@@ -227,17 +227,13 @@ func (h *PoliciesHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The policy engine matches on role name, not UUID.
+	// AgentRoleID = role name (e.g. "researcher"), consistent with CompiledRule.RoleID.
 	req := policy.EvalRequest{
-		Service: body.Service,
-		Action:  body.Action,
-		Params:  body.Params,
-	}
-
-	if body.Role != "" {
-		role, err := h.store.GetRoleByName(r.Context(), body.Role, user.ID)
-		if err == nil {
-			req.AgentRoleID = role.ID
-		}
+		Service:     body.Service,
+		Action:      body.Action,
+		Params:      body.Params,
+		AgentRoleID: body.Role, // role name passed directly
 	}
 
 	decision := h.registry.Evaluate(user.ID, req)
