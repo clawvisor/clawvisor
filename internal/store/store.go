@@ -23,9 +23,19 @@ type Store interface {
 
 	// Agent roles
 	CreateRole(ctx context.Context, userID, name, description string) (*AgentRole, error)
+	UpdateRole(ctx context.Context, id, userID, name, description string) (*AgentRole, error)
 	GetRole(ctx context.Context, id, userID string) (*AgentRole, error)
+	GetRoleByName(ctx context.Context, name, userID string) (*AgentRole, error)
 	ListRoles(ctx context.Context, userID string) ([]*AgentRole, error)
 	DeleteRole(ctx context.Context, id, userID string) error
+
+	// Policies
+	CreatePolicy(ctx context.Context, userID string, p *PolicyRecord) (*PolicyRecord, error)
+	UpdatePolicy(ctx context.Context, id, userID string, p *PolicyRecord) (*PolicyRecord, error)
+	DeletePolicy(ctx context.Context, id, userID string) error
+	GetPolicy(ctx context.Context, id, userID string) (*PolicyRecord, error)
+	GetPolicyBySlug(ctx context.Context, slug, userID string) (*PolicyRecord, error)
+	ListPolicies(ctx context.Context, userID string, filter PolicyFilter) ([]*PolicyRecord, error)
 
 	// Agents
 	CreateAgent(ctx context.Context, userID, name, tokenHash string, roleID *string) (*Agent, error)
@@ -100,6 +110,26 @@ type ServiceMeta struct {
 	ServiceID   string    `json:"service_id"`
 	ActivatedAt time.Time `json:"activated_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PolicyRecord is a policy as stored in the database.
+type PolicyRecord struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Slug        string    `json:"slug"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	RoleID      *string   `json:"role_id"`
+	RulesYAML   string    `json:"rules_yaml"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PolicyFilter controls which policies are returned by ListPolicies.
+// Zero value returns all policies for the user.
+type PolicyFilter struct {
+	RoleID     *string // only policies for this role
+	GlobalOnly bool    // only policies with no role (role_id IS NULL)
 }
 
 // NotificationConfig stores per-user, per-channel notification settings.

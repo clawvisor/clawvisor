@@ -14,6 +14,8 @@ import (
 	"github.com/ericlevine/clawvisor/internal/api"
 	"github.com/ericlevine/clawvisor/internal/auth"
 	"github.com/ericlevine/clawvisor/internal/config"
+	"github.com/ericlevine/clawvisor/internal/policy"
+	"github.com/ericlevine/clawvisor/internal/store"
 	pgstore "github.com/ericlevine/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/ericlevine/clawvisor/internal/store/sqlite"
 	"github.com/ericlevine/clawvisor/internal/vault"
@@ -47,10 +49,7 @@ func run(logger *slog.Logger) error {
 
 	// ── Database + Store ────────────────────────────────────────────────────
 	var (
-		st    interface {
-			Ping(context.Context) error
-			Close() error
-		}
+		st      store.Store
 		vaultDB *sql.DB
 	)
 
@@ -63,25 +62,8 @@ func run(logger *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("connecting to postgres: %w", err)
 		}
-		pgSt := pgstore.NewStore(pool)
-		// Expose pool as *sql.DB for LocalVault using pgx stdlib adapter
+		st = pgstore.NewStore(pool)
 		vaultDB = stdlib.OpenDBFromPool(pool)
-		st = pgSt
-
-		jwtSvc, err := auth.NewJWTService(cfg.Auth.JWTSecret)
-		if err != nil {
-			return err
-		}
-		v, err := buildVault(cfg, vaultDB, "postgres")
-		if err != nil {
-			return err
-		}
-		srv, err := api.New(cfg, pgSt, v, jwtSvc)
-		if err != nil {
-			return err
-		}
-		_ = st
-		return srv.Run(ctx)
 
 	case "sqlite":
 		db, err := sqlitestore.New(ctx, cfg.Database.SQLitePath)
@@ -89,27 +71,47 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("connecting to sqlite: %w", err)
 		}
 		sqliteSt := sqlitestore.NewStore(db)
-		vaultDB = db
 		st = sqliteSt
-
-		jwtSvc, err := auth.NewJWTService(cfg.Auth.JWTSecret)
-		if err != nil {
-			return err
-		}
-		v, err := buildVault(cfg, vaultDB, "sqlite")
-		if err != nil {
-			return err
-		}
-		srv, err := api.New(cfg, sqliteSt, v, jwtSvc)
-		if err != nil {
-			return err
-		}
-		_ = st
-		return srv.Run(ctx)
+		vaultDB = db
 
 	default:
 		return fmt.Errorf("unsupported database driver %q (use \"postgres\" or \"sqlite\")", cfg.Database.Driver)
 	}
+
+	// ── Auth ────────────────────────────────────────────────────────────────
+	jwtSvc, err := auth.NewJWTService(cfg.Auth.JWTSecret)
+	if err != nil {
+		return err
+	}
+
+	// ── Vault ───────────────────────────────────────────────────────────────
+	v, err := buildVault(cfg, vaultDB, cfg.Database.Driver)
+	if err != nil {
+		return err
+	}
+
+	// ── Policy Registry ─────────────────────────────────────────────────────
+	reg := policy.NewRegistry()
+	if err := loadPoliciesIntoRegistry(ctx, st, reg, logger); err != nil {
+		return fmt.Errorf("loading policies: %w", err)
+	}
+
+	// ── HTTP Server ─────────────────────────────────────────────────────────
+	srv, err := api.New(cfg, st, v, jwtSvc, reg)
+	if err != nil {
+		return err
+	}
+	return srv.Run(ctx)
+}
+
+// loadPoliciesIntoRegistry fetches all users' policies from the DB and compiles
+// them into the registry. This runs once at startup.
+func loadPoliciesIntoRegistry(ctx context.Context, st store.Store, reg *policy.Registry, logger *slog.Logger) error {
+	// We don't have a ListAllUsers method yet; we'll leave the registry empty at startup
+	// for now. The registry is updated incrementally via API handlers on every policy write.
+	// TODO Phase 4: add a batch preload when user list is available.
+	logger.Info("policy registry initialized (policies loaded on first access)")
+	return nil
 }
 
 func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
@@ -120,10 +122,6 @@ func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, err
 		if cfg.Vault.GCPProject == "" {
 			return nil, fmt.Errorf("GCP_PROJECT must be set for gcp vault backend")
 		}
-		// Load the master key from a GCP secret
-		// The key is stored in Secret Manager as "clawvisor-vault-key" and is a 32-byte base64-encoded value.
-		// For bootstrapping: if it doesn't exist, a local key file is used and its bytes are pushed to GCP.
-		// This is intentionally simple for Phase 1.
 		localKey, err := vault.LoadKey(cfg.Vault.LocalKeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("loading vault master key for gcp backend: %w", err)

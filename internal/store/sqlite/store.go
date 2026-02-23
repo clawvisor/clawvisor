@@ -146,6 +146,41 @@ func (s *Store) ListRoles(ctx context.Context, userID string) ([]*store.AgentRol
 	return roles, rows.Err()
 }
 
+func (s *Store) UpdateRole(ctx context.Context, id, userID, name, description string) (*store.AgentRole, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agent_roles SET name = ?, description = ? WHERE id = ? AND user_id = ?`,
+		name, description, id, userID,
+	)
+	if err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, store.ErrNotFound
+	}
+	return s.GetRole(ctx, id, userID)
+}
+
+func (s *Store) GetRoleByName(ctx context.Context, name, userID string) (*store.AgentRole, error) {
+	r := &store.AgentRole{}
+	var createdAt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, name, description, created_at FROM agent_roles WHERE name = ? AND user_id = ?`,
+		name, userID,
+	).Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.CreatedAt = parseTime(createdAt)
+	return r, nil
+}
+
 func (s *Store) DeleteRole(ctx context.Context, id, userID string) error {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM agent_roles WHERE id = ? AND user_id = ?`,
@@ -159,6 +194,127 @@ func (s *Store) DeleteRole(ctx context.Context, id, userID string) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+// ── Policies ──────────────────────────────────────────────────────────────────
+
+func (s *Store) CreatePolicy(ctx context.Context, userID string, p *store.PolicyRecord) (*store.PolicyRecord, error) {
+	id := uuid.New().String()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO policies (id, user_id, slug, name, description, role_id, rules_yaml)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, id, userID, p.Slug, p.Name, p.Description, p.RoleID, p.RulesYAML)
+	if err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	return s.GetPolicy(ctx, id, userID)
+}
+
+func (s *Store) UpdatePolicy(ctx context.Context, id, userID string, p *store.PolicyRecord) (*store.PolicyRecord, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE policies
+		SET slug = ?, name = ?, description = ?, role_id = ?, rules_yaml = ?, updated_at = datetime('now')
+		WHERE id = ? AND user_id = ?
+	`, p.Slug, p.Name, p.Description, p.RoleID, p.RulesYAML, id, userID)
+	if err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, store.ErrNotFound
+	}
+	return s.GetPolicy(ctx, id, userID)
+}
+
+func (s *Store) DeletePolicy(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM policies WHERE id = ? AND user_id = ?`,
+		id, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetPolicy(ctx context.Context, id, userID string) (*store.PolicyRecord, error) {
+	p := &store.PolicyRecord{}
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, slug, name, description, role_id, rules_yaml, created_at, updated_at
+		FROM policies WHERE id = ? AND user_id = ?
+	`, id, userID).Scan(&p.ID, &p.UserID, &p.Slug, &p.Name, &p.Description, &p.RoleID, &p.RulesYAML, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.CreatedAt = parseTime(createdAt)
+	p.UpdatedAt = parseTime(updatedAt)
+	return p, nil
+}
+
+func (s *Store) GetPolicyBySlug(ctx context.Context, slug, userID string) (*store.PolicyRecord, error) {
+	p := &store.PolicyRecord{}
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, slug, name, description, role_id, rules_yaml, created_at, updated_at
+		FROM policies WHERE slug = ? AND user_id = ?
+	`, slug, userID).Scan(&p.ID, &p.UserID, &p.Slug, &p.Name, &p.Description, &p.RoleID, &p.RulesYAML, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.CreatedAt = parseTime(createdAt)
+	p.UpdatedAt = parseTime(updatedAt)
+	return p, nil
+}
+
+func (s *Store) ListPolicies(ctx context.Context, userID string, filter store.PolicyFilter) ([]*store.PolicyRecord, error) {
+	query := `
+		SELECT id, user_id, slug, name, description, role_id, rules_yaml, created_at, updated_at
+		FROM policies WHERE user_id = ?`
+	args := []any{userID}
+
+	if filter.GlobalOnly {
+		query += ` AND role_id IS NULL`
+	} else if filter.RoleID != nil {
+		query += ` AND role_id = ?`
+		args = append(args, *filter.RoleID)
+	}
+	query += ` ORDER BY created_at ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var policies []*store.PolicyRecord
+	for rows.Next() {
+		p := &store.PolicyRecord{}
+		var createdAt, updatedAt string
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Slug, &p.Name, &p.Description, &p.RoleID, &p.RulesYAML, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = parseTime(createdAt)
+		p.UpdatedAt = parseTime(updatedAt)
+		policies = append(policies, p)
+	}
+	return policies, rows.Err()
 }
 
 // ── Agents ────────────────────────────────────────────────────────────────────

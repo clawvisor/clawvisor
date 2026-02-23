@@ -12,32 +12,35 @@ import (
 	"github.com/ericlevine/clawvisor/internal/api/middleware"
 	"github.com/ericlevine/clawvisor/internal/auth"
 	"github.com/ericlevine/clawvisor/internal/config"
+	"github.com/ericlevine/clawvisor/internal/policy"
 	"github.com/ericlevine/clawvisor/internal/store"
 	"github.com/ericlevine/clawvisor/internal/vault"
 )
 
 // Server is the Clawvisor HTTP server.
 type Server struct {
-	cfg    *config.Config
-	store  store.Store
-	vault  vault.Vault
-	jwtSvc *auth.JWTService
-	logger *slog.Logger
-	http   *http.Server
+	cfg      *config.Config
+	store    store.Store
+	vault    vault.Vault
+	jwtSvc   *auth.JWTService
+	registry *policy.Registry
+	logger   *slog.Logger
+	http     *http.Server
 }
 
 // New creates a Server and registers all routes.
-func New(cfg *config.Config, st store.Store, v vault.Vault, jwtSvc *auth.JWTService) (*Server, error) {
+func New(cfg *config.Config, st store.Store, v vault.Vault, jwtSvc *auth.JWTService, reg *policy.Registry) (*Server, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 
 	s := &Server{
-		cfg:    cfg,
-		store:  st,
-		vault:  v,
-		jwtSvc: jwtSvc,
-		logger: logger,
+		cfg:      cfg,
+		store:    st,
+		vault:    v,
+		jwtSvc:   jwtSvc,
+		registry: reg,
+		logger:   logger,
 	}
 
 	mux := s.routes()
@@ -59,9 +62,13 @@ func (s *Server) routes() http.Handler {
 
 	authHandler := handlers.NewAuthHandler(s.jwtSvc, s.store, s.cfg.Auth)
 	healthHandler := handlers.NewHealthHandler(s.store, s.vault)
+	rolesHandler := handlers.NewRolesHandler(s.store)
+	policiesHandler := handlers.NewPoliciesHandler(s.store, s.registry)
 
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	logMiddleware := middleware.Logging(s.logger)
+
+	auth := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
 
 	// Health (no auth)
 	mux.HandleFunc("GET /health", healthHandler.Health)
@@ -73,8 +80,23 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/refresh", authHandler.Refresh)
 
 	// Auth (requires user JWT)
-	mux.Handle("POST /api/auth/logout", requireUser(http.HandlerFunc(authHandler.Logout)))
-	mux.Handle("GET /api/me", requireUser(http.HandlerFunc(authHandler.Me)))
+	mux.Handle("POST /api/auth/logout", auth(authHandler.Logout))
+	mux.Handle("GET /api/me", auth(authHandler.Me))
+
+	// Roles
+	mux.Handle("GET /api/roles", auth(rolesHandler.List))
+	mux.Handle("POST /api/roles", auth(rolesHandler.Create))
+	mux.Handle("PUT /api/roles/{id}", auth(rolesHandler.Update))
+	mux.Handle("DELETE /api/roles/{id}", auth(rolesHandler.Delete))
+
+	// Policies — specific routes first, then parameterized
+	mux.Handle("POST /api/policies/validate", auth(policiesHandler.Validate))
+	mux.Handle("POST /api/policies/evaluate", auth(policiesHandler.Evaluate))
+	mux.Handle("GET /api/policies", auth(policiesHandler.List))
+	mux.Handle("POST /api/policies", auth(policiesHandler.Create))
+	mux.Handle("GET /api/policies/{id}", auth(policiesHandler.Get))
+	mux.Handle("PUT /api/policies/{id}", auth(policiesHandler.Update))
+	mux.Handle("DELETE /api/policies/{id}", auth(policiesHandler.Delete))
 
 	// SPA fallback: serve frontend for all unmatched routes
 	if s.cfg.Server.FrontendDir != "" {
