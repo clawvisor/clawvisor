@@ -77,7 +77,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		ActivatedAt *time.Time `json:"activated_at,omitempty"`
 	}
 
-	var services []serviceEntry
+	services := make([]serviceEntry, 0)
 	for _, a := range h.adapterReg.All() {
 		vKey := vaultKeyForService(a.ServiceID())
 		status := "not_activated"

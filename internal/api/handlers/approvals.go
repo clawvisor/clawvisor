@@ -47,6 +47,9 @@ func (h *ApprovalsHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list pending approvals")
 		return
 	}
+	if entries == nil {
+		entries = []*store.AuditEntry{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total":   total,
 		"entries": entries,

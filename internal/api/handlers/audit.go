@@ -43,6 +43,9 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list audit entries")
 		return
 	}
+	if entries == nil {
+		entries = []*store.AuditEntry{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total":   total,
 		"entries": entries,

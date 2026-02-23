@@ -172,6 +172,11 @@ func (s *Server) routes() http.Handler {
 	return logMiddleware(mux)
 }
 
+// Handler returns the HTTP handler, primarily for use in tests.
+func (s *Server) Handler() http.Handler {
+	return s.http.Handler
+}
+
 // Run starts the HTTP server and blocks until the context is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	// Start background expiry cleanup.
