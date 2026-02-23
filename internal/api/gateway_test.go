@@ -236,6 +236,44 @@ func TestPolicies_GetAndDelete(t *testing.T) {
 	mustStatus(t, resp, http.StatusNotFound)
 }
 
+func TestPolicies_Update_ChangesRegistryDecision(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+
+	s.do("POST", "/api/roles", map[string]any{"name": "bot"})
+
+	// Create a block policy with slug "update-test-block"
+	resp := s.do("POST", "/api/policies", map[string]any{
+		"yaml": blockPolicy("update-test-block", "bot", "google.gmail", "send"),
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	policyID := str(t, body, "id")
+
+	// Confirm evaluate returns block
+	resp = s.do("POST", "/api/policies/evaluate", map[string]any{
+		"service": "google.gmail", "action": "send", "role": "bot",
+	})
+	body = mustStatus(t, resp, http.StatusOK)
+	if str(t, body, "decision") != "block" {
+		t.Fatalf("before update: expected block, got %q", str(t, body, "decision"))
+	}
+
+	// Update to an approve policy — note the YAML id changes to "update-test-approve"
+	resp = s.do("PUT", fmt.Sprintf("/api/policies/%s", policyID), map[string]any{
+		"yaml": approvePolicy("update-test-approve", "bot", "google.gmail", "send"),
+	})
+	mustStatus(t, resp, http.StatusOK)
+
+	// Evaluate again — old block rules must be gone; should now return approve
+	resp = s.do("POST", "/api/policies/evaluate", map[string]any{
+		"service": "google.gmail", "action": "send", "role": "bot",
+	})
+	body = mustStatus(t, resp, http.StatusOK)
+	if str(t, body, "decision") != "approve" {
+		t.Errorf("after update: expected approve, got %q", str(t, body, "decision"))
+	}
+}
+
 // ── Agents ────────────────────────────────────────────────────────────────────
 
 func TestAgents_Create_TokenShownOnce(t *testing.T) {

@@ -113,6 +113,18 @@ func (h *PoliciesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch the old record before updating so we can remove its rules from the
+	// registry by slug, even if the new YAML changes the policy's id field.
+	oldRec, err := h.store.GetPolicy(r.Context(), id, user.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "policy not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get policy")
+		return
+	}
+
 	rec, conflicts, httpStatus, errMsg := h.parseValidateAndBuild(r, user.ID, body.YAML, id)
 	if errMsg != "" {
 		writeError(w, httpStatus, "POLICY_ERROR", errMsg)
@@ -133,7 +145,8 @@ func (h *PoliciesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update registry
+	// Remove old rules (by old slug) then append new ones.
+	h.registry.Remove(user.ID, oldRec.Slug)
 	p, _ := policy.Parse([]byte(rec.RulesYAML))
 	if p != nil {
 		h.registry.Append(user.ID, *p)

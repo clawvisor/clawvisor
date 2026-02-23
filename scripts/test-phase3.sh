@@ -346,7 +346,7 @@ TOTAL=$(jqf "$ALL_AUDIT" .total)
   && pass "GET /api/audit → $TOTAL total entries" \
   || fail "expected ≥3 audit entries, got $TOTAL"
 
-for OUTCOME in blocked pending denied; do
+for OUTCOME in blocked denied error; do
   COUNT=$(jqf "$ALL_AUDIT" "[.entries[] | select(.outcome == \"$OUTCOME\")] | length")
   [[ "$COUNT" -ge 1 ]] \
     && pass "  outcome=$OUTCOME present ($COUNT entry/entries)" \
