@@ -90,6 +90,7 @@ func (s *Server) routes() http.Handler {
 	policiesHandler := handlers.NewPoliciesHandler(s.store, s.registry)
 	agentsHandler := handlers.NewAgentsHandler(s.store)
 	auditHandler := handlers.NewAuditHandler(s.store)
+	notificationsHandler := handlers.NewNotificationsHandler(s.store)
 	gatewayHandler := handlers.NewGatewayHandler(
 		s.store, s.vault, s.adapterReg, s.registry,
 		s.notifier, s.safety, *s.cfg, s.logger, baseURL,
@@ -118,6 +119,8 @@ func (s *Server) routes() http.Handler {
 	// Auth (requires user JWT)
 	mux.Handle("POST /api/auth/logout", user(authHandler.Logout))
 	mux.Handle("GET /api/me", user(authHandler.Me))
+	mux.Handle("PUT /api/me", user(authHandler.UpdateMe))
+	mux.Handle("DELETE /api/me", user(authHandler.DeleteMe))
 
 	// Roles
 	mux.Handle("GET /api/roles", user(rolesHandler.List))
@@ -137,7 +140,13 @@ func (s *Server) routes() http.Handler {
 	// Agents (user JWT)
 	mux.Handle("GET /api/agents", user(agentsHandler.List))
 	mux.Handle("POST /api/agents", user(agentsHandler.Create))
+	mux.Handle("PATCH /api/agents/{id}", user(agentsHandler.UpdateRole))
 	mux.Handle("DELETE /api/agents/{id}", user(agentsHandler.Delete))
+
+	// Notifications (user JWT)
+	mux.Handle("GET /api/notifications", user(notificationsHandler.List))
+	mux.Handle("PUT /api/notifications/telegram", user(notificationsHandler.UpsertTelegram))
+	mux.Handle("DELETE /api/notifications/telegram", user(notificationsHandler.DeleteTelegram))
 
 	// Gateway (agent token)
 	mux.Handle("POST /api/gateway/request", agent(gatewayHandler.HandleRequest))

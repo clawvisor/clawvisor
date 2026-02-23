@@ -79,6 +79,31 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*store.User, error)
 	return u, err
 }
 
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error {
+	res, err := s.pool.Exec(ctx,
+		`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+		newPasswordHash, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteUser(ctx context.Context, userID string) error {
+	res, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Agent Roles ───────────────────────────────────────────────────────────────
 
 func (s *Store) CreateRole(ctx context.Context, userID, name, description string) (*store.AgentRole, error) {

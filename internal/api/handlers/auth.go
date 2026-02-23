@@ -187,6 +187,99 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
+// UpdateMe updates the current user's password.
+//
+// PUT /api/me
+// Auth: Bearer <access_token>
+// Body: {"current_password": "...", "new_password": "..."}
+func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.CurrentPassword == "" || body.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "current_password and new_password are required")
+		return
+	}
+
+	// Re-fetch the full user record so we have the password hash.
+	full, err := h.st.GetUserByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load user")
+		return
+	}
+	if err := auth.CheckPassword(body.CurrentPassword, full.PasswordHash); err != nil {
+		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "current password is incorrect")
+		return
+	}
+
+	newHash, err := auth.HashPassword(body.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_PASSWORD", err.Error())
+		return
+	}
+	if err := h.st.UpdateUserPassword(r.Context(), user.ID, newHash); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update password")
+		return
+	}
+
+	updated, err := h.st.GetUserByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not reload user")
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// DeleteMe permanently deletes the current user account and all associated data.
+//
+// DELETE /api/me
+// Auth: Bearer <access_token>
+// Body: {"password": "..."}  (required confirmation)
+func (h *AuthHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	var body struct {
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Password == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "password is required to confirm deletion")
+		return
+	}
+
+	full, err := h.st.GetUserByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load user")
+		return
+	}
+	if err := auth.CheckPassword(body.Password, full.PasswordHash); err != nil {
+		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "password is incorrect")
+		return
+	}
+
+	if err := h.st.DeleteUser(r.Context(), user.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete account")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authResponse, error) {

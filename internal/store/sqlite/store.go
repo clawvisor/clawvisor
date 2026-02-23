@@ -89,6 +89,33 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*store.User, error)
 	return u, nil
 }
 
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		newPasswordHash, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteUser(ctx context.Context, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Agent Roles ───────────────────────────────────────────────────────────────
 
 func (s *Store) CreateRole(ctx context.Context, userID, name, description string) (*store.AgentRole, error) {

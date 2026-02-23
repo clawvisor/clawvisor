@@ -20,6 +20,8 @@ type Store interface {
 	CreateUser(ctx context.Context, email, passwordHash string) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
+	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
+	DeleteUser(ctx context.Context, userID string) error
 
 	// Agent roles
 	CreateRole(ctx context.Context, userID, name, description string) (*AgentRole, error)

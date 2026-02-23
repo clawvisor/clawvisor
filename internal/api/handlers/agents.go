@@ -83,6 +83,38 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents)
 }
 
+// UpdateRole changes the role assignment for an existing agent.
+//
+// PATCH /api/agents/{id}
+// Auth: user JWT
+// Body: {"role_id": "..." | null}
+func (h *AgentsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	id := r.PathValue("id")
+	var body struct {
+		RoleID *string `json:"role_id"` // null = remove role
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	agent, err := h.st.UpdateAgentRole(r.Context(), id, user.ID, body.RoleID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update agent")
+		return
+	}
+	writeJSON(w, http.StatusOK, agent)
+}
+
 // Delete removes an agent by ID.
 //
 // DELETE /api/agents/{id}
