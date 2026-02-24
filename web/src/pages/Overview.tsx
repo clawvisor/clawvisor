@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, type AuditEntry } from '../api/client'
+import { api, type AuditEntry, type Task } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 
 interface Props {
   pendingCount: number
+  actionableTaskCount: number
 }
 
 const OUTCOME_COLORS: Record<string, string> = {
@@ -37,7 +38,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
   )
 }
 
-export default function Overview({ pendingCount }: Props) {
+export default function Overview({ pendingCount, actionableTaskCount }: Props) {
   const { data: services } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.services.list(),
@@ -47,20 +48,33 @@ export default function Overview({ pendingCount }: Props) {
     queryFn: () => api.audit.list({ limit: 10 }),
   })
 
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => api.tasks.list(),
+  })
+
   const activatedCount = services?.services.filter(s => s.status === 'activated').length ?? 0
   const recentEntries = auditData?.entries ?? []
+  const activeTasks = (tasksData?.tasks ?? []).filter((t: Task) => t.status === 'active')
+  const activeTaskCount = activeTasks.length
 
   return (
     <div className="p-8 space-y-8">
       <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard
           label="Activated Services"
           value={activatedCount}
           href="/dashboard/services"
           color="blue"
+        />
+        <StatCard
+          label="Active Tasks"
+          value={activeTaskCount}
+          href="/dashboard/tasks"
+          color={activeTaskCount > 0 ? 'blue' : 'gray'}
         />
         <StatCard
           label="Pending Approvals"
@@ -84,6 +98,21 @@ export default function Overview({ pendingCount }: Props) {
           </span>
           <span className="text-orange-600 text-sm">See the panel →</span>
         </div>
+      )}
+
+      {/* Pending task approvals banner */}
+      {actionableTaskCount > 0 && (
+        <Link
+          to="/dashboard/tasks"
+          className="block rounded-lg border border-orange-200 bg-orange-50 px-5 py-4 hover:bg-orange-100 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-orange-800 font-medium">
+              {actionableTaskCount} task{actionableTaskCount > 1 ? 's' : ''} awaiting your approval
+            </span>
+            <span className="text-orange-600 text-sm">Review tasks →</span>
+          </div>
+        </Link>
       )}
 
       {/* Recent audit activity */}

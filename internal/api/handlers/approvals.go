@@ -227,4 +227,21 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		}
 		h.logger.Info("pending approval expired", "request_id", pa.RequestID)
 	}
+
+	// Expire timed-out tasks.
+	expiredTasks, err := h.st.ListExpiredTasks(ctx)
+	if err != nil {
+		h.logger.Warn("task expiry cleanup: list failed", "err", err)
+		return
+	}
+	for _, task := range expiredTasks {
+		_ = h.st.UpdateTaskStatus(ctx, task.ID, "expired")
+		if task.CallbackURL != nil && *task.CallbackURL != "" {
+			_ = callback.DeliverResult(ctx, *task.CallbackURL, &callback.Payload{
+				RequestID: task.ID,
+				Status:    "task_expired",
+			}, "")
+		}
+		h.logger.Info("task expired", "task_id", task.ID)
+	}
 }

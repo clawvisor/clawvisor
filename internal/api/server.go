@@ -113,6 +113,8 @@ func (s *Server) routes() http.Handler {
 	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.registry, s.logger)
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.logger)
 	s.approvalsHandler = approvalsHandler
+	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg, s.registry,
+		s.notifier, *s.cfg, s.logger, baseURL)
 
 	// Middleware
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
@@ -183,6 +185,19 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
 	mux.Handle("POST /api/approvals/{request_id}/approve", user(approvalsHandler.Approve))
 	mux.Handle("POST /api/approvals/{request_id}/deny", user(approvalsHandler.Deny))
+
+	// Tasks (agent auth)
+	mux.Handle("POST /api/tasks", agent(tasksHandler.Create))
+	mux.Handle("GET /api/tasks/{id}", agent(tasksHandler.Get))
+	mux.Handle("POST /api/tasks/{id}/complete", agent(tasksHandler.Complete))
+	mux.Handle("POST /api/tasks/{id}/expand", agent(tasksHandler.Expand))
+
+	// Tasks (user JWT)
+	mux.Handle("GET /api/tasks", user(tasksHandler.List))
+	mux.Handle("POST /api/tasks/{id}/approve", user(tasksHandler.Approve))
+	mux.Handle("POST /api/tasks/{id}/deny", user(tasksHandler.Deny))
+	mux.Handle("POST /api/tasks/{id}/expand/approve", user(tasksHandler.ExpandApprove))
+	mux.Handle("POST /api/tasks/{id}/expand/deny", user(tasksHandler.ExpandDeny))
 
 	// Audit (user JWT)
 	mux.Handle("GET /api/audit", user(auditHandler.List))

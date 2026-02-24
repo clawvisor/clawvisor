@@ -70,6 +70,17 @@ type Store interface {
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 
+	// Tasks
+	CreateTask(ctx context.Context, task *Task) error
+	GetTask(ctx context.Context, id string) (*Task, error)
+	ListTasks(ctx context.Context, userID string) ([]*Task, error)
+	UpdateTaskStatus(ctx context.Context, id, status string) error
+	UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time) error
+	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
+	IncrementTaskRequestCount(ctx context.Context, id string) error
+	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
+	ListExpiredTasks(ctx context.Context) ([]*Task, error)
+
 	// Pending approvals
 	SavePendingApproval(ctx context.Context, pa *PendingApproval) error
 	GetPendingApproval(ctx context.Context, requestID string) (*PendingApproval, error)
@@ -167,6 +178,7 @@ type AuditEntry struct {
 	UserID         string          `json:"user_id"`
 	AgentID        *string         `json:"agent_id,omitempty"`
 	RequestID      string          `json:"request_id"`
+	TaskID         *string         `json:"task_id,omitempty"`
 	Timestamp      time.Time       `json:"timestamp"`
 	Service        string          `json:"service"`
 	Action         string          `json:"action"`
@@ -183,6 +195,32 @@ type AuditEntry struct {
 	DurationMS     int             `json:"duration_ms"`
 	FiltersApplied json.RawMessage `json:"filters_applied,omitempty"`
 	ErrorMsg       *string         `json:"error_msg,omitempty"`
+}
+
+// TaskAction represents a single authorized action within a task scope.
+type TaskAction struct {
+	Service     string `json:"service"`
+	Action      string `json:"action"`       // specific action or "*"
+	AutoExecute bool   `json:"auto_execute"`
+}
+
+// Task represents a task-scoped authorization.
+type Task struct {
+	ID                string       `json:"id"`
+	UserID            string       `json:"user_id"`
+	AgentID           string       `json:"agent_id"`
+	Purpose           string       `json:"purpose"`
+	Status            string       `json:"status"` // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion
+	AuthorizedActions []TaskAction `json:"authorized_actions"`
+	CallbackURL       *string      `json:"callback_url,omitempty"`
+	CreatedAt         time.Time    `json:"created_at"`
+	ApprovedAt        *time.Time   `json:"approved_at,omitempty"`
+	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`
+	ExpiresInSeconds  int          `json:"expires_in_seconds,omitempty"`
+	RequestCount      int          `json:"request_count"`
+	// PendingAction holds the action awaiting scope expansion approval.
+	PendingAction *TaskAction `json:"pending_action,omitempty"`
+	PendingReason string      `json:"pending_reason,omitempty"`
 }
 
 // PendingApproval is a gateway request awaiting human approval.

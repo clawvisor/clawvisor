@@ -15,10 +15,16 @@ type Config struct {
 	Vault    VaultConfig    `yaml:"vault"`
 	Auth     AuthConfig     `yaml:"auth"`
 	Approval ApprovalConfig `yaml:"approval"`
+	Task     TaskConfig     `yaml:"task"`
 	LLM      LLMConfig      `yaml:"llm"`
 	MCP      MCPConfig      `yaml:"mcp"`
 	Telegram TelegramConfig `yaml:"telegram"`
 	Google   GoogleConfig   `yaml:"google"`
+}
+
+// TaskConfig holds settings for task-scoped authorization.
+type TaskConfig struct {
+	DefaultExpirySeconds int `yaml:"default_expiry_seconds"` // default: 1800 (30 min)
 }
 
 type ServerConfig struct {
@@ -108,6 +114,9 @@ func Default() *Config {
 		Approval: ApprovalConfig{
 			Timeout:   300,
 			OnTimeout: "fail",
+		},
+		Task: TaskConfig{
+			DefaultExpirySeconds: 1800,
 		},
 		LLM: LLMConfig{
 			Safety: LLMProviderConfig{

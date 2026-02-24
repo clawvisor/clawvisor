@@ -170,12 +170,90 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// iMessage send_message always requires approval — hardcoded, not overridable by policy.
-	if req.Service == "apple.imessage" && req.Action == "send_message" &&
+	if RequiresHardcodedApproval(req.Service, req.Action) &&
 		decision.Decision == policy.DecisionExecute {
 		decision.Decision = policy.DecisionApprove
 		if decision.Reason == "" {
 			decision.Reason = "iMessage send_message always requires human approval"
 		}
+	}
+
+	// ── Task scope enforcement ────────────────────────────────────────────────
+	if req.TaskID != "" {
+		task, taskErr := h.store.GetTask(ctx, req.TaskID)
+		if taskErr != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "task not found")
+			return
+		}
+		if task.UserID != agent.UserID {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "task does not belong to this agent's user")
+			return
+		}
+		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":  "task_expired",
+				"task_id": req.TaskID,
+				"message": "Task has expired. Use POST /api/tasks/{id}/expand to extend.",
+			})
+			return
+		}
+		if task.Status != "active" {
+			writeError(w, http.StatusConflict, "INVALID_STATE",
+				fmt.Sprintf("task is %s, not active", task.Status))
+			return
+		}
+
+		// Tag audit entries with task_id.
+		baseEntry = func(outcome string) *store.AuditEntry {
+			e := &store.AuditEntry{
+				ID:         auditID,
+				UserID:     agent.UserID,
+				AgentID:    &agent.ID,
+				RequestID:  req.RequestID,
+				TaskID:     &req.TaskID,
+				Timestamp:  time.Now().UTC(),
+				Service:    req.Service,
+				Action:     req.Action,
+				ParamsSafe: json.RawMessage(paramsSafe),
+				Decision:   string(decision.Decision),
+				Outcome:    outcome,
+				Reason:     nullableStr(req.Reason),
+				DataOrigin: req.Context.DataOrigin,
+				ContextSrc: nullableStr(req.Context.Source),
+			}
+			if decision.PolicyID != "" {
+				e.PolicyID = &decision.PolicyID
+			}
+			if decision.RuleID != "" {
+				e.RuleID = &decision.RuleID
+			}
+			return e
+		}
+
+		// Block always enforced regardless of task scope.
+		// Execute (policy-allowed) proceeds normally, tagged with task_id.
+		// Approve: check task scope.
+		if decision.Decision == policy.DecisionApprove {
+			match := CheckTaskScope(task, req.Service, req.Action)
+			if match.InScope && match.AutoExecute {
+				// Override to execute — task scope grants auto-execution.
+				decision.Decision = policy.DecisionExecute
+			} else if !match.InScope {
+				// Out of scope — tell agent to expand.
+				_ = h.store.IncrementTaskRequestCount(ctx, req.TaskID)
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status":     "pending_scope_expansion",
+					"task_id":    req.TaskID,
+					"request_id": req.RequestID,
+					"message": fmt.Sprintf("Action %s:%s is outside the approved task scope. Use POST /api/tasks/%s/expand to request it.",
+						req.Service, req.Action, req.TaskID),
+				})
+				return
+			}
+			// In scope + auto_execute=false: falls through to normal approval flow.
+		}
+
+		_ = h.store.IncrementTaskRequestCount(ctx, req.TaskID)
 	}
 
 	switch decision.Decision {

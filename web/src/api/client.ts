@@ -256,6 +256,29 @@ export interface NotificationConfig {
   updated_at: string
 }
 
+export interface TaskAction {
+  service: string
+  action: string
+  auto_execute: boolean
+}
+
+export interface Task {
+  id: string
+  user_id: string
+  agent_id: string
+  purpose: string
+  status: 'pending_approval' | 'pending_scope_expansion' | 'active' | 'completed' | 'expired' | 'denied'
+  authorized_actions: TaskAction[]
+  callback_url?: string
+  created_at: string
+  approved_at?: string
+  expires_at?: string
+  expires_in_seconds: number
+  request_count: number
+  pending_action?: TaskAction
+  pending_reason?: string
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -334,6 +357,17 @@ export const api = {
     upsertTelegram: (botToken: string, chatId: string) =>
       put<NotificationConfig>('/api/notifications/telegram', { bot_token: botToken, chat_id: chatId }),
     deleteTelegram: () => del<void>('/api/notifications/telegram'),
+  },
+  tasks: {
+    list: () => get<{ tasks: Task[]; total: number }>('/api/tasks'),
+    approve: (id: string) =>
+      post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/approve`, {}),
+    deny: (id: string) =>
+      post<{ task_id: string; status: string }>(`/api/tasks/${id}/deny`, {}),
+    expandApprove: (id: string) =>
+      post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/expand/approve`, {}),
+    expandDeny: (id: string) =>
+      post<{ task_id: string; status: string }>(`/api/tasks/${id}/expand/deny`, {}),
   },
 }
 

@@ -8,6 +8,7 @@ type Request struct {
 	Reason    string         `json:"reason"`    // agent's stated reason (untrusted)
 	Context   RequestContext `json:"context"`
 	RequestID string         `json:"request_id"` // optional; generated if empty
+	TaskID    string         `json:"task_id,omitempty"`
 }
 
 // RequestContext carries metadata about the agent's session.

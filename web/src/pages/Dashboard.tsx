@@ -9,10 +9,12 @@ import Audit from './Audit'
 import Agents from './Agents'
 import Settings from './Settings'
 import Overview from './Overview'
+import Tasks from './Tasks'
 import ApprovalsPanel from '../components/ApprovalsPanel'
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', end: true },
+  { to: '/dashboard/tasks', label: 'Tasks' },
   { to: '/dashboard/services', label: 'Services' },
   { to: '/dashboard/policies', label: 'Policies' },
   { to: '/dashboard/agents', label: 'Agents' },
@@ -30,6 +32,16 @@ export default function Dashboard() {
     refetchInterval: 15_000,
   })
   const pendingCount = approvalsData?.entries?.length ?? 0
+
+  // Poll tasks for badge count
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => api.tasks.list(),
+    refetchInterval: 15_000,
+  })
+  const actionableTaskCount = (tasksData?.tasks ?? []).filter(
+    t => t.status === 'pending_approval' || t.status === 'pending_scope_expansion'
+  ).length
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -58,6 +70,11 @@ export default function Dashboard() {
                     {pendingCount > 9 ? '9+' : pendingCount}
                   </span>
                 )}
+                {label === 'Tasks' && actionableTaskCount > 0 && (
+                  <span className="ml-auto bg-orange-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                    {actionableTaskCount > 9 ? '9+' : actionableTaskCount}
+                  </span>
+                )}
               </NavLink>
             </li>
           ))}
@@ -76,7 +93,8 @@ export default function Dashboard() {
       {/* Main content */}
       <main className="flex-1 min-w-0 overflow-auto">
         <Routes>
-          <Route index element={<Overview pendingCount={pendingCount} />} />
+          <Route index element={<Overview pendingCount={pendingCount} actionableTaskCount={actionableTaskCount} />} />
+          <Route path="tasks" element={<Tasks />} />
           <Route path="services" element={<Services />} />
           <Route path="policies" element={<Policies />} />
           <Route path="policies/new" element={<PolicyEditor />} />

@@ -531,12 +531,12 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_log (
-			id, user_id, agent_id, request_id, timestamp, service, action,
+			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 			params_safe, decision, outcome, policy_id, rule_id,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, error_msg
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.Timestamp,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
 		e.PolicyID, e.RuleID, e.SafetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, nilIfEmpty(e.FiltersApplied), e.ErrorMsg)
@@ -558,13 +558,13 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, timestamp, service, action,
+		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 		       params_safe, decision, outcome, policy_id, rule_id,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, error_msg
 		FROM audit_log WHERE id = $1 AND user_id = $2
 	`, id, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.Timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
 		&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &e.ErrorMsg)
@@ -585,13 +585,13 @@ func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID 
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, timestamp, service, action,
+		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 		       params_safe, decision, outcome, policy_id, rule_id,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, error_msg
 		FROM audit_log WHERE request_id = $1 AND user_id = $2
 	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.Timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
 		&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &e.ErrorMsg)
@@ -639,7 +639,7 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		return nil, 0, err
 	}
 
-	dataQuery := `SELECT id, user_id, agent_id, request_id, timestamp, service, action,
+	dataQuery := `SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 		params_safe, decision, outcome, policy_id, rule_id,
 		safety_flagged, safety_reason, reason, data_origin, context_src,
 		duration_ms, filters_applied, error_msg
@@ -654,6 +654,180 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	defer rows.Close()
 	entries, err := scanAuditEntries(rows)
 	return entries, total, err
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+
+func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
+	if task.ID == "" {
+		task.ID = uuid.New().String()
+	}
+	actionsJSON, err := json.Marshal(task.AuthorizedActions)
+	if err != nil {
+		return err
+	}
+	var pendingActionJSON []byte
+	if task.PendingAction != nil {
+		pendingActionJSON, _ = json.Marshal(task.PendingAction)
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
+		actionsJSON, task.CallbackURL, task.ExpiresInSeconds,
+		task.ApprovedAt, task.ExpiresAt,
+		nilIfEmpty(pendingActionJSON), task.PendingReason)
+	return err
+}
+
+func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
+	t := &store.Task{}
+	var actionsJSON, pendingActionJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
+		       pending_action, pending_reason
+		FROM tasks WHERE id = $1
+	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
+		&t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
+		&t.RequestCount, &pendingActionJSON, &t.PendingReason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(actionsJSON, &t.AuthorizedActions); err != nil {
+		return nil, fmt.Errorf("unmarshal authorized_actions: %w", err)
+	}
+	if pendingActionJSON != nil {
+		var pa store.TaskAction
+		if err := json.Unmarshal(pendingActionJSON, &pa); err == nil {
+			t.PendingAction = &pa
+		}
+	}
+	return t, nil
+}
+
+func (s *Store) ListTasks(ctx context.Context, userID string) ([]*store.Task, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
+		       pending_action, pending_reason
+		FROM tasks WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
+func (s *Store) UpdateTaskStatus(ctx context.Context, id, status string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET status = $1 WHERE id = $2`, status, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET status = 'active', approved_at = NOW(), expires_at = $1
+		WHERE id = $2
+	`, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskActions(ctx context.Context, id string, actions []store.TaskAction, expiresAt time.Time) error {
+	actionsJSON, err := json.Marshal(actions)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET authorized_actions = $1, expires_at = $2, status = 'active',
+			pending_action = NULL, pending_reason = ''
+		WHERE id = $3
+	`, actionsJSON, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) IncrementTaskRequestCount(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET request_count = request_count + 1 WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) SetTaskPendingExpansion(ctx context.Context, id string, action *store.TaskAction, reason string) error {
+	var pendingActionJSON []byte
+	if action != nil {
+		pendingActionJSON, _ = json.Marshal(action)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET status = 'pending_scope_expansion', pending_action = $1, pending_reason = $2
+		WHERE id = $3
+	`, nilIfEmpty(pendingActionJSON), reason, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
+		       pending_action, pending_reason
+		FROM tasks WHERE status = 'active' AND expires_at < NOW()
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
+func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
+	var tasks []*store.Task
+	for rows.Next() {
+		t := &store.Task{}
+		var actionsJSON, pendingActionJSON []byte
+		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
+			&t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
+			&t.RequestCount, &pendingActionJSON, &t.PendingReason); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(actionsJSON, &t.AuthorizedActions)
+		if pendingActionJSON != nil {
+			var pa store.TaskAction
+			if err := json.Unmarshal(pendingActionJSON, &pa); err == nil {
+				t.PendingAction = &pa
+			}
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
 }
 
 // ── Pending Approvals ─────────────────────────────────────────────────────────
@@ -753,7 +927,7 @@ func scanAuditEntries(rows pgx.Rows) ([]*store.AuditEntry, error) {
 		e := &store.AuditEntry{}
 		var paramsSafe, filtersApplied []byte
 		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.Timestamp,
+			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
 			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
 			&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &e.ErrorMsg,

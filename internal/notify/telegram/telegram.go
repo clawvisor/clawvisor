@@ -82,6 +82,44 @@ func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.Activat
 	return nil
 }
 
+func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
+	chatID, err := n.chatID(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	text := formatTaskApprovalMessage(req)
+	keyboard := inlineKeyboard([][]inlineButton{{
+		{Text: "✅ Approve Task", URL: req.ApproveURL},
+		{Text: "❌ Deny Task", URL: req.DenyURL},
+	}})
+
+	msgID, err := n.sendMessage(ctx, chatID, text, keyboard)
+	if err != nil {
+		return "", fmt.Errorf("telegram: send task approval request: %w", err)
+	}
+	return msgID, nil
+}
+
+func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.ScopeExpansionRequest) (string, error) {
+	chatID, err := n.chatID(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+
+	text := formatScopeExpansionMessage(req)
+	keyboard := inlineKeyboard([][]inlineButton{{
+		{Text: "✅ Approve Expansion", URL: req.ApproveURL},
+		{Text: "❌ Deny Expansion", URL: req.DenyURL},
+	}})
+
+	msgID, err := n.sendMessage(ctx, chatID, text, keyboard)
+	if err != nil {
+		return "", fmt.Errorf("telegram: send scope expansion request: %w", err)
+	}
+	return msgID, nil
+}
+
 // ── Message formatting ────────────────────────────────────────────────────────
 
 func formatApprovalMessage(req notify.ApprovalRequest) string {
@@ -120,6 +158,51 @@ func formatApprovalMessage(req notify.ApprovalRequest) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("\n<i>Expires in %s</i>", html.EscapeString(req.ExpiresIn)))
+	return sb.String()
+}
+
+func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
+	var sb strings.Builder
+	sb.WriteString("📋 <b>Clawvisor — Task Approval Request</b>\n\n")
+	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
+	sb.WriteString(fmt.Sprintf("<b>Purpose:</b> %s\n", html.EscapeString(req.Purpose)))
+	sb.WriteString(fmt.Sprintf("<b>Time:</b> %s\n", time.Now().UTC().Format("Mon Jan 2 2006, 3:04 PM MST")))
+
+	sb.WriteString("\n<b>Requested actions:</b>\n")
+	for _, a := range req.Actions {
+		mode := "auto-execute"
+		if !a.AutoExecute {
+			mode = "requires per-request approval"
+		}
+		sb.WriteString(fmt.Sprintf("  • %s:%s (%s)\n",
+			html.EscapeString(a.Service),
+			html.EscapeString(a.Action),
+			mode))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n<i>Expires in %s</i>", html.EscapeString(req.ExpiresIn)))
+	return sb.String()
+}
+
+func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
+	var sb strings.Builder
+	sb.WriteString("🔄 <b>Clawvisor — Scope Expansion Request</b>\n\n")
+	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
+	sb.WriteString(fmt.Sprintf("<b>Task:</b> %s\n", html.EscapeString(req.Purpose)))
+
+	mode := "auto-execute"
+	if !req.NewAction.AutoExecute {
+		mode = "requires per-request approval"
+	}
+	sb.WriteString(fmt.Sprintf("\n<b>New action:</b> %s:%s (%s)\n",
+		html.EscapeString(req.NewAction.Service),
+		html.EscapeString(req.NewAction.Action),
+		mode))
+
+	if req.Reason != "" {
+		sb.WriteString(fmt.Sprintf("\n<b>Reason:</b> %s\n", html.EscapeString(req.Reason)))
+	}
+
 	return sb.String()
 }
 

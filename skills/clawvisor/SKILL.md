@@ -101,6 +101,82 @@ the data origin — set it.
 
 ---
 
+## Task-Scoped Access (multi-step tasks)
+
+For tasks involving multiple requests to the same service, declare a task scope
+to get one approval instead of N:
+
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "Review last 30 iMessage threads and classify reply status",
+    "authorized_actions": [
+      {"service": "apple.imessage", "action": "list_threads", "auto_execute": true},
+      {"service": "apple.imessage", "action": "get_thread", "auto_execute": true}
+    ],
+    "expires_in_seconds": 1800
+  }'
+```
+
+If all actions are already allowed by policy, the task goes straight to `active`
+with no approval needed. Otherwise, the response status is `pending_approval` and
+the user is notified to approve.
+
+Once the task is active, include `"task_id": "<task-uuid>"` in each gateway
+request to auto-execute in-scope actions without per-request approvals:
+
+```json
+{
+  "task_id": "<task-uuid>",
+  "service": "apple.imessage",
+  "action": "get_thread",
+  "params": {"thread_id": "+15551234567", "max_results": 5},
+  "reason": "checking if thread needs a reply",
+  "request_id": "...",
+  "context": {...}
+}
+```
+
+### Task response statuses
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `pending_task_approval` | Task declared but not yet approved | Tell the user and wait for callback or poll `GET /api/tasks/{id}`. |
+| `pending_scope_expansion` | Request outside task scope | Call `POST /api/tasks/{id}/expand` with the new action. |
+| `task_expired` | Task has passed its expiry | Expand the task to extend, or create a new task. |
+
+### Scope expansion
+
+If you need an action not in the original task scope:
+
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service": "apple.imessage",
+    "action": "send_message",
+    "auto_execute": false,
+    "reason": "John Doe asked a question that warrants a reply"
+  }'
+```
+
+The user will be notified to approve the expansion. On approval, the action is
+added to the task scope and the expiry is reset.
+
+### Completing a task
+
+When you're done, mark the task as completed:
+
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/complete" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN"
+```
+
+---
+
 ## Handling responses
 
 Every response has a `status` field. Handle each case as follows:
