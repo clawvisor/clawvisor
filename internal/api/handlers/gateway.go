@@ -197,7 +197,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	case policy.DecisionApprove:
 		// Reject unknown services immediately — there is no point queuing an
 		// approval for a request that can never execute.
-		if _, ok := h.adapterReg.Get(req.Service); !ok {
+		approveAdapter, ok := h.adapterReg.Get(req.Service)
+		if !ok {
 			e := baseEntry("error")
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := fmt.Sprintf("unknown service %q", req.Service)
@@ -214,10 +215,13 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Service is registered — if the user has not yet activated it (vault key
-		// absent), route to the activation flow instead of wasting queue space.
+		// Service is registered — if it requires credentials but none are stored,
+		// route to activation before wasting queue space. Services that accept a
+		// nil credential (e.g. apple.imessage, which uses local file access) skip
+		// this check entirely.
 		vKey := vaultKeyForService(req.Service)
-		if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+		if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) &&
+			approveAdapter.ValidateCredential(nil) != nil {
 			e := baseEntry("pending_activation")
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := fmt.Sprintf("service %q not activated", req.Service)
@@ -444,7 +448,13 @@ func executeAdapterRequest(
 	vKey := vaultKeyForService(service)
 	cred, err := v.Get(ctx, userID, vKey)
 	if err != nil {
-		return nil, nil, err // vault.ErrNotFound propagated to caller
+		// For credential-free adapters (e.g. apple.imessage uses local file access),
+		// ValidateCredential(nil) returns nil — proceed without a vault entry.
+		if errors.Is(err, vault.ErrNotFound) && adapter.ValidateCredential(nil) == nil {
+			cred = nil
+		} else {
+			return nil, nil, err // vault.ErrNotFound propagated to caller
+		}
 	}
 
 	result, err := adapter.Execute(ctx, adapters.Request{

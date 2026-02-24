@@ -71,30 +71,33 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type serviceEntry struct {
-		ID          string     `json:"id"`
-		OAuth       bool       `json:"oauth"`
-		Actions     []string   `json:"actions"`
-		Status      string     `json:"status"`
-		ActivatedAt *time.Time `json:"activated_at,omitempty"`
+		ID                 string     `json:"id"`
+		OAuth              bool       `json:"oauth"`
+		RequiresActivation bool       `json:"requires_activation"`
+		Actions            []string   `json:"actions"`
+		Status             string     `json:"status"`
+		ActivatedAt        *time.Time `json:"activated_at,omitempty"`
 	}
 
 	services := make([]serviceEntry, 0)
 	for _, a := range h.adapterReg.All() {
+		credentialFree := a.ValidateCredential(nil) == nil
 		vKey := vaultKeyForService(a.ServiceID())
 		status := "not_activated"
 		var activatedAt *time.Time
-		if keySet[vKey] {
+		if credentialFree || keySet[vKey] {
 			status = "activated"
 			if m, ok := metaMap[a.ServiceID()]; ok {
 				activatedAt = &m.ActivatedAt
 			}
 		}
 		services = append(services, serviceEntry{
-			ID:          a.ServiceID(),
-			OAuth:       a.OAuthConfig() != nil,
-			Actions:     a.SupportedActions(),
-			Status:      status,
-			ActivatedAt: activatedAt,
+			ID:                 a.ServiceID(),
+			OAuth:              a.OAuthConfig() != nil,
+			RequiresActivation: !credentialFree,
+			Actions:            a.SupportedActions(),
+			Status:             status,
+			ActivatedAt:        activatedAt,
 		})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].ID < services[j].ID })

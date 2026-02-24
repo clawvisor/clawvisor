@@ -288,7 +288,12 @@ func (m *mockAdapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 	return []byte("mock-cred"), nil
 }
 
-func (m *mockAdapter) ValidateCredential(_ []byte) error { return nil }
+func (m *mockAdapter) ValidateCredential(b []byte) error {
+	if b == nil {
+		return fmt.Errorf("mock: credential required")
+	}
+	return nil
+}
 
 // ── Policy YAML helpers ───────────────────────────────────────────────────────
 

@@ -146,6 +146,7 @@ export interface Agent {
 export interface ServiceInfo {
   id: string
   oauth: boolean
+  requires_activation?: boolean
   actions: string[]
   status: 'activated' | 'not_activated'
   activated_at?: string

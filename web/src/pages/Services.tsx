@@ -67,7 +67,7 @@ function ServiceCard({ svc }: { svc: ServiceInfo }) {
       {error && <p className="text-xs text-red-500">{error}</p>}
 
       <div className="pt-1 space-y-2">
-        {isActivated ? (
+        {svc.requires_activation === false ? null : isActivated ? (
           <div className="flex gap-2">
             {svc.oauth && (
               <button

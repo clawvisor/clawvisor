@@ -110,6 +110,7 @@ func (s *Server) routes() http.Handler {
 		s.notifier, s.safety, s.llmCfg, *s.cfg, s.logger, baseURL,
 	)
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL)
+	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.registry, s.logger)
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.logger)
 	s.approvalsHandler = approvalsHandler
 
@@ -174,6 +175,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback) // no auth: browser redirect
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
+
+	// Skill catalog (agent token)
+	mux.Handle("GET /api/skill/catalog", agent(skillHandler.Catalog))
 
 	// Approvals (user JWT)
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
