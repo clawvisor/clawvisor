@@ -60,6 +60,20 @@ export const SERVICE_BRAND_COLORS: Record<string, {
   },
 }
 
+export const SERVICE_DESCRIPTIONS: Record<string, string> = {
+  'google.gmail': 'Read, search, and send email',
+  'google.calendar': 'View and manage calendar events',
+  'google.drive': 'List, search, and manage files',
+  'google.contacts': 'Search and view contacts',
+  'github': 'Issues, PRs, and code review',
+  'apple.imessage': 'Search and read iMessage threads',
+}
+
+export function serviceDescription(id: string): string {
+  const base = id.includes(':') ? id.slice(0, id.indexOf(':')) : id
+  return SERVICE_DESCRIPTIONS[base] ?? ''
+}
+
 export const ACTION_DISPLAY_NAMES: Record<string, string> = {
   // Gmail
   list_messages: 'List messages',
@@ -106,12 +120,26 @@ const DEFAULT_BRAND = {
   dot: 'bg-gray-400',
 }
 
-export function serviceName(id: string): string {
-  return SERVICE_DISPLAY_NAMES[id] ?? id
+export function serviceName(id: string, alias?: string): string {
+  // Handle alias: "google.gmail:personal" → "Gmail (personal)"
+  const colonIdx = id.indexOf(':')
+  if (colonIdx >= 0) {
+    const base = id.slice(0, colonIdx)
+    const a = id.slice(colonIdx + 1)
+    const name = SERVICE_DISPLAY_NAMES[base] ?? base
+    return `${name} (${a})`
+  }
+  const name = SERVICE_DISPLAY_NAMES[id] ?? id
+  if (alias && alias !== 'default') {
+    return `${name} (${alias})`
+  }
+  return name
 }
 
 export function serviceBrand(id: string) {
-  return SERVICE_BRAND_COLORS[id] ?? DEFAULT_BRAND
+  // Strip alias suffix for brand lookup: "google.gmail:personal" → "google.gmail"
+  const base = id.includes(':') ? id.slice(0, id.indexOf(':')) : id
+  return SERVICE_BRAND_COLORS[base] ?? DEFAULT_BRAND
 }
 
 export function actionName(action: string): string {
