@@ -18,8 +18,9 @@ import (
 // Payload is posted to the agent's callback URL.
 type Payload struct {
 	RequestID string           `json:"request_id"`
-	Status    string           `json:"status"` // "executed" | "denied" | "timeout"
+	Status    string           `json:"status"` // "executed" | "denied" | "timeout" | "error"
 	Result    *adapters.Result `json:"result,omitempty"`
+	Error     string           `json:"error,omitempty"` // populated when status == "error"
 	AuditID   string           `json:"audit_id"`
 }
 

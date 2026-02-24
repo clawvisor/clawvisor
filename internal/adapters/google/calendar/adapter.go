@@ -148,7 +148,17 @@ func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, p
 		calendarID = v
 	}
 	timeMin, _ := params["time_min"].(string)
+	if timeMin == "" {
+		timeMin, _ = params["from"].(string) // accept "from" as alias for "time_min"
+	}
 	timeMax, _ := params["time_max"].(string)
+	if timeMax == "" {
+		timeMax, _ = params["to"].(string) // accept "to" as alias for "time_max"
+	}
+	// Default to now if no start time — avoids returning old recurring events.
+	if timeMin == "" {
+		timeMin = time.Now().UTC().Format(time.RFC3339)
+	}
 	maxResults := 10
 	if v, ok := paramInt(params, "max_results"); ok && v > 0 && v <= 50 {
 		maxResults = v

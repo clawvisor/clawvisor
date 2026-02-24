@@ -172,6 +172,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/oauth/url", user(servicesHandler.OAuthGetURL))     // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", user(servicesHandler.OAuthStart))    // kept for compat
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback) // no auth: browser redirect
+	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
 
 	// Approvals (user JWT)

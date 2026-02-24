@@ -195,6 +195,42 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case policy.DecisionApprove:
+		// If the service is registered but not activated, route straight to the
+		// activation flow — there's no point queuing an approval for a request that
+		// will always fail due to missing credentials.
+		// (Unknown/unregistered services are allowed through to the queue so that
+		// test environments that don't register every adapter still work correctly.)
+		if _, ok := h.adapterReg.Get(req.Service); ok {
+			vKey := vaultKeyForService(req.Service)
+			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+				e := baseEntry("pending_activation")
+				e.DurationMS = int(time.Since(start).Milliseconds())
+				errMsg := vaultErr.Error()
+				e.ErrorMsg = &errMsg
+				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					h.logger.Warn("audit log failed", "err", logErr)
+				}
+				expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
+				blob := buildRequestBlob(req, agent, nil)
+				activateURL := fmt.Sprintf("%s/api/oauth/start?service=%s&pending_request_id=%s",
+					h.baseURL, req.Service, req.RequestID)
+				denyURL := fmt.Sprintf("%s/api/approvals/%s/deny", h.baseURL, req.RequestID)
+				if notifyErr := h.saveAndNotifyActivation(ctx, agent.UserID, blob, auditID,
+					req.Context.CallbackURL, expiresAt, req.Service, agent.Name, req.Action,
+					activateURL, denyURL); notifyErr != nil {
+					h.logger.Warn("activation notification failed", "err", notifyErr)
+				}
+				writeJSON(w, http.StatusAccepted, map[string]any{
+					"status":       "pending_activation",
+					"request_id":   req.RequestID,
+					"audit_id":     auditID,
+					"message":      "Service not activated. Please activate in the Clawvisor dashboard.",
+					"code":         "SERVICE_NOT_CONFIGURED",
+					"activate_url": activateURL,
+				})
+				return
+			}
+		}
 		e := baseEntry("pending")
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
@@ -255,6 +291,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			if req.Context.CallbackURL != "" {
+				tokenHash := agent.TokenHash
+				go func() {
+					_ = callback.DeliverResult(context.Background(), req.Context.CallbackURL, &callback.Payload{
+						RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
+					}, tokenHash)
+				}()
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":     "error",

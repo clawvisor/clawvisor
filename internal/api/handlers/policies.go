@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/ericlevine/clawvisor/internal/api/middleware"
 	"github.com/ericlevine/clawvisor/internal/policy"
@@ -61,10 +62,17 @@ func (h *PoliciesHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *PoliciesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	var body struct {
+		ID   string `json:"id"`
 		YAML string `json:"yaml"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
+	}
+
+	// Allow callers to pass "id" as a top-level JSON field rather than embedding
+	// it inside the YAML. Inject it into the YAML if it's absent there.
+	if body.ID != "" && !strings.Contains(body.YAML, "id:") {
+		body.YAML = "id: " + body.ID + "\n" + body.YAML
 	}
 
 	rec, conflicts, httpStatus, errMsg := h.parseValidateAndBuild(r, user.ID, body.YAML, "")

@@ -276,6 +276,56 @@ setTimeout(function(){window.close()},1500)
 </script></body></html>`)
 }
 
+// Activate is a unified activation endpoint.
+// For OAuth services: returns the OAuth authorization URL as JSON (no redirect).
+// For API key services: delegates to ActivateWithKey.
+//
+// POST /api/services/{serviceID}/activate
+// Auth: user JWT
+// OAuth body: {} or {"pending_request_id": "..."} — returns {"url": "https://..."}
+// API key body: {"token": "ghp_..."} — returns {"status": "activated", "service": "..."}
+func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	serviceID := r.PathValue("serviceID")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "serviceID is required")
+		return
+	}
+
+	adapter, ok := h.adapterReg.Get(serviceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
+		return
+	}
+
+	if adapter.OAuthConfig() != nil {
+		// OAuth service: generate state token and return the consent URL as JSON.
+		var body struct {
+			PendingRequestID string `json:"pending_request_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body) // body is optional
+
+		stateToken := uuid.New().String()
+		h.oauthStates.Store(stateToken, oauthStateEntry{
+			UserID:       user.ID,
+			ServiceID:    serviceID,
+			PendingReqID: body.PendingRequestID,
+			ExpiresAt:    time.Now().Add(10 * time.Minute),
+		})
+		authURL := adapter.OAuthConfig().AuthCodeURL(stateToken)
+		writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
+		return
+	}
+
+	// API key service: delegate to the existing activate-key handler.
+	h.ActivateWithKey(w, r)
+}
+
 // ActivateWithKey activates a non-OAuth service (e.g. GitHub) using an API key.
 //
 // POST /api/services/{serviceID}/activate-key

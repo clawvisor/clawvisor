@@ -453,14 +453,70 @@ func extractBody(payload struct {
 		}
 	}
 
-	// Fall back to any HTML part
+	// Fall back to any HTML part — strip tags before returning.
 	for _, part := range payload.Parts {
 		if part.MimeType == "text/html" && part.Body.Data != "" {
-			return decodeBase64(part.Body.Data)
+			return stripHTML(decodeBase64(part.Body.Data))
 		}
+	}
+	// Also handle direct HTML body (non-multipart).
+	if payload.MimeType == "text/html" && payload.Body.Data != "" {
+		return stripHTML(decodeBase64(payload.Body.Data))
 	}
 
 	return ""
+}
+
+// stripHTML removes HTML tags, style/script blocks, and decodes common entities,
+// returning plain text suitable for an LLM or human reader.
+func stripHTML(s string) string {
+	// Remove <style>...</style> and <script>...</script> blocks (case-insensitive).
+	for _, tag := range []string{"style", "script"} {
+		for {
+			open := strings.Index(strings.ToLower(s), "<"+tag)
+			if open < 0 {
+				break
+			}
+			close := strings.Index(strings.ToLower(s[open:]), "</"+tag+">")
+			if close < 0 {
+				s = s[:open]
+				break
+			}
+			s = s[:open] + s[open+close+len("</"+tag+">"):]
+		}
+	}
+	// Strip remaining HTML tags.
+	var out strings.Builder
+	inTag := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+			out.WriteRune(' ') // replace tag with space to separate words
+		case !inTag:
+			out.WriteRune(r)
+		}
+	}
+	// Decode common HTML entities.
+	result := out.String()
+	result = strings.ReplaceAll(result, "&amp;", "&")
+	result = strings.ReplaceAll(result, "&lt;", "<")
+	result = strings.ReplaceAll(result, "&gt;", ">")
+	result = strings.ReplaceAll(result, "&quot;", `"`)
+	result = strings.ReplaceAll(result, "&#39;", "'")
+	result = strings.ReplaceAll(result, "&nbsp;", " ")
+	// Collapse runs of whitespace/newlines.
+	lines := strings.Split(result, "\n")
+	var kept []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			kept = append(kept, l)
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 func decodeBase64(s string) string {

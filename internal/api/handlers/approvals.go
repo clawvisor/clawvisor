@@ -110,11 +110,13 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 			cbResult = result
 		}
 		tok := blob.CallbackKey
+		cbErr := errMsg
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
 				RequestID: requestID,
 				Status:    outcome,
 				Result:    cbResult,
+				Error:     cbErr,
 				AuditID:   pa.AuditID,
 			}, tok)
 		}()
