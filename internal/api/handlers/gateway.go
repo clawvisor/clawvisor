@@ -214,6 +214,37 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// Service is registered — if the user has not yet activated it (vault key
+		// absent), route to the activation flow instead of wasting queue space.
+		vKey := vaultKeyForService(req.Service)
+		if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+			e := baseEntry("pending_activation")
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := fmt.Sprintf("service %q not activated", req.Service)
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
+			blob := buildRequestBlob(req, agent, nil)
+			activateURL := fmt.Sprintf("%s/api/oauth/start?service=%s&pending_request_id=%s",
+				h.baseURL, req.Service, req.RequestID)
+			denyURL := fmt.Sprintf("%s/api/approvals/%s/deny", h.baseURL, req.RequestID)
+			if notifyErr := h.saveAndNotifyActivation(ctx, agent.UserID, blob, auditID,
+				req.Context.CallbackURL, expiresAt, req.Service, agent.Name, req.Action,
+				activateURL, denyURL); notifyErr != nil {
+				h.logger.Warn("activation notification failed", "err", notifyErr)
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"status":       "pending_activation",
+				"request_id":   req.RequestID,
+				"audit_id":     auditID,
+				"message":      "Service not activated. Please activate in the Clawvisor dashboard.",
+				"code":         "SERVICE_NOT_CONFIGURED",
+				"activate_url": activateURL,
+			})
+			return
+		}
 		e := baseEntry("pending")
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {

@@ -73,6 +73,9 @@ func TestGateway_Dedup_PendingRequest(t *testing.T) {
 	// status=pending without queueing a duplicate approval.
 	env := newTestEnv(t, newMockAdapter("mock.svc", "run"))
 	sc := newScenario(t, env, "dedup-pend")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.svc", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-dedup-pend", "dedup-pend", "mock.svc", "run"))
 
 	reqID := fmt.Sprintf("dedup-pend-%s", randSuffix())
@@ -185,6 +188,9 @@ func TestGateway_Status_Blocked(t *testing.T) {
 func TestGateway_Status_Pending(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("mock.svc", "run"))
 	sc := newScenario(t, env, "status-pend")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.svc", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-status-pend", "status-pend", "mock.svc", "run"))
 
 	reqID := fmt.Sprintf("status-pend-%s", randSuffix())
@@ -220,6 +226,9 @@ func TestGateway_Status_UpdatesAfterDeny(t *testing.T) {
 	// A pending request, once denied, should show status=denied on the status endpoint.
 	env := newTestEnv(t, newMockAdapter("mock.svc", "run"))
 	sc := newScenario(t, env, "status-deny")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.svc", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-status-deny", "status-deny", "mock.svc", "run"))
 
 	reqID := fmt.Sprintf("status-deny-%s", randSuffix())
@@ -380,6 +389,9 @@ func TestApprovals_Deny_CallbackHMACSigned(t *testing.T) {
 	// When a pending request is denied, the callback must be HMAC-signed.
 	env := newTestEnv(t, newMockAdapter("mock.svc", "run"))
 	sc := newScenario(t, env, "cb-deny")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.svc", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-cb-deny", "cb-deny", "mock.svc", "run"))
 
 	cbSrv, cbCh := newCallbackServer(t)

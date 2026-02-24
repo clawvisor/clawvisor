@@ -314,15 +314,11 @@ func (a *CalendarAdapter) createEvent(ctx context.Context, client *http.Client, 
 		return nil, fmt.Errorf("calendar create_event: summary, start, and end are required")
 	}
 
-	type dtField struct {
-		DateTime string `json:"dateTime,omitempty"`
-		Date     string `json:"date,omitempty"`
-	}
 	body := map[string]any{
 		"summary":     eventSummary,
 		"description": description,
-		"start":       dtField{DateTime: start},
-		"end":         dtField{DateTime: end},
+		"start":       calendarDtField(start),
+		"end":         calendarDtField(end),
 	}
 	if rawAttendees, ok := params["attendees"].([]any); ok {
 		attendees := make([]map[string]string, 0, len(rawAttendees))
@@ -372,10 +368,10 @@ func (a *CalendarAdapter) updateEvent(ctx context.Context, client *http.Client, 
 		patch["description"] = v
 	}
 	if v, ok := params["start"].(string); ok {
-		patch["start"] = map[string]string{"dateTime": v}
+		patch["start"] = calendarDtField(v)
 	}
 	if v, ok := params["end"].(string); ok {
-		patch["end"] = map[string]string{"dateTime": v}
+		patch["end"] = calendarDtField(v)
 	}
 
 	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/%s",
@@ -546,4 +542,23 @@ func dateToRFC3339(params map[string]any, key, alias string) string {
 		return s // return as-is if we can't parse; API will reject with a clear error
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// calendarDtField builds the Google Calendar API start/end object from a
+// user-supplied date or datetime string.
+//   - "YYYY-MM-DD"          → {"date": "..."} (all-day event)
+//   - "YYYY-MM-DDTHH:MM:SS" → {"dateTime": "...Z"} (UTC assumed)
+//   - RFC3339 with tz       → {"dateTime": "..."} (passed through)
+func calendarDtField(v string) map[string]string {
+	if len(v) == 10 {
+		// Plain date — all-day event.
+		return map[string]string{"date": v}
+	}
+	// DateTime: ensure it has a timezone. "2006-01-02T15:04:05" has no tz → add Z.
+	if len(v) == 19 {
+		if t, err := time.Parse("2006-01-02T15:04:05", v); err == nil {
+			return map[string]string{"dateTime": t.UTC().Format(time.RFC3339)}
+		}
+	}
+	return map[string]string{"dateTime": v}
 }

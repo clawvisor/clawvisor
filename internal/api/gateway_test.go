@@ -400,6 +400,9 @@ func TestGateway_DefaultApprove_NoPolicy(t *testing.T) {
 	// Without any matching policy, the default decision is "approve".
 	env := newTestEnv(t, newMockAdapter("google.gmail", "send"))
 	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "google", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 
 	result := sc.gatewayRequest(env, "req-default-approve", "google.gmail", "send")
 	if result["status"] != "pending" {
@@ -410,6 +413,9 @@ func TestGateway_DefaultApprove_NoPolicy(t *testing.T) {
 func TestGateway_ApprovePolicy_QueuesPending(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("google.gmail", "send"))
 	sc := newScenario(t, env, "automation")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "google", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-gw-approve", "automation", "google.gmail", "send"))
 
 	reqID := fmt.Sprintf("req-approve-%s", randSuffix())
@@ -493,6 +499,9 @@ func TestGateway_Execute_NoVaultCred_ReturnsPendingActivation(t *testing.T) {
 func TestApprovals_Deny(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("google.gmail", "send"))
 	sc := newScenario(t, env, "automation")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "google", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc.createPolicy(t, approvePolicy("p-deny", "automation", "google.gmail", "send"))
 
 	reqID := fmt.Sprintf("req-deny-%s", randSuffix())
@@ -552,6 +561,9 @@ func TestApprovals_Approve_WithMockAdapter(t *testing.T) {
 func TestApprovals_Approve_WrongUser_Forbidden(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("google.gmail", "send"))
 	sc1 := newScenario(t, env, "bot1")
+	if err := env.Vault.Set(context.Background(), sc1.session.UserID, "google", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 	sc1.createPolicy(t, approvePolicy("p-forbidden", "bot1", "google.gmail", "send"))
 
 	reqID := fmt.Sprintf("req-forbidden-%s", randSuffix())
@@ -645,6 +657,9 @@ func TestAudit_AllOutcomesRecorded(t *testing.T) {
 	// In one test, generate block, approve(→pending), and deny outcomes, then verify all appear.
 	env := newTestEnv(t, newMockAdapter("mock.svc", "blocked-action", "approved-action"))
 	sc := newScenario(t, env, "mixed")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.svc", []byte("dummy")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 
 	sc.createPolicy(t, blockPolicy("p-mix-block", "mixed", "mock.svc", "blocked-action"))
 	sc.createPolicy(t, approvePolicy("p-mix-approve", "mixed", "mock.svc", "approved-action"))

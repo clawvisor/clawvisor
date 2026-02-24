@@ -197,9 +197,9 @@ return the outcome if it has already been resolved.
 ### google.calendar
 | Action | Key params | Description |
 |---|---|---|
-| `list_events` | `time_min`, `time_max`, `calendar_id` (opt) | List events in a time range |
+| `list_events` | `time_min` / `from`, `time_max` / `to`, `calendar_id` (opt) | List events in a time range. Dates accepted as `"YYYY-MM-DD"` or RFC3339. |
 | `get_event` | `event_id` | Get full event details |
-| `create_event` | `summary`, `start`, `end`, `attendees` (opt) | Create a calendar event |
+| `create_event` | `summary`, `start`, `end`, `attendees` (opt) | Create a calendar event. `start`/`end` accept `"YYYY-MM-DD"` (all-day) or `"YYYY-MM-DDTHH:MM:SS[Z]"` (timed). |
 | `update_event` | `event_id`, fields to update | Update an existing event |
 | `delete_event` | `event_id` | Delete an event |
 
@@ -329,3 +329,20 @@ Approvals panel in the dashboard.
 **"I was blocked and I don't know why"**
 The `reason` field in the response explains the policy rule that matched. Pass
 it to the user verbatim — don't guess or try to work around it.
+
+---
+
+## Policy decision vocabulary
+
+The `/api/policies/evaluate` dry-run endpoint returns a `decision` field that
+maps to the gateway response `status` as follows:
+
+| YAML rule | `evaluate` decision | Gateway `status` |
+|---|---|---|
+| `allow: true` | `execute` | `executed` |
+| `require_approval: true` | `approve` | `pending` |
+| `allow: false` | `block` | `blocked` |
+| (no matching rule) | `approve` | `pending` |
+
+This vocabulary is also used in policy conflict reports (`opposing_decisions`,
+`shadowed_rule`) and in the `reason` field returned by the gateway.
