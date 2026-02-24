@@ -527,8 +527,12 @@ func (a *IMessageAdapter) formatMessages(msgs []rawMessage, nameMap map[string]s
 	coredataEpoch := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 	results := make([]messageResult, 0, len(msgs))
 	for _, m := range msgs {
-		if !m.text.Valid || strings.TrimSpace(m.text.String) == "" {
-			continue
+		text := ""
+		if m.text.Valid {
+			text = strings.TrimSpace(m.text.String)
+		}
+		if text == "" {
+			text = "[attachment]"
 		}
 		ts := coredataEpoch.Add(time.Duration(m.dateNS))
 		from := m.handleID
@@ -544,7 +548,7 @@ func (a *IMessageAdapter) formatMessages(msgs []rawMessage, nameMap map[string]s
 			ID:             fmt.Sprintf("msg-%d", m.rowID),
 			From:           displayName,
 			FromIdentifier: from,
-			Text:           format.SanitizeText(m.text.String, format.MaxBodyLen),
+			Text:           format.SanitizeText(text, format.MaxBodyLen),
 			Timestamp:      ts.UTC().Format(time.RFC3339),
 			IsFromMe:       m.isFromMe,
 			ThreadID:       m.chatID,
