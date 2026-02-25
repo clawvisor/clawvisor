@@ -35,6 +35,16 @@ services:
     enabled: true          # from env: GITHUB_ENABLED — always registered; per-user API key activation
   imessage:
     enabled: true          # from env: IMESSAGE_ENABLED — requires macOS with chat.db; set false to disable
+  slack:
+    enabled: true          # from env: SLACK_ENABLED — per-user bot token activation
+  notion:
+    enabled: true          # from env: NOTION_ENABLED — per-user integration token activation
+  linear:
+    enabled: true          # from env: LINEAR_ENABLED — per-user API key activation
+  stripe:
+    enabled: true          # from env: STRIPE_ENABLED — per-user restricted API key activation
+  twilio:
+    enabled: true          # from env: TWILIO_ENABLED — per-user Account SID:Auth Token activation
 
 # ── LLM configuration ────────────────────────────────────────────────────────
 # Four independent LLM slots. Each can use a different provider/model.

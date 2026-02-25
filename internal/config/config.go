@@ -94,6 +94,11 @@ type ServicesConfig struct {
 	Google   GoogleServicesConfig   `yaml:"google"`
 	GitHub   GitHubServicesConfig   `yaml:"github"`
 	IMessage IMessageServicesConfig `yaml:"imessage"`
+	Slack    SlackServicesConfig    `yaml:"slack"`
+	Notion   NotionServicesConfig   `yaml:"notion"`
+	Linear   LinearServicesConfig   `yaml:"linear"`
+	Stripe   StripeServicesConfig   `yaml:"stripe"`
+	Twilio   TwilioServicesConfig   `yaml:"twilio"`
 }
 
 // GoogleServicesConfig holds OAuth2 credentials for all Google adapters.
@@ -110,6 +115,31 @@ type GitHubServicesConfig struct {
 
 // IMessageServicesConfig holds settings for the iMessage adapter.
 type IMessageServicesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// SlackServicesConfig holds settings for the Slack adapter.
+type SlackServicesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// NotionServicesConfig holds settings for the Notion adapter.
+type NotionServicesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// LinearServicesConfig holds settings for the Linear adapter.
+type LinearServicesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// StripeServicesConfig holds settings for the Stripe adapter.
+type StripeServicesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// TwilioServicesConfig holds settings for the Twilio adapter.
+type TwilioServicesConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
@@ -180,6 +210,11 @@ func Default() *Config {
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},
 			IMessage: IMessageServicesConfig{Enabled: true},
+			Slack:    SlackServicesConfig{Enabled: true},
+			Notion:   NotionServicesConfig{Enabled: true},
+			Linear:   LinearServicesConfig{Enabled: true},
+			Stripe:   StripeServicesConfig{Enabled: true},
+			Twilio:   TwilioServicesConfig{Enabled: true},
 		},
 	}
 }
@@ -241,6 +276,21 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("IMESSAGE_ENABLED"); v != "" {
 		cfg.Services.IMessage.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SLACK_ENABLED"); v != "" {
+		cfg.Services.Slack.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("NOTION_ENABLED"); v != "" {
+		cfg.Services.Notion.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("LINEAR_ENABLED"); v != "" {
+		cfg.Services.Linear.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("STRIPE_ENABLED"); v != "" {
+		cfg.Services.Stripe.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("TWILIO_ENABLED"); v != "" {
+		cfg.Services.Twilio.Enabled = v == "true" || v == "1"
 	}
 
 	// LLM Safety overrides

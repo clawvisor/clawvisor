@@ -17,6 +17,11 @@ import (
 	"github.com/ericlevine/clawvisor/internal/adapters"
 	imessageadapter "github.com/ericlevine/clawvisor/internal/adapters/apple/imessage"
 	githubadapter "github.com/ericlevine/clawvisor/internal/adapters/github"
+	linearadapter "github.com/ericlevine/clawvisor/internal/adapters/linear"
+	notionadapter "github.com/ericlevine/clawvisor/internal/adapters/notion"
+	slackadapter "github.com/ericlevine/clawvisor/internal/adapters/slack"
+	stripeadapter "github.com/ericlevine/clawvisor/internal/adapters/stripe"
+	twilioadapter "github.com/ericlevine/clawvisor/internal/adapters/twilio"
 	calendaradapter "github.com/ericlevine/clawvisor/internal/adapters/google/calendar"
 	contactsadapter "github.com/ericlevine/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/ericlevine/clawvisor/internal/adapters/google/drive"
@@ -133,6 +138,46 @@ func run(logger *slog.Logger) error {
 		logger.Info("github adapter registered")
 	} else {
 		logger.Info("github adapter disabled via config")
+	}
+
+	// Slack adapter — registered unless explicitly disabled via config.
+	if cfg.Services.Slack.Enabled {
+		adapterReg.Register(slackadapter.New())
+		logger.Info("slack adapter registered")
+	} else {
+		logger.Info("slack adapter disabled via config")
+	}
+
+	// Notion adapter — registered unless explicitly disabled via config.
+	if cfg.Services.Notion.Enabled {
+		adapterReg.Register(notionadapter.New())
+		logger.Info("notion adapter registered")
+	} else {
+		logger.Info("notion adapter disabled via config")
+	}
+
+	// Linear adapter — registered unless explicitly disabled via config.
+	if cfg.Services.Linear.Enabled {
+		adapterReg.Register(linearadapter.New())
+		logger.Info("linear adapter registered")
+	} else {
+		logger.Info("linear adapter disabled via config")
+	}
+
+	// Stripe adapter — registered unless explicitly disabled via config.
+	if cfg.Services.Stripe.Enabled {
+		adapterReg.Register(stripeadapter.New())
+		logger.Info("stripe adapter registered")
+	} else {
+		logger.Info("stripe adapter disabled via config")
+	}
+
+	// Twilio adapter — registered unless explicitly disabled via config.
+	if cfg.Services.Twilio.Enabled {
+		adapterReg.Register(twilioadapter.New())
+		logger.Info("twilio adapter registered")
+	} else {
+		logger.Info("twilio adapter disabled via config")
 	}
 
 	// iMessage adapter — registered if enabled in config and available (macOS with chat.db).
