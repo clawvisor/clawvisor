@@ -9,17 +9,17 @@ import (
 	"os"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/api/handlers"
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/auth"
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/intent"
-	"github.com/ericlevine/clawvisor/internal/notify"
-	"github.com/ericlevine/clawvisor/internal/safety"
-	"github.com/ericlevine/clawvisor/internal/store"
-	"github.com/ericlevine/clawvisor/internal/vault"
-	skillfiles "github.com/ericlevine/clawvisor/skills"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/api/handlers"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/safety"
+	"github.com/clawvisor/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/vault"
+	skillfiles "github.com/clawvisor/clawvisor/skills"
 )
 
 // Server is the Clawvisor HTTP server.

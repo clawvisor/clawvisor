@@ -9,11 +9,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/callback"
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/notify"
-	"github.com/ericlevine/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/store"
 )
 
 // hardcodedApprovalActions lists service:action pairs that always require

@@ -13,14 +13,14 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/api"
-	"github.com/ericlevine/clawvisor/internal/auth"
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/safety"
-	"github.com/ericlevine/clawvisor/internal/store"
-	sqlitestore "github.com/ericlevine/clawvisor/internal/store/sqlite"
-	"github.com/ericlevine/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/api"
+	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/safety"
+	"github.com/clawvisor/clawvisor/internal/store"
+	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	"github.com/clawvisor/clawvisor/internal/vault"
 )
 
 // ── Test environment ──────────────────────────────────────────────────────────

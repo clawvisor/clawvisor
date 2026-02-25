@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/llm"
 )
 
 // oaResponse builds a minimal OpenAI-compatible chat completions response.

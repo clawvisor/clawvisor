@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/store"
-	"github.com/ericlevine/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/vault"
 )
 
 // SkillHandler serves the dynamic skill catalog endpoint.

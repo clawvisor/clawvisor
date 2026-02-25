@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/adapters"
 )
 
 func validCred(token string) []byte {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/config"
 )
 
 const anthropicVersion = "2023-06-01"

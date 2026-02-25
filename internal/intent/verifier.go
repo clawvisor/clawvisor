@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/llm"
 )
 
 // VerificationVerdict is the result of intent verification.

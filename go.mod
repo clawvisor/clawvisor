@@ -1,4 +1,4 @@
-module github.com/ericlevine/clawvisor
+module github.com/clawvisor/clawvisor
 
 go 1.25.0
 

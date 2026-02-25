@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/gateway"
-	"github.com/ericlevine/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/gateway"
+	"github.com/clawvisor/clawvisor/internal/store"
 )
 
 // Notifier sends approval and activation requests to the user.

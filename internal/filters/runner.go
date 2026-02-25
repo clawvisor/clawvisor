@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/adapters/format"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
 )
 
 // FilterRecord is appended to the audit log for each filter applied.

@@ -12,19 +12,19 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/adapters/format"
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/callback"
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/filters"
-	"github.com/ericlevine/clawvisor/internal/gateway"
-	"github.com/ericlevine/clawvisor/internal/intent"
-	"github.com/ericlevine/clawvisor/internal/llm"
-	"github.com/ericlevine/clawvisor/internal/notify"
-	"github.com/ericlevine/clawvisor/internal/safety"
-	"github.com/ericlevine/clawvisor/internal/store"
-	"github.com/ericlevine/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/filters"
+	"github.com/clawvisor/clawvisor/internal/gateway"
+	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/safety"
+	"github.com/clawvisor/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/vault"
 )
 
 // pendingRequestBlob is stored in pending_approvals.request_blob.

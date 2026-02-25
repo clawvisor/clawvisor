@@ -30,8 +30,8 @@ import (
 
 	_ "modernc.org/sqlite" // registers "sqlite" driver
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/adapters/format"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
 )
 
 const serviceID = "apple.imessage"

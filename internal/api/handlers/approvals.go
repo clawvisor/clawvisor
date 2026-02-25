@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/callback"
-	"github.com/ericlevine/clawvisor/internal/notify"
-	"github.com/ericlevine/clawvisor/internal/store"
-	"github.com/ericlevine/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/vault"
 )
 
 // ApprovalsHandler manages pending approval decisions.

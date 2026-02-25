@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericlevine/clawvisor/internal/notify"
-	"github.com/ericlevine/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/store"
 )
 
 // Notifier sends Telegram messages for approval and service-activation requests.

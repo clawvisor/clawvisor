@@ -14,9 +14,9 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/adapters/format"
-	"github.com/ericlevine/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
+	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 )
 
 const serviceID = "google.drive"

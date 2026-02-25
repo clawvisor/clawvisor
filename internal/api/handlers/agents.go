@@ -3,8 +3,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/ericlevine/clawvisor/internal/api/middleware"
-	"github.com/ericlevine/clawvisor/internal/store"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/store"
 )
 
 // AgentsHandler manages agent token lifecycle.

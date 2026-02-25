@@ -3,7 +3,7 @@ package safety_test
 import (
 	"testing"
 
-	"github.com/ericlevine/clawvisor/internal/safety"
+	"github.com/clawvisor/clawvisor/internal/safety"
 )
 
 func TestParseSafetyResponse_Safe(t *testing.T) {

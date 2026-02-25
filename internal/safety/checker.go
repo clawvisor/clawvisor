@@ -7,10 +7,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/ericlevine/clawvisor/internal/adapters"
-	"github.com/ericlevine/clawvisor/internal/config"
-	"github.com/ericlevine/clawvisor/internal/gateway"
-	"github.com/ericlevine/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/config"
+	"github.com/clawvisor/clawvisor/internal/gateway"
+	"github.com/clawvisor/clawvisor/internal/llm"
 )
 
 // SafetyResult is returned by a SafetyChecker.
