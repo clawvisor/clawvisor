@@ -38,6 +38,7 @@ type Server struct {
 
 	// approvalsCleaner is used to stop the background goroutine.
 	approvalsHandler *handlers.ApprovalsHandler
+	tasksHandler     *handlers.TasksHandler
 }
 
 // New creates a Server and registers all routes.
@@ -120,6 +121,7 @@ func (s *Server) routes() http.Handler {
 	s.approvalsHandler = approvalsHandler
 	tasksHandler := handlers.NewTasksHandler(s.store,
 		s.notifier, *s.cfg, s.logger, baseURL)
+	s.tasksHandler = tasksHandler
 
 	// Middleware
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
@@ -232,6 +234,47 @@ func (s *Server) routes() http.Handler {
 	return logMiddleware(mux)
 }
 
+// consumeTelegramDecisions reads from the Telegram notifier's decision channel
+// and routes approve/deny decisions to the appropriate handler.
+func (s *Server) consumeTelegramDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case d, ok := <-ch:
+			if !ok {
+				return
+			}
+			var err error
+			switch d.Type {
+			case "approval":
+				if d.Action == "approve" {
+					err = s.approvalsHandler.ApproveByRequestID(ctx, d.TargetID, d.UserID)
+				} else {
+					err = s.approvalsHandler.DenyByRequestID(ctx, d.TargetID, d.UserID)
+				}
+			case "task":
+				if d.Action == "approve" {
+					err = s.tasksHandler.ApproveByTaskID(ctx, d.TargetID, d.UserID)
+				} else {
+					err = s.tasksHandler.DenyByTaskID(ctx, d.TargetID, d.UserID)
+				}
+			case "scope_expansion":
+				if d.Action == "approve" {
+					err = s.tasksHandler.ExpandApproveByTaskID(ctx, d.TargetID, d.UserID)
+				} else {
+					err = s.tasksHandler.ExpandDenyByTaskID(ctx, d.TargetID, d.UserID)
+				}
+			}
+			if err != nil {
+				s.logger.Warn("telegram decision failed",
+					"type", d.Type, "action", d.Action,
+					"target_id", d.TargetID, "err", err)
+			}
+		}
+	}
+}
+
 // Handler returns the HTTP handler, primarily for use in tests.
 func (s *Server) Handler() http.Handler {
 	return s.http.Handler
@@ -241,6 +284,15 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) Run(ctx context.Context) error {
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
+
+	// Start Telegram inline callback consumer and token cleanup.
+	if tg, ok := s.notifier.(interface {
+		DecisionChannel() <-chan notify.CallbackDecision
+		RunCleanup(context.Context)
+	}); ok {
+		go tg.RunCleanup(ctx)
+		go s.consumeTelegramDecisions(ctx, tg.DecisionChannel())
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

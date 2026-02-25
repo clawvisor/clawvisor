@@ -85,49 +85,9 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var blob pendingRequestBlob
-	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
-		return
-	}
+	result, outcome, errMsg := h.executeApproval(r.Context(), pa)
 
-	start := time.Now()
-	result, _, execErr := executeAdapterRequest(r.Context(), h.vault, h.adapterReg,
-		user.ID, blob.Service, blob.Action, blob.Params, "", blob.ResponseFilters, nil)
-	dur := int(time.Since(start).Milliseconds())
-
-	outcome := "executed"
-	errMsg := ""
-	if execErr != nil {
-		outcome = "error"
-		errMsg = execErr.Error()
-	}
-
-	_ = h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, outcome, errMsg, dur)
-	_ = h.st.DeletePendingApproval(r.Context(), requestID)
-
-	// Update the Telegram message to reflect the outcome.
-	h.updateTelegramMsg(r.Context(), pa, "✅ <b>Approved</b> — request executed.")
-
-	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
-		var cbResult *adapters.Result
-		if execErr == nil {
-			cbResult = result
-		}
-		tok := blob.CallbackKey
-		cbErr := errMsg
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
-				RequestID: requestID,
-				Status:    outcome,
-				Result:    cbResult,
-				Error:     cbErr,
-				AuditID:   pa.AuditID,
-			}, tok)
-		}()
-	}
-
-	if execErr != nil {
+	if outcome == "error" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":     "error",
 			"request_id": requestID,
@@ -143,6 +103,57 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		"audit_id":   pa.AuditID,
 		"result":     result,
 	})
+}
+
+// ApproveByRequestID is the core approve logic, callable from both the HTTP handler
+// and the Telegram callback decision consumer.
+func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, userID string) error {
+	pa, err := h.st.GetPendingApproval(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if pa.UserID != userID {
+		return errors.New("not your approval")
+	}
+	if time.Now().After(pa.ExpiresAt) {
+		return errors.New("approval expired")
+	}
+
+	h.executeApproval(ctx, pa)
+	return nil
+}
+
+// DenyByRequestID is the core deny logic, callable from both the HTTP handler
+// and the Telegram callback decision consumer.
+func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userID string) error {
+	pa, err := h.st.GetPendingApproval(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if pa.UserID != userID {
+		return errors.New("not your approval")
+	}
+
+	var denyBlob pendingRequestBlob
+	_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
+
+	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0)
+	_ = h.st.DeletePendingApproval(ctx, requestID)
+
+	h.updateNotificationMsg(ctx, "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
+
+	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
+		tok := denyBlob.CallbackKey
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
+				RequestID: requestID,
+				Status:    "denied",
+				AuditID:   pa.AuditID,
+			}, tok)
+		}()
+	}
+
+	return nil
 }
 
 // Deny rejects a pending request and notifies the callback URL.
@@ -178,8 +189,7 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	_ = h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0)
 	_ = h.st.DeletePendingApproval(r.Context(), requestID)
 
-	// Update the Telegram message to reflect the denial.
-	h.updateTelegramMsg(r.Context(), pa, "❌ <b>Denied</b> — request rejected.")
+	h.updateNotificationMsg(r.Context(), "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		tok := denyBlob.CallbackKey
@@ -197,6 +207,54 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		"request_id": requestID,
 		"audit_id":   pa.AuditID,
 	})
+}
+
+// executeApproval runs the adapter request for an approved pending approval
+// and handles audit logging, notification update, and callback delivery.
+func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.PendingApproval) (*adapters.Result, string, string) {
+	var blob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+		return nil, "error", "invalid request blob"
+	}
+
+	start := time.Now()
+	result, _, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+		pa.UserID, blob.Service, blob.Action, blob.Params, "", blob.ResponseFilters, nil)
+	dur := int(time.Since(start).Milliseconds())
+
+	outcome := "executed"
+	errMsg := ""
+	if execErr != nil {
+		outcome = "error"
+		errMsg = execErr.Error()
+	}
+
+	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur)
+	_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
+
+	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, "✅ <b>Approved</b> — request executed.")
+
+	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
+		var cbResult *adapters.Result
+		if execErr == nil {
+			cbResult = result
+		}
+		tok := blob.CallbackKey
+		cbErr := errMsg
+		requestID := pa.RequestID
+		auditID := pa.AuditID
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
+				RequestID: requestID,
+				Status:    outcome,
+				Result:    cbResult,
+				Error:     cbErr,
+				AuditID:   auditID,
+			}, tok)
+		}()
+	}
+
+	return result, outcome, errMsg
 }
 
 // RunExpiryCleanup runs in a background goroutine to expire timed-out approvals.
@@ -224,7 +282,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
 
 		// Update the Telegram message before deleting the pending approval.
-		h.updateTelegramMsg(ctx, pa, "⏰ <b>Timed out</b> — approval window expired.")
+		h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, "⏰ <b>Timed out</b> — approval window expired.")
 
 		_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
 
@@ -248,6 +306,9 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	}
 	for _, task := range expiredTasks {
 		_ = h.st.UpdateTaskStatus(ctx, task.ID, "expired")
+
+		h.updateNotificationMsg(ctx, "task", task.ID, task.UserID, "⏰ <b>Task expired</b>")
+
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
 			_ = callback.DeliverResult(ctx, *task.CallbackURL, &callback.Payload{
 				RequestID: task.ID,
@@ -258,13 +319,17 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	}
 }
 
-// updateTelegramMsg updates the Telegram message for a pending approval if
-// both the notifier and a message ID are available.
-func (h *ApprovalsHandler) updateTelegramMsg(ctx context.Context, pa *store.PendingApproval, text string) {
-	if h.notifier == nil || pa.TelegramMsgID == nil || *pa.TelegramMsgID == "" {
+// updateNotificationMsg updates the Telegram message for a target
+// using the notification_messages table.
+func (h *ApprovalsHandler) updateNotificationMsg(ctx context.Context, targetType, targetID, userID, text string) {
+	if h.notifier == nil {
 		return
 	}
-	if err := h.notifier.UpdateMessage(ctx, pa.UserID, *pa.TelegramMsgID, text); err != nil {
-		h.logger.Warn("telegram message update failed", "err", err, "request_id", pa.RequestID)
+	msgID, err := h.st.GetNotificationMessage(ctx, targetType, targetID, "telegram")
+	if err != nil {
+		return
+	}
+	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
+		h.logger.Warn("telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
 	}
 }

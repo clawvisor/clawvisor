@@ -38,8 +38,9 @@ type getMeResponse struct {
 }
 
 type telegramUpdate struct {
-	UpdateID int `json:"update_id"`
-	Message  *telegramMsg `json:"message"`
+	UpdateID      int            `json:"update_id"`
+	Message       *telegramMsg   `json:"message"`
+	CallbackQuery *callbackQuery `json:"callback_query"`
 }
 
 type telegramMsg struct {
@@ -49,6 +50,23 @@ type telegramMsg struct {
 
 type telegramChat struct {
 	ID int64 `json:"id"`
+}
+
+// callbackQuery represents a Telegram callback_query from an inline button tap.
+type callbackQuery struct {
+	ID      string          `json:"id"`
+	From    telegramUser    `json:"from"`
+	Message *callbackMessage `json:"message"`
+	Data    string          `json:"data"`
+}
+
+type telegramUser struct {
+	ID int64 `json:"id"`
+}
+
+type callbackMessage struct {
+	MessageID int    `json:"message_id"`
+	Text      string `json:"text"`
 }
 
 const pairingTimeout = 5 * time.Minute
@@ -65,6 +83,14 @@ func (n *Notifier) StartPairing(ctx context.Context, userID, botToken string) (*
 		}
 		return true
 	})
+
+	// Cancel any active callback poller for this user — Telegram only allows
+	// one getUpdates consumer per bot token at a time.
+	if val, ok := n.pollers.Load(userID); ok {
+		ps := val.(*pollingSession)
+		ps.cancel()
+		n.pollers.Delete(userID)
+	}
 
 	// Validate bot token via getMe.
 	username, err := n.getMe(ctx, botToken)

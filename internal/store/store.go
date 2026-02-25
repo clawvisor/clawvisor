@@ -75,9 +75,12 @@ type Store interface {
 	SavePendingApproval(ctx context.Context, pa *PendingApproval) error
 	GetPendingApproval(ctx context.Context, requestID string) (*PendingApproval, error)
 	ListPendingApprovals(ctx context.Context, userID string) ([]*PendingApproval, error)
-	UpdatePendingTelegramMsgID(ctx context.Context, requestID, msgID string) error
 	DeletePendingApproval(ctx context.Context, requestID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
+
+	// Notification messages (cross-channel message tracking)
+	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
+	GetNotificationMessage(ctx context.Context, targetType, targetID, channel string) (string, error)
 
 	// Health
 	Ping(ctx context.Context) error

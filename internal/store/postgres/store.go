@@ -752,13 +752,6 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	return pa, nil
 }
 
-func (s *Store) UpdatePendingTelegramMsgID(ctx context.Context, requestID, msgID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE pending_approvals SET telegram_msg_id = $1 WHERE request_id = $2`,
-		msgID, requestID)
-	return err
-}
-
 func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM pending_approvals WHERE request_id = $1`, requestID)
@@ -785,6 +778,33 @@ func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.Pendi
 	}
 	defer rows.Close()
 	return scanPendingApprovals(rows)
+}
+
+// ── Notification Messages ──────────────────────────────────────────────────────
+
+func (s *Store) SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO notification_messages (target_type, target_id, channel, message_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (target_type, target_id, channel) DO UPDATE SET
+			message_id = EXCLUDED.message_id
+	`, targetType, targetID, channel, messageID)
+	return err
+}
+
+func (s *Store) GetNotificationMessage(ctx context.Context, targetType, targetID, channel string) (string, error) {
+	var messageID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT message_id FROM notification_messages
+		WHERE target_type = $1 AND target_id = $2 AND channel = $3
+	`, targetType, targetID, channel).Scan(&messageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return messageID, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

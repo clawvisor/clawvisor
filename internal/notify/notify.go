@@ -93,5 +93,14 @@ type TelegramPairer interface {
 	CancelPairing(pairingID string)
 }
 
+// CallbackDecision is sent by the Telegram notifier when a user taps an
+// inline Approve/Deny button. The server routes this to the appropriate handler.
+type CallbackDecision struct {
+	Type     string // "approval", "task", "scope_expansion"
+	Action   string // "approve" or "deny"
+	TargetID string
+	UserID   string
+}
+
 // Ensure we import gateway without unused import errors in callers.
 var _ = gateway.Request{}

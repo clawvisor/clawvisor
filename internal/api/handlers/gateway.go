@@ -578,7 +578,7 @@ func (h *GatewayHandler) routeToApproval(
 		return nil
 	}
 
-	_ = h.store.UpdatePendingTelegramMsgID(ctx, blob.RequestID, msgID)
+	_ = h.store.SaveNotificationMessage(ctx, "approval", blob.RequestID, "telegram", msgID)
 	return nil
 }
 

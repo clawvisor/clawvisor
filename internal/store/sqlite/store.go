@@ -907,13 +907,6 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	return pa, nil
 }
 
-func (s *Store) UpdatePendingTelegramMsgID(ctx context.Context, requestID, msgID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE pending_approvals SET telegram_msg_id = ? WHERE request_id = ?`,
-		msgID, requestID)
-	return err
-}
-
 func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM pending_approvals WHERE request_id = ?`, requestID)
@@ -959,6 +952,33 @@ func scanSQLitePendingApprovals(rows *sql.Rows) ([]*store.PendingApproval, error
 		pas = append(pas, pa)
 	}
 	return pas, rows.Err()
+}
+
+// ── Notification Messages ──────────────────────────────────────────────────────
+
+func (s *Store) SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO notification_messages (target_type, target_id, channel, message_id)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (target_type, target_id, channel) DO UPDATE SET
+			message_id = excluded.message_id
+	`, targetType, targetID, channel, messageID)
+	return err
+}
+
+func (s *Store) GetNotificationMessage(ctx context.Context, targetType, targetID, channel string) (string, error) {
+	var messageID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT message_id FROM notification_messages
+		WHERE target_type = ? AND target_id = ? AND channel = ?
+	`, targetType, targetID, channel).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return messageID, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

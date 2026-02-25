@@ -142,7 +142,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			expiresInStr = "standing (no expiry)"
 		}
 
-		if _, err := h.notifier.SendTaskApprovalRequest(ctx, notify.TaskApprovalRequest{
+		if msgID, err := h.notifier.SendTaskApprovalRequest(ctx, notify.TaskApprovalRequest{
 			TaskID:     task.ID,
 			UserID:     agent.UserID,
 			AgentName:  agent.Name,
@@ -153,6 +153,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ExpiresIn:  expiresInStr,
 		}); err != nil {
 			h.logger.Warn("failed to send task approval notification", "task_id", task.ID, "err", err)
+		} else if msgID != "" {
+			_ = h.st.SaveNotificationMessage(ctx, "task", task.ID, "telegram", msgID)
 		}
 	}
 
@@ -486,7 +488,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		approveURL := fmt.Sprintf("%s/dashboard/tasks?action=expand_approve&task_id=%s", h.baseURL, taskID)
 		denyURL := fmt.Sprintf("%s/dashboard/tasks?action=expand_deny&task_id=%s", h.baseURL, taskID)
 
-		if _, err := h.notifier.SendScopeExpansionRequest(ctx, notify.ScopeExpansionRequest{
+		if msgID, err := h.notifier.SendScopeExpansionRequest(ctx, notify.ScopeExpansionRequest{
 			TaskID:     taskID,
 			UserID:     agent.UserID,
 			AgentName:  agent.Name,
@@ -497,6 +499,8 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 			DenyURL:    denyURL,
 		}); err != nil {
 			h.logger.Warn("failed to send scope expansion notification", "task_id", taskID, "err", err)
+		} else if msgID != "" {
+			_ = h.st.SaveNotificationMessage(ctx, "task", taskID, "telegram", msgID)
 		}
 	}
 
@@ -632,6 +636,164 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 		"task_id": taskID,
 		"status":  newStatus,
 	})
+}
+
+// ── Core approve/deny methods (used by HTTP handlers and Telegram consumer) ──
+
+// ApproveByTaskID approves a pending task.
+func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return fmt.Errorf("not your task")
+	}
+	if task.Status != "pending_approval" {
+		return fmt.Errorf("task is not pending approval")
+	}
+
+	var expiresAt time.Time
+	if task.Lifetime == "standing" {
+		expiresAt = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+	}
+	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt); err != nil {
+		return err
+	}
+
+	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
+
+	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
+				RequestID: taskID,
+				Status:    "task_approved",
+			}, "")
+		}()
+	}
+	return nil
+}
+
+// DenyByTaskID denies a pending task.
+func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return fmt.Errorf("not your task")
+	}
+	if task.Status != "pending_approval" && task.Status != "pending_scope_expansion" {
+		return fmt.Errorf("task is not pending")
+	}
+
+	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
+		return err
+	}
+
+	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Denied</b> — task rejected.")
+
+	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
+				RequestID: taskID,
+				Status:    "denied",
+			}, "")
+		}()
+	}
+	return nil
+}
+
+// ExpandApproveByTaskID approves a pending scope expansion.
+func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return fmt.Errorf("not your task")
+	}
+	if task.Status != "pending_scope_expansion" || task.PendingAction == nil {
+		return fmt.Errorf("task has no pending scope expansion")
+	}
+
+	newActions := append(task.AuthorizedActions, *task.PendingAction)
+	expiresAt := time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+
+	if err := h.st.UpdateTaskActions(ctx, taskID, newActions, expiresAt); err != nil {
+		return err
+	}
+
+	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
+
+	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
+				RequestID: taskID,
+				Status:    "scope_expanded",
+			}, "")
+		}()
+	}
+	return nil
+}
+
+// ExpandDenyByTaskID denies a pending scope expansion.
+func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID string) error {
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return fmt.Errorf("not your task")
+	}
+	if task.Status != "pending_scope_expansion" {
+		return fmt.Errorf("task has no pending scope expansion")
+	}
+
+	newStatus := "active"
+	if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+		newStatus = "expired"
+	}
+
+	exp := time.Now().UTC()
+	if task.ExpiresAt != nil {
+		exp = *task.ExpiresAt
+	}
+	if err := h.st.UpdateTaskActions(ctx, taskID, task.AuthorizedActions, exp); err != nil {
+		return err
+	}
+	if newStatus != "active" {
+		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
+	}
+
+	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Scope expansion denied</b>")
+
+	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		go func() {
+			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
+				RequestID: taskID,
+				Status:    "scope_expansion_denied",
+			}, "")
+		}()
+	}
+	return nil
+}
+
+// updateNotificationMsg updates the Telegram message for a target
+// using the notification_messages table.
+func (h *TasksHandler) updateNotificationMsg(ctx context.Context, targetType, targetID, userID, text string) {
+	if h.notifier == nil {
+		return
+	}
+	msgID, err := h.st.GetNotificationMessage(ctx, targetType, targetID, "telegram")
+	if err != nil {
+		return
+	}
+	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
+		h.logger.Warn("telegram message update failed", "err", err, "target_type", targetType, "target_id", targetID)
+	}
 }
 
 // ── Revoke ────────────────────────────────────────────────────────────────────

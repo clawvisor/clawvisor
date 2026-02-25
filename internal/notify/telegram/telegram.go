@@ -27,14 +27,43 @@ type Notifier struct {
 	client        *http.Client
 	pairingClient *http.Client // longer timeout for long-poll getUpdates
 	pairings      sync.Map     // pairing ID → *pairingSession
+
+	cbTokens   *callbackTokenStore
+	pollers    sync.Map // userID → *pollingSession
+	decisionCh chan notify.CallbackDecision
+	serverCtx  context.Context
 }
 
 // New creates a Telegram Notifier that reads per-user bot tokens from the store.
-func New(st store.Store) *Notifier {
+// serverCtx is the server's top-level context; polling goroutines respect its cancellation.
+func New(st store.Store, serverCtx context.Context) *Notifier {
 	return &Notifier{
 		store:         st,
 		client:        &http.Client{Timeout: 10 * time.Second},
 		pairingClient: &http.Client{Timeout: 30 * time.Second},
+		cbTokens:      newCallbackTokenStore(),
+		decisionCh:    make(chan notify.CallbackDecision, 32),
+		serverCtx:     serverCtx,
+	}
+}
+
+// DecisionChannel returns a read-only channel that emits callback decisions
+// from inline button taps.
+func (n *Notifier) DecisionChannel() <-chan notify.CallbackDecision {
+	return n.decisionCh
+}
+
+// RunCleanup periodically removes expired/used callback tokens.
+func (n *Notifier) RunCleanup(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n.cbTokens.Cleanup()
+		}
 	}
 }
 
@@ -47,15 +76,32 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 	}
 
 	text := formatApprovalMessage(req)
-	keyboard := inlineKeyboard([][]inlineButton{{
-		{Text: "✅ Approve", URL: req.ApproveURL},
-		{Text: "❌ Deny", URL: req.DenyURL},
-	}})
+
+	// Generate callback tokens for inline buttons.
+	approveID, denyID, tokenErr := n.cbTokens.Generate("approval", req.RequestID, req.UserID, chatID, 6*time.Minute)
+	var keyboard any
+	if tokenErr == nil {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve", CallbackData: "a:" + approveID},
+			{Text: "❌ Deny", CallbackData: "d:" + denyID},
+		}})
+	} else {
+		// Fallback to URL buttons if token generation fails.
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve", URL: req.ApproveURL},
+			{Text: "❌ Deny", URL: req.DenyURL},
+		}})
+	}
 
 	msgID, err := n.sendMessage(ctx, botToken, chatID, text, keyboard)
 	if err != nil {
 		return "", fmt.Errorf("telegram: send approval request: %w", err)
 	}
+
+	if tokenErr == nil {
+		n.ensurePolling(req.UserID, botToken, chatID)
+	}
+
 	return msgID, nil
 }
 
@@ -91,15 +137,30 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 	}
 
 	text := formatTaskApprovalMessage(req)
-	keyboard := inlineKeyboard([][]inlineButton{{
-		{Text: "✅ Approve Task", URL: req.ApproveURL},
-		{Text: "❌ Deny Task", URL: req.DenyURL},
-	}})
+
+	approveID, denyID, tokenErr := n.cbTokens.Generate("task", req.TaskID, req.UserID, chatID, 6*time.Minute)
+	var keyboard any
+	if tokenErr == nil {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Task", CallbackData: "a:" + approveID},
+			{Text: "❌ Deny Task", CallbackData: "d:" + denyID},
+		}})
+	} else {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Task", URL: req.ApproveURL},
+			{Text: "❌ Deny Task", URL: req.DenyURL},
+		}})
+	}
 
 	msgID, err := n.sendMessage(ctx, botToken, chatID, text, keyboard)
 	if err != nil {
 		return "", fmt.Errorf("telegram: send task approval request: %w", err)
 	}
+
+	if tokenErr == nil {
+		n.ensurePolling(req.UserID, botToken, chatID)
+	}
+
 	return msgID, nil
 }
 
@@ -110,15 +171,30 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 	}
 
 	text := formatScopeExpansionMessage(req)
-	keyboard := inlineKeyboard([][]inlineButton{{
-		{Text: "✅ Approve Expansion", URL: req.ApproveURL},
-		{Text: "❌ Deny Expansion", URL: req.DenyURL},
-	}})
+
+	approveID, denyID, tokenErr := n.cbTokens.Generate("scope_expansion", req.TaskID, req.UserID, chatID, 6*time.Minute)
+	var keyboard any
+	if tokenErr == nil {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Expansion", CallbackData: "a:" + approveID},
+			{Text: "❌ Deny Expansion", CallbackData: "d:" + denyID},
+		}})
+	} else {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Expansion", URL: req.ApproveURL},
+			{Text: "❌ Deny Expansion", URL: req.DenyURL},
+		}})
+	}
 
 	msgID, err := n.sendMessage(ctx, botToken, chatID, text, keyboard)
 	if err != nil {
 		return "", fmt.Errorf("telegram: send scope expansion request: %w", err)
 	}
+
+	if tokenErr == nil {
+		n.ensurePolling(req.UserID, botToken, chatID)
+	}
+
 	return msgID, nil
 }
 
@@ -249,8 +325,9 @@ func paramValue(v any) string {
 // ── Telegram API calls ────────────────────────────────────────────────────────
 
 type inlineButton struct {
-	Text string `json:"text"`
-	URL  string `json:"url,omitempty"`
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 func inlineKeyboard(rows [][]inlineButton) any {
