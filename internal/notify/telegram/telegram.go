@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/notify"
 	"github.com/clawvisor/clawvisor/internal/store"
 )
@@ -111,16 +112,17 @@ func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.Activat
 		return err
 	}
 
+	svcName := display.ServiceName(req.Service)
 	text := fmt.Sprintf(
 		"🔔 <b>Clawvisor — Service Activation Required</b>\n\n"+
 			"<b>Agent:</b> %s wants to use: <b>%s</b>\n"+
 			"<b>Requested action:</b> %s",
 		html.EscapeString(req.AgentName),
-		html.EscapeString(req.Service),
-		html.EscapeString(req.Service),
+		html.EscapeString(svcName),
+		html.EscapeString(svcName),
 	)
 	keyboard := inlineKeyboard([][]inlineButton{{
-		{Text: "🔗 Activate " + req.Service, URL: req.ActivateURL},
+		{Text: "🔗 Activate " + svcName, URL: req.ActivateURL},
 		{Text: "❌ Deny", URL: req.DenyURL},
 	}})
 
@@ -235,8 +237,8 @@ func formatApprovalMessage(req notify.ApprovalRequest) string {
 	var sb strings.Builder
 	sb.WriteString("🔔 <b>Clawvisor Approval Request</b>\n\n")
 	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
-	sb.WriteString(fmt.Sprintf("<b>Service:</b> %s\n", html.EscapeString(req.Service)))
-	sb.WriteString(fmt.Sprintf("<b>Action:</b> %s\n", html.EscapeString(req.Action)))
+	sb.WriteString(fmt.Sprintf("<b>Service:</b> %s\n", html.EscapeString(display.ServiceName(req.Service))))
+	sb.WriteString(fmt.Sprintf("<b>Action:</b> %s\n", html.EscapeString(display.ActionName(req.Action))))
 	sb.WriteString(fmt.Sprintf("<b>Time:</b> %s\n", time.Now().UTC().Format("Mon Jan 2 2006, 3:04 PM MST")))
 
 	if len(req.Params) > 0 {
@@ -283,9 +285,8 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 		if !a.AutoExecute {
 			mode = "requires per-request approval"
 		}
-		sb.WriteString(fmt.Sprintf("  • %s:%s (%s)\n",
-			html.EscapeString(a.Service),
-			html.EscapeString(a.Action),
+		sb.WriteString(fmt.Sprintf("  • %s (%s)\n",
+			html.EscapeString(display.FormatServiceAction(a.Service, a.Action)),
 			mode))
 	}
 
@@ -303,9 +304,8 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 	if !req.NewAction.AutoExecute {
 		mode = "requires per-request approval"
 	}
-	sb.WriteString(fmt.Sprintf("\n<b>New action:</b> %s:%s (%s)\n",
-		html.EscapeString(req.NewAction.Service),
-		html.EscapeString(req.NewAction.Action),
+	sb.WriteString(fmt.Sprintf("\n<b>New action:</b> %s (%s)\n",
+		html.EscapeString(display.FormatServiceAction(req.NewAction.Service, req.NewAction.Action)),
 		mode))
 
 	if req.Reason != "" {

@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/internal/adapters"
+	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
@@ -86,6 +87,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	type serviceEntry struct {
 		ID                 string     `json:"id"`
+		Name               string     `json:"name"`
+		Description        string     `json:"description"`
 		Alias              string     `json:"alias,omitempty"`
 		OAuth              bool       `json:"oauth"`
 		RequiresActivation bool       `json:"requires_activation"`
@@ -102,6 +105,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			// Credential-free services (e.g. iMessage) have no alias concept.
 			services = append(services, serviceEntry{
 				ID:                 a.ServiceID(),
+				Name:               display.ServiceName(a.ServiceID()),
+				Description:        display.ServiceDescription(a.ServiceID()),
 				OAuth:              a.OAuthConfig() != nil,
 				RequiresActivation: false,
 				Actions:            a.SupportedActions(),
@@ -128,6 +133,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			activatedAt := m.ActivatedAt
 			services = append(services, serviceEntry{
 				ID:                 a.ServiceID(),
+				Name:               display.ServiceName(a.ServiceID()),
+				Description:        display.ServiceDescription(a.ServiceID()),
 				Alias:              alias,
 				OAuth:              a.OAuthConfig() != nil,
 				RequiresActivation: true,
@@ -150,6 +157,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			services = append(services, serviceEntry{
 				ID:                 a.ServiceID(),
+				Name:               display.ServiceName(a.ServiceID()),
+				Description:        display.ServiceDescription(a.ServiceID()),
 				OAuth:              a.OAuthConfig() != nil,
 				RequiresActivation: true,
 				Actions:            a.SupportedActions(),
@@ -162,6 +171,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		if !shown {
 			services = append(services, serviceEntry{
 				ID:                 a.ServiceID(),
+				Name:               display.ServiceName(a.ServiceID()),
+				Description:        display.ServiceDescription(a.ServiceID()),
 				OAuth:              a.OAuthConfig() != nil,
 				RequiresActivation: true,
 				Actions:            a.SupportedActions(),

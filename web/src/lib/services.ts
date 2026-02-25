@@ -7,6 +7,11 @@ export const SERVICE_DISPLAY_NAMES: Record<string, string> = {
   'google.contacts': 'Google Contacts',
   'github': 'GitHub',
   'apple.imessage': 'iMessage',
+  'slack': 'Slack',
+  'notion': 'Notion',
+  'linear': 'Linear',
+  'stripe': 'Stripe',
+  'twilio': 'Twilio',
 }
 
 export const SERVICE_BRAND_COLORS: Record<string, {
@@ -58,6 +63,41 @@ export const SERVICE_BRAND_COLORS: Record<string, {
     border: 'border-green-500',
     dot: 'bg-green-500',
   },
+  'slack': {
+    bg: 'bg-purple-600',
+    bgLight: 'bg-purple-50',
+    text: 'text-purple-700',
+    border: 'border-purple-400',
+    dot: 'bg-purple-500',
+  },
+  'notion': {
+    bg: 'bg-neutral-800',
+    bgLight: 'bg-neutral-50',
+    text: 'text-neutral-800',
+    border: 'border-neutral-600',
+    dot: 'bg-neutral-700',
+  },
+  'linear': {
+    bg: 'bg-violet-600',
+    bgLight: 'bg-violet-50',
+    text: 'text-violet-700',
+    border: 'border-violet-400',
+    dot: 'bg-violet-500',
+  },
+  'stripe': {
+    bg: 'bg-indigo-600',
+    bgLight: 'bg-indigo-50',
+    text: 'text-indigo-700',
+    border: 'border-indigo-400',
+    dot: 'bg-indigo-500',
+  },
+  'twilio': {
+    bg: 'bg-red-600',
+    bgLight: 'bg-red-50',
+    text: 'text-red-700',
+    border: 'border-red-400',
+    dot: 'bg-red-500',
+  },
 }
 
 export const SERVICE_DESCRIPTIONS: Record<string, string> = {
@@ -67,6 +107,11 @@ export const SERVICE_DESCRIPTIONS: Record<string, string> = {
   'google.contacts': 'Search and view contacts',
   'github': 'Issues, PRs, and code review',
   'apple.imessage': 'Search and read iMessage threads',
+  'slack': 'Channels, messages, and search',
+  'notion': 'Pages, databases, and search',
+  'linear': 'Issues, projects, and teams',
+  'stripe': 'Customers, charges, and subscriptions',
+  'twilio': 'SMS, WhatsApp, and messaging',
 }
 
 export function serviceDescription(id: string): string {
@@ -110,6 +155,38 @@ export const ACTION_DISPLAY_NAMES: Record<string, string> = {
   list_threads: 'List threads',
   get_thread: 'Get thread',
   // send_message already covered by Gmail — same key, same label
+  // Slack
+  list_channels: 'List channels',
+  get_channel: 'Get channel',
+  // list_messages, send_message, search_messages already covered
+  list_users: 'List users',
+  // Notion
+  search: 'Search',
+  get_page: 'Get page',
+  create_page: 'Create page',
+  update_page: 'Update page',
+  query_database: 'Query database',
+  list_databases: 'List databases',
+  // Linear
+  // list_issues, get_issue, create_issue already covered
+  update_issue: 'Update issue',
+  add_comment: 'Add comment',
+  list_teams: 'List teams',
+  list_projects: 'List projects',
+  search_issues: 'Search issues',
+  // Stripe
+  list_customers: 'List customers',
+  get_customer: 'Get customer',
+  list_charges: 'List charges',
+  get_charge: 'Get charge',
+  list_subscriptions: 'List subscriptions',
+  get_subscription: 'Get subscription',
+  create_refund: 'Create refund',
+  get_balance: 'Get balance',
+  // Twilio
+  send_sms: 'Send SMS',
+  send_whatsapp: 'Send WhatsApp',
+  // list_messages, get_message already covered
 }
 
 const DEFAULT_BRAND = {
