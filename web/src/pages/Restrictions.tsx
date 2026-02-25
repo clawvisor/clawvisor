@@ -209,34 +209,36 @@ function ServiceGroup({
   restrictions: Restriction[]
 }) {
   const brand = serviceBrand(svc.id)
+  // The restriction service key includes the alias when present (e.g. "google.gmail:personal").
+  const svcKey = svc.alias ? `${svc.id}:${svc.alias}` : svc.id
 
   // Build lookup: "service:action" → restriction ID
   const lookup = new Map<string, string>()
   for (const r of restrictions) {
-    if (r.service === svc.id) {
+    if (r.service === svcKey) {
       lookup.set(`${r.service}:${r.action}`, r.id)
     }
   }
 
-  const wildcardId = lookup.get(`${svc.id}:*`) ?? null
+  const wildcardId = lookup.get(`${svcKey}:*`) ?? null
   const hasWildcard = !!wildcardId
 
   return (
     <div className={`bg-white border rounded-lg overflow-hidden border-l-4 ${brand.border}`}>
       <div className="px-4 py-3 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900">{serviceName(svc.id)}</h3>
-          <p className="text-xs text-gray-400">{svc.id}</p>
+          <h3 className="text-sm font-semibold text-gray-900">{serviceName(svc.id, svc.alias)}</h3>
+          <p className="text-xs text-gray-400">{svcKey}</p>
         </div>
-        <WildcardToggle serviceId={svc.id} restrictionId={wildcardId} />
+        <WildcardToggle serviceId={svcKey} restrictionId={wildcardId} />
       </div>
       <div className="border-t divide-y divide-gray-100">
         {svc.actions.map(action => (
           <ActionRow
             key={action}
-            serviceId={svc.id}
+            serviceId={svcKey}
             action={action}
-            restrictionId={lookup.get(`${svc.id}:${action}`) ?? null}
+            restrictionId={lookup.get(`${svcKey}:${action}`) ?? null}
             disabled={hasWildcard}
           />
         ))}
@@ -278,7 +280,7 @@ export default function Restrictions() {
       <div className="space-y-4">
         {services.map(svc => (
           <ServiceGroup
-            key={svc.id}
+            key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
             svc={svc}
             restrictions={allRestrictions}
           />
