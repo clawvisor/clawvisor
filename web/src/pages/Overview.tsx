@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Task, type Agent } from '../api/client'
+import { api, type Task, type Agent, type NotificationConfig } from '../api/client'
 import { serviceName, actionName } from '../lib/services'
+import Onboarding from './Onboarding'
 
 interface Props {
   pendingCount: number
@@ -179,7 +180,39 @@ export default function Overview({ pendingCount }: Props) {
     agentMap.set(a.id, a.name)
   }
 
-  const activatedCount = services?.services.filter(s => s.status === 'activated').length ?? 0
+  const { data: notificationsData } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: (): Promise<NotificationConfig[]> => api.notifications.list(),
+  })
+
+  const allServices = services?.services ?? []
+
+  // Latch onboarding visibility once on first data load.
+  // During the session, only user actions (dismiss / complete all steps) hide it.
+  const onboardingDecided = useRef(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [onboardingInitial, setOnboardingInitial] = useState<number[]>([])
+
+  useEffect(() => {
+    if (onboardingDecided.current) return
+    if (!services || agentsData === undefined || notificationsData === undefined) return
+    onboardingDecided.current = true
+    const hasService = (services.services ?? []).some(
+      (s: { status: string; requires_activation?: boolean }) => s.status === 'activated' && (s.requires_activation ?? true)
+    )
+    const hasAgents = (agentsData ?? []).length > 0
+    const hasTelegram = notificationsData.some((c: NotificationConfig) => c.channel === 'telegram' && c.config?.bot_token)
+    const done: number[] = []
+    if (hasService) done.push(1)
+    if (hasAgents) done.push(2)
+    if (hasTelegram) done.push(3)
+    if (done.length < 3) {
+      setOnboardingInitial(done)
+      setShowOnboarding(true)
+    }
+  }, [services, agentsData, notificationsData])
+
+  const activatedCount = allServices.filter(s => s.status === 'activated').length
   const allTasks = tasksData?.tasks ?? []
   const actionableTasks = allTasks.filter(
     (t: Task) => t.status === 'pending_approval' || t.status === 'pending_scope_expansion'
@@ -190,6 +223,15 @@ export default function Overview({ pendingCount }: Props) {
   return (
     <div className="p-8 space-y-8">
       <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
+
+      {/* Onboarding */}
+      {showOnboarding && (
+        <Onboarding
+          allServices={allServices}
+          initialCompleted={onboardingInitial}
+          onDismiss={() => setShowOnboarding(false)}
+        />
+      )}
 
       {/* Deep link result banner */}
       {deepLinkResult && (

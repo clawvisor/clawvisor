@@ -48,9 +48,7 @@ export default function Dashboard() {
       <nav className="w-56 bg-[#0f1117] border-r border-gray-800 flex flex-col shrink-0">
         <div className="px-4 py-5 border-b border-gray-800">
           <span className="font-bold text-lg tracking-tight text-white flex items-center gap-2">
-            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
+            <img src="/favicon.svg" alt="" className="w-5 h-5" />
             Clawvisor
           </span>
         </div>

@@ -39,11 +39,12 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, err := generateToken()
+	rawSecret, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
 		return
 	}
+	rawToken := "cvis_" + rawSecret
 
 	agent, err := h.st.CreateAgent(r.Context(), user.ID, body.Name, hashToken(rawToken))
 	if err != nil {
