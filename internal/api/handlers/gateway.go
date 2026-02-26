@@ -479,8 +479,8 @@ func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry) {
 
 // ── Shared execution logic ────────────────────────────────────────────────────
 
-// executeAdapterRequest fetches the credential from vault, calls the adapter,
-// and returns the result. Shared between gateway and approvals handlers.
+// executeAdapterRequest fetches the credential from vault and calls the adapter.
+// Shared between gateway and approvals handlers.
 // vaultKey overrides the default vault key when non-empty (used for aliased services).
 func executeAdapterRequest(
 	ctx context.Context,
