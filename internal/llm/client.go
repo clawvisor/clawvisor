@@ -63,7 +63,7 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage) (string, 
 	if c.provider == "anthropic" {
 		return c.completeAnthropic(ctx, messages)
 	}
-	return c.completeOpenAI(ctx, messages)
+	return c.completeOpenAI(ctx, messages) // "openai" and "ollama" both use OpenAI-compatible API
 }
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -87,7 +87,9 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
