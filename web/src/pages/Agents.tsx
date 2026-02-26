@@ -33,6 +33,10 @@ export default function Agents() {
   return (
     <div className="p-8 space-y-8">
       <h1 className="text-2xl font-bold text-gray-900">Agents</h1>
+      <p className="text-sm text-gray-500">
+        An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
+        Each agent gets a unique token — paste it into your agent's configuration to connect it to Clawvisor.
+      </p>
 
       {/* New token display */}
       {newToken && (
