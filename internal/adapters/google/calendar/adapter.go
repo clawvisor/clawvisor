@@ -115,7 +115,7 @@ func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, p
 		calendarID = v
 	}
 	timeMin := dateToRFC3339(params, "time_min", "from")
-	timeMax := dateToRFC3339(params, "time_max", "to")
+	timeMax := dateToRFC3339Max(params, "time_max", "to")
 	// Default to now if no start time — avoids returning old recurring events.
 	if timeMin == "" {
 		timeMin = time.Now().UTC().Format(time.RFC3339)
@@ -509,6 +509,29 @@ func dateToRFC3339(params map[string]any, key, alias string) string {
 		return s // return as-is if we can't parse; API will reject with a clear error
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// dateToRFC3339Max is like dateToRFC3339 but treats plain dates as inclusive
+// upper bounds: "2006-01-02" becomes "2006-01-02T23:59:59Z" so that events
+// on that day are included. Google Calendar's timeMax is exclusive, so passing
+// start-of-day would exclude the entire day.
+func dateToRFC3339Max(params map[string]any, key, alias string) string {
+	s, _ := params[key].(string)
+	if s == "" {
+		s, _ = params[alias].(string)
+	}
+	if s == "" {
+		return ""
+	}
+	if len(s) > 10 {
+		return s
+	}
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return s
+	}
+	// End of the given day so the date is treated as inclusive.
+	return t.Add(24*time.Hour - time.Second).UTC().Format(time.RFC3339)
 }
 
 // calendarDtField builds the Google Calendar API start/end object from a
