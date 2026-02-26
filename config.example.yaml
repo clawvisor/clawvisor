@@ -61,7 +61,7 @@ llm:
     api_key: ""                   # from env: CLAWVISOR_LLM_VERIFICATION_API_KEY
     model: claude-haiku-4-5-20251001
     timeout_seconds: 5
-    fail_closed: false           # false = allow on LLM error; true = block on error
+    fail_closed: true            # true = block on LLM error (after retry); false = allow on error
     cache_ttl_seconds: 60        # cache identical verdicts for 60s
 
 mcp:

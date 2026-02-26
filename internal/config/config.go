@@ -174,7 +174,7 @@ func Default() *Config {
 					Model:          "claude-haiku-4-5-20251001",
 					TimeoutSeconds: 5,
 				},
-				FailClosed:      false,
+				FailClosed:      true,
 				CacheTTLSeconds: 60,
 			},
 		},

@@ -85,59 +85,42 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		{Role: "user", Content: userMsg},
 	}
 
-	raw, err := client.Complete(ctx, messages)
-	latency := int(time.Since(start).Milliseconds())
-
-	if err != nil {
-		if v.cfg.FailClosed {
-			return &VerificationVerdict{
-				Allow:           false,
-				ParamScope:      "n/a",
-				ReasonCoherence: "n/a",
-				Explanation:     "Verification unavailable: " + err.Error(),
-				Model:           v.cfg.Model,
-				LatencyMS:       latency,
-			}, nil
+	var lastErr error
+	for attempt := range 2 {
+		raw, err := client.Complete(ctx, messages)
+		if err != nil {
+			lastErr = err
+			if attempt == 0 {
+				continue
+			}
+			break
 		}
-		// Fail open: allow with note
-		return &VerificationVerdict{
-			Allow:           true,
-			ParamScope:      "n/a",
-			ReasonCoherence: "n/a",
-			Explanation:     "VERIFICATION_SKIPPED: " + err.Error(),
-			Model:           v.cfg.Model,
-			LatencyMS:       latency,
-		}, nil
+
+		verdict, parseErr := parseVerificationResponse(raw)
+		if parseErr != nil {
+			lastErr = parseErr
+			if attempt == 0 {
+				continue
+			}
+			break
+		}
+
+		verdict.Model = v.cfg.Model
+		verdict.LatencyMS = int(time.Since(start).Milliseconds())
+		verdict.Cached = false
+
+		v.cache.Put(key, verdict)
+		return verdict, nil
 	}
 
-	verdict, parseErr := parseVerificationResponse(raw)
-	if parseErr != nil {
-		if v.cfg.FailClosed {
-			return &VerificationVerdict{
-				Allow:           false,
-				ParamScope:      "n/a",
-				ReasonCoherence: "n/a",
-				Explanation:     "Verification returned unparseable response",
-				Model:           v.cfg.Model,
-				LatencyMS:       latency,
-			}, nil
-		}
-		return &VerificationVerdict{
-			Allow:           true,
-			ParamScope:      "n/a",
-			ReasonCoherence: "n/a",
-			Explanation:     "VERIFICATION_SKIPPED: unparseable response",
-			Model:           v.cfg.Model,
-			LatencyMS:       latency,
-		}, nil
-	}
-
-	verdict.Model = v.cfg.Model
-	verdict.LatencyMS = latency
-	verdict.Cached = false
-
-	v.cache.Put(key, verdict)
-	return verdict, nil
+	return &VerificationVerdict{
+		Allow:           false,
+		ParamScope:      "n/a",
+		ReasonCoherence: "n/a",
+		Explanation:     "Verification failed after retry: " + lastErr.Error(),
+		Model:           v.cfg.Model,
+		LatencyMS:       int(time.Since(start).Milliseconds()),
+	}, nil
 }
 
 // MarshalVerdict marshals a verdict to JSON for storage in the audit log.
