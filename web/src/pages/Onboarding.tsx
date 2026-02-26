@@ -186,10 +186,7 @@ function OnboardingServices({
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Connect a service</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Activate at least one service so your agents can work on your behalf.
-          </p>
+          <h2 className="text-lg font-semibold text-gray-900">How Clawvisor works</h2>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <button onClick={onSkip} className="text-sm text-gray-400 hover:text-gray-600">
@@ -204,6 +201,15 @@ function OnboardingServices({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="text-sm text-gray-600 space-y-2">
+        <p>
+          Clawvisor sits between your AI agent and sensitive APIs like Gmail, Slack, and GitHub.
+          Your agent never holds credentials directly — instead, every request flows through Clawvisor,
+          where you control what's allowed and what requires your approval.
+        </p>
+        <p>To get started, connect at least one service below.</p>
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
