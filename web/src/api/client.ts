@@ -244,6 +244,37 @@ export interface Task {
   pending_reason?: string
 }
 
+export interface ActivityBucket {
+  bucket: string
+  outcome: string
+  count: number
+}
+
+export interface OverviewData {
+  queue: QueueItem[]
+  queue_total: number
+  active_tasks: Task[]
+  activity: ActivityBucket[]
+}
+
+export interface QueueApproval {
+  request_id: string
+  audit_id: string
+  service: string
+  action: string
+  params: Record<string, unknown>
+  reason?: string
+}
+
+export interface QueueItem {
+  type: 'approval' | 'task'
+  id: string
+  created_at: string
+  expires_at: string | null
+  approval?: QueueApproval
+  task?: Task
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -326,6 +357,12 @@ export const api = {
   },
   config: {
     public: () => get<{ auth_mode: 'magic_link' | 'password' }>('/api/config/public'),
+  },
+  queue: {
+    list: () => get<{ items: QueueItem[]; total: number }>('/api/queue'),
+  },
+  overview: {
+    get: () => get<OverviewData>('/api/overview'),
   },
   tasks: {
     list: () => get<{ tasks: Task[]; total: number }>('/api/tasks'),

@@ -541,6 +541,34 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	return entries, total, err
 }
 
+// ── Audit Activity Buckets ────────────────────────────────────────────────────
+
+func (s *Store) AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]store.ActivityBucket, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT date_trunc('minute', timestamp)
+		         - (EXTRACT(minute FROM timestamp)::int % $3) * interval '1 minute' AS bucket,
+		       outcome, COUNT(*) AS cnt
+		FROM audit_log
+		WHERE user_id = $1 AND timestamp >= $2
+		GROUP BY bucket, outcome
+		ORDER BY bucket ASC
+	`, userID, since, bucketMinutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []store.ActivityBucket
+	for rows.Next() {
+		var b store.ActivityBucket
+		if err := rows.Scan(&b.Bucket, &b.Outcome, &b.Count); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, b)
+	}
+	return buckets, rows.Err()
+}
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {

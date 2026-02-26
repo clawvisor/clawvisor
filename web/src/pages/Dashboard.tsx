@@ -9,10 +9,11 @@ import Agents from './Agents'
 import Settings from './Settings'
 import Overview from './Overview'
 import Tasks from './Tasks'
-import ApprovalsPanel from '../components/ApprovalsPanel'
+import Queue from './Queue'
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', end: true },
+  { to: '/dashboard/queue', label: 'Queue' },
   { to: '/dashboard/tasks', label: 'Tasks' },
   { to: '/dashboard/services', label: 'Services' },
   { to: '/dashboard/restrictions', label: 'Restrictions' },
@@ -24,23 +25,13 @@ const navItems = [
 export default function Dashboard() {
   const { user, logout } = useAuth()
 
-  // Poll pending approvals for notification badge
-  const { data: approvalsData } = useQuery({
-    queryKey: ['approvals'],
-    queryFn: () => api.approvals.list(),
+  // Poll unified queue for badge + floating panel
+  const { data: queueData } = useQuery({
+    queryKey: ['queue'],
+    queryFn: () => api.queue.list(),
     refetchInterval: 15_000,
   })
-  const pendingCount = approvalsData?.entries?.length ?? 0
-
-  // Poll tasks for badge count
-  const { data: tasksData } = useQuery({
-    queryKey: ['tasks'],
-    queryFn: () => api.tasks.list(),
-    refetchInterval: 15_000,
-  })
-  const actionableTaskCount = (tasksData?.tasks ?? []).filter(
-    t => t.status === 'pending_approval' || t.status === 'pending_scope_expansion'
-  ).length
+  const queueCount = queueData?.total ?? 0
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -67,14 +58,9 @@ export default function Dashboard() {
                 }
               >
                 {label}
-                {label === 'Overview' && pendingCount > 0 && (
+                {label === 'Queue' && queueCount > 0 && (
                   <span className="ml-auto bg-orange-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                    {pendingCount > 9 ? '9+' : pendingCount}
-                  </span>
-                )}
-                {label === 'Tasks' && actionableTaskCount > 0 && (
-                  <span className="ml-auto bg-orange-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                    {actionableTaskCount > 9 ? '9+' : actionableTaskCount}
+                    {queueCount > 9 ? '9+' : queueCount}
                   </span>
                 )}
               </NavLink>
@@ -95,7 +81,8 @@ export default function Dashboard() {
       {/* Main content */}
       <main className="flex-1 min-w-0 overflow-auto">
         <Routes>
-          <Route index element={<Overview pendingCount={pendingCount} actionableTaskCount={actionableTaskCount} />} />
+          <Route index element={<Overview />} />
+          <Route path="queue" element={<Queue />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="services" element={<Services />} />
           <Route path="restrictions" element={<Restrictions />} />
@@ -106,8 +93,6 @@ export default function Dashboard() {
         </Routes>
       </main>
 
-      {/* Floating approvals panel (visible from anywhere) */}
-      {pendingCount > 0 && <ApprovalsPanel />}
     </div>
   )
 }

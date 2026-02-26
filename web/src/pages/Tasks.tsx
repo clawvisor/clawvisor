@@ -1,102 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
-import { api, type Task, type TaskAction, type Agent, type AuditEntry } from '../api/client'
-import { formatDistanceToNow, differenceInSeconds, format } from 'date-fns'
+import { useSearchParams, Link } from 'react-router-dom'
+import { api, type Task, type Agent, type AuditEntry } from '../api/client'
+import { formatDistanceToNow, format } from 'date-fns'
 import { serviceName, actionName, serviceBrand, formatServiceAction } from '../lib/services'
-
-const STATUS_STYLES: Record<string, string> = {
-  pending_approval: 'bg-orange-100 text-orange-800',
-  pending_scope_expansion: 'bg-orange-100 text-orange-800',
-  active: 'bg-green-100 text-green-800',
-  completed: 'bg-gray-100 text-gray-600',
-  expired: 'bg-gray-100 text-gray-500',
-  denied: 'bg-red-100 text-red-700',
-  revoked: 'bg-gray-100 text-gray-500',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  pending_approval: 'Pending Approval',
-  pending_scope_expansion: 'Scope Expansion',
-  active: 'Active',
-  completed: 'Completed',
-  expired: 'Expired',
-  denied: 'Denied',
-  revoked: 'Revoked',
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_STYLES[status] ?? 'bg-gray-100 text-gray-600'}`}>
-      {STATUS_LABELS[status] ?? status}
-    </span>
-  )
-}
-
-function ExpiryCountdown({ expiresAt }: { expiresAt: string }) {
-  const secs = Math.max(0, differenceInSeconds(new Date(expiresAt), new Date()))
-  if (secs <= 0) return <span className="text-xs text-red-500 font-medium">Expired</span>
-  const mins = Math.floor(secs / 60)
-  const s = secs % 60
-  const urgent = secs < 120
-  return (
-    <span className={`font-mono text-xs tabular-nums ${urgent ? 'text-red-600' : 'text-gray-400'}`}>
-      {mins}:{String(s).padStart(2, '0')} remaining
-    </span>
-  )
-}
-
-function summarizeActions(actions: TaskAction[]): string {
-  const groups = new Map<string, { auto: string[]; manual: string[] }>()
-  for (const a of actions) {
-    const svc = serviceName(a.service)
-    if (!groups.has(svc)) groups.set(svc, { auto: [], manual: [] })
-    const g = groups.get(svc)!
-    if (a.auto_execute) {
-      g.auto.push(actionName(a.action).toLowerCase())
-    } else {
-      g.manual.push(actionName(a.action).toLowerCase())
-    }
-  }
-
-  const parts: string[] = []
-  for (const [svc, g] of groups) {
-    if (g.auto.length > 0) {
-      parts.push(`Can ${joinList(g.auto)} on ${svc}`)
-    }
-    if (g.manual.length > 0) {
-      parts.push(`Can ${joinList(g.manual)} on ${svc} with approval`)
-    }
-  }
-  return parts.join(' · ') || 'No actions authorized'
-}
-
-function joinList(items: string[]): string {
-  if (items.length <= 1) return items[0] ?? ''
-  return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1]
-}
-
-function LifetimeBadge({ lifetime }: { lifetime?: string }) {
-  if (!lifetime || lifetime === 'session') return null
-  return (
-    <span
-      className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700"
-      title="This task does not expire and remains active until revoked"
-    >
-      Ongoing
-    </span>
-  )
-}
-
-const OUTCOME_STYLE: Record<string, string> = {
-  executed: 'bg-green-100 text-green-800',
-  blocked: 'bg-red-100 text-red-800',
-  restricted: 'bg-orange-100 text-orange-800',
-  pending: 'bg-yellow-100 text-yellow-800',
-  denied: 'bg-gray-100 text-gray-600',
-  error: 'bg-red-100 text-red-700',
-  timeout: 'bg-gray-100 text-gray-500',
-}
+import { summarizeActions, OUTCOME_STYLE } from '../lib/queue-helpers'
+import CountdownTimer from '../components/CountdownTimer'
+import StatusBadge from '../components/StatusBadge'
+import LifetimeBadge from '../components/LifetimeBadge'
 
 function TaskCard({ task, agentName }: { task: Task; agentName: string }) {
   const qc = useQueryClient()
@@ -179,7 +90,7 @@ function TaskCard({ task, agentName }: { task: Task; agentName: string }) {
         </div>
         <div className="text-right shrink-0 space-y-1">
           {task.status === 'active' && !isStanding && task.expires_at && (
-            <ExpiryCountdown expiresAt={task.expires_at} />
+            <CountdownTimer expiresAt={task.expires_at} showLabel />
           )}
           {task.status === 'active' && isStanding && (
             <span className="text-xs text-purple-600 font-medium">No expiry</span>
@@ -543,7 +454,10 @@ export default function Tasks() {
 
       {!isLoading && sorted.length === 0 && (
         <div className="text-sm text-gray-400 py-8 text-center">
-          {filter ? 'No tasks match this filter.' : 'No tasks yet. Tasks are created by agents using task-scoped authorization.'}
+          {filter
+            ? 'No tasks match this filter.'
+            : <>When your agent requests permission to run a task, it'll appear here for your approval.{(agentsData ?? []).length === 0 && (<>{' '}<Link to="/dashboard/agents" className="text-blue-600 hover:underline">Create an agent</Link> to get started.</>)}</>
+          }
         </div>
       )}
 

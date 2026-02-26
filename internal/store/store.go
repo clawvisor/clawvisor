@@ -58,6 +58,7 @@ type Store interface {
 	GetAuditEntry(ctx context.Context, id, userID string) (*AuditEntry, error)
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
+	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
 
 	// Tasks
 	CreateTask(ctx context.Context, task *Task) error
@@ -221,4 +222,11 @@ type AuditFilter struct {
 	TaskID     string // filter by task_id
 	Limit      int    // 0 → default (50)
 	Offset     int
+}
+
+// ActivityBucket is one row of the aggregated audit activity histogram.
+type ActivityBucket struct {
+	Bucket  time.Time `json:"bucket"`
+	Outcome string    `json:"outcome"`
+	Count   int       `json:"count"`
 }

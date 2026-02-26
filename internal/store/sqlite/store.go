@@ -631,6 +631,36 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	return entries, total, rows.Err()
 }
 
+// ── Audit Activity Buckets ────────────────────────────────────────────────────
+
+func (s *Store) AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]store.ActivityBucket, error) {
+	interval := bucketMinutes * 60
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT datetime((CAST(strftime('%s', timestamp) AS INTEGER) / ?) * ?, 'unixepoch') AS bucket,
+		       outcome, COUNT(*) AS cnt
+		FROM audit_log
+		WHERE user_id = ? AND timestamp >= ?
+		GROUP BY bucket, outcome
+		ORDER BY bucket ASC
+	`, interval, interval, userID, since.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var buckets []store.ActivityBucket
+	for rows.Next() {
+		var b store.ActivityBucket
+		var bucketStr string
+		if err := rows.Scan(&bucketStr, &b.Outcome, &b.Count); err != nil {
+			return nil, err
+		}
+		b.Bucket = parseTime(bucketStr)
+		buckets = append(buckets, b)
+	}
+	return buckets, rows.Err()
+}
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {

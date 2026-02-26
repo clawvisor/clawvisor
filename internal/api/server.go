@@ -199,6 +199,14 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/approvals/{request_id}/approve", user(approvalsHandler.Approve))
 	mux.Handle("POST /api/approvals/{request_id}/deny", user(approvalsHandler.Deny))
 
+	// Unified queue (user JWT)
+	queueHandler := handlers.NewQueueHandler(s.store)
+	mux.Handle("GET /api/queue", user(queueHandler.List))
+
+	// Overview (user JWT)
+	overviewHandler := handlers.NewOverviewHandler(s.store)
+	mux.Handle("GET /api/overview", user(overviewHandler.Get))
+
 	// Tasks (agent auth)
 	mux.Handle("POST /api/tasks", agent(tasksHandler.Create))
 	mux.Handle("GET /api/tasks/{id}", agent(tasksHandler.Get))
