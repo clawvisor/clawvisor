@@ -174,7 +174,11 @@ export default function Audit() {
       {isLoading && <div className="text-sm text-gray-400">Loading…</div>}
 
       {!isLoading && entries.length === 0 && (
-        <div className="text-sm text-gray-400 py-8 text-center">No entries match your filters.</div>
+        <div className="text-sm text-gray-400 py-8 text-center">
+          {outcomeFilter || serviceFilter
+            ? 'No entries match your filters.'
+            : "No activity yet. Your agent's requests will be logged here."}
+        </div>
       )}
 
       {entries.length > 0 && (
