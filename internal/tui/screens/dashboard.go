@@ -504,11 +504,13 @@ func (s *DashboardScreen) renderTaskAuditView() string {
 			if a.AutoExecute {
 				auto = "auto"
 			}
-			b.WriteString(fmt.Sprintf("  %s/%s (%s)", a.Service, a.Action, auto))
+			b.WriteString(fmt.Sprintf("  %s/%s (%s)\n", a.Service, a.Action, auto))
 			if a.ExpectedUse != "" {
-				b.WriteString("  — " + a.ExpectedUse)
+				wrapped := wordWrap(a.ExpectedUse, cw-4) // 4 = indent
+				for _, line := range wrapped {
+					b.WriteString("    " + tui.StyleDim.Render(line) + "\n")
+				}
 			}
-			b.WriteString("\n")
 		}
 	}
 
@@ -752,4 +754,28 @@ func (s *DashboardScreen) contentWidth() int {
 // *client.Task suitable for drillTask. QueueItem.Task is already a pointer.
 func taskPtrFromQueueTask(t *client.Task) *client.Task {
 	return t
+}
+
+// wordWrap breaks text into lines that fit within maxWidth, splitting at word
+// boundaries. Words longer than maxWidth are placed on their own line unsplit.
+func wordWrap(text string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	var lines []string
+	line := words[0]
+	for _, w := range words[1:] {
+		if len(line)+1+len(w) > maxWidth {
+			lines = append(lines, line)
+			line = w
+		} else {
+			line += " " + w
+		}
+	}
+	lines = append(lines, line)
+	return lines
 }
