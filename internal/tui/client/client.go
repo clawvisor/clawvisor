@@ -55,7 +55,7 @@ func (c *Client) Refresh() error {
 	}
 	body := map[string]string{"refresh_token": c.refreshToken}
 	var resp AuthResponse
-	if err := c.doJSON("POST", "/api/auth/refresh", body, &resp); err != nil {
+	if err := c.doJSON("POST", c.baseURL+"/api/auth/refresh", body, &resp); err != nil {
 		return fmt.Errorf("refresh: %w", err)
 	}
 	c.accessToken = resp.AccessToken
@@ -101,6 +101,16 @@ func (c *Client) LoginMagic(token string) (*AuthResponse, error) {
 	}
 	c.accessToken = resp.AccessToken
 	c.refreshToken = resp.RefreshToken
+	return &resp, nil
+}
+
+// ── Overview ────────────────────────────────────────────────────────────────
+
+func (c *Client) GetOverview() (*OverviewResponse, error) {
+	var resp OverviewResponse
+	if err := c.get("/api/overview", nil, &resp); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 

@@ -30,7 +30,7 @@ func NewApp(c *client.Client) *App {
 	return &App{
 		client:       c,
 		screens:      make(map[Screen]ScreenModel),
-		active:       ScreenPending,
+		active:       ScreenDashboard,
 		pollInterval: 5 * time.Second,
 	}
 }
@@ -198,6 +198,7 @@ func (a *App) switchTo(s Screen) tea.Cmd {
 
 func (a *App) renderSidebar() string {
 	screens := []Screen{
+		ScreenDashboard,
 		ScreenPending,
 		ScreenTasks,
 		ScreenActivity,
@@ -289,6 +290,15 @@ func (a *App) renderHelp() string {
 				{"r", "Refresh"},
 				{"?", "Toggle help"},
 				{"q", "Quit"},
+			},
+		},
+		{
+			"Dashboard",
+			[][2]string{
+				{"a", "Approve queue item"},
+				{"d", "Deny queue item"},
+				{"enter", "Drill into task/request"},
+				{"esc", "Back from drill-down"},
 			},
 		},
 		{

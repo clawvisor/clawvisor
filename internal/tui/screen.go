@@ -6,7 +6,8 @@ import tea "github.com/charmbracelet/bubbletea"
 type Screen int
 
 const (
-	ScreenPending Screen = iota
+	ScreenDashboard Screen = iota
+	ScreenPending
 	ScreenTasks
 	ScreenActivity
 	ScreenServices
@@ -15,6 +16,7 @@ const (
 )
 
 var ScreenNames = []string{
+	"Dashboard",
 	"Pending",
 	"Tasks",
 	"Recent Activity",

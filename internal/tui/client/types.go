@@ -192,6 +192,21 @@ type Restriction struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ── Overview ────────────────────────────────────────────────────────────────
+
+type OverviewResponse struct {
+	Queue       []QueueItem      `json:"queue"`
+	QueueTotal  int              `json:"queue_total"`
+	ActiveTasks []*Task          `json:"active_tasks"`
+	Activity    []ActivityBucket `json:"activity"`
+}
+
+type ActivityBucket struct {
+	Bucket  time.Time `json:"bucket"`
+	Outcome string    `json:"outcome"`
+	Count   int       `json:"count"`
+}
+
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 type Agent struct {
