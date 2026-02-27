@@ -48,6 +48,8 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 
 			ctx := context.WithValue(r.Context(), AgentContextKey, agent)
 			ctx = context.WithValue(ctx, AgentRawTokenKey, token)
+			AddLogField(ctx, "agent_id", agent.ID)
+			AddLogField(ctx, "user_id", agent.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

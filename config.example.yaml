@@ -2,6 +2,8 @@ server:
   port: 8080
   host: "127.0.0.1"       # override to "0.0.0.0" for Cloud Run
   frontend_dir: "./web/dist"
+  log_format: ""           # "json", "text", or "" (auto: json in prod, text in dev). Env: LOG_FORMAT
+  log_level: "info"        # "debug", "info", "warn", "error". Env: LOG_LEVEL
 
 database:
   driver: "postgres"       # "postgres" | "sqlite"
@@ -69,3 +71,18 @@ llm:
 
 mcp:
   approval_timeout: 240    # MCP tool calls block this many seconds waiting for approval
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+rate_limit:
+  gateway:                   # per agent
+    limit: 60                # requests per window
+    window: 60               # seconds
+  oauth:                     # per user
+    limit: 5
+    window: 60
+  policy_api:                # per user — restrictions writes
+    limit: 30
+    window: 60
+  review_run:                # per user — manual review triggers
+    limit: 5
+    window: 3600

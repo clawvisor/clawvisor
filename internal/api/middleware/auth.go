@@ -46,6 +46,7 @@ func RequireUser(jwtSvc *auth.JWTService, st store.Store) func(http.Handler) htt
 			}
 
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			AddLogField(ctx, "user_id", user.ID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -16,9 +16,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/config"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/notify"
+	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/store"
 	"github.com/clawvisor/clawvisor/internal/vault"
 	skillfiles "github.com/clawvisor/clawvisor/skills"
+
+	"golang.org/x/time/rate"
 )
 
 // Server is the Clawvisor HTTP server.
@@ -52,9 +55,19 @@ func New(
 	llmCfg config.LLMConfig,
 	magicStore *auth.MagicTokenStore,
 ) (*Server, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}
+	var logHandler slog.Handler
+	switch {
+	case cfg.Server.LogFormat == "json":
+		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+	case cfg.Server.LogFormat == "text":
+		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+	case !cfg.Server.IsLocal():
+		logHandler = slog.NewJSONHandler(os.Stdout, logOpts)
+	default:
+		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
+	}
+	logger := slog.New(logHandler)
 
 	s := &Server{
 		cfg:        cfg,
@@ -134,9 +147,40 @@ func (s *Server) routes() http.Handler {
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
 	logMiddleware := middleware.Logging(s.logger)
+	securityMiddleware := middleware.Security(s.cfg.Server.IsLocal())
+
+	// Rate limiters (skip when config is zero-valued, e.g. in tests)
+	rlCfg := s.cfg.RateLimit
+	gatewayRL := newKeyedLimiterFromBucket(rlCfg.Gateway)
+	oauthRL := newKeyedLimiterFromBucket(rlCfg.OAuth)
+	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
+
+	agentKeyFn := func(r *http.Request) string {
+		if a := middleware.AgentFromContext(r.Context()); a != nil {
+			return a.ID
+		}
+		return ""
+	}
+	userKeyFn := func(r *http.Request) string {
+		if u := middleware.UserFromContext(r.Context()); u != nil {
+			return u.ID
+		}
+		return ""
+	}
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
 	agent := func(h http.HandlerFunc) http.Handler { return requireAgent(h) }
+
+	// Rate-limited route helpers: auth runs first (resolves identity), then rate limit checks.
+	agentRateLimited := func(h http.HandlerFunc) http.Handler {
+		return requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(h))
+	}
+	userOAuthRL := func(h http.HandlerFunc) http.Handler {
+		return requireUser(middleware.RateLimit(oauthRL, userKeyFn, rlCfg.OAuth.Limit)(h))
+	}
+	userPolicyRL := func(h http.HandlerFunc) http.Handler {
+		return requireUser(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
+	}
 
 	// Health (no auth)
 	mux.HandleFunc("GET /health", healthHandler.Health)
@@ -159,10 +203,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("PUT /api/me", user(authHandler.UpdateMe))
 	mux.Handle("DELETE /api/me", user(authHandler.DeleteMe))
 
-	// Restrictions
+	// Restrictions (rate-limited writes)
 	mux.Handle("GET /api/restrictions", user(restrictionsHandler.List))
-	mux.Handle("POST /api/restrictions", user(restrictionsHandler.Create))
-	mux.Handle("DELETE /api/restrictions/{id}", user(restrictionsHandler.Delete))
+	mux.Handle("POST /api/restrictions", userPolicyRL(restrictionsHandler.Create))
+	mux.Handle("DELETE /api/restrictions/{id}", userPolicyRL(restrictionsHandler.Delete))
 
 	// Agents (user JWT)
 	mux.Handle("GET /api/agents", user(agentsHandler.List))
@@ -178,14 +222,14 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
 
-	// Gateway (agent token)
-	mux.Handle("POST /api/gateway/request", agent(gatewayHandler.HandleRequest))
-	mux.Handle("GET /api/gateway/request/{request_id}/status", agent(gatewayHandler.HandleStatus))
+	// Gateway (agent token, rate-limited)
+	mux.Handle("POST /api/gateway/request", agentRateLimited(gatewayHandler.HandleRequest))
+	mux.Handle("GET /api/gateway/request/{request_id}/status", agentRateLimited(gatewayHandler.HandleStatus))
 
-	// Services / OAuth (user JWT)
+	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
-	mux.Handle("GET /api/oauth/url", user(servicesHandler.OAuthGetURL))     // fetch → returns {"url":"..."}
-	mux.Handle("GET /api/oauth/start", user(servicesHandler.OAuthStart))    // kept for compat
+	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))     // fetch → returns {"url":"..."}
+	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart))    // kept for compat
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback) // no auth: browser redirect
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
@@ -248,7 +292,7 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
-	return logMiddleware(mux)
+	return securityMiddleware(logMiddleware(mux))
 }
 
 // consumeTelegramDecisions reads from the Telegram notifier's decision channel
@@ -333,4 +377,16 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.Info("server stopped")
 		return nil
 	}
+}
+
+// newKeyedLimiterFromBucket creates a KeyedLimiter from a config bucket.
+// Returns nil when the bucket has zero values (unconfigured).
+func newKeyedLimiterFromBucket(b config.RateLimitBucket) *ratelimit.KeyedLimiter {
+	if b.Limit <= 0 || b.Window <= 0 {
+		return nil
+	}
+	return ratelimit.NewKeyedLimiter(
+		rate.Limit(float64(b.Limit)/float64(b.Window)),
+		b.Limit,
+	)
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -11,16 +12,17 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Vault    VaultConfig    `yaml:"vault"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Approval ApprovalConfig `yaml:"approval"`
-	Callback CallbackConfig `yaml:"callback"`
-	Task     TaskConfig     `yaml:"task"`
-	LLM      LLMConfig      `yaml:"llm"`
-	MCP      MCPConfig      `yaml:"mcp"`
-	Services ServicesConfig `yaml:"services"`
+	Server    ServerConfig    `yaml:"server"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Vault     VaultConfig     `yaml:"vault"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Approval  ApprovalConfig  `yaml:"approval"`
+	Callback  CallbackConfig  `yaml:"callback"`
+	Task      TaskConfig      `yaml:"task"`
+	LLM       LLMConfig       `yaml:"llm"`
+	MCP       MCPConfig       `yaml:"mcp"`
+	Services  ServicesConfig  `yaml:"services"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
 }
 
 // CallbackConfig holds settings for callback delivery.
@@ -39,6 +41,8 @@ type ServerConfig struct {
 	FrontendDir string `yaml:"frontend_dir"`
 	PublicURL   string `yaml:"public_url"`  // e.g. "http://192.168.4.247:5173" — used in Telegram notification links
 	AuthMode    string `yaml:"auth_mode"`   // "magic_link", "password", or "" (auto-detect from IsLocal)
+	LogFormat   string `yaml:"log_format"`  // "json", "text", or "" (auto: json in prod, text in dev)
+	LogLevel    string `yaml:"log_level"`   // "debug", "info", "warn", "error" (default: "info")
 }
 
 type DatabaseConfig struct {
@@ -90,6 +94,20 @@ type LLMConfig struct {
 // MCPConfig holds settings for the MCP server (Phase 8).
 type MCPConfig struct {
 	ApprovalTimeout int `yaml:"approval_timeout"` // Reserved for Phase 8: MCP tool call approval timeout in seconds (default 240s)
+}
+
+// RateLimitBucket configures a single rate limit bucket.
+type RateLimitBucket struct {
+	Limit  int `yaml:"limit"`  // max requests per window
+	Window int `yaml:"window"` // window in seconds
+}
+
+// RateLimitConfig holds rate limit settings for different route groups.
+type RateLimitConfig struct {
+	Gateway   RateLimitBucket `yaml:"gateway"`    // per agent
+	OAuth     RateLimitBucket `yaml:"oauth"`      // per user
+	PolicyAPI RateLimitBucket `yaml:"policy_api"` // per user
+	ReviewRun RateLimitBucket `yaml:"review_run"` // per user
 }
 
 // ServicesConfig groups all adapter/service-specific settings.
@@ -188,6 +206,12 @@ func Default() *Config {
 		MCP: MCPConfig{
 			ApprovalTimeout: 240,
 		},
+		RateLimit: RateLimitConfig{
+			Gateway:   RateLimitBucket{Limit: 60, Window: 60},
+			OAuth:     RateLimitBucket{Limit: 5, Window: 60},
+			PolicyAPI: RateLimitBucket{Limit: 30, Window: 60},
+			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},
+		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},
 			IMessage: IMessageServicesConfig{Enabled: true},
@@ -285,6 +309,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	// LLM Verification overrides
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		cfg.Server.LogFormat = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.Server.LogLevel = v
+	}
+
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_ENABLED"); v != "" {
 		cfg.LLM.Verification.Enabled = v == "true" || v == "1"
 	}
@@ -325,5 +356,19 @@ func (s ServerConfig) IsLocal() bool {
 // Addr returns the server listen address.
 func (s ServerConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+}
+
+// SlogLevel returns the slog.Level matching the configured LogLevel string.
+func (s ServerConfig) SlogLevel() slog.Level {
+	switch strings.ToLower(s.LogLevel) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 

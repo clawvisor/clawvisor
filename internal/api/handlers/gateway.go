@@ -93,6 +93,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service and action are required")
 		return
 	}
+
+	middleware.AddLogField(ctx, "service", req.Service)
+	middleware.AddLogField(ctx, "action", req.Action)
+
 	if req.Reason == "" {
 		writeError(w, http.StatusBadRequest, "MISSING_REASON", "reason is required on every gateway request")
 		return
@@ -121,6 +125,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	middleware.AddLogField(ctx, "request_id", req.RequestID)
 
 	paramsSafe, _ := json.Marshal(format.StripSecrets(cloneParams(req.Params)))
 
@@ -153,6 +158,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		restriction, _ = h.store.MatchRestriction(ctx, agent.UserID, serviceType, req.Action)
 	}
 	if restriction != nil {
+		middleware.AddLogField(ctx, "decision", "block")
+		middleware.AddLogField(ctx, "outcome", "blocked")
 		e := baseEntry("block", "blocked", nil)
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
@@ -333,6 +340,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Success
+			middleware.AddLogField(ctx, "decision", "execute")
+			middleware.AddLogField(ctx, "outcome", "executed")
 			e := baseEntry("execute", "executed", taskIDPtr)
 			e.DurationMS = dur
 			if verdict != nil {
@@ -417,6 +426,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Route to per-request approval.
+	middleware.AddLogField(ctx, "decision", "approve")
+	middleware.AddLogField(ctx, "outcome", "pending")
 	e := baseEntry("approve", "pending", nil)
 	if req.TaskID != "" {
 		e.TaskID = &req.TaskID
