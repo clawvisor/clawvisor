@@ -424,8 +424,8 @@ func oauthPopupClose(w http.ResponseWriter, errMsg, cliCallback string) {
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
 .card{background:#fff;border-radius:8px;padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:320px}
 h2{color:#dc2626;margin:0 0 8px}p{color:#6b7280;margin:4px 0;font-size:14px}</style></head>
-<body><div class="card"><h2>Authorization failed</h2><p>%s</p><p>This window will close automatically.</p></div>
-<script>setTimeout(function(){window.close()},5000)</script></body></html>`,
+<body><div class="card"><h2>Authorization failed</h2><p>%s</p><p>You can close this tab.</p></div>
+</body></html>`,
 			html.EscapeString(errMsg))
 		return
 	}
@@ -438,10 +438,10 @@ h2{color:#dc2626;margin:0 0 8px}p{color:#6b7280;margin:4px 0;font-size:14px}</st
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
 .card{background:#fff;border-radius:8px;padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:320px}
 h2{color:#16a34a;margin:0 0 8px}p{color:#6b7280;margin:0;font-size:14px}</style></head>
-<body><div class="card"><h2>&#10003; Authorized</h2><p>Service activated. This window will close automatically.</p></div>
+<body><div class="card"><h2>&#10003; Authorized</h2><p>Service activated. You can close this tab.</p></div>
 <script>
 if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},'*')}catch(e){}}
-%ssetTimeout(function(){window.close()},1500)
+%stry{window.close()}catch(e){}
 </script></body></html>`, cliCallbackSnippet)
 }
 

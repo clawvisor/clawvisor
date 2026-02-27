@@ -94,6 +94,22 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 
 	// Detail overlay takes priority.
 	if s.detail.Visible() {
+		// Intercept activation/deactivation keys inside the detail view.
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			switch msg.String() {
+			case "a":
+				if s.cursor < len(s.services) && s.services[s.cursor].Status != "activated" && s.services[s.cursor].RequiresActivation {
+					s.detail.Hide()
+					return s, s.startActivation()
+				}
+			case "d":
+				if s.cursor < len(s.services) && s.services[s.cursor].Status == "activated" {
+					s.detail.Hide()
+					s.startDeactivation()
+					return s, nil
+				}
+			}
+		}
 		d, cmd := s.detail.Update(msg)
 		s.detail = d
 		if cmd != nil {
@@ -414,7 +430,9 @@ func (s *ServicesScreen) renderService(svc client.ServiceInfo, selected, connect
 
 	status := ""
 	if connected {
-		status = tui.StyleGreen.Render("✓ healthy")
+		status = tui.StyleGreen.Render("✓ connected")
+	} else if selected && svc.RequiresActivation {
+		status = tui.StyleDim.Render("[a] connect")
 	}
 
 	line := marker + icon + " " +
@@ -652,12 +670,20 @@ func (s *ServicesScreen) showDetail() {
 	b.WriteString(tui.StyleDim.Render("ID:          ") + svc.ID + "\n")
 	b.WriteString(tui.StyleDim.Render("Name:        ") + svc.Name + "\n")
 	b.WriteString(tui.StyleDim.Render("Description: ") + svc.Description + "\n")
-	b.WriteString(tui.StyleDim.Render("Status:      ") + svc.Status + "\n")
-	b.WriteString(tui.StyleDim.Render("OAuth:       "))
-	if svc.OAuth {
-		b.WriteString("Yes")
+
+	b.WriteString(tui.StyleDim.Render("Status:      "))
+	if svc.Status == "activated" {
+		b.WriteString(tui.StyleGreen.Render("Connected"))
 	} else {
-		b.WriteString("No (API key)")
+		b.WriteString(tui.StyleAmber.Render("Not connected"))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(tui.StyleDim.Render("Auth:        "))
+	if svc.OAuth {
+		b.WriteString("OAuth")
+	} else {
+		b.WriteString("API key")
 	}
 	b.WriteString("\n")
 
@@ -670,6 +696,13 @@ func (s *ServicesScreen) showDetail() {
 		for _, a := range svc.Actions {
 			b.WriteString("  " + a + "\n")
 		}
+	}
+
+	// Action hint at the bottom of the detail content.
+	if svc.Status != "activated" && svc.RequiresActivation {
+		b.WriteString("\n" + tui.StyleAmber.Render("Press [a] to connect this service.") + "\n")
+	} else if svc.Status == "activated" {
+		b.WriteString("\n" + tui.StyleDim.Render("Press [d] to disconnect.") + "\n")
 	}
 
 	s.detail.Show("Service: "+svc.Name, b.String())
