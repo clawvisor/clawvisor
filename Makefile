@@ -8,8 +8,9 @@ build: web/dist
 build-server: web/dist
 	go build -o bin/clawvisor-server ./cmd/server
 
-web/dist: web/src
+web/dist: $(shell find web/src -type f)
 	cd web && npm install && npm run build
+	@touch web/dist
 
 # ── Test ───────────────────────────────────────────────────────────────────────
 
