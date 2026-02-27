@@ -285,6 +285,8 @@ export const api = {
       post<AuthResponse>('/api/auth/login', { email, password }),
     refresh: (refreshToken: string) =>
       post<AuthResponse>('/api/auth/refresh', { refresh_token: refreshToken }),
+    magic: (token: string) =>
+      post<AuthResponse>('/api/auth/magic', { token }),
     logout: (refreshToken?: string) =>
       post<void>('/api/auth/logout', { refresh_token: refreshToken }),
     me: () => get<User>('/api/me'),

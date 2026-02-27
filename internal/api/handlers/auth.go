@@ -283,10 +283,10 @@ func (h *AuthHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleMagicLink validates a magic link token and bootstraps a browser session.
-// It exchanges the token for a refresh token and redirects to the SPA with the
-// refresh token in a URL fragment (never sent to the server or logged). The SPA
-// picks it up from the fragment, stores it, and clears the URL.
+// HandleMagicLink redirects to the SPA with the magic token in a URL fragment.
+// The SPA's MagicLink page extracts the token, calls POST /api/auth/magic to
+// exchange it for a session, and redirects to the dashboard on success.
+// Fragments are never sent to the server, so the token stays client-side.
 //
 // GET /auth/local?token=...
 func (h *AuthHandler) HandleMagicLink(w http.ResponseWriter, r *http.Request) {
@@ -295,32 +295,7 @@ func (h *AuthHandler) HandleMagicLink(w http.ResponseWriter, r *http.Request) {
 		h.magicLinkError(w, "Missing token parameter.")
 		return
 	}
-	if h.magicStore == nil {
-		h.magicLinkError(w, "Magic link auth is not enabled.")
-		return
-	}
-
-	userID, err := h.magicStore.Validate(token)
-	if err != nil {
-		h.magicLinkError(w, "Link expired or already used. Restart the server for a new one.")
-		return
-	}
-
-	user, err := h.st.GetUserByID(r.Context(), userID)
-	if err != nil {
-		h.magicLinkError(w, "User not found.")
-		return
-	}
-
-	resp, err := h.issueTokens(r, user)
-	if err != nil {
-		h.magicLinkError(w, "Could not create session.")
-		return
-	}
-
-	// Redirect to the SPA with the refresh token in a URL fragment.
-	// Fragments are never sent to the server, so the token stays client-side.
-	http.Redirect(w, r, "/dashboard#token="+resp.RefreshToken, http.StatusFound)
+	http.Redirect(w, r, "/magic-link#token="+token, http.StatusFound)
 }
 
 func (h *AuthHandler) magicLinkError(w http.ResponseWriter, msg string) {
