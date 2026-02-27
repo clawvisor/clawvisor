@@ -13,8 +13,8 @@ type GlobalKeys struct {
 
 var Keys = GlobalKeys{
 	Quit: key.NewBinding(
-		key.WithKeys("q"),
-		key.WithHelp("q", "quit"),
+		key.WithKeys("ctrl+d"),
+		key.WithHelp("ctrl+d", "quit"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),

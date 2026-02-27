@@ -247,7 +247,7 @@ func (a *App) renderStatusBar(hints []string) string {
 	globalHints := []string{
 		StyleStatusKey.Render("[tab]") + StyleStatusBar.Render(" Nav"),
 		StyleStatusKey.Render("[?]") + StyleStatusBar.Render(" Help"),
-		StyleStatusKey.Render("[q]") + StyleStatusBar.Render(" Quit"),
+		StyleStatusKey.Render("[ctrl+d]") + StyleStatusBar.Render(" Quit"),
 	}
 
 	all := append(hints, globalHints...)
@@ -289,7 +289,7 @@ func (a *App) renderHelp() string {
 				{"esc", "Close / go back"},
 				{"r", "Refresh"},
 				{"?", "Toggle help"},
-				{"q", "Quit"},
+				{"ctrl+d", "Quit"},
 			},
 		},
 		{
