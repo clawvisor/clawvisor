@@ -412,6 +412,13 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 // If cliCallback is set, the success page also pings that URL to notify the TUI.
 func oauthPopupClose(w http.ResponseWriter, errMsg, cliCallback string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Override the global CSP set by security middleware. This page uses
+	// inline scripts (postMessage, window.close, fetch to TUI callback)
+	// which are blocked by the default "script-src 'self'" policy.
+	// connect-src http://localhost:* allows the fetch to the TUI's local
+	// one-shot server when cli_callback is provided.
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src http://localhost:* http://127.0.0.1:*")
 	if errMsg != "" {
 		fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error – Clawvisor</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
