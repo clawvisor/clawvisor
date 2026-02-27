@@ -52,14 +52,15 @@ const (
 // ── Model ───────────────────────────────────────────────────────────────────
 
 type ServicesScreen struct {
-	client   *client.Client
-	services []client.ServiceInfo
-	cursor   int
-	width    int
-	height   int
-	loading  bool
-	err      error
-	detail   Detail
+	client       *client.Client
+	services     []client.ServiceInfo
+	displayOrder []int // indexes into services, sorted: connected first then available
+	cursor       int   // index into displayOrder
+	width        int
+	height       int
+	loading      bool
+	err          error
+	detail       Detail
 
 	// Activation flow state.
 	inputStep         int
@@ -96,17 +97,19 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 	if s.detail.Visible() {
 		// Intercept activation/deactivation keys inside the detail view.
 		if msg, isKey := msg.(tea.KeyMsg); isKey {
-			switch msg.String() {
-			case "a":
-				if s.cursor < len(s.services) && s.services[s.cursor].Status != "activated" && s.services[s.cursor].RequiresActivation {
-					s.detail.Hide()
-					return s, s.startActivation()
-				}
-			case "d":
-				if s.cursor < len(s.services) && s.services[s.cursor].Status == "activated" {
-					s.detail.Hide()
-					s.startDeactivation()
-					return s, nil
+			if svc := s.selectedService(); svc != nil {
+				switch msg.String() {
+				case "a":
+					if svc.Status != "activated" && svc.RequiresActivation {
+						s.detail.Hide()
+						return s, s.startActivation()
+					}
+				case "d":
+					if svc.Status == "activated" {
+						s.detail.Hide()
+						s.startDeactivation()
+						return s, nil
+					}
 				}
 			}
 		}
@@ -225,7 +228,7 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 				s.cursor--
 			}
 		case key.Matches(msg, tui.ListNavKeys.Down):
-			if s.cursor < len(s.services)-1 {
+			if s.cursor < len(s.displayOrder)-1 {
 				s.cursor++
 			}
 		case key.Matches(msg, tui.ListNavKeys.Enter):
@@ -244,8 +247,9 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 	case servicesDataMsg:
 		s.loading = false
 		s.services = msg.services
-		if s.cursor >= len(s.services) {
-			s.cursor = max(0, len(s.services)-1)
+		s.rebuildDisplayOrder()
+		if s.cursor >= len(s.displayOrder) {
+			s.cursor = max(0, len(s.displayOrder)-1)
 		}
 
 	case oauthURLMsg:
@@ -350,40 +354,32 @@ func (s *ServicesScreen) View() string {
 		return b.String()
 	}
 
-	// Split by status.
-	var connected, available []indexedService
-	for i, svc := range s.services {
-		is := indexedService{svc: svc, idx: i}
-		if svc.Status == "activated" {
-			connected = append(connected, is)
-		} else {
-			available = append(available, is)
+	// Render in display order (connected first, then available).
+	inConnected := false
+	inAvailable := false
+	for displayIdx, svcIdx := range s.displayOrder {
+		svc := s.services[svcIdx]
+		connected := svc.Status == "activated"
+		if connected && !inConnected {
+			inConnected = true
+			b.WriteString(tui.StyleBold.Render("CONNECTED") + "\n")
 		}
-	}
-
-	if len(connected) > 0 {
-		b.WriteString(tui.StyleBold.Render("CONNECTED") + "\n")
-		for _, is := range connected {
-			sel := is.idx == s.cursor
-			b.WriteString(s.renderService(is.svc, sel, true))
+		if !connected && !inAvailable {
+			inAvailable = true
+			if inConnected {
+				b.WriteString("\n")
+			}
+			b.WriteString(tui.StyleDim.Render("AVAILABLE (not connected)") + "\n")
 		}
-		b.WriteString("\n")
-	}
-
-	if len(available) > 0 {
-		b.WriteString(tui.StyleDim.Render("AVAILABLE (not connected)") + "\n")
-		for _, is := range available {
-			sel := is.idx == s.cursor
-			b.WriteString(s.renderService(is.svc, sel, false))
-		}
+		sel := displayIdx == s.cursor
+		b.WriteString(s.renderService(svc, sel, connected))
 	}
 
 	return b.String()
 }
 
 func (s *ServicesScreen) ShortHelp() []string {
-	if s.cursor < len(s.services) {
-		svc := s.services[s.cursor]
+	if svc := s.selectedService(); svc != nil {
 		if svc.Status == "activated" {
 			return []string{
 				tui.StyleStatusKey.Render("[d]") + tui.StyleStatusBar.Render(" Disconnect"),
@@ -403,11 +399,6 @@ func (s *ServicesScreen) ShortHelp() []string {
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
-
-type indexedService struct {
-	svc client.ServiceInfo
-	idx int
-}
 
 func (s *ServicesScreen) renderService(svc client.ServiceInfo, selected, connected bool) string {
 	marker := "  "
@@ -525,15 +516,12 @@ func (s *ServicesScreen) viewOAuthWaiting() string {
 // ── Activation flow ─────────────────────────────────────────────────────────
 
 func (s *ServicesScreen) startActivation() tea.Cmd {
-	if s.cursor >= len(s.services) {
-		return nil
-	}
-	svc := s.services[s.cursor]
-	if svc.Status == "activated" || !svc.RequiresActivation {
+	svc := s.selectedService()
+	if svc == nil || svc.Status == "activated" || !svc.RequiresActivation {
 		return nil
 	}
 
-	s.activatingService = &svc
+	s.activatingService = svc
 	s.inputStep = stepAlias
 	ni := textinput.New()
 	ni.Placeholder = "default"
@@ -602,11 +590,8 @@ func (s *ServicesScreen) waitForOAuth() tea.Cmd {
 // ── Deactivation ────────────────────────────────────────────────────────────
 
 func (s *ServicesScreen) startDeactivation() {
-	if s.cursor >= len(s.services) {
-		return
-	}
-	svc := s.services[s.cursor]
-	if svc.Status != "activated" {
+	svc := s.selectedService()
+	if svc == nil || svc.Status != "activated" {
 		return
 	}
 	c := components.NewConfirm(
@@ -618,10 +603,10 @@ func (s *ServicesScreen) startDeactivation() {
 }
 
 func (s *ServicesScreen) deactivateSelected() tea.Cmd {
-	if s.cursor >= len(s.services) {
+	svc := s.selectedService()
+	if svc == nil {
 		return nil
 	}
-	svc := s.services[s.cursor]
 	cl := s.client
 	alias := svc.Alias
 	return func() tea.Msg {
@@ -631,6 +616,31 @@ func (s *ServicesScreen) deactivateSelected() tea.Cmd {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// selectedService returns the service at the current cursor position
+// (in display order), or nil if the cursor is out of range.
+func (s *ServicesScreen) selectedService() *client.ServiceInfo {
+	if s.cursor < 0 || s.cursor >= len(s.displayOrder) {
+		return nil
+	}
+	return &s.services[s.displayOrder[s.cursor]]
+}
+
+// rebuildDisplayOrder computes the visual ordering: connected services first,
+// then available (not connected). Called whenever s.services changes.
+func (s *ServicesScreen) rebuildDisplayOrder() {
+	s.displayOrder = make([]int, 0, len(s.services))
+	for i, svc := range s.services {
+		if svc.Status == "activated" {
+			s.displayOrder = append(s.displayOrder, i)
+		}
+	}
+	for i, svc := range s.services {
+		if svc.Status != "activated" {
+			s.displayOrder = append(s.displayOrder, i)
+		}
+	}
+}
 
 func (s *ServicesScreen) resetActivation() {
 	s.inputStep = stepNone
@@ -661,10 +671,10 @@ func (s *ServicesScreen) fetchServices() tea.Cmd {
 }
 
 func (s *ServicesScreen) showDetail() {
-	if s.cursor >= len(s.services) {
+	svc := s.selectedService()
+	if svc == nil {
 		return
 	}
-	svc := s.services[s.cursor]
 
 	var b strings.Builder
 	b.WriteString(tui.StyleDim.Render("ID:          ") + svc.ID + "\n")
