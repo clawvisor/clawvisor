@@ -24,6 +24,9 @@ web/dist/
 # Terraform (has its own git repo)
 terraform/
 
+# Landing page (has its own git repo)
+landing/
+
 # OS
 .DS_Store
 Thumbs.db
