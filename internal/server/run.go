@@ -235,7 +235,7 @@ func Run(logger *slog.Logger) error {
 		if displayHost == "0.0.0.0" || displayHost == "127.0.0.1" || displayHost == "" {
 			displayHost = "localhost"
 		}
-		magicURL = fmt.Sprintf("http://%s:%d/auth/local?token=%s", displayHost, cfg.Server.Port, token)
+		magicURL = fmt.Sprintf("http://%s:%d/magic-link?token=%s", displayHost, cfg.Server.Port, token)
 
 		// Generate a second magic token for TUI auto-login and write it to
 		// ~/.clawvisor/.local-session so `clawvisor tui` can authenticate

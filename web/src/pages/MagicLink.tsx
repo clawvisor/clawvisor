@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { api, setAccessToken } from '../api/client'
 
@@ -7,33 +7,27 @@ const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
 
 export default function MagicLink() {
   const { isAuthenticated, isLoading } = useAuth()
+  const [searchParams] = useSearchParams()
+  const magicToken = searchParams.get('token')
   const [error, setError] = useState<string | null>(null)
-  const [exchanging, setExchanging] = useState(false)
+  const [exchanging, setExchanging] = useState(!!magicToken)
   const didExchange = useRef(false)
 
   useEffect(() => {
-    if (didExchange.current) return
-    const hash = window.location.hash
-    if (!hash.startsWith('#token=')) return
+    if (didExchange.current || !magicToken) return
     didExchange.current = true
 
-    const magicToken = hash.slice('#token='.length)
-    window.history.replaceState(null, '', window.location.pathname)
-    if (!magicToken) return
-
-    setExchanging(true)
     api.auth.magic(magicToken)
       .then((resp) => {
         setAccessToken(resp.access_token)
         localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
-        // Force a page reload so AuthProvider picks up the new session cleanly.
         window.location.href = '/dashboard'
       })
       .catch(() => {
         setError('Link expired or already used. Restart the server for a new one.')
         setExchanging(false)
       })
-  }, [])
+  }, [magicToken])
 
   if (isLoading || exchanging) {
     return <div className="min-h-screen flex items-center justify-center">Signing in...</div>

@@ -194,7 +194,6 @@ func (s *Server) routes() http.Handler {
 
 	// Magic link auth (no auth required; only registered when magicStore is set)
 	if s.magicStore != nil {
-		mux.HandleFunc("GET /auth/local", authHandler.HandleMagicLink)
 		mux.HandleFunc("POST /api/auth/magic", authHandler.ExchangeMagic)
 	}
 
@@ -286,6 +285,9 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			path := s.cfg.Server.FrontendDir + r.URL.Path
 			if _, err := os.Stat(path); os.IsNotExist(err) || r.URL.Path == "/" {
+				// index.html must not be cached — it references content-hashed
+				// JS/CSS chunks, so a stale copy serves outdated code.
+				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, s.cfg.Server.FrontendDir+"/index.html")
 				return
 			}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -283,33 +282,8 @@ func (h *AuthHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleMagicLink redirects to the SPA with the magic token in a URL fragment.
-// The SPA's MagicLink page extracts the token, calls POST /api/auth/magic to
-// exchange it for a session, and redirects to the dashboard on success.
-// Fragments are never sent to the server, so the token stays client-side.
-//
-// GET /auth/local?token=...
-func (h *AuthHandler) HandleMagicLink(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		h.magicLinkError(w, "Missing token parameter.")
-		return
-	}
-	http.Redirect(w, r, "/magic-link#token="+token, http.StatusFound)
-}
-
-func (h *AuthHandler) magicLinkError(w http.ResponseWriter, msg string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusUnauthorized)
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><title>Auth Error</title></head><body>
-<h2>Authentication Failed</h2>
-<p>%s</p>
-</body></html>`, msg)
-}
-
 // ExchangeMagic validates a magic token via JSON and returns a token pair.
-// This is the API equivalent of HandleMagicLink, used by the TUI.
+// Used by the SPA's MagicLink page and by the TUI.
 //
 // POST /api/auth/magic
 // Body: {"token": "..."}
