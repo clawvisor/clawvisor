@@ -294,12 +294,13 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "task_approved",
 				AuditID:   "",
-			}, "")
+			}, cbKey)
 		}()
 	}
 
@@ -353,12 +354,13 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "denied",
 				AuditID:   "",
-			}, "")
+			}, cbKey)
 		}()
 	}
 
@@ -554,12 +556,13 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "scope_expanded",
 				AuditID:   "",
-			}, "")
+			}, cbKey)
 		}()
 	}
 
@@ -624,12 +627,13 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "scope_expansion_denied",
 				AuditID:   "",
-			}, "")
+			}, cbKey)
 		}()
 	}
 
@@ -667,11 +671,12 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "task_approved",
-			}, "")
+			}, cbKey)
 		}()
 	}
 	return nil
@@ -698,11 +703,12 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	h.decrementNotifierPolling(userID)
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "denied",
-			}, "")
+			}, cbKey)
 		}()
 	}
 	return nil
@@ -731,11 +737,12 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "scope_expanded",
-			}, "")
+			}, cbKey)
 		}()
 	}
 	return nil
@@ -774,11 +781,12 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 	h.decrementNotifierPolling(userID)
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 		go func() {
 			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
 				RequestID: taskID,
 				Status:    "scope_expansion_denied",
-			}, "")
+			}, cbKey)
 		}()
 	}
 	return nil

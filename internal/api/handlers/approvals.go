@@ -318,10 +318,11 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		h.updateNotificationMsg(ctx, "task", task.ID, task.UserID, "⏰ <b>Task expired</b>")
 
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
+			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
 			_ = callback.DeliverResult(ctx, *task.CallbackURL, &callback.Payload{
 				RequestID: task.ID,
 				Status:    "task_expired",
-			}, "")
+			}, cbKey)
 		}
 		h.decrementNotifierPolling(task.UserID)
 		h.logger.Info("task expired", "task_id", task.ID)
