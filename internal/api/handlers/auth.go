@@ -284,8 +284,9 @@ func (h *AuthHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleMagicLink validates a magic link token and bootstraps a browser session.
-// It writes a small HTML page that stores the refresh token in localStorage and
-// redirects to the dashboard. The SPA's existing session restore logic picks it up.
+// It exchanges the token for a refresh token and redirects to the SPA with the
+// refresh token in a URL fragment (never sent to the server or logged). The SPA
+// picks it up from the fragment, stores it, and clears the URL.
 //
 // GET /auth/local?token=...
 func (h *AuthHandler) HandleMagicLink(w http.ResponseWriter, r *http.Request) {
@@ -317,16 +318,9 @@ func (h *AuthHandler) HandleMagicLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write a small HTML page that stores tokens and redirects to the dashboard.
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><title>Signing in…</title></head><body>
-<p>Signing in…</p>
-<script>
-localStorage.setItem('clawvisor_refresh_token', %q);
-window.location.href = '/dashboard';
-</script>
-</body></html>`, resp.RefreshToken)
+	// Redirect to the SPA with the refresh token in a URL fragment.
+	// Fragments are never sent to the server, so the token stays client-side.
+	http.Redirect(w, r, "/dashboard#token="+resp.RefreshToken, http.StatusFound)
 }
 
 func (h *AuthHandler) magicLinkError(w http.ResponseWriter, msg string) {

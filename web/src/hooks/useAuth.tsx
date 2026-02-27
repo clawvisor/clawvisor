@@ -28,6 +28,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (didInit.current) return
     didInit.current = true
 
+    // Check for a magic-link token in the URL fragment (e.g. /dashboard#token=...).
+    // The backend redirects here after validating the magic link. Fragments are
+    // never sent to the server, so the token stays client-side only.
+    const hash = window.location.hash
+    if (hash.startsWith('#token=')) {
+      const fragmentToken = hash.slice('#token='.length)
+      // Clear the fragment immediately so it doesn't linger in the URL.
+      window.history.replaceState(null, '', window.location.pathname)
+      if (fragmentToken) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, fragmentToken)
+      }
+    }
+
     // Fetch auth mode and refresh token in parallel.
     const configPromise = api.config.public()
       .then((cfg) => setAuthMode(cfg.auth_mode))
