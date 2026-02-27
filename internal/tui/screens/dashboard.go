@@ -150,6 +150,12 @@ func (s *DashboardScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 			cmds = append(cmds, func() tea.Msg {
 				return tui.StatusMsg(fmt.Sprintf("Item %s", msg.action))
 			})
+			// Return to main view after acting from drill-down.
+			if s.view == dashViewTaskAudit {
+				s.view = dashViewMain
+				s.drillTask = nil
+				s.auditEntries = nil
+			}
 		}
 		cmds = append(cmds, s.fetchOverview())
 
@@ -209,8 +215,57 @@ func (s *DashboardScreen) handleTaskAuditKey(msg tea.KeyMsg) (tui.ScreenModel, t
 		}
 	case key.Matches(msg, tui.ListNavKeys.Enter):
 		return s, s.loadAuditDetail()
+	case key.Matches(msg, tui.PendingKeys.Approve):
+		return s, s.approveDrillTask()
+	case key.Matches(msg, tui.PendingKeys.Deny):
+		return s, s.denyDrillTask()
 	}
 	return s, nil
+}
+
+func (s *DashboardScreen) drillTaskIsPending() bool {
+	return s.drillTask != nil &&
+		(s.drillTask.Status == "pending_approval" || s.drillTask.Status == "pending_scope_expansion")
+}
+
+func (s *DashboardScreen) approveDrillTask() tea.Cmd {
+	if !s.drillTaskIsPending() {
+		return nil
+	}
+	t := s.drillTask
+	c := s.client
+	return func() tea.Msg {
+		var err error
+		if t.Status == "pending_scope_expansion" {
+			_, err = c.ApproveExpansion(t.ID)
+		} else {
+			_, err = c.ApproveTask(t.ID)
+		}
+		if err != nil {
+			return dashApprovalDoneMsg{err: err}
+		}
+		return dashApprovalDoneMsg{action: "approved"}
+	}
+}
+
+func (s *DashboardScreen) denyDrillTask() tea.Cmd {
+	if !s.drillTaskIsPending() {
+		return nil
+	}
+	t := s.drillTask
+	c := s.client
+	return func() tea.Msg {
+		var err error
+		if t.Status == "pending_scope_expansion" {
+			_, err = c.DenyExpansion(t.ID)
+		} else {
+			_, err = c.DenyTask(t.ID)
+		}
+		if err != nil {
+			return dashApprovalDoneMsg{err: err}
+		}
+		return dashApprovalDoneMsg{action: "denied"}
+	}
 }
 
 func (s *DashboardScreen) View() string {
@@ -226,10 +281,17 @@ func (s *DashboardScreen) View() string {
 func (s *DashboardScreen) ShortHelp() []string {
 	switch s.view {
 	case dashViewTaskAudit:
-		return []string{
+		hints := []string{
 			tui.StyleStatusKey.Render("[enter]") + tui.StyleStatusBar.Render(" Details"),
 			tui.StyleStatusKey.Render("[esc]") + tui.StyleStatusBar.Render(" Back"),
 		}
+		if s.drillTaskIsPending() {
+			hints = append(hints,
+				tui.StyleStatusKey.Render("[a]")+tui.StyleStatusBar.Render(" Approve"),
+				tui.StyleStatusKey.Render("[d]")+tui.StyleStatusBar.Render(" Deny"),
+			)
+		}
+		return hints
 	default:
 		hints := []string{
 			tui.StyleStatusKey.Render("[enter]") + tui.StyleStatusBar.Render(" Drill"),
