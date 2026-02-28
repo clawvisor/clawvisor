@@ -314,8 +314,8 @@ Handle callbacks as follows:
 ### OpenClaw callback setup
 
 If you are running as an OpenClaw agent with the `clawvisor-webhook` extension
-installed, build your `callback_url` using the `hooks_url` and `session_key`
-from `session_status`:
+installed, build your `callback_url` using the `OPENCLAW_HOOKS_URL` environment
+variable and your session key (shown in `session_status` as `🧵 Session: <key>`):
 
 ```
 callback_url: "${OPENCLAW_HOOKS_URL}/clawvisor/callback?session=<session_key>"
