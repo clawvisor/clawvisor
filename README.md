@@ -1,22 +1,27 @@
 # Clawvisor
 
-Clawvisor is a gatekeeper service that sits between AI agents and external APIs. Agents never hold credentials. Every request flows through Clawvisor, which checks restrictions, enforces task scopes, routes to human approval when needed, injects credentials from an encrypted vault, and delivers formatted results back to the agent.
+Clawvisor is a gatekeeper service that sits between AI agents and external APIs. Agents never hold credentials — instead, they declare **tasks** describing what they need to do, the user approves the scope, and Clawvisor handles credential injection, execution, and audit logging for every request under that task.
+
+The typical flow: an agent creates a task ("triage my inbox — read emails, but ask before sending"), the user approves it once, and the agent makes as many requests as it needs within that scope without further interruption. Actions outside the scope go to the user for per-request approval. Restrictions can hard-block specific actions entirely.
 
 ## How It Works
 
 ```
 Agent                         Clawvisor                              External API
   │                              │                                       │
+  ├─ POST /api/tasks ────────────►  (declare scope, wait for approval)   │
+  │◄──── task approved ──────────┤                                       │
+  │                              │                                       │
   ├─ POST /api/gateway/request ──►                                       │
-  │                              ├─ Check restrictions (hard blocks)      │
+  │    (with task_id)            ├─ Check restrictions (hard blocks)      │
   │                              ├─ Check task scope (pre-approved?)      │
-  │                              ├─ Route to approval queue OR execute    │
+  │                              ├─ Auto-execute or route to approval     │
   │                              │                                       │
   │                              │  ┌─ On execute: ──────────────────┐   │
   │                              │  │ Vault inject credentials       │   │
   │                              │  │ Adapter call ──────────────────────►│
   │                              │  │ Format + filter response       │◄──┤
-  │                              │  │ Safety check (optional)        │   │
+  │                              │  │ Intent verification (optional) │   │
   │                              │  │ Audit log                      │   │
   │                              │  └────────────────────────────────┘   │
   │◄──── Response ───────────────┤                                       │
@@ -24,11 +29,11 @@ Agent                         Clawvisor                              External AP
 
 Authorization has three layers:
 
-- **Restrictions** — hard blocks you set on specific service/action pairs. If a restriction matches, the request is blocked immediately.
-- **Task scopes** — pre-approved sets of actions the agent declares up front. If the action is in scope with `auto_execute`, it runs without per-request approval. Tasks can be session-scoped (with expiry) or standing (indefinite).
-- **Per-request approval** — the default. Anything not covered by a task scope goes to the approval queue and the user is notified via Telegram.
+1. **Restrictions** — hard blocks you set on specific service/action pairs. If a restriction matches, the request is blocked immediately.
+2. **Task scopes** — the primary mechanism. Agents declare tasks with a purpose and a set of authorized actions. The user approves the scope once; subsequent requests under that task execute without per-request approval (for `auto_execute` actions). Tasks can be session-scoped (with expiry) or standing (indefinite, user-revocable).
+3. **Per-request approval** — the fallback. Requests without a task, or with actions not in the task's scope, go to the approval queue and the user is notified via Telegram.
 
-Unmatched requests go to the approval queue, not to a block. The default is approve.
+Requests that don't match any restriction or task scope go to the approval queue — the default is approve, not block.
 
 ## Supported Services
 
@@ -39,9 +44,14 @@ Unmatched requests go to the approval queue, not to a block. The default is appr
 | `google.drive` | Google Drive | `list_files`, `get_file`, `create_file`, `update_file`, `search_files` |
 | `google.contacts` | Google Contacts | `list_contacts`, `get_contact`, `search_contacts` |
 | `github` | GitHub | `list_issues`, `get_issue`, `create_issue`, `comment_issue`, `list_prs`, `get_pr`, `list_repos`, `search_code` |
+| `slack` | Slack | `list_channels`, `get_channel`, `list_messages`, `send_message`, `search_messages`, `list_users` |
+| `notion` | Notion | `search`, `get_page`, `create_page`, `update_page`, `query_database`, `list_databases` |
+| `linear` | Linear | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `add_comment`, `list_teams`, `list_projects`, `search_issues` |
+| `stripe` | Stripe | `list_customers`, `get_customer`, `list_charges`, `get_charge`, `list_subscriptions`, `get_subscription`, `create_refund`, `get_balance` |
+| `twilio` | Twilio | `send_sms`, `send_whatsapp`, `list_messages`, `get_message` |
 | `apple.imessage` | iMessage | `search_messages`, `list_threads`, `get_thread`, `send_message` |
 
-Google services share a single OAuth connection — activating one activates all four. GitHub uses a personal access token. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
+Google services share a single OAuth connection — activating one activates all four. GitHub, Slack, Notion, Linear, Stripe, and Twilio each use per-user API keys/tokens. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
 
 ## Quickstart
 
@@ -83,22 +93,28 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 
 | Setting | Env var | Notes |
 |---|---|---|
-| Database driver | `DATABASE_DRIVER` | `postgres` or `sqlite` |
+| Database driver | `DATABASE_DRIVER` | `postgres` or `sqlite` (auto-selects sqlite locally) |
 | Postgres URL | `DATABASE_URL` | Required for postgres driver |
-| JWT secret | `JWT_SECRET` | **Required** |
+| JWT secret | `JWT_SECRET` | Auto-generated locally; **required** in prod |
 | Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Needed for Google services |
 | Public URL | `PUBLIC_URL` | Used in Telegram notification links |
-| LLM safety | `CLAWVISOR_LLM_SAFETY_*` | Optional post-execution safety check |
+| Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
 
 ## Agent Integration
 
-### 1. Create an agent token
+### Create an agent token
 
 In the dashboard, create an agent and copy the bearer token. The agent uses this for all API calls.
 
-### 2. Create a task (optional, for multi-step workflows)
+### Tasks
+
+Tasks are the primary authorization mechanism. An agent declares what it needs to do — the purpose, the specific service/action pairs, and whether each can auto-execute — and the user approves the scope once. After that, every gateway request under that task runs without per-request approval (for `auto_execute` actions).
+
+Without a task, every request goes to the approval queue individually.
+
+#### Creating a task
 
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
@@ -107,17 +123,75 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
   -d '{
     "purpose": "Triage inbox and draft replies",
     "authorized_actions": [
-      {"service": "google.gmail", "action": "list_messages", "auto_execute": true},
-      {"service": "google.gmail", "action": "get_message", "auto_execute": true},
+      {"service": "google.gmail", "action": "list_messages", "auto_execute": true, "expected_use": "List recent emails to identify unread messages"},
+      {"service": "google.gmail", "action": "get_message", "auto_execute": true, "expected_use": "Read individual emails to assess priority"},
       {"service": "google.gmail", "action": "send_message", "auto_execute": false}
     ],
-    "expires_in_seconds": 1800
+    "expires_in_seconds": 1800,
+    "callback_url": "https://your-agent/callback"
   }'
 ```
 
-The task starts as `pending_approval`. The user approves it via Telegram or the dashboard. Once active, requests with the `task_id` that match an `auto_execute` action run immediately.
+The task starts as `pending_approval`. The user approves it via Telegram or the dashboard. Include a `callback_url` to receive a callback when the task is approved or denied — otherwise poll `GET /api/tasks/{id}`.
 
-### 3. Make a gateway request
+Key fields:
+
+- **`purpose`** — shown to the user during approval and used by intent verification to check that requests are consistent with the declared intent
+- **`auto_execute`** — `true` means in-scope requests execute immediately; `false` means they still go to per-request approval (useful for destructive actions like `send_message`)
+- **`expected_use`** — per-action description of how the agent intends to use it, shown during approval and checked by intent verification
+- **`expires_in_seconds`** — session tasks expire after this TTL once approved
+
+#### Session vs standing tasks
+
+**Session tasks** (the default) expire after their TTL. Use these for bounded work like "triage my inbox" or "review this PR."
+
+**Standing tasks** have no expiry and remain active until the user revokes them. Use these for ongoing workflows:
+
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "Ongoing email triage",
+    "lifetime": "standing",
+    "authorized_actions": [
+      {"service": "google.gmail", "action": "list_messages", "auto_execute": true},
+      {"service": "google.gmail", "action": "get_message", "auto_execute": true}
+    ]
+  }'
+```
+
+#### Task lifecycle
+
+1. **`pending_approval`** — created, waiting for user approval
+2. **`active`** — approved, gateway requests with this `task_id` are authorized
+3. **`pending_scope_expansion`** — agent requested a new action via `POST /api/tasks/{id}/expand`
+4. **`completed`** — agent marked the task done via `POST /api/tasks/{id}/complete`
+5. **`expired`** — session task TTL elapsed
+6. **`revoked`** — user revoked the task from the dashboard
+7. **`denied`** — user denied the task or scope expansion
+
+#### Scope expansion
+
+If the agent needs an action not in the original scope, it requests expansion:
+
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand" \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service": "google.gmail",
+    "action": "send_message",
+    "auto_execute": false,
+    "reason": "User asked me to reply to the triage summary"
+  }'
+```
+
+The user is notified and can approve or deny. On approval, the action is added and the session task TTL is reset. Standing tasks cannot be expanded — create a separate task instead.
+
+### Gateway requests
+
+Once a task is active, the agent makes gateway requests under it:
 
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
@@ -137,6 +211,8 @@ curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
   }'
 ```
 
+Requests without a `task_id` go to per-request approval automatically.
+
 ### Response statuses
 
 | Status | Meaning |
@@ -144,22 +220,39 @@ curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
 | `executed` | Action completed. Result in `result.summary` and `result.data`. |
 | `pending` | Awaiting human approval. Wait for callback or poll with same `request_id`. |
 | `blocked` | A restriction blocks this action. Do not retry. |
-| `pending_activation` | Service not connected. Response includes `activate_url`. |
+| `restricted` | Intent verification rejected the request. Adjust params/reason and retry with a new `request_id`. |
 | `pending_task_approval` | Task declared but not yet approved by the user. |
-| `error` | Execution failed. Check `error` field for details. |
+| `pending_scope_expansion` | Action is outside the task scope. Call `POST /api/tasks/{id}/expand`. |
+| `task_expired` | Task TTL elapsed. Expand to extend, or create a new task. |
+| `error` | Execution failed. Check `error` field. `code: SERVICE_NOT_CONFIGURED` means the service needs activation. |
 
 ### Callbacks
 
-When a pending request resolves, Clawvisor POSTs to the `callback_url`:
+Callbacks carry a `type` field (`"request"` or `"task"`) and use dedicated ID fields.
+
+When a pending gateway request resolves, Clawvisor POSTs to the request's `callback_url`:
 
 ```json
 {
+  "type": "request",
   "request_id": "req-001",
   "status": "executed",
   "result": {"summary": "Found 3 unread messages", "data": [...]},
   "audit_id": "a8f3..."
 }
 ```
+
+When a task is approved, denied, expanded, or expires, Clawvisor POSTs to the task's `callback_url`:
+
+```json
+{
+  "type": "task",
+  "task_id": "task-uuid",
+  "status": "approved"
+}
+```
+
+Task callback statuses: `approved`, `denied`, `scope_expanded`, `scope_expansion_denied`, `expired`.
 
 For the full agent protocol, see [`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
 
@@ -169,7 +262,7 @@ The web UI provides:
 
 - **Approvals** — approve or deny pending requests and task scopes
 - **Tasks** — view active/standing tasks, revoke task scopes, see audit trails
-- **Services** — activate services via OAuth (Google) or API key (GitHub)
+- **Services** — activate services via OAuth (Google) or API key (GitHub, Slack, Notion, etc.)
 - **Restrictions** — create and manage hard blocks on service/action pairs
 - **Audit log** — searchable history of every gateway request with outcomes
 - **Agents** — create agent tokens, manage per-agent restrictions
@@ -223,7 +316,7 @@ clawvisor tui
 cmd/server/main.go          — entry point
 internal/
   api/                      — HTTP server, middleware, handlers
-  adapters/                 — service adapters (google/, github/, apple/)
+  adapters/                 — service adapters (google/, github/, apple/, slack/, notion/, linear/, stripe/, twilio/)
   store/                    — Store interface + postgres/ and sqlite/ implementations
   vault/                    — Vault interface + local and GCP implementations
   config/                   — config loading with env var overrides
