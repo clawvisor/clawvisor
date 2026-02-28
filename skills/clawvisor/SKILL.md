@@ -309,10 +309,18 @@ Handle callbacks as follows:
 4. For task callbacks: if `approved` or `scope_expanded`, proceed with your
    task. If `denied`, `scope_expansion_denied`, or `expired`, inform the user.
 
-**OpenClaw note:** When your `callback_url` is an OpenClaw `/hooks/agent`
-endpoint, the JSON callback is delivered to your session as a text message
-with a `[Clawvisor Result]` prefix. The content is the same — just formatted
-as text instead of raw JSON.
+### OpenClaw callback setup
+
+If you are running as an OpenClaw agent with the `clawvisor-webhook` extension
+installed, build your `callback_url` using the `hooks_url` and `session_key`
+from `session_status`:
+
+```
+callback_url: "<hooks_url>/clawvisor/callback?session=<session_key>"
+```
+
+The `?session=` query parameter routes the callback to the originating
+conversation so the result is delivered back to the correct session.
 
 ### Polling when no callback_url is set
 
