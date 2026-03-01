@@ -294,7 +294,7 @@ export default function Queue() {
 
   return (
     <div className="p-8 space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Queue</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Pending</h1>
 
       {/* Deep link result banner */}
       {deepLinkResult && (

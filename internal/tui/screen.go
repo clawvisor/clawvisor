@@ -6,20 +6,20 @@ import tea "github.com/charmbracelet/bubbletea"
 type Screen int
 
 const (
-	ScreenOverview Screen = iota
-	ScreenQueue
+	ScreenDashboard Screen = iota
+	ScreenPending
 	ScreenTasks
-	ScreenAuditLog
+	ScreenGatewayLog
 	ScreenServices
 	ScreenRestrictions
 	ScreenAgents
 )
 
 var ScreenNames = []string{
-	"Overview",
-	"Queue",
+	"Dashboard",
+	"Pending",
 	"Tasks",
-	"Audit Log",
+	"Gateway Log",
 	"Services",
 	"Restrictions",
 	"Agents",

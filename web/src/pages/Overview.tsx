@@ -75,7 +75,7 @@ export default function Overview() {
 
   return (
     <div className="p-8 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
 
       {/* Onboarding */}
       {showOnboarding && (

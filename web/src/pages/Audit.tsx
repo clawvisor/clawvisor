@@ -142,7 +142,7 @@ export default function Audit() {
   return (
     <div className="p-8 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Audit Log</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Gateway Log</h1>
         <button
           onClick={() => refetch()}
           className="text-sm text-blue-600 hover:underline"

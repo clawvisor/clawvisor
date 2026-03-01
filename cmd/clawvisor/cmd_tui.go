@@ -57,10 +57,10 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 	app := tui.NewApp(c)
 	app.SetScreens(map[tui.Screen]tui.ScreenModel{
-		tui.ScreenOverview:     screens.NewDashboardScreen(c),
-		tui.ScreenQueue:        screens.NewPendingScreen(c),
+		tui.ScreenDashboard:     screens.NewDashboardScreen(c),
+		tui.ScreenPending:        screens.NewPendingScreen(c),
 		tui.ScreenTasks:        screens.NewTasksScreen(c),
-		tui.ScreenAuditLog:     screens.NewActivityScreen(c),
+		tui.ScreenGatewayLog:     screens.NewActivityScreen(c),
 		tui.ScreenServices:     screens.NewServicesScreen(c),
 		tui.ScreenRestrictions: screens.NewRestrictionsScreen(c),
 		tui.ScreenAgents:       screens.NewAgentsScreen(c),
