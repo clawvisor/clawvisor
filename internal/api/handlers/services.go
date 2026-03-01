@@ -7,8 +7,10 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +54,29 @@ var validAliasRe = regexp.MustCompile(`^[a-zA-Z0-9_-]*$`)
 // validAlias returns true if s is a safe service alias (empty is OK, maps to "default").
 func validAlias(s string) bool {
 	return validAliasRe.MatchString(s)
+}
+
+// validateCLICallback checks that a CLI callback URL is safe — it must be
+// http-only and point to localhost or 127.0.0.1. Returns "" if invalid.
+func validateCLICallback(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme != "http" {
+		return ""
+	}
+	host := u.Hostname()
+	if host != "localhost" && host != "127.0.0.1" {
+		return ""
+	}
+	if !strings.HasPrefix(u.Path, "/") {
+		return ""
+	}
+	return raw
 }
 
 func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, logger *slog.Logger, baseURL string) *ServicesHandler {
@@ -254,7 +279,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		ServiceID:    serviceID,
 		Alias:        alias,
 		PendingReqID: r.URL.Query().Get("pending_request_id"),
-		CLICallback:  r.URL.Query().Get("cli_callback"),
+		CLICallback:  validateCLICallback(r.URL.Query().Get("cli_callback")),
 		Scopes:       mergedScopes,
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})

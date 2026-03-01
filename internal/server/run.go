@@ -70,8 +70,8 @@ func Run(logger *slog.Logger) error {
 		}
 	}
 
-	// Initialize callback CIDR allowlist (before any gateway requests).
-	callback.Init(cfg.Callback.AllowPrivateCIDRs)
+	// Initialize callback CIDR allowlist and HTTPS enforcement (before any gateway requests).
+	callback.Init(cfg.Callback.AllowPrivateCIDRs, cfg.Callback.RequireHTTPS)
 
 	// ── Database + Store ────────────────────────────────────────────────────
 	var (

@@ -30,12 +30,16 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	limit := parseIntQuery(q.Get("limit"), 50)
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
 	filter := store.AuditFilter{
 		Service:    q.Get("service"),
 		Outcome:    q.Get("outcome"),
 		DataOrigin: q.Get("data_origin"),
 		TaskID:     q.Get("task_id"),
-		Limit:      parseIntQuery(q.Get("limit"), 50),
+		Limit:      limit,
 		Offset:     parseIntQuery(q.Get("offset"), 0),
 	}
 
@@ -76,6 +80,8 @@ func (h *AuditHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, entry)
 }
+
+const maxListLimit = 200
 
 // parseIntQuery parses a query string integer, returning defaultVal if missing or invalid.
 func parseIntQuery(s string, defaultVal int) int {

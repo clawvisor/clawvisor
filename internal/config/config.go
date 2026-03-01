@@ -36,6 +36,7 @@ type Config struct {
 // CallbackConfig holds settings for callback delivery.
 type CallbackConfig struct {
 	AllowPrivateCIDRs []string `yaml:"allow_private_cidrs"` // CIDRs exempt from SSRF callback blocking
+	RequireHTTPS      bool     `yaml:"require_https"`       // when true, reject http:// callbacks except for localhost
 }
 
 // TaskConfig holds settings for task-scoped authorization.
@@ -314,6 +315,9 @@ func Load(path string) (*Config, error) {
 
 	if v := os.Getenv("CALLBACK_ALLOW_PRIVATE_CIDRS"); v != "" {
 		cfg.Callback.AllowPrivateCIDRs = strings.Split(v, ",")
+	}
+	if v := os.Getenv("CALLBACK_REQUIRE_HTTPS"); v != "" {
+		cfg.Callback.RequireHTTPS = v == "true" || v == "1"
 	}
 
 	// LLM Verification overrides

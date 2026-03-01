@@ -501,13 +501,17 @@ func (a *IMessageAdapter) sendMessage(ctx context.Context, params map[string]any
 		}
 	}
 
-	script := fmt.Sprintf(`tell application "Messages"
-	set targetService to 1st service whose service type = iMessage
-	set targetBuddy to buddy %q of targetService
-	send %q to targetBuddy
-end tell`, identifier, text)
+	// Use "on run argv" to pass arguments via command-line args rather than
+	// string interpolation, eliminating AppleScript injection.
+	script := `on run argv
+	tell application "Messages"
+		set targetService to 1st service whose service type = iMessage
+		set targetBuddy to buddy (item 1 of argv) of targetService
+		send (item 2 of argv) to targetBuddy
+	end tell
+end run`
 
-	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script, "--", identifier, text)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("imessage send_message: AppleScript failed: %w — %s", err, truncate(string(out), 200))
 	}

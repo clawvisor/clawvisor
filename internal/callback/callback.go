@@ -30,34 +30,62 @@ type Payload struct {
 	AuditID   string           `json:"audit_id,omitempty"`
 }
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		DialContext: ssrfSafeDialContext,
+	},
+}
 
-// ValidateCallbackURL checks that a callback URL is safe to send requests to.
-// It rejects private, link-local, and metadata IP ranges to prevent SSRF.
-// Loopback addresses (127.0.0.0/8, ::1) are allowed for local development.
-func ValidateCallbackURL(rawURL string) error {
-	u, err := url.Parse(rawURL)
+// ssrfSafeDialContext resolves DNS and checks the resulting IPs against the
+// SSRF blocklist before connecting. This eliminates the TOCTOU gap that occurs
+// when DNS is resolved separately in validation and again in http.Client.Do.
+func ssrfSafeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("invalid callback URL: %w", err)
-	}
-	if u.Scheme != "https" && u.Scheme != "http" {
-		return fmt.Errorf("callback URL scheme must be https (got %q)", u.Scheme)
+		return nil, fmt.Errorf("callback: invalid address %q: %w", address, err)
 	}
 
-	hostname := u.Hostname()
-
-	// Resolve to IPs and check each one.
-	ips, err := net.LookupHost(hostname)
+	resolver := &net.Resolver{}
+	ips, err := resolver.LookupHost(ctx, host)
 	if err != nil {
-		return fmt.Errorf("callback URL: cannot resolve host %q: %w", hostname, err)
+		return nil, fmt.Errorf("callback: cannot resolve host %q: %w", host, err)
 	}
+
 	for _, ipStr := range ips {
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
 			continue
 		}
 		if isSSRFTarget(ip) {
-			return fmt.Errorf("callback URL resolves to private/reserved IP %s", ipStr)
+			return nil, fmt.Errorf("callback: host %q resolves to blocked IP %s", host, ipStr)
+		}
+		// Dial the first safe IP directly, bypassing a second DNS resolution.
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ipStr, port))
+	}
+	return nil, fmt.Errorf("callback: no safe IPs found for host %q", host)
+}
+
+// requireHTTPS controls whether ValidateCallbackURL rejects http:// URLs
+// for non-localhost hosts. Set via Init.
+var requireHTTPS bool
+
+// ValidateCallbackURL checks that a callback URL is parseable and uses an
+// allowed scheme. IP-level SSRF checks are performed at connect time by
+// ssrfSafeDialContext to prevent DNS rebinding.
+func ValidateCallbackURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid callback URL: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("callback URL scheme must be http or https (got %q)", u.Scheme)
+	}
+	if requireHTTPS && u.Scheme == "http" {
+		host := u.Hostname()
+		if host != "localhost" && host != "127.0.0.1" {
+			return fmt.Errorf("callback URL must use https (http only allowed for localhost)")
 		}
 	}
 	return nil
@@ -87,8 +115,8 @@ var ssrfRanges = func() []*net.IPNet {
 var allowedCIDRs []*net.IPNet
 
 // Init parses the given CIDR strings into an allowlist that exempts matching IPs
-// from the SSRF check. Call once at startup.
-func Init(cidrs []string) {
+// from the SSRF check, and sets the HTTPS enforcement flag. Call once at startup.
+func Init(cidrs []string, httpsRequired bool) {
 	nets := make([]*net.IPNet, 0, len(cidrs))
 	for _, cidr := range cidrs {
 		_, n, err := net.ParseCIDR(cidr)
@@ -98,6 +126,7 @@ func Init(cidrs []string) {
 		nets = append(nets, n)
 	}
 	allowedCIDRs = nets
+	requireHTTPS = httpsRequired
 }
 
 func isSSRFTarget(ip net.IP) bool {

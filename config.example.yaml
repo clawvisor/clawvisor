@@ -26,6 +26,7 @@ approval:
 
 callback:
   allow_private_cidrs: []  # CIDRs exempt from SSRF callback blocking, e.g. ["192.168.1.0/24"]
+  require_https: false     # when true, reject http:// callback URLs except for localhost. Env: CALLBACK_REQUIRE_HTTPS
 
 task:
   default_expiry_seconds: 1800  # 30 minutes — task-scoped authorization window

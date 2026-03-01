@@ -220,6 +220,9 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			filter.Limit = n
+			if filter.Limit > maxListLimit {
+				filter.Limit = maxListLimit
+			}
 		}
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
