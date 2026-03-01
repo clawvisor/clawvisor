@@ -28,55 +28,6 @@ The typical flow: an agent creates a task ("triage my inbox — read emails, but
 
 Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
-## How It Works
-
-```
-Agent                         Clawvisor                              External API
-  │                              │                                       │
-  ├─ POST /api/tasks ────────────►  (declare scope, wait for approval)   │
-  │◄──── task approved ──────────┤                                       │
-  │                              │                                       │
-  ├─ POST /api/gateway/request ──►                                       │
-  │    (with task_id)            ├─ Check restrictions (hard blocks)      │
-  │                              ├─ Check task scope (pre-approved?)      │
-  │                              ├─ Auto-execute or route to approval     │
-  │                              │                                       │
-  │                              │  ┌─ On execute: ──────────────────┐   │
-  │                              │  │ Vault inject credentials       │   │
-  │                              │  │ Adapter call ──────────────────────►│
-  │                              │  │ Format + filter response       │◄──┤
-  │                              │  │ Intent verification (optional) │   │
-  │                              │  │ Audit log                      │   │
-  │                              │  └────────────────────────────────┘   │
-  │◄──── Response ───────────────┤                                       │
-```
-
-Authorization has three layers:
-
-1. **Restrictions** — hard blocks you set on specific service/action pairs. If a restriction matches, the request is blocked immediately.
-2. **Task scopes** — the primary mechanism. Agents declare tasks with a purpose and a set of authorized actions. The user approves the scope once; subsequent requests under that task execute without per-request approval (for `auto_execute` actions). Tasks can be session-scoped (with expiry) or standing (indefinite, user-revocable).
-3. **Per-request approval** — the fallback. Requests without a task, or with actions not in the task's scope, go to the approval queue and the user is notified via Telegram.
-
-Requests that don't match any restriction or task scope go to the approval queue — the default is approve, not block.
-
-## Supported Services
-
-| Service ID | Service | Actions |
-|---|---|---|
-| `google.gmail` | Gmail | `list_messages`, `get_message`, `send_message` |
-| `google.calendar` | Google Calendar | `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `list_calendars` |
-| `google.drive` | Google Drive | `list_files`, `get_file`, `create_file`, `update_file`, `search_files` |
-| `google.contacts` | Google Contacts | `list_contacts`, `get_contact`, `search_contacts` |
-| `github` | GitHub | `list_issues`, `get_issue`, `create_issue`, `comment_issue`, `list_prs`, `get_pr`, `list_repos`, `search_code` |
-| `slack` | Slack | `list_channels`, `get_channel`, `list_messages`, `send_message`, `search_messages`, `list_users` |
-| `notion` | Notion | `search`, `get_page`, `create_page`, `update_page`, `query_database`, `list_databases` |
-| `linear` | Linear | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `add_comment`, `list_teams`, `list_projects`, `search_issues` |
-| `stripe` | Stripe | `list_customers`, `get_customer`, `list_charges`, `get_charge`, `list_subscriptions`, `get_subscription`, `create_refund`, `get_balance` |
-| `twilio` | Twilio | `send_sms`, `send_whatsapp`, `list_messages`, `get_message` |
-| `apple.imessage` | iMessage | `search_messages`, `list_threads`, `get_thread`, `send_message` |
-
-Google services share a single OAuth connection — activating one activates all four. GitHub, Slack, Notion, Linear, Stripe, and Twilio each use per-user API keys/tokens. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
-
 ## Quickstart
 
 **Prerequisites:** Go 1.23+, Node 18+
@@ -125,6 +76,55 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
+
+## How It Works
+
+```
+Agent                         Clawvisor                              External API
+  │                              │                                       │
+  ├─ POST /api/tasks ────────────►  (declare scope, wait for approval)   │
+  │◄──── task approved ──────────┤                                       │
+  │                              │                                       │
+  ├─ POST /api/gateway/request ──►                                       │
+  │    (with task_id)            ├─ Check restrictions (hard blocks)      │
+  │                              ├─ Check task scope (pre-approved?)      │
+  │                              ├─ Auto-execute or route to approval     │
+  │                              │                                       │
+  │                              │  ┌─ On execute: ──────────────────┐   │
+  │                              │  │ Vault inject credentials       │   │
+  │                              │  │ Adapter call ──────────────────────►│
+  │                              │  │ Format + filter response       │◄──┤
+  │                              │  │ Intent verification (optional) │   │
+  │                              │  │ Audit log                      │   │
+  │                              │  └────────────────────────────────┘   │
+  │◄──── Response ───────────────┤                                       │
+```
+
+Authorization has three layers:
+
+1. **Restrictions** — hard blocks you set on specific service/action pairs. If a restriction matches, the request is blocked immediately.
+2. **Task scopes** — the primary mechanism. Agents declare tasks with a purpose and a set of authorized actions. The user approves the scope once; subsequent requests under that task execute without per-request approval (for `auto_execute` actions). Tasks can be session-scoped (with expiry) or standing (indefinite, user-revocable).
+3. **Per-request approval** — the fallback. Requests without a task, or with actions not in the task's scope, go to the approval queue and the user is notified via Telegram.
+
+Requests that don't match any restriction or task scope go to the approval queue — the default is approve, not block.
+
+## Supported Services
+
+| Service ID | Service | Actions |
+|---|---|---|
+| `google.gmail` | Gmail | `list_messages`, `get_message`, `send_message` |
+| `google.calendar` | Google Calendar | `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `list_calendars` |
+| `google.drive` | Google Drive | `list_files`, `get_file`, `create_file`, `update_file`, `search_files` |
+| `google.contacts` | Google Contacts | `list_contacts`, `get_contact`, `search_contacts` |
+| `github` | GitHub | `list_issues`, `get_issue`, `create_issue`, `comment_issue`, `list_prs`, `get_pr`, `list_repos`, `search_code` |
+| `slack` | Slack | `list_channels`, `get_channel`, `list_messages`, `send_message`, `search_messages`, `list_users` |
+| `notion` | Notion | `search`, `get_page`, `create_page`, `update_page`, `query_database`, `list_databases` |
+| `linear` | Linear | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `add_comment`, `list_teams`, `list_projects`, `search_issues` |
+| `stripe` | Stripe | `list_customers`, `get_customer`, `list_charges`, `get_charge`, `list_subscriptions`, `get_subscription`, `create_refund`, `get_balance` |
+| `twilio` | Twilio | `send_sms`, `send_whatsapp`, `list_messages`, `get_message` |
+| `apple.imessage` | iMessage | `search_messages`, `list_threads`, `get_thread`, `send_message` |
+
+Google services share a single OAuth connection — activating one activates all four. GitHub, Slack, Notion, Linear, Stripe, and Twilio each use per-user API keys/tokens. iMessage reads the local `chat.db` on macOS and is always available without activation on supported machines.
 
 ## Agent Integration
 
