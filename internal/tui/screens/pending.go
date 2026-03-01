@@ -36,6 +36,7 @@ type PendingScreen struct {
 	loading bool
 	err     error
 	detail  Detail
+	busy    string
 }
 
 func NewPendingScreen(c *client.Client) *PendingScreen {
@@ -86,8 +87,16 @@ func (s *PendingScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 				s.cursor++
 			}
 		case key.Matches(msg, tui.PendingKeys.Approve):
+			if s.busy != "" {
+				return s, nil
+			}
+			s.busy = "Approving..."
 			return s, s.approveSelected()
 		case key.Matches(msg, tui.PendingKeys.Deny):
+			if s.busy != "" {
+				return s, nil
+			}
+			s.busy = "Denying..."
 			return s, s.denySelected()
 		case key.Matches(msg, tui.ListNavKeys.Enter):
 			s.showDetail()
@@ -111,6 +120,7 @@ func (s *PendingScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		cmds = append(cmds, tui.ConnState(true))
 
 	case approvalDoneMsg:
+		s.busy = ""
 		if msg.err != nil {
 			s.err = msg.err
 		} else {
@@ -139,7 +149,13 @@ func (s *PendingScreen) View() string {
 	b.WriteString(header.Render("PENDING APPROVALS"))
 	b.WriteString("\n")
 	b.WriteString(tui.StyleDim.Render(strings.Repeat("─", min(60, s.contentWidth()))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	if s.busy != "" {
+		b.WriteString(tui.StyleAmber.Render(s.busy))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if s.err != nil {
 		b.WriteString(tui.StyleRed.Render("Error: " + s.err.Error()))

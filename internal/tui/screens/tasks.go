@@ -40,6 +40,7 @@ type TasksScreen struct {
 	total   int
 	filter  client.TaskFilter
 	showAll bool
+	busy    string
 }
 
 func NewTasksScreen(c *client.Client) *TasksScreen {
@@ -64,6 +65,7 @@ func (s *TasksScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		case components.ConfirmResult:
 			s.confirm = nil
 			if msg.Confirmed && msg.Tag == "revoke" {
+				s.busy = "Revoking..."
 				return s, s.revokeSelected()
 			}
 			return s, nil
@@ -110,6 +112,9 @@ func (s *TasksScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 				s.cursor++
 			}
 		case key.Matches(msg, tui.TaskKeys.Revoke):
+			if s.busy != "" {
+				return s, nil
+			}
 			if s.cursor < len(s.tasks) {
 				t := s.tasks[s.cursor]
 				if t.Status == "active" {
@@ -162,6 +167,7 @@ func (s *TasksScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		cmds = append(cmds, tui.ConnState(true))
 
 	case taskActionDoneMsg:
+		s.busy = ""
 		if msg.err != nil {
 			s.err = msg.err
 		} else {
@@ -201,7 +207,13 @@ func (s *TasksScreen) View() string {
 	b.WriteString(header.Render(title))
 	b.WriteString("\n")
 	b.WriteString(tui.StyleDim.Render(strings.Repeat("─", min(60, s.contentWidth()))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	if s.busy != "" {
+		b.WriteString(tui.StyleAmber.Render(s.busy))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if s.err != nil {
 		b.WriteString(tui.StyleRed.Render("Error: " + s.err.Error()) + "\n")

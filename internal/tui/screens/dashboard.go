@@ -71,6 +71,7 @@ type DashboardScreen struct {
 	height  int
 	loading bool
 	err     error
+	busy    string
 }
 
 func NewDashboardScreen(c *client.Client) *DashboardScreen {
@@ -118,6 +119,7 @@ func (s *DashboardScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		}
 
 	case dashOverviewMsg:
+		s.busy = ""
 		s.loading = false
 		s.err = nil
 		s.queue = msg.queue
@@ -131,10 +133,12 @@ func (s *DashboardScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		cmds = append(cmds, tui.ConnState(true))
 
 	case dashAuditListMsg:
+		s.busy = ""
 		s.auditEntries = msg.entries
 		s.auditCursor = 0
 
 	case dashAuditDetailMsg:
+		s.busy = ""
 		if msg.err != nil {
 			s.err = msg.err
 		} else if msg.entry != nil {
@@ -146,6 +150,7 @@ func (s *DashboardScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		}
 
 	case dashApprovalDoneMsg:
+		s.busy = ""
 		if msg.err != nil {
 			s.err = msg.err
 		} else {
@@ -191,10 +196,21 @@ func (s *DashboardScreen) handleMainKey(msg tea.KeyMsg) (tui.ScreenModel, tea.Cm
 			s.cursor++
 		}
 	case key.Matches(msg, tui.PendingKeys.Approve):
+		if s.busy != "" {
+			return s, nil
+		}
+		s.busy = "Approving..."
 		return s, s.approveSelected()
 	case key.Matches(msg, tui.PendingKeys.Deny):
+		if s.busy != "" {
+			return s, nil
+		}
+		s.busy = "Denying..."
 		return s, s.denySelected()
 	case key.Matches(msg, tui.ListNavKeys.Enter):
+		if s.busy != "" {
+			return s, nil
+		}
 		return s, s.enterSelected()
 	case key.Matches(msg, tui.Keys.Refresh):
 		return s, s.fetchOverview()
@@ -217,10 +233,22 @@ func (s *DashboardScreen) handleTaskAuditKey(msg tea.KeyMsg) (tui.ScreenModel, t
 			s.auditCursor++
 		}
 	case key.Matches(msg, tui.ListNavKeys.Enter):
+		if s.busy != "" {
+			return s, nil
+		}
+		s.busy = "Loading..."
 		return s, s.loadAuditDetail()
 	case key.Matches(msg, tui.PendingKeys.Approve):
+		if s.busy != "" {
+			return s, nil
+		}
+		s.busy = "Approving..."
 		return s, s.approveDrillTask()
 	case key.Matches(msg, tui.PendingKeys.Deny):
+		if s.busy != "" {
+			return s, nil
+		}
+		s.busy = "Denying..."
 		return s, s.denyDrillTask()
 	}
 	return s, nil
@@ -319,7 +347,13 @@ func (s *DashboardScreen) renderMainView() string {
 	b.WriteString(header.Render("DASHBOARD"))
 	b.WriteString("\n")
 	b.WriteString(tui.StyleDim.Render(strings.Repeat("─", min(60, cw))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	if s.busy != "" {
+		b.WriteString(tui.StyleAmber.Render(s.busy))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if s.err != nil {
 		b.WriteString(tui.StyleRed.Render("Error: "+s.err.Error()) + "\n\n")
@@ -483,7 +517,13 @@ func (s *DashboardScreen) renderTaskAuditView() string {
 	b.WriteString(header.Render("TASK: "+s.drillTask.Purpose))
 	b.WriteString("\n")
 	b.WriteString(tui.StyleDim.Render(strings.Repeat("─", min(60, cw))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	if s.busy != "" {
+		b.WriteString(tui.StyleAmber.Render(s.busy))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	// Task header info.
 	b.WriteString(tui.StyleDim.Render("Status:    ") + s.drillTask.Status + "\n")
@@ -704,6 +744,7 @@ func (s *DashboardScreen) enterSelected() tea.Cmd {
 		switch item.Type {
 		case "task":
 			if item.Task != nil {
+				s.busy = "Loading..."
 				s.drillTask = taskPtrFromQueueTask(item.Task)
 				s.view = dashViewTaskAudit
 				return s.fetchTaskAudit(item.Task.ID)
@@ -724,6 +765,7 @@ func (s *DashboardScreen) enterSelected() tea.Cmd {
 	taskIdx := s.cursor - len(s.queue)
 	if taskIdx < len(s.activeTasks) {
 		t := s.activeTasks[taskIdx]
+		s.busy = "Loading..."
 		s.drillTask = t
 		s.view = dashViewTaskAudit
 		return s.fetchTaskAudit(t.ID)
