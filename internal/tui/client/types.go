@@ -168,6 +168,7 @@ type ServiceInfo struct {
 	Alias              string   `json:"alias,omitempty"`
 	OAuth              bool     `json:"oauth"`
 	RequiresActivation bool     `json:"requires_activation"`
+	CredentialFree     bool     `json:"credential_free"`
 	Actions            []string `json:"actions"`
 	Status             string   `json:"status"` // "activated" or "not_activated"
 	ActivatedAt        string   `json:"activated_at,omitempty"`

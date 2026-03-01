@@ -139,6 +139,7 @@ export interface ServiceInfo {
   alias?: string
   oauth: boolean
   requires_activation?: boolean
+  credential_free?: boolean
   actions: string[]
   status: 'activated' | 'not_activated'
   activated_at?: string
@@ -311,6 +312,8 @@ export const api = {
         ...(pendingReqId ? { pending_request_id: pendingReqId } : {}),
         ...(alias ? { alias } : {}),
       }),
+    activate: (serviceID: string) =>
+      post<{ status: string; service: string }>(`/api/services/${serviceID}/activate`, {}),
     activateWithKey: (serviceID: string, token: string, alias?: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/activate-key`, {
         token,

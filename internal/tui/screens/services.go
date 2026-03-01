@@ -524,6 +524,17 @@ func (s *ServicesScreen) startActivation() tea.Cmd {
 		return nil
 	}
 
+	// Credential-free services activate immediately — no alias/key prompt needed.
+	if svc.CredentialFree {
+		s.activatingService = svc
+		cl := s.client
+		serviceID := svc.ID
+		return func() tea.Msg {
+			err := cl.ActivateService(serviceID)
+			return svcActivatedMsg{err: err}
+		}
+	}
+
 	s.activatingService = svc
 	s.inputStep = stepAlias
 	ni := textinput.New()
@@ -597,9 +608,13 @@ func (s *ServicesScreen) startDeactivation() {
 	if svc == nil || svc.Status != "activated" {
 		return
 	}
+	msg := fmt.Sprintf("Disconnect %s? This removes stored credentials.", svc.Name)
+	if svc.CredentialFree {
+		msg = fmt.Sprintf("Disconnect %s? Your agents will lose access.", svc.Name)
+	}
 	c := components.NewConfirm(
 		"Disconnect Service",
-		fmt.Sprintf("Disconnect %s? This removes stored credentials.", svc.Name),
+		msg,
 		"deactivate-service",
 	)
 	s.confirm = &c
@@ -693,7 +708,9 @@ func (s *ServicesScreen) showDetail() {
 	b.WriteString("\n")
 
 	b.WriteString(tui.StyleDim.Render("Auth:        "))
-	if svc.OAuth {
+	if svc.CredentialFree {
+		b.WriteString("None (local)")
+	} else if svc.OAuth {
 		b.WriteString("OAuth")
 	} else {
 		b.WriteString("API key")

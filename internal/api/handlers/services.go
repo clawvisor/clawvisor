@@ -118,6 +118,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Alias              string     `json:"alias,omitempty"`
 		OAuth              bool       `json:"oauth"`
 		RequiresActivation bool       `json:"requires_activation"`
+		CredentialFree     bool       `json:"credential_free"`
 		Actions            []string   `json:"actions"`
 		Status             string     `json:"status"`
 		ActivatedAt        *time.Time `json:"activated_at,omitempty"`
@@ -128,15 +129,24 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		credentialFree := a.ValidateCredential(nil) == nil
 
 		if credentialFree {
-			// Credential-free services (e.g. iMessage) have no alias concept.
+			// Credential-free services (e.g. iMessage) require explicit activation
+			// via service_meta — no vault credential needed.
+			status := "not_activated"
+			var activatedAt *time.Time
+			if m, ok := metaByKey[a.ServiceID()+":default"]; ok {
+				status = "activated"
+				activatedAt = &m.ActivatedAt
+			}
 			services = append(services, serviceEntry{
 				ID:                 a.ServiceID(),
 				Name:               display.ServiceName(a.ServiceID()),
 				Description:        display.ServiceDescription(a.ServiceID()),
 				OAuth:              a.OAuthConfig() != nil,
-				RequiresActivation: false,
+				RequiresActivation: true,
+				CredentialFree:     true,
 				Actions:            a.SupportedActions(),
-				Status:             "activated",
+				Status:             status,
+				ActivatedAt:        activatedAt,
 			})
 			continue
 		}
@@ -539,6 +549,14 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Credential-free service (e.g. iMessage): create service_meta record, no vault op.
+	if adapter.ValidateCredential(nil) == nil {
+		_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, "default", time.Now())
+		h.logger.Info("credential-free service activated", "user", user.ID, "service", serviceID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID})
+		return
+	}
+
 	// API key service: delegate to the existing activate-key handler.
 	h.ActivateWithKey(w, r)
 }
@@ -647,6 +665,14 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 
 	// Remove the service_meta record first.
 	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
+
+	// Credential-free services have no vault credential to clean up.
+	adapter, ok := h.adapterReg.Get(serviceID)
+	if ok && adapter.ValidateCredential(nil) == nil {
+		h.logger.Info("credential-free service deactivated", "user", user.ID, "service", serviceID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
+		return
+	}
 
 	// Google services share the vault key "google" (or "google:<alias>").
 	// If other services still reference the same vault key, strip the

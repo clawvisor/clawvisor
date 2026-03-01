@@ -276,6 +276,28 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			// ── End intent verification ──────────────────────────────────
 
+			// Check activation for credential-free services before executing.
+			if taskAdapter, taskAdapterOK := h.adapterReg.Get(serviceType); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
+				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
+					dur := int(time.Since(start).Milliseconds())
+					e := baseEntry("block", "error", taskIDPtr)
+					e.DurationMS = dur
+					errMsg := fmt.Sprintf("service %q not activated", req.Service)
+					e.ErrorMsg = &errMsg
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
+					}
+					writeJSON(w, http.StatusOK, map[string]any{
+						"status":     "error",
+						"request_id": req.RequestID,
+						"audit_id":   auditID,
+						"error":      fmt.Sprintf("Service %q is not activated. Connect it in the Clawvisor dashboard before making requests.", req.Service),
+						"code":       "SERVICE_NOT_CONFIGURED",
+					})
+					return
+				}
+			}
+
 			vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
 			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
 				agent.UserID, serviceType, req.Action, req.Params, vKey)
@@ -383,9 +405,20 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if service needs activation.
-	vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
-	if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) &&
-		approveAdapter.ValidateCredential(nil) != nil {
+	serviceNotActivated := false
+	if approveAdapter.ValidateCredential(nil) == nil {
+		// Credential-free service: check service_meta for explicit activation.
+		if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
+			serviceNotActivated = true
+		}
+	} else {
+		// Credential-backed service: check vault key.
+		vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
+		if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+			serviceNotActivated = true
+		}
+	}
+	if serviceNotActivated {
 		e := baseEntry("block", "error", nil)
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		errMsg := fmt.Sprintf("service %q not activated", req.Service)

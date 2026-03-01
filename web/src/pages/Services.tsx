@@ -83,7 +83,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
         {/* Actions */}
         {svc.requires_activation !== false && (
           <div className="flex gap-1.5 shrink-0">
-            {svc.oauth ? (
+            {!svc.credential_free && (svc.oauth ? (
               <button
                 onClick={handleReauth}
                 className="text-xs px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -97,7 +97,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
               >
                 Update token
               </button>
-            )}
+            ))}
             <button
               onClick={handleDeactivate}
               className="text-xs px-2.5 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50"
@@ -140,6 +140,7 @@ interface ServiceType {
   baseId: string
   oauth: boolean
   requiresActivation: boolean
+  credentialFree: boolean
   actions: string[]
   activatedCount: number
 }
@@ -181,7 +182,7 @@ function AddServiceModal({
     return () => window.removeEventListener('message', handler)
   }, [qc, onClose])
 
-  // Build deduplicated service types (exclude credential-free services)
+  // Build deduplicated service types
   const typeMap = new Map<string, ServiceType>()
   for (const svc of services) {
     if (!(svc.requires_activation ?? true)) continue
@@ -194,6 +195,7 @@ function AddServiceModal({
         baseId,
         oauth: svc.oauth,
         requiresActivation: svc.requires_activation ?? true,
+        credentialFree: svc.credential_free ?? false,
         actions: svc.actions,
         activatedCount: svc.status === 'activated' ? 1 : 0,
       })
@@ -234,6 +236,17 @@ function AddServiceModal({
       setError(e.message ?? 'Failed to save API key')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleActivateCredentialFree(serviceId: string) {
+    setError(null)
+    try {
+      await api.services.activate(serviceId)
+      qc.invalidateQueries({ queryKey: ['services'] })
+      onClose()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to activate service')
     }
   }
 
@@ -288,7 +301,7 @@ function AddServiceModal({
                   <h3 className="font-semibold text-gray-900">{serviceName(st.baseId)}</h3>
                   {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {st.oauth ? 'Activate with OAuth' : 'Activate with API key'}
+                    {st.credentialFree ? 'No credentials needed' : st.oauth ? 'Activate with OAuth' : 'Activate with API key'}
                   </p>
                 </div>
 
@@ -353,7 +366,7 @@ function AddServiceModal({
                 {/* Action button (hide when inline inputs are active for this service) */}
                 {aliasInputFor !== st.baseId && keyInputFor !== st.baseId && (
                   <button
-                    onClick={() => showAliasPrompt(st)}
+                    onClick={() => st.credentialFree ? handleActivateCredentialFree(st.baseId) : showAliasPrompt(st)}
                     className={`text-xs px-3 py-1.5 rounded ${isActivated
                       ? 'border border-gray-300 text-gray-600 hover:bg-gray-50'
                       : 'bg-blue-600 text-white hover:bg-blue-700'

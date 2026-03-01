@@ -303,6 +303,12 @@ func (c *Client) ActivateWithKey(serviceID, token, alias string) error {
 	return c.post("/api/services/"+serviceID+"/activate-key", body, &resp)
 }
 
+// ActivateService activates a credential-free service (e.g. iMessage).
+func (c *Client) ActivateService(serviceID string) error {
+	var resp map[string]string
+	return c.post("/api/services/"+serviceID+"/activate", nil, &resp)
+}
+
 // DeactivateService removes credentials for a service (default alias).
 func (c *Client) DeactivateService(serviceID, alias string) error {
 	body := map[string]string{}
