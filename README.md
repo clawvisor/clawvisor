@@ -352,3 +352,7 @@ make build                          # full build (Go binary + frontend)
 - **Audit trail.** Every gateway request is logged with a unique `request_id` (enforced by DB constraint). Outcomes are updated after execution.
 - **Response formatting.** Adapter results are semantically formatted — secrets are stripped, HTML/Unicode is sanitized before anything reaches the agent.
 - **Optional LLM safety check.** A configurable post-execution check scans formatted output for prompt injection or unsafe content before delivery.
+
+### Agent isolation
+
+Clawvisor's security model assumes the agent can only reach it through the API — it should never have direct access to Clawvisor's database, configuration, or runtime environment. If the agent runs on the same machine with unrestricted shell access, it could bypass Clawvisor entirely by reading the database or inspecting process environment variables. The recommended deployment is to run the agent in an environment without direct access to Clawvisor's host — a sandboxed container (e.g. Docker), a separate machine, or in the cloud. This ensures the agent can only interact with Clawvisor through the gateway API, where restrictions, approval flows, and audit logging are enforced.
