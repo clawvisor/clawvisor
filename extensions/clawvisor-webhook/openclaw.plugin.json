@@ -1,0 +1,25 @@
+{
+  "id": "clawvisor-webhook",
+  "name": "Clawvisor Webhook",
+  "description": "Receives Clawvisor action callbacks, verifies HMAC signatures, and routes results to the agent session.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "secret": {
+        "type": "string",
+        "description": "Callback signing secret from POST /api/callbacks/register (cbsec_...)"
+      },
+      "path": {
+        "type": "string",
+        "description": "HTTP path to listen on for Clawvisor callbacks. Default: /clawvisor/callback"
+      }
+    }
+  },
+  "uiHints": {
+    "secret": { "label": "Callback Signing Secret", "sensitive": true, "placeholder": "cbsec_..." },
+    "path": { "label": "Webhook Path", "advanced": true }
+  }
+}
