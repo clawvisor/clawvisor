@@ -46,7 +46,7 @@ func NewTasksScreen(c *client.Client) *TasksScreen {
 	return &TasksScreen{
 		client: c,
 		detail: NewDetail(),
-		filter: client.TaskFilter{ActiveOnly: true, Limit: 50},
+		filter: client.TaskFilter{ActiveOnly: true, Limit: 20},
 	}
 }
 
@@ -94,6 +94,10 @@ func (s *TasksScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		s.width = msg.Width
 		s.height = msg.Height
 		s.detail = s.detail.SetSize(msg.Width, msg.Height)
+		if newLimit := s.computePageSize(); newLimit != s.filter.Limit {
+			s.filter.Limit = newLimit
+			cmds = append(cmds, s.fetchTasks())
+		}
 
 	case tea.KeyMsg:
 		switch {
@@ -320,10 +324,21 @@ func (s *TasksScreen) renderTask(t client.Task, selected bool) string {
 		timeInfo = timeAgo(t.CreatedAt)
 	}
 
+	// Truncate purpose to prevent line wrapping.
+	purpose := t.Purpose
+	if s.width > 0 {
+		// line1 overhead: marker(2) + icon(1) + space(1) + two double-space gaps(4) = 8
+		purposeMax := s.width - 8 - len(t.Lifetime) - len(timeInfo)
+		if purposeMax < 10 {
+			purposeMax = 10
+		}
+		purpose = truncStr(purpose, purposeMax)
+	}
+
 	line1 := fmt.Sprintf("%s%s %s  %s  %s",
 		marker,
 		statusIcon,
-		tui.StyleBold.Render(t.Purpose),
+		tui.StyleBold.Render(purpose),
 		tui.StyleDim.Render(t.Lifetime),
 		tui.StyleDim.Render(timeInfo),
 	)
@@ -344,10 +359,22 @@ func (s *TasksScreen) renderTask(t client.Task, selected bool) string {
 		agentName = t.AgentID[:8]
 	}
 
+	requestStr := fmt.Sprintf("%d requests", t.RequestCount)
+
+	// Truncate actions line to prevent wrapping.
+	if s.width > 0 {
+		// line2 overhead: 6 spaces + two double-space gaps(4) = 10
+		actionMax := s.width - 10 - len(agentName) - len(requestStr)
+		if actionMax < 10 {
+			actionMax = 10
+		}
+		actionStr = truncStr(actionStr, actionMax)
+	}
+
 	line2 := fmt.Sprintf("      %s  %s  %s",
 		tui.StyleDim.Render(actionStr),
 		agentName,
-		tui.StyleDim.Render(fmt.Sprintf("%d requests", t.RequestCount)),
+		tui.StyleDim.Render(requestStr),
 	)
 
 	return line1 + "\n" + line2 + "\n"
@@ -400,4 +427,26 @@ func (s *TasksScreen) contentWidth() int {
 		w = 40
 	}
 	return w
+}
+
+func (s *TasksScreen) computePageSize() int {
+	if s.height <= 0 {
+		return 20
+	}
+	size := (s.height - 8) / 2
+	if size < 5 {
+		size = 5
+	}
+	return size
+}
+
+func truncStr(s string, maxWidth int) string {
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
 }
