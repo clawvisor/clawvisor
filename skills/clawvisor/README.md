@@ -1,6 +1,6 @@
 # Clawvisor — OpenClaw Skill
 
-Route tool requests through [Clawvisor](https://github.com/ericlevine/clawvisor-gatekeeper)
+Route tool requests through [Clawvisor](https://github.com/clawvisor/clawvisor)
 for policy enforcement, credential vaulting, and human approval flows.
 
 The agent never holds API keys. Every action is logged and auditable. The user
@@ -20,7 +20,7 @@ controls what is allowed via dashboard policies.
 
 ```bash
 # Local (SQLite, no Docker)
-git clone https://github.com/ericlevine/clawvisor-gatekeeper
+git clone https://github.com/clawvisor/clawvisor
 cd clawvisor-gatekeeper
 JWT_SECRET=your-secret make run-sqlite
 ```
@@ -80,6 +80,6 @@ can approve from the dashboard. The result is delivered back to the agent via
 
 ## Links
 
-- [Repository](https://github.com/ericlevine/clawvisor-gatekeeper)
+- [Repository](https://github.com/clawvisor/clawvisor)
 - [Dashboard](http://localhost:8080) (local) / your Cloud Run URL
-- [Phase docs](https://github.com/ericlevine/clawvisor-gatekeeper/tree/main/docs)
+- [Phase docs](https://github.com/clawvisor/clawvisor/tree/main/docs)
