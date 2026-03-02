@@ -33,8 +33,8 @@ Approve a purpose, not a permission. Clawvisor enforces it on every request.
 **Prerequisites:** Go 1.23+, Node 18+
 
 ```bash
-git clone https://github.com/ericlevine/clawvisor-gatekeeper.git
-cd clawvisor-gatekeeper
+git clone https://github.com/clawvisor/clawvisor.git
+cd clawvisor
 
 # Interactive setup — installs deps, builds, generates config
 make setup
