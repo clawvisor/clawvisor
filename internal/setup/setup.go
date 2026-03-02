@@ -258,7 +258,7 @@ func stepGoogle(cfg *config) error {
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Enable Gmail, Calendar, Drive, and Contacts?").
-				Description("Requires a Google Cloud OAuth 2.0 client.\nhttps://console.cloud.google.com/apis/credentials").
+				Description("Requires a Google Cloud OAuth 2.0 client.\nSetup guide: https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md\nhttps://console.cloud.google.com/apis/credentials").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&cfg.googleEnabled),
