@@ -521,7 +521,7 @@ const plugin = {
     // Prefer registerHttpRoute (new Plugin SDK) with fallback to
     // registerHttpHandler (legacy) for backward compatibility.
     if (typeof api.registerHttpRoute === "function") {
-      api.registerHttpRoute("POST", webhookPath, handleCallback);
+      api.registerHttpRoute({ path: webhookPath, handler: handleCallback });
     } else {
       api.registerHttpHandler(async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
         const url = req.url ?? "";
