@@ -7,7 +7,7 @@ import WebSocket from "ws";
 
 const DEFAULT_PATH = "/clawvisor/callback";
 const MAX_BODY_BYTES = 1024 * 512;
-const GATEWAY_WS_URL = "ws://127.0.0.1:18789";
+const DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789";
 const DEFAULT_SESSION_KEY = "agent:main:main";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ const DEFAULT_SESSION_KEY = "agent:main:main";
 interface ClawvisorConfig {
   secret?: string;
   path?: string;
+  gatewayWsUrl?: string;
 }
 
 interface ClawvisorRequestCallback {
@@ -222,6 +223,7 @@ class GatewayClient {
   private ws: WebSocket | null = null;
   private device: DeviceIdentity;
   private gatewayToken: string;
+  private gatewayWsUrl: string;
   private log: OpenClawPluginApi["log"];
   private pending = new Map<string, PendingRequest>();
   private connected = false;
@@ -230,9 +232,10 @@ class GatewayClient {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickIntervalMs = 15000;
 
-  constructor(device: DeviceIdentity, gatewayToken: string, log: OpenClawPluginApi["log"]) {
+  constructor(device: DeviceIdentity, gatewayToken: string, gatewayWsUrl: string, log: OpenClawPluginApi["log"]) {
     this.device = device;
     this.gatewayToken = gatewayToken;
+    this.gatewayWsUrl = gatewayWsUrl;
     this.log = log;
   }
 
@@ -255,7 +258,7 @@ class GatewayClient {
   private connect(): Promise<void> {
     this.connecting = true;
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(GATEWAY_WS_URL);
+      this.ws = new WebSocket(this.gatewayWsUrl);
 
       this.ws.on("open", () => {
         this.log?.info("clawvisor-webhook: WS connected, waiting for challenge");
@@ -386,7 +389,7 @@ class GatewayClient {
     if (this.tickTimer) { clearInterval(this.tickTimer); this.tickTimer = null; }
   }
 
-  async chatSend(message: string, sessionKey: string = DEFAULT_SESSION_KEY): Promise<unknown> {
+  async chatSend(message: string, sessionKey: string = DEFAULT_SESSION_KEY, idempotencyKey?: string): Promise<unknown> {
     await this.ensureConnected();
 
     const id = randomUUID();
@@ -397,7 +400,7 @@ class GatewayClient {
       params: {
         sessionKey,
         message,
-        idempotencyKey: randomUUID(),
+        idempotencyKey: idempotencyKey ?? randomUUID(),
       },
     };
 
@@ -443,20 +446,19 @@ const plugin = {
     }
 
     const webhookPath = config.path ?? DEFAULT_PATH;
+    const gatewayWsUrl = config.gatewayWsUrl ?? process.env.OPENCLAW_GATEWAY_WS_URL ?? DEFAULT_GATEWAY_WS_URL;
     const dataDir = join(process.env.HOME ?? "/tmp", ".openclaw", "extensions", "clawvisor-webhook");
     const device = getOrCreateDevice(dataDir);
-    const gateway = new GatewayClient(device, gatewayToken, api.log);
+    const gateway = new GatewayClient(device, gatewayToken, gatewayWsUrl, api.log);
 
-    api.log?.info(`clawvisor-webhook: listening on ${webhookPath} (WS mode, device=${device.id})`);
+    api.log?.info(`clawvisor-webhook: listening on ${webhookPath} (WS → ${gatewayWsUrl}, device=${device.id})`);
 
-    api.registerHttpHandler(async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
-      const url = req.url ?? "";
-      if (url !== webhookPath && !url.startsWith(webhookPath + "?")) return false;
-
+    // Core handler logic shared by both registration methods.
+    async function handleCallback(req: IncomingMessage, res: ServerResponse): Promise<void> {
       if (req.method !== "POST") {
         res.writeHead(405, { "Content-Type": "text/plain" });
         res.end("Method Not Allowed");
-        return true;
+        return;
       }
 
       let rawBody: string;
@@ -465,14 +467,14 @@ const plugin = {
       } catch (err: unknown) {
         res.writeHead(413, { "Content-Type": "text/plain" });
         res.end(err instanceof Error ? err.message : "Read error");
-        return true;
+        return;
       }
 
       const signature = req.headers["x-clawvisor-signature"] as string | undefined;
       if (!verifySignature(rawBody, secret, signature)) {
         res.writeHead(401, { "Content-Type": "text/plain" });
         res.end("Unauthorized: invalid signature");
-        return true;
+        return;
       }
 
       let payload: ClawvisorCallbackPayload;
@@ -481,30 +483,53 @@ const plugin = {
       } catch {
         res.writeHead(400, { "Content-Type": "text/plain" });
         res.end("Bad Request: invalid JSON");
-        return true;
+        return;
       }
 
       // Extract session key from query param, fall back to default
+      const url = req.url ?? "";
       const urlObj = new URL(url, "http://localhost");
       const sessionKey = urlObj.searchParams.get("session") ?? DEFAULT_SESSION_KEY;
 
       const wakeText = buildWakeText(payload);
 
+      // Derive a stable idempotency key from the payload so that Clawvisor
+      // callback retries don't start duplicate agent turns.
+      const callbackId = payload.type === "task"
+        ? `clawvisor:task:${payload.task_id}:${payload.status}`
+        : `clawvisor:request:${payload.request_id}:${payload.status}`;
+
       try {
-        const result = await gateway.chatSend(wakeText, sessionKey);
-        api.log?.info(`clawvisor-webhook: chat.send OK for ${payload.request_id}: ${JSON.stringify(result)}`);
+        const result = await gateway.chatSend(wakeText, sessionKey, callbackId);
+        const payloadId = payload.type === "task" ? payload.task_id : payload.request_id;
+        api.log?.info(`clawvisor-webhook: chat.send OK for ${payloadId}: ${JSON.stringify(result)}`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "chat.send error";
         api.log?.error(`clawvisor-webhook: chat.send failed: ${msg}`);
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end(`Internal error: ${msg}`);
-        return true;
+        return;
       }
 
       res.writeHead(202, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, request_id: payload.request_id }));
-      return true;
-    });
+      const responseId = payload.type === "task"
+        ? { task_id: payload.task_id }
+        : { request_id: payload.request_id };
+      res.end(JSON.stringify({ ok: true, ...responseId }));
+    }
+
+    // Prefer registerHttpRoute (new Plugin SDK) with fallback to
+    // registerHttpHandler (legacy) for backward compatibility.
+    if (typeof api.registerHttpRoute === "function") {
+      api.registerHttpRoute("POST", webhookPath, handleCallback);
+    } else {
+      api.registerHttpHandler(async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+        const url = req.url ?? "";
+        if (url !== webhookPath && !url.startsWith(webhookPath + "?")) return false;
+        await handleCallback(req, res);
+        return true;
+      });
+    }
   },
 };
 
