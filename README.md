@@ -49,7 +49,8 @@ make run
 make tui
 ```
 
-That's it — three commands to a working setup.
+Once the server is running, [connect your agent](#connect-your-agent) to start
+making gated API requests.
 
 `make setup` walks through environment, Google OAuth, iMessage, and intent verification configuration. It generates a `config.yaml` with sensible defaults (hit Enter through most prompts for a basic local setup) and writes `~/.clawvisor/config.yaml` with the server URL so the TUI knows where to connect.
 
@@ -79,6 +80,35 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
+
+### Connect your agent
+
+Once the server is running, create an agent token in the dashboard and install
+the Clawvisor skill so your agent knows the protocol.
+
+**OpenClaw agents (via ClawHub):**
+
+```bash
+clawhub install clawvisor
+```
+
+Then configure the agent's environment:
+
+```bash
+openclaw credentials set CLAWVISOR_URL http://localhost:8080
+openclaw credentials set CLAWVISOR_AGENT_TOKEN <your-agent-token>
+openclaw credentials set OPENCLAW_HOOKS_URL http://localhost:18789
+```
+
+`OPENCLAW_HOOKS_URL` is your OpenClaw gateway address — it enables Clawvisor
+to send callbacks (approval notifications, async results) back to the agent's
+session.
+
+**Other agents:**
+
+Any agent that can make HTTP requests can use Clawvisor. See
+[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md) for the complete
+API protocol — task creation, gateway requests, callbacks, and error handling.
 
 ## How It Works
 
