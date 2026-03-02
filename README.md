@@ -30,7 +30,10 @@ Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
 ## Quickstart
 
-**Prerequisites:** Go 1.23+, Node 18+
+**Prerequisites:**
+
+- [Go 1.23+](https://go.dev/doc/install) — `brew install go` on macOS
+- [Node.js 18+](https://nodejs.org/) — `brew install node` on macOS
 
 ```bash
 git clone https://github.com/clawvisor/clawvisor.git
