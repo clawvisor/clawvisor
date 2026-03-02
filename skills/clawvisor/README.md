@@ -21,7 +21,7 @@ controls what is allowed via dashboard policies.
 ```bash
 # Local (SQLite, no Docker)
 git clone https://github.com/clawvisor/clawvisor
-cd clawvisor-gatekeeper
+cd clawvisor
 JWT_SECRET=your-secret make run-sqlite
 ```
 
