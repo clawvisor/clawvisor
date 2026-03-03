@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const verificationSystemPrompt = `You are a security verifier for an AI agent authorization system.
@@ -46,13 +47,14 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 		expectedUseLine = "Action expected use: not specified (check params against the agent's reason below)"
 	}
 
-	return fmt.Sprintf(`Task purpose: %s
+	return fmt.Sprintf(`Current date: %s
+Task purpose: %s
 %s
 Service: %s
 Action: %s
 Request params:
 %s
-Agent reason for this request: %s`, req.TaskPurpose, expectedUseLine, req.Service, req.Action, params, req.Reason)
+Agent reason for this request: %s`, time.Now().UTC().Format("2006-01-02"), req.TaskPurpose, expectedUseLine, req.Service, req.Action, params, req.Reason)
 }
 
 // parseVerificationResponse parses the LLM response into a VerificationVerdict.
