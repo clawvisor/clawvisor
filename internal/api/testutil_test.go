@@ -97,6 +97,82 @@ func newTestEnv(t *testing.T, extra ...adapters.Adapter) *testEnv {
 	}
 }
 
+// magicLinkTestEnv extends testEnv with a MagicTokenStore for magic-link tests.
+type magicLinkTestEnv struct {
+	*testEnv
+	magicStore *auth.MagicTokenStore
+}
+
+// newMagicLinkTestEnv spins up an API server with magic-link auth (PasswordAuth: false).
+// Users must be created directly via Store.CreateUser since Register is unavailable.
+func newMagicLinkTestEnv(t *testing.T) *magicLinkTestEnv {
+	t.Helper()
+
+	ctx := context.Background()
+
+	db, err := sqlitestore.New(ctx, t.TempDir()+"/test.db")
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	st := sqlitestore.NewStore(db)
+
+	v, err := intvault.NewLocalVault(t.TempDir()+"/vault.key", db, "sqlite")
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+
+	jwtSvc, err := auth.NewJWTService("test-secret-for-integration-tests")
+	if err != nil {
+		t.Fatalf("jwt: %v", err)
+	}
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 0},
+		Auth: config.AuthConfig{
+			JWTSecret:       "test-secret-for-integration-tests",
+			AccessTokenTTL:  "15m",
+			RefreshTokenTTL: "720h",
+		},
+		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
+		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
+	}
+
+	ms := auth.NewMagicTokenStore()
+
+	srv, err := api.New(cfg, st, v, jwtSvc, adapters.NewRegistry(), nil, config.LLMConfig{}, ms,
+		api.WithFeatures(api.FeatureSet{PasswordAuth: false}),
+	)
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { _ = st.Close() })
+
+	return &magicLinkTestEnv{
+		testEnv: &testEnv{
+			t:      t,
+			ts:     ts,
+			Vault:  v,
+			Store:  st,
+			client: ts.Client(),
+		},
+		magicStore: ms,
+	}
+}
+
+// createUser creates a user directly in the store (bypasses auth routes).
+func (e *magicLinkTestEnv) createUser(t *testing.T) (userID, email string) {
+	t.Helper()
+	email = fmt.Sprintf("magic-%s@test.example", randSuffix())
+	user, err := e.Store.CreateUser(context.Background(), email, "unused-hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	return user.ID, email
+}
+
 // url builds an absolute URL for the given path.
 func (e *testEnv) url(path string) string {
 	return e.ts.URL + path

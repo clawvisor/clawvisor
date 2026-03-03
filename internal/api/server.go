@@ -13,7 +13,6 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
-	"github.com/clawvisor/clawvisor/internal/auth"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/internal/intent"
@@ -38,7 +37,7 @@ type Server struct {
 	logger     *slog.Logger
 	http       *http.Server
 
-	magicStore *auth.MagicTokenStore
+	magicStore pkgauth.MagicTokenStore
 
 	// Extension points for open-core customization.
 	extraRoutes func(*http.ServeMux, Dependencies)
@@ -101,7 +100,7 @@ func New(
 	adapterReg *adapters.Registry,
 	notifier notify.Notifier,
 	llmCfg config.LLMConfig,
-	magicStore *auth.MagicTokenStore,
+	magicStore pkgauth.MagicTokenStore,
 	opts ...ServerOption,
 ) (*Server, error) {
 	logOpts := &slog.HandlerOptions{Level: cfg.Server.SlogLevel()}

@@ -161,3 +161,76 @@ func TestAuth_InvalidToken_Rejected(t *testing.T) {
 	resp := env.do("GET", "/api/me", "not-a-valid-jwt", nil)
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
+
+// ── Magic-link auth tests ─────────────────────────────────────────────────────
+
+func TestMagicLink_Exchange(t *testing.T) {
+	env := newMagicLinkTestEnv(t)
+	userID, _ := env.createUser(t)
+
+	token, err := env.magicStore.Generate(userID)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	resp := env.do("POST", "/api/auth/magic", "", map[string]any{"token": token})
+	body := mustStatus(t, resp, http.StatusOK)
+
+	if str(t, body, "access_token") == "" {
+		t.Error("magic exchange: access_token missing")
+	}
+	if str(t, body, "refresh_token") == "" {
+		t.Error("magic exchange: refresh_token missing")
+	}
+	user := nested(t, body, "user")
+	if str(t, user, "id") != userID {
+		t.Errorf("magic exchange: user.id = %q, want %q", str(t, user, "id"), userID)
+	}
+}
+
+func TestMagicLink_InvalidToken(t *testing.T) {
+	env := newMagicLinkTestEnv(t)
+
+	resp := env.do("POST", "/api/auth/magic", "", map[string]any{"token": "bogus-token"})
+	mustStatus(t, resp, http.StatusUnauthorized)
+}
+
+func TestMagicLink_ReusedToken(t *testing.T) {
+	env := newMagicLinkTestEnv(t)
+	userID, _ := env.createUser(t)
+
+	token, err := env.magicStore.Generate(userID)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// First use succeeds.
+	resp := env.do("POST", "/api/auth/magic", "", map[string]any{"token": token})
+	mustStatus(t, resp, http.StatusOK)
+
+	// Second use must fail.
+	resp = env.do("POST", "/api/auth/magic", "", map[string]any{"token": token})
+	mustStatus(t, resp, http.StatusUnauthorized)
+}
+
+func TestMagicLink_PasswordRoutesUnavailable(t *testing.T) {
+	env := newMagicLinkTestEnv(t)
+
+	// POST /api/auth/register should not be routed (405 or 404).
+	resp := env.do("POST", "/api/auth/register", "", map[string]any{
+		"email": "x@test.example", "password": "pass",
+	})
+	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("register: expected 405 or 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// POST /api/auth/login should not be routed (405 or 404).
+	resp = env.do("POST", "/api/auth/login", "", map[string]any{
+		"email": "x@test.example", "password": "pass",
+	})
+	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("login: expected 405 or 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}

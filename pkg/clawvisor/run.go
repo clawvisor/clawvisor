@@ -7,7 +7,6 @@ import (
 	"syscall"
 
 	"github.com/clawvisor/clawvisor/internal/api"
-	"github.com/clawvisor/clawvisor/internal/auth"
 )
 
 // Run starts the Clawvisor server with the given options and blocks until
@@ -47,15 +46,9 @@ func Run(opts *ServerOptions) error {
 		apiOpts = append(apiOpts, api.WithWrapRoutes(opts.WrapRoutes))
 	}
 
-	// Resolve magic store — the internal API expects *auth.MagicTokenStore specifically.
-	var magicStore *auth.MagicTokenStore
-	if ms, ok := opts.MagicStore.(*auth.MagicTokenStore); ok {
-		magicStore = ms
-	}
-
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
-		opts.AdapterReg, opts.Notifier, opts.Config.LLM, magicStore,
+		opts.AdapterReg, opts.Notifier, opts.Config.LLM, opts.MagicStore,
 		apiOpts...,
 	)
 	if err != nil {

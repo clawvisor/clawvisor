@@ -27,7 +27,7 @@ func Run(logger *slog.Logger) error {
 
 	// ── Magic link setup (local mode) ──────────────────────────────────────
 	var magicURL string
-	if ms, ok := opts.MagicStore.(*auth.MagicTokenStore); ok && ms != nil {
+	if ms := opts.MagicStore; ms != nil {
 		cfg := opts.Config
 		const localEmail = "admin@local"
 		bgCtx := context.Background()

@@ -13,6 +13,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
+
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -22,11 +23,11 @@ type AuthHandler struct {
 	jwtSvc     pkgauth.TokenService
 	st         store.Store
 	cfg        config.AuthConfig
-	magicStore *auth.MagicTokenStore // nil when magic link auth is disabled
+	magicStore pkgauth.MagicTokenStore // nil when magic link auth is disabled
 	baseURL    string
 }
 
-func NewAuthHandler(jwtSvc pkgauth.TokenService, st store.Store, cfg config.AuthConfig, magicStore *auth.MagicTokenStore, baseURL string) *AuthHandler {
+func NewAuthHandler(jwtSvc pkgauth.TokenService, st store.Store, cfg config.AuthConfig, magicStore pkgauth.MagicTokenStore, baseURL string) *AuthHandler {
 	return &AuthHandler{jwtSvc: jwtSvc, st: st, cfg: cfg, magicStore: magicStore, baseURL: baseURL}
 }
 

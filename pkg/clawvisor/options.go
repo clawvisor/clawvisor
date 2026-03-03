@@ -31,7 +31,7 @@ type ServerOptions struct {
 
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.
-	MagicStore MagicTokenStore
+	MagicStore auth.MagicTokenStore
 
 	// Features declares which capabilities the frontend exposes.
 	Features FeatureSet
@@ -41,13 +41,6 @@ type ServerOptions struct {
 
 	// WrapRoutes wraps the entire HTTP handler (e.g. tenant-scoping middleware).
 	WrapRoutes func(handler http.Handler) http.Handler
-}
-
-// MagicTokenStore is the interface for magic link auth (local mode).
-type MagicTokenStore interface {
-	Generate(userID string) (string, error)
-	Validate(token string) (userID string, err error)
-	Cleanup()
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

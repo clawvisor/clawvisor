@@ -14,6 +14,15 @@ type TokenService interface {
 	ValidateToken(tokenStr string) (*Claims, error)
 }
 
+// MagicTokenStore manages single-use magic link tokens.
+// The open-source in-memory implementation lives in internal/auth.
+// Cloud deployments can provide alternative implementations (e.g. Redis-backed).
+type MagicTokenStore interface {
+	Generate(userID string) (string, error)
+	Validate(token string) (userID string, err error)
+	Cleanup()
+}
+
 // Claims is the payload stored inside a user JWT.
 type Claims struct {
 	UserID string `json:"user_id"`
