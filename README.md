@@ -32,7 +32,7 @@ Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
 **Prerequisites:**
 
-- [Go 1.23+](https://go.dev/doc/install) — `brew install go` on macOS
+- [Go 1.25+](https://go.dev/doc/install) — `brew install go` on macOS
 - [Node.js 18+](https://nodejs.org/) — `brew install node` on macOS
 
 ```bash
@@ -360,8 +360,8 @@ clawvisor tui
 
 | Layer | Choice |
 |---|---|
-| Backend | Go 1.23+, `net/http` ServeMux |
-| Frontend | Vite + React 18 + TypeScript + Tailwind + shadcn/ui |
+| Backend | Go 1.25+, `net/http` ServeMux |
+| Frontend | Vite + React 18 + TypeScript + Tailwind |
 | Database | Postgres (prod) or SQLite (local), behind `Store` interface |
 | Vault | AES-256-GCM with keyfile (local) or GCP Secret Manager, behind `Vault` interface |
 | Auth | JWT (HS256), bcrypt passwords |
@@ -370,20 +370,23 @@ clawvisor tui
 ### Directory layout
 
 ```
-cmd/server/main.go          — entry point
+cmd/clawvisor/main.go       — unified CLI entry point (server, tui, setup)
 internal/
   api/                      — HTTP server, middleware, handlers
   adapters/                 — service adapters (google/, github/, apple/, slack/, notion/, linear/, stripe/, twilio/)
   store/                    — Store interface + postgres/ and sqlite/ implementations
   vault/                    — Vault interface + local and GCP implementations
-  config/                   — config loading with env var overrides
   auth/                     — JWT, passwords, magic link tokens
-  safety/                   — LLM safety checker
-  notify/                   — Telegram notifier
+  browser/                  — opens URLs in the user's browser
   callback/                 — async result delivery to agents
-  gateway/                  — gateway request types
-  filters/                  — response filter pipeline
+  display/                  — human-readable names for services and actions
   intent/                   — intent verification
+  llm/                      — LLM HTTP client for intent verification
+  notify/                   — Telegram notifier
+  ratelimit/                — rate limiting
+  server/                   — server bootstrap and config loading
+  setup/                    — interactive setup wizard
+  tui/                      — terminal UI dashboard
 web/                        — React frontend (Vite)
 skills/clawvisor/           — agent skill definition (SKILL.md)
 deploy/                     — Dockerfile, docker-compose, Cloud Run config
