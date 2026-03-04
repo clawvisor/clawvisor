@@ -412,3 +412,163 @@ make build                          # full build (Go binary + frontend)
 ### Agent isolation
 
 Clawvisor's security model assumes the agent can only reach it through the API — it should never have direct access to Clawvisor's database, configuration, or runtime environment. If the agent runs on the same machine with unrestricted shell access, it could bypass Clawvisor entirely by reading the database or inspecting process environment variables. The recommended deployment is to run the agent in an environment without direct access to Clawvisor's host — a sandboxed container (e.g. Docker), a separate machine, or in the cloud. This ensures the agent can only interact with Clawvisor through the gateway API, where restrictions, approval flows, and audit logging are enforced.
+
+## Automated Setup FAQ
+
+This section covers questions that come up when an AI agent (Claude Code, OpenClaw, etc.) sets up Clawvisor programmatically.
+
+### How do I authenticate without a browser?
+
+When the server starts in local mode, it prints a magic link URL to stdout and writes a separate one-time token to `~/.clawvisor/.local-session`. Either token can be exchanged for a JWT via `POST /api/auth/magic`:
+
+```bash
+# Read the token from the local session file
+TOKEN=$(python3 -c "import json; print(json.load(open('$HOME/.clawvisor/.local-session'))['magic_token'])")
+
+# Exchange it for a JWT
+curl -s -X POST http://localhost:8080/api/auth/magic \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$TOKEN\"}" | jq '.access_token'
+```
+
+> **Important:** Both tokens are single-use and expire after one exchange. Capture the `refresh_token` from the response and use `POST /api/auth/refresh` to get new access tokens without restarting the server.
+
+### How do I create an agent token?
+
+Once you have a user JWT, `POST /api/agents` returns the raw agent token (shown only once — store it immediately):
+
+```bash
+curl -s -X POST http://localhost:8080/api/agents \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-agent"}' | jq '.token'
+```
+
+### What's the correct health check endpoint?
+
+The health endpoint is at `/health` (no `/api` prefix), not `/api/health`:
+
+```bash
+curl http://localhost:8080/health    # → {"status":"ok"}
+curl http://localhost:8080/ready     # → {"db":"ok","vault":"ok","status":"ok"}
+```
+
+### How do I activate a service via API?
+
+Services that use API keys (GitHub, Slack, Notion, Linear, Stripe, Twilio) are activated with `POST /api/services/{serviceID}/activate` using a `{"token": "..."}` body:
+
+```bash
+# GitHub
+curl -s -X POST http://localhost:8080/api/services/github/activate \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"token": "ghp_your_token_here"}'
+
+# Slack
+curl -s -X POST http://localhost:8080/api/services/slack/activate \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"token": "xoxb-your-bot-token"}'
+```
+
+Google services (Gmail, Calendar, Drive, Contacts) require OAuth and cannot be activated purely via API — use `GET /api/oauth/url?service=google.gmail` to get the consent URL, which can be opened in a browser or displayed to the user. See [Google OAuth Setup](docs/GOOGLE_OAUTH_SETUP.md).
+
+### How do I check which services are available and their status?
+
+```bash
+curl -s http://localhost:8080/api/services \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq '.services[] | {id, status, oauth, actions}'
+```
+
+### Tasks require human approval — how does that work headlessly?
+
+Tasks always start in `pending_approval` state. This is by design — Clawvisor is a human-in-the-loop system. For automated testing or CI environments, you can approve tasks immediately via the user API:
+
+```bash
+# Create task (returns task_id)
+TASK_ID=$(curl -s -X POST http://localhost:8080/api/tasks \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "List GitHub repos for the project",
+    "authorized_actions": [
+      {"service": "github", "action": "list_repos", "auto_execute": true, "expected_use": "List repos"}
+    ]
+  }' | jq -r '.task_id')
+
+# Approve it (use the user JWT, not agent token)
+curl -s -X POST http://localhost:8080/api/tasks/$TASK_ID/approve \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+> In production, task approval is done by the human via the dashboard or a notification channel (Telegram). The agent waits for the callback.
+
+### What does `auto_execute: true` mean?
+
+When `auto_execute: true` is set on an authorized action, requests for that action will execute immediately without a per-request approval prompt — once the task itself has been approved. The task approval is still required; `auto_execute` just skips the per-request approval within an already-approved task.
+
+### How do I run without iMessage to avoid macOS errors?
+
+On non-macOS systems or when iMessage isn't needed, set `IMESSAGE_ENABLED=false`:
+
+```bash
+DATABASE_DRIVER=sqlite JWT_SECRET=your-secret IMESSAGE_ENABLED=false ./bin/clawvisor server
+```
+
+### Full end-to-end script (no browser required)
+
+```bash
+# 1. Build and start
+make build
+DATABASE_DRIVER=sqlite JWT_SECRET=your-secret IMESSAGE_ENABLED=false ./bin/clawvisor server &
+sleep 3
+
+# 2. Authenticate using local-session token
+TOKEN=$(python3 -c "import json; print(json.load(open('$HOME/.clawvisor/.local-session'))['magic_token'])")
+AUTH=$(curl -s -X POST http://localhost:8080/api/auth/magic \
+  -H "Content-Type: application/json" -d "{\"token\": \"$TOKEN\"}")
+ACCESS=$(echo $AUTH | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+REFRESH=$(echo $AUTH | python3 -c "import sys,json; print(json.load(sys.stdin)['refresh_token'])")
+
+# 3. Create agent token
+AGENT_TOKEN=$(curl -s -X POST http://localhost:8080/api/agents \
+  -H "Authorization: Bearer $ACCESS" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-agent"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# 4. Activate a service
+curl -s -X POST http://localhost:8080/api/services/github/activate \
+  -H "Authorization: Bearer $ACCESS" \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$GITHUB_TOKEN\"}"
+
+# 5. Create and approve a task
+TASK_ID=$(curl -s -X POST http://localhost:8080/api/tasks \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "List GitHub repos",
+    "authorized_actions": [
+      {"service": "github", "action": "list_repos", "auto_execute": true, "expected_use": "List repos"}
+    ]
+  }' | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
+
+curl -s -X POST http://localhost:8080/api/tasks/$TASK_ID/approve \
+  -H "Authorization: Bearer $ACCESS" -d '{}'
+
+# 6. Make a gateway request
+curl -s -X POST http://localhost:8080/api/gateway/request \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"task_id\": \"$TASK_ID\",
+    \"service\": \"github\",
+    \"action\": \"list_repos\",
+    \"params\": {},
+    \"reason\": \"Listing repos for project overview\",
+    \"request_id\": \"$(python3 -c 'import uuid; print(uuid.uuid4())')\",
+    \"context\": {\"source\": \"user_message\", \"data_origin\": null}
+  }"
+```
