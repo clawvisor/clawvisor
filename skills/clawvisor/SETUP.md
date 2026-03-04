@@ -23,7 +23,19 @@ When setup is complete, the user should have:
 ## Step 1: Locate the Clawvisor repository
 
 The Clawvisor source is needed for `docker-compose.openclaw.yml` and the
-webhook extension files. Check common locations:
+webhook extension files.
+
+First, check if the current working directory is already the Clawvisor
+repository:
+
+```bash
+ls docker-compose.openclaw.yml extensions/clawvisor-webhook/ 2>/dev/null
+```
+
+If both exist, the current directory is the repo — use it as
+`$CLAWVISOR_REPO`.
+
+If not, search common locations:
 
 ```bash
 ls -d ~/code/clawvisor 2>/dev/null \
