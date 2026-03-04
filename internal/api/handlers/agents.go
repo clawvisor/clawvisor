@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -39,14 +40,13 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawSecret, err := generateToken()
+	rawToken, err := auth.GenerateAgentToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
 		return
 	}
-	rawToken := "cvis_" + rawSecret
 
-	agent, err := h.st.CreateAgent(r.Context(), user.ID, body.Name, hashToken(rawToken))
+	agent, err := h.st.CreateAgent(r.Context(), user.ID, body.Name, auth.HashToken(rawToken))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create agent")
 		return

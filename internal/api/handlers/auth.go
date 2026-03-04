@@ -1,9 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -140,7 +137,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenHash := hashToken(body.RefreshToken)
+	tokenHash := auth.HashToken(body.RefreshToken)
 	sess, err := h.st.GetSession(r.Context(), tokenHash)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "invalid or expired refresh token")
@@ -187,7 +184,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	if body.RefreshToken != "" {
-		_ = h.st.DeleteSession(r.Context(), hashToken(body.RefreshToken))
+		_ = h.st.DeleteSession(r.Context(), auth.HashToken(body.RefreshToken))
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -354,13 +351,13 @@ func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authRespo
 		return nil, err
 	}
 
-	rawRefresh, err := generateToken()
+	rawRefresh, err := auth.GenerateRandomToken()
 	if err != nil {
 		return nil, err
 	}
 
 	expiresAt := time.Now().Add(refreshTTL)
-	if _, err := h.st.CreateSession(r.Context(), user.ID, hashToken(rawRefresh), expiresAt); err != nil {
+	if _, err := h.st.CreateSession(r.Context(), user.ID, auth.HashToken(rawRefresh), expiresAt); err != nil {
 		return nil, err
 	}
 
@@ -371,17 +368,3 @@ func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authRespo
 	}, nil
 }
 
-// generateToken creates a cryptographically secure random token string.
-func generateToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-// hashToken returns the SHA-256 hex digest of a token.
-func hashToken(token string) string {
-	h := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(h[:])
-}

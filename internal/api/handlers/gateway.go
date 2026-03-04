@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +12,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
-	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -516,7 +515,7 @@ func (h *GatewayHandler) RegisterCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	secret, err := generateCallbackSecret()
+	secret, err := auth.GenerateCallbackSecret()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate secret")
 		return
@@ -532,14 +531,6 @@ func (h *GatewayHandler) RegisterCallback(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// generateCallbackSecret returns a "cbsec_"-prefixed 32-byte hex secret.
-func generateCallbackSecret() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return "cbsec_" + hex.EncodeToString(b), nil
-}
 
 // ── Shared execution logic ────────────────────────────────────────────────────
 

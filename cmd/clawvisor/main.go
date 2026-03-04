@@ -16,6 +16,8 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(healthcheckCmd)
 }
 
 func main() {

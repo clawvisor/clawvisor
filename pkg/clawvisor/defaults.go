@@ -181,6 +181,45 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 	}, nil
 }
 
+// ConnectStore loads config and connects to the database only.
+// Use for CLI commands that need DB access without the full server stack
+// (no vault, adapters, notifier, or JWT initialization).
+func ConnectStore(logger *slog.Logger) (*config.Config, store.Store, error) {
+	ctx := context.Background()
+
+	cfgPath := "config.yaml"
+	if p := os.Getenv("CONFIG_FILE"); p != "" {
+		cfgPath = p
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading config: %w", err)
+	}
+
+	var st store.Store
+	switch cfg.Database.Driver {
+	case "postgres":
+		if cfg.Database.PostgresURL == "" {
+			return nil, nil, fmt.Errorf("DATABASE_URL must be set for postgres driver")
+		}
+		pool, err := pgstore.New(ctx, cfg.Database.PostgresURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("connecting to postgres: %w", err)
+		}
+		st = pgstore.NewStore(pool)
+	case "sqlite":
+		db, err := sqlitestore.New(ctx, cfg.Database.SQLitePath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("connecting to sqlite: %w", err)
+		}
+		st = sqlitestore.NewStore(db)
+	default:
+		return nil, nil, fmt.Errorf("unsupported database driver %q (use \"postgres\" or \"sqlite\")", cfg.Database.Driver)
+	}
+
+	return cfg, st, nil
+}
+
 func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
 	switch cfg.Vault.Backend {
 	case "local":

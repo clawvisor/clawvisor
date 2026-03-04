@@ -2,10 +2,9 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -31,7 +30,7 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			hash := agentTokenHash(token)
+			hash := auth.HashToken(token)
 			agent, err := st.GetAgentByToken(r.Context(), hash)
 			if err != nil {
 				http.Error(w, `{"error":"invalid agent token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
@@ -46,8 +45,3 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// agentTokenHash returns the SHA-256 hex digest of an agent token.
-func agentTokenHash(token string) string {
-	h := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(h[:])
-}

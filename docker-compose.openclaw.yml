@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: clawvisor
+      POSTGRES_PASSWORD: clawvisor
+      POSTGRES_DB: clawvisor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawvisor"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://clawvisor:clawvisor@postgres:5432/clawvisor"
+      DATABASE_DRIVER: "postgres"
+      JWT_SECRET: "dev-secret-change-in-production"
+      SERVER_HOST: "0.0.0.0"
+      VAULT_BACKEND: "local"
+      VAULT_KEY_FILE: "/data/vault.key"
+      CALLBACK_ALLOW_PRIVATE_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      CALLBACK_REQUIRE_HTTPS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /clawvisor, healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    volumes:
+      - clawvisor_data:/data
+
+volumes:
+  postgres_data:
+  clawvisor_data:
