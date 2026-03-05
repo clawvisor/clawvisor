@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#quickstart">Quickstart</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#tui">TUI</a> · <a href="#supported-services">Services</a>
+  <a href="#get-started">Get Started</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#tui">TUI</a> · <a href="#supported-services">Services</a>
 </p>
 
 ---
@@ -24,47 +24,52 @@ AI agents are getting good at doing things. The problem is letting them — safe
 
 Clawvisor sits in the middle. Agents never hold credentials. Instead, they declare **tasks** describing what they need to do, the user approves the scope, and Clawvisor handles credential injection, execution, and audit logging for every request under that task.
 
-The typical flow: an agent creates a task ("triage my inbox — read emails, but ask before sending"), the user approves it once, and the agent makes as many requests as it needs within that scope without further interruption. Actions outside the scope go to the user for per-request approval. Restrictions can hard-block specific actions entirely.
+The typical flow: a user asks their agent to triage their inbox. The agent creates a Clawvisor task declaring what it needs — read emails, but ask before sending. The user approves the scope once, and the agent makes as many requests as it needs within that scope without further interruption. Actions outside the scope go to the user for per-request approval. Restrictions can hard-block specific actions entirely.
 
 Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
-## Quickstart
+## Get Started
 
-**Prerequisites:**
+The setup guides in [`docs/`](docs/SETUP.md) are written as agent-executable
+instructions — give the right one to your AI agent and it will walk you
+through setup and integration interactively.
 
-- [Go 1.25+](https://go.dev/doc/install) — `brew install go` on macOS
-- [Node.js 18+](https://nodejs.org/) — `brew install node` on macOS
+**Point your agent at [docs/SETUP.md](docs/SETUP.md)** to get started. It
+covers two steps:
+
+1. **Run Clawvisor** — locally with Go, with Docker, or on a remote server
+2. **Connect your agent** — Claude Code, OpenClaw, or any HTTP agent
+
+Or jump directly to the guide you need:
+
+| Run Clawvisor | Connect your agent |
+|---|---|
+| [Local](docs/SETUP_LOCAL.md) — Go + SQLite, no Docker | [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) |
+| [Docker](docs/SETUP_DOCKER.md) — Docker Compose locally | [OpenClaw](docs/INTEGRATE_OPENCLAW.md) |
+| [Cloud](docs/SETUP_CLOUD.md) — remote server or container platform | [Generic agent](docs/INTEGRATE_GENERIC.md) |
+
+For the complete agent API protocol, see
+[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
+
+### Manual quickstart
+
+If you prefer to set up without an agent:
 
 ```bash
 git clone https://github.com/clawvisor/clawvisor.git
 cd clawvisor
-
-# Interactive setup — installs deps, builds, generates config
-make setup
-
-# Start the server
-make run
-
-# Launch the TUI dashboard (in a separate terminal)
-make tui
+make setup    # interactive config wizard
+make run      # start server (SQLite, magic link auth)
+make tui      # terminal dashboard (separate terminal)
 ```
 
-Once the server is running, [connect your agent](#connect-your-agent) to start
-making gated API requests.
+`make setup` generates `config.yaml` (database, Google OAuth, intent verification). `make run` starts the server, creates an `admin@local` user, and opens the dashboard via a magic link. `make tui` auto-authenticates using the local session file.
 
-`make setup` walks through environment, Google OAuth, iMessage, and intent verification configuration. It generates a `config.yaml` with sensible defaults (hit Enter through most prompts for a basic local setup) and writes `~/.clawvisor/config.yaml` with the server URL so the TUI knows where to connect.
-
-`make run` starts the server. In local mode it auto-creates an `admin@local` user, opens the web dashboard via a magic link, and writes a session file (`~/.clawvisor/.local-session`) for the TUI.
-
-`make tui` launches the terminal dashboard. It automatically authenticates using the local session file — no manual token configuration needed. On first launch it exchanges the session token for a refresh token and saves it for future use.
-
-You can also run without the setup script:
+You can also skip the wizard:
 
 ```bash
 DATABASE_DRIVER=sqlite JWT_SECRET=dev-secret go run ./cmd/server
 ```
-
-A `vault.key` file is auto-generated on first run if one doesn't exist. This is the master encryption key for stored credentials.
 
 ### Configuration
 
@@ -80,20 +85,6 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
-
-### Connect your agent
-
-Once the server is running, create an agent token in the dashboard and install
-the Clawvisor skill so your agent knows the protocol.
-
-#### Setup guides
-
-See [**docs/SETUP.md**](docs/SETUP.md) for the full setup guide — choose how
-to run Clawvisor (local, Docker, or cloud) and then connect your agent
-(Claude Code, OpenClaw, or any HTTP agent).
-
-For the complete agent API protocol, see
-[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
 
 ## How It Works
 
