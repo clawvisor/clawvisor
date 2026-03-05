@@ -109,13 +109,11 @@ Agent                         Clawvisor                              External AP
   │◄──── Response ───────────────┤                                       │
 ```
 
-Authorization has three layers:
+Every gateway request passes through three authorization layers, checked in order:
 
-1. **Restrictions** — hard blocks you set on specific service/action pairs. If a restriction matches, the request is blocked immediately.
-2. **Task scopes** — the primary mechanism. Agents declare tasks with a purpose and a set of authorized actions. The user approves the scope once; subsequent requests under that task execute without per-request approval (for `auto_execute` actions). Tasks can be session-scoped (with expiry) or standing (indefinite, user-revocable).
-3. **Per-request approval** — the fallback. Requests without a task, or with actions not in the task's scope, go to the approval queue and the user is notified via Telegram.
-
-Requests that don't match any restriction or task scope go to the approval queue — the default is approve, not block.
+1. **Restrictions** — hard blocks you configure on specific service/action pairs. If a restriction matches, the request is denied immediately. Use these for actions you never want any agent to take (e.g. "no agent can delete calendar events").
+2. **Task scopes** — the primary mechanism. When an agent needs to do something, it creates a task declaring the purpose and which service/action pairs it needs. You review and approve the scope once. After that, requests under that task execute without further interruption — you approved the purpose, not each individual call. Tasks can be session-scoped (expire after a TTL) or standing (persist until you revoke them).
+3. **Per-request approval** — the fallback. Any request that isn't covered by a task scope goes to the approval queue, and you're notified via the dashboard or Telegram. This is the default for actions the agent didn't declare upfront, or for task actions marked `auto_execute: false` (e.g. sending emails).
 
 ## Supported Services
 
