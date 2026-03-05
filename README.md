@@ -86,6 +86,15 @@ See [`config.example.yaml`](config.example.yaml) for the full configuration refe
 Once the server is running, create an agent token in the dashboard and install
 the Clawvisor skill so your agent knows the protocol.
 
+#### Setup guides
+
+| Guide | Use case |
+|---|---|
+| [Local Setup](docs/SETUP_LOCAL.md) | Run natively with Go — no Docker, no Postgres |
+| [Claude Code](docs/SETUP_CLAUDE_CODE.md) | Use Clawvisor as a Claude Code skill |
+| [Cloud Deployment](docs/SETUP_CLOUD.md) | Self-host on your own server or cloud platform |
+| [OpenClaw](docs/SETUP_OPENCLAW.md) | Run alongside OpenClaw (Docker) |
+
 **OpenClaw agents (via ClawHub):**
 
 ```bash
