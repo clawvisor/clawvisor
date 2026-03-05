@@ -6,7 +6,7 @@ description: >
   Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
   manages task scopes, and injects credentials — the agent never handles
   secrets directly.
-version: 0.1.0
+version: 0.2.0
 homepage: https://github.com/clawvisor/clawvisor
 metadata:
   openclaw:
