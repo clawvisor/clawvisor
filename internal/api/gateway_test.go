@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -266,21 +267,99 @@ func TestGateway_Execute_AdapterError_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestGateway_Execute_NoVaultCred_ReturnsError(t *testing.T) {
+func TestTaskCreate_InactiveService_Rejected(t *testing.T) {
 	adapter := newMockAdapter("mock.noauth", "go")
 	env := newTestEnv(t, adapter)
 
 	sc := newScenario(t, env, "runner")
-	taskID := sc.createApprovedTask(t, env, "mock.noauth", "go", true)
 
-	// No vault credential seeded — gateway should return error
-	result := sc.gatewayRequestWithTask(env, fmt.Sprintf("req-na-%s", randSuffix()), "mock.noauth", "go", taskID)
-	if result["status"] != "error" {
-		t.Errorf("no vault cred: expected status=error, got %v", result["status"])
+	// No vault credential seeded — task creation should fail
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "test task",
+		"authorized_actions": []map[string]any{{
+			"service": "mock.noauth", "action": "go", "auto_execute": true,
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusBadRequest)
+	if body["code"] != "INVALID_REQUEST" {
+		t.Errorf("expected code=INVALID_REQUEST, got %v", body["code"])
 	}
-	if result["code"] != "SERVICE_NOT_CONFIGURED" {
-		t.Errorf("no vault cred: expected code=SERVICE_NOT_CONFIGURED, got %v", result["code"])
+	msg, _ := body["error"].(string)
+	strContains(t, msg, "not activated", "error message")
+}
+
+// ── Alias mismatch ───────────────────────────────────────────────────────────
+
+// TestApproval_AliasPreserved verifies that approving a request for an aliased
+// service correctly resolves the vault key including the alias.
+func TestApproval_AliasPreserved(t *testing.T) {
+	adapter := newMockAdapter("mock.echo", "echo").
+		withResult("echo ok", map[string]any{"msg": "hello"})
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "automation")
+
+	// Activate under "work" alias → vault key = "mock.echo:work"
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.echo:work", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
 	}
+
+	// Gateway request for "mock.echo:work" without a task → per-request approval.
+	reqID := fmt.Sprintf("req-alias-%s", randSuffix())
+	result := sc.gatewayRequest(env, reqID, "mock.echo:work", "echo")
+	if result["status"] != "pending" {
+		t.Fatalf("expected status=pending, got %v (full: %v)", result["status"], result)
+	}
+
+	// Approve — should execute successfully using the aliased vault key.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "executed" {
+		t.Errorf("expected status=executed, got %v (error=%v)", body["status"], body["error"])
+	}
+}
+
+// TestGateway_AliasNotFound verifies that requesting a non-existent alias
+// returns ALIAS_NOT_FOUND when the service has other aliases activated.
+func TestGateway_AliasNotFound(t *testing.T) {
+	adapter := newMockAdapter("mock.echo", "echo")
+	env := newTestEnv(t, adapter)
+
+	t.Run("non-default alias missing", func(t *testing.T) {
+		sc := newScenario(t, env, "automation")
+		// Activate default alias only.
+		if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.echo", []byte("cred")); err != nil {
+			t.Fatalf("vault seed: %v", err)
+		}
+
+		result := sc.gatewayRequest(env, fmt.Sprintf("req-noalias-%s", randSuffix()), "mock.echo:nonexistent", "echo")
+		if result["code"] != "ALIAS_NOT_FOUND" {
+			t.Errorf("expected code=ALIAS_NOT_FOUND, got %v", result["code"])
+		}
+		errMsg, _ := result["error"].(string)
+		if !strings.Contains(errMsg, "nonexistent") {
+			t.Errorf("error should mention the alias name, got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "GET /api/skill/catalog") {
+			t.Errorf("error should direct agent to the catalog endpoint, got: %s", errMsg)
+		}
+	})
+
+	t.Run("default alias missing but other alias exists", func(t *testing.T) {
+		sc := newScenario(t, env, "automation")
+		// Activate only a non-default alias.
+		if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.echo:work", []byte("cred")); err != nil {
+			t.Fatalf("vault seed: %v", err)
+		}
+
+		result := sc.gatewayRequest(env, fmt.Sprintf("req-defmiss-%s", randSuffix()), "mock.echo", "echo")
+		if result["code"] != "ALIAS_NOT_FOUND" {
+			t.Errorf("expected code=ALIAS_NOT_FOUND, got %v (full: %v)", result["code"], result)
+		}
+		errMsg, _ := result["error"].(string)
+		if !strings.Contains(errMsg, "default") {
+			t.Errorf("error should mention the alias name, got: %s", errMsg)
+		}
+	})
 }
 
 // ── Standing task guards ──────────────────────────────────────────────────────
@@ -288,6 +367,7 @@ func TestGateway_Execute_NoVaultCred_ReturnsError(t *testing.T) {
 func TestStandingTask_RejectsExpiresInSeconds(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("mock.echo", "echo"))
 	sc := newScenario(t, env, "automation")
+	sc.activateService(t, env, "mock.echo")
 
 	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
 		"purpose":            "bad combo",

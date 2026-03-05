@@ -717,8 +717,10 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 		return
 	}
 
+	serviceType, alias := parseServiceAlias(blob.Service)
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
-		userID, blob.Service, blob.Action, blob.Params, "")
+		userID, blob.Service, blob.Action, blob.Params, vKey)
 
 	outcome := "executed"
 	errMsg := ""

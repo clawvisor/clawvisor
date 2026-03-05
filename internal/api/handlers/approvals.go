@@ -221,9 +221,12 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 		return nil, "error", "invalid request blob"
 	}
 
+	serviceType, alias := parseServiceAlias(blob.Service)
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
+
 	start := time.Now()
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
-		pa.UserID, blob.Service, blob.Action, blob.Params, "")
+		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
 	dur := int(time.Since(start).Milliseconds())
 
 	outcome := "executed"

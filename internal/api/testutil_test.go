@@ -405,6 +405,15 @@ func newScenario(t *testing.T, env *testEnv, _ string) *scenario {
 	}
 }
 
+// activateService seeds a dummy vault credential so the service passes activation checks.
+func (sc *scenario) activateService(t *testing.T, env *testEnv, service string) {
+	t.Helper()
+	cred := []byte(`{"type":"api_key","token":"test-token"}`)
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, service, cred); err != nil {
+		t.Fatalf("activateService: vault.Set failed: %v", err)
+	}
+}
+
 // createRestriction creates a restriction via the API and returns its ID.
 func (sc *scenario) createRestriction(t *testing.T, service, action, reason string) string {
 	t.Helper()
@@ -419,6 +428,7 @@ func (sc *scenario) createRestriction(t *testing.T, service, action, reason stri
 // Returns the task ID.
 func (sc *scenario) createApprovedTask(t *testing.T, env *testEnv, service, action string, autoExecute bool) string {
 	t.Helper()
+	sc.activateService(t, env, service)
 	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
 		"purpose": "test task",
 		"authorized_actions": []map[string]any{{
@@ -437,6 +447,7 @@ func (sc *scenario) createApprovedTask(t *testing.T, env *testEnv, service, acti
 // createApprovedStandingTask creates a standing task and approves it. Returns the task ID.
 func (sc *scenario) createApprovedStandingTask(t *testing.T, env *testEnv, service, action string, autoExecute bool) string {
 	t.Helper()
+	sc.activateService(t, env, service)
 	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
 		"purpose":  "standing test task",
 		"lifetime": "standing",

@@ -281,17 +281,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					dur := int(time.Since(start).Milliseconds())
 					e := baseEntry("block", "error", taskIDPtr)
 					e.DurationMS = dur
-					errMsg := fmt.Sprintf("service %q not activated", req.Service)
-					e.ErrorMsg = &errMsg
+					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
+					e.ErrorMsg = &auditMsg
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
 					}
-					writeJSON(w, http.StatusOK, map[string]any{
+					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"status":     "error",
 						"request_id": req.RequestID,
 						"audit_id":   auditID,
-						"error":      fmt.Sprintf("Service %q is not activated. Connect it in the Clawvisor dashboard before making requests.", req.Service),
-						"code":       "SERVICE_NOT_CONFIGURED",
+						"error":      userErr,
+						"code":       code,
 					})
 					return
 				}
@@ -309,17 +309,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
 						e := baseEntry("block", "error", taskIDPtr)
 						e.DurationMS = dur
-						errMsg := fmt.Sprintf("service %q not activated", req.Service)
-						e.ErrorMsg = &errMsg
+						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
+						e.ErrorMsg = &auditMsg
 						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 							h.logger.Warn("audit log failed", "err", logErr)
 						}
-						writeJSON(w, http.StatusOK, map[string]any{
+						writeJSON(w, http.StatusBadRequest, map[string]any{
 							"status":     "error",
 							"request_id": req.RequestID,
 							"audit_id":   auditID,
-							"error":      fmt.Sprintf("Service %q is not activated. Connect it in the Clawvisor dashboard before making requests.", req.Service),
-							"code":       "SERVICE_NOT_CONFIGURED",
+							"error":      userErr,
+							"code":       code,
 						})
 						return
 					}
@@ -404,35 +404,35 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if service needs activation.
-	serviceNotActivated := false
-	if approveAdapter.ValidateCredential(nil) == nil {
-		// Credential-free service: check service_meta for explicit activation.
-		if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-			serviceNotActivated = true
+	{
+		notActivated := false
+		if approveAdapter.ValidateCredential(nil) == nil {
+			if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
+				notActivated = true
+			}
+		} else {
+			vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
+			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+				notActivated = true
+			}
 		}
-	} else {
-		// Credential-backed service: check vault key.
-		vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
-		if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
-			serviceNotActivated = true
+		if notActivated {
+			e := baseEntry("block", "error", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
+			e.ErrorMsg = &auditMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"status":     "error",
+				"request_id": req.RequestID,
+				"audit_id":   auditID,
+				"error":      userErr,
+				"code":       code,
+			})
+			return
 		}
-	}
-	if serviceNotActivated {
-		e := baseEntry("block", "error", nil)
-		e.DurationMS = int(time.Since(start).Milliseconds())
-		errMsg := fmt.Sprintf("service %q not activated", req.Service)
-		e.ErrorMsg = &errMsg
-		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-			h.logger.Warn("audit log failed", "err", logErr)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":     "error",
-			"request_id": req.RequestID,
-			"audit_id":   auditID,
-			"error":      fmt.Sprintf("Service %q is not activated. Connect it in the Clawvisor dashboard before making requests.", req.Service),
-			"code":       "SERVICE_NOT_CONFIGURED",
-		})
-		return
 	}
 
 	// Route to per-request approval.
@@ -666,6 +666,52 @@ func vaultKeyForServiceAlias(serviceType, alias string) string {
 	return base + ":" + alias
 }
 
+// hasAnyAlias reports whether any vault entry exists for the given service type
+// (under any alias). It uses vault.List and checks for matching key prefixes.
+func hasAnyAlias(ctx context.Context, v vault.Vault, userID, serviceType string) bool {
+	base := vaultKeyForService(serviceType)
+	keys, err := v.List(ctx, userID)
+	if err != nil {
+		return false
+	}
+	for _, k := range keys {
+		if k == base || strings.HasPrefix(k, base+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceNotActivatedResponse returns the error code and message for a missing
+// service or alias. It distinguishes ALIAS_NOT_FOUND (service exists under
+// other aliases) from SERVICE_NOT_CONFIGURED (service not activated at all).
+func serviceNotActivatedResponse(
+	ctx context.Context,
+	v vault.Vault,
+	st store.Store,
+	userID, serviceType, serviceAlias, serviceDisplay string,
+	adapter adapters.Adapter,
+) (code, userErr, auditMsg string) {
+	isAlias := false
+	if adapter.ValidateCredential(nil) == nil {
+		if count, cErr := st.CountServiceMetasByType(ctx, userID, serviceType); cErr == nil && count > 0 {
+			isAlias = true
+		}
+	} else {
+		if hasAnyAlias(ctx, v, userID, serviceType) {
+			isAlias = true
+		}
+	}
+	if isAlias {
+		return "ALIAS_NOT_FOUND",
+			fmt.Sprintf("Alias %q does not exist for service %q. Review the available services and aliases via GET /api/skill/catalog.", serviceAlias, serviceType),
+			fmt.Sprintf("alias %q not found for service %q", serviceAlias, serviceType)
+	}
+	return "SERVICE_NOT_CONFIGURED",
+		fmt.Sprintf("Service %q is not activated. Review the available services via GET /api/skill/catalog.", serviceDisplay),
+		fmt.Sprintf("service %q not activated", serviceDisplay)
+}
+
 func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBlob {
 	return &pendingRequestBlob{
 		Service:     req.Service,
@@ -678,6 +724,15 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}
+}
+
+func adapterSupportsAction(adapter adapters.Adapter, action string) bool {
+	for _, a := range adapter.SupportedActions() {
+		if a == action {
+			return true
+		}
+	}
+	return false
 }
 
 func nullableStr(s string) *string {

@@ -201,7 +201,7 @@ func (s *Server) routes() http.Handler {
 	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.logger)
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger)
 	s.approvalsHandler = approvalsHandler
-	tasksHandler := handlers.NewTasksHandler(s.store,
+	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL)
 	s.tasksHandler = tasksHandler
 

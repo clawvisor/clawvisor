@@ -12,9 +12,11 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // hardcodedApprovalActions lists service:action pairs that always require
@@ -31,22 +33,26 @@ func RequiresHardcodedApproval(service, action string) bool {
 
 // TasksHandler manages task-scoped authorization.
 type TasksHandler struct {
-	st       store.Store
-	notifier notify.Notifier
-	cfg      config.Config
-	logger   *slog.Logger
-	baseURL  string
+	st         store.Store
+	vault      vault.Vault
+	adapterReg *adapters.Registry
+	notifier   notify.Notifier
+	cfg        config.Config
+	logger     *slog.Logger
+	baseURL    string
 }
 
 func NewTasksHandler(
 	st store.Store,
+	v vault.Vault,
+	adapterReg *adapters.Registry,
 	notifier notify.Notifier,
 	cfg config.Config,
 	logger *slog.Logger,
 	baseURL string,
 ) *TasksHandler {
 	return &TasksHandler{
-		st: st, notifier: notifier, cfg: cfg, logger: logger, baseURL: baseURL,
+		st: st, vault: v, adapterReg: adapterReg, notifier: notifier, cfg: cfg, logger: logger, baseURL: baseURL,
 	}
 }
 
@@ -85,8 +91,25 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate: hardcoded approval actions reject auto_execute: true.
+	// Validate each authorized action.
 	for _, a := range req.AuthorizedActions {
+		serviceType, serviceAlias := parseServiceAlias(a.Service)
+		adapter, ok := h.adapterReg.Get(serviceType)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				fmt.Sprintf("unknown service %q", a.Service))
+			return
+		}
+		if !adapterSupportsAction(adapter, a.Action) {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				fmt.Sprintf("service %q does not support action %q", serviceType, a.Action))
+			return
+		}
+		if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				fmt.Sprintf("service %q is not activated — connect it in the Clawvisor dashboard first", a.Service))
+			return
+		}
 		if a.AutoExecute && RequiresHardcodedApproval(a.Service, a.Action) {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
 				fmt.Sprintf("action %s:%s has hardcoded approval — auto_execute must be false", a.Service, a.Action))
@@ -461,6 +484,25 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Service == "" || req.Action == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service and action are required")
+		return
+	}
+
+	// Validate service and action exist.
+	serviceType, serviceAlias := parseServiceAlias(req.Service)
+	adapter, ok := h.adapterReg.Get(serviceType)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			fmt.Sprintf("unknown service %q", req.Service))
+		return
+	}
+	if !adapterSupportsAction(adapter, req.Action) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			fmt.Sprintf("service %q does not support action %q", serviceType, req.Action))
+		return
+	}
+	if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			fmt.Sprintf("service %q is not activated — connect it in the Clawvisor dashboard first", req.Service))
 		return
 	}
 
@@ -868,6 +910,20 @@ func (h *TasksHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		"task_id": taskID,
 		"status":  "revoked",
 	})
+}
+
+// serviceActivated checks whether a service (with alias) has been activated.
+// Credential-free services check service_meta; credential-backed services check the vault.
+func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType, alias string, adapter adapters.Adapter) bool {
+	if adapter.ValidateCredential(nil) == nil {
+		// Credential-free: check service_meta.
+		_, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias)
+		return err == nil
+	}
+	// Credential-backed: check vault.
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
+	_, err := h.vault.Get(ctx, userID, vKey)
+	return err == nil
 }
 
 // ── Task scope check helper ───────────────────────────────────────────────────
