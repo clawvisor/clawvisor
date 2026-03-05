@@ -15,8 +15,7 @@ When setup is complete, the user should have:
 2. Clawvisor running with Postgres on their server or container platform
 3. HTTPS configured (reverse proxy or platform-managed)
 4. A user account created
-5. An agent token created
-6. Security checklist reviewed
+5. Security checklist reviewed
 
 ---
 
@@ -209,16 +208,7 @@ Wait for the user to confirm they've registered before proceeding.
 
 ---
 
-## Step 6: Create an agent token
-
-Instruct the user to create an agent in the dashboard under the **Agents**
-tab. The token is shown once on creation — they should copy and save it.
-
-Wait for the user to confirm they have the token before proceeding.
-
----
-
-## Step 7: Security checklist
+## Step 6: Security checklist
 
 Walk through these items with the user:
 
@@ -238,7 +228,7 @@ Walk through these items with the user:
 
 ---
 
-## Step 8: Summary
+## Step 7: Summary
 
 Present the user with:
 
@@ -247,7 +237,6 @@ Clawvisor Cloud Deployment Complete
 ─────────────────────────────────────
 Dashboard:  <PUBLIC_URL>
 Auth mode:  password
-Agent:      my-agent
 Database:   Postgres
 
 To stop (Docker Compose):
@@ -262,6 +251,9 @@ Remind the user to:
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API
     keys/tokens
 - Set up Telegram notifications for mobile approvals (optional)
+
+**Next:** Connect your agent — see [SETUP.md](SETUP.md#2-connect-your-agent)
+for integration guides.
 
 ---
 

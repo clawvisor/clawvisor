@@ -15,8 +15,7 @@ When setup is complete, the user should have:
 2. Clawvisor built and running locally with SQLite
 3. A `config.yaml` generated (via the setup wizard or manually)
 4. A magic link URL to sign into the dashboard
-5. An agent token created
-6. The TUI dashboard working (optional)
+5. The TUI dashboard working (optional)
 
 ---
 
@@ -171,29 +170,7 @@ browser to sign into the dashboard.
 
 ---
 
-## Step 6: Create an agent
-
-Create an agent token using the CLI. Use `--replace` so this is safe to
-re-run:
-
-```bash
-cd "$CLAWVISOR_REPO" && ./bin/clawvisor agent create my-agent --replace --json
-```
-
-This returns JSON with `id`, `name`, and `token` fields. Save the `token`
-value — it is shown only once.
-
-Other useful commands:
-
-```bash
-./bin/clawvisor agent list              # List all agents
-./bin/clawvisor agent list --json       # JSON output
-./bin/clawvisor agent delete my-agent   # Delete by name or ID
-```
-
----
-
-## Step 7: TUI dashboard (optional)
+## Step 6: TUI dashboard (optional)
 
 If the user wants the terminal dashboard, launch it in a separate terminal:
 
@@ -213,7 +190,7 @@ ls ~/.clawvisor/config.yaml 2>/dev/null
 
 ---
 
-## Step 8: Summary
+## Step 7: Summary
 
 Present the user with:
 
@@ -222,7 +199,6 @@ Clawvisor Local Setup Complete
 ────────────────────────────────
 Dashboard:  http://localhost:25297
 Sign in:    <magic link from Step 5>
-Agent:      my-agent
 TUI:        make tui (in a separate terminal)
 
 To stop:    Ctrl+C in the server terminal
@@ -236,6 +212,9 @@ Remind the user to:
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API
     keys/tokens
   - iMessage — always available on macOS without activation
+
+**Next:** Connect your agent — see [SETUP.md](SETUP.md#2-connect-your-agent)
+for integration guides.
 
 ---
 

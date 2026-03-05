@@ -88,36 +88,12 @@ the Clawvisor skill so your agent knows the protocol.
 
 #### Setup guides
 
-| Guide | Use case |
-|---|---|
-| [Local Setup](docs/SETUP_LOCAL.md) | Run natively with Go — no Docker, no Postgres |
-| [Claude Code](docs/SETUP_CLAUDE_CODE.md) | Use Clawvisor as a Claude Code skill |
-| [Cloud Deployment](docs/SETUP_CLOUD.md) | Self-host on your own server or cloud platform |
-| [OpenClaw](docs/SETUP_OPENCLAW.md) | Run alongside OpenClaw (Docker) |
+See [**docs/SETUP.md**](docs/SETUP.md) for the full setup guide — choose how
+to run Clawvisor (local, Docker, or cloud) and then connect your agent
+(Claude Code, OpenClaw, or any HTTP agent).
 
-**OpenClaw agents (via ClawHub):**
-
-```bash
-clawhub install clawvisor
-```
-
-Then configure the agent's environment:
-
-```bash
-openclaw credentials set CLAWVISOR_URL http://localhost:25297
-openclaw credentials set CLAWVISOR_AGENT_TOKEN <your-agent-token>
-openclaw credentials set OPENCLAW_HOOKS_URL http://localhost:18789
-```
-
-`OPENCLAW_HOOKS_URL` is your OpenClaw gateway address — it enables Clawvisor
-to send callbacks (approval notifications, async results) back to the agent's
-session.
-
-**Other agents:**
-
-Any agent that can make HTTP requests can use Clawvisor. See
-[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md) for the complete
-API protocol — task creation, gateway requests, callbacks, and error handling.
+For the complete agent API protocol, see
+[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
 
 ## How It Works
 

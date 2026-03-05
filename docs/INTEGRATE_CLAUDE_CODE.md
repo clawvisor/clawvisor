@@ -35,10 +35,8 @@ If not running, ask the user:
 - **"Is Clawvisor running somewhere else?"** — they may have a cloud instance
   or a different port. If so, get the URL and verify with
   `curl -sf $CLAWVISOR_URL/ready`.
-- **"Would you like to set it up now?"** — point them to the appropriate guide:
-  - Local: `docs/SETUP_LOCAL.md`
-  - Cloud: `docs/SETUP_CLOUD.md`
-  - OpenClaw: `docs/SETUP_OPENCLAW.md`
+- **"Would you like to set it up now?"** — point them to
+  [SETUP.md](SETUP.md) for setup options.
 
 Do not proceed until Clawvisor is reachable.
 
