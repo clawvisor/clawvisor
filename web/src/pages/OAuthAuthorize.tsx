@@ -1,17 +1,26 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 
 export default function OAuthAuthorize() {
   const [searchParams] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
+  const [showClose, setShowClose] = useState(false)
 
   const clientId = searchParams.get('client_id') ?? ''
   const redirectUri = searchParams.get('redirect_uri') ?? ''
   const state = searchParams.get('state') ?? ''
   const codeChallenge = searchParams.get('code_challenge') ?? ''
   const scope = searchParams.get('scope') ?? ''
+
+  // If the redirect opens another app (e.g. Claude), this tab stays open.
+  // Show "you can close this page" after a short delay.
+  useEffect(() => {
+    if (!redirecting) return
+    const timer = setTimeout(() => setShowClose(true), 2000)
+    return () => clearTimeout(timer)
+  }, [redirecting])
 
   if (!clientId || !redirectUri || !codeChallenge) {
     return (
@@ -33,7 +42,7 @@ export default function OAuthAuthorize() {
         code_challenge: codeChallenge,
         scope,
       })
-      setDone(true)
+      setRedirecting(true)
       window.location.href = result.redirect_uri
     } catch (err: any) {
       setError(err.message ?? 'Authorization failed')
@@ -47,19 +56,28 @@ export default function OAuthAuthorize() {
         redirect_uri: redirectUri,
         state,
       })
-      setDone(true)
+      setRedirecting(true)
       window.location.href = result.redirect_uri
     } catch (err: any) {
       setError(err.message ?? 'Failed to deny authorization')
     }
   }
 
-  if (done) {
+  if (redirecting) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950">
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 max-w-md w-full text-center">
-          <h1 className="text-xl font-semibold text-gray-100 mb-2">Authorization Complete</h1>
-          <p className="text-gray-400 text-sm">You can close this page now.</p>
+          {showClose ? (
+            <>
+              <h1 className="text-xl font-semibold text-gray-100 mb-2">Authorization Complete</h1>
+              <p className="text-gray-400 text-sm">You can close this page now.</p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-xl font-semibold text-gray-100 mb-2">Redirecting...</h1>
+              <p className="text-gray-400 text-sm">Completing authorization.</p>
+            </>
+          )}
         </div>
       </div>
     )
