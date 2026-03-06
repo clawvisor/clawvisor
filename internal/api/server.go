@@ -384,7 +384,8 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("GET /.well-known/oauth-protected-resource", oauthProvider.ProtectedResourceMetadata)
 		mux.HandleFunc("GET /.well-known/oauth-authorization-server", oauthProvider.AuthorizationServerMetadata)
 		mux.HandleFunc("POST /oauth/register", oauthProvider.Register)
-		mux.HandleFunc("GET /oauth/authorize", oauthProvider.Authorize)
+		// GET /oauth/authorize is handled by the SPA (React consent page).
+		// The frontend POSTs to POST /oauth/authorize on approval.
 		mux.HandleFunc("POST /oauth/authorize", oauthProvider.AuthorizeApprove)
 		mux.HandleFunc("POST /oauth/token", oauthProvider.Token)
 	}
