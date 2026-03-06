@@ -5,6 +5,7 @@ import { api } from '../api/client'
 export default function OAuthAuthorize() {
   const [searchParams] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
 
   const clientId = searchParams.get('client_id') ?? ''
   const redirectUri = searchParams.get('redirect_uri') ?? ''
@@ -32,6 +33,7 @@ export default function OAuthAuthorize() {
         code_challenge: codeChallenge,
         scope,
       })
+      setDone(true)
       window.location.href = result.redirect_uri
     } catch (err: any) {
       setError(err.message ?? 'Authorization failed')
@@ -45,10 +47,22 @@ export default function OAuthAuthorize() {
         redirect_uri: redirectUri,
         state,
       })
+      setDone(true)
       window.location.href = result.redirect_uri
     } catch (err: any) {
       setError(err.message ?? 'Failed to deny authorization')
     }
+  }
+
+  if (done) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 max-w-md w-full text-center">
+          <h1 className="text-xl font-semibold text-gray-100 mb-2">Authorization Complete</h1>
+          <p className="text-gray-400 text-sm">You can close this page now.</p>
+        </div>
+      </div>
+    )
   }
 
   if (error) {
