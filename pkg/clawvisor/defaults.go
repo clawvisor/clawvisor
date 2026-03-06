@@ -160,12 +160,12 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 	var notifier notify.Notifier = telegramnotify.New(st, ctx)
 
 	// ── Auth mode ──────────────────────────────────────────────────────────
-	// Open-source build always uses magic-link auth.
-	// Password auth is enabled by the cloud build (opts.Features.PasswordAuth = true).
+	// Default is magic-link. Set auth_mode: "password" in config.yaml
+	// (or AUTH_MODE=password env var) to enable email/password auth.
 	magicStore := auth.NewMagicTokenStore()
 
 	features := FeatureSet{
-		PasswordAuth: false,
+		PasswordAuth: cfg.Server.AuthMode == "password",
 	}
 
 	return &ServerOptions{
