@@ -1,26 +1,51 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/mcp"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // MCPHandler handles POST /mcp — the MCP JSON-RPC 2.0 endpoint.
+// It performs agent auth inline (not via middleware) so it can return
+// the WWW-Authenticate header that MCP OAuth discovery requires.
 type MCPHandler struct {
 	server  *mcp.Server
+	st      store.Store
 	baseURL string
 }
 
 // NewMCPHandler creates an MCP handler.
-func NewMCPHandler(server *mcp.Server, baseURL string) *MCPHandler {
-	return &MCPHandler{server: server, baseURL: baseURL}
+func NewMCPHandler(server *mcp.Server, st store.Store, baseURL string) *MCPHandler {
+	return &MCPHandler{server: server, st: st, baseURL: baseURL}
 }
 
 // Handle processes an MCP JSON-RPC request.
-// Agent authentication is handled by the requireAgent middleware.
 func (h *MCPHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	// Authenticate agent inline — we need to set WWW-Authenticate on 401.
+	token := bearerToken(r)
+	if token == "" {
+		h.writeUnauthorized(w)
+		return
+	}
+
+	hash := auth.HashToken(token)
+	agent, err := h.st.GetAgentByToken(r.Context(), hash)
+	if err != nil {
+		h.writeUnauthorized(w)
+		return
+	}
+
+	// Inject agent into context (same as requireAgent middleware).
+	ctx := context.WithValue(r.Context(), middleware.AgentContextKey, agent)
+	r = r.WithContext(ctx)
+
 	var req mcp.Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -53,4 +78,27 @@ func (h *MCPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// writeUnauthorized sends a 401 with the WWW-Authenticate header
+// that tells MCP clients where to find the OAuth metadata.
+func (h *MCPHandler) writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate",
+		`Bearer resource_metadata="`+h.baseURL+`/.well-known/oauth-protected-resource"`)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": "unauthorized",
+		"code":  "UNAUTHORIZED",
+	})
+}
+
+// bearerToken extracts a Bearer token from the Authorization header.
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
 }

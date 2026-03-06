@@ -376,8 +376,8 @@ func (s *Server) routes() http.Handler {
 		mcpServer := mcp.NewServer(sessionTTL, mcpHandlers, s.logger)
 		s.mcpServer = mcpServer
 
-		mcpHandler := handlers.NewMCPHandler(mcpServer, baseURL)
-		mux.Handle("POST /mcp", agent(mcpHandler.Handle))
+		mcpHandler := handlers.NewMCPHandler(mcpServer, s.store, baseURL)
+		mux.HandleFunc("POST /mcp", mcpHandler.Handle)
 
 		// OAuth 2.1 (for MCP clients — no auth required on discovery/registration)
 		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger)
