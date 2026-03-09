@@ -197,6 +197,49 @@ func (v *LocalVault) decrypt(encrypted, iv, authTag string) ([]byte, error) {
 	return plaintext, nil
 }
 
+// NewLocalVaultFromKeyWithDB builds a LocalVault from a raw 32-byte key with
+// a database connection. Use this when the key is resolved externally (e.g.
+// from an environment variable) but the vault still needs DB-backed storage.
+func NewLocalVaultFromKeyWithDB(key []byte, db *sql.DB, driver string) (*LocalVault, error) {
+	if len(key) != 32 {
+		return nil, errors.New("vault key must be exactly 32 bytes")
+	}
+	return &LocalVault{key: key, db: db, driver: driver}, nil
+}
+
+// ResolveKey resolves the 32-byte vault master key with clear priority:
+//   - If masterKeyB64 is non-empty, base64-decode it and validate 32 bytes
+//   - Otherwise, read from keyFile (must already exist)
+//
+// Unlike loadOrCreateKey, this function never auto-generates a key.
+func ResolveKey(masterKeyB64, keyFile string) ([]byte, error) {
+	if masterKeyB64 != "" {
+		key, err := base64.StdEncoding.DecodeString(masterKeyB64)
+		if err != nil {
+			return nil, fmt.Errorf("decoding VAULT_KEY: %w", err)
+		}
+		if len(key) != 32 {
+			return nil, fmt.Errorf("VAULT_KEY must decode to exactly 32 bytes, got %d", len(key))
+		}
+		return key, nil
+	}
+	data, err := os.ReadFile(keyFile)
+	if os.IsNotExist(err) {
+		return nil, fmt.Errorf("vault key not configured: set VAULT_KEY env var or create key file %s", keyFile)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading vault key file: %w", err)
+	}
+	key, decErr := base64.StdEncoding.DecodeString(string(data))
+	if decErr != nil {
+		key = data // raw bytes fallback
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("vault key file %s: expected 32 bytes, got %d", keyFile, len(key))
+	}
+	return key, nil
+}
+
 // LoadKey is the exported version of loadOrCreateKey, used by main.go
 // when the GCP vault backend needs the master key.
 func LoadKey(path string) ([]byte, error) {

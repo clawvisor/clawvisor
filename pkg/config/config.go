@@ -64,6 +64,7 @@ type VaultConfig struct {
 	Backend      string `yaml:"backend"`
 	LocalKeyFile string `yaml:"local_key_file"`
 	GCPProject   string `yaml:"gcp_project"`
+	MasterKey    string `yaml:"-"` // base64-encoded 32-byte key; env-only (VAULT_KEY)
 }
 
 type AuthConfig struct {
@@ -272,6 +273,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("VAULT_KEY_FILE"); v != "" {
 		cfg.Vault.LocalKeyFile = v
+	}
+	if v := os.Getenv("VAULT_KEY"); v != "" {
+		cfg.Vault.MasterKey = v
 	}
 	if v := os.Getenv("PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {

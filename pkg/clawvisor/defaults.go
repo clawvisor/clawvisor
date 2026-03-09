@@ -223,16 +223,20 @@ func ConnectStore(logger *slog.Logger) (*config.Config, store.Store, error) {
 func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, error) {
 	switch cfg.Vault.Backend {
 	case "local":
-		return intvault.NewLocalVault(cfg.Vault.LocalKeyFile, db, driver)
+		key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("resolving vault key: %w", err)
+		}
+		return intvault.NewLocalVaultFromKeyWithDB(key, db, driver)
 	case "gcp":
 		if cfg.Vault.GCPProject == "" {
 			return nil, fmt.Errorf("GCP_PROJECT must be set for gcp vault backend")
 		}
-		localKey, err := intvault.LoadKey(cfg.Vault.LocalKeyFile)
+		key, err := intvault.ResolveKey(cfg.Vault.MasterKey, cfg.Vault.LocalKeyFile)
 		if err != nil {
-			return nil, fmt.Errorf("loading vault master key for gcp backend: %w", err)
+			return nil, fmt.Errorf("resolving vault key for gcp backend: %w", err)
 		}
-		return intvault.NewGCPVault(context.Background(), cfg.Vault.GCPProject, localKey)
+		return intvault.NewGCPVault(context.Background(), cfg.Vault.GCPProject, key)
 	default:
 		return nil, fmt.Errorf("unsupported vault backend %q (use \"local\" or \"gcp\")", cfg.Vault.Backend)
 	}
