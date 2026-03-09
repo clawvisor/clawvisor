@@ -71,6 +71,10 @@ func ssrfSafeDialContext(ctx context.Context, network, address string) (net.Conn
 // for non-localhost hosts. Set via Init.
 var requireHTTPS bool
 
+// blockLoopback controls whether loopback IPs (127.0.0.0/8, ::1) are treated
+// as SSRF targets. Enabled in production to prevent callbacks to the host itself.
+var blockLoopback bool
+
 // ValidateCallbackURL checks that a callback URL is parseable and uses an
 // allowed scheme. IP-level SSRF checks are performed at connect time by
 // ssrfSafeDialContext to prevent DNS rebinding.
@@ -115,8 +119,9 @@ var ssrfRanges = func() []*net.IPNet {
 var allowedCIDRs []*net.IPNet
 
 // Init parses the given CIDR strings into an allowlist that exempts matching IPs
-// from the SSRF check, and sets the HTTPS enforcement flag. Call once at startup.
-func Init(cidrs []string, httpsRequired bool) {
+// from the SSRF check, sets the HTTPS enforcement flag, and optionally blocks
+// loopback addresses (for production deployments). Call once at startup.
+func Init(cidrs []string, httpsRequired, blockLoopbackAddrs bool) {
 	nets := make([]*net.IPNet, 0, len(cidrs))
 	for _, cidr := range cidrs {
 		_, n, err := net.ParseCIDR(cidr)
@@ -127,6 +132,7 @@ func Init(cidrs []string, httpsRequired bool) {
 	}
 	allowedCIDRs = nets
 	requireHTTPS = httpsRequired
+	blockLoopback = blockLoopbackAddrs
 }
 
 func isSSRFTarget(ip net.IP) bool {
@@ -134,6 +140,9 @@ func isSSRFTarget(ip net.IP) bool {
 		if n.Contains(ip) {
 			return false
 		}
+	}
+	if blockLoopback && ip.IsLoopback() {
+		return true
 	}
 	for _, n := range ssrfRanges {
 		if n.Contains(ip) {

@@ -185,6 +185,9 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	if body.RefreshToken != "" {
 		_ = h.st.DeleteSession(r.Context(), auth.HashToken(body.RefreshToken))
+	} else {
+		// No specific token provided — clear all sessions for the user.
+		_ = h.st.DeleteUserSessions(r.Context(), user.ID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -247,6 +250,9 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update password")
 		return
 	}
+
+	// Revoke all existing sessions so stolen refresh tokens become invalid.
+	_ = h.st.DeleteUserSessions(r.Context(), user.ID)
 
 	updated, err := h.st.GetUserByID(r.Context(), user.ID)
 	if err != nil {

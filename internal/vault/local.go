@@ -232,7 +232,7 @@ func ResolveKey(masterKeyB64, keyFile string) ([]byte, error) {
 	}
 	key, decErr := base64.StdEncoding.DecodeString(string(data))
 	if decErr != nil {
-		key = data // raw bytes fallback
+		return nil, fmt.Errorf("vault key file %s: invalid base64: %w", keyFile, decErr)
 	}
 	if len(key) != 32 {
 		return nil, fmt.Errorf("vault key file %s: expected 32 bytes, got %d", keyFile, len(key))
@@ -251,7 +251,7 @@ func loadOrCreateKey(path string) ([]byte, error) {
 	if err == nil {
 		key, decErr := base64.StdEncoding.DecodeString(string(data))
 		if decErr != nil {
-			key = data // raw bytes fallback
+			return nil, fmt.Errorf("vault key file %s: invalid base64: %w", path, decErr)
 		}
 		if len(key) != 32 {
 			return nil, fmt.Errorf("vault key file %s: expected 32 bytes, got %d", path, len(key))

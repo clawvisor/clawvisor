@@ -13,6 +13,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
@@ -52,8 +53,9 @@ type Server struct {
 	approvalsHandler *handlers.ApprovalsHandler
 	tasksHandler     *handlers.TasksHandler
 
-	eventHub  *events.Hub
-	mcpServer *mcp.Server
+	eventHub    *events.Hub
+	mcpServer   *mcp.Server
+	ticketStore *intauth.TicketStore
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -211,7 +213,8 @@ func (s *Server) routes() http.Handler {
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub)
 	s.tasksHandler = tasksHandler
-	eventsHandler := handlers.NewEventsHandler(s.eventHub)
+	s.ticketStore = intauth.NewTicketStore()
+	eventsHandler := handlers.NewEventsHandler(s.eventHub, s.ticketStore)
 
 	// Middleware
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
@@ -224,6 +227,7 @@ func (s *Server) routes() http.Handler {
 	gatewayRL := newKeyedLimiterFromBucket(rlCfg.Gateway)
 	oauthRL := newKeyedLimiterFromBucket(rlCfg.OAuth)
 	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
+	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
 
 	ipKeyFn := func(r *http.Request) string {
 		return r.RemoteAddr
@@ -254,6 +258,9 @@ func (s *Server) routes() http.Handler {
 	userPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
+	authRateLimited := func(h http.HandlerFunc) http.Handler {
+		return middleware.RateLimit(authRL, ipKeyFn, rlCfg.Auth.Limit)(h)
+	}
 
 	// Health (no auth)
 	mux.HandleFunc("GET /health", healthHandler.Health)
@@ -261,13 +268,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/config/public", healthHandler.ConfigPublic)
 
 	// Auth — core routes (always registered)
-	mux.HandleFunc("POST /api/auth/refresh", authHandler.Refresh)
+	mux.Handle("POST /api/auth/refresh", authRateLimited(authHandler.Refresh))
 	mux.Handle("POST /api/auth/logout", user(authHandler.Logout))
 	mux.Handle("GET /api/me", user(authHandler.Me))
 
 	// Magic link auth (local mode only)
 	if s.magicStore != nil {
-		mux.HandleFunc("POST /api/auth/magic", authHandler.ExchangeMagic)
+		mux.Handle("POST /api/auth/magic", authRateLimited(authHandler.ExchangeMagic))
 	}
 
 	// Password auth routes are registered only when the PasswordAuth feature is enabled
@@ -275,8 +282,8 @@ func (s *Server) routes() http.Handler {
 	// In the open-source build this is off by default (local mode uses magic links).
 	// Cloud and self-hosted password deployments enable it via WithFeatures.
 	if s.features.PasswordAuth && !s.skipBuiltinAuthRoutes {
-		mux.HandleFunc("POST /api/auth/register", authHandler.Register)
-		mux.HandleFunc("POST /api/auth/login", authHandler.Login)
+		mux.Handle("POST /api/auth/register", authRateLimited(authHandler.Register))
+		mux.Handle("POST /api/auth/login", authRateLimited(authHandler.Login))
 		mux.Handle("PUT /api/me", user(authHandler.UpdateMe))
 		mux.Handle("DELETE /api/me", user(authHandler.DeleteMe))
 	}
@@ -357,8 +364,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/audit", user(auditHandler.List))
 	mux.Handle("GET /api/audit/{id}", user(auditHandler.Get))
 
-	// SSE event stream (user JWT — token via query param for EventSource)
-	mux.Handle("GET /api/events", user(eventsHandler.Stream))
+	// SSE event stream (user JWT or single-use ticket for EventSource)
+	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)
+	mux.Handle("GET /api/events", requireUserOrTicket(http.HandlerFunc(eventsHandler.Stream)))
+	mux.Handle("POST /api/events/ticket", user(eventsHandler.IssueTicket))
 
 	// Skill files (no auth — served so OpenClaw instances can install the skill)
 	// GET /skill         → redirects to /skill/SKILL.md
@@ -503,6 +512,22 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) Run(ctx context.Context) error {
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
+
+	// Start SSE ticket store cleanup.
+	if s.ticketStore != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.ticketStore.Cleanup()
+				}
+			}
+		}()
+	}
 
 	// Start MCP session cleanup.
 	if s.mcpServer != nil {

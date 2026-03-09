@@ -71,7 +71,7 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 		}
 	}
 
-	callback.Init(cfg.Callback.AllowPrivateCIDRs, cfg.Callback.RequireHTTPS)
+	callback.Init(cfg.Callback.AllowPrivateCIDRs, cfg.Callback.RequireHTTPS, !cfg.Server.IsLocal())
 
 	// ── Database + Store ────────────────────────────────────────────────────
 	var (

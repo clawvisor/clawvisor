@@ -41,6 +41,7 @@ type Store interface {
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (*Session, error)
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+	DeleteUserSessions(ctx context.Context, userID string) error
 
 	// Service credentials metadata (vault stores the actual bytes)
 	UpsertServiceMeta(ctx context.Context, userID, serviceID, alias string, activatedAt time.Time) error

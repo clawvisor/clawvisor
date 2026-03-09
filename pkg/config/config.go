@@ -121,6 +121,7 @@ type RateLimitConfig struct {
 	OAuth     RateLimitBucket `yaml:"oauth"`      // per user
 	PolicyAPI RateLimitBucket `yaml:"policy_api"` // per user
 	ReviewRun RateLimitBucket `yaml:"review_run"` // per user
+	Auth      RateLimitBucket `yaml:"auth"`       // per IP (pre-auth endpoints)
 }
 
 // ServicesConfig groups all adapter/service-specific settings.
@@ -226,6 +227,7 @@ func Default() *Config {
 			OAuth:     RateLimitBucket{Limit: 5, Window: 60},
 			PolicyAPI: RateLimitBucket{Limit: 30, Window: 60},
 			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},
+			Auth:      RateLimitBucket{Limit: 5, Window: 60},
 		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},

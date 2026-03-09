@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/clawvisor/clawvisor/pkg/auth"
+	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -59,18 +60,50 @@ func RequireUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) ht
 	}
 }
 
+// RequireUserOrTicket is middleware that first tries JWT auth (via Authorization
+// header), then falls back to a single-use ticket query parameter. This is used
+// for SSE endpoints where EventSource cannot set custom headers.
+func RequireUserOrTicket(jwtSvc auth.TokenService, st store.Store, tickets *intauth.TicketStore) func(http.Handler) http.Handler {
+	jwtMiddleware := RequireUser(jwtSvc, st)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try JWT first.
+			if bearerToken(r) != "" {
+				jwtMiddleware(next).ServeHTTP(w, r)
+				return
+			}
+
+			// Fall back to ticket query param.
+			ticket := r.URL.Query().Get("ticket")
+			if ticket == "" {
+				http.Error(w, `{"error":"missing authorization","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				return
+			}
+
+			userID, err := tickets.Validate(ticket)
+			if err != nil {
+				http.Error(w, `{"error":"invalid or expired ticket","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				return
+			}
+
+			user, err := st.GetUserByID(r.Context(), userID)
+			if err != nil {
+				http.Error(w, `{"error":"user not found","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // bearerToken extracts the token value from "Authorization: Bearer <token>".
-// Falls back to the "token" query parameter (used by EventSource/SSE which
-// cannot set custom headers).
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if strings.HasPrefix(h, prefix) {
 		return strings.TrimSpace(h[len(prefix):])
-	}
-	// Fallback for SSE: EventSource doesn't support custom headers.
-	if t := r.URL.Query().Get("token"); t != "" {
-		return t
 	}
 	return ""
 }

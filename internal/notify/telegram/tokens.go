@@ -121,9 +121,9 @@ func (s *callbackTokenStore) Cleanup() {
 	}
 }
 
-// randomShortID generates a 4-byte random hex string (8 chars).
+// randomShortID generates a 16-byte random hex string (32 chars / 128 bits).
 func randomShortID() (string, error) {
-	b := make([]byte, 4)
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}

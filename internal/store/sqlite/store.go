@@ -355,6 +355,11 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	return err
+}
+
 // ── Service Metadata ──────────────────────────────────────────────────────────
 
 func (s *Store) UpsertServiceMeta(ctx context.Context, userID, serviceID, alias string, activatedAt time.Time) error {

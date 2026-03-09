@@ -7,17 +7,39 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 )
 
 // EventsHandler serves the SSE event stream.
 type EventsHandler struct {
-	hub *events.Hub
+	hub     *events.Hub
+	tickets *auth.TicketStore
 }
 
 // NewEventsHandler creates a new SSE handler.
-func NewEventsHandler(hub *events.Hub) *EventsHandler {
-	return &EventsHandler{hub: hub}
+func NewEventsHandler(hub *events.Hub, tickets *auth.TicketStore) *EventsHandler {
+	return &EventsHandler{hub: hub, tickets: tickets}
+}
+
+// IssueTicket issues a short-lived, single-use ticket for SSE authentication.
+//
+// POST /api/events/ticket
+// Auth: Bearer <access_token>
+func (h *EventsHandler) IssueTicket(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ticket, err := h.tickets.Generate(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate ticket")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": ticket})
 }
 
 // Stream handles GET /api/events — an SSE endpoint that pushes invalidation events.
