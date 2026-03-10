@@ -30,7 +30,7 @@ services:
       JWT_SECRET: "dev-secret-change-in-production"
       SERVER_HOST: "0.0.0.0"
       VAULT_BACKEND: "local"
-      VAULT_KEY_FILE: "/vault/vault.key"
+      VAULT_KEY: "${VAULT_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
       CLAWVISOR_LLM_VERIFICATION_ENABLED: "${CLAWVISOR_LLM_VERIFICATION_ENABLED:-false}"
@@ -41,9 +41,5 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - vault_key:/vault
-
 volumes:
   postgres_data:
-  vault_key:
