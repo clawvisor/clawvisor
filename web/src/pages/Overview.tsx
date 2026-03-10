@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket } from '../api/client'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { serviceName } from '../lib/services'
+import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
 import Onboarding from './Onboarding'
@@ -307,7 +307,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
     <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-warning overflow-hidden">
       {/* Header */}
       <div className="px-5 pt-5 pb-4">
-        <span className="font-mono text-lg font-semibold text-text-primary">{serviceName(a.service)}.{a.action}</span>
+        <span className="font-mono text-lg font-semibold text-text-primary">{serviceName(a.service)} · {actionName(a.action)}</span>
         {a.reason && (
           <p className="text-sm text-text-secondary mt-1.5">{a.reason}</p>
         )}

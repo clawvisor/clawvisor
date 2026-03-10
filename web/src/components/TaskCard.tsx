@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Task, type AuditEntry } from '../api/client'
 import { format } from 'date-fns'
-import { serviceName } from '../lib/services'
+import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
 
 // ── Status helpers ───────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ export default function TaskCard({
                 <table className="w-full text-sm">
                   <tbody>
                     <tr>
-                      <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(task.pending_action.service)}.{task.pending_action.action}</td>
+                      <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(task.pending_action.service)} · {actionName(task.pending_action.action)}</td>
                       <td className="px-3 py-2 text-sm text-text-secondary">{task.pending_reason ?? ''}</td>
                     </tr>
                   </tbody>
@@ -299,7 +299,7 @@ function ScopeGroupTables({ autoActions, manualActions }: {
             <tbody>
               {autoActions.map((a, i) => (
                 <tr key={`${a.service}|${a.action}`} className={i < autoActions.length - 1 ? 'border-b border-border-subtle' : ''}>
-                  <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(a.service)}.{a.action}</td>
+                  <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(a.service)} · {actionName(a.action)}</td>
                   <td className="px-3 py-2 text-sm text-text-secondary">{a.expected_use ?? ''}</td>
                 </tr>
               ))}
@@ -317,7 +317,7 @@ function ScopeGroupTables({ autoActions, manualActions }: {
             <tbody>
               {manualActions.map((a, i) => (
                 <tr key={`${a.service}|${a.action}`} className={i < manualActions.length - 1 ? 'border-b border-border-subtle' : ''}>
-                  <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(a.service)}.{a.action}</td>
+                  <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(a.service)} · {actionName(a.action)}</td>
                   <td className="px-3 py-2 text-sm text-text-secondary">{a.expected_use ?? ''}</td>
                 </tr>
               ))}
@@ -391,7 +391,7 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
       >
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
-          <span className="font-mono text-text-primary text-xs">{serviceName(entry.service)}.{entry.action}</span>
+          <span className="font-mono text-text-primary text-xs">{serviceName(entry.service)} · {actionName(entry.action)}</span>
           <span className="text-text-tertiary text-xs">&middot;</span>
           <span className="text-text-secondary text-xs truncate" style={{ maxWidth: 260 }}>
             {entry.reason ?? entry.outcome}
