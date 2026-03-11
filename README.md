@@ -63,13 +63,7 @@ make run      # start server (SQLite, magic link auth)
 make tui      # terminal dashboard (separate terminal)
 ```
 
-`make setup` generates `config.yaml` (database, Google OAuth, intent verification). `make run` starts the server, creates an `admin@local` user, and opens the dashboard via a magic link. `make tui` auto-authenticates using the local session file.
-
-You can also skip the wizard:
-
-```bash
-DATABASE_DRIVER=sqlite JWT_SECRET=dev-secret go run ./cmd/server
-```
+`make setup` generates `config.yaml` and a `vault.key` (database, Google OAuth, intent verification). `make run` starts the server, creates an `admin@local` user, and opens the dashboard via a magic link. `make tui` auto-authenticates using the local session file.
 
 ### Configuration
 
@@ -80,6 +74,9 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Database driver | `DATABASE_DRIVER` | `postgres` or `sqlite` (auto-selects sqlite locally) |
 | Postgres URL | `DATABASE_URL` | Required for postgres driver |
 | JWT secret | `JWT_SECRET` | Auto-generated locally; **required** in prod |
+| Vault key | `VAULT_KEY` | Base64-encoded 32-byte key; alternative to `vault.key` file |
+| Auth mode | `AUTH_MODE` | `magic_link` (default locally) or `password` |
+| Allowed emails | `ALLOWED_EMAILS` | Comma-separated emails allowed to register |
 | Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Needed for Google services |
 | Public URL | `PUBLIC_URL` | Used in Telegram notification links |
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
@@ -89,24 +86,24 @@ See [`config.example.yaml`](config.example.yaml) for the full configuration refe
 ## How It Works
 
 ```
-Agent                         Clawvisor                              External API
-  │                              │                                       │
-  ├─ POST /api/tasks ────────────►  (declare scope, wait for approval)   │
-  │◄──── task approved ──────────┤                                       │
-  │                              │                                       │
-  ├─ POST /api/gateway/request ──►                                       │
-  │    (with task_id)            ├─ Check restrictions (hard blocks)      │
-  │                              ├─ Check task scope (pre-approved?)      │
-  │                              ├─ Auto-execute or route to approval     │
-  │                              │                                       │
-  │                              │  ┌─ On execute: ──────────────────┐   │
-  │                              │  │ Vault inject credentials       │   │
-  │                              │  │ Adapter call ──────────────────────►│
-  │                              │  │ Format + filter response       │◄──┤
-  │                              │  │ Intent verification (optional) │   │
-  │                              │  │ Audit log                      │   │
-  │                              │  └────────────────────────────────┘   │
-  │◄──── Response ───────────────┤                                       │
+Agent                    Clawvisor                         External API
+  │                         │                                   │
+  ├── POST /api/tasks ─────►│  (declare scope, wait for user)   │
+  │◄── task approved ───────┤                                   │
+  │                         │                                   │
+  ├── POST /api/gateway ───►│                                   │
+  │   (with task_id)        ├─ Check restrictions               │
+  │                         ├─ Check task scope                 │
+  │                         ├─ Auto-execute or queue approval   │
+  │                         │                                   │
+  │                         │  ┌─ On execute: ──────────────┐   │
+  │                         │  │  Inject credentials        │   │
+  │                         │  │  Call adapter ────────────────►│
+  │                         │  │  Format response  ◄────────────┤
+  │                         │  │  Intent verification       │   │
+  │                         │  │  Audit log                 │   │
+  │                         │  └────────────────────────────┘   │
+  │◄── Response ────────────┤                                   │
 ```
 
 Every gateway request passes through three authorization layers, checked in order:
@@ -298,6 +295,7 @@ The web UI provides:
 - **Audit log** — searchable history of every gateway request with outcomes
 - **Agents** — create agent tokens, manage per-agent restrictions
 - **Telegram** — pair your Telegram bot for mobile approval notifications
+- **Light/dark mode** — toggle in the sidebar; persists across sessions
 
 ## TUI
 
@@ -335,10 +333,11 @@ clawvisor tui
 | Layer | Choice |
 |---|---|
 | Backend | Go 1.25+, `net/http` ServeMux |
-| Frontend | Vite + React 18 + TypeScript + Tailwind |
+| Frontend | Vite 7 + React 18 + TypeScript + Tailwind |
 | Database | Postgres (prod) or SQLite (local), behind `Store` interface |
-| Vault | AES-256-GCM with keyfile (local) or GCP Secret Manager, behind `Vault` interface |
-| Auth | JWT (HS256), bcrypt passwords |
+| Vault | AES-256-GCM with master key (env var or keyfile) or GCP Secret Manager, behind `Vault` interface |
+| Auth | JWT (HS256), magic links (local), bcrypt passwords (prod) |
+| Real-time | SSE event stream for instant dashboard updates |
 | Notifications | Telegram (per-user bot tokens) |
 
 ### Directory layout
@@ -346,23 +345,36 @@ clawvisor tui
 ```
 cmd/clawvisor/main.go       — unified CLI entry point (server, tui, setup)
 internal/
-  api/                      — HTTP server, middleware, handlers
   adapters/                 — service adapters (google/, github/, apple/, slack/, notion/, linear/, stripe/, twilio/)
-  store/                    — Store interface + postgres/ and sqlite/ implementations
-  vault/                    — Vault interface + local and GCP implementations
+  api/                      — HTTP server, middleware, handlers
   auth/                     — JWT, passwords, magic link tokens
   browser/                  — opens URLs in the user's browser
   callback/                 — async result delivery to agents
   display/                  — human-readable names for services and actions
+  events/                   — SSE event hub for real-time dashboard updates
   intent/                   — intent verification
   llm/                      — LLM HTTP client for intent verification
+  mcp/                      — MCP (Model Context Protocol) server
   notify/                   — Telegram notifier
   ratelimit/                — rate limiting
   server/                   — server bootstrap and config loading
   setup/                    — interactive setup wizard
+  store/                    — Store interface + postgres/ and sqlite/ implementations
   tui/                      — terminal UI dashboard
+  vault/                    — Vault interface + local and GCP implementations
+pkg/
+  adapters/                 — Adapter interface
+  auth/                     — TokenService interface and JWT claims
+  clawvisor/                — high-level app bootstrap (wires config → store → vault → server)
+  config/                   — configuration loading and env var resolution
+  gateway/                  — gateway request/response types
+  notify/                   — Notifier interface
+  store/                    — Store interface (91 methods)
+  vault/                    — Vault interface
 web/                        — React frontend (Vite)
+docs/                       — setup and integration guides
 skills/clawvisor/           — agent skill definition (SKILL.md)
+extensions/                 — OpenClaw webhook plugin
 deploy/                     — Dockerfile, docker-compose, Cloud Run config
 ```
 
@@ -382,7 +394,7 @@ make build                          # full build (Go binary + frontend)
 ## Security Model
 
 - **Agents never receive credentials.** Credentials are injected inside the Clawvisor process after authorization. They are stripped from all responses, logs, and error messages.
-- **Vault encryption.** Credentials are encrypted at rest with AES-256-GCM using a master keyfile (`vault.key`).
+- **Vault encryption.** Credentials are encrypted at rest with AES-256-GCM using a master key (via `VAULT_KEY` env var or `vault.key` file).
 - **Audit trail.** Every gateway request is logged with a unique `request_id` (enforced by DB constraint). Outcomes are updated after execution.
 - **Response formatting.** Adapter results are semantically formatted — secrets are stripped, HTML/Unicode is sanitized before anything reaches the agent.
 
