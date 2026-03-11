@@ -84,6 +84,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.issueTokens(r, user)
 	if err != nil {
+		_ = h.st.DeleteUser(r.Context(), user.ID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not issue tokens")
 		return
 	}

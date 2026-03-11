@@ -27,7 +27,7 @@ services:
     environment:
       DATABASE_URL: "postgres://clawvisor:clawvisor@postgres:5432/clawvisor"
       DATABASE_DRIVER: "postgres"
-      JWT_SECRET: "dev-secret-change-in-production"
+      JWT_SECRET: "${JWT_SECRET}"
       SERVER_HOST: "0.0.0.0"
       VAULT_BACKEND: "local"
       VAULT_KEY: "${VAULT_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}"

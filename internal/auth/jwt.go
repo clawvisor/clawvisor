@@ -43,6 +43,24 @@ func (s *JWTService) GenerateAccessToken(userID, email string, ttl time.Duration
 	return token.SignedString(s.secret)
 }
 
+// GeneratePurposeToken creates a JWT with a purpose restriction.
+// Purpose-restricted tokens are rejected by the general RequireUser middleware
+// and only accepted by specific endpoints that check for the purpose.
+func (s *JWTService) GeneratePurposeToken(userID, email, purpose string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := Claims{
+		UserID:  userID,
+		Email:   email,
+		Purpose: purpose,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			Subject:   userID,
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.secret)
+}
+
 // ValidateToken parses and validates a JWT, returning its claims.
 func (s *JWTService) ValidateToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {

@@ -47,9 +47,10 @@ Ask the user for the following. Generate defaults where noted.
   `https://clawvisor.example.com`). Ask the user. Store as `$PUBLIC_URL`.
   If the user doesn't have a domain, they can use an SSH tunnel instead —
   see Step 5.
-- **JWT secret** — generate one:
+- **JWT secret** and **Vault key** — generate both:
   ```bash
-  openssl rand -hex 32
+  openssl rand -hex 32     # JWT_SECRET
+  openssl rand -base64 32  # VAULT_KEY
   ```
 
 **Intent verification** — Clawvisor uses a lightweight LLM to verify that
@@ -114,6 +115,7 @@ Generate the `.env.cloud` contents for the user to place on their server.
 DATABASE_URL=postgres://clawvisor:clawvisor@postgres:5432/clawvisor
 DATABASE_DRIVER=postgres
 JWT_SECRET=<generated secret from Step 2>
+VAULT_KEY=<generated key from Step 2>
 SERVER_HOST=0.0.0.0
 AUTH_MODE=password
 VAULT_BACKEND=local
@@ -136,6 +138,7 @@ GOOGLE_CLIENT_SECRET=<if provided, or remove this line>
 DATABASE_URL=postgres://clawvisor:clawvisor@postgres:5432/clawvisor
 DATABASE_DRIVER=postgres
 JWT_SECRET=<generated secret from Step 2>
+VAULT_KEY=<generated key from Step 2>
 SERVER_HOST=0.0.0.0
 VAULT_BACKEND=local
 LOG_FORMAT=json
@@ -170,8 +173,8 @@ registry instead of building on the server.
 curl -sf http://localhost:25297/ready && echo "RUNNING" || echo "NOT RUNNING"
 ```
 
-Postgres data and the vault key are persisted in Docker volumes
-(`postgres_data` and `vault_key`).
+Postgres data is persisted in the `postgres_data` Docker volume. The vault
+master key is provided via the `VAULT_KEY` environment variable.
 
 ### Option B: Container platform
 
@@ -197,11 +200,8 @@ gcloud run deploy clawvisor \
   --set-env-vars "DATABASE_URL=...,JWT_SECRET=...,SERVER_HOST=0.0.0.0,AUTH_MODE=password,PUBLIC_URL=..."
 ```
 
-**Vault considerations:**
-- For platforms with persistent volumes (Fly.io, Railway), mount a volume at
-  `/vault` for the vault key file.
-- For ephemeral platforms (Cloud Run), use GCP Secret Manager instead:
-  `VAULT_BACKEND=gcp`, `GCP_PROJECT=<project-id>`.
+**Vault key:** Set `VAULT_KEY` as an environment variable (base64-encoded
+32-byte key). This works on all platforms — no volume mounts needed.
 
 ---
 
@@ -300,11 +300,11 @@ Walk through these items with the user:
   `CALLBACK_REQUIRE_HTTPS=true`.
 - [ ] **Restrict registration** — set `ALLOWED_EMAILS` to control who can
   create accounts.
-- [ ] **Backup the vault key** — if using `VAULT_BACKEND=local`, the
-  `vault.key` file is the master encryption key for all stored credentials.
+- [ ] **Backup the vault key** — `VAULT_KEY` is the master encryption key
+  for all stored credentials. Store it securely (e.g. a secrets manager).
   Losing it means losing access to all encrypted credentials.
-- [ ] **Persistent volumes** — mount volumes for Postgres data and the vault
-  key so they survive container restarts.
+- [ ] **Persistent volumes** — mount a volume for Postgres data so it
+  survives container restarts.
 - [ ] **Agent isolation** — run agents in a separate environment (container,
   VM) without direct access to Clawvisor's database, config, or filesystem.
 
@@ -358,8 +358,9 @@ for integration guides.
 | `PORT` | No | `25297` | Server listen port |
 | `PUBLIC_URL` | Recommended | — | Full public URL (e.g. `https://clawvisor.example.com`) |
 | `AUTH_MODE` | Recommended | auto | `password` or `magic_link` |
-| `VAULT_BACKEND` | No | `local` | `local` (AES-256-GCM file) or `gcp` (Secret Manager) |
-| `VAULT_KEY_FILE` | No | `./vault.key` | Path to local vault encryption key |
+| `VAULT_BACKEND` | No | `local` | `local` (AES-256-GCM) or `gcp` (Secret Manager) |
+| `VAULT_KEY` | Yes | — | Base64-encoded 32-byte vault master key |
+| `VAULT_KEY_FILE` | No | `./vault.key` | Path to vault key file (alternative to `VAULT_KEY`) |
 | `GCP_PROJECT` | If `gcp` vault | — | GCP project ID for Secret Manager |
 | `CALLBACK_REQUIRE_HTTPS` | Recommended | `false` | Reject `http://` callback URLs (except localhost) |
 | `ALLOWED_EMAILS` | No | — | Comma-separated emails allowed to register |

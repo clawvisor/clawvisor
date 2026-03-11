@@ -102,7 +102,11 @@ file references these variables via `${VAR:-}` interpolation, and
 ```bash
 cd "$CLAWVISOR_REPO"
 
-cat > .env.docker <<EOF
+# Generate secrets
+./deploy/init.sh .env.docker
+
+# Add service configuration
+cat >> .env.docker <<EOF
 GOOGLE_CLIENT_ID=<from Step 3, or empty>
 GOOGLE_CLIENT_SECRET=<from Step 3, or empty>
 CLAWVISOR_LLM_VERIFICATION_ENABLED=<true or false>
@@ -123,8 +127,8 @@ until curl -sf http://localhost:25297/ready >/dev/null 2>&1; do sleep 1; done
 
 This typically takes 30–60 seconds on first build.
 
-Postgres data and the vault key are persisted in Docker volumes
-(`postgres_data` and `vault_key`).
+Postgres data is persisted in the `postgres_data` Docker volume. The vault
+master key is provided via the `VAULT_KEY` environment variable.
 
 > **OpenClaw users:** If you're integrating with OpenClaw, use
 > `docker-compose.openclaw.yml` instead — it includes private-network

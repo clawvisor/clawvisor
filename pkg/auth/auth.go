@@ -11,6 +11,7 @@ import (
 // Cloud deployments can provide alternative implementations (e.g. RS256, multi-tenant).
 type TokenService interface {
 	GenerateAccessToken(userID, email string, ttl time.Duration) (string, error)
+	GeneratePurposeToken(userID, email, purpose string, ttl time.Duration) (string, error)
 	ValidateToken(tokenStr string) (*Claims, error)
 }
 
