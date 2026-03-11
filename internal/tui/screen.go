@@ -7,7 +7,6 @@ type Screen int
 
 const (
 	ScreenDashboard Screen = iota
-	ScreenPending
 	ScreenTasks
 	ScreenGatewayLog
 	ScreenServices
@@ -17,7 +16,6 @@ const (
 
 var ScreenNames = []string{
 	"Dashboard",
-	"Pending",
 	"Tasks",
 	"Gateway Log",
 	"Services",

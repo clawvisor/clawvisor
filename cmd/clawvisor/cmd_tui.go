@@ -18,6 +18,7 @@ import (
 var (
 	flagURL   string
 	flagToken string
+	flagDebug bool
 )
 
 var tuiCmd = &cobra.Command{
@@ -29,6 +30,7 @@ var tuiCmd = &cobra.Command{
 func init() {
 	tuiCmd.Flags().StringVar(&flagURL, "url", "", "Server URL (overrides config)")
 	tuiCmd.Flags().StringVar(&flagToken, "token", "", "Refresh token (overrides config)")
+	tuiCmd.Flags().BoolVar(&flagDebug, "debug", false, "Show SSE connection status in the status bar")
 }
 
 func runTUI(cmd *cobra.Command, args []string) error {
@@ -56,11 +58,11 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	app := tui.NewApp(c)
+	app.SetDebug(flagDebug)
 	app.SetScreens(map[tui.Screen]tui.ScreenModel{
-		tui.ScreenDashboard:     screens.NewDashboardScreen(c),
-		tui.ScreenPending:        screens.NewPendingScreen(c),
+		tui.ScreenDashboard:    screens.NewDashboardScreen(c),
 		tui.ScreenTasks:        screens.NewTasksScreen(c),
-		tui.ScreenGatewayLog:     screens.NewActivityScreen(c),
+		tui.ScreenGatewayLog:   screens.NewActivityScreen(c),
 		tui.ScreenServices:     screens.NewServicesScreen(c),
 		tui.ScreenRestrictions: screens.NewRestrictionsScreen(c),
 		tui.ScreenAgents:       screens.NewAgentsScreen(c),

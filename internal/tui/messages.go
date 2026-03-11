@@ -34,3 +34,14 @@ func ConnState(connected bool) tea.Cmd {
 
 // ScreenSwitchMsg requests switching to a different screen.
 type ScreenSwitchMsg struct{ Screen Screen }
+
+// SSEEventMsg carries an SSE event from the background subscription.
+type SSEEventMsg struct {
+	Type string // "queue", "tasks", "audit"
+	ID   string // optional task/audit ID
+}
+
+// SSEDisconnectMsg indicates the SSE stream dropped.
+type SSEDisconnectMsg struct {
+	Err string // optional error detail
+}

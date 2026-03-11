@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -22,8 +23,13 @@ type App struct {
 	status       string
 	pollInterval time.Duration
 	disconnected bool
+	sseConnected bool
+	sseCancel    context.CancelFunc
+	sseEvents    chan client.SSEEvent
+	sseErr       string // last SSE error, for status bar
 	// overlay state
 	showHelp bool
+	debug    bool
 }
 
 // NewApp creates the root TUI application.
@@ -32,9 +38,13 @@ func NewApp(c *client.Client) *App {
 		client:       c,
 		screens:      make(map[Screen]ScreenModel),
 		active:       ScreenDashboard,
-		pollInterval: 5 * time.Second,
+		pollInterval: 30 * time.Second,
+		sseEvents:    make(chan client.SSEEvent, 16),
 	}
 }
+
+// SetDebug enables debug indicators (SSE status) in the status bar.
+func (a *App) SetDebug(on bool) { a.debug = on }
 
 // SetScreens injects the screen implementations. Called after construction
 // because screens need a reference to the client.
@@ -50,6 +60,8 @@ func (a *App) Init() tea.Cmd {
 	}
 	// Start the poll timer.
 	cmds = append(cmds, PollTick(a.pollInterval))
+	// Start SSE subscription.
+	cmds = append(cmds, a.connectSSE())
 	return tea.Batch(cmds...)
 }
 
@@ -118,12 +130,47 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConnStateMsg:
 		connected := bool(msg)
 		if connected && a.disconnected {
-			a.pollInterval = 5 * time.Second
+			if a.sseConnected {
+				a.pollInterval = 30 * time.Second
+			} else {
+				a.pollInterval = 5 * time.Second
+			}
 		} else if !connected && !a.disconnected {
 			a.pollInterval = 15 * time.Second
 		}
 		a.disconnected = !connected
 		return a, nil
+
+	case SSEEventMsg:
+		if !a.sseConnected {
+			a.sseConnected = true
+			a.sseErr = ""
+			a.pollInterval = 30 * time.Second
+		}
+		// SSE event received — trigger a refetch on the active screen.
+		if s, ok := a.screens[a.active]; ok {
+			s, cmd := s.Update(TickMsg(time.Now()))
+			a.screens[a.active] = s
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		// Continue listening for the next SSE event.
+		cmds = append(cmds, a.waitSSE())
+		return a, tea.Batch(cmds...)
+
+	case SSEDisconnectMsg:
+		a.sseConnected = false
+		a.sseErr = msg.Err
+		a.pollInterval = 5 * time.Second
+		// Try to reconnect after a short delay.
+		cmds = append(cmds, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+			return sseReconnectMsg{}
+		}))
+		return a, tea.Batch(cmds...)
+
+	case sseReconnectMsg:
+		return a, a.connectSSE()
 
 	case ScreenSwitchMsg:
 		return a, a.switchTo(msg.Screen)
@@ -210,7 +257,6 @@ func (a *App) switchTo(s Screen) tea.Cmd {
 func (a *App) renderSidebar() string {
 	screens := []Screen{
 		ScreenDashboard,
-		ScreenPending,
 		ScreenTasks,
 		ScreenGatewayLog,
 		ScreenServices,
@@ -240,7 +286,7 @@ func (a *App) renderSidebar() string {
 
 		name := s.String()
 		line := marker + " " + style.Render(name)
-		if s == ScreenPending && a.pendingCount > 0 {
+		if s == ScreenDashboard && a.pendingCount > 0 {
 			line += " " + StyleSidebarBadge.Render("("+itoa(a.pendingCount)+")")
 		}
 		items = append(items, line)
@@ -270,6 +316,14 @@ func (a *App) renderStatusBar(hints []string) string {
 			content += sep
 		}
 		content += h
+	}
+
+	if a.debug {
+		if a.sseConnected {
+			content = StyleGreen.Render("SSE ●") + sep + content
+		} else if a.sseErr != "" {
+			content = StyleAmber.Render("SSE ✗ "+a.sseErr) + sep + content
+		}
 	}
 
 	if a.disconnected {
@@ -314,13 +368,6 @@ func (a *App) renderHelp() string {
 				{"d", "Deny queue item"},
 				{"enter", "Drill into task/request"},
 				{"esc", "Back from drill-down"},
-			},
-		},
-		{
-			"Pending",
-			[][2]string{
-				{"a", "Approve"},
-				{"d", "Deny"},
 			},
 		},
 		{
@@ -371,6 +418,69 @@ func (a *App) overlayCenter(base, overlay string) string {
 		overlay,
 		lipgloss.WithWhitespaceChars(" "),
 	)
+}
+
+// ── SSE ─────────────────────────────────────────────────────────────────────
+
+type sseReconnectMsg struct{}
+
+// connectSSE starts an SSE subscription in a background goroutine and returns
+// a tea.Cmd that waits for the first event.
+func (a *App) connectSSE() tea.Cmd {
+	// Cancel any existing SSE connection.
+	if a.sseCancel != nil {
+		a.sseCancel()
+	}
+
+	c := a.client
+	ch := a.sseEvents
+	ctx, cancel := context.WithCancel(context.Background())
+	a.sseCancel = cancel
+
+	return func() tea.Msg {
+		ticket, err := c.GetEventTicket()
+		if err != nil {
+			return SSEDisconnectMsg{Err: "ticket: " + err.Error()}
+		}
+
+		// Run the SSE reader in a goroutine — it writes to ch until
+		// the context is cancelled or the connection drops.
+		go func() {
+			sseErr := c.SubscribeSSE(ctx, ticket, ch)
+			errMsg := ""
+			if sseErr != nil {
+				errMsg = sseErr.Error()
+			}
+			// Signal disconnect (non-blocking in case nobody is listening).
+			select {
+			case ch <- client.SSEEvent{Type: "_disconnect", ID: errMsg}:
+			default:
+			}
+		}()
+
+		// Wait for the first event.
+		select {
+		case evt := <-ch:
+			if evt.Type == "_disconnect" {
+				return SSEDisconnectMsg{Err: evt.ID}
+			}
+			return SSEEventMsg{Type: evt.Type, ID: evt.ID}
+		case <-ctx.Done():
+			return SSEDisconnectMsg{Err: "cancelled"}
+		}
+	}
+}
+
+// waitSSE returns a tea.Cmd that waits for the next SSE event from the channel.
+func (a *App) waitSSE() tea.Cmd {
+	ch := a.sseEvents
+	return func() tea.Msg {
+		evt, ok := <-ch
+		if !ok || evt.Type == "_disconnect" {
+			return SSEDisconnectMsg{Err: evt.ID}
+		}
+		return SSEEventMsg{Type: evt.Type, ID: evt.ID}
+	}
 }
 
 // ── Messages ────────────────────────────────────────────────────────────────
