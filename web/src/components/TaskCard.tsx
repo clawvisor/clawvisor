@@ -393,7 +393,11 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
           <span className="font-mono text-text-primary text-xs">{serviceName(entry.service)} · {actionName(entry.action)}</span>
           <span className="text-text-tertiary text-xs">&middot;</span>
-          <span className="text-text-secondary text-xs truncate" style={{ maxWidth: 260 }}>
+          <span
+            className="text-text-secondary text-xs truncate"
+            style={{ maxWidth: 480 }}
+            title={entry.reason ?? entry.outcome}
+          >
             {entry.reason ?? entry.outcome}
           </span>
         </div>
