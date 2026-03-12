@@ -9,6 +9,7 @@ import (
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	pkgvault "github.com/clawvisor/clawvisor/pkg/vault"
+	"google.golang.org/api/iterator"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -139,8 +140,11 @@ func (v *GCPVault) List(ctx context.Context, userID string) ([]string, error) {
 	it := v.client.ListSecrets(ctx, &secretmanagerpb.ListSecretsRequest{Parent: parent})
 	for {
 		secret, err := it.Next()
-		if err != nil {
+		if err == iterator.Done {
 			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing secrets: %w", err)
 		}
 		// Extract secret ID from full name
 		// full name: projects/{project}/secrets/{secretID}

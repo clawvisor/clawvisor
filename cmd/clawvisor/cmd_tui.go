@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/term"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
@@ -97,15 +99,18 @@ func autoLogin(c *client.Client) error {
 		return nil
 
 	case "password":
-		var email, password string
+		var email string
 		fmt.Print("Email: ")
 		if _, err := fmt.Scanln(&email); err != nil {
 			return fmt.Errorf("reading email: %w", err)
 		}
 		fmt.Print("Password: ")
-		if _, err := fmt.Scanln(&password); err != nil {
+		pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println() // newline after hidden input
+		if err != nil {
 			return fmt.Errorf("reading password: %w", err)
 		}
+		password := string(pwBytes)
 		resp, err := c.Login(email, password)
 		if err != nil {
 			return fmt.Errorf("login failed: %w", err)
