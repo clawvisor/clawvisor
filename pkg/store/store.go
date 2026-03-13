@@ -211,6 +211,9 @@ type Task struct {
 	// PendingAction holds the action awaiting scope expansion approval.
 	PendingAction *TaskAction `json:"pending_action,omitempty"`
 	PendingReason string      `json:"pending_reason,omitempty"`
+	// RiskLevel is the LLM-assessed risk level ("low", "medium", "high", "critical", "unknown", or "").
+	RiskLevel   string          `json:"risk_level,omitempty"`
+	RiskDetails json.RawMessage `json:"risk_details,omitempty"`
 }
 
 // PendingApproval is a gateway request awaiting human approval.

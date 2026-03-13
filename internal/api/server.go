@@ -20,6 +20,7 @@ import (
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -210,8 +211,15 @@ func (s *Server) routes() http.Handler {
 	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.logger)
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger, s.eventHub)
 	s.approvalsHandler = approvalsHandler
+
+	// Construct task risk assessor (noop if disabled).
+	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
+	if s.llmCfg.TaskRisk.Enabled {
+		assessor = taskrisk.NewLLMAssessor(s.llmCfg.TaskRisk, s.logger)
+	}
+
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
-		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub)
+		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
 	s.tasksHandler = tasksHandler
 	s.ticketStore = intauth.NewTicketStore()
 	eventsHandler := handlers.NewEventsHandler(s.eventHub, s.ticketStore)

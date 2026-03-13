@@ -728,13 +728,16 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 		v := task.ExpiresAt.UTC().Format(time.RFC3339)
 		expiresAt = &v
 	}
+	riskDetails := string(task.RiskDetails)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
-			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
+			risk_level, risk_details)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), task.CallbackURL, task.ExpiresInSeconds,
-		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime)
+		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
+		task.RiskLevel, riskDetails)
 	return err
 }
 
@@ -742,14 +745,16 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
+	var riskDetailsStr string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime
+		       pending_action, pending_reason, lifetime, risk_level, risk_details
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime)
+		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+		&t.RiskLevel, &riskDetailsStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -774,6 +779,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 			t.PendingAction = &pa
 		}
 	}
+	if riskDetailsStr != "" {
+		t.RiskDetails = json.RawMessage(riskDetailsStr)
+	}
 	return t, nil
 }
 
@@ -794,7 +802,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime
+		       pending_action, pending_reason, lifetime, risk_level, risk_details
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -813,9 +821,11 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
+		var riskDetailsStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime); err != nil {
+			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RiskLevel, &riskDetailsStr); err != nil {
 			return nil, 0, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -833,6 +843,9 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
 				t.PendingAction = &pa
 			}
+		}
+		if riskDetailsStr != "" {
+			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -935,7 +948,7 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime
+		       pending_action, pending_reason, lifetime, risk_level, risk_details
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -948,9 +961,11 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		t := &store.Task{}
 		var actionsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
+		var riskDetailsStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
-			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime); err != nil {
+			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
+			&t.RiskLevel, &riskDetailsStr); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -968,6 +983,9 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
 				t.PendingAction = &pa
 			}
+		}
+		if riskDetailsStr != "" {
+			t.RiskDetails = json.RawMessage(riskDetailsStr)
 		}
 		tasks = append(tasks, t)
 	}

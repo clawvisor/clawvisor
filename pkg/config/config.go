@@ -97,9 +97,15 @@ type VerificationConfig struct {
 	CacheTTLSeconds   int  `yaml:"cache_ttl_seconds"`
 }
 
+// TaskRiskConfig holds settings for task risk assessment.
+type TaskRiskConfig struct {
+	LLMProviderConfig `yaml:",inline"`
+}
+
 // LLMConfig groups all LLM provider configurations.
 type LLMConfig struct {
 	Verification VerificationConfig `yaml:"verification"` // Intent verification (runtime)
+	TaskRisk     TaskRiskConfig     `yaml:"task_risk"`     // Task risk assessment (creation time)
 }
 
 // MCPConfig holds settings for the MCP server.
@@ -215,6 +221,14 @@ func Default() *Config {
 				},
 				FailClosed:      true,
 				CacheTTLSeconds: 60,
+			},
+			TaskRisk: TaskRiskConfig{
+				LLMProviderConfig: LLMProviderConfig{
+					Enabled:        false,
+					Provider:       "anthropic",
+					Model:          "claude-haiku-4-5-20251001",
+					TimeoutSeconds: 10,
+				},
 			},
 		},
 		MCP: MCPConfig{
@@ -360,6 +374,42 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_FAIL_CLOSED"); v != "" {
 		cfg.LLM.Verification.FailClosed = v == "true" || v == "1"
+	}
+
+	// LLM Task Risk overrides
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_ENABLED"); v != "" {
+		cfg.LLM.TaskRisk.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_PROVIDER"); v != "" {
+		cfg.LLM.TaskRisk.Provider = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_ENDPOINT"); v != "" {
+		cfg.LLM.TaskRisk.Endpoint = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_API_KEY"); v != "" {
+		cfg.LLM.TaskRisk.APIKey = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_MODEL"); v != "" {
+		cfg.LLM.TaskRisk.Model = v
+	}
+
+	// Fallback: inherit empty task_risk fields from verification config.
+	tr := &cfg.LLM.TaskRisk
+	vr := &cfg.LLM.Verification
+	if tr.Provider == "" {
+		tr.Provider = vr.Provider
+	}
+	if tr.Endpoint == "" {
+		tr.Endpoint = vr.Endpoint
+	}
+	if tr.APIKey == "" {
+		tr.APIKey = vr.APIKey
+	}
+	if tr.Model == "" {
+		tr.Model = vr.Model
+	}
+	if tr.TimeoutSeconds == 0 {
+		tr.TimeoutSeconds = vr.TimeoutSeconds
 	}
 
 	// Resolve empty database driver: explicit env/config wins; otherwise auto-detect.

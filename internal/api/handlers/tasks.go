@@ -13,6 +13,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -42,6 +43,7 @@ type TasksHandler struct {
 	logger     *slog.Logger
 	baseURL    string
 	eventHub   *events.Hub
+	assessor   taskrisk.Assessor
 }
 
 func NewTasksHandler(
@@ -53,10 +55,11 @@ func NewTasksHandler(
 	logger *slog.Logger,
 	baseURL string,
 	eventHub *events.Hub,
+	assessor taskrisk.Assessor,
 ) *TasksHandler {
 	return &TasksHandler{
 		st: st, vault: v, adapterReg: adapterReg, notifier: notifier, cfg: cfg, logger: logger, baseURL: baseURL,
-		eventHub: eventHub,
+		eventHub: eventHub, assessor: assessor,
 	}
 }
 
@@ -159,6 +162,22 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.CallbackURL != "" {
 		task.CallbackURL = &req.CallbackURL
+	}
+
+	// Run risk assessment (non-blocking — errors are logged, not propagated).
+	if h.assessor != nil {
+		assessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+			Purpose:           req.Purpose,
+			AuthorizedActions: req.AuthorizedActions,
+			AgentName:         agent.Name,
+		})
+		if err != nil {
+			h.logger.Warn("task risk assessment failed", "error", err)
+		}
+		if assessment != nil {
+			task.RiskLevel = assessment.RiskLevel
+			task.RiskDetails = taskrisk.MarshalAssessment(assessment)
+		}
 	}
 
 	if err := h.st.CreateTask(ctx, task); err != nil {
