@@ -336,11 +336,17 @@ func (s *TasksScreen) renderTask(t client.Task, selected bool) string {
 		timeInfo = timeAgo(t.CreatedAt)
 	}
 
+	risk := riskBadge(t.RiskLevel)
+
 	// Truncate purpose to prevent line wrapping.
 	purpose := t.Purpose
 	if s.width > 0 {
 		// line1 overhead: marker(2) + icon(1) + space(1) + two double-space gaps(4) = 8
-		purposeMax := s.width - 8 - len(t.Lifetime) - len(timeInfo)
+		extra := 8 + len(t.Lifetime) + len(timeInfo)
+		if t.RiskLevel != "" {
+			extra += len(t.RiskLevel) + len(" risk") + 2 // badge text + gap
+		}
+		purposeMax := s.width - extra
 		if purposeMax < 10 {
 			purposeMax = 10
 		}
@@ -354,6 +360,9 @@ func (s *TasksScreen) renderTask(t client.Task, selected bool) string {
 		tui.StyleDim.Render(t.Lifetime),
 		tui.StyleDim.Render(timeInfo),
 	)
+	if risk != "" {
+		line1 += "  " + risk
+	}
 
 	// Actions summary.
 	var actions []string

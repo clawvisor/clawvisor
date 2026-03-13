@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +20,37 @@ func formatTaskDetail(t *client.Task) string {
 	if t.ExpiresAt != nil {
 		b.WriteString(tui.StyleDim.Render("Expires:   ") + t.ExpiresAt.Format(time.RFC3339) + "\n")
 	}
+	if badge := riskBadge(t.RiskLevel); badge != "" {
+		b.WriteString(tui.StyleDim.Render("Risk:      ") + badge + "\n")
+	}
 	b.WriteString("\n")
+
+	if len(t.RiskDetails) > 0 {
+		var ra client.RiskAssessment
+		if json.Unmarshal(t.RiskDetails, &ra) == nil && ra.Explanation != "" {
+			b.WriteString(tui.StyleBold.Render("Risk Assessment") + "\n")
+			b.WriteString("  " + ra.Explanation + "\n")
+			if len(ra.Factors) > 0 {
+				for _, f := range ra.Factors {
+					b.WriteString("  • " + f + "\n")
+				}
+			}
+			if len(ra.Conflicts) > 0 {
+				b.WriteString("\n")
+				for _, c := range ra.Conflicts {
+					b.WriteString("  " + tui.StyleRed.Render("✗") + " " + c.Description)
+					if c.Severity != "" {
+						b.WriteString(" (" + c.Severity + ")")
+					}
+					b.WriteString("\n")
+				}
+			}
+			if ra.Model != "" {
+				b.WriteString(tui.StyleDim.Render(fmt.Sprintf("  model: %s  latency: %dms", ra.Model, ra.LatencyMs)) + "\n")
+			}
+			b.WriteString("\n")
+		}
+	}
 
 	if len(t.AuthorizedActions) > 0 {
 		b.WriteString(tui.StyleBold.Render("Authorized Actions") + "\n")
@@ -45,6 +76,21 @@ func formatTaskDetail(t *client.Task) string {
 	}
 
 	return b.String()
+}
+
+func riskBadge(level string) string {
+	switch level {
+	case "low":
+		return tui.StyleGreen.Render("low risk")
+	case "medium":
+		return tui.StyleAmber.Render("medium risk")
+	case "high":
+		return tui.StyleOrange.Render("high risk")
+	case "critical":
+		return tui.StyleRed.Render("critical risk")
+	default:
+		return ""
+	}
 }
 
 func formatApprovalDetail(a *client.QueueApproval, created time.Time) string {

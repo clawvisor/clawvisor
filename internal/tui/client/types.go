@@ -1,6 +1,9 @@
 package client
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ── Public Config ────────────────────────────────────────────────────────────
 
@@ -69,8 +72,10 @@ type Task struct {
 	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`
 	ExpiresInSeconds  int          `json:"expires_in_seconds"`
 	RequestCount      int          `json:"request_count"`
-	PendingAction     *TaskAction  `json:"pending_action,omitempty"`
-	PendingReason     string       `json:"pending_reason,omitempty"`
+	PendingAction     *TaskAction     `json:"pending_action,omitempty"`
+	PendingReason     string          `json:"pending_reason,omitempty"`
+	RiskLevel         string          `json:"risk_level,omitempty"`
+	RiskDetails       json.RawMessage `json:"risk_details,omitempty"`
 }
 
 type TaskAction struct {
@@ -78,6 +83,21 @@ type TaskAction struct {
 	Action      string `json:"action"`
 	AutoExecute bool   `json:"auto_execute"`
 	ExpectedUse string `json:"expected_use,omitempty"`
+}
+
+type RiskAssessment struct {
+	RiskLevel   string         `json:"risk_level"`
+	Explanation string         `json:"explanation"`
+	Factors     []string       `json:"factors"`
+	Conflicts   []RiskConflict `json:"conflicts"`
+	Model       string         `json:"model"`
+	LatencyMs   int            `json:"latency_ms"`
+}
+
+type RiskConflict struct {
+	Field       string `json:"field"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
 }
 
 type TaskActionResponse struct {

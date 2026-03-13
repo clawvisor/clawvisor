@@ -10,6 +10,7 @@ var (
 	ColorAccent       = lipgloss.Color("#f59e0b") // amber
 	ColorGreen        = lipgloss.Color("#22c55e")
 	ColorRed          = lipgloss.Color("#ef4444")
+	ColorOrange       = lipgloss.Color("#f97316")
 	ColorDim          = lipgloss.Color("#6b7280")
 	ColorWhite        = lipgloss.Color("#e5e7eb")
 	ColorYellow       = lipgloss.Color("#eab308")
@@ -21,8 +22,9 @@ var (
 	StyleDim   = lipgloss.NewStyle().Foreground(ColorDim)
 	StyleGreen = lipgloss.NewStyle().Foreground(ColorGreen)
 	StyleRed   = lipgloss.NewStyle().Foreground(ColorRed)
-	StyleAmber = lipgloss.NewStyle().Foreground(ColorAccent)
-	StyleBold  = lipgloss.NewStyle().Bold(true)
+	StyleAmber  = lipgloss.NewStyle().Foreground(ColorAccent)
+	StyleOrange = lipgloss.NewStyle().Foreground(ColorOrange)
+	StyleBold   = lipgloss.NewStyle().Bold(true)
 	StyleWhite = lipgloss.NewStyle().Foreground(ColorWhite)
 
 	// Sidebar

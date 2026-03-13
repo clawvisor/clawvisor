@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -419,12 +420,16 @@ func (s *DashboardScreen) renderQueueItem(item client.QueueItem, selected bool) 
 		if item.Task == nil {
 			return marker + tui.StyleDim.Render("Task (no data)")
 		}
-		return fmt.Sprintf("%s%s %s  %s",
+		line := fmt.Sprintf("%s%s %s  %s",
 			marker,
 			tui.StyleAmber.Render("Task:"),
 			tui.StyleBold.Render(item.Task.Purpose),
 			tui.StyleDim.Render(timeAgo(item.CreatedAt)),
 		)
+		if risk := riskBadge(item.Task.RiskLevel); risk != "" {
+			line += "  " + risk
+		}
+		return line
 	case "approval":
 		if item.Approval == nil {
 			return marker + tui.StyleDim.Render("Request (no data)")
@@ -539,6 +544,34 @@ func (s *DashboardScreen) renderTaskAuditView() string {
 			b.WriteString(tui.StyleDim.Render("Expires:   ") + fmt.Sprintf("%d min left", int(remaining.Minutes())) + "\n")
 		}
 	}
+	if badge := riskBadge(s.drillTask.RiskLevel); badge != "" {
+		b.WriteString(tui.StyleDim.Render("Risk:      ") + badge + "\n")
+	}
+
+	if len(s.drillTask.RiskDetails) > 0 {
+		var ra client.RiskAssessment
+		if json.Unmarshal(s.drillTask.RiskDetails, &ra) == nil && ra.Explanation != "" {
+			b.WriteString("\n" + tui.StyleBold.Render("Risk Assessment") + "\n")
+			b.WriteString("  " + ra.Explanation + "\n")
+			for _, f := range ra.Factors {
+				b.WriteString("  • " + f + "\n")
+			}
+			if len(ra.Conflicts) > 0 {
+				b.WriteString("\n")
+				for _, c := range ra.Conflicts {
+					b.WriteString("  " + tui.StyleRed.Render("✗") + " " + c.Description)
+					if c.Severity != "" {
+						b.WriteString(" (" + c.Severity + ")")
+					}
+					b.WriteString("\n")
+				}
+			}
+			if ra.Model != "" {
+				b.WriteString(tui.StyleDim.Render(fmt.Sprintf("  model: %s  latency: %dms", ra.Model, ra.LatencyMs)) + "\n")
+			}
+		}
+	}
+
 	if len(s.drillTask.AuthorizedActions) > 0 {
 		b.WriteString("\n")
 		b.WriteString(tui.StyleBold.Render("Authorized Actions") + "\n")
