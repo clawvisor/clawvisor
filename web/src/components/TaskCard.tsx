@@ -58,6 +58,7 @@ export default function TaskCard({
   const [scopesOpen, setScopesOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
   const [riskOpen, setRiskOpen] = useState(false)
+  const [confirmApprove, setConfirmApprove] = useState(false)
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -246,10 +247,21 @@ export default function TaskCard({
               className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
               Deny
             </button>
-            <button onClick={() => approveMut.mutate()} disabled={isPending}
-              className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
-              {approveMut.isPending ? 'Approving...' : 'Approve Task'}
-            </button>
+            {isHighRisk && !confirmApprove ? (
+              <button onClick={() => setConfirmApprove(true)} disabled={isPending}
+                className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
+                Approve Task
+              </button>
+            ) : (
+              <button onClick={() => approveMut.mutate()} disabled={isPending}
+                className={`font-medium rounded px-5 py-1.5 text-sm disabled:opacity-50 ${
+                  confirmApprove
+                    ? 'bg-danger text-surface-0 hover:bg-danger/80'
+                    : 'bg-brand text-surface-0 hover:bg-brand-strong'
+                }`}>
+                {approveMut.isPending ? 'Approving...' : confirmApprove ? 'Confirm Approve' : 'Approve Task'}
+              </button>
+            )}
           </div>
         </div>
       )}
