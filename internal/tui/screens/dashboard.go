@@ -272,7 +272,7 @@ func (s *DashboardScreen) handleTaskAuditKey(msg tea.KeyMsg) (tui.ScreenModel, t
 			s.auditCursor++
 		}
 	case key.Matches(msg, tui.ListNavKeys.Enter):
-		if s.busy != "" {
+		if s.busy != "" || len(s.auditEntries) == 0 {
 			return s, nil
 		}
 		s.busy = "Loading..."
