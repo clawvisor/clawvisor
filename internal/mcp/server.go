@@ -36,13 +36,26 @@ func (s *Server) HandleJSONRPC(w http.ResponseWriter, r *http.Request, req *Requ
 	case "initialize":
 		return s.handleInitialize(w, req)
 	case "notifications/initialized":
-		return nil // notification, no response
-	case "ping":
-		return newResponse(req.ID, map[string]any{})
-	case "tools/list":
-		return s.handleToolsList(req)
-	case "tools/call":
-		return s.handleToolsCall(r, req)
+		// Notification — validate session but no response either way.
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		if !s.sessions.Valid(sessionID) {
+			s.logger.Warn("notifications/initialized with invalid session", "session_id", sessionID)
+		}
+		return nil
+	case "ping", "tools/list", "tools/call":
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		if !s.sessions.Valid(sessionID) {
+			return newErrorResponse(req.ID, CodeInvalidRequest, "invalid or expired session")
+		}
+		switch req.Method {
+		case "ping":
+			return newResponse(req.ID, map[string]any{})
+		case "tools/list":
+			return s.handleToolsList(req)
+		case "tools/call":
+			return s.handleToolsCall(r, req)
+		}
+		return nil // unreachable
 	default:
 		return newErrorResponse(req.ID, CodeMethodNotFound, "method not found: "+req.Method)
 	}

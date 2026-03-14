@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -46,6 +47,12 @@ func (p *Provider) Register(w http.ResponseWriter, r *http.Request) {
 	if len(req.RedirectURIs) == 0 {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "redirect_uris is required")
 		return
+	}
+	for _, uri := range req.RedirectURIs {
+		if err := validateRedirectURI(uri); err != nil {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 	}
 
 	client := &store.OAuthClient{
@@ -92,6 +99,12 @@ func (p *Provider) AuthorizeApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	// Validate redirect URI scheme (defense-in-depth).
+	if err := validateRedirectURI(req.RedirectURI); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -155,6 +168,12 @@ func (p *Provider) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	// Validate redirect URI scheme (defense-in-depth).
+	if err := validateRedirectURI(req.RedirectURI); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -262,6 +281,21 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 		"access_token": rawToken,
 		"token_type":   "Bearer",
 	})
+}
+
+// validateRedirectURI rejects redirect URIs that aren't http or https.
+func validateRedirectURI(uri string) error {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("invalid redirect URI: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("redirect URI scheme must be http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("redirect URI must include a host")
+	}
+	return nil
 }
 
 // uriRegistered checks whether uri is in the registered list.
