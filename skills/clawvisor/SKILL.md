@@ -6,7 +6,7 @@ description: >
   Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
   manages task scopes, and injects credentials — the agent never handles
   secrets directly.
-version: 0.2.0
+version: 0.6.0
 homepage: https://github.com/clawvisor/clawvisor
 metadata:
   openclaw:
@@ -17,9 +17,11 @@ metadata:
     user_setup:
       - "Set CLAWVISOR_URL to your Clawvisor instance URL"
       - "Create an agent in the Clawvisor dashboard, copy the token, then run: openclaw credentials set CLAWVISOR_AGENT_TOKEN"
+      - "⚠️ Treat CLAWVISOR_AGENT_TOKEN as a high-privilege credential — it grants the agent access to every service you have activated in Clawvisor. Use a dedicated agent token with only the services you need, and rotate or revoke it immediately if compromised."
       - "Set OPENCLAW_HOOKS_URL to your OpenClaw gateway's reachable URL (default http://localhost:18789). Override if using Tailscale or a remote gateway."
       - "Activate any services you want the agent to use (Gmail, GitHub, etc.) in the dashboard under Services"
-      - "Optionally create restrictions in the dashboard to block specific actions"
+      - "Set dashboard policies to require approval for write/send/delete actions — only enable auto_execute for read-only actions you trust the agent to perform unsupervised."
+      - "Optionally create restrictions in the dashboard to block specific actions outright"
 ---
 
 # Clawvisor Skill
