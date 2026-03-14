@@ -119,6 +119,8 @@ When a task is created, Clawvisor can optionally run an **LLM-powered risk asses
 
 For multi-step tasks, **chain context verification** tracks structural facts (IDs, email addresses, phone numbers) extracted from adapter results and feeds them into subsequent verification prompts. This prevents a compromised agent from reading an inbox and then targeting an entity not present in the results. Chain context is activated by passing a consistent `session_id` across related gateway requests.
 
+All three LLM subsystems (intent verification, chain context extraction, and task risk assessment) are covered by eval suites totaling 243 cases. See [docs/eval-results.md](docs/eval-results.md) for accuracy breakdowns and failure analysis.
+
 ## Supported Services
 
 | Service ID | Service | Actions |
