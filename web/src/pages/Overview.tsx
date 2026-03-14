@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict } from '../api/client'
@@ -290,6 +290,7 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
 function ApprovalCard({ item }: { item: QueueItem }) {
   const qc = useQueryClient()
   const [result, setResult] = useState<string | null>(null)
+  const [verifyOpen, setVerifyOpen] = useState(false)
   const a = item.approval!
 
   const approveMut = useMutation({
@@ -311,6 +312,9 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   const isPending = approveMut.isPending || denyMut.isPending
   const params = a.params ?? {}
   const paramEntries = Object.entries(params)
+  const hasIssue = a.verification ? hasVerificationIssue(a.verification) : false
+  // Auto-expand when there's a problem
+  const showPanel = a.verification && (hasIssue || verifyOpen)
 
   if (result) {
     return (
@@ -337,6 +341,24 @@ function ApprovalCard({ item }: { item: QueueItem }) {
         </div>
       </div>
 
+      {/* Verification — auto-expanded for issues, collapsible toggle for clean */}
+      {a.verification && !hasIssue && (
+        <div className="px-5 pb-3">
+          <button
+            onClick={() => setVerifyOpen(o => !o)}
+            className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
+          >
+            <svg className={`w-3 h-3 transition-transform ${verifyOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+            <span className="font-medium">Verification</span>
+            <VerificationIcon result={a.verification.param_scope} type="param" />
+            <VerificationIcon result={a.verification.reason_coherence} type="reason" />
+          </button>
+        </div>
+      )}
+      {showPanel && (
+        <VerificationPanel verification={a.verification!} />
+      )}
+
       {/* Parameters */}
       {paramEntries.length > 0 && (
         <div className="px-5 pb-3">
@@ -357,19 +379,8 @@ function ApprovalCard({ item }: { item: QueueItem }) {
         </div>
       )}
 
-      {/* Verification warning */}
-      {a.verification && hasVerificationIssue(a.verification) && (
-        <VerificationWarningPanel verification={a.verification} />
-      )}
-
       {/* Actions */}
       <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-        {a.verification && hasVerificationIssue(a.verification) && (
-          <div className="flex items-center gap-1.5 mr-auto">
-            <VerificationIcon result={a.verification.param_scope} type="param" />
-            <VerificationIcon result={a.verification.reason_coherence} type="reason" />
-          </div>
-        )}
         <button
           onClick={() => denyMut.mutate()}
           disabled={isPending}
@@ -393,21 +404,37 @@ function hasVerificationIssue(v: VerificationVerdict): boolean {
   return v.param_scope !== 'ok' || v.reason_coherence !== 'ok'
 }
 
-function VerificationWarningPanel({ verification: v }: { verification: VerificationVerdict }) {
+const VERIFY_COLORS = {
+  clean:   { bg: 'rgba(34, 197, 94, 0.04)', border: 'rgba(34, 197, 94, 0.15)', headerBorder: 'rgba(34, 197, 94, 0.10)', color: 'rgb(var(--color-success))' },
+  warning: { bg: 'rgba(245, 158, 11, 0.05)', border: 'rgba(245, 158, 11, 0.2)', headerBorder: 'rgba(245, 158, 11, 0.12)', color: 'rgb(var(--color-warning))' },
+  danger:  { bg: 'rgba(239, 68, 68, 0.06)', border: 'rgba(239, 68, 68, 0.25)', headerBorder: 'rgba(239, 68, 68, 0.15)', color: 'rgb(var(--color-danger))' },
+}
+
+function VerificationPanel({ verification: v }: { verification: VerificationVerdict }) {
   const isDanger = v.param_scope === 'violation' || v.reason_coherence === 'incoherent'
-  const colors = isDanger
-    ? { bg: 'rgba(239, 68, 68, 0.06)', border: 'rgba(239, 68, 68, 0.25)', headerBorder: 'rgba(239, 68, 68, 0.15)', color: 'rgb(var(--color-danger))' }
-    : { bg: 'rgba(245, 158, 11, 0.05)', border: 'rgba(245, 158, 11, 0.2)', headerBorder: 'rgba(245, 158, 11, 0.12)', color: 'rgb(var(--color-warning))' }
+  const isClean = v.param_scope === 'ok' && v.reason_coherence === 'ok'
+  const colors = isClean ? VERIFY_COLORS.clean : isDanger ? VERIFY_COLORS.danger : VERIFY_COLORS.warning
+
+  let headerIcon: ReactNode
+  let headerLabel: string
+  if (isClean) {
+    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+    headerLabel = 'Verification Passed'
+  } else if (isDanger) {
+    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    headerLabel = 'Verification Warning'
+  } else {
+    headerIcon = <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    headerLabel = 'Verification Notice'
+  }
 
   return (
     <div className="px-5 pb-3">
       <div className="rounded overflow-hidden" style={{ background: colors.bg, border: `1px solid ${colors.border}` }}>
         <div className="px-3 py-1.5 flex items-center gap-1.5" style={{ borderBottom: `1px solid ${colors.headerBorder}` }}>
-          <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-          </svg>
+          {headerIcon}
           <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: colors.color }}>
-            {isDanger ? 'Verification Warning' : 'Verification Notice'}
+            {headerLabel}
           </span>
         </div>
         <div className="px-3 py-2.5 space-y-1.5">
