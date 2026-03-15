@@ -61,7 +61,7 @@ Agent → POST /api/gateway/request → Policy check → Vault inject → Adapte
                                           ↓
                                    Approval queue (if policy requires)
                                           ↓
-                                   Telegram / Dashboard → Human approves/denies
+                                   Dashboard / Notification → Human approves/denies
                                           ↓
                                    Callback to agent session
 ```
@@ -76,7 +76,8 @@ can approve from the dashboard. The result is delivered back to the agent via
 | Variable | Description |
 |---|---|
 | `CLAWVISOR_URL` | Base URL of your Clawvisor instance |
-| `CLAWVISOR_AGENT_TOKEN` | Agent bearer token from the dashboard |
+| `CLAWVISOR_AGENT_TOKEN` | Agent bearer token from the dashboard — treat as a high-privilege credential |
+| `OPENCLAW_HOOKS_URL` | OpenClaw gateway URL for callbacks (default: `http://localhost:18789`) |
 
 ## Links
 

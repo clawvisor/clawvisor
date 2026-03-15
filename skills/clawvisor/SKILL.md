@@ -6,25 +6,34 @@ description: >
   Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
   manages task scopes, and injects credentials — the agent never handles
   secrets directly.
-version: 0.6.0
+version: 0.6.1
 homepage: https://github.com/clawvisor/clawvisor
 metadata:
-  openclaw:
-    requires_env:
-      - CLAWVISOR_URL          # e.g. http://localhost:25297 or https://your-instance.run.app
-      - CLAWVISOR_AGENT_TOKEN  # agent bearer token from the Clawvisor dashboard
-      - OPENCLAW_HOOKS_URL     # default: http://localhost:18789
-    user_setup:
-      - "Set CLAWVISOR_URL to your Clawvisor instance URL"
-      - "Create an agent in the Clawvisor dashboard, copy the token, then run: openclaw credentials set CLAWVISOR_AGENT_TOKEN"
-      - "⚠️ Treat CLAWVISOR_AGENT_TOKEN as a high-privilege credential — it grants the agent access to every service you have activated in Clawvisor. Use a dedicated agent token with only the services you need, and rotate or revoke it immediately if compromised."
-      - "Set OPENCLAW_HOOKS_URL to your OpenClaw gateway's reachable URL (default http://localhost:18789). Override if using Tailscale or a remote gateway."
-      - "Activate any services you want the agent to use (Gmail, GitHub, etc.) in the dashboard under Services"
-      - "Set dashboard policies to require approval for write/send/delete actions — only enable auto_execute for read-only actions you trust the agent to perform unsupervised."
-      - "Optionally create restrictions in the dashboard to block specific actions outright"
+  {
+    "openclaw":
+      {
+        "emoji": "🔐",
+        "requires": { "env": ["CLAWVISOR_URL", "CLAWVISOR_AGENT_TOKEN", "OPENCLAW_HOOKS_URL"] },
+        "primaryEnv": "CLAWVISOR_AGENT_TOKEN",
+      },
+  }
 ---
 
 # Clawvisor Skill
+
+## Setup
+
+1. Set `CLAWVISOR_URL` to your Clawvisor instance URL (e.g. `http://localhost:25297`)
+2. Create an agent in the Clawvisor dashboard, copy the token, then run: `openclaw credentials set CLAWVISOR_AGENT_TOKEN`
+3. Set `OPENCLAW_HOOKS_URL` to your OpenClaw gateway's reachable URL (default `http://localhost:18789`)
+4. Activate any services you want the agent to use (Gmail, GitHub, etc.) in the dashboard under Services
+5. Set dashboard policies to require approval for write/send/delete actions — only enable `auto_execute` for read-only actions you trust the agent to perform unsupervised
+
+> ⚠️ **`CLAWVISOR_AGENT_TOKEN` is a high-privilege credential.** It grants the agent access to every service activated in Clawvisor. Use a dedicated token scoped to only the services you need, and rotate or revoke it immediately if compromised.
+
+---
+
+## Overview
 
 Clawvisor is a gatekeeper between you and external services. Every action goes
 through Clawvisor, which checks restrictions, validates task scopes, injects
