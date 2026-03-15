@@ -226,6 +226,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/tasks/{id}
 // Auth: agent bearer token
+//
+// Query params:
+//
+//	wait=true    – long-poll until the task leaves a pending state (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
 func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	agent := middleware.AgentFromContext(ctx)
@@ -249,8 +254,79 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Long-poll: if wait=true and task is still pending, block until it
+	// transitions or the timeout elapses.
+	if r.URL.Query().Get("wait") == "true" && isTaskPending(task.Status) && h.eventHub != nil {
+		timeout := 120
+		if v := r.URL.Query().Get("timeout"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				timeout = n
+			}
+		}
+		if timeout > 120 {
+			timeout = 120
+		}
+
+		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+	}
+
 	sanitizeTaskForResponse(task)
 	writeJSON(w, http.StatusOK, task)
+}
+
+// isTaskPending returns true if the status represents a state that is
+// waiting on user action.
+func isTaskPending(status string) bool {
+	return status == "pending_approval" || status == "pending_scope_expansion"
+}
+
+// waitForTaskResolution subscribes to the event hub and re-fetches the task
+// each time a "tasks" event fires for the owning user. It returns as soon as
+// the task leaves a pending state or the timeout / request context expires.
+func (h *TasksHandler) waitForTaskResolution(ctx context.Context, taskID, userID string, timeout time.Duration) *store.Task {
+	ch, unsub := h.eventHub.Subscribe(userID)
+	defer unsub()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Client disconnected.
+			t, err := h.st.GetTask(ctx, taskID)
+			if err != nil {
+				return &store.Task{ID: taskID}
+			}
+			return t
+		case <-timer.C:
+			// Timeout — return whatever state the task is in now.
+			t, err := h.st.GetTask(context.Background(), taskID)
+			if err != nil {
+				return &store.Task{ID: taskID}
+			}
+			return t
+		case evt, ok := <-ch:
+			if !ok {
+				// Hub closed.
+				t, err := h.st.GetTask(context.Background(), taskID)
+				if err != nil {
+					return &store.Task{ID: taskID}
+				}
+				return t
+			}
+			if evt.Type != "tasks" {
+				continue
+			}
+			t, err := h.st.GetTask(ctx, taskID)
+			if err != nil {
+				continue
+			}
+			if !isTaskPending(t.Status) {
+				return t
+			}
+		}
+	}
 }
 
 // ── List ──────────────────────────────────────────────────────────────────────

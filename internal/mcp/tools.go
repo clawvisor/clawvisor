@@ -58,11 +58,13 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "get_task",
-			Description: "Get the current status and details of a task.",
+			Description: "Get the current status and details of a task. Use wait=true to long-poll until the task is approved or denied instead of returning immediately.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"task_id": {"type": "string", "description": "The task ID to look up"}
+					"task_id": {"type": "string", "description": "The task ID to look up"},
+					"wait": {"type": "boolean", "description": "Long-poll until the task leaves pending state (default false)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
 				"required": ["task_id"]
 			}`),

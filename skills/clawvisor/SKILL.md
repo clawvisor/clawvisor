@@ -50,7 +50,7 @@ The authorization model has two layers — applied in order:
 
 1. Fetch the catalog — confirm the service is active and the action isn't restricted
 2. Create a task declaring your purpose and the actions you need
-3. Tell the user to approve it; poll `GET /api/tasks/{id}` until approved
+3. Tell the user to approve it; call `get_task` with `wait: true` to long-poll until approved
 4. Make gateway requests under the task — in-scope actions execute automatically
 5. Mark the task complete when done
 
@@ -95,11 +95,11 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
 - **`expected_use`** — per-action description of how you'll use it. Shown during approval and checked by intent verification against your actual request params. Be specific: "Fetch today's calendar events" is better than "Use the calendar API."
 - **`auto_execute`** — `true` runs in-scope requests immediately; `false` still requires per-request approval (use for destructive actions like `send_message`).
 - **`expires_in_seconds`** — task TTL. Omit and set `"lifetime": "standing"` for a task that persists until the user revokes it (see below).
-- **`callback_url`** — *(optional, only if callbacks are configured)* Clawvisor posts task lifecycle events here. Otherwise, poll `GET /api/tasks/{id}`.
+- **`callback_url`** — *(optional, only if callbacks are configured)* Clawvisor posts task lifecycle events here. Otherwise, use `get_task` with `wait: true` to long-poll.
 
 All tasks start as `pending_approval` — the user is notified to approve the
-scope before it becomes active. Poll `GET /api/tasks/{id}` until `status`
-changes to `active` (or `denied`).
+scope before it becomes active. Call `get_task` with `wait: true` to long-poll
+until `status` changes to `active` (or `denied`).
 
 ### Standing tasks
 
@@ -235,7 +235,7 @@ Every response has a `status` field. Handle each case as follows:
 | `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." Poll with the same `request_id` until resolved. Do **not** send a new request. |
 | `blocked` | A restriction blocks this action | Tell the user: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround. |
 | `restricted` | Intent verification rejected the request | Your params or reason were inconsistent with the task's approved purpose. Adjust and retry with a new `request_id`. |
-| `pending_task_approval` | Task not yet approved | Tell the user and poll `GET /api/tasks/{id}` until approved. |
+| `pending_task_approval` | Task not yet approved | Tell the user and call `get_task` with `wait: true` until approved. |
 | `pending_scope_expansion` | Request outside task scope | Call `POST /api/tasks/{id}/expand` with the new action. |
 | `task_expired` | Task has passed its expiry | Expand the task to extend, or create a new task. |
 | `error` (`SERVICE_NOT_CONFIGURED`) | Service not yet connected | Tell the user: "[Service] isn't activated yet. Connect it in the Clawvisor dashboard." |
@@ -244,12 +244,22 @@ Every response has a `status` field. Handle each case as follows:
 
 ---
 
-## Polling
+## Waiting for approval
 
-Polling is the primary mechanism for waiting on approvals.
+**Tasks (preferred — long-poll):** Call `get_task` with `wait: true` to
+long-poll until the task leaves `pending_approval` / `pending_scope_expansion`.
+The request blocks server-side (up to `timeout` seconds, default & max 120) and
+returns the task as soon as it is approved, denied, or the timeout elapses.
 
-**Tasks:** Poll `GET /api/tasks/{id}` until `status` changes from
-`pending_approval` to `active` (or `denied`).
+```json
+{ "task_id": "abc-123", "wait": true, "timeout": 120 }
+```
+
+If the timeout elapses while still pending, the response is a normal 200 with
+the current (still-pending) task — just call again to keep waiting.
+
+**Tasks (legacy polling):** Poll `GET /api/tasks/{id}` until `status` changes
+from `pending_approval` to `active` (or `denied`).
 
 **Gateway requests:** Re-send the same gateway request with the same
 `request_id`. Clawvisor recognizes the duplicate and returns the current status

@@ -131,7 +131,19 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		if err := validatePathParam(id, "task_id"); err != nil {
 			return internalRoute{}, nil, err
 		}
-		return internalRoute{"GET", "/api/tasks/" + id, "GET /api/tasks/{id}",
+		path := "/api/tasks/" + id
+		// Forward optional long-poll query params.
+		var qp []string
+		if w := getString("wait"); w == "true" {
+			qp = append(qp, "wait=true")
+		}
+		if t := getString("timeout"); t != "" {
+			qp = append(qp, "timeout="+t)
+		}
+		if len(qp) > 0 {
+			path += "?" + strings.Join(qp, "&")
+		}
+		return internalRoute{"GET", path, "GET /api/tasks/{id}",
 			map[string]string{"id": id}}, nil, nil
 
 	case "complete_task":
