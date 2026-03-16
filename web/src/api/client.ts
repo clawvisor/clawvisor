@@ -341,6 +341,14 @@ export interface FeatureSet {
   password_auth: boolean
 }
 
+export interface VersionInfo {
+  current: string
+  latest?: string
+  update_available: boolean
+  release_url?: string
+  upgrade_command?: string
+}
+
 export interface ActivityBucket {
   bucket: string
   outcome: string
@@ -491,6 +499,9 @@ export const api = {
   },
   config: {
     public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey' }>('/api/config/public'),
+  },
+  version: {
+    get: () => get<VersionInfo>('/api/version'),
   },
   features: {
     get: () => get<FeatureSet>('/api/features'),

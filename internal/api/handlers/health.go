@@ -6,6 +6,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 // HealthHandler handles /health and /ready.
@@ -58,6 +59,11 @@ func (h *HealthHandler) ConfigPublic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"auth_mode": h.authMode,
 	})
+}
+
+// Version returns the current and latest available version (no auth required).
+func (h *HealthHandler) Version(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, version.Check())
 }
 
 // writeJSON is a shared JSON response helper used across all handlers.

@@ -280,6 +280,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /health", healthHandler.Health)
 	mux.HandleFunc("GET /ready", healthHandler.Ready)
 	mux.HandleFunc("GET /api/config/public", healthHandler.ConfigPublic)
+	mux.HandleFunc("GET /api/version", healthHandler.Version)
 
 	// Auth — core routes (always registered)
 	mux.Handle("POST /api/auth/refresh", authRateLimited(authHandler.Refresh))

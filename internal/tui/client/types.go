@@ -237,3 +237,13 @@ type Agent struct {
 	CreatedAt time.Time `json:"created_at"`
 	Token     string    `json:"token,omitempty"` // only on creation
 }
+
+// ── Version ─────────────────────────────────────────────────────────────────
+
+type VersionInfo struct {
+	Current     string `json:"current"`
+	Latest      string `json:"latest,omitempty"`
+	UpdateAvail bool   `json:"update_available"`
+	ReleaseURL  string `json:"release_url,omitempty"`
+	UpgradeCmd  string `json:"upgrade_command,omitempty"`
+}

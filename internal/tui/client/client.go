@@ -387,6 +387,27 @@ func (c *Client) Health() error {
 	return nil
 }
 
+// GetVersion fetches version info from the server (no auth required).
+func (c *Client) GetVersion() (*VersionInfo, error) {
+	var resp VersionInfo
+	req, err := http.NewRequest("GET", c.baseURL+"/api/version", nil)
+	if err != nil {
+		return nil, err
+	}
+	hresp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer hresp.Body.Close()
+	if hresp.StatusCode != 200 {
+		return nil, fmt.Errorf("version returned %d", hresp.StatusCode)
+	}
+	if err := json.NewDecoder(hresp.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return &resp, nil
+}
+
 // ── HTTP helpers ────────────────────────────────────────────────────────────
 
 func (c *Client) get(path string, params url.Values, dst interface{}) error {

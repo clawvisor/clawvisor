@@ -13,7 +13,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-builder /web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o clawvisor ./cmd/clawvisor
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION}" -o clawvisor ./cmd/clawvisor
 
 # Stage 3: Runtime (minimal distroless image)
 FROM gcr.io/distroless/static-debian12

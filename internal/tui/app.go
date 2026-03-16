@@ -30,6 +30,10 @@ type App struct {
 	// overlay state
 	showHelp bool
 	debug    bool
+	// version update state
+	updateAvail   bool
+	latestVersion string
+	upgradeCmd    string
 }
 
 // NewApp creates the root TUI application.
@@ -62,7 +66,24 @@ func (a *App) Init() tea.Cmd {
 	cmds = append(cmds, PollTick(a.pollInterval))
 	// Start SSE subscription.
 	cmds = append(cmds, a.connectSSE())
+	// Check for version updates.
+	cmds = append(cmds, a.checkVersion())
 	return tea.Batch(cmds...)
+}
+
+func (a *App) checkVersion() tea.Cmd {
+	c := a.client
+	return func() tea.Msg {
+		info, err := c.GetVersion()
+		if err != nil || info == nil {
+			return nil
+		}
+		return VersionMsg{
+			Latest:      info.Latest,
+			UpdateAvail: info.UpdateAvail,
+			UpgradeCmd:  info.UpgradeCmd,
+		}
+	}
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -174,6 +195,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ScreenSwitchMsg:
 		return a, a.switchTo(msg.Screen)
+
+	case VersionMsg:
+		a.updateAvail = msg.UpdateAvail
+		a.latestVersion = msg.Latest
+		a.upgradeCmd = msg.UpgradeCmd
+		return a, nil
 	}
 
 	// Forward to active screen.
@@ -274,6 +301,12 @@ func (a *App) renderSidebar() string {
 		Foreground(ColorBrand).
 		Bold(true).
 		Render("Clawvisor")
+	if a.updateAvail && a.latestVersion != "" {
+		title += " " + lipgloss.NewStyle().
+			Foreground(ColorGreen).
+			Bold(true).
+			Render("v"+a.latestVersion+" available")
+	}
 	items = append(items, title, "")
 
 	for _, s := range screens {
@@ -328,6 +361,10 @@ func (a *App) renderStatusBar(hints []string) string {
 
 	if a.disconnected {
 		content = StyleRed.Render("Reconnecting...") + sep + content
+	}
+
+	if a.updateAvail && a.upgradeCmd != "" {
+		content = StyleGreen.Render("Update: "+a.upgradeCmd) + sep + content
 	}
 
 	if a.status != "" {

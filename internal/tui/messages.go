@@ -45,3 +45,10 @@ type SSEEventMsg struct {
 type SSEDisconnectMsg struct {
 	Err string // optional error detail
 }
+
+// VersionMsg carries version info fetched from the server.
+type VersionMsg struct {
+	Latest      string
+	UpdateAvail bool
+	UpgradeCmd  string
+}

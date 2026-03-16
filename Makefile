@@ -1,12 +1,15 @@
 .PHONY: build test run run-sqlite migrate lint clean setup tui eval-intent
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
+LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION)"
+
 # ── Build ──────────────────────────────────────────────────────────────────────
 
 build: web/dist
-	go build -o bin/clawvisor ./cmd/clawvisor
+	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
 
 build-server: web/dist
-	go build -o bin/clawvisor-server ./cmd/server
+	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server
 
 web/dist: $(shell find web/src -type f)
 	cd web && npm install && npm run build
@@ -27,14 +30,14 @@ eval-intent:
 
 # Run locally (rebuilds frontend if web/src changed, then builds + runs)
 run: web/dist
-	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
+	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
 
 run-sqlite:
-	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
+	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
 
 # Launch TUI dashboard
 tui:
-	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor tui
+	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor tui
 
 # ── Docker / Cloud ─────────────────────────────────────────────────────────────
 

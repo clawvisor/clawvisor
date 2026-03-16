@@ -37,6 +37,14 @@ export default function Dashboard() {
   })
   const queueCount = queueData?.total ?? 0
 
+  // Check for version updates (infrequently)
+  const { data: versionData } = useQuery({
+    queryKey: ['version'],
+    queryFn: () => api.version.get(),
+    refetchInterval: 3600_000, // 1 hour
+    staleTime: 3600_000,
+  })
+
   return (
     <div className="min-h-screen bg-surface-0 flex">
       {/* Sidebar */}
@@ -75,6 +83,14 @@ export default function Dashboard() {
           ))}
         </ul>
         <div className="px-4 py-3 border-t border-border-default text-sm space-y-1">
+          {versionData?.current && (
+            <div className="text-xs text-text-tertiary flex items-center gap-1.5">
+              v{versionData.current}
+              {versionData.update_available && (
+                <span className="inline-block w-2 h-2 rounded-full bg-brand animate-pulse" title={`v${versionData.latest} available`} />
+              )}
+            </div>
+          )}
           <div className="truncate text-text-secondary">{user?.email}</div>
           <div className="flex items-center gap-2">
             <button
@@ -100,6 +116,31 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="flex-1 min-w-0 overflow-auto">
+        {versionData?.update_available && (
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
+            <span className="text-text-primary">
+              <span className="font-medium">Clawvisor v{versionData.latest}</span> is available
+              {versionData.current && <span className="text-text-secondary"> (current: v{versionData.current})</span>}
+            </span>
+            <span className="flex items-center gap-3">
+              {versionData.upgrade_command && (
+                <code className="text-xs bg-surface-2 px-2 py-1 rounded text-text-secondary font-mono">
+                  {versionData.upgrade_command}
+                </code>
+              )}
+              {versionData.release_url && (
+                <a
+                  href={versionData.release_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand hover:text-brand/80 font-medium transition-colors"
+                >
+                  View release
+                </a>
+              )}
+            </span>
+          </div>
+        )}
         <Routes>
           <Route index element={<Overview />} />
           <Route path="tasks" element={<Tasks />} />
