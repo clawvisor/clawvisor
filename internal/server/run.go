@@ -13,13 +13,19 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/browser"
 	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
+// RunOptions holds optional flags for the server entrypoint.
+type RunOptions struct {
+	OpenBrowser bool
+}
+
 // Run starts the Clawvisor API server. This is the main entrypoint called
 // from cmd/clawvisor/cmd_server.go.
-func Run(logger *slog.Logger) error {
+func Run(logger *slog.Logger, ropts RunOptions) error {
 	opts, err := clawvisor.DefaultOptions(logger)
 	if err != nil {
 		return err
@@ -85,6 +91,10 @@ func Run(logger *slog.Logger) error {
 	// ── Banner ─────────────────────────────────────────────────────────────
 	if opts.Config.Server.IsLocal() {
 		printBanner(opts.Config, magicURL)
+	}
+
+	if ropts.OpenBrowser && magicURL != "" {
+		browser.Open(magicURL)
 	}
 
 	return clawvisor.Run(opts)

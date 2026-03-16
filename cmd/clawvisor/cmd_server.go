@@ -13,6 +13,11 @@ var serverCmd = &cobra.Command{
 	Short: "Start the Clawvisor API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-		return server.Run(logger)
+		openBrowser, _ := cmd.Flags().GetBool("open")
+		return server.Run(logger, server.RunOptions{OpenBrowser: openBrowser})
 	},
+}
+
+func init() {
+	serverCmd.Flags().Bool("open", false, "Open the magic link in the default browser on startup")
 }
