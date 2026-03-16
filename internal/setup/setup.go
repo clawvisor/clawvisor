@@ -49,8 +49,10 @@ type config struct {
 	llmModel    string
 	llmAPIKey   string
 
-	taskRiskEnabled    bool
+	taskRiskEnabled     bool
 	chainContextEnabled bool
+
+	telemetryEnabled bool
 }
 
 // Run executes the setup wizard.
@@ -132,6 +134,9 @@ func runSetup() (*config, error) {
 		return nil, err
 	}
 	if err := stepLLM(cfg); err != nil {
+		return nil, err
+	}
+	if err := stepTelemetry(cfg); err != nil {
 		return nil, err
 	}
 	if err := stepConfirm(cfg); err != nil {
@@ -442,6 +447,33 @@ func stepLLM(cfg *config) error {
 	).Run()
 }
 
+func stepTelemetry(cfg *config) error {
+	fmt.Println(section.Render("── Telemetry ──────────────────────────────"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("Help improve Clawvisor by sharing anonymous,"))
+	fmt.Println(dim.Padding(0, 2).Render("non-identifying usage data. Each report includes:"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("  • Clawvisor version (e.g. 0.5.1)"))
+	fmt.Println(dim.Padding(0, 2).Render("  • OS and architecture (e.g. linux/amd64)"))
+	fmt.Println(dim.Padding(0, 2).Render("  • Agent count (bucketed, e.g. \"6-20\")"))
+	fmt.Println(dim.Padding(0, 2).Render("  • Requests per service (bucketed, e.g. gmail: \"101-1000\")"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("No instance ID, IP, credentials, or personal data"))
+	fmt.Println(dim.Padding(0, 2).Render("is collected. Reports cannot be linked across restarts."))
+	fmt.Println()
+
+	cfg.telemetryEnabled = true
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Send anonymous usage reports?").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&cfg.telemetryEnabled),
+		),
+	).Run()
+}
+
 func stepConfirm(cfg *config) error {
 	fmt.Println(section.Render("── Summary ────────────────────────────────"))
 	fmt.Println()
@@ -483,6 +515,12 @@ func stepConfirm(cfg *config) error {
 		lines = append(lines, fmt.Sprintf("  Chain Context  %s", bold.Render("Enabled")))
 	} else {
 		lines = append(lines, fmt.Sprintf("  Chain Context  %s", dim.Render("Disabled")))
+	}
+
+	if cfg.telemetryEnabled {
+		lines = append(lines, fmt.Sprintf("  Telemetry      %s", bold.Render("Enabled")))
+	} else {
+		lines = append(lines, fmt.Sprintf("  Telemetry      %s", dim.Render("Disabled")))
 	}
 
 	fmt.Println(strings.Join(lines, "\n"))
@@ -580,6 +618,9 @@ func writeConfig(cfg *config) error {
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.taskRiskEnabled)
 	fmt.Fprintf(&b, "  chain_context:\n")
 	fmt.Fprintf(&b, "    enabled: %t\n", cfg.chainContextEnabled)
+
+	fmt.Fprintf(&b, "\ntelemetry:\n")
+	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
 	return os.WriteFile("config.yaml", []byte(b.String()), 0644)
 }

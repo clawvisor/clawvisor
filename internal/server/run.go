@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/browser"
+	"github.com/clawvisor/clawvisor/internal/telemetry"
 	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 	"github.com/clawvisor/clawvisor/pkg/config"
 )
@@ -96,6 +97,9 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 	if ropts.OpenBrowser && magicURL != "" {
 		browser.Open(magicURL)
 	}
+
+	// ── Telemetry ──────────────────────────────────────────────────────────
+	telemetry.Start(context.Background(), opts.Config, opts.Store, logger)
 
 	return clawvisor.Run(opts)
 }

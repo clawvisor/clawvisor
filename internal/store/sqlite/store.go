@@ -1249,6 +1249,32 @@ func parseTime(s string) time.Time {
 	return time.Time{}
 }
 
+// TelemetryCounts returns aggregate, anonymous usage data for telemetry.
+func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, error) {
+	c := &store.TelemetryCounts{
+		RequestsByService: make(map[string]int),
+	}
+
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents").Scan(&c.Agents); err != nil {
+		return nil, fmt.Errorf("counting agents: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, "SELECT service, COUNT(*) FROM audit_log GROUP BY service")
+	if err != nil {
+		return nil, fmt.Errorf("counting requests by service: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var svc string
+		var count int
+		if err := rows.Scan(&svc, &count); err != nil {
+			return nil, err
+		}
+		c.RequestsByService[svc] = count
+	}
+	return c, rows.Err()
+}
+
 // Ensure Store implements store.Store at compile time.
 var _ store.Store = (*Store)(nil)
 

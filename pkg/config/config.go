@@ -29,8 +29,15 @@ type Config struct {
 	MCP       MCPConfig       `yaml:"mcp"`
 	Services  ServicesConfig  `yaml:"services"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Telemetry TelemetryConfig `yaml:"telemetry"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
+}
+
+// TelemetryConfig holds settings for anonymous usage telemetry.
+type TelemetryConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint,omitempty"`
 }
 
 // CallbackConfig holds settings for callback delivery.
@@ -431,6 +438,13 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_MODEL"); v != "" {
 		cfg.LLM.ChainContext.Model = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_TELEMETRY_ENABLED"); v != "" {
+		cfg.Telemetry.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_TELEMETRY_ENDPOINT"); v != "" {
+		cfg.Telemetry.Endpoint = v
 	}
 
 	// Inherit: fill empty subsection fields from shared LLM config.
