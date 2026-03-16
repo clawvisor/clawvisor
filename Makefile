@@ -26,8 +26,9 @@ eval-intent:
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 # Run locally (rebuilds frontend if web/src changed, then builds + runs)
+# Use OPEN=1 to auto-open the magic link in a browser: make run OPEN=1
 run: web/dist
-	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
+	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server $(if $(OPEN),--open,)
 
 run-sqlite:
 	@go build -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server

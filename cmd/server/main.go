@@ -10,7 +10,7 @@ import (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if err := server.Run(logger); err != nil {
+	if err := server.Run(logger, server.RunOptions{}); err != nil {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
