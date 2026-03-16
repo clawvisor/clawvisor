@@ -99,9 +99,18 @@ type Store interface {
 	// code. Returns ErrNotFound if the code does not exist (or was already consumed).
 	ConsumeAuthorizationCode(ctx context.Context, codeHash string) (*OAuthAuthorizationCode, error)
 
+	// Aggregate counts (telemetry)
+	TelemetryCounts(ctx context.Context) (*TelemetryCounts, error)
+
 	// Health
 	Ping(ctx context.Context) error
 	Close() error
+}
+
+// TelemetryCounts holds aggregate, anonymous usage data for telemetry.
+type TelemetryCounts struct {
+	Agents          int            // total registered agents
+	RequestsByService map[string]int // gateway requests per service (e.g. "gmail": 120)
 }
 
 // User represents a registered Clawvisor account.

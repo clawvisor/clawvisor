@@ -1096,6 +1096,32 @@ func nilIfEmpty(b json.RawMessage) []byte {
 	return []byte(b)
 }
 
+// TelemetryCounts returns aggregate, anonymous usage data for telemetry.
+func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, error) {
+	c := &store.TelemetryCounts{
+		RequestsByService: make(map[string]int),
+	}
+
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM agents").Scan(&c.Agents); err != nil {
+		return nil, fmt.Errorf("counting agents: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, "SELECT service, COUNT(*) FROM audit_log GROUP BY service")
+	if err != nil {
+		return nil, fmt.Errorf("counting requests by service: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var svc string
+		var count int
+		if err := rows.Scan(&svc, &count); err != nil {
+			return nil, err
+		}
+		c.RequestsByService[svc] = count
+	}
+	return c, rows.Err()
+}
+
 func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	var agents []*store.Agent
 	for rows.Next() {
