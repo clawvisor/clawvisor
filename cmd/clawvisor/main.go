@@ -23,6 +23,7 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(healthcheckCmd)
+	rootCmd.AddCommand(daemonCmd)
 }
 
 func main() {

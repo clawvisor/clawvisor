@@ -1223,6 +1223,107 @@ func (s *Store) DeleteChainFactsByTask(ctx context.Context, taskID string) error
 	return err
 }
 
+// ── Connection Requests ───────────────────────────────────────────────────────
+
+func (s *Store) CreateConnectionRequest(ctx context.Context, req *store.ConnectionRequest) error {
+	if req.ID == "" {
+		req.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO connection_requests (id, user_id, name, description, callback_url, status, ip_address, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.ID, req.UserID, req.Name, req.Description, req.CallbackURL, req.Status, req.IPAddress,
+		req.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) GetConnectionRequest(ctx context.Context, id string) (*store.ConnectionRequest, error) {
+	r := &store.ConnectionRequest{}
+	var createdAt, expiresAt string
+	var agentID sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE id = ?
+	`, id).Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+		&agentID, &r.IPAddress, &createdAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if agentID.Valid {
+		r.AgentID = agentID.String
+	}
+	r.CreatedAt = parseTime(createdAt)
+	r.ExpiresAt = parseTime(expiresAt)
+	return r, nil
+}
+
+func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string) ([]*store.ConnectionRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*store.ConnectionRequest
+	for rows.Next() {
+		r := &store.ConnectionRequest{}
+		var createdAt, expiresAt string
+		var agentID sql.NullString
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+			&agentID, &r.IPAddress, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		if agentID.Valid {
+			r.AgentID = agentID.String
+		}
+		r.CreatedAt = parseTime(createdAt)
+		r.ExpiresAt = parseTime(expiresAt)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error {
+	var res sql.Result
+	var err error
+	if agentID != "" {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE connection_requests SET status = ?, agent_id = ? WHERE id = ?`,
+			status, agentID, id)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE connection_requests SET status = ? WHERE id = ?`,
+			status, id)
+	}
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteExpiredConnectionRequests(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM connection_requests WHERE status = 'pending' AND expires_at < datetime('now')`)
+	return err
+}
+
+func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM connection_requests WHERE status = 'pending'`).Scan(&count)
+	return count, err
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isDuplicate(err error) bool {

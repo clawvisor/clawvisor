@@ -325,6 +325,18 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
 
+	// Connection requests (unauthenticated — agents requesting access)
+	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
+	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	mux.Handle("POST /api/agents/connect",
+		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(http.HandlerFunc(connectionsHandler.RequestConnect)))
+	mux.HandleFunc("GET /api/agents/connect/{id}/status", connectionsHandler.PollStatus)
+
+	// Connection request management (user JWT)
+	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
+	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
+	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
+
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
 	mux.Handle("POST /api/guard/check", agent(guardHandler.Check))
