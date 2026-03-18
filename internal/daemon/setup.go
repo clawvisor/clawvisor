@@ -66,6 +66,21 @@ func runDaemonSetup(dataDir string) error {
 		return fmt.Errorf("generating vault key: %w", err)
 	}
 
+	// Generate relay keys (Ed25519 for auth, X25519 for E2E).
+	if err := ensureRelayKeys(dataDir); err != nil {
+		return fmt.Errorf("generating relay keys: %w", err)
+	}
+
+	// Register with relay to get daemon_id.
+	relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
+	if relayURL == "" {
+		relayURL = "wss://relay.clawvisor.com"
+	}
+	if err := registerWithRelay(dataDir, relayURL); err != nil {
+		fmt.Println(dim.Padding(0, 2).Render("  Warning: relay registration failed: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Daemon will work locally. Re-run setup to try again."))
+	}
+
 	fmt.Println()
 	fmt.Println(green.Padding(0, 2).Render("✓ Daemon configured"))
 	fmt.Println(dim.Padding(0, 2).Render("  " + configPath))
@@ -282,6 +297,14 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
+
+	relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
+	if relayURL == "" {
+		relayURL = "wss://relay.clawvisor.com"
+	}
+	fmt.Fprintf(&b, "\nrelay:\n")
+	fmt.Fprintf(&b, "  enabled: true\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", relayURL)
 
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }

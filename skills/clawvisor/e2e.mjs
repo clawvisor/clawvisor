@@ -23,8 +23,9 @@ const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
  */
 async function fetchDaemonKey(baseURL, bypassCache = false) {
   const cacheDir = tmpdir();
-  const url = new URL('/.well-known/clawvisor-keys', baseURL);
-  const cachePath = join(cacheDir, `cvis-pubkey-${url.hostname}.json`);
+  const keyURL = baseURL.replace(/\/+$/, '') + '/.well-known/clawvisor-keys';
+  const parsed = new URL(keyURL);
+  const cachePath = join(cacheDir, `cvis-pubkey-${parsed.hostname}.json`);
 
   if (!bypassCache && existsSync(cachePath)) {
     try {
@@ -33,7 +34,7 @@ async function fetchDaemonKey(baseURL, bypassCache = false) {
     } catch { /* ignore corrupt cache */ }
   }
 
-  const data = await httpGet(url.href);
+  const data = await httpGet(keyURL);
   const keys = JSON.parse(data);
   writeFileSync(cachePath, JSON.stringify(keys), { mode: 0o600 });
   return keys;
@@ -44,8 +45,8 @@ async function fetchDaemonKey(baseURL, bypassCache = false) {
  */
 function evictKeyCache(baseURL) {
   try {
-    const url = new URL('/.well-known/clawvisor-keys', baseURL);
-    const cachePath = join(tmpdir(), `cvis-pubkey-${url.hostname}.json`);
+    const parsed = new URL(baseURL);
+    const cachePath = join(tmpdir(), `cvis-pubkey-${parsed.hostname}.json`);
     if (existsSync(cachePath)) unlinkSync(cachePath);
   } catch { /* best effort */ }
 }
