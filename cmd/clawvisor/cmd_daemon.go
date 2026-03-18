@@ -77,7 +77,18 @@ var daemonSetupCmd = &cobra.Command{
 	},
 }
 
+var daemonDashboardCmd = &cobra.Command{
+	Use:   "dashboard",
+	Short: "Open the daemon dashboard in your browser",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		noOpen, _ := cmd.Flags().GetBool("no-open")
+		return daemon.Dashboard(noOpen)
+	},
+}
+
 func init() {
+	daemonDashboardCmd.Flags().Bool("no-open", false, "Print the URL instead of opening the browser")
+
 	daemonCmd.AddCommand(daemonRunCmd)
 	daemonCmd.AddCommand(daemonInstallCmd)
 	daemonCmd.AddCommand(daemonUninstallCmd)
@@ -85,4 +96,5 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonSetupCmd)
+	daemonCmd.AddCommand(daemonDashboardCmd)
 }

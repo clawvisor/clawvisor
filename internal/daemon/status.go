@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/clawvisor/clawvisor/internal/browser"
 )
 
 // Status holds the daemon's current state.
@@ -47,6 +49,40 @@ func CheckStatus() (*Status, error) {
 		return &Status{Running: true, ServerURL: session.ServerURL, PID: pid}, nil
 	}
 	return &Status{ServerURL: session.ServerURL}, nil
+}
+
+// Dashboard constructs a magic-link URL for the running daemon and opens it
+// in the default browser. If noOpen is true, it prints the URL instead.
+func Dashboard(noOpen bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
+	}
+
+	dataDir := filepath.Join(home, ".clawvisor")
+	serverURL, magicToken, err := readLocalSession(dataDir)
+	if err != nil {
+		return fmt.Errorf("no local session found — is the daemon running?")
+	}
+	if serverURL == "" || magicToken == "" {
+		return fmt.Errorf("incomplete local session — try restarting the daemon")
+	}
+
+	dashURL := fmt.Sprintf("%s/magic-link?token=%s", serverURL, magicToken)
+
+	if noOpen {
+		fmt.Println(dashURL)
+		return nil
+	}
+
+	if !browser.Open(dashURL) {
+		fmt.Println("  Could not open browser. Visit this URL:")
+		fmt.Println("  " + dashURL)
+		return nil
+	}
+
+	fmt.Println("  Opening dashboard in browser...")
+	return nil
 }
 
 // PrintStatus prints the daemon status to stdout.
