@@ -52,6 +52,17 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		apiOpts = append(apiOpts, api.WithQuiet())
 	}
 
+	if opts.X25519Key != nil {
+		apiOpts = append(apiOpts, api.WithE2EKey(opts.X25519Key))
+	}
+
+	if opts.Config.Relay.DaemonID != "" {
+		apiOpts = append(apiOpts, api.WithDaemonKeys(
+			opts.Config.Relay.DaemonID,
+			opts.X25519Key,
+		))
+	}
+
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
 		opts.AdapterReg, opts.Notifier, opts.Config.LLM, opts.MagicStore,
@@ -60,6 +71,18 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// Start relay client if configured. Give it the real server handler so
+	// relay-proxied requests go through the full middleware stack.
+	if opts.RelayClient != nil {
+		opts.RelayClient.SetHandler(srv.Handler())
+		go func() {
+			if err := opts.RelayClient.Run(ctx); err != nil && ctx.Err() == nil {
+				opts.Logger.Error("relay client stopped", "error", err)
+			}
+		}()
+	}
+
 	return srv.Run(ctx)
 }
 

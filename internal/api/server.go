@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,6 +53,11 @@ type Server struct {
 	features              FeatureSet
 	skipBuiltinAuthRoutes bool
 	quiet                 bool // suppress user-facing messages (e.g. during daemon setup)
+
+	// Relay/E2E keys.
+	x25519Key    *ecdh.PrivateKey // X25519 key for E2E encryption of gateway requests
+	daemonID     string           // relay daemon ID
+	ed25519PubB64 string          // base64-encoded Ed25519 public key for .well-known
 
 	// approvalsCleaner is used to stop the background goroutine.
 	approvalsHandler *handlers.ApprovalsHandler
@@ -113,6 +120,21 @@ func WithSkipBuiltinAuth() ServerOption {
 // server runs in the background.
 func WithQuiet() ServerOption {
 	return func(s *Server) { s.quiet = true }
+}
+
+// WithE2EKey sets the X25519 private key for E2E encryption of gateway requests.
+func WithE2EKey(key *ecdh.PrivateKey) ServerOption {
+	return func(s *Server) { s.x25519Key = key }
+}
+
+// WithDaemonKeys sets the daemon identity keys for the .well-known/clawvisor-keys endpoint.
+func WithDaemonKeys(daemonID string, x25519Key *ecdh.PrivateKey) ServerOption {
+	return func(s *Server) {
+		s.daemonID = daemonID
+		if x25519Key != nil {
+			s.x25519Key = x25519Key
+		}
+	}
 }
 
 // New creates a Server and registers all routes.
@@ -354,9 +376,19 @@ func (s *Server) routes() http.Handler {
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
 	mux.Handle("POST /api/guard/check", agent(guardHandler.Check))
 
-	// Gateway (agent token, rate-limited)
-	mux.Handle("POST /api/gateway/request", agentRateLimited(gatewayHandler.HandleRequest))
-	mux.Handle("GET /api/gateway/request/{request_id}/status", agentRateLimited(gatewayHandler.HandleStatus))
+	// Gateway (agent token, rate-limited, E2E on relay traffic)
+	if s.x25519Key != nil {
+		e2eMiddleware := middleware.E2E(s.x25519Key)
+		gatewayRequestHandler := requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+			e2eMiddleware(http.HandlerFunc(gatewayHandler.HandleRequest))))
+		gatewayStatusHandler := requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+			e2eMiddleware(http.HandlerFunc(gatewayHandler.HandleStatus))))
+		mux.Handle("POST /api/gateway/request", gatewayRequestHandler)
+		mux.Handle("GET /api/gateway/request/{request_id}/status", gatewayStatusHandler)
+	} else {
+		mux.Handle("POST /api/gateway/request", agentRateLimited(gatewayHandler.HandleRequest))
+		mux.Handle("GET /api/gateway/request/{request_id}/status", agentRateLimited(gatewayHandler.HandleStatus))
+	}
 
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", agent(gatewayHandler.RegisterCallback))
@@ -418,6 +450,11 @@ func (s *Server) routes() http.Handler {
 		http.Redirect(w, r, "/skill/SKILL.md", http.StatusFound)
 	})
 	mux.Handle("/skill/", skillFileHandler)
+
+	// Key discovery endpoint (no auth — agents need the public key for E2E).
+	if s.daemonID != "" && s.x25519Key != nil {
+		mux.HandleFunc("GET /.well-known/clawvisor-keys", s.handleClawvisorKeys)
+	}
 
 	// MCP endpoint (agent token auth)
 	if s.cfg.MCP.Enabled {
@@ -500,6 +537,18 @@ func (s *Server) routes() http.Handler {
 func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.features)
+}
+
+// handleClawvisorKeys returns the daemon's public keys for E2E encryption.
+func (s *Server) handleClawvisorKeys(w http.ResponseWriter, r *http.Request) {
+	x25519Pub := base64.StdEncoding.EncodeToString(s.x25519Key.PublicKey().Bytes())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"daemon_id": s.daemonID,
+		"x25519":    x25519Pub,
+		"algorithm": "x25519-ecdh-aes256gcm",
+	})
 }
 
 // consumeTelegramDecisions reads from the Telegram notifier's decision channel
