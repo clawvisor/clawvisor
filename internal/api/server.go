@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
+	"github.com/clawvisor/clawvisor/internal/notify/push"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/internal/intent"
@@ -59,9 +60,13 @@ type Server struct {
 	daemonID     string           // relay daemon ID
 	ed25519PubB64 string          // base64-encoded Ed25519 public key for .well-known
 
-	// approvalsCleaner is used to stop the background goroutine.
-	approvalsHandler *handlers.ApprovalsHandler
-	tasksHandler     *handlers.TasksHandler
+	// Handler references for background goroutines and decision dispatch.
+	approvalsHandler   *handlers.ApprovalsHandler
+	tasksHandler       *handlers.TasksHandler
+	connectionsHandler *handlers.ConnectionsHandler
+	devicesHandler     *handlers.DevicesHandler
+
+	pushNotifier *push.Notifier // concrete push notifier; may be nil
 
 	eventHub    *events.Hub
 	mcpServer   *mcp.Server
@@ -135,6 +140,12 @@ func WithDaemonKeys(daemonID string, x25519Key *ecdh.PrivateKey) ServerOption {
 			s.x25519Key = x25519Key
 		}
 	}
+}
+
+// WithPushNotifier passes the concrete push notifier so the device handler
+// can register/deregister device tokens and emit action decisions.
+func WithPushNotifier(pn *push.Notifier) ServerOption {
+	return func(s *Server) { s.pushNotifier = pn }
 }
 
 // New creates a Server and registers all routes.
@@ -362,6 +373,7 @@ func (s *Server) routes() http.Handler {
 
 	// Connection requests (unauthenticated — agents requesting access)
 	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
+	s.connectionsHandler = connectionsHandler
 	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
 		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(http.HandlerFunc(connectionsHandler.RequestConnect)))
@@ -371,6 +383,18 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
+
+	// Device pairing and management
+	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.logger, baseURL)
+	s.devicesHandler = devicesHandler
+	devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
+	mux.Handle("POST /api/devices/pair/complete",
+		middleware.RateLimit(devicesRL, ipKeyFn, 5)(http.HandlerFunc(devicesHandler.CompletePairing)))
+	mux.Handle("GET /api/devices", user(devicesHandler.List))
+	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
+	requireDevice := middleware.RequireDevice(s.store)
+	mux.Handle("POST /api/devices/{id}/action", requireDevice(http.HandlerFunc(devicesHandler.Action)))
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
@@ -551,9 +575,9 @@ func (s *Server) handleClawvisorKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// consumeTelegramDecisions reads from the Telegram notifier's decision channel
+// consumeNotifierDecisions reads from the notifier's decision channel
 // and routes approve/deny decisions to the appropriate handler.
-func (s *Server) consumeTelegramDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
+func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -582,9 +606,15 @@ func (s *Server) consumeTelegramDecisions(ctx context.Context, ch <-chan notify.
 				} else {
 					err = s.tasksHandler.ExpandDenyByTaskID(ctx, d.TargetID, d.UserID)
 				}
+			case "connection":
+				if d.Action == "approve" {
+					_, err = s.connectionsHandler.ApproveByID(ctx, d.TargetID, d.UserID)
+				} else {
+					err = s.connectionsHandler.DenyByID(ctx, d.TargetID, d.UserID)
+				}
 			}
 			if err != nil {
-				s.logger.Warn("telegram decision failed",
+				s.logger.Warn("notifier decision failed",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}
@@ -623,13 +653,18 @@ func (s *Server) Run(ctx context.Context) error {
 		s.mcpServer.StartCleanup(ctx.Done())
 	}
 
-	// Start Telegram inline callback consumer and token cleanup.
-	if tg, ok := s.notifier.(interface {
+	// Start notifier inline callback consumer and token cleanup.
+	if dc, ok := s.notifier.(interface {
 		DecisionChannel() <-chan notify.CallbackDecision
 		RunCleanup(context.Context)
 	}); ok {
-		go tg.RunCleanup(ctx)
-		go s.consumeTelegramDecisions(ctx, tg.DecisionChannel())
+		go dc.RunCleanup(ctx)
+		go s.consumeNotifierDecisions(ctx, dc.DecisionChannel())
+	}
+
+	// Start device pairing session cleanup.
+	if s.devicesHandler != nil {
+		go s.devicesHandler.RunCleanup(ctx)
 	}
 
 	errCh := make(chan error, 1)

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -11,18 +12,28 @@ import (
 
 // setupConnectionEnv creates a test environment with an admin@local user
 // and a session for approving/denying connection requests.
+// The session user IS admin@local so that ownership checks pass.
 func setupConnectionEnv(t *testing.T) (*testEnv, *testSession) {
 	t.Helper()
 	env := newTestEnv(t)
 
-	// Connection requests resolve the daemon owner as admin@local.
-	_, err := env.Store.CreateUser(context.Background(), "admin@local", "unused-hash")
-	if err != nil {
-		t.Fatalf("create admin@local: %v", err)
-	}
+	// Register admin@local through the API so the session user is the daemon owner.
+	// Connection requests are assigned to admin@local, so the approving user
+	// must be admin@local for the ownership check in ApproveByID/DenyByID.
+	const password = "TestPass123!"
+	resp := env.do("POST", "/api/auth/register", "", map[string]any{
+		"email": "admin@local", "password": password,
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	user := nested(t, body, "user")
 
-	// Create a session for user-authenticated endpoints.
-	session := newSession(t, env)
+	session := &testSession{
+		env:          env,
+		Email:        "admin@local",
+		UserID:       str(t, user, "id"),
+		AccessToken:  str(t, body, "access_token"),
+		RefreshToken: str(t, body, "refresh_token"),
+	}
 	return env, session
 }
 
@@ -244,11 +255,19 @@ func TestConnectionRequest_List(t *testing.T) {
 	env.do("POST", "/api/agents/connect", "", map[string]any{"name": "A"})
 	env.do("POST", "/api/agents/connect", "", map[string]any{"name": "B"})
 
-	// List pending (note: these belong to admin@local, not session's user).
-	// The List endpoint returns pending requests for the authenticated user.
-	// Since session's user is different from admin@local, this tests the scoping.
+	// List pending — the session user is admin@local, who owns the requests.
 	resp := session.do("GET", "/api/agents/connections", nil)
-	mustStatus(t, resp, http.StatusOK)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var list []any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("expected 2 pending requests, got %d", len(list))
+	}
 }
 
 func TestConnectionRequest_DeleteExpired(t *testing.T) {

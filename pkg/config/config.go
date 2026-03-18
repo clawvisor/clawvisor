@@ -32,6 +32,7 @@ type Config struct {
 	Relay     RelayConfig     `yaml:"relay"`
 	Telemetry TelemetryConfig `yaml:"telemetry"`
 	Daemon    DaemonConfig    `yaml:"daemon"`
+	Push      PushConfig      `yaml:"push"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
 }
@@ -51,6 +52,12 @@ type RelayConfig struct {
 type DaemonConfig struct {
 	DataDir string `yaml:"data_dir"` // defaults to ~/.clawvisor
 	LogFile string `yaml:"log_file"` // relative to data_dir, defaults to logs/daemon.log
+}
+
+// PushConfig holds settings for mobile push notifications.
+type PushConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	URL     string `yaml:"url"`
 }
 
 // TelemetryConfig holds settings for anonymous usage telemetry.
@@ -287,6 +294,9 @@ func Default() *Config {
 			DataDir: "~/.clawvisor",
 			LogFile: "logs/daemon.log",
 		},
+		Push: PushConfig{
+			URL: "https://push.clawvisor.com",
+		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},
 			IMessage: IMessageServicesConfig{Enabled: true},
@@ -479,6 +489,12 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_RELAY_DAEMON_ID"); v != "" {
 		cfg.Relay.DaemonID = v
+	}
+	if v := os.Getenv("CLAWVISOR_PUSH_ENABLED"); v != "" {
+		cfg.Push.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_PUSH_URL"); v != "" {
+		cfg.Push.URL = v
 	}
 
 	if v := os.Getenv("CLAWVISOR_DAEMON_DATA_DIR"); v != "" {

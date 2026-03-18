@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +15,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
+)
+
+var (
+	errAlreadyResolved = errors.New("connection request already resolved")
+	errExpired         = errors.New("connection request expired")
+	errForbidden       = errors.New("connection request does not belong to this user")
 )
 
 const (
@@ -243,58 +251,70 @@ func (h *ConnectionsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
-	cr, err := h.st.GetConnectionRequest(r.Context(), id)
+	agentID, err := h.ApproveByID(r.Context(), id, user.ID)
 	if err != nil {
-		if err == store.ErrNotFound {
+		switch err {
+		case store.ErrNotFound:
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "connection request not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get connection request")
+		case errForbidden:
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "not your connection request")
+		case errAlreadyResolved:
+			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
+		case errExpired:
+			writeError(w, http.StatusGone, "EXPIRED", "connection request has expired")
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve connection request")
 		}
 		return
 	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "approved",
+		"agent_id": agentID,
+	})
+}
+
+// ApproveByID is the core approve logic, callable from HTTP handlers and
+// the notifier decision consumer.
+func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string) (agentID string, err error) {
+	cr, err := h.st.GetConnectionRequest(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if cr.UserID != userID {
+		return "", errForbidden
+	}
 	if cr.Status != "pending" {
-		writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
-		return
+		return "", errAlreadyResolved
 	}
 	if time.Now().After(cr.ExpiresAt) {
-		_ = h.st.UpdateConnectionRequestStatus(r.Context(), id, "expired", "")
-		writeError(w, http.StatusGone, "EXPIRED", "connection request has expired")
-		return
+		_ = h.st.UpdateConnectionRequestStatus(ctx, id, "expired", "")
+		return "", errExpired
 	}
 
-	// Generate agent token.
 	rawToken, err := auth.GenerateAgentToken()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
-		return
+		return "", fmt.Errorf("generate token: %w", err)
 	}
 
-	agent, err := h.st.CreateAgent(r.Context(), user.ID, cr.Name, auth.HashToken(rawToken))
+	agent, err := h.st.CreateAgent(ctx, userID, cr.Name, auth.HashToken(rawToken))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create agent")
-		return
+		return "", fmt.Errorf("create agent: %w", err)
 	}
 
-	if err := h.st.UpdateConnectionRequestStatus(r.Context(), id, "approved", agent.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update connection request")
-		return
+	if err := h.st.UpdateConnectionRequestStatus(ctx, id, "approved", agent.ID); err != nil {
+		return "", fmt.Errorf("update status: %w", err)
 	}
 
-	// Cache token in memory for the polling window.
 	h.tokensMu.Lock()
 	h.tokens[id] = approvedToken{raw: rawToken, approvedAt: time.Now()}
 	h.tokensMu.Unlock()
 
-	// Clean up expired tokens in the background.
 	go h.cleanExpiredTokens()
 
-	// Notify via SSE so PollStatus returns immediately.
-	h.eventHub.Publish(user.ID, events.Event{Type: "queue"})
+	h.eventHub.Publish(userID, events.Event{Type: "queue"})
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "approved",
-		"agent_id": agent.ID,
-	})
+	return agent.ID, nil
 }
 
 // Deny handles POST /api/agents/connect/{id}/deny (user JWT).
@@ -306,28 +326,43 @@ func (h *ConnectionsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
-	cr, err := h.st.GetConnectionRequest(r.Context(), id)
-	if err != nil {
-		if err == store.ErrNotFound {
+	if err := h.DenyByID(r.Context(), id, user.ID); err != nil {
+		switch err {
+		case store.ErrNotFound:
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "connection request not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get connection request")
+		case errForbidden:
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "not your connection request")
+		case errAlreadyResolved:
+			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny connection request")
 		}
 		return
 	}
-	if cr.Status != "pending" {
-		writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
-		return
-	}
-
-	if err := h.st.UpdateConnectionRequestStatus(r.Context(), id, "denied", ""); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update connection request")
-		return
-	}
-
-	h.eventHub.Publish(user.ID, events.Event{Type: "queue"})
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+}
+
+// DenyByID is the core deny logic, callable from HTTP handlers and
+// the notifier decision consumer.
+func (h *ConnectionsHandler) DenyByID(ctx context.Context, id, userID string) error {
+	cr, err := h.st.GetConnectionRequest(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cr.UserID != userID {
+		return errForbidden
+	}
+	if cr.Status != "pending" {
+		return errAlreadyResolved
+	}
+
+	if err := h.st.UpdateConnectionRequestStatus(ctx, id, "denied", ""); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	return nil
 }
 
 // List handles GET /api/agents/connections (user JWT).
