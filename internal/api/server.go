@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,7 @@ type Server struct {
 	wrapRoutes  func(http.Handler) http.Handler
 	features              FeatureSet
 	skipBuiltinAuthRoutes bool
+	quiet                 bool // suppress user-facing messages (e.g. during daemon setup)
 
 	// approvalsCleaner is used to stop the background goroutine.
 	approvalsHandler *handlers.ApprovalsHandler
@@ -106,6 +108,13 @@ func WithSkipBuiltinAuth() ServerOption {
 	return func(s *Server) { s.skipBuiltinAuthRoutes = true }
 }
 
+// WithQuiet suppresses user-facing messages (startup banner, shutdown notice)
+// and sets log level to WARN. Used during daemon setup phases where a temporary
+// server runs in the background.
+func WithQuiet() ServerOption {
+	return func(s *Server) { s.quiet = true }
+}
+
 // New creates a Server and registers all routes.
 // magicStore may be nil when magic link auth is not enabled.
 func New(
@@ -149,6 +158,10 @@ func New(
 	// Apply optional configuration.
 	for _, o := range opts {
 		o(s)
+	}
+
+	if s.quiet {
+		s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
 	mux := s.routes()
@@ -324,6 +337,18 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/notifications/telegram/pair", user(notificationsHandler.StartPairing))
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
+
+	// Connection requests (unauthenticated — agents requesting access)
+	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
+	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	mux.Handle("POST /api/agents/connect",
+		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(http.HandlerFunc(connectionsHandler.RequestConnect)))
+	mux.HandleFunc("GET /api/agents/connect/{id}/status", connectionsHandler.PollStatus)
+
+	// Connection request management (user JWT)
+	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
+	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
+	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
@@ -572,9 +597,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		if s.cfg.Server.IsLocal() {
+		if s.cfg.Server.IsLocal() && !s.quiet {
 			fmt.Println("\n  Shutting down...")
-		} else {
+		} else if !s.quiet {
 			s.logger.Info("shutting down server")
 		}
 		// Close SSE connections first so handlers return before Shutdown waits on them.

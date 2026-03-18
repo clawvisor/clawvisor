@@ -91,6 +91,14 @@ type Store interface {
 	ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*ChainFact, error)
 	DeleteChainFactsByTask(ctx context.Context, taskID string) error
 
+	// Connection requests (daemon agent onboarding)
+	CreateConnectionRequest(ctx context.Context, req *ConnectionRequest) error
+	GetConnectionRequest(ctx context.Context, id string) (*ConnectionRequest, error)
+	ListPendingConnectionRequests(ctx context.Context, userID string) ([]*ConnectionRequest, error)
+	UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error
+	DeleteExpiredConnectionRequests(ctx context.Context) error
+	CountPendingConnectionRequests(ctx context.Context) (int, error)
+
 	// OAuth (MCP client registration + authorization codes)
 	CreateOAuthClient(ctx context.Context, client *OAuthClient) error
 	GetOAuthClient(ctx context.Context, clientID string) (*OAuthClient, error)
@@ -280,6 +288,21 @@ type ChainFact struct {
 	FactType  string    `json:"fact_type"`
 	FactValue string    `json:"fact_value"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// ConnectionRequest represents an agent's request to connect to this daemon.
+type ConnectionRequest struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CallbackURL string    `json:"callback_url,omitempty"`
+	Status      string    `json:"status"`              // pending | approved | denied | expired
+	AgentID     string    `json:"agent_id,omitempty"`   // set on approval
+	Token       string    `json:"token,omitempty"`      // raw token, set on approval (never persisted)
+	IPAddress   string    `json:"ip_address"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).

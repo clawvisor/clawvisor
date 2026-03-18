@@ -1122,6 +1122,101 @@ func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, er
 	return c, rows.Err()
 }
 
+// ── Connection Requests ───────────────────────────────────────────────────────
+
+func (s *Store) CreateConnectionRequest(ctx context.Context, req *store.ConnectionRequest) error {
+	if req.ID == "" {
+		req.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO connection_requests (id, user_id, name, description, callback_url, status, ip_address, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, req.ID, req.UserID, req.Name, req.Description, req.CallbackURL, req.Status, req.IPAddress, req.ExpiresAt)
+	return err
+}
+
+func (s *Store) GetConnectionRequest(ctx context.Context, id string) (*store.ConnectionRequest, error) {
+	r := &store.ConnectionRequest{}
+	var agentID *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE id = $1
+	`, id).Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+		&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if agentID != nil {
+		r.AgentID = *agentID
+	}
+	return r, nil
+}
+
+func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string) ([]*store.ConnectionRequest, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE user_id = $1 AND status = 'pending' ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*store.ConnectionRequest
+	for rows.Next() {
+		r := &store.ConnectionRequest{}
+		var agentID *string
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+			&agentID, &r.IPAddress, &r.CreatedAt, &r.ExpiresAt); err != nil {
+			return nil, err
+		}
+		if agentID != nil {
+			r.AgentID = *agentID
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error {
+	var err error
+	var n int64
+	if agentID != "" {
+		tag, e := s.pool.Exec(ctx,
+			`UPDATE connection_requests SET status = $1, agent_id = $2 WHERE id = $3`,
+			status, agentID, id)
+		err, n = e, tag.RowsAffected()
+	} else {
+		tag, e := s.pool.Exec(ctx,
+			`UPDATE connection_requests SET status = $1 WHERE id = $2`,
+			status, id)
+		err, n = e, tag.RowsAffected()
+	}
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteExpiredConnectionRequests(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM connection_requests WHERE status = 'pending' AND expires_at < NOW()`)
+	return err
+}
+
+func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connection_requests WHERE status = 'pending'`).Scan(&count)
+	return count, err
+}
+
 func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	var agents []*store.Agent
 	for rows.Next() {

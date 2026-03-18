@@ -45,6 +45,10 @@ type ServerOptions struct {
 	// SkipBuiltinAuth prevents the core server from registering its built-in
 	// login/register/password routes, allowing ExtraRoutes to provide custom auth.
 	SkipBuiltinAuth bool
+
+	// Quiet suppresses user-facing messages and sets server log level to WARN.
+	// Used during daemon setup when a temporary server runs in the background.
+	Quiet bool
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

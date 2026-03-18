@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -53,10 +54,24 @@ type config struct {
 	chainContextEnabled bool
 
 	telemetryEnabled bool
+
+	outputDir string // set by RunWithOptions; empty = CWD
 }
 
-// Run executes the setup wizard.
+// RunOptions controls where setup writes its output files.
+type RunOptions struct {
+	// Dir is the target directory for config.yaml, vault.key, and clawvisor.db.
+	// When empty, files are written to the current working directory.
+	Dir string
+}
+
+// Run executes the setup wizard, writing files to the current directory.
 func Run() error {
+	return RunWithOptions(RunOptions{})
+}
+
+// RunWithOptions executes the setup wizard, writing files to opts.Dir.
+func RunWithOptions(opts RunOptions) error {
 	printBanner()
 
 	cfg, err := runSetup()
@@ -68,13 +83,24 @@ func Run() error {
 		return err
 	}
 
-	if err := writeConfig(cfg); err != nil {
+	dir := opts.Dir
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("creating data dir %s: %w", dir, err)
+		}
+	}
+
+	configPath := filepath.Join(dir, "config.yaml")
+	cfg.outputDir = dir
+
+	if err := writeConfig(cfg, configPath); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
 	// Generate vault key file for local backend (no-op if it already exists).
 	if cfg.vault == "local" {
-		if err := ensureVaultKey("./vault.key"); err != nil {
+		vaultKeyPath := filepath.Join(dir, "vault.key")
+		if err := ensureVaultKey(vaultKeyPath); err != nil {
 			return fmt.Errorf("generating vault key: %w", err)
 		}
 	}
@@ -526,8 +552,9 @@ func stepConfirm(cfg *config) error {
 	fmt.Println(strings.Join(lines, "\n"))
 	fmt.Println()
 
+	configPath := filepath.Join(cfg.outputDir, "config.yaml")
 	overwrite := false
-	if _, err := os.Stat("config.yaml"); err == nil {
+	if _, err := os.Stat(configPath); err == nil {
 		err := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
@@ -567,18 +594,30 @@ func stepConfirm(cfg *config) error {
 	return nil
 }
 
-func writeConfig(cfg *config) error {
+func writeConfig(cfg *config, path string) error {
 	var b strings.Builder
+
+	// When writing into a daemon data dir, resolve paths relative to it.
+	sqlitePath := "./clawvisor.db"
+	vaultKeyPath := "./vault.key"
+	frontendDir := "./web/dist"
+	if cfg.outputDir != "" {
+		sqlitePath = filepath.Join(cfg.outputDir, "clawvisor.db")
+		vaultKeyPath = filepath.Join(cfg.outputDir, "vault.key")
+		frontendDir = "" // daemon mode — no frontend served
+	}
 
 	fmt.Fprintf(&b, "server:\n")
 	fmt.Fprintf(&b, "  port: %s\n", cfg.port)
 	fmt.Fprintf(&b, "  host: \"%s\"\n", cfg.host)
-	fmt.Fprintf(&b, "  frontend_dir: \"./web/dist\"\n")
+	if frontendDir != "" {
+		fmt.Fprintf(&b, "  frontend_dir: \"%s\"\n", frontendDir)
+	}
 
 	fmt.Fprintf(&b, "\ndatabase:\n")
 	if cfg.envMode == "local" {
 		fmt.Fprintf(&b, "  driver: \"sqlite\"\n")
-		fmt.Fprintf(&b, "  sqlite_path: \"./clawvisor.db\"\n")
+		fmt.Fprintf(&b, "  sqlite_path: \"%s\"\n", sqlitePath)
 	} else {
 		fmt.Fprintf(&b, "  driver: \"postgres\"\n")
 		fmt.Fprintf(&b, "  postgres_url: \"%s\"\n", cfg.dbURL)
@@ -589,7 +628,7 @@ func writeConfig(cfg *config) error {
 	if cfg.vault == "gcp" {
 		fmt.Fprintf(&b, "  gcp_project: \"%s\"\n", cfg.gcpProject)
 	} else {
-		fmt.Fprintf(&b, "  local_key_file: \"./vault.key\"\n")
+		fmt.Fprintf(&b, "  local_key_file: \"%s\"\n", vaultKeyPath)
 	}
 
 	if cfg.envMode == "production" {
@@ -622,7 +661,7 @@ func writeConfig(cfg *config) error {
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
-	return os.WriteFile("config.yaml", []byte(b.String()), 0644)
+	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
 func writeTUIConfig(cfg *config) error {

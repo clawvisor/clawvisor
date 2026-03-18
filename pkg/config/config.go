@@ -30,8 +30,15 @@ type Config struct {
 	Services  ServicesConfig  `yaml:"services"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Telemetry TelemetryConfig `yaml:"telemetry"`
+	Daemon    DaemonConfig    `yaml:"daemon"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
+}
+
+// DaemonConfig holds settings for daemon mode.
+type DaemonConfig struct {
+	DataDir string `yaml:"data_dir"` // defaults to ~/.clawvisor
+	LogFile string `yaml:"log_file"` // relative to data_dir, defaults to logs/daemon.log
 }
 
 // TelemetryConfig holds settings for anonymous usage telemetry.
@@ -256,6 +263,10 @@ func Default() *Config {
 			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},
 			Auth:      RateLimitBucket{Limit: 5, Window: 60},
 		},
+		Daemon: DaemonConfig{
+			DataDir: "~/.clawvisor",
+			LogFile: "logs/daemon.log",
+		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},
 			IMessage: IMessageServicesConfig{Enabled: true},
@@ -438,6 +449,10 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_MODEL"); v != "" {
 		cfg.LLM.ChainContext.Model = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_DAEMON_DATA_DIR"); v != "" {
+		cfg.Daemon.DataDir = v
 	}
 
 	if v := os.Getenv("CLAWVISOR_TELEMETRY_ENABLED"); v != "" {
