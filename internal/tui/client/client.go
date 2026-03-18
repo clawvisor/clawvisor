@@ -498,6 +498,26 @@ func (c *Client) doJSON(method, fullURL string, body interface{}, dst interface{
 	return nil
 }
 
+// ── Devices ─────────────────────────────────────────────────────────────────
+
+// StartPairing initiates a device pairing session and returns the token/code.
+func (c *Client) StartPairing() (*StartPairingResponse, error) {
+	var resp StartPairingResponse
+	if err := c.post("/api/devices/pair", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListDevices returns all paired devices for the current user.
+func (c *Client) ListDevices() ([]PairedDevice, error) {
+	var resp []PairedDevice
+	if err := c.get("/api/devices", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // APIError represents an HTTP error from the API.
 type APIError struct {
 	StatusCode int

@@ -280,6 +280,10 @@ func Setup() error {
 		}
 	}
 
+	// Stop any running daemon so the setup-phase server can bind the port
+	// and the magic token matches the new JWT secret.
+	_ = Stop()
+
 	if err := runDaemonSetup(dataDir); err != nil {
 		return err
 	}

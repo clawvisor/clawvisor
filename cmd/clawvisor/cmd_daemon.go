@@ -77,6 +77,14 @@ var daemonSetupCmd = &cobra.Command{
 	},
 }
 
+var daemonPairCmd = &cobra.Command{
+	Use:   "pair",
+	Short: "Pair a mobile device via QR code",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return daemon.Pair()
+	},
+}
+
 var daemonDashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Open the daemon dashboard in your browser",
@@ -96,5 +104,6 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonSetupCmd)
+	daemonCmd.AddCommand(daemonPairCmd)
 	daemonCmd.AddCommand(daemonDashboardCmd)
 }
