@@ -63,6 +63,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		))
 	}
 
+	if opts.PushNotifier != nil {
+		apiOpts = append(apiOpts, api.WithPushNotifier(opts.PushNotifier))
+	}
+
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
 		opts.AdapterReg, opts.Notifier, opts.Config.LLM, opts.MagicStore,

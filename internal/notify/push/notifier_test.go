@@ -61,6 +61,7 @@ func TestSendApprovalRequest(t *testing.T) {
 	n, pub := testNotifier(t, srv, devices)
 
 	msgID, err := n.SendApprovalRequest(context.Background(), notify.ApprovalRequest{
+		PendingID: "pend-456",
 		RequestID: "req-123",
 		UserID:    "u1",
 		AgentName: "TestAgent",
@@ -78,8 +79,8 @@ func TestSendApprovalRequest(t *testing.T) {
 	if len(received.DeviceTokens) != 2 {
 		t.Errorf("expected 2 device tokens, got %d", len(received.DeviceTokens))
 	}
-	if received.Category != "approval_request" {
-		t.Errorf("expected category 'approval_request', got %q", received.Category)
+	if received.Category != "GATEWAY_APPROVAL" {
+		t.Errorf("expected category 'GATEWAY_APPROVAL', got %q", received.Category)
 	}
 	if received.Title != "Approval Request" {
 		t.Errorf("expected title 'Approval Request', got %q", received.Title)
@@ -87,8 +88,11 @@ func TestSendApprovalRequest(t *testing.T) {
 	if !strings.Contains(received.Body, "TestAgent") {
 		t.Errorf("body should contain agent name, got %q", received.Body)
 	}
-	if received.Data["request_id"] != "req-123" {
-		t.Errorf("expected request_id 'req-123', got %v", received.Data["request_id"])
+	if received.Data["target_id"] != "pend-456" {
+		t.Errorf("expected target_id 'pend-456', got %v", received.Data["target_id"])
+	}
+	if received.Data["type"] != "approval" {
+		t.Errorf("expected type 'approval', got %v", received.Data["type"])
 	}
 
 	// Verify Ed25519 signature format.
@@ -111,8 +115,8 @@ func TestSendAlert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if received.Category != "informational" {
-		t.Errorf("expected category 'informational', got %q", received.Category)
+	if received.Category != "" {
+		t.Errorf("expected empty category, got %q", received.Category)
 	}
 	if received.Body != "Something happened" {
 		t.Errorf("expected body 'Something happened', got %q", received.Body)

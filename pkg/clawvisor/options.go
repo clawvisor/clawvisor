@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/auth"
@@ -38,6 +39,11 @@ type ServerOptions struct {
 	// X25519Key is the daemon's X25519 private key for E2E encryption.
 	// Required when relay is enabled. Used by E2E middleware on gateway routes.
 	X25519Key *ecdh.PrivateKey
+
+	// PushNotifier is the concrete push notifier for device registration and
+	// action handling. Set when push notifications are enabled.
+	// The Notifier field should be a MultiNotifier wrapping both Telegram and Push.
+	PushNotifier *push.Notifier
 
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.

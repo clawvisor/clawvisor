@@ -308,6 +308,14 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	if relayURL == "" {
 		relayURL = "wss://relay.clawvisor.com"
 	}
+	pushURL := os.Getenv("CLAWVISOR_PUSH_URL")
+	if pushURL == "" {
+		pushURL = "https://push.clawvisor.com"
+	}
+	fmt.Fprintf(&b, "\npush:\n")
+	fmt.Fprintf(&b, "  enabled: true\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", pushURL)
+
 	fmt.Fprintf(&b, "\nrelay:\n")
 	fmt.Fprintf(&b, "  enabled: true\n")
 	fmt.Fprintf(&b, "  url: \"%s\"\n", relayURL)

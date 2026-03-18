@@ -93,48 +93,47 @@ func (n *Notifier) DeregisterDevice(ctx context.Context, deviceToken string) err
 
 func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalRequest) (string, error) {
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
-		Category: "approval_request",
+		Category: "GATEWAY_APPROVAL",
 		Title:    "Approval Request",
 		Body:     fmt.Sprintf("%s wants to use %s.%s", req.AgentName, req.Service, req.Action),
-		Data: map[string]any{
-			"request_id": req.RequestID,
-			"action_url": n.daemonURL + "/api/approvals/" + req.RequestID,
+		Data: map[string]string{
+			"target_id":  req.PendingID,
+			"type":       "approval",
+			"daemon_url": n.daemonURL,
 		},
 	})
 }
 
 func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.ActivationRequest) error {
 	_, err := n.sendToDevices(ctx, req.UserID, pushPayload{
-		Category: "informational",
-		Title:    "Service Activation Required",
-		Body:     fmt.Sprintf("%s wants to use %s", req.AgentName, req.Service),
-		Data: map[string]any{
-			"activate_url": req.ActivateURL,
-		},
+		Title: "Service Activation Required",
+		Body:  fmt.Sprintf("%s wants to use %s", req.AgentName, req.Service),
 	})
 	return err
 }
 
 func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
-		Category: "approval_request",
+		Category: "TASK_APPROVAL",
 		Title:    "Task Approval Request",
 		Body:     fmt.Sprintf("%s: %s", req.AgentName, req.Purpose),
-		Data: map[string]any{
-			"task_id":    req.TaskID,
-			"action_url": n.daemonURL + "/api/tasks/" + req.TaskID,
+		Data: map[string]string{
+			"target_id":  req.TaskID,
+			"type":       "task",
+			"daemon_url": n.daemonURL,
 		},
 	})
 }
 
 func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.ScopeExpansionRequest) (string, error) {
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
-		Category: "scope_expansion",
+		Category: "SCOPE_EXPANSION",
 		Title:    "Scope Expansion Request",
 		Body:     fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason),
-		Data: map[string]any{
-			"task_id":    req.TaskID,
-			"action_url": n.daemonURL + "/api/tasks/" + req.TaskID,
+		Data: map[string]string{
+			"target_id":  req.TaskID,
+			"type":       "scope_expansion",
+			"daemon_url": n.daemonURL,
 		},
 	})
 }
@@ -146,18 +145,16 @@ func (n *Notifier) UpdateMessage(ctx context.Context, userID, messageID, text st
 
 func (n *Notifier) SendTestMessage(ctx context.Context, userID string) error {
 	_, err := n.sendToDevices(ctx, userID, pushPayload{
-		Category: "informational",
-		Title:    "Clawvisor Test",
-		Body:     "Your push notifications are working!",
+		Title: "Clawvisor Test",
+		Body:  "Your push notifications are working!",
 	})
 	return err
 }
 
 func (n *Notifier) SendAlert(ctx context.Context, userID, text string) error {
 	_, err := n.sendToDevices(ctx, userID, pushPayload{
-		Category: "informational",
-		Title:    "Clawvisor Alert",
-		Body:     text,
+		Title: "Clawvisor Alert",
+		Body:  text,
 	})
 	return err
 }
@@ -165,18 +162,18 @@ func (n *Notifier) SendAlert(ctx context.Context, userID, text string) error {
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 type pushPayload struct {
-	Category string         `json:"category"`
-	Title    string         `json:"title"`
-	Body     string         `json:"body"`
-	Data     map[string]any `json:"data,omitempty"`
+	Category string            `json:"category,omitempty"`
+	Title    string            `json:"title"`
+	Body     string            `json:"body"`
+	Data     map[string]string `json:"data,omitempty"`
 }
 
 type pushRequest struct {
-	DeviceTokens []string    `json:"device_tokens"`
-	Title        string      `json:"title"`
-	Body         string      `json:"body"`
-	Category     string      `json:"category"`
-	Data         map[string]any `json:"data,omitempty"`
+	DeviceTokens []string          `json:"device_tokens"`
+	Title        string            `json:"title"`
+	Body         string            `json:"body"`
+	Category     string            `json:"category,omitempty"`
+	Data         map[string]string `json:"data,omitempty"`
 }
 
 func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPayload) (string, error) {
