@@ -1217,6 +1217,79 @@ func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error)
 	return count, err
 }
 
+// ── Paired Devices ────────────────────────────────────────────────────────────
+
+func (s *Store) CreatePairedDevice(ctx context.Context, d *store.PairedDevice) error {
+	if d.ID == "" {
+		d.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paired_devices (id, user_id, device_name, device_token, device_hmac_key)
+		VALUES ($1, $2, $3, $4, $5)
+	`, d.ID, d.UserID, d.DeviceName, d.DeviceToken, d.DeviceHMACKey)
+	return err
+}
+
+func (s *Store) GetPairedDevice(ctx context.Context, id string) (*store.PairedDevice, error) {
+	d := &store.PairedDevice{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		FROM paired_devices WHERE id = $1
+	`, id).Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PairedAt, &d.LastSeenAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.PairedDevice, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		FROM paired_devices WHERE user_id = $1 ORDER BY paired_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*store.PairedDevice
+	for rows.Next() {
+		d := &store.PairedDevice{}
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey,
+			&d.PairedAt, &d.LastSeenAt); err != nil {
+			return nil, err
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
+func (s *Store) DeletePairedDevice(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM paired_devices WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePairedDeviceLastSeen(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE paired_devices SET last_seen_at = NOW() WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	var agents []*store.Agent
 	for rows.Next() {

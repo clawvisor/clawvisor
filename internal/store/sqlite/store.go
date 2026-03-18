@@ -1324,6 +1324,87 @@ func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error)
 	return count, err
 }
 
+// ── Paired Devices ────────────────────────────────────────────────────────────
+
+func (s *Store) CreatePairedDevice(ctx context.Context, d *store.PairedDevice) error {
+	if d.ID == "" {
+		d.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO paired_devices (id, user_id, device_name, device_token, device_hmac_key)
+		VALUES (?, ?, ?, ?, ?)
+	`, d.ID, d.UserID, d.DeviceName, d.DeviceToken, d.DeviceHMACKey)
+	return err
+}
+
+func (s *Store) GetPairedDevice(ctx context.Context, id string) (*store.PairedDevice, error) {
+	d := &store.PairedDevice{}
+	var pairedAt, lastSeenAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		FROM paired_devices WHERE id = ?
+	`, id).Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &pairedAt, &lastSeenAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d.PairedAt = parseTime(pairedAt)
+	d.LastSeenAt = parseTime(lastSeenAt)
+	return d, nil
+}
+
+func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.PairedDevice, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		FROM paired_devices WHERE user_id = ? ORDER BY paired_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*store.PairedDevice
+	for rows.Next() {
+		d := &store.PairedDevice{}
+		var pairedAt, lastSeenAt string
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey,
+			&pairedAt, &lastSeenAt); err != nil {
+			return nil, err
+		}
+		d.PairedAt = parseTime(pairedAt)
+		d.LastSeenAt = parseTime(lastSeenAt)
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
+func (s *Store) DeletePairedDevice(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM paired_devices WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePairedDeviceLastSeen(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET last_seen_at = datetime('now') WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isDuplicate(err error) bool {

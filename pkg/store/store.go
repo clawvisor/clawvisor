@@ -91,6 +91,13 @@ type Store interface {
 	ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*ChainFact, error)
 	DeleteChainFactsByTask(ctx context.Context, taskID string) error
 
+	// Paired devices (mobile push notifications)
+	CreatePairedDevice(ctx context.Context, d *PairedDevice) error
+	GetPairedDevice(ctx context.Context, id string) (*PairedDevice, error)
+	ListPairedDevices(ctx context.Context, userID string) ([]*PairedDevice, error)
+	DeletePairedDevice(ctx context.Context, id string) error
+	UpdatePairedDeviceLastSeen(ctx context.Context, id string) error
+
 	// Connection requests (daemon agent onboarding)
 	CreateConnectionRequest(ctx context.Context, req *ConnectionRequest) error
 	GetConnectionRequest(ctx context.Context, id string) (*ConnectionRequest, error)
@@ -288,6 +295,17 @@ type ChainFact struct {
 	FactType  string    `json:"fact_type"`
 	FactValue string    `json:"fact_value"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// PairedDevice represents a mobile device paired for push notifications.
+type PairedDevice struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"user_id"`
+	DeviceName    string    `json:"device_name"`
+	DeviceToken   string    `json:"-"`
+	DeviceHMACKey string    `json:"-"`
+	PairedAt      time.Time `json:"paired_at"`
+	LastSeenAt    time.Time `json:"last_seen_at"`
 }
 
 // ConnectionRequest represents an agent's request to connect to this daemon.
