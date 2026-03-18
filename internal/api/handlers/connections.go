@@ -39,7 +39,10 @@ type ConnectionsHandler struct {
 	logger   *slog.Logger
 
 	// In-memory token cache: connection request ID → {raw token, approved time}.
-	// Tokens are never persisted; lost on daemon restart.
+	// Tokens are never persisted — raw tokens must not hit the DB for security.
+	// This is a hard single-instance assumption: Approve and PollStatus must
+	// run in the same process. This is fine for the local daemon; if the server
+	// ever runs multi-instance, this needs a shared secret store or signed JWT.
 	tokensMu sync.RWMutex
 	tokens   map[string]approvedToken
 
