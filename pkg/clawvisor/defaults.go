@@ -2,17 +2,22 @@ package clawvisor
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	githubadapter "github.com/clawvisor/clawvisor/internal/adapters/github"
@@ -168,7 +173,7 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 		PasswordAuth: cfg.Server.AuthMode == "password",
 	}
 
-	return &ServerOptions{
+	opts := &ServerOptions{
 		Logger:     logger,
 		Config:     cfg,
 		Store:      st,
@@ -178,7 +183,84 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 		Notifier:   notifier,
 		MagicStore: magicStore,
 		Features:   features,
-	}, nil
+	}
+
+	// Wire relay client when configured.
+	if cfg.Relay.Enabled && cfg.Relay.DaemonID != "" {
+		dataDir := cfg.Daemon.DataDir
+		if dataDir == "~/.clawvisor" {
+			home, _ := os.UserHomeDir()
+			dataDir = filepath.Join(home, ".clawvisor")
+		}
+
+		// Load Ed25519 key for relay auth.
+		keyPath := cfg.Relay.KeyFile
+		if !filepath.IsAbs(keyPath) {
+			keyPath = filepath.Join(dataDir, keyPath)
+		}
+		ed25519Key, err := loadEd25519KeyFile(keyPath)
+		if err != nil {
+			logger.Warn("relay: could not load Ed25519 key, relay disabled", "err", err)
+		} else {
+			// Load X25519 key for E2E encryption.
+			e2eKeyPath := cfg.Relay.E2EKeyFile
+			if !filepath.IsAbs(e2eKeyPath) {
+				e2eKeyPath = filepath.Join(dataDir, e2eKeyPath)
+			}
+			x25519Key, err := loadX25519KeyFile(e2eKeyPath)
+			if err != nil {
+				logger.Warn("relay: could not load X25519 key, E2E disabled", "err", err)
+			} else {
+				opts.X25519Key = x25519Key
+			}
+
+			relayClient := relay.New(cfg.Relay, ed25519Key, nil, logger)
+			opts.RelayClient = relayClient
+		}
+	} else if cfg.Relay.DaemonID != "" {
+		// Even if relay is disabled, load X25519 key for E2E support on local requests.
+		dataDir := cfg.Daemon.DataDir
+		if dataDir == "~/.clawvisor" {
+			home, _ := os.UserHomeDir()
+			dataDir = filepath.Join(home, ".clawvisor")
+		}
+		e2eKeyPath := cfg.Relay.E2EKeyFile
+		if !filepath.IsAbs(e2eKeyPath) {
+			e2eKeyPath = filepath.Join(dataDir, e2eKeyPath)
+		}
+		x25519Key, err := loadX25519KeyFile(e2eKeyPath)
+		if err == nil {
+			opts.X25519Key = x25519Key
+		}
+	}
+
+	return opts, nil
+}
+
+// loadEd25519KeyFile reads a PEM-encoded Ed25519 private key seed.
+func loadEd25519KeyFile(path string) (ed25519.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found in %s", path)
+	}
+	return ed25519.NewKeyFromSeed(block.Bytes), nil
+}
+
+// loadX25519KeyFile reads a raw 32-byte X25519 private key and returns
+// an *ecdh.PrivateKey.
+func loadX25519KeyFile(path string) (*ecdh.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != 32 {
+		return nil, fmt.Errorf("X25519 key must be 32 bytes, got %d", len(data))
+	}
+	return ecdh.X25519().NewPrivateKey(data)
 }
 
 // ConnectStore loads config and connects to the database only.

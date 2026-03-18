@@ -4,9 +4,11 @@
 package clawvisor
 
 import (
+	"crypto/ecdh"
 	"log/slog"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -28,6 +30,14 @@ type ServerOptions struct {
 	JWTService auth.TokenService
 	AdapterReg *adapters.Registry
 	Notifier   notify.Notifier
+
+	// RelayClient connects to the cloud relay for public internet access.
+	// Leave nil to disable relay (localhost-only operation).
+	RelayClient *relay.Client
+
+	// X25519Key is the daemon's X25519 private key for E2E encryption.
+	// Required when relay is enabled. Used by E2E middleware on gateway routes.
+	X25519Key *ecdh.PrivateKey
 
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.
