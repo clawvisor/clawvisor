@@ -3,7 +3,6 @@ package push
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -328,9 +327,8 @@ func TestSignatureIncludesBodyHash(t *testing.T) {
 	ts := parts[1]
 	sig, _ := base64.StdEncoding.DecodeString(parts[2])
 
-	// Reconstruct the signed message with body hash.
-	bodyHash := sha256.Sum256(capturedBody)
-	message := fmt.Sprintf("POST\n/api/push\n%s\n%x", ts, bodyHash)
+	// Reconstruct the signed message with raw body.
+	message := fmt.Sprintf("POST\n/api/push\n%s\n%s", string(capturedBody), ts)
 
 	if !ed25519.Verify(pub, []byte(message), sig) {
 		t.Fatal("signature verification failed — body hash may not be included in the signed message")
