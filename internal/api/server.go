@@ -385,7 +385,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
 
 	// Device pairing and management
-	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.logger, baseURL)
+	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.logger, baseURL, s.jwtSvc)
 	s.devicesHandler = devicesHandler
 	devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
 	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
@@ -395,6 +395,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
 	requireDevice := middleware.RequireDevice(s.store)
 	mux.Handle("POST /api/devices/{id}/action", requireDevice(http.HandlerFunc(devicesHandler.Action)))
+	mux.Handle("POST /api/devices/{id}/token", requireDevice(http.HandlerFunc(devicesHandler.MintToken)))
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)

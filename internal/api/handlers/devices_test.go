@@ -69,7 +69,7 @@ func (s *devicesTestStore) UpdatePairedDeviceLastSeen(_ context.Context, id stri
 }
 
 func newTestDevicesHandler() *DevicesHandler {
-	return NewDevicesHandler(newDevicesTestStore(), nil, slog.Default(), "http://localhost:9090")
+	return NewDevicesHandler(newDevicesTestStore(), nil, slog.Default(), "http://localhost:9090", nil)
 }
 
 func withUser(ctx context.Context, user *store.User) context.Context {
@@ -327,7 +327,7 @@ func TestActionEndpointNoPush(t *testing.T) {
 		UserID: "u1",
 	}
 	// pushN is nil — action should return 503.
-	h := NewDevicesHandler(st, nil, slog.Default(), "http://localhost:9090")
+	h := NewDevicesHandler(st, nil, slog.Default(), "http://localhost:9090", nil)
 
 	body, _ := json.Marshal(map[string]string{
 		"action":       "approve",
@@ -370,7 +370,7 @@ func TestDeleteForbidden(t *testing.T) {
 		ID:     "d1",
 		UserID: "u1",
 	}
-	h := NewDevicesHandler(st, nil, slog.Default(), "http://localhost:9090")
+	h := NewDevicesHandler(st, nil, slog.Default(), "http://localhost:9090", nil)
 
 	req := httptest.NewRequest("DELETE", "/api/devices/d1", nil)
 	req.SetPathValue("id", "d1")

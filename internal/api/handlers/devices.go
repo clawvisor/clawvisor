@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
+	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -29,6 +30,7 @@ type DevicesHandler struct {
 	pushN    *push.Notifier // may be nil if push is not configured
 	logger   *slog.Logger
 	baseURL  string
+	jwtSvc   pkgauth.TokenService
 
 	pairingsMu sync.Mutex
 	pairings   map[string]*pairingSession
@@ -42,12 +44,13 @@ type pairingSession struct {
 	ExpiresAt time.Time
 }
 
-func NewDevicesHandler(st store.Store, pushN *push.Notifier, logger *slog.Logger, baseURL string) *DevicesHandler {
+func NewDevicesHandler(st store.Store, pushN *push.Notifier, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
 	return &DevicesHandler{
 		st:       st,
 		pushN:    pushN,
 		logger:   logger,
 		baseURL:  baseURL,
+		jwtSvc:   jwtSvc,
 		pairings: make(map[string]*pairingSession),
 	}
 }
@@ -304,6 +307,43 @@ func generatePairingToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b), nil
+}
+
+// MintToken handles POST /api/devices/{id}/token (DeviceHMAC auth).
+// Returns a short-lived User JWT for the device's linked user.
+func (h *DevicesHandler) MintToken(w http.ResponseWriter, r *http.Request) {
+	device := middleware.DeviceFromContext(r.Context())
+	if device == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "device not authenticated")
+		return
+	}
+
+	// Defense in depth: verify path param matches authenticated device.
+	if r.PathValue("id") != device.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "device ID mismatch")
+		return
+	}
+
+	// Look up the user to get their email for the JWT claims.
+	user, err := h.st.GetUserByID(r.Context(), device.UserID)
+	if err != nil {
+		h.logger.Error("mint device token: user lookup failed", "device_id", device.ID, "user_id", device.UserID, "error", err)
+		writeError(w, http.StatusInternalServerError, "TOKEN_ERROR", "failed to resolve user")
+		return
+	}
+
+	const tokenTTL = 5 * time.Minute
+	token, err := h.jwtSvc.GenerateAccessToken(user.ID, user.Email, tokenTTL)
+	if err != nil {
+		h.logger.Error("mint device token failed", "device_id", device.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "TOKEN_ERROR", "failed to generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"access_token": token,
+		"expires_in":   int(tokenTTL.Seconds()),
+	})
 }
 
 // generatePairingCode returns a random 6-digit numeric code.
