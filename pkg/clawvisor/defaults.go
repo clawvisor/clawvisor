@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jackc/pgx/v5/stdlib"
 
@@ -189,6 +190,11 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 	var pushN *pushnotify.Notifier
 	if cfg.Push.Enabled && ed25519Key != nil {
 		daemonURL := cfg.Server.PublicURL
+		if daemonURL == "" && cfg.Relay.Enabled && cfg.Relay.URL != "" && cfg.Relay.DaemonID != "" {
+			// Use the relay URL so the phone can route actions back through the relay.
+			relayHost := strings.TrimPrefix(strings.TrimPrefix(cfg.Relay.URL, "wss://"), "ws://")
+			daemonURL = fmt.Sprintf("https://%s/d/%s", relayHost, cfg.Relay.DaemonID)
+		}
 		if daemonURL == "" {
 			daemonURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
 		}
