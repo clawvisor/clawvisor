@@ -254,6 +254,8 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 		return "", err
 	}
 
+	n.logger.Info("push: sending notification", "category", p.Category, "title", p.Title, "data", p.Data, "device_count", len(tokens))
+
 	if err := n.signedPost(ctx, "/api/push", body); err != nil {
 		return "", err
 	}
