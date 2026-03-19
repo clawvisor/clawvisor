@@ -143,24 +143,34 @@ func readDaemonID(configPath string) (string, error) {
 }
 
 // patchDaemonID writes relay.daemon_id into config.yaml.
+// patchDaemonID inserts relay.daemon_id into config.yaml using line-level
+// editing to avoid corrupting other values via YAML round-trip.
 func patchDaemonID(configPath, daemonID string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return err
+
+	content := string(data)
+	daemonIDLine := fmt.Sprintf("  daemon_id: \"%s\"\n", daemonID)
+
+	// If daemon_id already exists, replace it.
+	if strings.Contains(content, "  daemon_id:") {
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "daemon_id:") {
+				lines[i] = fmt.Sprintf("  daemon_id: \"%s\"", daemonID)
+				break
+			}
+		}
+		content = strings.Join(lines, "\n")
+	} else if strings.Contains(content, "relay:") {
+		// Insert after the relay: section header.
+		content = strings.Replace(content, "relay:\n", "relay:\n"+daemonIDLine, 1)
+	} else {
+		// No relay section — append one.
+		content += "\nrelay:\n" + daemonIDLine
 	}
-	relayCfg, ok := raw["relay"].(map[string]interface{})
-	if !ok {
-		relayCfg = map[string]interface{}{}
-		raw["relay"] = relayCfg
-	}
-	relayCfg["daemon_id"] = daemonID
-	out, err := yaml.Marshal(raw)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configPath, out, 0600)
+
+	return os.WriteFile(configPath, []byte(content), 0600)
 }
