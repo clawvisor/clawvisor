@@ -250,11 +250,16 @@ func ensureSetup(dataDir string) (firstRun bool, err error) {
 	return true, runDaemonSetup(dataDir)
 }
 
+// SetupOptions configures the daemon setup wizard.
+type SetupOptions struct {
+	Pair bool // chain into device pairing after setup and print agent setup URL
+}
+
 // Setup explicitly re-runs the full daemon setup wizard (config + services)
 // from the top. If a config already exists, the user is asked whether to
 // overwrite it. It spins up a temporary server for service setup, so it
 // works identically whether or not a daemon is already running.
-func Setup() error {
+func Setup(opts SetupOptions) error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
@@ -326,5 +331,40 @@ func Setup() error {
 	if err := Install(); err != nil {
 		return fmt.Errorf("installing daemon: %w", err)
 	}
-	return Start()
+	if err := Start(); err != nil {
+		return err
+	}
+
+	if opts.Pair {
+		// Wait briefly for the daemon to be ready before starting the pair flow.
+		time.Sleep(2 * time.Second)
+
+		if err := Pair(); err != nil {
+			return err
+		}
+
+		// Print the agent setup URL.
+		printAgentSetupURL(dataDir)
+	}
+
+	return nil
+}
+
+// printAgentSetupURL reads the relay config and prints the setup URL
+// that users should give to their agent.
+func printAgentSetupURL(dataDir string) {
+	daemonID, relayHost, err := readRelayConfig(dataDir)
+	if err != nil || daemonID == "" || relayHost == "" {
+		fmt.Println(dim.Padding(0, 2).Render("  Could not determine agent setup URL — relay not configured."))
+		return
+	}
+
+	setupURL := fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID)
+
+	fmt.Println()
+	fmt.Println(bold.Padding(0, 2).Render("Connect an agent"))
+	fmt.Println(dim.Padding(0, 2).Render("Copy this to your agent:"))
+	fmt.Println()
+	fmt.Printf("  Follow the instructions at %s\n", green.Render(setupURL))
+	fmt.Println()
 }

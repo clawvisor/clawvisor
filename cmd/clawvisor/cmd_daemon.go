@@ -73,7 +73,8 @@ var daemonSetupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Re-run the first-run setup wizard",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return daemon.Setup()
+		pair, _ := cmd.Flags().GetBool("pair")
+		return daemon.Setup(daemon.SetupOptions{Pair: pair})
 	},
 }
 
@@ -95,6 +96,7 @@ var daemonDashboardCmd = &cobra.Command{
 }
 
 func init() {
+	daemonSetupCmd.Flags().Bool("pair", false, "Pair a mobile device after setup and print the agent setup URL")
 	daemonDashboardCmd.Flags().Bool("no-open", false, "Print the URL instead of opening the browser")
 
 	daemonCmd.AddCommand(daemonRunCmd)

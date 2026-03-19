@@ -319,6 +319,8 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "\nrelay:\n")
 	fmt.Fprintf(&b, "  enabled: true\n")
 	fmt.Fprintf(&b, "  url: \"%s\"\n", relayURL)
+	fmt.Fprintf(&b, "  key_file: \"%s\"\n", filepath.Join(dataDir, "daemon-ed25519.key"))
+	fmt.Fprintf(&b, "  e2e_key_file: \"%s\"\n", filepath.Join(dataDir, "daemon-x25519.key"))
 
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }

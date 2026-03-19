@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -68,6 +68,46 @@ func (n *Notifier) RegisterDevice(ctx context.Context, deviceToken string) error
 	}
 	body, _ := json.Marshal(payload)
 	return n.signedPost(ctx, "/api/tokens/register", body)
+}
+
+// RegisterDaemon registers this daemon's Ed25519 public key with the push
+// service. The push service requires this before it will accept signed
+// requests. Idempotent — re-registering with the same key returns 201.
+func (n *Notifier) RegisterDaemon(ctx context.Context) error {
+	pub := n.privateKey.Public().(ed25519.PublicKey)
+	payload := map[string]string{
+		"daemon_id":  n.daemonID,
+		"public_key": hex.EncodeToString(pub),
+	}
+	body, _ := json.Marshal(payload)
+
+	// The push service's daemon registration endpoint uses a self-signed
+	// proof: method + "\n" + path + "\n" + body + "\n" + timestamp.
+	// This differs from the normal signRequest which hashes the body.
+	path := "/api/daemons/register"
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	message := "POST\n" + path + "\n" + string(body) + "\n" + ts
+	sig := ed25519.Sign(n.privateKey, []byte(message))
+
+	url := n.pushURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization",
+		fmt.Sprintf("Ed25519-Sig %s:%s:%s", n.daemonID, ts, base64.StdEncoding.EncodeToString(sig)))
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("push: register daemon: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("push: register daemon: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // DeregisterDevice removes a device token from the push service.
@@ -231,17 +271,12 @@ func (n *Notifier) signedPost(ctx context.Context, path string, body []byte) err
 
 // signRequest adds the Ed25519-Sig authorization header.
 // Format: Ed25519-Sig <daemon_id>:<timestamp>:<base64(signature)>
-// Signed message: "<method>\n<path>\n<timestamp>\n<sha256(body)>"
+// Signed message: "<method>\n<path>\n<body>\n<timestamp>"
 func (n *Notifier) signRequest(req *http.Request, body []byte) {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
-	bodyHash := sha256Hex(body)
-	message := req.Method + "\n" + req.URL.Path + "\n" + ts + "\n" + bodyHash
+	message := req.Method + "\n" + req.URL.Path + "\n" + string(body) + "\n" + ts
 	sig := ed25519.Sign(n.privateKey, []byte(message))
 	req.Header.Set("Authorization",
 		fmt.Sprintf("Ed25519-Sig %s:%s:%s", n.daemonID, ts, base64.StdEncoding.EncodeToString(sig)))
 }
 
-func sha256Hex(data []byte) string {
-	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h[:])
-}

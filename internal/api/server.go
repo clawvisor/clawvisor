@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"net/http"
 	"os"
 	"time"
@@ -469,11 +470,22 @@ func (s *Server) routes() http.Handler {
 	// Skill files (no auth — served so OpenClaw instances can install the skill)
 	// GET /skill         → redirects to /skill/SKILL.md
 	// GET /skill/*       → embedded clawvisor skill tree (SKILL.md, policies/, …)
+	// GET /skill/setup   → agent onboarding document with pre-filled CLAWVISOR_URL
 	skillFS, _ := fs.Sub(skillfiles.FS, "clawvisor")
 	skillFileHandler := http.StripPrefix("/skill", http.FileServer(http.FS(skillFS)))
 	mux.HandleFunc("GET /skill", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/skill/SKILL.md", http.StatusFound)
 	})
+	if s.daemonID != "" {
+		relayHost := ""
+		if s.cfg.Relay.URL != "" {
+			relayHost = s.cfg.Relay.URL
+			relayHost = strings.TrimPrefix(relayHost, "wss://")
+			relayHost = strings.TrimPrefix(relayHost, "ws://")
+		}
+		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
+		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+	}
 	mux.Handle("/skill/", skillFileHandler)
 
 	// Key discovery endpoint (no auth — agents need the public key for E2E).

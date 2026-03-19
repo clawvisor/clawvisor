@@ -154,6 +154,16 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 	}
 	hmacKeyHex := hex.EncodeToString(hmacKey)
 
+	// Remove stale devices (and their push tokens) before creating the new one.
+	if existing, err := h.st.ListPairedDevices(r.Context(), session.UserID); err == nil {
+		for _, old := range existing {
+			if h.pushN != nil {
+				_ = h.pushN.DeregisterDevice(r.Context(), old.DeviceToken)
+			}
+			_ = h.st.DeletePairedDevice(r.Context(), old.ID)
+		}
+	}
+
 	device := &store.PairedDevice{
 		UserID:        session.UserID,
 		DeviceName:    body.DeviceName,
