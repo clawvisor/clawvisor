@@ -201,6 +201,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			AgentName:  agent.Name,
 			Purpose:    req.Purpose,
 			Actions:    req.AuthorizedActions,
+			RiskLevel:  task.RiskLevel,
 			ApproveURL: approveURL,
 			DenyURL:    denyURL,
 			ExpiresIn:  expiresInStr,

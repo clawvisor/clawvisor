@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -137,9 +138,10 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 		Title:    "Approval Request",
 		Body:     fmt.Sprintf("%s wants to use %s.%s", req.AgentName, req.Service, req.Action),
 		Data: map[string]string{
-			"target_id":  req.PendingID,
-			"type":       "approval",
-			"daemon_url": n.daemonURL,
+			"target_id":      req.PendingID,
+			"type":           "approval",
+			"daemon_url":     n.daemonURL,
+			"action_summary": req.Service + "/" + req.Action,
 		},
 	})
 }
@@ -153,15 +155,23 @@ func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.Activat
 }
 
 func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
+	data := map[string]string{
+		"target_id":  req.TaskID,
+		"type":       "task",
+		"daemon_url": n.daemonURL,
+		"purpose":    req.Purpose,
+	}
+	if req.RiskLevel != "" {
+		data["risk_level"] = req.RiskLevel
+	}
+	if summary := actionSummary(req.Actions); summary != "" {
+		data["action_summary"] = summary
+	}
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
 		Category: "TASK_APPROVAL",
 		Title:    "Task Approval Request",
 		Body:     fmt.Sprintf("%s: %s", req.AgentName, req.Purpose),
-		Data: map[string]string{
-			"target_id":  req.TaskID,
-			"type":       "task",
-			"daemon_url": n.daemonURL,
-		},
+		Data:     data,
 	})
 }
 
@@ -171,9 +181,11 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 		Title:    "Scope Expansion Request",
 		Body:     fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason),
 		Data: map[string]string{
-			"target_id":  req.TaskID,
-			"type":       "scope_expansion",
-			"daemon_url": n.daemonURL,
+			"target_id":      req.TaskID,
+			"type":           "scope_expansion",
+			"daemon_url":     n.daemonURL,
+			"purpose":        req.Purpose,
+			"action_summary": req.NewAction.Service + "/" + req.NewAction.Action,
 		},
 	})
 }
@@ -278,5 +290,17 @@ func (n *Notifier) signRequest(req *http.Request, body []byte) {
 	sig := ed25519.Sign(n.privateKey, []byte(message))
 	req.Header.Set("Authorization",
 		fmt.Sprintf("Ed25519-Sig %s:%s:%s", n.daemonID, ts, base64.StdEncoding.EncodeToString(sig)))
+}
+
+// actionSummary builds a comma-separated "service/action" string from task actions.
+func actionSummary(actions []store.TaskAction) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, a := range actions {
+		parts = append(parts, a.Service+"/"+a.Action)
+	}
+	return strings.Join(parts, ", ")
 }
 

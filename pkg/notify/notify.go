@@ -64,6 +64,7 @@ type TaskApprovalRequest struct {
 	AgentName  string
 	Purpose    string
 	Actions    []store.TaskAction
+	RiskLevel  string // "low", "medium", "high", "critical"
 	ApproveURL string
 	DenyURL    string
 	ExpiresIn  string
