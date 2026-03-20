@@ -122,8 +122,12 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	// Notify owner via SSE and push notification.
 	h.eventHub.Publish(owner.ID, events.Event{Type: "queue"})
 	if h.notifier != nil {
-		msg := fmt.Sprintf("Agent %q is requesting to connect from %s", body.Name, r.RemoteAddr)
-		if err := h.notifier.SendAlert(r.Context(), owner.ID, msg); err != nil {
+		if _, err := h.notifier.SendConnectionRequest(r.Context(), notify.ConnectionRequest{
+			ConnectionID: req.ID,
+			UserID:       owner.ID,
+			AgentName:    body.Name,
+			IPAddress:    r.RemoteAddr,
+		}); err != nil {
 			h.logger.Warn("failed to send connection request notification", "err", err)
 		}
 	}

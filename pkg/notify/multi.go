@@ -130,6 +130,21 @@ func (m *MultiNotifier) SendScopeExpansionRequest(ctx context.Context, req Scope
 	return messageID, errors.Join(errs...)
 }
 
+func (m *MultiNotifier) SendConnectionRequest(ctx context.Context, req ConnectionRequest) (string, error) {
+	var messageID string
+	var errs []error
+	for _, n := range m.notifiers {
+		id, err := n.SendConnectionRequest(ctx, req)
+		if err != nil {
+			m.logger.Warn("notifier: SendConnectionRequest failed", "err", err)
+			errs = append(errs, err)
+		} else if messageID == "" && id != "" {
+			messageID = id
+		}
+	}
+	return messageID, errors.Join(errs...)
+}
+
 func (m *MultiNotifier) UpdateMessage(ctx context.Context, userID, messageID, text string) error {
 	var errs []error
 	for _, n := range m.notifiers {

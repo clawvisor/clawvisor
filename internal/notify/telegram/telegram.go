@@ -208,6 +208,20 @@ func (n *Notifier) UpdateMessage(ctx context.Context, userID, messageID, text st
 	return n.editMessage(ctx, botToken, chatID, messageID, text)
 }
 
+func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.ConnectionRequest) (string, error) {
+	botToken, chatID, err := n.userConfig(ctx, req.UserID)
+	if err != nil {
+		return "", err
+	}
+	text := fmt.Sprintf("🔗 <b>Agent Connection Request</b>\n\nAgent <b>%s</b> is requesting to connect from %s.",
+		req.AgentName, req.IPAddress)
+	msgID, err := n.sendMessage(ctx, botToken, chatID, text, nil)
+	if err != nil {
+		return "", fmt.Errorf("telegram: send connection request: %w", err)
+	}
+	return msgID, nil
+}
+
 func (n *Notifier) SendAlert(ctx context.Context, userID, text string) error {
 	botToken, chatID, err := n.userConfig(ctx, userID)
 	if err != nil {

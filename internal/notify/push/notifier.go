@@ -255,6 +255,39 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 	})
 }
 
+func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.ConnectionRequest) (string, error) {
+	body := fmt.Sprintf("Agent %q is requesting to connect from %s", req.AgentName, req.IPAddress)
+	return n.sendToDevices(ctx, req.UserID, pushPayload{
+		Category: "AGENT_CONNECTION",
+		Title:    "Agent Connection Request",
+		Body:     body,
+		Data: map[string]string{
+			"target_id":      req.ConnectionID,
+			"type":           "connection",
+			"daemon_url":     n.daemonURL,
+			"purpose":        fmt.Sprintf("%s requests to connect", req.AgentName),
+			"action_summary": "agent/connect",
+		},
+		LiveActivity: &liveActivityPayload{
+			AttributesType: "ApprovalActivityAttributes",
+			Attributes: map[string]string{
+				"targetID":      req.ConnectionID,
+				"daemonURL":     n.daemonURL,
+				"requestType":   "agent_connection",
+				"category":      "AGENT_CONNECTION",
+				"purpose":       "Agent requests to connect",
+				"actionSummary": "agent/connect",
+			},
+			ContentState: map[string]any{
+				"status":        "pending",
+				"resultMessage": nil,
+			},
+			AlertTitle: "Agent Connection Request",
+			AlertBody:  body,
+		},
+	})
+}
+
 func (n *Notifier) UpdateMessage(ctx context.Context, userID, messageID, text string) error {
 	// Push notifications are ephemeral — no update mechanism.
 	return nil
