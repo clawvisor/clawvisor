@@ -74,6 +74,16 @@ func Pair() error {
 	fmt.Println()
 	fmt.Printf("  Pairing code: %s\n", bold.Render(formatCode(resp.Code)))
 	fmt.Println(dim.Padding(0, 2).Render("Enter this code on your phone if prompted."))
+
+	// Also fetch a relay pairing code for MCP/remote use.
+	if pairingCode, err := apiClient.GetPairingCode(); err == nil {
+		fmt.Println()
+		fmt.Printf("  Daemon ID:    %s\n", bold.Render(pairingCode.DaemonID))
+		fmt.Printf("  Pairing code: %s\n", bold.Render(formatCode(pairingCode.Code)))
+		fmt.Printf("  Code expires in %d minutes.\n", pairingCode.ExpiresIn/60)
+		fmt.Printf("  Enter these at: https://%s/authorize\n", relayHost)
+	}
+
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("Waiting for pairing to complete..."))
 

@@ -388,6 +388,17 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
 
+	// Pairing code (for relay MCP OAuth consent — no auth, CORS for relay origin)
+	if s.daemonID != "" {
+		pairingHandler := handlers.NewPairingHandler(s.daemonID)
+		corsOrigins := []string{"https://relay.clawvisor.com", "https://app.clawvisor.com"}
+		mux.Handle("GET /api/pairing/code",
+			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(pairingHandler.GenerateCode)))
+		mux.Handle("OPTIONS /api/pairing/code",
+			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+		mux.HandleFunc("POST /api/pairing/verify", pairingHandler.VerifyCode)
+	}
+
 	// Device pairing and management
 	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.eventHub, s.logger, baseURL, s.jwtSvc)
 	if s.daemonID != "" {
