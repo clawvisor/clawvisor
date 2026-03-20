@@ -365,6 +365,8 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.logger.Info("listing tasks", "active_only", filter.ActiveOnly, "status", filter.Status, "limit", filter.Limit, "offset", filter.Offset)
+
 	tasks, total, err := h.st.ListTasks(ctx, user.ID, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list tasks")

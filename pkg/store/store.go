@@ -262,7 +262,7 @@ type PendingApproval struct {
 // Zero values mean "no filter" (backwards compatible).
 type TaskFilter struct {
 	ActiveOnly bool   // status IN ('active','pending_approval','pending_scope_expansion')
-	Status     string // exact status match (e.g. "active", "completed", "denied")
+	Status     string // exact status match (e.g. "active", "pending_approval", "denied"); empty = no filter
 	Limit      int    // 0 -> no limit
 	Offset     int
 }

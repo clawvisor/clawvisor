@@ -677,7 +677,11 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	args := []any{userID}
 	argIdx := 2
 
-	if filter.ActiveOnly {
+	if filter.Status != "" {
+		where += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, filter.Status)
+		argIdx++
+	} else if filter.ActiveOnly {
 		where += fmt.Sprintf(" AND status IN ($%d, $%d, $%d)", argIdx, argIdx+1, argIdx+2)
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 		argIdx += 3

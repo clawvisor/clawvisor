@@ -789,7 +789,10 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	where := "WHERE user_id = ?"
 	args := []any{userID}
 
-	if filter.ActiveOnly {
+	if filter.Status != "" {
+		where += " AND status = ?"
+		args = append(args, filter.Status)
+	} else if filter.ActiveOnly {
 		where += " AND status IN (?, ?, ?)"
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 		// Exclude session tasks that have expired but haven't been swept yet.
