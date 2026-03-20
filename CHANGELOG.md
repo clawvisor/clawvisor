@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/clawvisor/clawvisor/compare/v0.5.2...v0.5.3) (2026-03-20)
+
+
+### Features
+
+* add release binary build workflow with manual trigger ([fba3a62](https://github.com/clawvisor/clawvisor/commit/fba3a62682ff860e6f815e19f2c110dd7ef0bcb2))
+
 ## [0.5.2](https://github.com/clawvisor/clawvisor/compare/v0.5.1...v0.5.2) (2026-03-16)
 
 
