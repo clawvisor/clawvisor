@@ -201,6 +201,19 @@ export interface Agent {
   token?: string // only present on creation
 }
 
+export interface ConnectionRequest {
+  id: string
+  user_id: string
+  name: string
+  description: string
+  callback_url?: string
+  status: string // pending | approved | denied | expired
+  agent_id?: string
+  ip_address: string
+  created_at: string
+  expires_at: string
+}
+
 export interface ServiceInfo {
   id: string
   alias?: string
@@ -438,6 +451,13 @@ export const api = {
     create: (name: string) =>
       post<Agent>('/api/agents', { name }),
     delete: (id: string) => del<void>(`/api/agents/${id}`),
+  },
+  connections: {
+    list: () => get<ConnectionRequest[]>('/api/agents/connections'),
+    approve: (id: string) =>
+      post<{ status: string; agent_id: string }>(`/api/agents/connect/${id}/approve`, {}),
+    deny: (id: string) =>
+      post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
   },
   services: {
     list: () => get<{ services: ServiceInfo[] }>('/api/services'),

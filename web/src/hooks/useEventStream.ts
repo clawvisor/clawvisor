@@ -47,6 +47,7 @@ export function useEventStream() {
       es.addEventListener('queue', () => {
         qc.invalidateQueries({ queryKey: ['overview'] })
         qc.invalidateQueries({ queryKey: ['queue'] })
+        qc.invalidateQueries({ queryKey: ['connections'] })
       })
 
       es.addEventListener('tasks', () => {
