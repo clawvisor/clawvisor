@@ -148,6 +148,25 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 
 	c.logger.Info("relay connected", "daemon_id", c.daemonID)
 
+	// Send periodic pings to keep the connection alive. The relay may not
+	// send traffic during idle periods, so without client-side pings the
+	// read timeout fires and we needlessly reconnect.
+	const pingInterval = 30 * time.Second
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	defer pingCancel()
+	go func() {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingCtx.Done():
+				return
+			case <-ticker.C:
+				c.sendFrame(FramePing, "", nil)
+			}
+		}
+	}()
+
 	// Read loop. We set a read deadline so that if the relay disappears
 	// without a clean close (e.g. deploy), we detect it within 90s rather
 	// than waiting for a TCP keepalive timeout (which can be minutes).
