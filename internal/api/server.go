@@ -31,6 +31,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	skillfiles "github.com/clawvisor/clawvisor/skills"
+	webfs "github.com/clawvisor/clawvisor/web"
 
 	"golang.org/x/time/rate"
 )
@@ -539,9 +540,9 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
-	// SPA fallback
+	// SPA fallback — serve from disk if configured, otherwise from embedded FS.
 	if s.cfg.Server.FrontendDir != "" {
-		fs := http.FileServer(http.Dir(s.cfg.Server.FrontendDir))
+		fileServer := http.FileServer(http.Dir(s.cfg.Server.FrontendDir))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			path := s.cfg.Server.FrontendDir + r.URL.Path
 			if _, err := os.Stat(path); os.IsNotExist(err) || r.URL.Path == "/" {
@@ -551,7 +552,23 @@ func (s *Server) routes() http.Handler {
 				http.ServeFile(w, r, s.cfg.Server.FrontendDir+"/index.html")
 				return
 			}
-			fs.ServeHTTP(w, r)
+			fileServer.ServeHTTP(w, r)
+		})
+	} else if distFS, err := fs.Sub(webfs.DistFS, "dist"); err == nil {
+		fileServer := http.FileServer(http.FS(distFS))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Check if the file exists in the embedded FS.
+			if f, err := distFS.Open(strings.TrimPrefix(r.URL.Path, "/")); err == nil {
+				f.Close()
+				if r.URL.Path != "/" {
+					fileServer.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.Header().Set("Cache-Control", "no-cache")
+			index, _ := fs.ReadFile(distFS, "index.html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(index)
 		})
 	}
 
