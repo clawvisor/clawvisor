@@ -261,11 +261,9 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "  port: 25297\n")
 	fmt.Fprintf(&b, "  host: \"127.0.0.1\"\n")
 
-	// Resolve the frontend directory relative to the running binary.
-	// This lets the daemon serve the dashboard when run from a built binary.
-	if frontendDir := resolveFrontendDir(); frontendDir != "" {
-		fmt.Fprintf(&b, "  frontend_dir: \"%s\"\n", frontendDir)
-	}
+	// Frontend is installed to a well-known location by the upgrade script.
+	frontendDir := filepath.Join(dataDir, "web", "dist")
+	fmt.Fprintf(&b, "  frontend_dir: \"%s\"\n", frontendDir)
 
 	fmt.Fprintf(&b, "\ndatabase:\n")
 	fmt.Fprintf(&b, "  driver: \"sqlite\"\n")
@@ -325,29 +323,6 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
-// resolveFrontendDir finds web/dist relative to the running binary.
-// Returns "" if it can't be found (e.g. the frontend hasn't been built).
-func resolveFrontendDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return ""
-	}
-	// The binary is typically at <repo>/clawvisor or <repo>/bin/clawvisor.
-	// Walk up to find web/dist.
-	dir := filepath.Dir(exe)
-	for i := 0; i < 3; i++ {
-		candidate := filepath.Join(dir, "web", "dist")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
-		dir = filepath.Dir(dir)
-	}
-	return ""
-}
 
 func generateRandomBase64(n int) (string, error) {
 	b := make([]byte, n)

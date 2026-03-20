@@ -47,11 +47,16 @@ if [[ ! -f "$REPO_ROOT/go.mod" ]]; then
     exit 1
 fi
 
-# Build the frontend if web/package.json exists.
+# Build the frontend if web/package.json exists, then install to ~/.clawvisor.
 WEBDIR="$REPO_ROOT/web"
+FRONTEND_INSTALL_DIR="$HOME/.clawvisor/web/dist"
 if [[ -f "$WEBDIR/package.json" ]]; then
     echo "  Building frontend..."
     (cd "$WEBDIR" && npm install --silent && npm run build --silent)
+    echo "  Installing frontend to $FRONTEND_INSTALL_DIR ..."
+    rm -rf "$FRONTEND_INSTALL_DIR"
+    mkdir -p "$FRONTEND_INSTALL_DIR"
+    cp -R "$WEBDIR/dist/." "$FRONTEND_INSTALL_DIR/"
 fi
 
 echo "  Building backend from $REPO_ROOT ..."
