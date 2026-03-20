@@ -431,8 +431,10 @@ function DevicePairing() {
     url: string
     code: string
     expiresAt: string
+    existingIds: Set<string>
   } | null>(null)
   const [pairError, setPairError] = useState<string | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data: pairInfo } = useQuery({
     queryKey: ['pair-info'],
@@ -445,14 +447,39 @@ function DevicePairing() {
     queryFn: () => api.devices.list(),
   })
 
+  // When devices changes while a pairing session is active, check for new device
+  useEffect(() => {
+    if (!pairingState || !devices) return
+    const newDevice = devices.find(d => !pairingState.existingIds.has(d.id))
+    if (newDevice) {
+      setPairingState(null)
+      clearPairingTimeout()
+    }
+  }, [devices, pairingState])
+
+  // Clean up timeout on unmount
+  useEffect(() => () => clearPairingTimeout(), [])
+
+  function clearPairingTimeout() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+  }
+
   const startMut = useMutation({
     mutationFn: () => api.devices.startPairing(),
     onSuccess: (session) => {
       if (!pairInfo) return
       const url = `https://clawvisor.com/clip/pair?d=${pairInfo.daemon_id}&t=${session.pairing_token}&r=${pairInfo.relay_host}`
-      setPairingState({ url, code: session.code, expiresAt: session.expires_at })
+      const existingIds = new Set((devices ?? []).map(d => d.id))
+      setPairingState({ url, code: session.code, expiresAt: session.expires_at, existingIds })
       setPairError(null)
-      pollForDevice()
+      clearPairingTimeout()
+      timeoutRef.current = setTimeout(() => {
+        setPairingState(null)
+        setPairError('Pairing timed out — try again.')
+      }, 5 * 60 * 1000)
     },
     onError: (err: Error) => setPairError(err.message),
   })
@@ -462,28 +489,9 @@ function DevicePairing() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
   })
 
-  function pollForDevice() {
-    const existingIds = new Set((devices ?? []).map(d => d.id))
-    const deadline = Date.now() + 5 * 60 * 1000
-    const interval = setInterval(async () => {
-      if (Date.now() > deadline) {
-        clearInterval(interval)
-        setPairingState(null)
-        setPairError('Pairing timed out — try again.')
-        return
-      }
-      try {
-        const current = await api.devices.list()
-        const newDevice = current.find(d => !existingIds.has(d.id))
-        if (newDevice) {
-          clearInterval(interval)
-          setPairingState(null)
-          qc.invalidateQueries({ queryKey: ['devices'] })
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 2000)
+  function cancelPairing() {
+    setPairingState(null)
+    clearPairingTimeout()
   }
 
   const formatCode = (code: string) =>
@@ -557,7 +565,7 @@ function DevicePairing() {
             </div>
           </div>
           <button
-            onClick={() => setPairingState(null)}
+            onClick={cancelPairing}
             className="text-xs text-text-tertiary hover:text-text-secondary"
           >
             Cancel

@@ -389,7 +389,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
 
 	// Device pairing and management
-	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.logger, baseURL, s.jwtSvc)
+	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.eventHub, s.logger, baseURL, s.jwtSvc)
 	if s.daemonID != "" {
 		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
 		devicesHandler.SetRelayInfo(s.daemonID, relayHost)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -28,6 +29,7 @@ const (
 type DevicesHandler struct {
 	st       store.Store
 	pushN    *push.Notifier // may be nil if push is not configured
+	eventHub *events.Hub
 	logger   *slog.Logger
 	baseURL  string
 	jwtSvc   pkgauth.TokenService
@@ -55,10 +57,11 @@ type pairingSession struct {
 	ExpiresAt time.Time
 }
 
-func NewDevicesHandler(st store.Store, pushN *push.Notifier, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
+func NewDevicesHandler(st store.Store, pushN *push.Notifier, eventHub *events.Hub, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
 	return &DevicesHandler{
 		st:       st,
 		pushN:    pushN,
+		eventHub: eventHub,
 		logger:   logger,
 		baseURL:  baseURL,
 		jwtSvc:   jwtSvc,
@@ -212,6 +215,9 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 			h.logger.Warn("failed to register device with push service", "err", err)
 		}
 	}
+
+	// Notify the dashboard so it can stop polling.
+	h.eventHub.Publish(session.UserID, events.Event{Type: "devices"})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"device_id": device.ID,

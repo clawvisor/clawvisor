@@ -340,22 +340,17 @@ func TestLiveActivitySentWhenTokenPresent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(requests) != 2 {
-		t.Fatalf("expected 2 requests (push + live-activity), got %d", len(requests))
+	// Live Activity replaces the regular push when push-to-start tokens are available.
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 request (live-activity only), got %d", len(requests))
 	}
 
-	// First request: standard push.
-	if requests[0].Path != "/api/push" {
-		t.Errorf("expected first request to /api/push, got %q", requests[0].Path)
-	}
-
-	// Second request: live activity.
-	if requests[1].Path != "/api/push/live-activity" {
-		t.Errorf("expected second request to /api/push/live-activity, got %q", requests[1].Path)
+	if requests[0].Path != "/api/push/live-activity" {
+		t.Errorf("expected request to /api/push/live-activity, got %q", requests[0].Path)
 	}
 
 	var laReq liveActivityRequest
-	if err := json.Unmarshal(requests[1].Body, &laReq); err != nil {
+	if err := json.Unmarshal(requests[0].Body, &laReq); err != nil {
 		t.Fatalf("failed to unmarshal live activity request: %v", err)
 	}
 

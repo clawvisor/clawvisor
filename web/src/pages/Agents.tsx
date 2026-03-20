@@ -19,7 +19,6 @@ export default function Agents() {
   const { data: connections } = useQuery({
     queryKey: ['connections'],
     queryFn: () => api.connections.list(),
-    refetchInterval: 10_000,
   })
 
   const createMut = useMutation({

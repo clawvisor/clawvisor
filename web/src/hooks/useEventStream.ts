@@ -55,6 +55,10 @@ export function useEventStream() {
         qc.invalidateQueries({ queryKey: ['overview'] })
       })
 
+      es.addEventListener('devices', () => {
+        qc.invalidateQueries({ queryKey: ['devices'] })
+      })
+
       es.addEventListener('audit', (e) => {
         const { id } = JSON.parse(e.data)
         qc.invalidateQueries({ queryKey: ['audit'] })

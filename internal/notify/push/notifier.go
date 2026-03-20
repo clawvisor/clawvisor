@@ -158,7 +158,7 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 			Attributes: map[string]string{
 				"targetID":      req.PendingID,
 				"daemonURL":     n.daemonURL,
-				"requestType":   "gateway_approval",
+				"requestType":   "approval",
 				"category":      "GATEWAY_APPROVAL",
 				"actionSummary": summary,
 			},
@@ -205,7 +205,7 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 			Attributes: map[string]string{
 				"targetID":      req.TaskID,
 				"daemonURL":     n.daemonURL,
-				"requestType":   "task_approval",
+				"requestType":   "task",
 				"category":      "TASK_APPROVAL",
 				"purpose":       req.Purpose,
 				"riskLevel":     req.RiskLevel,
@@ -273,7 +273,7 @@ func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.Connect
 			Attributes: map[string]string{
 				"targetID":      req.ConnectionID,
 				"daemonURL":     n.daemonURL,
-				"requestType":   "agent_connection",
+				"requestType":   "connection",
 				"category":      "AGENT_CONNECTION",
 				"purpose":       "Agent requests to connect",
 				"actionSummary": "agent/connect",
@@ -359,25 +359,7 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 		tokens[i] = d.DeviceToken
 	}
 
-	reqBody := pushRequest{
-		DeviceTokens: tokens,
-		Title:        p.Title,
-		Body:         p.Body,
-		Category:     p.Category,
-		Data:         p.Data,
-	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-
-	n.logger.Info("push: sending notification", "category", p.Category, "title", p.Title, "data", p.Data, "device_count", len(tokens))
-
-	if err := n.signedPost(ctx, "/api/push", body); err != nil {
-		return "", err
-	}
-
-	// Send push-to-start Live Activity if any device has a token and payload includes it.
+	// Prefer Live Activity over regular push when push-to-start tokens are available.
 	if p.LiveActivity != nil {
 		var ptsTokens []string
 		for _, d := range devices {
@@ -400,7 +382,27 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 			if err := n.signedPost(ctx, "/api/push/live-activity", laBody); err != nil {
 				n.logger.Warn("push: live activity failed", "err", err)
 			}
+			return "push:" + n.daemonID, nil
 		}
+	}
+
+	// Fall back to regular push notification.
+	reqBody := pushRequest{
+		DeviceTokens: tokens,
+		Title:        p.Title,
+		Body:         p.Body,
+		Category:     p.Category,
+		Data:         p.Data,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	n.logger.Info("push: sending notification", "category", p.Category, "title", p.Title, "data", p.Data, "device_count", len(tokens))
+
+	if err := n.signedPost(ctx, "/api/push", body); err != nil {
+		return "", err
 	}
 
 	return "push:" + n.daemonID, nil
