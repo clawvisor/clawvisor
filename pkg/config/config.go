@@ -234,9 +234,8 @@ type TwilioServicesConfig struct {
 func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:        25297,
-			Host:        "127.0.0.1",
-			FrontendDir: "./web/dist",
+			Port: 25297,
+			Host: "127.0.0.1",
 		},
 		Database: DatabaseConfig{
 			Driver:     "",
