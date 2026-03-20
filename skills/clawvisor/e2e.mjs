@@ -136,10 +136,10 @@ export async function createClient(daemonURL, agentToken) {
     const ephPubRaw = ephPub.export({ type: 'spki', format: 'der' }).subarray(-32);
 
     const headers = {
-      'Authorization': `Bearer ${agentToken}`,
       'X-Clawvisor-E2E': 'aes-256-gcm',
       'X-Clawvisor-Ephemeral-Key': ephPubRaw.toString('base64'),
     };
+    if (agentToken) headers['Authorization'] = `Bearer ${agentToken}`;
 
     let reqBody = null;
     if (body != null) {
@@ -208,8 +208,8 @@ if (process.argv[1]?.endsWith('e2e.mjs')) {
     else if (args[i] === '--endpoint') endpoint = args[++i];
     else if (args[i] === '--method') method = args[++i];
   }
-  if (!url || !token) {
-    console.error('Usage: node e2e.mjs --url <daemon_url> --token <agent_token> [--endpoint /api/...] [--method POST] [--body \'<json>\']');
+  if (!url) {
+    console.error('Usage: node e2e.mjs --url <daemon_url> [--token <agent_token>] [--endpoint /api/...] [--method POST] [--body \'<json>\']');
     process.exit(1);
   }
   const client = await createClient(url, token);
