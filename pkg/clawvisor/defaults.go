@@ -199,7 +199,6 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 			daemonURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
 		}
 		pushN = pushnotify.New(st, cfg.Push.URL, cfg.Relay.DaemonID, ed25519Key, daemonURL, logger)
-		logger.Info("push notifier enabled", "push_url", cfg.Push.URL, "daemon_id", cfg.Relay.DaemonID)
 
 		// Register daemon's public key with the push service (idempotent).
 		if err := pushN.RegisterDaemon(ctx); err != nil {

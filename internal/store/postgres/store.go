@@ -681,6 +681,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		where += fmt.Sprintf(" AND status IN ($%d, $%d, $%d)", argIdx, argIdx+1, argIdx+2)
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 		argIdx += 3
+		// Exclude session tasks that have expired but haven't been swept yet.
+		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < NOW())"
 	}
 	if filter.Status != "" {
 		where += fmt.Sprintf(" AND status = $%d", argIdx)

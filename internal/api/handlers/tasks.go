@@ -374,7 +374,11 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		tasks = []*store.Task{}
 	}
 	for _, t := range tasks {
-		sanitizeTaskForResponse(t)
+		if sanitizeTaskForResponse(t) {
+			// Opportunistically mark expired tasks in the DB so the
+			// background sweep doesn't have to catch them later.
+			_ = h.st.UpdateTaskStatus(ctx, t.ID, "expired")
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -387,15 +391,17 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 //   - Standing tasks: nil out the sentinel expiry so it doesn't leak.
 //   - Active session tasks past their expiry: report status as "expired"
 //     even if the background cleanup goroutine hasn't swept them yet.
-func sanitizeTaskForResponse(t *store.Task) {
+func sanitizeTaskForResponse(t *store.Task) (nowExpired bool) {
 	if t.Lifetime == "standing" {
 		t.ExpiresAt = nil
 		t.ExpiresInSeconds = 0
-		return
+		return false
 	}
 	if t.Status == "active" && t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
 		t.Status = "expired"
+		return true
 	}
+	return false
 }
 
 // ── Approve ───────────────────────────────────────────────────────────────────
