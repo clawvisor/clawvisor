@@ -261,9 +261,7 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "  port: 25297\n")
 	fmt.Fprintf(&b, "  host: \"127.0.0.1\"\n")
 
-	// Frontend is installed to a well-known location by the upgrade script.
-	frontendDir := filepath.Join(dataDir, "web", "dist")
-	fmt.Fprintf(&b, "  frontend_dir: \"%s\"\n", frontendDir)
+	// No frontend_dir — the embedded frontend FS is used automatically.
 
 	fmt.Fprintf(&b, "\ndatabase:\n")
 	fmt.Fprintf(&b, "  driver: \"sqlite\"\n")
