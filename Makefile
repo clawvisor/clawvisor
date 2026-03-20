@@ -1,4 +1,4 @@
-.PHONY: build test run run-sqlite migrate lint clean setup tui eval-intent
+.PHONY: build test run run-sqlite migrate lint clean setup tui eval-intent release
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION)"
@@ -77,5 +77,8 @@ lint:
 setup: build
 	@bin/clawvisor setup
 
+release: web/dist
+	scripts/build-release.sh v$(VERSION)
+
 clean:
-	rm -rf bin/ web/dist/
+	rm -rf bin/ web/dist/ dist/
