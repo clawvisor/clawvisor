@@ -793,6 +793,10 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		where += " AND status IN (?, ?, ?)"
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 	}
+	if filter.Status != "" {
+		where += " AND status = ?"
+		args = append(args, filter.Status)
+	}
 
 	// Count total matching rows.
 	var total int

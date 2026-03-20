@@ -682,6 +682,11 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 		argIdx += 3
 	}
+	if filter.Status != "" {
+		where += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, filter.Status)
+		argIdx++
+	}
 
 	// Count total matching rows.
 	var total int

@@ -525,7 +525,14 @@ export const api = {
     state: string
   }) => post<{ redirect_uri: string }>('/oauth/deny', params),
   tasks: {
-    list: () => get<{ tasks: Task[]; total: number }>('/api/tasks'),
+    list: (params?: { status?: string; limit?: number; offset?: number }) => {
+      const q = new URLSearchParams()
+      if (params?.status) q.set('status', params.status)
+      if (params?.limit) q.set('limit', String(params.limit))
+      if (params?.offset) q.set('offset', String(params.offset))
+      const qs = q.toString()
+      return get<{ tasks: Task[]; total: number }>(`/api/tasks${qs ? `?${qs}` : ''}`)
+    },
     approve: (id: string) =>
       post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/approve`, {}),
     deny: (id: string) =>

@@ -348,6 +348,9 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("active_only") == "true" {
 		filter.ActiveOnly = true
 	}
+	if v := r.URL.Query().Get("status"); v != "" {
+		filter.Status = v
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			filter.Limit = n

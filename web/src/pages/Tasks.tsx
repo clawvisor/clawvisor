@@ -14,8 +14,11 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'revoked', label: 'Revoked' },
 ]
 
+const PAGE_SIZE = 25
+
 export default function Tasks() {
   const [filter, setFilter] = useState('')
+  const [offset, setOffset] = useState(0)
   const [searchParams, setSearchParams] = useSearchParams()
   const qc = useQueryClient()
   const [deepLinkResult, setDeepLinkResult] = useState<string | null>(null)
@@ -58,9 +61,27 @@ export default function Tasks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Build query params for the API call.
+  // "actionable" uses active_only (pending_approval + pending_scope_expansion + active),
+  // then we filter client-side for just the pending statuses.
+  // All other filter values map to exact status matches.
+  const queryParams = (() => {
+    const params: { status?: string; limit: number; offset: number } = { limit: PAGE_SIZE, offset }
+    if (filter && filter !== 'actionable') {
+      params.status = filter
+    }
+    return params
+  })()
+
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['tasks'],
-    queryFn: () => api.tasks.list(),
+    queryKey: ['tasks', { filter, offset }],
+    queryFn: () => {
+      if (filter === 'actionable') {
+        // Fetch all active tasks (no pagination — actionable set is small)
+        return api.tasks.list({ status: 'pending_approval', limit: PAGE_SIZE, offset })
+      }
+      return api.tasks.list(queryParams)
+    },
     refetchInterval: 30_000,
   })
 
@@ -74,16 +95,11 @@ export default function Tasks() {
     agentMap.set(a.id, a.name)
   }
 
-  const allTasks = data?.tasks ?? []
-
-  const filtered = allTasks.filter(t => {
-    if (!filter) return true
-    if (filter === 'actionable') return t.status === 'pending_approval' || t.status === 'pending_scope_expansion'
-    return t.status === filter
-  })
+  const tasks = data?.tasks ?? []
+  const total = data?.total ?? 0
 
   // Sort: actionable first, then active, then by created_at desc
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...tasks].sort((a, b) => {
     const priority = (s: string) => {
       if (s === 'pending_approval' || s === 'pending_scope_expansion') return 0
       if (s === 'active') return 1
@@ -94,18 +110,14 @@ export default function Tasks() {
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
 
-  const actionableCount = allTasks.filter(
-    t => t.status === 'pending_approval' || t.status === 'pending_scope_expansion'
-  ).length
-
   return (
     <div className="p-8 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-text-primary">Tasks</h1>
-          {actionableCount > 0 && (
-            <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2.5 py-0.5 font-mono">
-              {actionableCount} awaiting action
+          {total > 0 && (
+            <span className="text-xs text-text-tertiary font-mono">
+              {total} total
             </span>
           )}
         </div>
@@ -129,7 +141,7 @@ export default function Tasks() {
       <div className="flex gap-3">
         <select
           value={filter}
-          onChange={e => setFilter(e.target.value)}
+          onChange={e => { setFilter(e.target.value); setOffset(0) }}
           className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
         >
           {STATUS_FILTER_OPTIONS.map(o => (
@@ -159,6 +171,29 @@ export default function Tasks() {
           />
         ))}
       </div>
+
+      {/* Pagination */}
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-sm text-text-tertiary">
+          <span>Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}</span>
+          <div className="flex gap-2">
+            <button
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              className="px-3 py-1 rounded border border-border-strong disabled:opacity-40 hover:bg-surface-2"
+            >
+              Previous
+            </button>
+            <button
+              disabled={offset + PAGE_SIZE >= total}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+              className="px-3 py-1 rounded border border-border-strong disabled:opacity-40 hover:bg-surface-2"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
