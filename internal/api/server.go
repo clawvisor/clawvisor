@@ -307,12 +307,6 @@ func (s *Server) routes() http.Handler {
 	}
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
-	agent := func(h http.HandlerFunc) http.Handler { return requireAgent(h) }
-
-	// Rate-limited route helpers: auth runs first (resolves identity), then rate limit checks.
-	agentRateLimited := func(h http.HandlerFunc) http.Handler {
-		return requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(h))
-	}
 	userOAuthRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(oauthRL, userKeyFn, rlCfg.OAuth.Limit)(h))
 	}
@@ -372,13 +366,21 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
 
+	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
+	// Local requests pass through unencrypted; relay requests without E2E get 403.
+	e2e := func(h http.Handler) http.Handler { return h }
+	if s.x25519Key != nil {
+		e2eMw := middleware.E2E(s.x25519Key)
+		e2e = func(h http.Handler) http.Handler { return e2eMw(h) }
+	}
+
 	// Connection requests (unauthenticated — agents requesting access)
 	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
 	s.connectionsHandler = connectionsHandler
 	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
-		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(http.HandlerFunc(connectionsHandler.RequestConnect)))
-	mux.HandleFunc("GET /api/agents/connect/{id}/status", connectionsHandler.PollStatus)
+		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.RequestConnect))))
+	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
 	// Connection request management (user JWT)
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
@@ -401,24 +403,16 @@ func (s *Server) routes() http.Handler {
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
-	mux.Handle("POST /api/guard/check", agent(guardHandler.Check))
+	mux.Handle("POST /api/guard/check", requireAgent(e2e(http.HandlerFunc(guardHandler.Check))))
 
 	// Gateway (agent token, rate-limited, E2E on relay traffic)
-	if s.x25519Key != nil {
-		e2eMiddleware := middleware.E2E(s.x25519Key)
-		gatewayRequestHandler := requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
-			e2eMiddleware(http.HandlerFunc(gatewayHandler.HandleRequest))))
-		gatewayStatusHandler := requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
-			e2eMiddleware(http.HandlerFunc(gatewayHandler.HandleStatus))))
-		mux.Handle("POST /api/gateway/request", gatewayRequestHandler)
-		mux.Handle("GET /api/gateway/request/{request_id}/status", gatewayStatusHandler)
-	} else {
-		mux.Handle("POST /api/gateway/request", agentRateLimited(gatewayHandler.HandleRequest))
-		mux.Handle("GET /api/gateway/request/{request_id}/status", agentRateLimited(gatewayHandler.HandleStatus))
-	}
+	mux.Handle("POST /api/gateway/request", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleRequest)))))
+	mux.Handle("GET /api/gateway/request/{request_id}/status", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleStatus)))))
 
 	// Callback secret registration (agent token)
-	mux.Handle("POST /api/callbacks/register", agent(gatewayHandler.RegisterCallback))
+	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
@@ -430,7 +424,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
 
 	// Skill catalog (agent token)
-	mux.Handle("GET /api/skill/catalog", agent(skillHandler.Catalog))
+	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))
 
 	// Approvals (user JWT)
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
@@ -446,10 +440,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/overview", user(overviewHandler.Get))
 
 	// Tasks (agent auth)
-	mux.Handle("POST /api/tasks", agent(tasksHandler.Create))
-	mux.Handle("GET /api/tasks/{id}", agent(tasksHandler.Get))
-	mux.Handle("POST /api/tasks/{id}/complete", agent(tasksHandler.Complete))
-	mux.Handle("POST /api/tasks/{id}/expand", agent(tasksHandler.Expand))
+	mux.Handle("POST /api/tasks", requireAgent(e2e(http.HandlerFunc(tasksHandler.Create))))
+	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))
+	mux.Handle("POST /api/tasks/{id}/complete", requireAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
+	mux.Handle("POST /api/tasks/{id}/expand", requireAgent(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
 	// Tasks (user JWT)
 	mux.Handle("GET /api/tasks", user(tasksHandler.List))

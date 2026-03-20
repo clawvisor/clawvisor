@@ -121,7 +121,7 @@ function importX25519Pub(rawBytes) {
 }
 
 /**
- * Create an E2E client for making gateway requests.
+ * Create an E2E client for making encrypted requests to the daemon.
  *
  * On decryption failure (stale cached daemon key after key regeneration),
  * the client evicts the cache, fetches a fresh key, and retries once.
@@ -129,30 +129,31 @@ function importX25519Pub(rawBytes) {
 export async function createClient(daemonURL, agentToken) {
   let daemonKeyObj = await loadDaemonKey(daemonURL, false);
 
-  async function sendEncrypted(endpoint, body) {
+  async function sendEncrypted(method, endpoint, body) {
     const { publicKey: ephPub, privateKey: ephPriv } = generateKeyPairSync('x25519');
     const shared = diffieHellman({ privateKey: ephPriv, publicKey: daemonKeyObj });
 
-    // Encrypt request body: nonce(12) || ciphertext || tag(16)
-    const nonce = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', shared, nonce);
-    const encrypted = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(body))), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    const ciphertext = Buffer.concat([nonce, encrypted, tag]);
-
     const ephPubRaw = ephPub.export({ type: 'spki', format: 'der' }).subarray(-32);
 
-    const resp = await httpReq(
-      `${daemonURL}${endpoint}`,
-      'POST',
-      {
-        'Authorization': `Bearer ${agentToken}`,
-        'Content-Type': 'application/octet-stream',
-        'X-Clawvisor-E2E': 'aes-256-gcm',
-        'X-Clawvisor-Ephemeral-Key': ephPubRaw.toString('base64'),
-      },
-      ciphertext.toString('base64'),
-    );
+    const headers = {
+      'Authorization': `Bearer ${agentToken}`,
+      'X-Clawvisor-E2E': 'aes-256-gcm',
+      'X-Clawvisor-Ephemeral-Key': ephPubRaw.toString('base64'),
+    };
+
+    let reqBody = null;
+    if (body != null) {
+      // Encrypt request body: nonce(12) || ciphertext || tag(16)
+      const nonce = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', shared, nonce);
+      const encrypted = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(body))), cipher.final()]);
+      const tag = cipher.getAuthTag();
+      const ciphertext = Buffer.concat([nonce, encrypted, tag]);
+      headers['Content-Type'] = 'application/octet-stream';
+      reqBody = ciphertext.toString('base64');
+    }
+
+    const resp = await httpReq(`${daemonURL}${endpoint}`, method, headers, reqBody);
 
     if (resp.headers['x-clawvisor-e2e']) {
       return JSON.parse(decrypt(resp.body, shared));
@@ -160,20 +161,29 @@ export async function createClient(daemonURL, agentToken) {
     return JSON.parse(resp.body);
   }
 
+  async function requestWithRetry(method, endpoint, body) {
+    try {
+      const result = await sendEncrypted(method, endpoint, body);
+      // Check for E2E_ERROR in the response (decryption failed server-side
+      // because we used a stale key).
+      if (result?.code === 'E2E_ERROR') throw new Error('E2E error');
+      return result;
+    } catch (err) {
+      // Evict stale key, fetch fresh, and retry once.
+      evictKeyCache(daemonURL);
+      daemonKeyObj = await loadDaemonKey(daemonURL, true);
+      return sendEncrypted(method, endpoint, body);
+    }
+  }
+
   return {
+    /** Generic encrypted request. */
+    async request(method, endpoint, body) {
+      return requestWithRetry(method, endpoint, body);
+    },
+    /** Shorthand for POST /api/gateway/request. */
     async gatewayRequest(body) {
-      try {
-        const result = await sendEncrypted('/api/gateway/request', body);
-        // Check for E2E_ERROR in the response (decryption failed server-side
-        // because we used a stale key).
-        if (result?.code === 'E2E_ERROR') throw new Error('E2E error');
-        return result;
-      } catch (err) {
-        // Evict stale key, fetch fresh, and retry once.
-        evictKeyCache(daemonURL);
-        daemonKeyObj = await loadDaemonKey(daemonURL, true);
-        return sendEncrypted('/api/gateway/request', body);
-      }
+      return requestWithRetry('POST', '/api/gateway/request', body);
     },
   };
 }
@@ -190,17 +200,19 @@ async function loadDaemonKey(daemonURL, bypassCache) {
 // CLI entry point
 if (process.argv[1]?.endsWith('e2e.mjs')) {
   const args = process.argv.slice(2);
-  let url, token, body;
+  let url, token, body, endpoint = '/api/gateway/request', method = 'POST';
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--url') url = args[++i];
     else if (args[i] === '--token') token = args[++i];
     else if (args[i] === '--body') body = args[++i];
+    else if (args[i] === '--endpoint') endpoint = args[++i];
+    else if (args[i] === '--method') method = args[++i];
   }
-  if (!url || !token || !body) {
-    console.error('Usage: node e2e.mjs --url <daemon_url> --token <agent_token> --body \'<json>\'');
+  if (!url || !token) {
+    console.error('Usage: node e2e.mjs --url <daemon_url> --token <agent_token> [--endpoint /api/...] [--method POST] [--body \'<json>\']');
     process.exit(1);
   }
   const client = await createClient(url, token);
-  const result = await client.gatewayRequest(JSON.parse(body));
+  const result = await client.request(method, endpoint, body ? JSON.parse(body) : null);
   console.log(JSON.stringify(result, null, 2));
 }

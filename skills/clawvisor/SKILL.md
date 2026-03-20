@@ -34,7 +34,7 @@ If you were given a setup URL (e.g. `https://relay.clawvisor.com/d/<id>/skill/se
 3. Set `OPENCLAW_HOOKS_URL` to your OpenClaw gateway's reachable URL (default `http://localhost:18789`)
 4. Activate any services you want the agent to use (Gmail, GitHub, etc.) in the dashboard under Services
 5. Set dashboard policies to require approval for write/send/delete actions — only enable `auto_execute` for read-only actions you trust the agent to perform unsupervised
-6. If connecting through the cloud relay, use the bundled `e2e.mjs` helper or `cvis-e2e` binary — gateway requests through the relay require E2E encryption
+6. If connecting through the cloud relay, use the bundled `e2e.mjs` helper or `cvis-e2e` binary — all requests through the relay require E2E encryption
 
 > ⚠️ **`CLAWVISOR_AGENT_TOKEN` is a high-privilege credential.** It grants the agent access to every service activated in Clawvisor. Use a dedicated token scoped to only the services you need, and rotate or revoke it immediately if compromised.
 

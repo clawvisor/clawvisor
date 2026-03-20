@@ -23,7 +23,7 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 
 			if r.Header.Get("X-Clawvisor-E2E") == "" {
 				if viaRelay {
-					http.Error(w, `{"error":"E2E encryption required for gateway requests through relay","code":"E2E_REQUIRED"}`, http.StatusForbidden)
+					http.Error(w, `{"error":"E2E encryption required for requests through relay","code":"E2E_REQUIRED"}`, http.StatusForbidden)
 					return
 				}
 				next.ServeHTTP(w, r)
