@@ -386,12 +386,32 @@ export interface QueueApproval {
 }
 
 export interface QueueItem {
-  type: 'approval' | 'task'
+  type: 'approval' | 'task' | 'connection'
   id: string
   created_at: string
   expires_at: string | null
   approval?: QueueApproval
   task?: Task
+  connection?: ConnectionRequest
+}
+
+export interface PairedDevice {
+  id: string
+  user_id: string
+  device_name: string
+  paired_at: string
+  last_seen_at: string
+}
+
+export interface PairInfo {
+  daemon_id: string
+  relay_host: string
+}
+
+export interface PairSession {
+  pairing_token: string
+  code: string
+  expires_at: string
 }
 
 // ── API surface ───────────────────────────────────────────────────────────────
@@ -531,6 +551,12 @@ export const api = {
   },
   overview: {
     get: () => get<OverviewData>('/api/overview'),
+  },
+  devices: {
+    list: () => get<PairedDevice[]>('/api/devices'),
+    delete: (id: string) => del<void>(`/api/devices/${id}`),
+    pairInfo: () => get<PairInfo>('/api/devices/pair/info'),
+    startPairing: () => post<PairSession>('/api/devices/pair', {}),
   },
   oauthApprove: (params: {
     client_id: string

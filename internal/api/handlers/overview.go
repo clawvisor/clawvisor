@@ -93,6 +93,21 @@ func (h *OverviewHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 2b. Connection requests
+	connections, err := h.st.ListPendingConnectionRequests(r.Context(), user.ID)
+	if err == nil {
+		for _, cr := range connections {
+			exp := cr.ExpiresAt
+			queueItems = append(queueItems, queueItem{
+				Type:       "connection",
+				ID:         cr.ID,
+				CreatedAt:  cr.CreatedAt,
+				ExpiresAt:  &exp,
+				Connection: cr,
+			})
+		}
+	}
+
 	sort.Slice(queueItems, func(i, j int) bool {
 		return queueItems[i].CreatedAt.After(queueItems[j].CreatedAt)
 	})

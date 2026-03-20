@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict } from '../api/client'
+import { api, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
@@ -151,6 +151,8 @@ export default function Overview() {
             {queueItems.map(item =>
               item.type === 'approval' ? (
                 <ApprovalCard key={item.id} item={item} />
+              ) : item.type === 'connection' && item.connection ? (
+                <ConnectionQueueCard key={item.id} connection={item.connection} />
               ) : item.task ? (
                 <TaskCard
                   key={item.id}
@@ -452,6 +454,80 @@ function VerificationPanel({ verification: v }: { verification: VerificationVerd
           {v.explanation && <p className="text-xs text-text-secondary">{v.explanation}</p>}
           <div className="text-[10px] font-mono text-text-tertiary">{v.model} &middot; {v.latency_ms}ms</div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Connection request card (overview queue) ──────────────────────────────────
+
+function ConnectionQueueCard({ connection: cr }: { connection: ConnectionRequest }) {
+  const qc = useQueryClient()
+  const [result, setResult] = useState<string | null>(null)
+
+  const approveMut = useMutation({
+    mutationFn: () => api.connections.approve(cr.id),
+    onSuccess: () => {
+      setResult('Approved')
+      qc.invalidateQueries({ queryKey: ['overview'] })
+      qc.invalidateQueries({ queryKey: ['queue'] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+    },
+    onError: (err: Error) => setResult(`Failed: ${err.message}`),
+  })
+
+  const denyMut = useMutation({
+    mutationFn: () => api.connections.deny(cr.id),
+    onSuccess: () => {
+      setResult('Denied')
+      qc.invalidateQueries({ queryKey: ['overview'] })
+      qc.invalidateQueries({ queryKey: ['queue'] })
+    },
+    onError: (err: Error) => setResult(`Failed: ${err.message}`),
+  })
+
+  const isPending = approveMut.isPending || denyMut.isPending
+
+  if (result) {
+    return (
+      <div className="border border-border-default rounded-md bg-surface-1 p-5">
+        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-brand overflow-hidden">
+      <div className="px-5 pt-5 pb-4">
+        <span className="font-mono text-lg font-semibold text-text-primary">{cr.name}</span>
+        {cr.description && (
+          <p className="text-sm text-text-secondary mt-1.5">{cr.description}</p>
+        )}
+        <div className="flex items-center gap-2 mt-2">
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-brand/15 text-brand">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+            agent connection
+          </span>
+          <span className="text-xs text-text-tertiary">IP: <code className="font-mono">{cr.ip_address}</code></span>
+          {cr.expires_at && <CountdownTimer expiresAt={cr.expires_at} />}
+        </div>
+      </div>
+
+      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+        <button
+          onClick={() => denyMut.mutate()}
+          disabled={isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+        >
+          Deny
+        </button>
+        <button
+          onClick={() => approveMut.mutate()}
+          disabled={isPending}
+          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+        >
+          {approveMut.isPending ? 'Approving...' : 'Approve'}
+        </button>
       </div>
     </div>
   )

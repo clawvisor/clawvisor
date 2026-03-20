@@ -390,8 +390,13 @@ func (s *Server) routes() http.Handler {
 
 	// Device pairing and management
 	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.logger, baseURL, s.jwtSvc)
+	if s.daemonID != "" {
+		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
+		devicesHandler.SetRelayInfo(s.daemonID, relayHost)
+	}
 	s.devicesHandler = devicesHandler
 	devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+	mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
 	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
 	mux.Handle("POST /api/devices/pair/complete",
 		middleware.RateLimit(devicesRL, ipKeyFn, 5)(http.HandlerFunc(devicesHandler.CompletePairing)))

@@ -32,8 +32,19 @@ type DevicesHandler struct {
 	baseURL  string
 	jwtSvc   pkgauth.TokenService
 
+	// Relay info for QR-code pairing (set via SetRelayInfo).
+	daemonID  string
+	relayHost string
+
 	pairingsMu sync.Mutex
 	pairings   map[string]*pairingSession
+}
+
+// SetRelayInfo sets daemon_id and relay host so the web dashboard can construct
+// the App Clip QR URL for device pairing.
+func (h *DevicesHandler) SetRelayInfo(daemonID, relayHost string) {
+	h.daemonID = daemonID
+	h.relayHost = relayHost
 }
 
 type pairingSession struct {
@@ -91,6 +102,26 @@ func (h *DevicesHandler) StartPairing(w http.ResponseWriter, r *http.Request) {
 		"code":          code,
 		"pairing_url":   h.baseURL + "/api/devices/pair/complete",
 		"expires_at":    session.ExpiresAt,
+	})
+}
+
+// PairInfo returns the daemon_id and relay_host needed to construct the QR code URL.
+//
+// GET /api/devices/pair/info
+// Auth: user JWT
+func (h *DevicesHandler) PairInfo(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.daemonID == "" {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor daemon setup")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"daemon_id":  h.daemonID,
+		"relay_host": h.relayHost,
 	})
 }
 
