@@ -500,6 +500,15 @@ func (c *Client) doJSON(method, fullURL string, body interface{}, dst interface{
 
 // ── Devices ─────────────────────────────────────────────────────────────────
 
+// GetPairingCode fetches a new 6-digit pairing code from GET /api/pairing/code.
+func (c *Client) GetPairingCode() (*PairingCodeResponse, error) {
+	var resp PairingCodeResponse
+	if err := c.get("/api/pairing/code", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // StartPairing initiates a device pairing session and returns the token/code.
 func (c *Client) StartPairing() (*StartPairingResponse, error) {
 	var resp StartPairingResponse

@@ -247,6 +247,12 @@ type StartPairingResponse struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+type PairingCodeResponse struct {
+	DaemonID  string `json:"daemon_id"`
+	Code      string `json:"code"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
 type PairedDevice struct {
 	ID         string    `json:"id"`
 	DeviceName string    `json:"device_name"`
