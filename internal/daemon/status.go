@@ -16,6 +16,7 @@ type Status struct {
 	Running   bool   `json:"running"`
 	PID       int    `json:"pid,omitempty"`
 	ServerURL string `json:"server_url,omitempty"`
+	DaemonID  string `json:"daemon_id,omitempty"`
 }
 
 // CheckStatus reads the local session file and pings the server.
@@ -25,7 +26,9 @@ func CheckStatus() (*Status, error) {
 		return &Status{}, nil
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".clawvisor", ".local-session"))
+	dataDir := filepath.Join(home, ".clawvisor")
+
+	data, err := os.ReadFile(filepath.Join(dataDir, ".local-session"))
 	if err != nil {
 		return &Status{}, nil
 	}
@@ -45,8 +48,9 @@ func CheckStatus() (*Status, error) {
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		pid := readPIDFile(filepath.Join(home, ".clawvisor", ".daemon.pid"))
-		return &Status{Running: true, ServerURL: session.ServerURL, PID: pid}, nil
+		pid := readPIDFile(filepath.Join(dataDir, ".daemon.pid"))
+		daemonID, _ := readDaemonID(filepath.Join(dataDir, "config.yaml"))
+		return &Status{Running: true, ServerURL: session.ServerURL, PID: pid, DaemonID: daemonID}, nil
 	}
 	return &Status{ServerURL: session.ServerURL}, nil
 }
@@ -92,6 +96,9 @@ func PrintStatus(s *Status) {
 			fmt.Printf("  Daemon is running at %s (PID %d)\n", s.ServerURL, s.PID)
 		} else {
 			fmt.Printf("  Daemon is running at %s\n", s.ServerURL)
+		}
+		if s.DaemonID != "" {
+			fmt.Printf("  Daemon ID: %s\n", s.DaemonID)
 		}
 	} else {
 		fmt.Println("  Daemon is not running.")

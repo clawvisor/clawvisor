@@ -24,6 +24,7 @@ func init() {
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(healthcheckCmd)
 	rootCmd.AddCommand(daemonCmd)
+	rootCmd.AddCommand(updateCmd)
 }
 
 func main() {

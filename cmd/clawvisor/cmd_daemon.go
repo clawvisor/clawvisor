@@ -56,6 +56,17 @@ var daemonStopCmd = &cobra.Command{
 	},
 }
 
+var daemonRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the daemon service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := daemon.Stop(); err != nil {
+			return err
+		}
+		return daemon.Start()
+	},
+}
+
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show daemon status",
@@ -104,6 +115,7 @@ func init() {
 	daemonCmd.AddCommand(daemonUninstallCmd)
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
+	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonSetupCmd)
 	daemonCmd.AddCommand(daemonPairCmd)

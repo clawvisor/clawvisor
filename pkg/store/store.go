@@ -339,6 +339,7 @@ type OAuthAuthorizationCode struct {
 	CodeHash      string    `json:"-"`
 	ClientID      string    `json:"client_id"`
 	UserID        string    `json:"user_id"`
+	DaemonID      string    `json:"daemon_id,omitempty"` // set when authorized via relay
 	RedirectURI   string    `json:"redirect_uri"`
 	CodeChallenge string    `json:"code_challenge"`
 	Scope         string    `json:"scope"`

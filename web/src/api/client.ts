@@ -564,6 +564,7 @@ export const api = {
     state: string
     code_challenge: string
     scope: string
+    daemon_id?: string
   }) => post<{ redirect_uri: string }>('/oauth/authorize', params),
   oauthDeny: (params: {
     client_id: string

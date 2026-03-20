@@ -15,11 +15,54 @@ export default function Settings() {
   return (
     <div className="p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+      <DaemonInfo />
       <DevicePairing />
       <TelegramSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
     </div>
+  )
+}
+
+// ── Daemon ID display ────────────────────────────────────────────────────────
+
+function DaemonInfo() {
+  const [copied, setCopied] = useState(false)
+
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pair-info'],
+    queryFn: () => api.devices.pairInfo(),
+    retry: false,
+  })
+
+  if (!pairInfo?.daemon_id) return null
+
+  function copyId() {
+    navigator.clipboard.writeText(pairInfo!.daemon_id)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Daemon ID</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Use this ID to connect MCP clients or other tools to your daemon via the relay.
+        </p>
+      </div>
+      <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between max-w-lg">
+        <code className="text-lg font-mono font-semibold text-text-primary tracking-wide select-all">
+          {pairInfo.daemon_id}
+        </code>
+        <button
+          onClick={copyId}
+          className="ml-4 px-3 py-1.5 text-xs rounded border border-border-strong text-text-secondary hover:bg-surface-2 transition-colors"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+    </section>
   )
 }
 

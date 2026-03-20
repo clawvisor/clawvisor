@@ -1143,9 +1143,9 @@ func (s *Store) GetOAuthClient(ctx context.Context, clientID string) (*store.OAu
 
 func (s *Store) SaveAuthorizationCode(ctx context.Context, code *store.OAuthAuthorizationCode) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		code.CodeHash, code.ClientID, code.UserID, code.RedirectURI, code.CodeChallenge, code.Scope,
+		`INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		code.CodeHash, code.ClientID, code.UserID, code.DaemonID, code.RedirectURI, code.CodeChallenge, code.Scope,
 		code.ExpiresAt.UTC().Format(time.RFC3339),
 	)
 	return err
@@ -1161,10 +1161,10 @@ func (s *Store) ConsumeAuthorizationCode(ctx context.Context, codeHash string) (
 	c := &store.OAuthAuthorizationCode{}
 	var expiresAt, createdAt string
 	err = tx.QueryRowContext(ctx,
-		`SELECT code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at, created_at
+		`SELECT code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at, created_at
 		 FROM oauth_authorization_codes WHERE code_hash = ?`,
 		codeHash,
-	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &expiresAt, &createdAt)
+	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.DaemonID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &expiresAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

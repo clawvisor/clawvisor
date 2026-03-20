@@ -1074,9 +1074,9 @@ func (s *Store) GetOAuthClient(ctx context.Context, clientID string) (*store.OAu
 
 func (s *Store) SaveAuthorizationCode(ctx context.Context, code *store.OAuthAuthorizationCode) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, code.CodeHash, code.ClientID, code.UserID, code.RedirectURI, code.CodeChallenge, code.Scope, code.ExpiresAt)
+		INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, code.CodeHash, code.ClientID, code.UserID, code.DaemonID, code.RedirectURI, code.CodeChallenge, code.Scope, code.ExpiresAt)
 	return err
 }
 
@@ -1084,9 +1084,9 @@ func (s *Store) ConsumeAuthorizationCode(ctx context.Context, codeHash string) (
 	c := &store.OAuthAuthorizationCode{}
 	err := s.pool.QueryRow(ctx,
 		`DELETE FROM oauth_authorization_codes WHERE code_hash = $1
-		 RETURNING code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at, created_at`,
+		 RETURNING code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at, created_at`,
 		codeHash,
-	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &c.ExpiresAt, &c.CreatedAt)
+	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.DaemonID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &c.ExpiresAt, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

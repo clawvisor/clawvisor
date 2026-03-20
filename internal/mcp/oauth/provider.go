@@ -97,6 +97,7 @@ func (p *Provider) AuthorizeApprove(w http.ResponseWriter, r *http.Request) {
 		State         string `json:"state"`
 		CodeChallenge string `json:"code_challenge"`
 		Scope         string `json:"scope"`
+		DaemonID      string `json:"daemon_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -133,6 +134,7 @@ func (p *Provider) AuthorizeApprove(w http.ResponseWriter, r *http.Request) {
 		CodeHash:      auth.HashToken(code),
 		ClientID:      req.ClientID,
 		UserID:        claims.UserID,
+		DaemonID:      req.DaemonID,
 		RedirectURI:   req.RedirectURI,
 		CodeChallenge: req.CodeChallenge,
 		Scope:         req.Scope,
@@ -276,12 +278,17 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]string{
 		"access_token": rawToken,
 		"token_type":   "Bearer",
-	})
+	}
+	if authCode.DaemonID != "" {
+		resp["daemon_id"] = authCode.DaemonID
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // dangerousSchemes are URI schemes that can execute code in a browser context
