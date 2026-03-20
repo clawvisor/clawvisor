@@ -77,7 +77,7 @@ func TestPairingVerifyValid(t *testing.T) {
 	code := genResp["code"].(string)
 
 	// Verify with the correct code.
-	body, _ := json.Marshal(map[string]string{"code": code})
+	body, _ := json.Marshal(map[string]string{"pairing_code": code})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestPairingVerifyInvalidCode(t *testing.T) {
 	h.GenerateCode(w, req)
 
 	// Verify with the wrong code.
-	body, _ := json.Marshal(map[string]string{"code": "000000"})
+	body, _ := json.Marshal(map[string]string{"pairing_code": "000000"})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -124,7 +124,7 @@ func TestPairingVerifyNoActiveCode(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
 
 	// No code generated — verify should return false.
-	body, _ := json.Marshal(map[string]string{"code": "123456"})
+	body, _ := json.Marshal(map[string]string{"pairing_code": "123456"})
 	req := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -154,7 +154,7 @@ func TestPairingVerifySingleUse(t *testing.T) {
 	code := genResp["code"].(string)
 
 	// First verify — should succeed.
-	body, _ := json.Marshal(map[string]string{"code": code})
+	body, _ := json.Marshal(map[string]string{"pairing_code": code})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestPairingVerifySingleUse(t *testing.T) {
 	}
 
 	// Second verify with same code — should fail (consumed).
-	body, _ = json.Marshal(map[string]string{"code": code})
+	body, _ = json.Marshal(map[string]string{"pairing_code": code})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -195,7 +195,7 @@ func TestPairingVerifyExpired(t *testing.T) {
 	h.created = time.Now().Add(-6 * time.Minute)
 	h.mu.Unlock()
 
-	body, _ := json.Marshal(map[string]string{"code": code})
+	body, _ := json.Marshal(map[string]string{"pairing_code": code})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -218,7 +218,7 @@ func TestPairingVerifyBruteForce(t *testing.T) {
 
 	// Send 3 wrong codes.
 	for i := 0; i < maxPairingCodeAttempts; i++ {
-		body, _ := json.Marshal(map[string]string{"code": "000000"})
+		body, _ := json.Marshal(map[string]string{"pairing_code": "000000"})
 		req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w = httptest.NewRecorder()
@@ -262,7 +262,7 @@ func TestPairingNewCodeInvalidatesPrevious(t *testing.T) {
 	code2 := resp2["code"].(string)
 
 	// First code should be invalid.
-	body, _ := json.Marshal(map[string]string{"code": code1})
+	body, _ := json.Marshal(map[string]string{"pairing_code": code1})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -275,7 +275,7 @@ func TestPairingNewCodeInvalidatesPrevious(t *testing.T) {
 	}
 
 	// Second code should work.
-	body, _ = json.Marshal(map[string]string{"code": code2})
+	body, _ = json.Marshal(map[string]string{"pairing_code": code2})
 	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
@@ -290,7 +290,7 @@ func TestPairingNewCodeInvalidatesPrevious(t *testing.T) {
 func TestPairingVerifyEmptyCode(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
 
-	body, _ := json.Marshal(map[string]string{"code": ""})
+	body, _ := json.Marshal(map[string]string{"pairing_code": ""})
 	req := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -322,7 +322,7 @@ func TestPairingConcurrentVerify(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			body, _ := json.Marshal(map[string]string{"code": code})
+			body, _ := json.Marshal(map[string]string{"pairing_code": code})
 			r := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
 			r.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()

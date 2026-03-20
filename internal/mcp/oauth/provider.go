@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -205,7 +206,7 @@ func (p *Provider) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Token handles POST /oauth/token (authorization code exchange).
+// Token handles POST /oauth/token (authorization code exchange or relay pairing).
 func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid form body")
@@ -213,13 +214,19 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grantType := r.FormValue("grant_type")
+
+	if grantType == "relay_pairing" {
+		p.handleRelayPairing(w, r)
+		return
+	}
+
 	code := r.FormValue("code")
 	clientID := r.FormValue("client_id")
 	redirectURI := r.FormValue("redirect_uri")
 	codeVerifier := r.FormValue("code_verifier")
 
 	if grantType != "authorization_code" {
-		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "only authorization_code is supported")
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "unsupported grant_type")
 		return
 	}
 	if code == "" || clientID == "" || redirectURI == "" || codeVerifier == "" {
@@ -289,6 +296,47 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// handleRelayPairing creates an agent and issues a cvis_ token directly.
+// This grant type is only accepted when the request arrives via the relay tunnel.
+func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
+	if !relay.ViaRelay(r.Context()) {
+		writeOAuthError(w, http.StatusForbidden, "access_denied", "relay_pairing grant is only available via relay tunnel")
+		return
+	}
+
+	// Look up the local user — in daemon mode this is always admin@local.
+	user, err := p.st.GetUserByEmail(r.Context(), "admin@local")
+	if err != nil {
+		p.logger.Error("relay_pairing: could not find local user", "err", err)
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "could not resolve local user")
+		return
+	}
+
+	// Generate a long-lived agent token (same as authorization_code grant).
+	token, err := auth.GenerateAgentToken()
+	if err != nil {
+		p.logger.Error("relay_pairing: failed to generate agent token", "err", err)
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to generate token")
+		return
+	}
+
+	tokenHash := auth.HashToken(token)
+	agentName := "mcp-relay-agent"
+
+	if _, err := p.st.CreateAgent(r.Context(), user.ID, agentName, tokenHash); err != nil {
+		p.logger.Error("relay_pairing: failed to create agent", "err", err)
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to create agent")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]any{
+		"access_token": token,
+		"token_type":   "Bearer",
+	})
 }
 
 // dangerousSchemes are URI schemes that can execute code in a browser context

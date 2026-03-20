@@ -148,9 +148,14 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 
 	c.logger.Info("relay connected", "daemon_id", c.daemonID)
 
-	// Read loop.
+	// Read loop. We set a read deadline so that if the relay disappears
+	// without a clean close (e.g. deploy), we detect it within 90s rather
+	// than waiting for a TCP keepalive timeout (which can be minutes).
+	const readTimeout = 90 * time.Second
 	for {
-		_, data, readErr := conn.Read(ctx)
+		readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
+		_, data, readErr := conn.Read(readCtx)
+		readCancel()
 		if readErr != nil {
 			return connectedAt, fmt.Errorf("reading frame: %w", readErr)
 		}
