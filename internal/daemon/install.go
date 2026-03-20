@@ -148,6 +148,38 @@ func installLaunchd(home string, data installData) error {
 	return nil
 }
 
+// updatePlistBinary rewrites ProgramArguments[0] in the plist to match the
+// currently running executable. This ensures `daemon start` after an upgrade
+// always launches the freshly built binary.
+func updatePlistBinary(plistPath string) error {
+	binary, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolving executable: %w", err)
+	}
+	binary, err = filepath.EvalSymlinks(binary)
+	if err != nil {
+		return fmt.Errorf("resolving symlinks: %w", err)
+	}
+	if isGoRunBinary(binary) {
+		return nil // don't persist a go-run temp path
+	}
+
+	// Read current value to avoid unnecessary writes.
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :ProgramArguments:0", plistPath).Output()
+	if err != nil {
+		return fmt.Errorf("reading plist: %w", err)
+	}
+	if strings.TrimSpace(string(out)) == binary {
+		return nil // already correct
+	}
+
+	if err := exec.Command("/usr/libexec/PlistBuddy", "-c",
+		fmt.Sprintf("Set :ProgramArguments:0 %s", binary), plistPath).Run(); err != nil {
+		return fmt.Errorf("updating plist: %w", err)
+	}
+	return nil
+}
+
 func installSystemd(home string, data installData) error {
 	unitDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(unitDir, 0755); err != nil {
@@ -210,6 +242,8 @@ func Uninstall() error {
 }
 
 // Start activates the installed daemon service.
+// On macOS it also updates the plist binary path to match the current
+// executable so that upgrades take effect without a separate install step.
 func Start() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -222,6 +256,13 @@ func Start() error {
 		if _, err := os.Stat(plistPath); os.IsNotExist(err) {
 			return fmt.Errorf("daemon not installed; run `clawvisor daemon install` first")
 		}
+
+		// Update the plist binary path to the current executable so that
+		// upgrades (build + restart) pick up the new binary automatically.
+		if err := updatePlistBinary(plistPath); err != nil {
+			fmt.Printf("  Warning: could not update plist binary path: %v\n", err)
+		}
+
 		// Unload first in case an old/stale plist was already loaded.
 		exec.Command("launchctl", "unload", plistPath).Run() //nolint:errcheck
 		out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput()

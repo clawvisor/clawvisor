@@ -121,6 +121,10 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 		printBanner(opts.Config, authResult.MagicURL)
 	}
 
+	if opts.PushNotifier != nil {
+		logger.Info("push notifier enabled", "push_url", opts.Config.Push.URL, "daemon_id", opts.Config.Relay.DaemonID)
+	}
+
 	if ropts.OpenBrowser && authResult.MagicURL != "" {
 		browser.Open(authResult.MagicURL)
 	}

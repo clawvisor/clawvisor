@@ -792,6 +792,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	if filter.ActiveOnly {
 		where += " AND status IN (?, ?, ?)"
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
+		// Exclude session tasks that have expired but haven't been swept yet.
+		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < datetime('now'))"
 	}
 
 	// Count total matching rows.

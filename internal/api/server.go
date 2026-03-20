@@ -643,6 +643,8 @@ func (s *Server) Handler() http.Handler {
 
 // Run starts the HTTP server and blocks until the context is cancelled.
 func (s *Server) Run(ctx context.Context) error {
+	s.logger.Info("server running", "expired_task_filter", true)
+
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
 
