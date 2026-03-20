@@ -1331,9 +1331,9 @@ func (s *Store) CreatePairedDevice(ctx context.Context, d *store.PairedDevice) e
 		d.ID = uuid.New().String()
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO paired_devices (id, user_id, device_name, device_token, device_hmac_key)
-		VALUES (?, ?, ?, ?, ?)
-	`, d.ID, d.UserID, d.DeviceName, d.DeviceToken, d.DeviceHMACKey)
+		INSERT INTO paired_devices (id, user_id, device_name, device_token, device_hmac_key, push_to_start_token)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, d.ID, d.UserID, d.DeviceName, d.DeviceToken, d.DeviceHMACKey, d.PushToStartToken)
 	return err
 }
 
@@ -1341,9 +1341,9 @@ func (s *Store) GetPairedDevice(ctx context.Context, id string) (*store.PairedDe
 	d := &store.PairedDevice{}
 	var pairedAt, lastSeenAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		SELECT id, user_id, device_name, device_token, device_hmac_key, push_to_start_token, paired_at, last_seen_at
 		FROM paired_devices WHERE id = ?
-	`, id).Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &pairedAt, &lastSeenAt)
+	`, id).Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PushToStartToken, &pairedAt, &lastSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1357,7 +1357,7 @@ func (s *Store) GetPairedDevice(ctx context.Context, id string) (*store.PairedDe
 
 func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.PairedDevice, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, device_name, device_token, device_hmac_key, paired_at, last_seen_at
+		SELECT id, user_id, device_name, device_token, device_hmac_key, push_to_start_token, paired_at, last_seen_at
 		FROM paired_devices WHERE user_id = ? ORDER BY paired_at DESC
 	`, userID)
 	if err != nil {
@@ -1369,7 +1369,7 @@ func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.
 	for rows.Next() {
 		d := &store.PairedDevice{}
 		var pairedAt, lastSeenAt string
-		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey,
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PushToStartToken,
 			&pairedAt, &lastSeenAt); err != nil {
 			return nil, err
 		}
@@ -1395,6 +1395,19 @@ func (s *Store) DeletePairedDevice(ctx context.Context, id string) error {
 func (s *Store) UpdatePairedDeviceLastSeen(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE paired_devices SET last_seen_at = datetime('now') WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePairedDevicePushToStartToken(ctx context.Context, id, token string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET push_to_start_token = ? WHERE id = ?`, token, id)
 	if err != nil {
 		return err
 	}

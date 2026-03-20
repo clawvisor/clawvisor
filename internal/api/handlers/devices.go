@@ -289,6 +289,46 @@ func (h *DevicesHandler) Action(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "received"})
 }
 
+// UpdatePushToStartToken handles POST /api/devices/{id}/push-to-start-token (DeviceHMAC auth).
+// The mobile app sends its push-to-start token for Live Activity support.
+func (h *DevicesHandler) UpdatePushToStartToken(w http.ResponseWriter, r *http.Request) {
+	device := middleware.DeviceFromContext(r.Context())
+	if device == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "device not authenticated")
+		return
+	}
+
+	if r.PathValue("id") != device.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "device ID mismatch")
+		return
+	}
+
+	var body struct {
+		PushToStartToken string `json:"push_to_start_token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.PushToStartToken == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "push_to_start_token is required")
+		return
+	}
+
+	if err := h.st.UpdatePairedDevicePushToStartToken(r.Context(), device.ID, body.PushToStartToken); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update push-to-start token")
+		return
+	}
+
+	// Register the token with the push service so the daemon is authorized to send live activities to it.
+	if err := h.pushN.RegisterPushToStartToken(r.Context(), body.PushToStartToken); err != nil {
+		h.logger.Warn("failed to register push-to-start token with push service", "err", err)
+	}
+
+	_ = h.st.UpdatePairedDeviceLastSeen(r.Context(), device.ID)
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "updated"})
+}
+
 // RunCleanup periodically sweeps expired pairing sessions.
 func (h *DevicesHandler) RunCleanup(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)

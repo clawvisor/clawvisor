@@ -71,6 +71,14 @@ func (n *Notifier) RegisterDevice(ctx context.Context, deviceToken string) error
 	return n.signedPost(ctx, "/api/tokens/register", body)
 }
 
+// RegisterPushToStartToken registers a push-to-start token with the push
+// service so the daemon is authorized to send Live Activity pushes to it.
+// Idempotent — re-registering the same token is a no-op.
+func (n *Notifier) RegisterPushToStartToken(ctx context.Context, token string) error {
+	body, _ := json.Marshal(map[string]string{"push_to_start_token": token})
+	return n.signedPost(ctx, "/api/tokens/push-to-start", body)
+}
+
 // RegisterDaemon registers this daemon's Ed25519 public key with the push
 // service. The push service requires this before it will accept signed
 // requests. Idempotent — re-registering with the same key returns 201.
@@ -133,15 +141,33 @@ func (n *Notifier) DeregisterDevice(ctx context.Context, deviceToken string) err
 // ── notify.Notifier implementation ────────────────────────────────────────────
 
 func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalRequest) (string, error) {
+	summary := req.Service + "/" + req.Action
+	body := fmt.Sprintf("%s wants to use %s.%s", req.AgentName, req.Service, req.Action)
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
 		Category: "GATEWAY_APPROVAL",
 		Title:    "Approval Request",
-		Body:     fmt.Sprintf("%s wants to use %s.%s", req.AgentName, req.Service, req.Action),
+		Body:     body,
 		Data: map[string]string{
 			"target_id":      req.PendingID,
 			"type":           "approval",
 			"daemon_url":     n.daemonURL,
-			"action_summary": req.Service + "/" + req.Action,
+			"action_summary": summary,
+		},
+		LiveActivity: &liveActivityPayload{
+			AttributesType: "ApprovalActivityAttributes",
+			Attributes: map[string]string{
+				"targetID":      req.PendingID,
+				"daemonURL":     n.daemonURL,
+				"requestType":   "gateway_approval",
+				"category":      "GATEWAY_APPROVAL",
+				"actionSummary": summary,
+			},
+			ContentState: map[string]any{
+				"status":        "pending",
+				"resultMessage": nil,
+			},
+			AlertTitle: "Approval Request",
+			AlertBody:  body,
 		},
 	})
 }
@@ -155,6 +181,7 @@ func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.Activat
 }
 
 func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
+	summary := actionSummary(req.Actions)
 	data := map[string]string{
 		"target_id":  req.TaskID,
 		"type":       "task",
@@ -164,28 +191,66 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 	if req.RiskLevel != "" {
 		data["risk_level"] = req.RiskLevel
 	}
-	if summary := actionSummary(req.Actions); summary != "" {
+	if summary != "" {
 		data["action_summary"] = summary
 	}
+	body := fmt.Sprintf("%s: %s", req.AgentName, req.Purpose)
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
 		Category: "TASK_APPROVAL",
 		Title:    "Task Approval Request",
-		Body:     fmt.Sprintf("%s: %s", req.AgentName, req.Purpose),
+		Body:     body,
 		Data:     data,
+		LiveActivity: &liveActivityPayload{
+			AttributesType: "ApprovalActivityAttributes",
+			Attributes: map[string]string{
+				"targetID":      req.TaskID,
+				"daemonURL":     n.daemonURL,
+				"requestType":   "task_approval",
+				"category":      "TASK_APPROVAL",
+				"purpose":       req.Purpose,
+				"riskLevel":     req.RiskLevel,
+				"actionSummary": summary,
+			},
+			ContentState: map[string]any{
+				"status":        "pending",
+				"resultMessage": nil,
+			},
+			AlertTitle: "Task Approval Needed",
+			AlertBody:  body,
+		},
 	})
 }
 
 func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.ScopeExpansionRequest) (string, error) {
+	summary := req.NewAction.Service + "/" + req.NewAction.Action
+	body := fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason)
 	return n.sendToDevices(ctx, req.UserID, pushPayload{
 		Category: "SCOPE_EXPANSION",
 		Title:    "Scope Expansion Request",
-		Body:     fmt.Sprintf("%s wants to expand task scope: %s", req.AgentName, req.Reason),
+		Body:     body,
 		Data: map[string]string{
 			"target_id":      req.TaskID,
 			"type":           "scope_expansion",
 			"daemon_url":     n.daemonURL,
 			"purpose":        req.Purpose,
-			"action_summary": req.NewAction.Service + "/" + req.NewAction.Action,
+			"action_summary": summary,
+		},
+		LiveActivity: &liveActivityPayload{
+			AttributesType: "ApprovalActivityAttributes",
+			Attributes: map[string]string{
+				"targetID":      req.TaskID,
+				"daemonURL":     n.daemonURL,
+				"requestType":   "scope_expansion",
+				"category":      "SCOPE_EXPANSION",
+				"purpose":       req.Purpose,
+				"actionSummary": summary,
+			},
+			ContentState: map[string]any{
+				"status":        "pending",
+				"resultMessage": nil,
+			},
+			AlertTitle: "Scope Expansion Request",
+			AlertBody:  body,
 		},
 	})
 }
@@ -214,10 +279,19 @@ func (n *Notifier) SendAlert(ctx context.Context, userID, text string) error {
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 type pushPayload struct {
-	Category string            `json:"category,omitempty"`
-	Title    string            `json:"title"`
-	Body     string            `json:"body"`
-	Data     map[string]string `json:"data,omitempty"`
+	Category     string            `json:"category,omitempty"`
+	Title        string            `json:"title"`
+	Body         string            `json:"body"`
+	Data         map[string]string `json:"data,omitempty"`
+	LiveActivity *liveActivityPayload
+}
+
+type liveActivityPayload struct {
+	AttributesType string            `json:"attributes_type"`
+	Attributes     map[string]string `json:"attributes"`
+	ContentState   map[string]any    `json:"content_state"`
+	AlertTitle     string            `json:"alert_title"`
+	AlertBody      string            `json:"alert_body"`
 }
 
 type pushRequest struct {
@@ -226,6 +300,16 @@ type pushRequest struct {
 	Body         string            `json:"body"`
 	Category     string            `json:"category,omitempty"`
 	Data         map[string]string `json:"data,omitempty"`
+}
+
+type liveActivityRequest struct {
+	PushToStartTokens []string          `json:"push_to_start_tokens"`
+	Event             string            `json:"event"`
+	AttributesType    string            `json:"attributes_type"`
+	Attributes        map[string]string `json:"attributes"`
+	ContentState      map[string]any    `json:"content_state"`
+	AlertTitle        string            `json:"alert_title"`
+	AlertBody         string            `json:"alert_body"`
 }
 
 func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPayload) (string, error) {
@@ -259,6 +343,33 @@ func (n *Notifier) sendToDevices(ctx context.Context, userID string, p pushPaylo
 	if err := n.signedPost(ctx, "/api/push", body); err != nil {
 		return "", err
 	}
+
+	// Send push-to-start Live Activity if any device has a token and payload includes it.
+	if p.LiveActivity != nil {
+		var ptsTokens []string
+		for _, d := range devices {
+			if d.PushToStartToken != "" {
+				ptsTokens = append(ptsTokens, d.PushToStartToken)
+			}
+		}
+		if len(ptsTokens) > 0 {
+			laReq := liveActivityRequest{
+				PushToStartTokens: ptsTokens,
+				Event:             "start",
+				AttributesType:    p.LiveActivity.AttributesType,
+				Attributes:        p.LiveActivity.Attributes,
+				ContentState:      p.LiveActivity.ContentState,
+				AlertTitle:        p.LiveActivity.AlertTitle,
+				AlertBody:         p.LiveActivity.AlertBody,
+			}
+			laBody, _ := json.Marshal(laReq)
+			n.logger.Info("push: sending live activity", "token_count", len(ptsTokens))
+			if err := n.signedPost(ctx, "/api/push/live-activity", laBody); err != nil {
+				n.logger.Warn("push: live activity failed", "err", err)
+			}
+		}
+	}
+
 	return "push:" + n.daemonID, nil
 }
 

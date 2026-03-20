@@ -305,6 +305,115 @@ func verifySignatureFormat(t *testing.T, authHeader string, pub ed25519.PublicKe
 	_ = ts // already validated by presence check
 }
 
+func TestLiveActivitySentWhenTokenPresent(t *testing.T) {
+	var requests []struct {
+		Path string
+		Body []byte
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests = append(requests, struct {
+			Path string
+			Body []byte
+		}{r.URL.Path, body})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	devices := []*store.PairedDevice{
+		{ID: "d1", UserID: "u1", DeviceToken: "tok1", PushToStartToken: "pts-tok1"},
+		{ID: "d2", UserID: "u1", DeviceToken: "tok2"}, // no push-to-start token
+	}
+
+	n, _ := testNotifier(t, srv, devices)
+
+	_, err := n.SendTaskApprovalRequest(context.Background(), notify.TaskApprovalRequest{
+		TaskID:    "task-1",
+		UserID:    "u1",
+		AgentName: "Agent",
+		Purpose:   "Deploy",
+		RiskLevel: "high",
+		Actions:   []store.TaskAction{{Service: "github", Action: "push"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 requests (push + live-activity), got %d", len(requests))
+	}
+
+	// First request: standard push.
+	if requests[0].Path != "/api/push" {
+		t.Errorf("expected first request to /api/push, got %q", requests[0].Path)
+	}
+
+	// Second request: live activity.
+	if requests[1].Path != "/api/push/live-activity" {
+		t.Errorf("expected second request to /api/push/live-activity, got %q", requests[1].Path)
+	}
+
+	var laReq liveActivityRequest
+	if err := json.Unmarshal(requests[1].Body, &laReq); err != nil {
+		t.Fatalf("failed to unmarshal live activity request: %v", err)
+	}
+
+	if len(laReq.PushToStartTokens) != 1 || laReq.PushToStartTokens[0] != "pts-tok1" {
+		t.Errorf("expected push_to_start_tokens ['pts-tok1'], got %v", laReq.PushToStartTokens)
+	}
+	if laReq.Event != "start" {
+		t.Errorf("expected event 'start', got %q", laReq.Event)
+	}
+	if laReq.AttributesType != "ApprovalActivityAttributes" {
+		t.Errorf("expected attributes_type 'ApprovalActivityAttributes', got %q", laReq.AttributesType)
+	}
+	if laReq.Attributes["targetID"] != "task-1" {
+		t.Errorf("expected targetID 'task-1', got %q", laReq.Attributes["targetID"])
+	}
+	if laReq.Attributes["riskLevel"] != "high" {
+		t.Errorf("expected riskLevel 'high', got %q", laReq.Attributes["riskLevel"])
+	}
+	if laReq.Attributes["actionSummary"] != "github/push" {
+		t.Errorf("expected actionSummary 'github/push', got %q", laReq.Attributes["actionSummary"])
+	}
+}
+
+func TestLiveActivitySkippedWhenNoToken(t *testing.T) {
+	var requestPaths []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPaths = append(requestPaths, r.URL.Path)
+		io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// No push-to-start tokens.
+	devices := []*store.PairedDevice{
+		{ID: "d1", UserID: "u1", DeviceToken: "tok1"},
+	}
+
+	n, _ := testNotifier(t, srv, devices)
+
+	_, err := n.SendTaskApprovalRequest(context.Background(), notify.TaskApprovalRequest{
+		TaskID:    "task-1",
+		UserID:    "u1",
+		AgentName: "Agent",
+		Purpose:   "Deploy",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(requestPaths) != 1 {
+		t.Fatalf("expected 1 request (push only), got %d", len(requestPaths))
+	}
+	if requestPaths[0] != "/api/push" {
+		t.Errorf("expected request to /api/push, got %q", requestPaths[0])
+	}
+}
+
 func TestSignatureIncludesBodyHash(t *testing.T) {
 	// Capture the auth header and body to verify the signature message includes body hash.
 	var capturedAuth string

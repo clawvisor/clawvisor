@@ -97,6 +97,7 @@ type Store interface {
 	ListPairedDevices(ctx context.Context, userID string) ([]*PairedDevice, error)
 	DeletePairedDevice(ctx context.Context, id string) error
 	UpdatePairedDeviceLastSeen(ctx context.Context, id string) error
+	UpdatePairedDevicePushToStartToken(ctx context.Context, id, token string) error
 
 	// Connection requests (daemon agent onboarding)
 	CreateConnectionRequest(ctx context.Context, req *ConnectionRequest) error
@@ -299,13 +300,14 @@ type ChainFact struct {
 
 // PairedDevice represents a mobile device paired for push notifications.
 type PairedDevice struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"user_id"`
-	DeviceName    string    `json:"device_name"`
-	DeviceToken   string    `json:"-"`
-	DeviceHMACKey string    `json:"-"`
-	PairedAt      time.Time `json:"paired_at"`
-	LastSeenAt    time.Time `json:"last_seen_at"`
+	ID               string    `json:"id"`
+	UserID           string    `json:"user_id"`
+	DeviceName       string    `json:"device_name"`
+	DeviceToken      string    `json:"-"`
+	DeviceHMACKey    string    `json:"-"`
+	PushToStartToken string    `json:"-"` // APNs push-to-start token for Live Activities
+	PairedAt         time.Time `json:"paired_at"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
 }
 
 // ConnectionRequest represents an agent's request to connect to this daemon.
