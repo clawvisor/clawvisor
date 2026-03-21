@@ -21,15 +21,28 @@ import (
 
 // Provider implements OAuth 2.1 endpoints for MCP client authentication.
 type Provider struct {
-	st      store.Store
-	jwtSvc  pkgauth.TokenService
-	baseURL string
-	logger  *slog.Logger
+	st       store.Store
+	jwtSvc   pkgauth.TokenService
+	baseURL  string
+	daemonID string // relay daemon ID, included in token responses
+	logger   *slog.Logger
 }
 
 // NewProvider creates an OAuth provider.
-func NewProvider(st store.Store, jwtSvc pkgauth.TokenService, baseURL string, logger *slog.Logger) *Provider {
-	return &Provider{st: st, jwtSvc: jwtSvc, baseURL: baseURL, logger: logger}
+func NewProvider(st store.Store, jwtSvc pkgauth.TokenService, baseURL string, logger *slog.Logger, opts ...ProviderOption) *Provider {
+	p := &Provider{st: st, jwtSvc: jwtSvc, baseURL: baseURL, logger: logger}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
+}
+
+// ProviderOption configures optional Provider fields.
+type ProviderOption func(*Provider)
+
+// WithDaemonID sets the daemon ID included in token responses.
+func WithDaemonID(id string) ProviderOption {
+	return func(p *Provider) { p.daemonID = id }
 }
 
 // Register handles POST /oauth/register (RFC 7591 Dynamic Client Registration).
@@ -331,12 +344,17 @@ func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"access_token": token,
 		"token_type":   "Bearer",
-	})
+	}
+	if p.daemonID != "" {
+		resp["daemon_id"] = p.daemonID
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // dangerousSchemes are URI schemes that can execute code in a browser context

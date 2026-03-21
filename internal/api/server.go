@@ -531,7 +531,11 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("POST /mcp", mcpHandler.Handle)
 
 		// OAuth 2.1 (for MCP clients)
-		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger)
+		var oauthOpts []mcpoauth.ProviderOption
+		if s.daemonID != "" {
+			oauthOpts = append(oauthOpts, mcpoauth.WithDaemonID(s.daemonID))
+		}
+		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger, oauthOpts...)
 		mux.HandleFunc("GET /.well-known/oauth-protected-resource", oauthProvider.ProtectedResourceMetadata)
 		mux.HandleFunc("GET /.well-known/oauth-authorization-server", oauthProvider.AuthorizationServerMetadata)
 		// Rate limit registration to prevent database flooding.
