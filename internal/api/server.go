@@ -529,6 +529,8 @@ func (s *Server) routes() http.Handler {
 
 		mcpHandler := handlers.NewMCPHandler(mcpServer, s.store, baseURL)
 		mux.HandleFunc("POST /mcp", mcpHandler.Handle)
+		mux.HandleFunc("GET /mcp", mcpHandler.HandleSSE)
+		mux.HandleFunc("DELETE /mcp", mcpHandler.HandleDelete)
 
 		// OAuth 2.1 (for MCP clients)
 		var oauthOpts []mcpoauth.ProviderOption

@@ -80,6 +80,25 @@ func (h *MCPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// HandleSSE handles GET /mcp — the SSE transport entry point.
+// Returns 401 with OAuth discovery for unauthenticated requests so that
+// mcp-remote (and other MCP clients) fall through to OAuth instead of
+// mistakenly connecting to the SPA catch-all.
+func (h *MCPHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		h.writeUnauthorized(w)
+		return
+	}
+	// SSE streaming not implemented — tell client to use POST.
+	http.Error(w, "SSE transport not supported, use POST", http.StatusMethodNotAllowed)
+}
+
+// HandleDelete handles DELETE /mcp — session termination.
+func (h *MCPHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // writeUnauthorized sends a 401 with the WWW-Authenticate header
 // that tells MCP clients where to find the OAuth metadata.
 func (h *MCPHandler) writeUnauthorized(w http.ResponseWriter) {
