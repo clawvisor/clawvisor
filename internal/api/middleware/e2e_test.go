@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
+	"golang.org/x/crypto/hkdf"
 )
 
 func TestE2E_PlaintextLocal(t *testing.T) {
@@ -76,7 +78,9 @@ func TestE2E_EncryptDecryptRoundTrip(t *testing.T) {
 
 	// Agent side: encrypt the request.
 	agentKey, _ := ecdh.X25519().GenerateKey(rand.Reader)
-	shared, _ := agentKey.ECDH(daemonKey.PublicKey())
+	rawShared, _ := agentKey.ECDH(daemonKey.PublicKey())
+	shared := make([]byte, 32)
+	io.ReadFull(hkdf.New(sha256.New, rawShared, nil, []byte("clawvisor-e2e-v1")), shared)
 
 	block, _ := aes.NewCipher(shared)
 	gcm, _ := cipher.NewGCM(block)
@@ -133,7 +137,9 @@ func TestE2E_GETStatusViaRelay(t *testing.T) {
 
 	// Agent generates ephemeral key for response decryption.
 	agentKey, _ := ecdh.X25519().GenerateKey(rand.Reader)
-	shared, _ := agentKey.ECDH(daemonKey.PublicKey())
+	rawShared, _ := agentKey.ECDH(daemonKey.PublicKey())
+	shared := make([]byte, 32)
+	io.ReadFull(hkdf.New(sha256.New, rawShared, nil, []byte("clawvisor-e2e-v1")), shared)
 
 	req := httptest.NewRequest("GET", "/api/gateway/request/abc/status", nil)
 	ctx := relay.WithViaRelay(req.Context())

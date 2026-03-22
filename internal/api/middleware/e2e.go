@@ -6,11 +6,13 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"io"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
+	"golang.org/x/crypto/hkdf"
 )
 
 // E2E wraps a gateway handler to transparently decrypt E2E-encrypted request
@@ -49,10 +51,15 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 				return
 			}
 
-			// ECDH → shared secret.
-			shared, err := x25519Key.ECDH(ephPub)
+			// ECDH → shared secret → HKDF derived key.
+			rawShared, err := x25519Key.ECDH(ephPub)
 			if err != nil {
 				http.Error(w, `{"error":"ECDH key exchange failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
+				return
+			}
+			shared := make([]byte, 32)
+			if _, err := io.ReadFull(hkdf.New(sha256.New, rawShared, nil, []byte("clawvisor-e2e-v1")), shared); err != nil {
+				http.Error(w, `{"error":"key derivation failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
 				return
 			}
 

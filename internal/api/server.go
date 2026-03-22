@@ -411,7 +411,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
 	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
 	mux.Handle("POST /api/devices/pair/complete",
-		middleware.RateLimit(devicesRL, ipKeyFn, 5)(http.HandlerFunc(devicesHandler.CompletePairing)))
+		middleware.RateLimit(devicesRL, ipKeyFn, 5)(e2e(http.HandlerFunc(devicesHandler.CompletePairing))))
 	mux.Handle("GET /api/devices", user(devicesHandler.List))
 	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
 	requireDevice := middleware.RequireDevice(s.store)
