@@ -64,12 +64,14 @@ func Dashboard(noOpen bool) error {
 	}
 
 	dataDir := filepath.Join(home, ".clawvisor")
-	serverURL, magicToken, err := readLocalSession(dataDir)
-	if err != nil {
+	serverURL, _, err := readLocalSession(dataDir)
+	if err != nil || serverURL == "" {
 		return fmt.Errorf("no local session found — is the daemon running?")
 	}
-	if serverURL == "" || magicToken == "" {
-		return fmt.Errorf("incomplete local session — try restarting the daemon")
+
+	magicToken, err := requestMagicToken(serverURL)
+	if err != nil {
+		return fmt.Errorf("could not get dashboard token: %w", err)
 	}
 
 	dashURL := fmt.Sprintf("%s/magic-link?token=%s", serverURL, magicToken)
@@ -85,8 +87,34 @@ func Dashboard(noOpen bool) error {
 		return nil
 	}
 
-	fmt.Println("  Opening dashboard in browser...")
+	fmt.Println("  Opening Clawvisor dashboard in browser...")
 	return nil
+}
+
+// requestMagicToken asks the running server for a fresh magic token via the
+// localhost-only endpoint.
+func requestMagicToken(serverURL string) (string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(serverURL+"/api/auth/magic/local", "application/json", nil)
+	if err != nil {
+		return "", fmt.Errorf("contacting server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("server returned empty token")
+	}
+	return result.Token, nil
 }
 
 // PrintStatus prints the daemon status to stdout.
