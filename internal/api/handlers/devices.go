@@ -119,7 +119,7 @@ func (h *DevicesHandler) PairInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.daemonID == "" {
-		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor daemon setup")
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor setup")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

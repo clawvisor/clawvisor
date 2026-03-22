@@ -120,7 +120,7 @@ func runWithServiceSetup(dataDir string, logger *slog.Logger, phase int) error {
 	needsRestart, err := runServiceSetup(apiClient, dataDir)
 	if err != nil {
 		logger.Warn("service setup error", "err", err)
-		// Non-fatal: user can configure services later via 'clawvisor daemon setup'.
+		// Non-fatal: user can configure services later via 'clawvisor setup'.
 	}
 
 	// Shut down the setup-phase server cleanly.
@@ -323,7 +323,7 @@ func Setup(opts SetupOptions) error {
 		return err
 	}
 	if !install {
-		fmt.Println(dim.Padding(0, 2).Render("  You can install later with: clawvisor daemon install"))
+		fmt.Println(dim.Padding(0, 2).Render("  You can install later with: clawvisor install"))
 		fmt.Println()
 		return nil
 	}

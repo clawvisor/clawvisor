@@ -97,4 +97,4 @@ echo "  Starting Clawvisor daemon for first-run setup..."
 echo ""
 
 # Start the daemon in the foreground for first-run.
-exec "$INSTALL_DIR/$BINARY" daemon
+exec "$INSTALL_DIR/$BINARY" start

@@ -26,14 +26,14 @@ resolve_binary() {
             ;;
         Linux)
             if [[ -f "$SYSTEMD_UNIT" ]]; then
-                # ExecStart=/path/to/clawvisor daemon run
+                # ExecStart=/path/to/clawvisor start
                 grep -oP '^ExecStart=\K\S+' "$SYSTEMD_UNIT" 2>/dev/null && return
             fi
             ;;
     esac
 
     echo >&2 "Could not determine installed binary path."
-    echo >&2 "Set CLAWVISOR_BIN or run 'clawvisor daemon install' first."
+    echo >&2 "Set CLAWVISOR_BIN or run 'clawvisor install' first."
     exit 1
 }
 
@@ -64,7 +64,7 @@ echo "  Building backend from $REPO_ROOT ..."
 echo "  Built $(${BIN} --version 2>/dev/null || echo 'ok')"
 
 echo "  Restarting daemon..."
-"$BIN" daemon stop 2>/dev/null || true
-"$BIN" daemon start
+"$BIN" stop 2>/dev/null || true
+"$BIN" start --background
 
 echo "  Done."
