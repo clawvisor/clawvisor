@@ -65,44 +65,31 @@ func (h *PairingHandler) GenerateCode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// VerifyCode handles POST /api/pairing/verify (no auth — only reachable via tunnel).
-// Validates and consumes the pairing code (single-use). Limited to 3 attempts
-// per code to prevent brute-force guessing.
-func (h *PairingHandler) VerifyCode(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Code string `json:"pairing_code"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	if body.Code == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "code is required")
-		return
-	}
-
+// Verify validates and consumes the pairing code (single-use). Limited to 3
+// attempts per code to prevent brute-force guessing. Returns true if the code
+// is valid and was consumed, false otherwise.
+func (h *PairingHandler) Verify(code string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	// No active code or expired.
 	if h.code == "" || time.Since(h.created) > pairingCodeExpiry {
 		h.code = ""
-		writeJSON(w, http.StatusOK, map[string]any{"valid": false})
-		return
+		return false
 	}
 
 	// Wrong code — count the attempt.
-	if h.code != body.Code {
+	if h.code != code {
 		h.attempts++
 		if h.attempts >= maxPairingCodeAttempts {
 			h.code = "" // burn the code after max attempts
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"valid": false})
-		return
+		return false
 	}
 
 	// Correct — consume the code.
 	h.code = ""
-	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
+	return true
 }
 
 func generatePairingCode6() (string, error) {

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -66,174 +65,66 @@ func TestPairingGenerateCodeRejectsRelay(t *testing.T) {
 
 func TestPairingVerifyValid(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	code := generateAndGetCode(t, h)
 
-	// Generate a code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var genResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &genResp)
-	code := genResp["code"].(string)
-
-	// Verify with the correct code.
-	body, _ := json.Marshal(map[string]string{"pairing_code": code})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != true {
-		t.Error("expected valid: true")
+	if !h.Verify(code) {
+		t.Error("expected Verify to return true for correct code")
 	}
 }
 
 func TestPairingVerifyInvalidCode(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	generateAndGetCode(t, h) // generate a code but don't use it
 
-	// Generate a code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	// Verify with the wrong code.
-	body, _ := json.Marshal(map[string]string{"pairing_code": "000000"})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != false {
-		t.Error("expected valid: false")
+	if h.Verify("000000") {
+		t.Error("expected Verify to return false for wrong code")
 	}
 }
 
 func TestPairingVerifyNoActiveCode(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
 
-	// No code generated — verify should return false.
-	body, _ := json.Marshal(map[string]string{"pairing_code": "123456"})
-	req := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != false {
-		t.Error("expected valid: false when no code active")
+	if h.Verify("123456") {
+		t.Error("expected Verify to return false when no code active")
 	}
 }
 
 func TestPairingVerifySingleUse(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	code := generateAndGetCode(t, h)
 
-	// Generate a code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var genResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &genResp)
-	code := genResp["code"].(string)
-
-	// First verify — should succeed.
-	body, _ := json.Marshal(map[string]string{"pairing_code": code})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != true {
+	if !h.Verify(code) {
 		t.Fatal("first verify should succeed")
 	}
-
-	// Second verify with same code — should fail (consumed).
-	body, _ = json.Marshal(map[string]string{"pairing_code": code})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != false {
+	if h.Verify(code) {
 		t.Error("second verify should fail — code was consumed")
 	}
 }
 
 func TestPairingVerifyExpired(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
-
-	// Generate code then manually expire it.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var genResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &genResp)
-	code := genResp["code"].(string)
+	code := generateAndGetCode(t, h)
 
 	h.mu.Lock()
 	h.created = time.Now().Add(-6 * time.Minute)
 	h.mu.Unlock()
 
-	body, _ := json.Marshal(map[string]string{"pairing_code": code})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["valid"] != false {
-		t.Error("expired code should return valid: false")
+	if h.Verify(code) {
+		t.Error("expired code should return false")
 	}
 }
 
 func TestPairingVerifyBruteForce(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	generateAndGetCode(t, h)
 
-	// Generate a code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	// Send 3 wrong codes.
 	for i := 0; i < maxPairingCodeAttempts; i++ {
-		body, _ := json.Marshal(map[string]string{"pairing_code": "000000"})
-		req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w = httptest.NewRecorder()
-		h.VerifyCode(w, req)
-
-		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		if resp["valid"] != false {
-			t.Errorf("attempt %d: expected valid: false", i+1)
+		if h.Verify("000000") {
+			t.Errorf("attempt %d: expected false for wrong code", i+1)
 		}
 	}
 
-	// Code should be burned — even the correct code should fail.
 	h.mu.Lock()
-	// The code should have been cleared.
 	if h.code != "" {
 		t.Error("code should be cleared after max attempts")
 	}
@@ -242,79 +133,22 @@ func TestPairingVerifyBruteForce(t *testing.T) {
 
 func TestPairingNewCodeInvalidatesPrevious(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	code1 := generateAndGetCode(t, h)
+	code2 := generateAndGetCode(t, h)
 
-	// Generate first code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var resp1 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp1)
-	code1 := resp1["code"].(string)
-
-	// Generate second code.
-	req = httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w = httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var resp2 map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp2)
-	code2 := resp2["code"].(string)
-
-	// First code should be invalid.
-	body, _ := json.Marshal(map[string]string{"pairing_code": code1})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	var verifyResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &verifyResp)
-	if verifyResp["valid"] != false {
+	if h.Verify(code1) {
 		t.Error("first code should be invalid after generating a new one")
 	}
 
-	// Second code should work.
-	body, _ = json.Marshal(map[string]string{"pairing_code": code2})
-	req = httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	json.Unmarshal(w.Body.Bytes(), &verifyResp)
-	if verifyResp["valid"] != true {
+	if !h.Verify(code2) {
 		t.Error("second code should be valid")
-	}
-}
-
-func TestPairingVerifyEmptyCode(t *testing.T) {
-	h := NewPairingHandler("test-daemon-id")
-
-	body, _ := json.Marshal(map[string]string{"pairing_code": ""})
-	req := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.VerifyCode(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for empty code, got %d", w.Code)
 	}
 }
 
 func TestPairingConcurrentVerify(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	code := generateAndGetCode(t, h)
 
-	// Generate a code.
-	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
-	w := httptest.NewRecorder()
-	h.GenerateCode(w, req)
-
-	var genResp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &genResp)
-	code := genResp["code"].(string)
-
-	// Fire 10 concurrent verify requests with the correct code.
-	// Exactly one should succeed.
 	const n = 10
 	results := make([]bool, n)
 	var wg sync.WaitGroup
@@ -322,15 +156,7 @@ func TestPairingConcurrentVerify(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			body, _ := json.Marshal(map[string]string{"pairing_code": code})
-			r := httptest.NewRequest("POST", "/api/pairing/verify", bytes.NewReader(body))
-			r.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-			h.VerifyCode(rec, r)
-
-			var resp map[string]any
-			json.Unmarshal(rec.Body.Bytes(), &resp)
-			results[idx] = resp["valid"] == true
+			results[idx] = h.Verify(code)
 		}(i)
 	}
 	wg.Wait()
@@ -344,4 +170,18 @@ func TestPairingConcurrentVerify(t *testing.T) {
 	if successCount != 1 {
 		t.Errorf("expected exactly 1 successful verify, got %d", successCount)
 	}
+}
+
+// generateAndGetCode calls GenerateCode and returns the 6-digit code string.
+func generateAndGetCode(t *testing.T, h *PairingHandler) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/pairing/code", nil)
+	w := httptest.NewRecorder()
+	h.GenerateCode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GenerateCode failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	return resp["code"].(string)
 }
