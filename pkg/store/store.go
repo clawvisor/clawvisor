@@ -107,6 +107,11 @@ type Store interface {
 	DeleteExpiredConnectionRequests(ctx context.Context) error
 	CountPendingConnectionRequests(ctx context.Context) (int, error)
 
+	// MCP sessions (persist across restarts)
+	CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error
+	MCPSessionValid(ctx context.Context, id string) (bool, error)
+	CleanupMCPSessions(ctx context.Context) error
+
 	// OAuth (MCP client registration + authorization codes)
 	CreateOAuthClient(ctx context.Context, client *OAuthClient) error
 	GetOAuthClient(ctx context.Context, clientID string) (*OAuthClient, error)

@@ -1107,6 +1107,39 @@ func nilIfEmpty(b json.RawMessage) []byte {
 	return []byte(b)
 }
 
+// ── MCP Sessions ─────────────────────────────────────────────────────────────
+
+func (s *Store) CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO mcp_sessions (id, expires_at) VALUES ($1, $2)`,
+		id, expiresAt,
+	)
+	return err
+}
+
+func (s *Store) MCPSessionValid(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT 1 FROM mcp_sessions WHERE id = $1 AND expires_at > $2`,
+		id, time.Now().UTC(),
+	).Scan(&n)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) CleanupMCPSessions(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM mcp_sessions WHERE expires_at <= $1`,
+		time.Now().UTC(),
+	)
+	return err
+}
+
 // TelemetryCounts returns aggregate, anonymous usage data for telemetry.
 func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, error) {
 	c := &store.TelemetryCounts{

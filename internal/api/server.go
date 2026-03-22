@@ -525,7 +525,7 @@ func (s *Server) routes() http.Handler {
 			"POST /api/gateway/request":     http.HandlerFunc(gatewayHandler.HandleRequest),
 		}
 
-		mcpServer := mcp.NewServer(sessionTTL, mcpHandlers, s.logger)
+		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)
 		s.mcpServer = mcpServer
 
 		mcpHandler := handlers.NewMCPHandler(mcpServer, s.store, baseURL)

@@ -1427,6 +1427,39 @@ func (s *Store) UpdatePairedDevicePushToStartToken(ctx context.Context, id, toke
 	return nil
 }
 
+// ── MCP Sessions ─────────────────────────────────────────────────────────────
+
+func (s *Store) CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mcp_sessions (id, expires_at) VALUES (?, ?)`,
+		id, expiresAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (s *Store) MCPSessionValid(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM mcp_sessions WHERE id = ? AND expires_at > ?`,
+		id, time.Now().UTC().Format(time.RFC3339),
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) CleanupMCPSessions(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM mcp_sessions WHERE expires_at <= ?`,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isDuplicate(err error) bool {
