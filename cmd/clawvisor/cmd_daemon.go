@@ -10,13 +10,13 @@ import (
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Clawvisor daemon",
-	Long:  "Start the Clawvisor daemon in the foreground.\nUse --background to start the installed system service instead.",
+	Long:  "Start the Clawvisor daemon as a background service.\nUse --foreground to run in the foreground instead.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		bg, _ := cmd.Flags().GetBool("background")
-		if bg {
-			return daemon.Start()
+		fg, _ := cmd.Flags().GetBool("foreground")
+		if fg {
+			return daemon.Run(daemon.RunOptions{Foreground: true})
 		}
-		return daemon.Run(daemon.RunOptions{Foreground: true})
+		return daemon.Start()
 	},
 }
 
@@ -86,6 +86,6 @@ var dashboardCmd = &cobra.Command{
 }
 
 func init() {
-	startCmd.Flags().Bool("background", false, "Start the installed system service instead of running in the foreground")
+	startCmd.Flags().Bool("foreground", false, "Run in the foreground instead of starting the background service")
 	dashboardCmd.Flags().Bool("no-open", false, "Print the URL instead of opening the browser")
 }

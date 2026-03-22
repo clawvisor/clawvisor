@@ -142,7 +142,7 @@ func installLaunchd(home string, data installData) error {
 	}
 
 	fmt.Printf("  Installed launch agent: %s\n", plistPath)
-	fmt.Println("  To start now: clawvisor start --background")
+	fmt.Println("  To start now: clawvisor start")
 	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }
@@ -204,7 +204,7 @@ func installSystemd(home string, data installData) error {
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
 
 	fmt.Printf("  Installed systemd user service: %s\n", unitPath)
-	fmt.Println("  To start now: clawvisor start --background")
+	fmt.Println("  To start now: clawvisor start")
 	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }

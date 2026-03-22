@@ -65,6 +65,6 @@ echo "  Built $(${BIN} --version 2>/dev/null || echo 'ok')"
 
 echo "  Restarting daemon..."
 "$BIN" stop 2>/dev/null || true
-"$BIN" start --background
+"$BIN" start
 
 echo "  Done."
