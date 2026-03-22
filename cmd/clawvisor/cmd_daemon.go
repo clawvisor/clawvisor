@@ -99,7 +99,7 @@ var daemonPairCmd = &cobra.Command{
 
 var daemonDashboardCmd = &cobra.Command{
 	Use:   "dashboard",
-	Short: "Open the daemon dashboard in your browser",
+	Short: "Open the Clawvisor dashboard in your browser",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		noOpen, _ := cmd.Flags().GetBool("no-open")
 		return daemon.Dashboard(noOpen)

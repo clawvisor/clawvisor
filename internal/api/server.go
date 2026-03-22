@@ -332,6 +332,7 @@ func (s *Server) routes() http.Handler {
 	// Magic link auth (local mode only)
 	if s.magicStore != nil {
 		mux.Handle("POST /api/auth/magic", authRateLimited(authHandler.ExchangeMagic))
+		mux.Handle("POST /api/auth/magic/local", authRateLimited(authHandler.GenerateMagicLocal))
 	}
 
 	// Password auth routes are registered only when the PasswordAuth feature is enabled

@@ -341,6 +341,47 @@ func (h *AuthHandler) ExchangeMagic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// GenerateMagicLocal generates a fresh magic token for the admin@local user.
+// This endpoint is restricted to localhost connections and requires no auth,
+// so the CLI can always get a valid token to open the dashboard.
+//
+// POST /api/auth/magic/local
+func (h *AuthHandler) GenerateMagicLocal(w http.ResponseWriter, r *http.Request) {
+	if h.magicStore == nil {
+		writeError(w, http.StatusBadRequest, "NOT_ENABLED", "magic link auth is not enabled")
+		return
+	}
+
+	// Only allow requests from localhost.
+	host := r.RemoteAddr
+	// RemoteAddr is "host:port"; strip the port.
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	// Strip brackets from IPv6 addresses (e.g. "[::1]" → "::1").
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "this endpoint is only available from localhost")
+		return
+	}
+
+	const localEmail = "admin@local"
+	user, err := h.st.GetUserByEmail(r.Context(), localEmail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "local user not found")
+		return
+	}
+
+	token, err := h.magicStore.Generate(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authResponse, error) {
