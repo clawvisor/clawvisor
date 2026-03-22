@@ -4,16 +4,41 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/clawvisor/clawvisor/pkg/config"
+)
+
+const (
+	// writeTimeout bounds how long a single WebSocket write can block.
+	writeTimeout = 10 * time.Second
+
+	// authTimeout bounds the entire challenge-response handshake.
+	authTimeout = 15 * time.Second
+
+	// readTimeout detects silent relay disappearance faster than TCP keepalive.
+	readTimeout = 90 * time.Second
+
+	// pingInterval keeps the connection alive during idle periods.
+	pingInterval = 30 * time.Second
+
+	// maxConcurrentRequests caps in-flight request handler goroutines.
+	maxConcurrentRequests = 50
+
+	// maxReadSize limits the size of a single incoming WebSocket message (1 MB).
+	maxReadSize = 1 << 20
+
+	// maxConsecutiveAuthFailures triggers error-level logging when exceeded.
+	maxConsecutiveAuthFailures = 3
 )
 
 // Client manages a persistent WebSocket connection to the cloud relay.
@@ -24,12 +49,14 @@ type Client struct {
 	handler    http.Handler
 	logger     *slog.Logger
 
-	baseDelay time.Duration
-	maxDelay  time.Duration
+	baseDelay    time.Duration
+	maxDelay     time.Duration
+	authTimeout  time.Duration // overridable for tests; defaults to authTimeout const
 
 	mu        sync.Mutex
 	conn      *websocket.Conn
 	connected bool
+	connClose context.CancelFunc // cancels the per-connection context to tear down on write error
 }
 
 // New creates a relay client. The handler can be nil at construction time
@@ -47,13 +74,14 @@ func New(cfg config.RelayConfig, key ed25519.PrivateKey,
 	}
 
 	return &Client{
-		relayURL:   cfg.URL,
-		daemonID:   cfg.DaemonID,
-		privateKey: key,
-		handler:    handler,
-		logger:     logger,
-		baseDelay:  baseDelay,
-		maxDelay:   maxDelay,
+		relayURL:    cfg.URL,
+		daemonID:    cfg.DaemonID,
+		privateKey:  key,
+		handler:     handler,
+		logger:      logger,
+		baseDelay:   baseDelay,
+		maxDelay:    maxDelay,
+		authTimeout: authTimeout,
 	}
 }
 
@@ -67,11 +95,23 @@ func (c *Client) SetHandler(h http.Handler) {
 // Handles reconnection with exponential backoff.
 func (c *Client) Run(ctx context.Context) error {
 	delay := c.baseDelay
+	consecutiveAuthFailures := 0
 
 	for {
 		connectedAt, err := c.connectAndServe(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+
+		// Track consecutive auth failures to distinguish permanent from transient.
+		if err != nil && isAuthError(err) {
+			consecutiveAuthFailures++
+			if consecutiveAuthFailures >= maxConsecutiveAuthFailures {
+				c.logger.Error("relay auth failing repeatedly — check daemon key/config",
+					"err", err, "consecutive_failures", consecutiveAuthFailures)
+			}
+		} else {
+			consecutiveAuthFailures = 0
 		}
 
 		// Reset backoff if the connection was healthy for a meaningful period
@@ -109,7 +149,11 @@ func (c *Client) Connected() bool {
 
 // DaemonURL returns the public URL for this daemon.
 func (c *Client) DaemonURL() string {
-	return fmt.Sprintf("https://relay.clawvisor.com/d/%s", c.daemonID)
+	// Derive the public URL from the configured relay URL.
+	base := c.relayURL
+	base = strings.Replace(base, "wss://", "https://", 1)
+	base = strings.Replace(base, "ws://", "http://", 1)
+	return fmt.Sprintf("%s/d/%s", base, c.daemonID)
 }
 
 // connectAndServe establishes a WebSocket connection, authenticates, and
@@ -125,10 +169,21 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 	if dialErr != nil {
 		return time.Time{}, fmt.Errorf("dialing relay: %w", dialErr)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// Authenticate via challenge-response.
-	if authErr := c.authenticate(ctx, conn); authErr != nil {
+	// Limit incoming message size to prevent OOM from oversized frames.
+	conn.SetReadLimit(maxReadSize)
+
+	// Create a per-connection context so write errors can tear down the
+	// read loop immediately instead of waiting for the read timeout.
+	connCtx, connCancel := context.WithCancel(ctx)
+	defer connCancel()
+
+	// Authenticate via challenge-response with a bounded timeout.
+	authCtx, authCancel := context.WithTimeout(connCtx, c.authTimeout)
+	authErr := c.authenticate(authCtx, conn)
+	authCancel()
+	if authErr != nil {
+		conn.Close(websocket.StatusNormalClosure, "")
 		return time.Time{}, fmt.Errorf("relay auth: %w", authErr)
 	}
 
@@ -137,13 +192,26 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connClose = connCancel
 	c.mu.Unlock()
 
+	// Use a WaitGroup to drain in-flight handlers before closing the conn.
+	var wg sync.WaitGroup
+	// Semaphore to bound concurrent request handlers.
+	sem := make(chan struct{}, maxConcurrentRequests)
+
 	defer func() {
+		// Mark disconnected first so new sendFrame calls bail out.
 		c.mu.Lock()
 		c.conn = nil
 		c.connected = false
+		c.connClose = nil
 		c.mu.Unlock()
+
+		// Wait for in-flight request handlers to finish before closing
+		// the connection, so their response writes can complete.
+		wg.Wait()
+		conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	c.logger.Info("relay connected", "daemon_id", c.daemonID)
@@ -151,28 +219,26 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 	// Send periodic pings to keep the connection alive. The relay may not
 	// send traffic during idle periods, so without client-side pings the
 	// read timeout fires and we needlessly reconnect.
-	const pingInterval = 30 * time.Second
-	pingCtx, pingCancel := context.WithCancel(ctx)
-	defer pingCancel()
 	go func() {
 		ticker := time.NewTicker(pingInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-pingCtx.Done():
+			case <-connCtx.Done():
 				return
 			case <-ticker.C:
-				c.sendFrame(FramePing, "", nil)
+				if err := c.sendFrame(FramePing, "", nil); err != nil {
+					c.logger.Warn("relay: ping write failed, closing connection", "err", err)
+					connCancel() // tear down read loop
+					return
+				}
 			}
 		}
 	}()
 
-	// Read loop. We set a read deadline so that if the relay disappears
-	// without a clean close (e.g. deploy), we detect it within 90s rather
-	// than waiting for a TCP keepalive timeout (which can be minutes).
-	const readTimeout = 90 * time.Second
+	// Read loop.
 	for {
-		readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
+		readCtx, readCancel := context.WithTimeout(connCtx, readTimeout)
 		_, data, readErr := conn.Read(readCtx)
 		readCancel()
 		if readErr != nil {
@@ -192,7 +258,24 @@ func (c *Client) connectAndServe(ctx context.Context) (connectedAt time.Time, er
 				c.logger.Warn("relay: invalid request payload", "err", err)
 				continue
 			}
-			go c.handleRequest(ctx, frame.ID, payload)
+			// Acquire semaphore slot (bounded concurrency).
+			select {
+			case sem <- struct{}{}:
+			default:
+				c.logger.Warn("relay: too many concurrent requests, dropping", "id", frame.ID)
+				go c.sendResponse(frame.ID, HTTPResponsePayload{
+					Status:  http.StatusServiceUnavailable,
+					Headers: map[string][]string{"Content-Type": {"text/plain"}},
+					Body:    "c2VydmljZSBidXN5", // base64("service busy")
+				})
+				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				c.handleRequest(connCtx, frame.ID, payload)
+			}()
 
 		case FramePing:
 			c.sendFrame(FramePong, frame.ID, nil)
@@ -231,10 +314,9 @@ func (c *Client) authenticate(ctx context.Context, conn *websocket.Conn) error {
 	return nil
 }
 
-// sendFrame writes a frame to the WebSocket connection. The write is
-// serialized by the mutex to prevent concurrent writes from corrupting
-// the WebSocket stream.
-func (c *Client) sendFrame(typ FrameType, id string, payload any) {
+// sendFrame writes a frame to the WebSocket connection with a write timeout.
+// Returns an error if the write fails or the connection is not available.
+func (c *Client) sendFrame(typ FrameType, id string, payload any) error {
 	var payloadBytes json.RawMessage
 	if payload != nil {
 		payloadBytes, _ = json.Marshal(payload)
@@ -251,15 +333,25 @@ func (c *Client) sendFrame(typ FrameType, id string, payload any) {
 	conn := c.conn
 	if conn == nil {
 		c.mu.Unlock()
-		return
+		return errors.New("not connected")
 	}
-	_ = conn.Write(context.Background(), websocket.MessageText, data)
 	c.mu.Unlock()
+
+	writeCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }
 
 // sendResponse sends an HTTP response frame back to the relay.
 func (c *Client) sendResponse(id string, resp HTTPResponsePayload) {
-	c.sendFrame(FrameHTTPResponse, id, resp)
+	if err := c.sendFrame(FrameHTTPResponse, id, resp); err != nil {
+		c.logger.Debug("relay: failed to send response", "id", id, "err", err)
+	}
+}
+
+// isAuthError returns true if the error originated from the authentication phase.
+func isAuthError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "relay auth:")
 }
 
 // applyJitter adds ±25% random jitter to a duration.

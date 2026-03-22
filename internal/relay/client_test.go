@@ -29,6 +29,7 @@ type mockRelay struct {
 	dropAfter     int           // close conn after this many reads (0 = never auto-drop)
 	holdDuration  time.Duration // keep conn alive this long before closing (0 = use dropAfter)
 	rejectAuth    bool          // reject the auth handshake
+	stallAuth     bool          // never send challenge (to test auth timeout)
 	onConnect     func()        // called after successful auth
 }
 
@@ -40,6 +41,12 @@ func (m *mockRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	ctx := r.Context()
+
+	if m.stallAuth {
+		// Never send challenge — client should time out.
+		<-ctx.Done()
+		return
+	}
 
 	// Send challenge.
 	challenge := fmt.Sprintf("2026-03-17T10:00:00Z:%d", m.connectCount.Load())
@@ -467,5 +474,84 @@ func TestApplyJitter(t *testing.T) {
 		if j < min || j > max {
 			t.Fatalf("jittered %v outside [%v, %v]", j, min, max)
 		}
+	}
+}
+
+func TestClient_DaemonURL(t *testing.T) {
+	cfg := config.RelayConfig{
+		URL:      "wss://custom-relay.example.com",
+		DaemonID: "d123",
+	}
+	c := New(cfg, nil, nil, slog.Default())
+	got := c.DaemonURL()
+	want := "https://custom-relay.example.com/d/d123"
+	if got != want {
+		t.Errorf("DaemonURL() = %q, want %q", got, want)
+	}
+}
+
+func TestClient_DaemonURL_PlainWS(t *testing.T) {
+	cfg := config.RelayConfig{
+		URL:      "ws://localhost:8080",
+		DaemonID: "local",
+	}
+	c := New(cfg, nil, nil, slog.Default())
+	got := c.DaemonURL()
+	want := "http://localhost:8080/d/local"
+	if got != want {
+		t.Errorf("DaemonURL() = %q, want %q", got, want)
+	}
+}
+
+func TestClient_SendFrameReturnsErrorWhenDisconnected(t *testing.T) {
+	cfg := config.RelayConfig{
+		URL:      "ws://localhost:0",
+		DaemonID: "test",
+	}
+	c := New(cfg, nil, nil, slog.Default())
+	err := c.sendFrame(FramePing, "", nil)
+	if err == nil {
+		t.Fatal("expected error when not connected")
+	}
+}
+
+func TestClient_IsAuthError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{fmt.Errorf("relay auth: reading challenge: EOF"), true},
+		{fmt.Errorf("dialing relay: connection refused"), false},
+		{fmt.Errorf("reading frame: EOF"), false},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		got := isAuthError(tt.err)
+		if got != tt.want {
+			t.Errorf("isAuthError(%v) = %v, want %v", tt.err, got, tt.want)
+		}
+	}
+}
+
+func TestClient_ConsecutiveAuthFailuresLogsError(t *testing.T) {
+	pub, priv := newTestKeyPair(t)
+
+	// Stall the auth handshake — never send the challenge so the client
+	// hits the auth timeout and sees a "relay auth:" error.
+	mock := &mockRelay{pub: pub, stallAuth: true}
+	srv := httptest.NewServer(mock)
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, priv, "10ms", "50ms")
+	c.authTimeout = 50 * time.Millisecond // short timeout for test speed
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Run will keep retrying until context expires. We just verify it
+	// doesn't panic and respects the context.
+	err := c.Run(ctx)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
 }
