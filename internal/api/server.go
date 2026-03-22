@@ -390,14 +390,14 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
 
 	// Pairing code (for relay MCP OAuth consent — no auth, CORS for relay origin)
+	var pairingHandler *handlers.PairingHandler
 	if s.daemonID != "" {
-		pairingHandler := handlers.NewPairingHandler(s.daemonID)
+		pairingHandler = handlers.NewPairingHandler(s.daemonID)
 		corsOrigins := []string{"https://relay.clawvisor.com", "https://app.clawvisor.com"}
 		mux.Handle("GET /api/pairing/code",
 			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(pairingHandler.GenerateCode)))
 		mux.Handle("OPTIONS /api/pairing/code",
 			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
-		mux.HandleFunc("POST /api/pairing/verify", pairingHandler.VerifyCode)
 	}
 
 	// Device pairing and management
@@ -537,6 +537,9 @@ func (s *Server) routes() http.Handler {
 		var oauthOpts []mcpoauth.ProviderOption
 		if s.daemonID != "" {
 			oauthOpts = append(oauthOpts, mcpoauth.WithDaemonID(s.daemonID))
+		}
+		if pairingHandler != nil {
+			oauthOpts = append(oauthOpts, mcpoauth.WithPairingVerifier(pairingHandler.Verify))
 		}
 		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger, oauthOpts...)
 		mux.HandleFunc("GET /.well-known/oauth-protected-resource", oauthProvider.ProtectedResourceMetadata)

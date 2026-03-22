@@ -21,11 +21,12 @@ import (
 
 // Provider implements OAuth 2.1 endpoints for MCP client authentication.
 type Provider struct {
-	st       store.Store
-	jwtSvc   pkgauth.TokenService
-	baseURL  string
-	daemonID string // relay daemon ID, included in token responses
-	logger   *slog.Logger
+	st              store.Store
+	jwtSvc          pkgauth.TokenService
+	baseURL         string
+	daemonID        string              // relay daemon ID, included in token responses
+	logger          *slog.Logger
+	pairingVerifier func(string) bool   // verifies pairing code for relay_pairing grant
 }
 
 // NewProvider creates an OAuth provider.
@@ -43,6 +44,13 @@ type ProviderOption func(*Provider)
 // WithDaemonID sets the daemon ID included in token responses.
 func WithDaemonID(id string) ProviderOption {
 	return func(p *Provider) { p.daemonID = id }
+}
+
+// WithPairingVerifier sets the function used to verify pairing codes for the
+// relay_pairing grant type. The function should atomically validate and consume
+// the code, returning true if valid.
+func WithPairingVerifier(fn func(string) bool) ProviderOption {
+	return func(p *Provider) { p.pairingVerifier = fn }
 }
 
 // Register handles POST /oauth/register (RFC 7591 Dynamic Client Registration).
@@ -312,10 +320,22 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRelayPairing creates an agent and issues a cvis_ token directly.
-// This grant type is only accepted when the request arrives via the relay tunnel.
+// This grant type is only accepted when the request arrives via the relay tunnel
+// and includes a valid pairing_code.
 func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 	if !relay.ViaRelay(r.Context()) {
 		writeOAuthError(w, http.StatusForbidden, "access_denied", "relay_pairing grant is only available via relay tunnel")
+		return
+	}
+
+	// Verify the pairing code atomically.
+	pairingCode := r.FormValue("pairing_code")
+	if pairingCode == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "pairing_code is required")
+		return
+	}
+	if p.pairingVerifier == nil || !p.pairingVerifier(pairingCode) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "invalid or expired pairing code")
 		return
 	}
 
