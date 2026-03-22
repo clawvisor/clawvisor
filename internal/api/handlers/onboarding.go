@@ -21,7 +21,7 @@ func NewOnboardingHandler(relayHost, daemonID string) *OnboardingHandler {
 // Setup serves the onboarding markdown document.
 func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	if h.daemonID == "" || h.relayHost == "" {
-		http.Error(w, "Daemon not registered with relay. Re-run `clawvisor daemon setup`.", http.StatusServiceUnavailable)
+		http.Error(w, "Daemon not registered with relay. Re-run `clawvisor setup`.", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -23,8 +23,7 @@ const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
     <key>ProgramArguments</key>
     <array>
         <string>{{.Binary}}</string>
-        <string>daemon</string>
-        <string>run</string>
+        <string>start</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -52,7 +51,7 @@ Description=Clawvisor Daemon
 After=network-online.target
 
 [Service]
-ExecStart={{.Binary}} daemon run
+ExecStart={{.Binary}} start
 Restart=always
 RestartSec=5
 Environment=CONFIG_FILE={{.DataDir}}/config.yaml
@@ -96,7 +95,7 @@ func Install() error {
 	// go run builds a temporary binary that won't exist after the process
 	// exits, so installing it as a service would always fail to launch.
 	if isGoRunBinary(binary) {
-		return fmt.Errorf("cannot install a service from `go run` — build a binary first:\n  go build -o clawvisor ./cmd/clawvisor && ./clawvisor daemon install")
+		return fmt.Errorf("cannot install a service from `go run` — build a binary first:\n  go build -o clawvisor ./cmd/clawvisor && ./clawvisor install")
 	}
 
 	home, err := os.UserHomeDir()
@@ -117,7 +116,7 @@ func Install() error {
 	case "linux":
 		return installSystemd(home, data)
 	default:
-		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor daemon run`")
+		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor start`")
 	}
 }
 
@@ -143,8 +142,8 @@ func installLaunchd(home string, data installData) error {
 	}
 
 	fmt.Printf("  Installed launch agent: %s\n", plistPath)
-	fmt.Println("  To start now: clawvisor daemon start")
-	fmt.Println("  To stop:      clawvisor daemon stop")
+	fmt.Println("  To start now: clawvisor start --background")
+	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }
 
@@ -205,8 +204,8 @@ func installSystemd(home string, data installData) error {
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
 
 	fmt.Printf("  Installed systemd user service: %s\n", unitPath)
-	fmt.Println("  To start now: clawvisor daemon start")
-	fmt.Println("  To stop:      clawvisor daemon stop")
+	fmt.Println("  To start now: clawvisor start --background")
+	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }
 
@@ -254,7 +253,7 @@ func Start() error {
 	case "darwin":
 		plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 		if _, err := os.Stat(plistPath); os.IsNotExist(err) {
-			return fmt.Errorf("daemon not installed; run `clawvisor daemon install` first")
+			return fmt.Errorf("daemon not installed; run `clawvisor install` first")
 		}
 
 		// Update the plist binary path to the current executable so that
@@ -277,7 +276,7 @@ func Start() error {
 		}
 		fmt.Println("  Daemon started.")
 	default:
-		return fmt.Errorf("use `clawvisor daemon run` to start the daemon on this platform")
+		return fmt.Errorf("use `clawvisor start` to start the daemon on this platform")
 	}
 	return nil
 }
