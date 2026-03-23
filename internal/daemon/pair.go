@@ -21,9 +21,17 @@ func Pair() error {
 	}
 
 	// Authenticate with the running daemon.
-	serverURL, magicToken, err := readLocalSession(dataDir)
+	serverURL, _, err := readLocalSession(dataDir)
 	if err != nil {
 		return fmt.Errorf("could not read local session — is the daemon running?\n  Start it with: clawvisor start")
+	}
+
+	// Mint a fresh magic token via the localhost-only endpoint so we always
+	// have a valid (unused) token — the one in .local-session may already
+	// have been consumed by a previous command.
+	magicToken, err := requestMagicToken(serverURL)
+	if err != nil {
+		return fmt.Errorf("could not get auth token: %w", err)
 	}
 
 	apiClient, err := authenticateClient(serverURL, magicToken)
