@@ -4,7 +4,7 @@
 
 import {
   generateKeyPairSync, diffieHellman, createPublicKey,
-  createCipheriv, createDecipheriv, randomBytes
+  createCipheriv, createDecipheriv, randomBytes, hkdfSync
 } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
@@ -131,7 +131,8 @@ export async function createClient(daemonURL, agentToken) {
 
   async function sendEncrypted(method, endpoint, body) {
     const { publicKey: ephPub, privateKey: ephPriv } = generateKeyPairSync('x25519');
-    const shared = diffieHellman({ privateKey: ephPriv, publicKey: daemonKeyObj });
+    const rawShared = diffieHellman({ privateKey: ephPriv, publicKey: daemonKeyObj });
+    const shared = Buffer.from(hkdfSync('sha256', rawShared, Buffer.alloc(0), 'clawvisor-e2e-v1', 32));
 
     const ephPubRaw = ephPub.export({ type: 'spki', format: 'der' }).subarray(-32);
 
