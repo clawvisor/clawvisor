@@ -39,15 +39,14 @@ func Run(opts RunOptions) error {
 		return err
 	}
 
-	// Point the server at the daemon's config file.
-	os.Setenv("CONFIG_FILE", filepath.Join(dataDir, "config.yaml"))
+	cfgPath := filepath.Join(dataDir, "config.yaml")
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	if firstRun {
 		// Phase 1 (and optionally Phase 2 for Google OAuth restart):
 		// start server in background, run service setup, then hand off.
-		if err := runWithServiceSetup(dataDir, logger, 1); err != nil {
+		if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
 			return err
 		}
 		fmt.Println()
@@ -64,7 +63,7 @@ func Run(opts RunOptions) error {
 	defer os.Remove(pidPath)
 
 	// Final production run — blocks until SIGINT/SIGTERM.
-	return server.Run(logger, server.RunOptions{})
+	return server.Run(logger, server.RunOptions{ConfigPath: cfgPath})
 }
 
 // runWithServiceSetup starts the server with a cancellable context, waits for
@@ -72,12 +71,12 @@ func Run(opts RunOptions) error {
 // down cleanly. phase should be 1 on first call; 2 on the restart triggered
 // by Google OAuth credential collection. Passing phase >= 2 disables further
 // restarts, preventing infinite loops if something goes wrong.
-func runWithServiceSetup(dataDir string, logger *slog.Logger, phase int) error {
+func runWithServiceSetup(dataDir, cfgPath string, logger *slog.Logger, phase int) error {
 	// Re-read DefaultOptions so the server picks up any config changes (e.g.
 	// Google creds written between phases). Use a discarding logger so server
 	// request logs don't clutter the interactive setup output.
 	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srvOpts, err := clawvisor.DefaultOptions(quietLogger)
+	srvOpts, err := clawvisor.DefaultOptions(quietLogger, cfgPath)
 	if err != nil {
 		return fmt.Errorf("building server options: %w", err)
 	}
@@ -139,7 +138,7 @@ func runWithServiceSetup(dataDir string, logger *slog.Logger, phase int) error {
 		fmt.Println()
 		fmt.Println(dim.Padding(0, 2).Render("  Restarting with updated configuration..."))
 		fmt.Println()
-		return runWithServiceSetup(dataDir, logger, phase+1)
+		return runWithServiceSetup(dataDir, cfgPath, logger, phase+1)
 	}
 
 	return nil
@@ -148,9 +147,10 @@ func runWithServiceSetup(dataDir string, logger *slog.Logger, phase int) error {
 // waitForServer polls the /health endpoint until it returns 200 or the
 // deadline (10 seconds) is exceeded.
 func waitForServer(serverURL string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/health") //nolint:noctx
+		resp, err := client.Get(serverURL + "/health") //nolint:noctx
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -293,15 +293,12 @@ func Setup(opts SetupOptions) error {
 		return err
 	}
 
-	// Point the server at the freshly written config file.
-	os.Setenv("CONFIG_FILE", cfgPath)
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// Start a temporary server and run the service setup wizard against it,
 	// just like the first-run path. This avoids depending on a running daemon
 	// that may have stale config.
-	if err := runWithServiceSetup(dataDir, logger, 1); err != nil {
+	if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
 		return err
 	}
 

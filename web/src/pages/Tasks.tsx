@@ -75,10 +75,17 @@ export default function Tasks() {
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['tasks', { filter, offset }],
-    queryFn: () => {
+    queryFn: async () => {
       if (filter === 'actionable') {
-        // Fetch all active tasks (no pagination — actionable set is small)
-        return api.tasks.list({ status: 'pending_approval', limit: PAGE_SIZE, offset })
+        // Fetch both pending statuses and merge (no pagination — actionable set is small)
+        const [approvals, expansions] = await Promise.all([
+          api.tasks.list({ status: 'pending_approval', limit: PAGE_SIZE, offset }),
+          api.tasks.list({ status: 'pending_scope_expansion', limit: PAGE_SIZE, offset }),
+        ])
+        return {
+          tasks: [...(approvals.tasks ?? []), ...(expansions.tasks ?? [])],
+          total: (approvals.total ?? 0) + (expansions.total ?? 0),
+        }
       }
       return api.tasks.list(queryParams)
     },

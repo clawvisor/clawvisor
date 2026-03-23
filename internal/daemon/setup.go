@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -253,6 +254,13 @@ func stepDaemonTelemetry(cfg *daemonConfig) error {
 	).Run()
 }
 
+// yamlQuote safely quotes a string for use as a YAML scalar value,
+// handling special characters that would otherwise corrupt the config.
+func yamlQuote(s string) string {
+	out, _ := yaml.Marshal(s)
+	return strings.TrimSpace(string(out))
+}
+
 func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error {
 	var b strings.Builder
 
@@ -265,14 +273,14 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 
 	fmt.Fprintf(&b, "\ndatabase:\n")
 	fmt.Fprintf(&b, "  driver: \"sqlite\"\n")
-	fmt.Fprintf(&b, "  sqlite_path: \"%s\"\n", filepath.Join(dataDir, "clawvisor.db"))
+	fmt.Fprintf(&b, "  sqlite_path: %s\n", yamlQuote(filepath.Join(dataDir, "clawvisor.db")))
 
 	fmt.Fprintf(&b, "\nvault:\n")
 	fmt.Fprintf(&b, "  backend: \"local\"\n")
-	fmt.Fprintf(&b, "  local_key_file: \"%s\"\n", filepath.Join(dataDir, "vault.key"))
+	fmt.Fprintf(&b, "  local_key_file: %s\n", yamlQuote(filepath.Join(dataDir, "vault.key")))
 
 	fmt.Fprintf(&b, "\nauth:\n")
-	fmt.Fprintf(&b, "  jwt_secret: \"%s\"\n", jwtSecret)
+	fmt.Fprintf(&b, "  jwt_secret: %s\n", yamlQuote(jwtSecret))
 
 	fmt.Fprintf(&b, "\nservices:\n")
 	fmt.Fprintf(&b, "  imessage:\n")
@@ -285,7 +293,7 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "\nllm:\n")
 	fmt.Fprintf(&b, "  provider: %s\n", cfg.llmProvider)
 	fmt.Fprintf(&b, "  endpoint: %s\n", cfg.llmEndpoint)
-	fmt.Fprintf(&b, "  api_key: \"%s\"\n", cfg.llmAPIKey)
+	fmt.Fprintf(&b, "  api_key: %s\n", yamlQuote(cfg.llmAPIKey))
 	fmt.Fprintf(&b, "  model: %s\n", cfg.llmModel)
 	fmt.Fprintf(&b, "  verification:\n")
 	fmt.Fprintf(&b, "    enabled: true\n")
@@ -310,15 +318,15 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	}
 	fmt.Fprintf(&b, "\npush:\n")
 	fmt.Fprintf(&b, "  enabled: true\n")
-	fmt.Fprintf(&b, "  url: \"%s\"\n", pushURL)
+	fmt.Fprintf(&b, "  url: %s\n", yamlQuote(pushURL))
 
 	fmt.Fprintf(&b, "\nrelay:\n")
 	fmt.Fprintf(&b, "  enabled: true\n")
-	fmt.Fprintf(&b, "  url: \"%s\"\n", relayURL)
-	fmt.Fprintf(&b, "  key_file: \"%s\"\n", filepath.Join(dataDir, "daemon-ed25519.key"))
-	fmt.Fprintf(&b, "  e2e_key_file: \"%s\"\n", filepath.Join(dataDir, "daemon-x25519.key"))
+	fmt.Fprintf(&b, "  url: %s\n", yamlQuote(relayURL))
+	fmt.Fprintf(&b, "  key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-ed25519.key")))
+	fmt.Fprintf(&b, "  e2e_key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-x25519.key")))
 
-	return os.WriteFile(path, []byte(b.String()), 0644)
+	return os.WriteFile(path, []byte(b.String()), 0600)
 }
 
 

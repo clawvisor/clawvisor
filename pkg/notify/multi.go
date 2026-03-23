@@ -22,7 +22,7 @@ type MultiNotifier struct {
 // NewMultiNotifier creates a MultiNotifier that delegates to the given notifiers.
 // It inspects each notifier for optional interfaces (TelegramPairer, PollingDecrementer,
 // DecisionChannel) and wires them through.
-func NewMultiNotifier(logger *slog.Logger, notifiers ...Notifier) *MultiNotifier {
+func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Notifier) *MultiNotifier {
 	m := &MultiNotifier{
 		notifiers:  notifiers,
 		logger:     logger,
@@ -49,14 +49,22 @@ func NewMultiNotifier(logger *slog.Logger, notifiers ...Notifier) *MultiNotifier
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for d := range ch {
-					m.decisionCh <- d
+				for {
+					select {
+					case d, ok := <-ch:
+						if !ok {
+							return
+						}
+						m.decisionCh <- d
+					case <-ctx.Done():
+						return
+					}
 				}
 			}()
 		}
 	}
 
-	// Close the merged channel when all inner channels close.
+	// Close the merged channel when all inner channels close or ctx cancels.
 	go func() {
 		wg.Wait()
 		close(m.decisionCh)
