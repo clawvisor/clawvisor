@@ -22,6 +22,7 @@ import (
 // RunOptions holds optional flags for the server entrypoint.
 type RunOptions struct {
 	OpenBrowser bool
+	ConfigPath  string // If set, passed to DefaultOptions instead of using env var.
 }
 
 // LocalAuthResult holds the outputs of SetupLocalAuth.
@@ -105,7 +106,7 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 // Run starts the Clawvisor API server. This is the main entrypoint called
 // from cmd/clawvisor/cmd_server.go.
 func Run(logger *slog.Logger, ropts RunOptions) error {
-	opts, err := clawvisor.DefaultOptions(logger)
+	opts, err := clawvisor.DefaultOptions(logger, ropts.ConfigPath)
 	if err != nil {
 		return err
 	}

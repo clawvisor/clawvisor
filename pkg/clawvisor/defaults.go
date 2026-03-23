@@ -53,12 +53,17 @@ import (
 //	opts.Store = tenancy.Wrap(opts.Store)
 //	opts.Features.PasswordAuth = true
 //	clawvisor.Run(opts)
-func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
+// DefaultOptions builds a ServerOptions from config. If configPath is provided,
+// it is used directly; otherwise CONFIG_FILE env var is consulted, falling back
+// to "config.yaml".
+func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, error) {
 	ctx := context.Background()
 
 	// ── Config ─────────────────────────────────────────────────────────────
 	cfgPath := "config.yaml"
-	if p := os.Getenv("CONFIG_FILE"); p != "" {
+	if len(configPath) > 0 && configPath[0] != "" {
+		cfgPath = configPath[0]
+	} else if p := os.Getenv("CONFIG_FILE"); p != "" {
 		cfgPath = p
 	}
 	cfg, err := config.Load(cfgPath)
@@ -211,7 +216,7 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 	if pushN != nil {
 		notifiers = append(notifiers, pushN)
 	}
-	var notifier notify.Notifier = notify.NewMultiNotifier(logger, notifiers...)
+	var notifier notify.Notifier = notify.NewMultiNotifier(ctx, logger, notifiers...)
 
 	// ── Auth mode ──────────────────────────────────────────────────────────
 	// Default is magic-link. Set auth_mode: "password" in config.yaml

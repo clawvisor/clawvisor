@@ -396,53 +396,81 @@ func googleCredsPresent(configPath string) (bool, error) {
 	return strings.TrimSpace(id) != "", nil
 }
 
-// patchGoogleConfig inserts Google OAuth credentials into config.yaml using
-// line-level editing to avoid the corruption caused by YAML round-tripping
-// through map[string]interface{} (which re-encodes all values and can mangle
-// strings containing special characters).
+// patchGoogleConfig inserts or replaces the google: block under services: in
+// the daemon config file. Uses yaml.Node to make structural edits while
+// preserving comments and formatting of unrelated sections.
 func patchGoogleConfig(configPath, clientID, clientSecret string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
 
-	content := string(data)
-	googleBlock := fmt.Sprintf("  google:\n    client_id: \"%s\"\n    client_secret: \"%s\"\n", clientID, clientSecret)
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config YAML: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("unexpected YAML structure in %s", configPath)
+	}
+	root := doc.Content[0] // mapping node
 
-	// If there's already a google: section under services:, replace it.
-	// Otherwise, append it after the services: line.
-	if strings.Contains(content, "  google:") {
-		// Replace existing google block (from "  google:" to next top-level or peer key).
-		lines := strings.Split(content, "\n")
-		var out []string
-		inGoogle := false
-		for _, line := range lines {
-			if strings.HasPrefix(line, "  google:") {
-				inGoogle = true
-				out = append(out, strings.TrimRight(googleBlock, "\n"))
-				continue
-			}
-			if inGoogle {
-				// Still inside google block if indented deeper than 2 spaces.
-				trimmed := strings.TrimLeft(line, " ")
-				indent := len(line) - len(trimmed)
-				if indent > 2 && trimmed != "" {
-					continue // skip old google sub-keys
-				}
-				inGoogle = false
-			}
-			out = append(out, line)
-		}
-		content = strings.Join(out, "\n")
-	} else if strings.Contains(content, "services:") {
-		// Append google block after services: line.
-		content = strings.Replace(content, "services:\n", "services:\n"+googleBlock, 1)
-	} else {
-		// No services section — append one.
-		content += "\nservices:\n" + googleBlock
+	// Find or create the "services" key.
+	servicesNode := yamlMapGet(root, "services")
+	if servicesNode == nil {
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "services"},
+			&yaml.Node{Kind: yaml.MappingNode},
+		)
+		servicesNode = root.Content[len(root.Content)-1]
 	}
 
-	return os.WriteFile(configPath, []byte(content), 0600)
+	// Find or create the "google" key under services.
+	googleNode := yamlMapGet(servicesNode, "google")
+	if googleNode == nil {
+		servicesNode.Content = append(servicesNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "google"},
+			&yaml.Node{Kind: yaml.MappingNode},
+		)
+		googleNode = servicesNode.Content[len(servicesNode.Content)-1]
+	}
+
+	// Set client_id and client_secret.
+	yamlMapSet(googleNode, "client_id", clientID)
+	yamlMapSet(googleNode, "client_secret", clientSecret)
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return fmt.Errorf("marshaling config YAML: %w", err)
+	}
+	return os.WriteFile(configPath, out, 0600)
+}
+
+// yamlMapGet returns the value node for the given key in a mapping node,
+// or nil if not found.
+func yamlMapGet(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// yamlMapSet sets or inserts a scalar key-value pair in a mapping node.
+func yamlMapSet(mapping *yaml.Node, key, value string) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Value: value}
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: value},
+	)
 }
 
 // injectMissingGoogleServices prepends known Google services to the list if

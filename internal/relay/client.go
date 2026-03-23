@@ -335,11 +335,11 @@ func (c *Client) sendFrame(typ FrameType, id string, payload any) error {
 		c.mu.Unlock()
 		return errors.New("not connected")
 	}
-	c.mu.Unlock()
-
 	writeCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-	defer cancel()
-	return conn.Write(writeCtx, websocket.MessageText, data)
+	err := conn.Write(writeCtx, websocket.MessageText, data)
+	c.mu.Unlock()
+	cancel()
+	return err
 }
 
 // sendResponse sends an HTTP response frame back to the relay.
