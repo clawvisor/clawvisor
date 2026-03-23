@@ -63,7 +63,7 @@ func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart boo
 		selected, err := presentServiceMenu(services)
 		if err != nil {
 			if err == huh.ErrUserAborted {
-				return needsRestart, nil
+				return needsRestart, huh.ErrUserAborted
 			}
 			return false, err
 		}

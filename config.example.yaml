@@ -74,7 +74,7 @@ llm:
   # created. Produces a risk level (low/medium/high/critical) shown in the dashboard.
   # Env overrides: CLAWVISOR_LLM_TASK_RISK_{ENABLED,PROVIDER,ENDPOINT,API_KEY,MODEL}
   task_risk:
-    enabled: false
+    enabled: true              # on by default; set to false to disable
     # provider, endpoint, api_key, model, timeout_seconds inherit from top-level llm
     # if not set here. Uncomment to override:
     # provider: anthropic
@@ -88,6 +88,8 @@ llm:
   # into subsequent intent verification prompts to detect when an agent targets
   # entities that didn't appear in prior results. Activated per-request by the
   # agent passing a session_id in gateway requests.
+  # NOTE: When enabled, the output of your API calls (e.g. email bodies, messages,
+  # contact details) is sent to the configured LLM provider for entity extraction.
   # Env overrides: CLAWVISOR_LLM_CHAIN_CONTEXT_{ENABLED,PROVIDER,ENDPOINT,API_KEY,MODEL}
   chain_context:
     enabled: false

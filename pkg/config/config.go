@@ -268,6 +268,11 @@ func Default() *Config {
 				FailClosed:      true,
 				CacheTTLSeconds: 60,
 			},
+			TaskRisk: TaskRiskConfig{
+				LLMProviderConfig: LLMProviderConfig{
+					Enabled: true,
+				},
+			},
 		},
 		MCP: MCPConfig{
 			Enabled:         true,

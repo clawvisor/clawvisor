@@ -41,11 +41,34 @@ func runDaemonSetup(dataDir string) error {
 
 	printDaemonBanner()
 
+	fmt.Println(dim.Padding(0, 2).Render("By continuing, you agree to the Clawvisor Terms of Service"))
+	fmt.Println(dim.Padding(0, 2).Render("and Privacy Policy:"))
+	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/terms"))
+	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/privacy"))
+	fmt.Println()
+
+	accepted := false
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Do you agree to the Terms of Service and Privacy Policy?").
+				Affirmative("I agree").
+				Negative("Cancel").
+				Value(&accepted),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !accepted {
+		fmt.Println("\n  Setup cancelled.")
+		return nil
+	}
+
 	cfg, err := collectDaemonConfig()
 	if err != nil {
 		if err == huh.ErrUserAborted {
 			fmt.Println("\n  Aborted. No files were written.")
-			return nil
+			return huh.ErrUserAborted
 		}
 		return err
 	}
@@ -91,10 +114,27 @@ func runDaemonSetup(dataDir string) error {
 
 func printDaemonBanner() {
 	fmt.Println()
-	fmt.Println(bold.Padding(0, 2).Render("Clawvisor Daemon Setup"))
+	fmt.Println(bold.Padding(0, 2).Render("Clawvisor Setup"))
 	fmt.Println(section.Render("─────────────────────────────────────────"))
 	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("The daemon runs locally on this machine."))
+
+	fmt.Println(bold.Padding(0, 2).Render("How Clawvisor Works"))
+	fmt.Println(dim.Padding(0, 2).Render("Clawvisor is a credential-vaulting gateway that runs locally on this"))
+	fmt.Println(dim.Padding(0, 2).Render("machine. It stores API credentials in an encrypted local vault and"))
+	fmt.Println(dim.Padding(0, 2).Render("proxies requests from AI agents to external APIs (Google, GitHub,"))
+	fmt.Println(dim.Padding(0, 2).Render("Slack, etc.), enforcing authorization policies and human approval."))
+	fmt.Println()
+
+	fmt.Println(bold.Padding(0, 2).Render("Public Relay"))
+	fmt.Println(dim.Padding(0, 2).Render("This instance will connect to relay.clawvisor.com so you can"))
+	fmt.Println(dim.Padding(0, 2).Render("access it remotely and receive mobile push notifications."))
+	fmt.Println(dim.Padding(0, 2).Render("The relay sees connection metadata (daemon ID, public key, IP)."))
+	fmt.Println(dim.Padding(0, 2).Render("Tunnel traffic is end-to-end encrypted when your client supports"))
+	fmt.Println(dim.Padding(0, 2).Render("it, but some clients (e.g. Claude Desktop) do not yet support"))
+	fmt.Println(dim.Padding(0, 2).Render("E2E encryption — in that case traffic is TLS-encrypted in transit"))
+	fmt.Println(dim.Padding(0, 2).Render("but readable by the relay."))
+	fmt.Println()
+
 	fmt.Println(dim.Padding(0, 2).Render("SQLite, vault, and networking are auto-configured."))
 	fmt.Println(dim.Padding(0, 2).Render("You just need to provide an LLM API key."))
 	fmt.Println()
@@ -225,14 +265,8 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Enable task risk assessment?").
-				Description("Evaluates scope and purpose coherence when tasks are created.").
-				Affirmative("Yes").
-				Negative("No").
-				Value(&cfg.taskRiskEnabled),
-			huh.NewConfirm().
 				Title("Enable chain context tracking?").
-				Description("Extracts entity references from results so multi-step tasks stay on-target.").
+				Description("Sends API call output to your LLM provider to extract entity references\n(IDs, emails, etc.) for multi-step task validation. Disable in config.yaml later.").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&cfg.chainContextEnabled),
