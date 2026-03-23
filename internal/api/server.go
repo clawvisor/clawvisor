@@ -415,9 +415,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/devices", user(devicesHandler.List))
 	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
 	requireDevice := middleware.RequireDevice(s.store)
-	mux.Handle("POST /api/devices/{id}/action", requireDevice(http.HandlerFunc(devicesHandler.Action)))
-	mux.Handle("POST /api/devices/{id}/token", requireDevice(http.HandlerFunc(devicesHandler.MintToken)))
-	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(http.HandlerFunc(devicesHandler.UpdatePushToStartToken)))
+	mux.Handle("POST /api/devices/{id}/action", requireDevice(e2e(http.HandlerFunc(devicesHandler.Action))))
+	mux.Handle("POST /api/devices/{id}/token", requireDevice(e2e(http.HandlerFunc(devicesHandler.MintToken))))
+	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
