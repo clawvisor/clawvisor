@@ -117,6 +117,11 @@ func runWithServiceSetup(dataDir, cfgPath string, logger *slog.Logger, phase int
 
 	// Run the interactive service setup wizard.
 	needsRestart, err := runServiceSetup(apiClient, dataDir)
+	if err == huh.ErrUserAborted {
+		cancel()
+		<-serverErrCh
+		return huh.ErrUserAborted
+	}
 	if err != nil {
 		logger.Warn("service setup error", "err", err)
 		// Non-fatal: user can configure services later via 'clawvisor setup'.

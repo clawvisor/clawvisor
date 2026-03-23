@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/charmbracelet/huh"
 	"github.com/clawvisor/clawvisor/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -10,8 +11,13 @@ var setupCmd = &cobra.Command{
 	Short: "Run the first-time setup wizard",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pair, _ := cmd.Flags().GetBool("pair")
-		return daemon.Setup(daemon.SetupOptions{Pair: pair})
+		err := daemon.Setup(daemon.SetupOptions{Pair: pair})
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
 	},
+	SilenceUsage: true,
 }
 
 func init() {
