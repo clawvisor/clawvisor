@@ -24,6 +24,7 @@ const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
     <array>
         <string>{{.Binary}}</string>
         <string>start</string>
+        <string>--foreground</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -51,7 +52,7 @@ Description=Clawvisor Daemon
 After=network-online.target
 
 [Service]
-ExecStart={{.Binary}} start
+ExecStart={{.Binary}} start --foreground
 Restart=always
 RestartSec=5
 Environment=CONFIG_FILE={{.DataDir}}/config.yaml
