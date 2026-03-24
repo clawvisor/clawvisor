@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.1](https://github.com/clawvisor/clawvisor/compare/v0.6.0...v0.6.1) (2026-03-24)
+
+
+### Features
+
+* warn when CLI and daemon versions differ ([#40](https://github.com/clawvisor/clawvisor/issues/40)) ([415ff6b](https://github.com/clawvisor/clawvisor/commit/415ff6b05f628842ac42cef9c08502f4eb5e5b0b))
+
+
+### Bug Fixes
+
+* return proper JSON error for dashboard token endpoint ([#38](https://github.com/clawvisor/clawvisor/issues/38)) ([906407f](https://github.com/clawvisor/clawvisor/commit/906407f245398f015712704ab9066fe47d13be8c))
+
 ## [0.6.0](https://github.com/clawvisor/clawvisor/compare/v0.5.2...v0.6.0) (2026-03-24)
 
 
