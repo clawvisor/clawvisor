@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/clawvisor/clawvisor/compare/v0.5.2...v0.6.0) (2026-03-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* return 404 for unregistered /api/ routes instead of serving SPA
+
+### Features
+
+* add release binary build workflow with manual trigger ([fba3a62](https://github.com/clawvisor/clawvisor/commit/fba3a62682ff860e6f815e19f2c110dd7ef0bcb2))
+* return 404 for unregistered /api/ routes instead of serving SPA ([bdfbdef](https://github.com/clawvisor/clawvisor/commit/bdfbdef0b75eb24fd41356bae267a4a70f4265fc))
+
 ## [0.5.2](https://github.com/clawvisor/clawvisor/compare/v0.5.1...v0.5.2) (2026-03-16)
 
 
