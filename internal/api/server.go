@@ -329,10 +329,11 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/auth/logout", user(authHandler.Logout))
 	mux.Handle("GET /api/me", user(authHandler.Me))
 
-	// Magic link auth (local mode only)
+	// Magic link auth — /local is always registered so the CLI gets a
+	// proper JSON error instead of the SPA HTML when magic links are disabled.
+	mux.Handle("POST /api/auth/magic/local", authRateLimited(authHandler.GenerateMagicLocal))
 	if s.magicStore != nil {
 		mux.Handle("POST /api/auth/magic", authRateLimited(authHandler.ExchangeMagic))
-		mux.Handle("POST /api/auth/magic/local", authRateLimited(authHandler.GenerateMagicLocal))
 	}
 
 	// Password auth routes are registered only when the PasswordAuth feature is enabled

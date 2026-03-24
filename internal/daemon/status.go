@@ -3,9 +3,11 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/browser"
@@ -104,15 +106,30 @@ func requestMagicToken(serverURL string) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	// Read the body up-front so we can include it in error messages.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+
 	if resp.StatusCode != http.StatusOK {
+		// Try to extract a JSON error message from the response.
+		var apiErr struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(body, &apiErr) == nil && apiErr.Message != "" {
+			return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, apiErr.Message)
+		}
 		return "", fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(ct, "application/json") {
+		return "", fmt.Errorf("server returned unexpected content type %q (is the daemon up to date?)", ct)
 	}
 
 	var result struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decoding response: %w", err)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("unexpected response from server (expected JSON, got %q); is the daemon up to date?", truncate(string(body), 80))
 	}
 	if result.Token == "" {
 		return "", fmt.Errorf("server returned empty token")
@@ -140,6 +157,13 @@ func fetchDaemonVersion(client *http.Client, serverURL string) string {
 		return ""
 	}
 	return info.Current
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // PrintStatus prints the daemon status to stdout.
