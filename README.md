@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#get-started">Get Started</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#tui">TUI</a> · <a href="#supported-services">Services</a>
+  <a href="#get-started">Get Started</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#daemon-mode">Daemon</a> · <a href="#supported-services">Services</a> · <a href="#security-model">Security</a>
 </p>
 
 ---
@@ -38,15 +38,16 @@ through setup and integration interactively.
 covers two steps:
 
 1. **Run Clawvisor** — locally with Go, with Docker, or on a remote server
-2. **Connect your agent** — Claude Code, OpenClaw, or any HTTP agent
+2. **Connect your agent** — Claude Code, Claude Desktop (MCP), OpenClaw, or any HTTP agent
 
 Or jump directly to the guide you need:
 
 | Run Clawvisor | Connect your agent |
 |---|---|
 | [Local](docs/SETUP_LOCAL.md) — Go + SQLite, no Docker | [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) |
-| [Docker](docs/SETUP_DOCKER.md) — Docker Compose locally | [OpenClaw](docs/INTEGRATE_OPENCLAW.md) |
-| [Cloud](docs/SETUP_CLOUD.md) — remote server or container platform | [Generic agent](docs/INTEGRATE_GENERIC.md) |
+| [Docker](docs/SETUP_DOCKER.md) — Docker Compose locally | [Claude Desktop](docs/INTEGRATE_CLAUDE_COWORK.md) (MCP) |
+| [Cloud](docs/SETUP_CLOUD.md) — remote server or container platform | [OpenClaw](docs/INTEGRATE_OPENCLAW.md) |
+| | [Generic agent](docs/INTEGRATE_GENERIC.md) |
 
 For the complete agent API protocol, see
 [`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
@@ -83,6 +84,10 @@ Clawvisor loads `config.yaml` from the working directory (override with `CONFIG_
 | Intent verification | `CLAWVISOR_LLM_VERIFICATION_*` | Optional LLM check that request params match task purpose |
 | Task risk assessment | `CLAWVISOR_LLM_TASK_RISK_*` | Optional LLM risk assessment when tasks are created |
 | Chain context | `CLAWVISOR_LLM_CHAIN_CONTEXT_*` | Optional LLM extraction of facts from results for multi-step verification |
+| Approval timeout | `APPROVAL_TIMEOUT` | Seconds before pending approvals expire (default 300) |
+| Rate limits | `RATE_LIMIT_*` | Per-agent gateway, per-user OAuth, policy API, and review limits |
+| MCP timeout | `MCP_APPROVAL_TIMEOUT` | Seconds MCP blocks waiting for approval (default 240) |
+| Telemetry | `TELEMETRY_ENABLED` | Opt-in anonymous usage telemetry |
 
 See [`config.example.yaml`](config.example.yaml) for the full configuration reference.
 
@@ -113,13 +118,13 @@ Every gateway request passes through three authorization layers, checked in orde
 
 1. **Restrictions** — hard blocks you configure on specific service/action pairs. If a restriction matches, the request is denied immediately. Use these for actions you never want any agent to take (e.g. "no agent can delete calendar events").
 2. **Task scopes** — the primary mechanism. When an agent needs to do something, it creates a task declaring the purpose and which service/action pairs it needs. You review and approve the scope once. After that, requests under that task execute without further interruption — you approved the purpose, not each individual call. Tasks can be session-scoped (expire after a TTL) or standing (persist until you revoke them).
-3. **Per-request approval** — the fallback. Any request that isn't covered by a task scope goes to the approval queue, and you're notified via the dashboard or Telegram. This is the default for actions the agent didn't declare upfront, or for task actions marked `auto_execute: false` (e.g. sending emails).
+3. **Per-request approval** — the fallback. Any request that isn't covered by a task scope goes to the approval queue, and you're notified via the dashboard, Telegram, or push notification to your phone. This is the default for actions the agent didn't declare upfront, or for task actions marked `auto_execute: false` (e.g. sending emails).
 
 When a task is created, Clawvisor can optionally run an **LLM-powered risk assessment** that evaluates the scope breadth, purpose-scope coherence, and internal consistency of the task. The assessment produces a risk level (low, medium, high, critical) shown in the dashboard to help inform your approval decision. High and critical risk tasks require a confirmation step before approval.
 
 For multi-step tasks, **chain context verification** tracks structural facts (IDs, email addresses, phone numbers) extracted from adapter results and feeds them into subsequent verification prompts. This prevents a compromised agent from reading an inbox and then targeting an entity not present in the results. Chain context is activated by passing a consistent `session_id` across related gateway requests.
 
-All three LLM subsystems (intent verification, chain context extraction, and task risk assessment) are covered by eval suites totaling 243 cases. See [docs/eval-results.md](docs/eval-results.md) for accuracy breakdowns and failure analysis.
+All three LLM subsystems (intent verification, chain context extraction, and task risk assessment) are covered by eval suites totaling 249 cases. See [docs/eval-results.md](docs/eval-results.md) for accuracy breakdowns and failure analysis.
 
 ## Supported Services
 
@@ -169,7 +174,7 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
   }'
 ```
 
-The task starts as `pending_approval`. The user approves it via Telegram or the dashboard. Include a `callback_url` to receive a callback when the task is approved or denied — otherwise poll `GET /api/tasks/{id}`.
+The task starts as `pending_approval`. The user approves it via the dashboard, Telegram, or a push notification on their phone. Include a `callback_url` to receive a callback when the task is approved or denied — otherwise poll `GET /api/tasks/{id}` (supports long-polling).
 
 Key fields:
 
@@ -297,13 +302,14 @@ For the full agent protocol, see [`skills/clawvisor/SKILL.md`](skills/clawvisor/
 
 The web UI provides:
 
-- **Approvals** — approve or deny pending requests and task scopes
-- **Tasks** — view active/standing tasks, revoke task scopes, see audit trails
-- **Services** — activate services via OAuth (Google) or API key (GitHub, Slack, Notion, etc.)
-- **Restrictions** — create and manage hard blocks on service/action pairs
-- **Audit log** — searchable history of every gateway request with outcomes
-- **Agents** — create agent tokens, manage per-agent restrictions
-- **Telegram** — pair your Telegram bot for mobile approval notifications
+- **Overview** — pending approvals queue, activity charts, and notification setup
+- **Tasks** — view active/standing tasks, approve/deny/revoke task scopes, filterable by status
+- **Services** — activate services via OAuth (Google) or API key (GitHub, Slack, Notion, etc.), re-authenticate, manage aliases
+- **Restrictions** — toggle hard blocks on service/action pairs
+- **Agents** — create agent tokens, manage connection requests
+- **Gateway log** — searchable audit trail of every gateway request with outcomes and verification results
+- **Settings** — device pairing (QR code for mobile), Telegram notification setup, password management, account settings
+- **Onboarding** — guided first-run flow for connecting services, creating agents, and setting up notifications
 - **Light/dark mode** — toggle in the sidebar; persists across sessions
 
 ## TUI
@@ -337,6 +343,31 @@ export CLAWVISOR_TOKEN=<refresh_token>
 clawvisor tui
 ```
 
+## Daemon Mode
+
+For persistent background operation, Clawvisor can run as a system service:
+
+```bash
+clawvisor start               # start as background service (--foreground to run in fg)
+clawvisor stop                # stop the daemon
+clawvisor restart             # restart the daemon
+clawvisor status              # check if running
+clawvisor install             # install as system service (launchd/systemd)
+clawvisor uninstall           # remove the system service
+clawvisor dashboard           # open the web dashboard (--no-open to print URL only)
+clawvisor pair                # pair a mobile device via QR code
+```
+
+On first run, the daemon runs an interactive setup wizard that generates `config.yaml`, creates the admin user, and optionally configures services and device pairing. Configuration and data are stored in `~/.clawvisor/`.
+
+### Remote access via relay
+
+When paired with a mobile device, the daemon connects to `relay.clawvisor.com` via a WebSocket reverse tunnel. This allows the iOS app to reach a local Clawvisor instance behind NAT without port forwarding. The daemon authenticates to the relay using Ed25519 challenge-response. All traffic is routed through `/d/<daemon_id>/api/...` on the relay.
+
+### MCP integration
+
+Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.1 for integration with Claude Desktop and other MCP clients. Tools available via MCP: `fetch_catalog`, `create_task`, `get_task`, `complete_task`, `expand_task`, `gateway_request`. See [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md) for setup.
+
 ## Architecture
 
 | Layer | Choice |
@@ -347,12 +378,17 @@ clawvisor tui
 | Vault | AES-256-GCM with master key (env var or keyfile) or GCP Secret Manager, behind `Vault` interface |
 | Auth | JWT (HS256), magic links (local), bcrypt passwords (prod) |
 | Real-time | SSE event stream for instant dashboard updates |
-| Notifications | Telegram (per-user bot tokens) |
+| Notifications | Telegram (per-user bot tokens), push notifications (APNs via external push service) |
+| Relay | WebSocket reverse tunnel for NAT traversal (connects to external relay service) |
+| MCP | Model Context Protocol server with OAuth 2.1 for Claude Desktop integration |
+| Telemetry | Opt-in anonymous product usage telemetry |
 
 ### Directory layout
 
 ```
-cmd/clawvisor/main.go       — unified CLI entry point (server, tui, setup)
+cmd/clawvisor/main.go       — unified CLI (start, stop, status, setup, pair, dashboard, server, tui, agent, update, install, healthcheck)
+cmd/cvis-e2e/               — E2E encryption test utility
+cmd/server/                 — standalone server entry point
 internal/
   adapters/                 — service adapters (google/, github/, apple/, slack/, notion/, linear/, stripe/, twilio/)
   api/                      — HTTP server, middleware, handlers
@@ -361,14 +397,17 @@ internal/
   callback/                 — async result delivery to agents
   display/                  — human-readable names for services and actions
   events/                   — SSE event hub for real-time dashboard updates
-  intent/                   — intent verification
+  daemon/                   — daemon management (install, keygen, pairing, relay, setup, status)
+  intent/                   — intent verification and chain context extraction
   llm/                      — LLM HTTP client for intent verification and task risk
   taskrisk/                 — LLM-powered task risk assessment
-  mcp/                      — MCP (Model Context Protocol) server
-  notify/                   — Telegram notifier
+  mcp/                      — MCP server with OAuth 2.1 provider
+  notify/                   — notifications (telegram/ and push/ sub-packages)
   ratelimit/                — rate limiting
+  relay/                    — WebSocket reverse tunnel client for NAT traversal
   server/                   — server bootstrap and config loading
   setup/                    — interactive setup wizard
+  telemetry/                — opt-in anonymous usage telemetry
   store/                    — Store interface + postgres/ and sqlite/ implementations
   tui/                      — terminal UI dashboard
   vault/                    — Vault interface + local and GCP implementations
@@ -379,8 +418,9 @@ pkg/
   config/                   — configuration loading and env var resolution
   gateway/                  — gateway request/response types
   notify/                   — Notifier interface
-  store/                    — Store interface (91 methods)
+  store/                    — Store interface (75 methods)
   vault/                    — Vault interface
+  version/                  — version information
 web/                        — React frontend (Vite)
 docs/                       — setup and integration guides
 skills/clawvisor/           — agent skill definition (SKILL.md)
@@ -391,14 +431,19 @@ deploy/                     — Dockerfile, docker-compose, Cloud Run config
 ### Dev commands
 
 ```bash
-go build ./...                      # compile check
-go test ./...                       # run all tests
-go vet ./...                        # lint
+make build                          # full build (Go binary + frontend)
+make run                            # local dev server (SQLite, auto-opens browser)
+make tui                            # terminal dashboard
+make setup                          # re-run interactive setup wizard
+make test                           # run all tests
+make lint                           # go vet
+make eval-intent                    # run LLM intent verification eval suite
 
-make run-sqlite                     # run with SQLite
 make up                             # docker compose (app + postgres)
 make web-dev                        # frontend dev server on :5173
-make build                          # full build (Go binary + frontend)
+make deploy                         # deploy via Cloud Build
+make release                        # build release binaries
+make clean                          # remove build artifacts
 ```
 
 ## Security Model
@@ -407,6 +452,10 @@ make build                          # full build (Go binary + frontend)
 - **Vault encryption.** Credentials are encrypted at rest with AES-256-GCM using a master key (via `VAULT_KEY` env var or `vault.key` file).
 - **Audit trail.** Every gateway request is logged with a unique `request_id` (enforced by DB constraint). Outcomes are updated after execution.
 - **Response formatting.** Adapter results are semantically formatted — secrets are stripped, HTML/Unicode is sanitized before anything reaches the agent.
+- **Device authentication.** Paired mobile devices authenticate via HMAC-SHA256 (signing method, path, timestamp, and body hash). Timestamps are checked within a 5-minute skew tolerance.
+- **E2E encryption.** Device-authenticated endpoints support end-to-end encryption using X25519 ECDH key exchange with HKDF key derivation and AES encryption.
+- **Relay authentication.** The daemon authenticates to the relay service via Ed25519 challenge-response with a 60-second replay window.
+- **Rate limiting.** Per-agent gateway rate limits and per-user limits on OAuth, policy API, and review endpoints.
 
 ### Agent isolation
 
