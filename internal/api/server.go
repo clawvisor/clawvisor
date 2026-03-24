@@ -570,6 +570,10 @@ func (s *Server) routes() http.Handler {
 	if s.cfg.Server.FrontendDir != "" {
 		fileServer := http.FileServer(http.Dir(s.cfg.Server.FrontendDir))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
 			path := s.cfg.Server.FrontendDir + r.URL.Path
 			if _, err := os.Stat(path); os.IsNotExist(err) || r.URL.Path == "/" {
 				// index.html must not be cached — it references content-hashed
@@ -583,6 +587,10 @@ func (s *Server) routes() http.Handler {
 	} else if distFS, err := fs.Sub(webfs.DistFS, "dist"); err == nil {
 		fileServer := http.FileServer(http.FS(distFS))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
 			// Check if the file exists in the embedded FS.
 			if f, err := distFS.Open(strings.TrimPrefix(r.URL.Path, "/")); err == nil {
 				f.Close()
