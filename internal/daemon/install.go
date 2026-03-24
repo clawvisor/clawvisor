@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,8 +81,20 @@ func Install() error {
 	if err != nil {
 		return err
 	}
-	if _, err := ensureSetup(dataDir); err != nil {
+	firstRun, err := ensureSetup(dataDir)
+	if err != nil {
 		return fmt.Errorf("setup: %w", err)
+	}
+
+	if firstRun {
+		cfgPath := filepath.Join(dataDir, "config.yaml")
+		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
+			return fmt.Errorf("service setup: %w", err)
+		}
+		fmt.Println()
+		fmt.Println(green.Padding(0, 2).Render("✓ Setup complete"))
+		fmt.Println()
 	}
 
 	binary, err := os.Executable()
