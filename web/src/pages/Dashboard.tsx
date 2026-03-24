@@ -48,14 +48,14 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-surface-0 flex">
       {/* Sidebar */}
-      <nav className="w-56 bg-surface-1 border-r border-border-default flex flex-col shrink-0">
+      <nav className="w-56 bg-surface-1 border-r border-border-default flex flex-col shrink-0 sticky top-0 h-screen">
         <div className="px-4 py-5 border-b border-border-default">
           <span className="font-bold text-lg tracking-tight text-text-primary flex items-center gap-2">
             <img src="/favicon.svg" alt="" className="w-5 h-5" />
             Clawvisor
           </span>
         </div>
-        <ul className="flex-1 py-2">
+        <ul className="flex-1 py-2 overflow-y-auto">
           {navItems.map(({ to, label, end, icon }) => (
             <li key={to}>
               <NavLink
@@ -148,7 +148,7 @@ export default function Dashboard() {
           <Route path="restrictions" element={<Restrictions />} />
           <Route path="audit" element={<Audit />} />
           <Route path="agents" element={<Agents />} />
-          <Route path="settings" element={<Settings />} />
+<Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>

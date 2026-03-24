@@ -238,6 +238,28 @@ type Agent struct {
 	Token     string    `json:"token,omitempty"` // only on creation
 }
 
+// ── Devices ─────────────────────────────────────────────────────────────────
+
+type StartPairingResponse struct {
+	PairingToken string    `json:"pairing_token"`
+	Code         string    `json:"code"`
+	PairingURL   string    `json:"pairing_url"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+type PairingCodeResponse struct {
+	DaemonID  string `json:"daemon_id"`
+	Code      string `json:"code"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
+type PairedDevice struct {
+	ID         string    `json:"id"`
+	DeviceName string    `json:"device_name"`
+	PairedAt   time.Time `json:"paired_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
 // ── Version ─────────────────────────────────────────────────────────────────
 
 type VersionInfo struct {

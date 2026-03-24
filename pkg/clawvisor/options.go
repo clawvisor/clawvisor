@@ -4,9 +4,12 @@
 package clawvisor
 
 import (
+	"crypto/ecdh"
 	"log/slog"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/notify/push"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -29,6 +32,19 @@ type ServerOptions struct {
 	AdapterReg *adapters.Registry
 	Notifier   notify.Notifier
 
+	// RelayClient connects to the cloud relay for public internet access.
+	// Leave nil to disable relay (localhost-only operation).
+	RelayClient *relay.Client
+
+	// X25519Key is the daemon's X25519 private key for E2E encryption.
+	// Required when relay is enabled. Used by E2E middleware on gateway routes.
+	X25519Key *ecdh.PrivateKey
+
+	// PushNotifier is the concrete push notifier for device registration and
+	// action handling. Set when push notifications are enabled.
+	// The Notifier field should be a MultiNotifier wrapping both Telegram and Push.
+	PushNotifier *push.Notifier
+
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.
 	MagicStore auth.MagicTokenStore
@@ -45,6 +61,10 @@ type ServerOptions struct {
 	// SkipBuiltinAuth prevents the core server from registering its built-in
 	// login/register/password routes, allowing ExtraRoutes to provide custom auth.
 	SkipBuiltinAuth bool
+
+	// Quiet suppresses user-facing messages and sets server log level to WARN.
+	// Used during daemon setup when a temporary server runs in the background.
+	Quiet bool
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

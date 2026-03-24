@@ -22,80 +22,112 @@ import (
 // RunOptions holds optional flags for the server entrypoint.
 type RunOptions struct {
 	OpenBrowser bool
+	ConfigPath  string // If set, passed to DefaultOptions instead of using env var.
+}
+
+// LocalAuthResult holds the outputs of SetupLocalAuth.
+type LocalAuthResult struct {
+	MagicURL   string // e.g. "http://localhost:25297/magic-link?token=..."
+	MagicToken string // raw one-time token for API client authentication
+	ServerURL  string // e.g. "http://localhost:25297"
+}
+
+// SetupLocalAuth creates the admin@local user (if not present), generates magic
+// tokens, and writes ~/.clawvisor/.local-session. Call this after
+// DefaultOptions but before Run/RunWithContext when starting the server without
+// going through the standard Run entrypoint.
+func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalAuthResult, error) {
+	ms := opts.MagicStore
+	if ms == nil {
+		return &LocalAuthResult{}, nil
+	}
+
+	cfg := opts.Config
+	const localEmail = "admin@local"
+	bgCtx := context.Background()
+
+	_, uErr := opts.Store.GetUserByEmail(bgCtx, localEmail)
+	if uErr != nil {
+		randPw := make([]byte, 32)
+		if _, err := cryptorand.Read(randPw); err != nil {
+			return nil, fmt.Errorf("generating random password: %w", err)
+		}
+		hash, err := auth.HashPassword(hex.EncodeToString(randPw))
+		if err != nil {
+			return nil, fmt.Errorf("hashing local user password: %w", err)
+		}
+		if _, err := opts.Store.CreateUser(bgCtx, localEmail, hash); err != nil {
+			return nil, fmt.Errorf("creating local user: %w", err)
+		}
+		logger.Debug("created local user", "email", localEmail)
+	}
+
+	localUser, err := opts.Store.GetUserByEmail(bgCtx, localEmail)
+	if err != nil {
+		return nil, fmt.Errorf("loading local user: %w", err)
+	}
+
+	displayHost := cfg.Server.Host
+	if displayHost == "0.0.0.0" || displayHost == "127.0.0.1" || displayHost == "" {
+		displayHost = "localhost"
+	}
+	serverURL := fmt.Sprintf("http://%s:%d", displayHost, cfg.Server.Port)
+
+	token, err := ms.Generate(localUser.ID)
+	if err != nil {
+		return nil, fmt.Errorf("generating magic token: %w", err)
+	}
+	magicURL := fmt.Sprintf("%s/magic-link?token=%s", serverURL, token)
+
+	// TUI auto-login token (written to .local-session).
+	tuiToken, err := ms.Generate(localUser.ID)
+	if err != nil {
+		logger.Warn("could not generate TUI magic token", "err", err)
+	} else {
+		writeLocalSession(serverURL, tuiToken, logger)
+	}
+
+	// Start cleanup goroutine (runs until process exits).
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			ms.Cleanup()
+		}
+	}()
+
+	return &LocalAuthResult{
+		MagicURL:   magicURL,
+		MagicToken: tuiToken,
+		ServerURL:  serverURL,
+	}, nil
 }
 
 // Run starts the Clawvisor API server. This is the main entrypoint called
 // from cmd/clawvisor/cmd_server.go.
 func Run(logger *slog.Logger, ropts RunOptions) error {
-	opts, err := clawvisor.DefaultOptions(logger)
+	opts, err := clawvisor.DefaultOptions(logger, ropts.ConfigPath)
 	if err != nil {
 		return err
 	}
 
 	// ── Magic link setup (local mode) ──────────────────────────────────────
-	var magicURL string
-	if ms := opts.MagicStore; ms != nil {
-		cfg := opts.Config
-		const localEmail = "admin@local"
-		bgCtx := context.Background()
-
-		_, uErr := opts.Store.GetUserByEmail(bgCtx, localEmail)
-		if uErr != nil {
-			randPw := make([]byte, 32)
-			if _, err := cryptorand.Read(randPw); err != nil {
-				return fmt.Errorf("generating random password: %w", err)
-			}
-			hash, err := auth.HashPassword(hex.EncodeToString(randPw))
-			if err != nil {
-				return fmt.Errorf("hashing local user password: %w", err)
-			}
-			if _, err := opts.Store.CreateUser(bgCtx, localEmail, hash); err != nil {
-				return fmt.Errorf("creating local user: %w", err)
-			}
-			logger.Debug("created local user", "email", localEmail)
-		}
-
-		localUser, err := opts.Store.GetUserByEmail(bgCtx, localEmail)
-		if err != nil {
-			return fmt.Errorf("loading local user: %w", err)
-		}
-
-		token, err := ms.Generate(localUser.ID)
-		if err != nil {
-			return fmt.Errorf("generating magic token: %w", err)
-		}
-
-		displayHost := cfg.Server.Host
-		if displayHost == "0.0.0.0" || displayHost == "127.0.0.1" || displayHost == "" {
-			displayHost = "localhost"
-		}
-		magicURL = fmt.Sprintf("http://%s:%d/magic-link?token=%s", displayHost, cfg.Server.Port, token)
-
-		// Generate a TUI auto-login token.
-		tuiToken, err := ms.Generate(localUser.ID)
-		if err != nil {
-			logger.Warn("could not generate TUI magic token", "err", err)
-		} else {
-			writeLocalSession(fmt.Sprintf("http://%s:%d", displayHost, cfg.Server.Port), tuiToken, logger)
-		}
-
-		// Start cleanup goroutine (runs until process exits).
-		go func() {
-			ticker := time.NewTicker(5 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				ms.Cleanup()
-			}
-		}()
+	authResult, err := SetupLocalAuth(opts, logger)
+	if err != nil {
+		return err
 	}
 
 	// ── Banner ─────────────────────────────────────────────────────────────
 	if opts.Config.Server.IsLocal() {
-		printBanner(opts.Config, magicURL)
+		printBanner(opts.Config, authResult.MagicURL)
 	}
 
-	if ropts.OpenBrowser && magicURL != "" {
-		browser.Open(magicURL)
+	if opts.PushNotifier != nil {
+		logger.Info("push notifier enabled", "push_url", opts.Config.Push.URL, "daemon_id", opts.Config.Relay.DaemonID)
+	}
+
+	if ropts.OpenBrowser && authResult.MagicURL != "" {
+		browser.Open(authResult.MagicURL)
 	}
 
 	// ── Telemetry ──────────────────────────────────────────────────────────

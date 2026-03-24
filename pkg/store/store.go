@@ -91,6 +91,27 @@ type Store interface {
 	ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*ChainFact, error)
 	DeleteChainFactsByTask(ctx context.Context, taskID string) error
 
+	// Paired devices (mobile push notifications)
+	CreatePairedDevice(ctx context.Context, d *PairedDevice) error
+	GetPairedDevice(ctx context.Context, id string) (*PairedDevice, error)
+	ListPairedDevices(ctx context.Context, userID string) ([]*PairedDevice, error)
+	DeletePairedDevice(ctx context.Context, id string) error
+	UpdatePairedDeviceLastSeen(ctx context.Context, id string) error
+	UpdatePairedDevicePushToStartToken(ctx context.Context, id, token string) error
+
+	// Connection requests (daemon agent onboarding)
+	CreateConnectionRequest(ctx context.Context, req *ConnectionRequest) error
+	GetConnectionRequest(ctx context.Context, id string) (*ConnectionRequest, error)
+	ListPendingConnectionRequests(ctx context.Context, userID string) ([]*ConnectionRequest, error)
+	UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error
+	DeleteExpiredConnectionRequests(ctx context.Context) error
+	CountPendingConnectionRequests(ctx context.Context) (int, error)
+
+	// MCP sessions (persist across restarts)
+	CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error
+	MCPSessionValid(ctx context.Context, id string) (bool, error)
+	CleanupMCPSessions(ctx context.Context) error
+
 	// OAuth (MCP client registration + authorization codes)
 	CreateOAuthClient(ctx context.Context, client *OAuthClient) error
 	GetOAuthClient(ctx context.Context, clientID string) (*OAuthClient, error)
@@ -246,6 +267,7 @@ type PendingApproval struct {
 // Zero values mean "no filter" (backwards compatible).
 type TaskFilter struct {
 	ActiveOnly bool   // status IN ('active','pending_approval','pending_scope_expansion')
+	Status     string // exact status match (e.g. "active", "pending_approval", "denied"); empty = no filter
 	Limit      int    // 0 -> no limit
 	Offset     int
 }
@@ -282,6 +304,33 @@ type ChainFact struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// PairedDevice represents a mobile device paired for push notifications.
+type PairedDevice struct {
+	ID               string    `json:"id"`
+	UserID           string    `json:"user_id"`
+	DeviceName       string    `json:"device_name"`
+	DeviceToken      string    `json:"-"`
+	DeviceHMACKey    string    `json:"-"`
+	PushToStartToken string    `json:"-"` // APNs push-to-start token for Live Activities
+	PairedAt         time.Time `json:"paired_at"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
+}
+
+// ConnectionRequest represents an agent's request to connect to this daemon.
+type ConnectionRequest struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CallbackURL string    `json:"callback_url,omitempty"`
+	Status      string    `json:"status"`              // pending | approved | denied | expired
+	AgentID     string    `json:"agent_id,omitempty"`   // set on approval
+	Token       string    `json:"token,omitempty"`      // raw token, set on approval (never persisted)
+	IPAddress   string    `json:"ip_address"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).
 type OAuthClient struct {
 	ID           string    `json:"client_id"`
@@ -295,6 +344,7 @@ type OAuthAuthorizationCode struct {
 	CodeHash      string    `json:"-"`
 	ClientID      string    `json:"client_id"`
 	UserID        string    `json:"user_id"`
+	DaemonID      string    `json:"daemon_id,omitempty"` // set when authorized via relay
 	RedirectURI   string    `json:"redirect_uri"`
 	CodeChallenge string    `json:"code_challenge"`
 	Scope         string    `json:"scope"`

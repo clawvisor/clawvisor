@@ -201,6 +201,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			AgentName:  agent.Name,
 			Purpose:    req.Purpose,
 			Actions:    req.AuthorizedActions,
+			RiskLevel:  task.RiskLevel,
 			ApproveURL: approveURL,
 			DenyURL:    denyURL,
 			ExpiresIn:  expiresInStr,
@@ -347,6 +348,9 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("active_only") == "true" {
 		filter.ActiveOnly = true
 	}
+	if v := r.URL.Query().Get("status"); v != "" {
+		filter.Status = v
+	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			filter.Limit = n
@@ -361,6 +365,8 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.logger.Info("listing tasks", "active_only", filter.ActiveOnly, "status", filter.Status, "limit", filter.Limit, "offset", filter.Offset)
+
 	tasks, total, err := h.st.ListTasks(ctx, user.ID, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list tasks")
@@ -370,7 +376,11 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		tasks = []*store.Task{}
 	}
 	for _, t := range tasks {
-		sanitizeTaskForResponse(t)
+		if sanitizeTaskForResponse(t) {
+			// Opportunistically mark expired tasks in the DB so the
+			// background sweep doesn't have to catch them later.
+			_ = h.st.UpdateTaskStatus(ctx, t.ID, "expired")
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -383,15 +393,17 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 //   - Standing tasks: nil out the sentinel expiry so it doesn't leak.
 //   - Active session tasks past their expiry: report status as "expired"
 //     even if the background cleanup goroutine hasn't swept them yet.
-func sanitizeTaskForResponse(t *store.Task) {
+func sanitizeTaskForResponse(t *store.Task) (nowExpired bool) {
 	if t.Lifetime == "standing" {
 		t.ExpiresAt = nil
 		t.ExpiresInSeconds = 0
-		return
+		return false
 	}
 	if t.Status == "active" && t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
 		t.Status = "expired"
+		return true
 	}
+	return false
 }
 
 // ── Approve ───────────────────────────────────────────────────────────────────

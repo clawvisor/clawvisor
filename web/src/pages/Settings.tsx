@@ -4,6 +4,9 @@ import type { NotificationConfig } from '../api/client'
 import { useNavigate } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
+import { QRCodeSVG } from 'qrcode.react'
+import CountdownTimer from '../components/CountdownTimer'
+import { formatDistanceToNow } from 'date-fns'
 
 export default function Settings() {
   const { features } = useAuth()
@@ -12,10 +15,54 @@ export default function Settings() {
   return (
     <div className="p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+      <DaemonInfo />
+      <DevicePairing />
       <TelegramSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
     </div>
+  )
+}
+
+// ── Daemon ID display ────────────────────────────────────────────────────────
+
+function DaemonInfo() {
+  const [copied, setCopied] = useState(false)
+
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pair-info'],
+    queryFn: () => api.devices.pairInfo(),
+    retry: false,
+  })
+
+  if (!pairInfo?.daemon_id) return null
+
+  function copyId() {
+    navigator.clipboard.writeText(pairInfo!.daemon_id)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Daemon ID</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Use this ID to connect MCP clients or other tools to your daemon via the relay.
+        </p>
+      </div>
+      <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between max-w-lg">
+        <code className="text-lg font-mono font-semibold text-text-primary tracking-wide select-all">
+          {pairInfo.daemon_id}
+        </code>
+        <button
+          onClick={copyId}
+          className="ml-4 px-3 py-1.5 text-xs rounded border border-border-strong text-text-secondary hover:bg-surface-2 transition-colors"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -415,6 +462,170 @@ function DangerZone() {
           </div>
         )}
       </div>
+    </section>
+  )
+}
+
+// ── Device pairing (QR code for iOS app) ─────────────────────────────────────
+
+function DevicePairing() {
+  const qc = useQueryClient()
+  const [pairingState, setPairingState] = useState<{
+    url: string
+    code: string
+    expiresAt: string
+    existingIds: Set<string>
+  } | null>(null)
+  const [pairError, setPairError] = useState<string | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pair-info'],
+    queryFn: () => api.devices.pairInfo(),
+    retry: false,
+  })
+
+  const { data: devices } = useQuery({
+    queryKey: ['devices'],
+    queryFn: () => api.devices.list(),
+  })
+
+  // When devices changes while a pairing session is active, check for new device
+  useEffect(() => {
+    if (!pairingState || !devices) return
+    const newDevice = devices.find(d => !pairingState.existingIds.has(d.id))
+    if (newDevice) {
+      setPairingState(null)
+      clearPairingTimeout()
+    }
+  }, [devices, pairingState])
+
+  // Clean up timeout on unmount
+  useEffect(() => () => clearPairingTimeout(), [])
+
+  function clearPairingTimeout() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+  }
+
+  const startMut = useMutation({
+    mutationFn: () => api.devices.startPairing(),
+    onSuccess: (session) => {
+      if (!pairInfo) return
+      const url = `https://clawvisor.com/clip/pair?d=${pairInfo.daemon_id}&t=${session.pairing_token}&r=${pairInfo.relay_host}`
+      const existingIds = new Set((devices ?? []).map(d => d.id))
+      setPairingState({ url, code: session.code, expiresAt: session.expires_at, existingIds })
+      setPairError(null)
+      clearPairingTimeout()
+      timeoutRef.current = setTimeout(() => {
+        setPairingState(null)
+        setPairError('Pairing timed out — try again.')
+      }, 5 * 60 * 1000)
+    },
+    onError: (err: Error) => setPairError(err.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.devices.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
+  })
+
+  function cancelPairing() {
+    setPairingState(null)
+    clearPairingTimeout()
+  }
+
+  const formatCode = (code: string) =>
+    code.length === 6 ? `${code.slice(0, 3)}-${code.slice(3)}` : code
+
+  if (!pairInfo) return null
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Mobile Device</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Pair a mobile device to receive push notifications and approve requests from the Clawvisor iOS app.
+        </p>
+      </div>
+
+      {/* Existing devices */}
+      {(devices ?? []).length > 0 && (
+        <div className="space-y-2">
+          {devices!.map(device => (
+            <div key={device.id} className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between max-w-lg">
+              <div>
+                <span className="font-medium text-text-primary">{device.device_name}</span>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  Paired {formatDistanceToNow(new Date(device.paired_at), { addSuffix: true })}
+                  {device.last_seen_at && ` · Last seen ${formatDistanceToNow(new Date(device.last_seen_at), { addSuffix: true })}`}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm(`Unpair "${device.device_name}"? Push notifications will stop working.`)) {
+                    deleteMut.mutate(device.id)
+                  }
+                }}
+                disabled={deleteMut.isPending}
+                className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+              >
+                Unpair
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Active pairing session */}
+      {pairingState ? (
+        <div className="bg-surface-1 border border-border-default rounded-md p-6 space-y-4 max-w-lg">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-text-secondary">Scan with your phone's camera</h3>
+            <CountdownTimer expiresAt={pairingState.expiresAt} />
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="bg-white p-3 rounded-lg shrink-0">
+              <QRCodeSVG value={pairingState.url} size={180} level="L" />
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-text-tertiary">Pairing code</p>
+                <p className="text-2xl font-mono font-bold text-text-primary tracking-widest">
+                  {formatCode(pairingState.code)}
+                </p>
+                <p className="text-xs text-text-tertiary mt-1">Enter this code on your phone if prompted.</p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-text-tertiary">
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Waiting for pairing to complete...
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={cancelPairing}
+            className="text-xs text-text-tertiary hover:text-text-secondary"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div>
+          {pairError && <div className="text-sm text-danger mb-2">{pairError}</div>}
+          <button
+            onClick={() => startMut.mutate()}
+            disabled={startMut.isPending}
+            className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+          >
+            {startMut.isPending ? 'Starting…' : 'Pair Device'}
+          </button>
+        </div>
+      )}
     </section>
   )
 }

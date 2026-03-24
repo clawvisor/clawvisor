@@ -18,11 +18,20 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.SetVersionTemplate(fmt.Sprintf("clawvisor %s\n", version.Version))
+	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(stopCmd)
+	rootCmd.AddCommand(restartCmd)
+	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(dashboardCmd)
+	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(pairCmd)
+	rootCmd.AddCommand(installCmd)
+	rootCmd.AddCommand(uninstallCmd)
+	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(healthcheckCmd)
+	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(tuiCmd)
-	rootCmd.AddCommand(setupCmd)
-	rootCmd.AddCommand(agentCmd)
-	rootCmd.AddCommand(healthcheckCmd)
 }
 
 func main() {

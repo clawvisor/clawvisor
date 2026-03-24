@@ -789,9 +789,18 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	where := "WHERE user_id = ?"
 	args := []any{userID}
 
-	if filter.ActiveOnly {
+	if filter.Status != "" {
+		where += " AND status = ?"
+		args = append(args, filter.Status)
+	} else if filter.ActiveOnly {
 		where += " AND status IN (?, ?, ?)"
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
+		// Exclude session tasks that have expired but haven't been swept yet.
+		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < datetime('now'))"
+	}
+	if filter.Status != "" {
+		where += " AND status = ?"
+		args = append(args, filter.Status)
 	}
 
 	// Count total matching rows.
@@ -1134,9 +1143,9 @@ func (s *Store) GetOAuthClient(ctx context.Context, clientID string) (*store.OAu
 
 func (s *Store) SaveAuthorizationCode(ctx context.Context, code *store.OAuthAuthorizationCode) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		code.CodeHash, code.ClientID, code.UserID, code.RedirectURI, code.CodeChallenge, code.Scope,
+		`INSERT INTO oauth_authorization_codes (code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		code.CodeHash, code.ClientID, code.UserID, code.DaemonID, code.RedirectURI, code.CodeChallenge, code.Scope,
 		code.ExpiresAt.UTC().Format(time.RFC3339),
 	)
 	return err
@@ -1152,10 +1161,10 @@ func (s *Store) ConsumeAuthorizationCode(ctx context.Context, codeHash string) (
 	c := &store.OAuthAuthorizationCode{}
 	var expiresAt, createdAt string
 	err = tx.QueryRowContext(ctx,
-		`SELECT code_hash, client_id, user_id, redirect_uri, code_challenge, scope, expires_at, created_at
+		`SELECT code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at, created_at
 		 FROM oauth_authorization_codes WHERE code_hash = ?`,
 		codeHash,
-	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &expiresAt, &createdAt)
+	).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.DaemonID, &c.RedirectURI, &c.CodeChallenge, &c.Scope, &expiresAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1220,6 +1229,234 @@ func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, li
 
 func (s *Store) DeleteChainFactsByTask(ctx context.Context, taskID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM chain_facts WHERE task_id = ?`, taskID)
+	return err
+}
+
+// ── Connection Requests ───────────────────────────────────────────────────────
+
+func (s *Store) CreateConnectionRequest(ctx context.Context, req *store.ConnectionRequest) error {
+	if req.ID == "" {
+		req.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO connection_requests (id, user_id, name, description, callback_url, status, ip_address, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.ID, req.UserID, req.Name, req.Description, req.CallbackURL, req.Status, req.IPAddress,
+		req.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) GetConnectionRequest(ctx context.Context, id string) (*store.ConnectionRequest, error) {
+	r := &store.ConnectionRequest{}
+	var createdAt, expiresAt string
+	var agentID sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE id = ?
+	`, id).Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+		&agentID, &r.IPAddress, &createdAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if agentID.Valid {
+		r.AgentID = agentID.String
+	}
+	r.CreatedAt = parseTime(createdAt)
+	r.ExpiresAt = parseTime(expiresAt)
+	return r, nil
+}
+
+func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string) ([]*store.ConnectionRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, name, description, callback_url, status, agent_id, ip_address, created_at, expires_at
+		FROM connection_requests WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*store.ConnectionRequest
+	for rows.Next() {
+		r := &store.ConnectionRequest{}
+		var createdAt, expiresAt string
+		var agentID sql.NullString
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Description, &r.CallbackURL, &r.Status,
+			&agentID, &r.IPAddress, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		if agentID.Valid {
+			r.AgentID = agentID.String
+		}
+		r.CreatedAt = parseTime(createdAt)
+		r.ExpiresAt = parseTime(expiresAt)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error {
+	var res sql.Result
+	var err error
+	if agentID != "" {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE connection_requests SET status = ?, agent_id = ? WHERE id = ?`,
+			status, agentID, id)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE connection_requests SET status = ? WHERE id = ?`,
+			status, id)
+	}
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteExpiredConnectionRequests(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM connection_requests WHERE status = 'pending' AND expires_at < datetime('now')`)
+	return err
+}
+
+func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM connection_requests WHERE status = 'pending'`).Scan(&count)
+	return count, err
+}
+
+// ── Paired Devices ────────────────────────────────────────────────────────────
+
+func (s *Store) CreatePairedDevice(ctx context.Context, d *store.PairedDevice) error {
+	if d.ID == "" {
+		d.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO paired_devices (id, user_id, device_name, device_token, device_hmac_key, push_to_start_token)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, d.ID, d.UserID, d.DeviceName, d.DeviceToken, d.DeviceHMACKey, d.PushToStartToken)
+	return err
+}
+
+func (s *Store) GetPairedDevice(ctx context.Context, id string) (*store.PairedDevice, error) {
+	d := &store.PairedDevice{}
+	var pairedAt, lastSeenAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, push_to_start_token, paired_at, last_seen_at
+		FROM paired_devices WHERE id = ?
+	`, id).Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PushToStartToken, &pairedAt, &lastSeenAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d.PairedAt = parseTime(pairedAt)
+	d.LastSeenAt = parseTime(lastSeenAt)
+	return d, nil
+}
+
+func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.PairedDevice, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, push_to_start_token, paired_at, last_seen_at
+		FROM paired_devices WHERE user_id = ? ORDER BY paired_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*store.PairedDevice
+	for rows.Next() {
+		d := &store.PairedDevice{}
+		var pairedAt, lastSeenAt string
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PushToStartToken,
+			&pairedAt, &lastSeenAt); err != nil {
+			return nil, err
+		}
+		d.PairedAt = parseTime(pairedAt)
+		d.LastSeenAt = parseTime(lastSeenAt)
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
+func (s *Store) DeletePairedDevice(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM paired_devices WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePairedDeviceLastSeen(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET last_seen_at = datetime('now') WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePairedDevicePushToStartToken(ctx context.Context, id, token string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE paired_devices SET push_to_start_token = ? WHERE id = ?`, token, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// ── MCP Sessions ─────────────────────────────────────────────────────────────
+
+func (s *Store) CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mcp_sessions (id, expires_at) VALUES (?, ?)`,
+		id, expiresAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (s *Store) MCPSessionValid(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM mcp_sessions WHERE id = ? AND expires_at > ?`,
+		id, time.Now().UTC().Format(time.RFC3339),
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) CleanupMCPSessions(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM mcp_sessions WHERE expires_at <= ?`,
+		time.Now().UTC().Format(time.RFC3339),
+	)
 	return err
 }
 

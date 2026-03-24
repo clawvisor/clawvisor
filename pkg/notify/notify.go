@@ -16,6 +16,7 @@ type Notifier interface {
 	SendScopeExpansionRequest(ctx context.Context, req ScopeExpansionRequest) (messageID string, err error)
 	UpdateMessage(ctx context.Context, userID, messageID, text string) error
 	SendTestMessage(ctx context.Context, userID string) error
+	SendConnectionRequest(ctx context.Context, req ConnectionRequest) (messageID string, err error)
 	SendAlert(ctx context.Context, userID, text string) error
 }
 
@@ -64,6 +65,7 @@ type TaskApprovalRequest struct {
 	AgentName  string
 	Purpose    string
 	Actions    []store.TaskAction
+	RiskLevel  string // "low", "medium", "high", "critical"
 	ApproveURL string
 	DenyURL    string
 	ExpiresIn  string
@@ -79,6 +81,14 @@ type ScopeExpansionRequest struct {
 	Reason     string
 	ApproveURL string
 	DenyURL    string
+}
+
+// ConnectionRequest carries the data for an agent connection request notification.
+type ConnectionRequest struct {
+	ConnectionID string
+	UserID       string
+	AgentName    string
+	IPAddress    string
 }
 
 // PairingSession represents an in-progress Telegram bot pairing.

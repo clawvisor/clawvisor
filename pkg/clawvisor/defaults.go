@@ -2,17 +2,23 @@ package clawvisor
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ed25519"
 	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	githubadapter "github.com/clawvisor/clawvisor/internal/adapters/github"
@@ -25,6 +31,7 @@ import (
 	slackadapter "github.com/clawvisor/clawvisor/internal/adapters/slack"
 	stripeadapter "github.com/clawvisor/clawvisor/internal/adapters/stripe"
 	twilioadapter "github.com/clawvisor/clawvisor/internal/adapters/twilio"
+	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
@@ -46,12 +53,17 @@ import (
 //	opts.Store = tenancy.Wrap(opts.Store)
 //	opts.Features.PasswordAuth = true
 //	clawvisor.Run(opts)
-func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
+// DefaultOptions builds a ServerOptions from config. If configPath is provided,
+// it is used directly; otherwise CONFIG_FILE env var is consulted, falling back
+// to "config.yaml".
+func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, error) {
 	ctx := context.Background()
 
 	// ── Config ─────────────────────────────────────────────────────────────
 	cfgPath := "config.yaml"
-	if p := os.Getenv("CONFIG_FILE"); p != "" {
+	if len(configPath) > 0 && configPath[0] != "" {
+		cfgPath = configPath[0]
+	} else if p := os.Getenv("CONFIG_FILE"); p != "" {
 		cfgPath = p
 	}
 	cfg, err := config.Load(cfgPath)
@@ -156,8 +168,55 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 		}
 	}
 
+	// ── Ed25519 key (shared by push + relay) ─────────────────────────────────
+	var ed25519Key ed25519.PrivateKey
+	var dataDir string
+	if cfg.Relay.DaemonID != "" {
+		dataDir = cfg.Daemon.DataDir
+		if dataDir == "~/.clawvisor" {
+			home, _ := os.UserHomeDir()
+			dataDir = filepath.Join(home, ".clawvisor")
+		}
+		keyPath := cfg.Relay.KeyFile
+		if !filepath.IsAbs(keyPath) {
+			keyPath = filepath.Join(dataDir, keyPath)
+		}
+		key, err := loadEd25519KeyFile(keyPath)
+		if err != nil {
+			logger.Warn("could not load Ed25519 key, relay+push disabled", "err", err)
+		} else {
+			ed25519Key = key
+		}
+	}
+
 	// ── Notifier ─────────────────────────────────────────────────────────────
-	var notifier notify.Notifier = telegramnotify.New(st, ctx)
+	telegramN := telegramnotify.New(st, ctx)
+
+	var pushN *pushnotify.Notifier
+	if cfg.Push.Enabled && ed25519Key != nil {
+		daemonURL := cfg.Server.PublicURL
+		if daemonURL == "" && cfg.Relay.Enabled && cfg.Relay.URL != "" && cfg.Relay.DaemonID != "" {
+			// Use the relay URL so the phone can route actions back through the relay.
+			relayHost := strings.TrimPrefix(strings.TrimPrefix(cfg.Relay.URL, "wss://"), "ws://")
+			daemonURL = fmt.Sprintf("https://%s/d/%s", relayHost, cfg.Relay.DaemonID)
+		}
+		if daemonURL == "" {
+			daemonURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+		}
+		pushN = pushnotify.New(st, cfg.Push.URL, cfg.Relay.DaemonID, ed25519Key, daemonURL, logger)
+
+		// Register daemon's public key with the push service (idempotent).
+		if err := pushN.RegisterDaemon(ctx); err != nil {
+			logger.Warn("failed to register daemon with push service", "err", err)
+		}
+	}
+
+	var notifiers []notify.Notifier
+	notifiers = append(notifiers, telegramN)
+	if pushN != nil {
+		notifiers = append(notifiers, pushN)
+	}
+	var notifier notify.Notifier = notify.NewMultiNotifier(ctx, logger, notifiers...)
 
 	// ── Auth mode ──────────────────────────────────────────────────────────
 	// Default is magic-link. Set auth_mode: "password" in config.yaml
@@ -168,17 +227,74 @@ func DefaultOptions(logger *slog.Logger) (*ServerOptions, error) {
 		PasswordAuth: cfg.Server.AuthMode == "password",
 	}
 
-	return &ServerOptions{
-		Logger:     logger,
-		Config:     cfg,
-		Store:      st,
-		Vault:      v,
-		JWTService: jwtSvc,
-		AdapterReg: adapterReg,
-		Notifier:   notifier,
-		MagicStore: magicStore,
-		Features:   features,
-	}, nil
+	opts := &ServerOptions{
+		Logger:       logger,
+		Config:       cfg,
+		Store:        st,
+		Vault:        v,
+		JWTService:   jwtSvc,
+		AdapterReg:   adapterReg,
+		Notifier:     notifier,
+		PushNotifier: pushN,
+		MagicStore:   magicStore,
+		Features:     features,
+	}
+
+	// Wire relay client when configured.
+	if cfg.Relay.Enabled && ed25519Key != nil {
+		// Load X25519 key for E2E encryption.
+		e2eKeyPath := cfg.Relay.E2EKeyFile
+		if !filepath.IsAbs(e2eKeyPath) {
+			e2eKeyPath = filepath.Join(dataDir, e2eKeyPath)
+		}
+		x25519Key, err := loadX25519KeyFile(e2eKeyPath)
+		if err != nil {
+			logger.Warn("relay: could not load X25519 key, E2E disabled", "err", err)
+		} else {
+			opts.X25519Key = x25519Key
+		}
+
+		relayClient := relay.New(cfg.Relay, ed25519Key, nil, logger)
+		opts.RelayClient = relayClient
+	} else if cfg.Relay.DaemonID != "" {
+		// Even if relay is disabled, load X25519 key for E2E support on local requests.
+		e2eKeyPath := cfg.Relay.E2EKeyFile
+		if !filepath.IsAbs(e2eKeyPath) {
+			e2eKeyPath = filepath.Join(dataDir, e2eKeyPath)
+		}
+		x25519Key, err := loadX25519KeyFile(e2eKeyPath)
+		if err == nil {
+			opts.X25519Key = x25519Key
+		}
+	}
+
+	return opts, nil
+}
+
+// loadEd25519KeyFile reads a PEM-encoded Ed25519 private key seed.
+func loadEd25519KeyFile(path string) (ed25519.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found in %s", path)
+	}
+	return ed25519.NewKeyFromSeed(block.Bytes), nil
+}
+
+// loadX25519KeyFile reads a raw 32-byte X25519 private key and returns
+// an *ecdh.PrivateKey.
+func loadX25519KeyFile(path string) (*ecdh.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != 32 {
+		return nil, fmt.Errorf("X25519 key must be 32 bytes, got %d", len(data))
+	}
+	return ecdh.X25519().NewPrivateKey(data)
 }
 
 // ConnectStore loads config and connects to the database only.

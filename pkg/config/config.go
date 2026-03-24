@@ -29,9 +29,35 @@ type Config struct {
 	MCP       MCPConfig       `yaml:"mcp"`
 	Services  ServicesConfig  `yaml:"services"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Relay     RelayConfig     `yaml:"relay"`
 	Telemetry TelemetryConfig `yaml:"telemetry"`
+	Daemon    DaemonConfig    `yaml:"daemon"`
+	Push      PushConfig      `yaml:"push"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
+}
+
+// RelayConfig holds settings for the cloud relay connection.
+type RelayConfig struct {
+	URL                string `yaml:"url"`                  // wss://relay.clawvisor.com
+	DaemonID           string `yaml:"daemon_id"`            // assigned on registration
+	KeyFile            string `yaml:"key_file"`             // Ed25519 private key path (relay auth)
+	E2EKeyFile         string `yaml:"e2e_key_file"`         // X25519 private key path (E2E encryption)
+	ReconnectBaseDelay string `yaml:"reconnect_base_delay"` // default: 1s
+	ReconnectMaxDelay  string `yaml:"reconnect_max_delay"`  // default: 60s
+	Enabled            bool   `yaml:"enabled"`              // default: false (explicit opt-in)
+}
+
+// DaemonConfig holds settings for daemon mode.
+type DaemonConfig struct {
+	DataDir string `yaml:"data_dir"` // defaults to ~/.clawvisor
+	LogFile string `yaml:"log_file"` // relative to data_dir, defaults to logs/daemon.log
+}
+
+// PushConfig holds settings for mobile push notifications.
+type PushConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	URL     string `yaml:"url"`
 }
 
 // TelemetryConfig holds settings for anonymous usage telemetry.
@@ -208,9 +234,8 @@ type TwilioServicesConfig struct {
 func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:        25297,
-			Host:        "127.0.0.1",
-			FrontendDir: "./web/dist",
+			Port: 25297,
+			Host: "127.0.0.1",
 		},
 		Database: DatabaseConfig{
 			Driver:     "",
@@ -243,6 +268,11 @@ func Default() *Config {
 				FailClosed:      true,
 				CacheTTLSeconds: 60,
 			},
+			TaskRisk: TaskRiskConfig{
+				LLMProviderConfig: LLMProviderConfig{
+					Enabled: true,
+				},
+			},
 		},
 		MCP: MCPConfig{
 			Enabled:         true,
@@ -255,6 +285,21 @@ func Default() *Config {
 			PolicyAPI: RateLimitBucket{Limit: 30, Window: 60},
 			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},
 			Auth:      RateLimitBucket{Limit: 5, Window: 60},
+		},
+		Relay: RelayConfig{
+			URL:                "wss://relay.clawvisor.com",
+			KeyFile:            "daemon-ed25519.key",
+			E2EKeyFile:         "daemon-x25519.key",
+			ReconnectBaseDelay: "1s",
+			ReconnectMaxDelay:  "60s",
+			Enabled:            false,
+		},
+		Daemon: DaemonConfig{
+			DataDir: "~/.clawvisor",
+			LogFile: "logs/daemon.log",
+		},
+		Push: PushConfig{
+			URL: "https://push.clawvisor.com",
 		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},
@@ -438,6 +483,26 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_MODEL"); v != "" {
 		cfg.LLM.ChainContext.Model = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
+		cfg.Relay.URL = v
+	}
+	if v := os.Getenv("CLAWVISOR_RELAY_ENABLED"); v != "" {
+		cfg.Relay.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RELAY_DAEMON_ID"); v != "" {
+		cfg.Relay.DaemonID = v
+	}
+	if v := os.Getenv("CLAWVISOR_PUSH_ENABLED"); v != "" {
+		cfg.Push.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_PUSH_URL"); v != "" {
+		cfg.Push.URL = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_DAEMON_DATA_DIR"); v != "" {
+		cfg.Daemon.DataDir = v
 	}
 
 	if v := os.Getenv("CLAWVISOR_TELEMETRY_ENABLED"); v != "" {

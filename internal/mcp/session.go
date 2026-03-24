@@ -1,59 +1,57 @@
 package mcp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"sync"
+	"log/slog"
 	"time"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-// session tracks a connected MCP client.
-type session struct {
-	id        string
-	createdAt time.Time
-}
-
-// SessionStore is an in-memory store for active MCP sessions.
+// SessionStore persists MCP sessions in the database so they survive restarts.
 type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*session
-	ttl      time.Duration
+	store  store.Store
+	ttl    time.Duration
+	logger *slog.Logger
 }
 
-// NewSessionStore creates a session store with the given TTL.
-func NewSessionStore(ttl time.Duration) *SessionStore {
+// NewSessionStore creates a database-backed session store with the given TTL.
+func NewSessionStore(st store.Store, ttl time.Duration, logger *slog.Logger) *SessionStore {
 	return &SessionStore{
-		sessions: make(map[string]*session),
-		ttl:      ttl,
+		store:  st,
+		ttl:    ttl,
+		logger: logger,
 	}
 }
 
-// Create generates a new session and returns its ID.
-func (s *SessionStore) Create() (string, error) {
+// Create generates a new session, persists it, and returns its ID.
+func (s *SessionStore) Create(ctx context.Context) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(b)
 
-	s.mu.Lock()
-	s.sessions[id] = &session{id: id, createdAt: time.Now()}
-	s.mu.Unlock()
+	expiresAt := time.Now().Add(s.ttl)
+	if err := s.store.CreateMCPSession(ctx, id, expiresAt); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 
 // Valid checks whether the session ID exists and is not expired.
-func (s *SessionStore) Valid(id string) bool {
-	s.mu.RLock()
-	sess, ok := s.sessions[id]
-	s.mu.RUnlock()
-	if !ok {
+func (s *SessionStore) Valid(ctx context.Context, id string) bool {
+	ok, err := s.store.MCPSessionValid(ctx, id)
+	if err != nil {
+		s.logger.Warn("mcp session lookup failed", "session_id", id, "err", err)
 		return false
 	}
-	return time.Since(sess.createdAt) < s.ttl
+	return ok
 }
 
-// RunCleanup periodically removes expired sessions. Blocks until ctx is done.
+// RunCleanup periodically removes expired sessions. Blocks until done is closed.
 func (s *SessionStore) RunCleanup(done <-chan struct{}) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -62,17 +60,9 @@ func (s *SessionStore) RunCleanup(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			s.cleanup()
-		}
-	}
-}
-
-func (s *SessionStore) cleanup() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, sess := range s.sessions {
-		if time.Since(sess.createdAt) >= s.ttl {
-			delete(s.sessions, id)
+			if err := s.store.CleanupMCPSessions(context.Background()); err != nil {
+				s.logger.Warn("mcp session cleanup failed", "err", err)
+			}
 		}
 	}
 }

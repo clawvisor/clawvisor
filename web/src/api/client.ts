@@ -201,6 +201,19 @@ export interface Agent {
   token?: string // only present on creation
 }
 
+export interface ConnectionRequest {
+  id: string
+  user_id: string
+  name: string
+  description: string
+  callback_url?: string
+  status: string // pending | approved | denied | expired
+  agent_id?: string
+  ip_address: string
+  created_at: string
+  expires_at: string
+}
+
 export interface ServiceInfo {
   id: string
   alias?: string
@@ -373,12 +386,32 @@ export interface QueueApproval {
 }
 
 export interface QueueItem {
-  type: 'approval' | 'task'
+  type: 'approval' | 'task' | 'connection'
   id: string
   created_at: string
   expires_at: string | null
   approval?: QueueApproval
   task?: Task
+  connection?: ConnectionRequest
+}
+
+export interface PairedDevice {
+  id: string
+  user_id: string
+  device_name: string
+  paired_at: string
+  last_seen_at: string
+}
+
+export interface PairInfo {
+  daemon_id: string
+  relay_host: string
+}
+
+export interface PairSession {
+  pairing_token: string
+  code: string
+  expires_at: string
 }
 
 // ── API surface ───────────────────────────────────────────────────────────────
@@ -438,6 +471,13 @@ export const api = {
     create: (name: string) =>
       post<Agent>('/api/agents', { name }),
     delete: (id: string) => del<void>(`/api/agents/${id}`),
+  },
+  connections: {
+    list: () => get<ConnectionRequest[]>('/api/agents/connections'),
+    approve: (id: string) =>
+      post<{ status: string; agent_id: string }>(`/api/agents/connect/${id}/approve`, {}),
+    deny: (id: string) =>
+      post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
   },
   services: {
     list: () => get<{ services: ServiceInfo[] }>('/api/services'),
@@ -512,12 +552,19 @@ export const api = {
   overview: {
     get: () => get<OverviewData>('/api/overview'),
   },
+  devices: {
+    list: () => get<PairedDevice[]>('/api/devices'),
+    delete: (id: string) => del<void>(`/api/devices/${id}`),
+    pairInfo: () => get<PairInfo>('/api/devices/pair/info'),
+    startPairing: () => post<PairSession>('/api/devices/pair', {}),
+  },
   oauthApprove: (params: {
     client_id: string
     redirect_uri: string
     state: string
     code_challenge: string
     scope: string
+    daemon_id?: string
   }) => post<{ redirect_uri: string }>('/oauth/authorize', params),
   oauthDeny: (params: {
     client_id: string
@@ -525,7 +572,14 @@ export const api = {
     state: string
   }) => post<{ redirect_uri: string }>('/oauth/deny', params),
   tasks: {
-    list: () => get<{ tasks: Task[]; total: number }>('/api/tasks'),
+    list: (params?: { status?: string; limit?: number; offset?: number }) => {
+      const q = new URLSearchParams()
+      if (params?.status) q.set('status', params.status)
+      if (params?.limit) q.set('limit', String(params.limit))
+      if (params?.offset) q.set('offset', String(params.offset))
+      const qs = q.toString()
+      return get<{ tasks: Task[]; total: number }>(`/api/tasks${qs ? `?${qs}` : ''}`)
+    },
     approve: (id: string) =>
       post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/approve`, {}),
     deny: (id: string) =>

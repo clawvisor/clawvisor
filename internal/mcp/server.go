@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // Server handles MCP JSON-RPC 2.0 requests.
@@ -16,9 +18,9 @@ type Server struct {
 
 // NewServer creates an MCP server.
 // handlers maps internal route patterns to their HTTP handlers (e.g. "GET /api/skill/catalog").
-func NewServer(sessionTTL time.Duration, handlers map[string]http.Handler, logger *slog.Logger) *Server {
+func NewServer(st store.Store, sessionTTL time.Duration, handlers map[string]http.Handler, logger *slog.Logger) *Server {
 	return &Server{
-		sessions: NewSessionStore(sessionTTL),
+		sessions: NewSessionStore(st, sessionTTL, logger),
 		handlers: handlers,
 		logger:   logger,
 	}
@@ -34,17 +36,17 @@ func (s *Server) StartCleanup(done <-chan struct{}) {
 func (s *Server) HandleJSONRPC(w http.ResponseWriter, r *http.Request, req *Request) *Response {
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(w, req)
+		return s.handleInitialize(w, r, req)
 	case "notifications/initialized":
 		// Notification — validate session but no response either way.
 		sessionID := r.Header.Get("Mcp-Session-Id")
-		if !s.sessions.Valid(sessionID) {
+		if !s.sessions.Valid(r.Context(), sessionID) {
 			s.logger.Warn("notifications/initialized with invalid session", "session_id", sessionID)
 		}
 		return nil
 	case "ping", "tools/list", "tools/call":
 		sessionID := r.Header.Get("Mcp-Session-Id")
-		if !s.sessions.Valid(sessionID) {
+		if !s.sessions.Valid(r.Context(), sessionID) {
 			return newErrorResponse(req.ID, CodeInvalidRequest, "invalid or expired session")
 		}
 		switch req.Method {
@@ -61,8 +63,8 @@ func (s *Server) HandleJSONRPC(w http.ResponseWriter, r *http.Request, req *Requ
 	}
 }
 
-func (s *Server) handleInitialize(w http.ResponseWriter, req *Request) *Response {
-	sessionID, err := s.sessions.Create()
+func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request, req *Request) *Response {
+	sessionID, err := s.sessions.Create(r.Context())
 	if err != nil {
 		return newErrorResponse(req.ID, CodeInternalError, "failed to create session")
 	}

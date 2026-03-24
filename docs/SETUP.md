@@ -38,6 +38,7 @@ Ask the user: **"Which agent are you connecting to Clawvisor?"**
 | Option | Guide | When to recommend |
 |---|---|---|
 | **Claude Code** | [INTEGRATE_CLAUDE_CODE.md](INTEGRATE_CLAUDE_CODE.md) | They're using Claude Code and want to install the Clawvisor skill |
+| **Claude Desktop** | [INTEGRATE_CLAUDE_COWORK.md](INTEGRATE_CLAUDE_COWORK.md) | They're using Claude Desktop and want MCP integration |
 | **OpenClaw** | [INTEGRATE_OPENCLAW.md](INTEGRATE_OPENCLAW.md) | They're running OpenClaw and want webhook callbacks |
 | **Other / generic** | [INTEGRATE_GENERIC.md](INTEGRATE_GENERIC.md) | Any HTTP-capable agent — covers token creation and points to the API protocol |
 

@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"net/http"
 	"os"
 	"time"
@@ -17,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
+	"github.com/clawvisor/clawvisor/internal/notify/push"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/internal/intent"
@@ -26,6 +31,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	skillfiles "github.com/clawvisor/clawvisor/skills"
+	webfs "github.com/clawvisor/clawvisor/web"
 
 	"golang.org/x/time/rate"
 )
@@ -49,10 +55,20 @@ type Server struct {
 	wrapRoutes  func(http.Handler) http.Handler
 	features              FeatureSet
 	skipBuiltinAuthRoutes bool
+	quiet                 bool // suppress user-facing messages (e.g. during daemon setup)
 
-	// approvalsCleaner is used to stop the background goroutine.
-	approvalsHandler *handlers.ApprovalsHandler
-	tasksHandler     *handlers.TasksHandler
+	// Relay/E2E keys.
+	x25519Key    *ecdh.PrivateKey // X25519 key for E2E encryption of gateway requests
+	daemonID     string           // relay daemon ID
+	ed25519PubB64 string          // base64-encoded Ed25519 public key for .well-known
+
+	// Handler references for background goroutines and decision dispatch.
+	approvalsHandler   *handlers.ApprovalsHandler
+	tasksHandler       *handlers.TasksHandler
+	connectionsHandler *handlers.ConnectionsHandler
+	devicesHandler     *handlers.DevicesHandler
+
+	pushNotifier *push.Notifier // concrete push notifier; may be nil
 
 	eventHub    *events.Hub
 	mcpServer   *mcp.Server
@@ -106,6 +122,34 @@ func WithSkipBuiltinAuth() ServerOption {
 	return func(s *Server) { s.skipBuiltinAuthRoutes = true }
 }
 
+// WithQuiet suppresses user-facing messages (startup banner, shutdown notice)
+// and sets log level to WARN. Used during daemon setup phases where a temporary
+// server runs in the background.
+func WithQuiet() ServerOption {
+	return func(s *Server) { s.quiet = true }
+}
+
+// WithE2EKey sets the X25519 private key for E2E encryption of gateway requests.
+func WithE2EKey(key *ecdh.PrivateKey) ServerOption {
+	return func(s *Server) { s.x25519Key = key }
+}
+
+// WithDaemonKeys sets the daemon identity keys for the .well-known/clawvisor-keys endpoint.
+func WithDaemonKeys(daemonID string, x25519Key *ecdh.PrivateKey) ServerOption {
+	return func(s *Server) {
+		s.daemonID = daemonID
+		if x25519Key != nil {
+			s.x25519Key = x25519Key
+		}
+	}
+}
+
+// WithPushNotifier passes the concrete push notifier so the device handler
+// can register/deregister device tokens and emit action decisions.
+func WithPushNotifier(pn *push.Notifier) ServerOption {
+	return func(s *Server) { s.pushNotifier = pn }
+}
+
 // New creates a Server and registers all routes.
 // magicStore may be nil when magic link auth is not enabled.
 func New(
@@ -149,6 +193,10 @@ func New(
 	// Apply optional configuration.
 	for _, o := range opts {
 		o(s)
+	}
+
+	if s.quiet {
+		s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
 	mux := s.routes()
@@ -260,12 +308,6 @@ func (s *Server) routes() http.Handler {
 	}
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
-	agent := func(h http.HandlerFunc) http.Handler { return requireAgent(h) }
-
-	// Rate-limited route helpers: auth runs first (resolves identity), then rate limit checks.
-	agentRateLimited := func(h http.HandlerFunc) http.Handler {
-		return requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(h))
-	}
 	userOAuthRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(oauthRL, userKeyFn, rlCfg.OAuth.Limit)(h))
 	}
@@ -290,6 +332,7 @@ func (s *Server) routes() http.Handler {
 	// Magic link auth (local mode only)
 	if s.magicStore != nil {
 		mux.Handle("POST /api/auth/magic", authRateLimited(authHandler.ExchangeMagic))
+		mux.Handle("POST /api/auth/magic/local", authRateLimited(authHandler.GenerateMagicLocal))
 	}
 
 	// Password auth routes are registered only when the PasswordAuth feature is enabled
@@ -325,16 +368,69 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
 
+	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
+	// Local requests pass through unencrypted; relay requests without E2E get 403.
+	e2e := func(h http.Handler) http.Handler { return h }
+	if s.x25519Key != nil {
+		e2eMw := middleware.E2E(s.x25519Key)
+		e2e = func(h http.Handler) http.Handler { return e2eMw(h) }
+	}
+
+	// Connection requests (unauthenticated — agents requesting access)
+	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
+	s.connectionsHandler = connectionsHandler
+	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
+	mux.Handle("POST /api/agents/connect",
+		middleware.RateLimit(connectionsRL, ipKeyFn, 10)(e2e(http.HandlerFunc(connectionsHandler.RequestConnect))))
+	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
+
+	// Connection request management (user JWT)
+	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
+	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
+	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
+
+	// Pairing code (for relay MCP OAuth consent — no auth, CORS for relay origin)
+	var pairingHandler *handlers.PairingHandler
+	if s.daemonID != "" {
+		pairingHandler = handlers.NewPairingHandler(s.daemonID)
+		corsOrigins := []string{"https://relay.clawvisor.com", "https://app.clawvisor.com"}
+		mux.Handle("GET /api/pairing/code",
+			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(pairingHandler.GenerateCode)))
+		mux.Handle("OPTIONS /api/pairing/code",
+			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	}
+
+	// Device pairing and management
+	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.eventHub, s.logger, baseURL, s.jwtSvc)
+	if s.daemonID != "" {
+		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
+		devicesHandler.SetRelayInfo(s.daemonID, relayHost)
+	}
+	s.devicesHandler = devicesHandler
+	devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+	mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
+	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
+	mux.Handle("POST /api/devices/pair/complete",
+		middleware.RateLimit(devicesRL, ipKeyFn, 5)(e2e(http.HandlerFunc(devicesHandler.CompletePairing))))
+	mux.Handle("GET /api/devices", user(devicesHandler.List))
+	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
+	requireDevice := middleware.RequireDevice(s.store)
+	mux.Handle("POST /api/devices/{id}/action", requireDevice(e2e(http.HandlerFunc(devicesHandler.Action))))
+	mux.Handle("POST /api/devices/{id}/token", requireDevice(e2e(http.HandlerFunc(devicesHandler.MintToken))))
+	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
+
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)
-	mux.Handle("POST /api/guard/check", agent(guardHandler.Check))
+	mux.Handle("POST /api/guard/check", requireAgent(e2e(http.HandlerFunc(guardHandler.Check))))
 
-	// Gateway (agent token, rate-limited)
-	mux.Handle("POST /api/gateway/request", agentRateLimited(gatewayHandler.HandleRequest))
-	mux.Handle("GET /api/gateway/request/{request_id}/status", agentRateLimited(gatewayHandler.HandleStatus))
+	// Gateway (agent token, rate-limited, E2E on relay traffic)
+	mux.Handle("POST /api/gateway/request", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleRequest)))))
+	mux.Handle("GET /api/gateway/request/{request_id}/status", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleStatus)))))
 
 	// Callback secret registration (agent token)
-	mux.Handle("POST /api/callbacks/register", agent(gatewayHandler.RegisterCallback))
+	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
@@ -346,7 +442,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
 
 	// Skill catalog (agent token)
-	mux.Handle("GET /api/skill/catalog", agent(skillHandler.Catalog))
+	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))
 
 	// Approvals (user JWT)
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
@@ -362,10 +458,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/overview", user(overviewHandler.Get))
 
 	// Tasks (agent auth)
-	mux.Handle("POST /api/tasks", agent(tasksHandler.Create))
-	mux.Handle("GET /api/tasks/{id}", agent(tasksHandler.Get))
-	mux.Handle("POST /api/tasks/{id}/complete", agent(tasksHandler.Complete))
-	mux.Handle("POST /api/tasks/{id}/expand", agent(tasksHandler.Expand))
+	mux.Handle("POST /api/tasks", requireAgent(e2e(http.HandlerFunc(tasksHandler.Create))))
+	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))
+	mux.Handle("POST /api/tasks/{id}/complete", requireAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
+	mux.Handle("POST /api/tasks/{id}/expand", requireAgent(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
 	// Tasks (user JWT)
 	mux.Handle("GET /api/tasks", user(tasksHandler.List))
@@ -387,12 +483,28 @@ func (s *Server) routes() http.Handler {
 	// Skill files (no auth — served so OpenClaw instances can install the skill)
 	// GET /skill         → redirects to /skill/SKILL.md
 	// GET /skill/*       → embedded clawvisor skill tree (SKILL.md, policies/, …)
+	// GET /skill/setup   → agent onboarding document with pre-filled CLAWVISOR_URL
 	skillFS, _ := fs.Sub(skillfiles.FS, "clawvisor")
 	skillFileHandler := http.StripPrefix("/skill", http.FileServer(http.FS(skillFS)))
 	mux.HandleFunc("GET /skill", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/skill/SKILL.md", http.StatusFound)
 	})
+	if s.daemonID != "" {
+		relayHost := ""
+		if s.cfg.Relay.URL != "" {
+			relayHost = s.cfg.Relay.URL
+			relayHost = strings.TrimPrefix(relayHost, "wss://")
+			relayHost = strings.TrimPrefix(relayHost, "ws://")
+		}
+		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
+		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+	}
 	mux.Handle("/skill/", skillFileHandler)
+
+	// Key discovery endpoint (no auth — agents need the public key for E2E).
+	if s.daemonID != "" && s.x25519Key != nil {
+		mux.HandleFunc("GET /.well-known/clawvisor-keys", s.handleClawvisorKeys)
+	}
 
 	// MCP endpoint (agent token auth)
 	if s.cfg.MCP.Enabled {
@@ -413,14 +525,23 @@ func (s *Server) routes() http.Handler {
 			"POST /api/gateway/request":     http.HandlerFunc(gatewayHandler.HandleRequest),
 		}
 
-		mcpServer := mcp.NewServer(sessionTTL, mcpHandlers, s.logger)
+		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)
 		s.mcpServer = mcpServer
 
 		mcpHandler := handlers.NewMCPHandler(mcpServer, s.store, baseURL)
 		mux.HandleFunc("POST /mcp", mcpHandler.Handle)
+		mux.HandleFunc("GET /mcp", mcpHandler.HandleSSE)
+		mux.HandleFunc("DELETE /mcp", mcpHandler.HandleDelete)
 
 		// OAuth 2.1 (for MCP clients)
-		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger)
+		var oauthOpts []mcpoauth.ProviderOption
+		if s.daemonID != "" {
+			oauthOpts = append(oauthOpts, mcpoauth.WithDaemonID(s.daemonID))
+		}
+		if pairingHandler != nil {
+			oauthOpts = append(oauthOpts, mcpoauth.WithPairingVerifier(pairingHandler.Verify))
+		}
+		oauthProvider := mcpoauth.NewProvider(s.store, s.jwtSvc, baseURL, s.logger, oauthOpts...)
 		mux.HandleFunc("GET /.well-known/oauth-protected-resource", oauthProvider.ProtectedResourceMetadata)
 		mux.HandleFunc("GET /.well-known/oauth-authorization-server", oauthProvider.AuthorizationServerMetadata)
 		// Rate limit registration to prevent database flooding.
@@ -445,10 +566,14 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
-	// SPA fallback
+	// SPA fallback — serve from disk if configured, otherwise from embedded FS.
 	if s.cfg.Server.FrontendDir != "" {
-		fs := http.FileServer(http.Dir(s.cfg.Server.FrontendDir))
+		fileServer := http.FileServer(http.Dir(s.cfg.Server.FrontendDir))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
 			path := s.cfg.Server.FrontendDir + r.URL.Path
 			if _, err := os.Stat(path); os.IsNotExist(err) || r.URL.Path == "/" {
 				// index.html must not be cached — it references content-hashed
@@ -457,7 +582,27 @@ func (s *Server) routes() http.Handler {
 				http.ServeFile(w, r, s.cfg.Server.FrontendDir+"/index.html")
 				return
 			}
-			fs.ServeHTTP(w, r)
+			fileServer.ServeHTTP(w, r)
+		})
+	} else if distFS, err := fs.Sub(webfs.DistFS, "dist"); err == nil {
+		fileServer := http.FileServer(http.FS(distFS))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			// Check if the file exists in the embedded FS.
+			if f, err := distFS.Open(strings.TrimPrefix(r.URL.Path, "/")); err == nil {
+				f.Close()
+				if r.URL.Path != "/" {
+					fileServer.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.Header().Set("Cache-Control", "no-cache")
+			index, _ := fs.ReadFile(distFS, "index.html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(index)
 		})
 	}
 
@@ -477,9 +622,21 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.features)
 }
 
-// consumeTelegramDecisions reads from the Telegram notifier's decision channel
+// handleClawvisorKeys returns the daemon's public keys for E2E encryption.
+func (s *Server) handleClawvisorKeys(w http.ResponseWriter, r *http.Request) {
+	x25519Pub := base64.StdEncoding.EncodeToString(s.x25519Key.PublicKey().Bytes())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"daemon_id": s.daemonID,
+		"x25519":    x25519Pub,
+		"algorithm": "x25519-ecdh-aes256gcm",
+	})
+}
+
+// consumeNotifierDecisions reads from the notifier's decision channel
 // and routes approve/deny decisions to the appropriate handler.
-func (s *Server) consumeTelegramDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
+func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.CallbackDecision) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -508,9 +665,15 @@ func (s *Server) consumeTelegramDecisions(ctx context.Context, ch <-chan notify.
 				} else {
 					err = s.tasksHandler.ExpandDenyByTaskID(ctx, d.TargetID, d.UserID)
 				}
+			case "connection":
+				if d.Action == "approve" {
+					_, err = s.connectionsHandler.ApproveByID(ctx, d.TargetID, d.UserID)
+				} else {
+					err = s.connectionsHandler.DenyByID(ctx, d.TargetID, d.UserID)
+				}
 			}
 			if err != nil {
-				s.logger.Warn("telegram decision failed",
+				s.logger.Warn("notifier decision failed",
 					"type", d.Type, "action", d.Action,
 					"target_id", d.TargetID, "err", err)
 			}
@@ -525,6 +688,8 @@ func (s *Server) Handler() http.Handler {
 
 // Run starts the HTTP server and blocks until the context is cancelled.
 func (s *Server) Run(ctx context.Context) error {
+	s.logger.Info("server running", "expired_task_filter", true)
+
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
 
@@ -549,13 +714,18 @@ func (s *Server) Run(ctx context.Context) error {
 		s.mcpServer.StartCleanup(ctx.Done())
 	}
 
-	// Start Telegram inline callback consumer and token cleanup.
-	if tg, ok := s.notifier.(interface {
+	// Start notifier inline callback consumer and token cleanup.
+	if dc, ok := s.notifier.(interface {
 		DecisionChannel() <-chan notify.CallbackDecision
 		RunCleanup(context.Context)
 	}); ok {
-		go tg.RunCleanup(ctx)
-		go s.consumeTelegramDecisions(ctx, tg.DecisionChannel())
+		go dc.RunCleanup(ctx)
+		go s.consumeNotifierDecisions(ctx, dc.DecisionChannel())
+	}
+
+	// Start device pairing session cleanup.
+	if s.devicesHandler != nil {
+		go s.devicesHandler.RunCleanup(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -572,9 +742,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		if s.cfg.Server.IsLocal() {
+		if s.cfg.Server.IsLocal() && !s.quiet {
 			fmt.Println("\n  Shutting down...")
-		} else {
+		} else if !s.quiet {
 			s.logger.Info("shutting down server")
 		}
 		// Close SSE connections first so handlers return before Shutdown waits on them.

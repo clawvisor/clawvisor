@@ -30,6 +30,8 @@ async function fetchTicket(): Promise<string | null> {
  * Connects to the SSE event stream and invalidates React Query caches
  * on server-pushed events. Uses a single-use ticket for authentication
  * instead of sending the JWT as a query parameter.
+ *
+ * Automatically reconnects with exponential backoff on connection loss.
  */
 export function useEventStream() {
   const qc = useQueryClient()
@@ -37,6 +39,7 @@ export function useEventStream() {
   useEffect(() => {
     let es: EventSource | null = null
     let cancelled = false
+    let retryDelay = 1000
 
     async function connect() {
       const ticket = await fetchTicket()
@@ -44,14 +47,23 @@ export function useEventStream() {
 
       es = new EventSource(`/api/events?ticket=${encodeURIComponent(ticket)}`)
 
+      es.onopen = () => {
+        retryDelay = 1000 // reset backoff on successful connection
+      }
+
       es.addEventListener('queue', () => {
         qc.invalidateQueries({ queryKey: ['overview'] })
         qc.invalidateQueries({ queryKey: ['queue'] })
+        qc.invalidateQueries({ queryKey: ['connections'] })
       })
 
       es.addEventListener('tasks', () => {
         qc.invalidateQueries({ queryKey: ['tasks'] })
         qc.invalidateQueries({ queryKey: ['overview'] })
+      })
+
+      es.addEventListener('devices', () => {
+        qc.invalidateQueries({ queryKey: ['devices'] })
       })
 
       es.addEventListener('audit', (e) => {
@@ -62,6 +74,16 @@ export function useEventStream() {
         }
         qc.invalidateQueries({ queryKey: ['overview'] })
       })
+
+      es.onerror = () => {
+        es?.close()
+        es = null
+        if (cancelled) return
+        setTimeout(() => {
+          if (!cancelled) connect()
+        }, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 30_000) // cap at 30s
+      }
     }
 
     connect()
