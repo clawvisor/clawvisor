@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/clawvisor/clawvisor/compare/v0.7.0...v0.7.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* trigger release binaries on tag push instead of release event ([#46](https://github.com/clawvisor/clawvisor/issues/46)) ([00bcbc5](https://github.com/clawvisor/clawvisor/commit/00bcbc5d85fe697641d5c9e945ccfd562c934c5d))
+
 ## [0.7.0](https://github.com/clawvisor/clawvisor/compare/v0.6.2...v0.7.0) (2026-03-25)
 
 
