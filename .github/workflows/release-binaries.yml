@@ -1,9 +1,6 @@
 name: Release Binaries
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -34,21 +31,10 @@ jobs:
       - name: Build frontend
         run: cd web && npm ci && npm run build
 
-      - name: Determine version tag
-        id: tag
-        run: echo "version=${{ github.ref_name || inputs.version }}" >> "$GITHUB_OUTPUT"
-
       - name: Build binaries and checksums
-        run: scripts/build-release.sh "${{ steps.tag.outputs.version }}"
+        run: scripts/build-release.sh "${{ inputs.version }}"
 
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Wait for release-please to create the GitHub Release (may lag behind the tag)
-          for i in 1 2 3 4 5; do
-            gh release view "${{ steps.tag.outputs.version }}" && break
-            echo "Release not found yet, retrying in 30s... ($i/5)"
-            sleep 30
-          done
-          gh release upload "${{ steps.tag.outputs.version }}" dist/* --clobber
+        run: gh release upload "${{ inputs.version }}" dist/* --clobber
