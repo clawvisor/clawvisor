@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/clawvisor/clawvisor/compare/v0.7.3...v0.7.4) (2026-03-25)
+
+
+### Bug Fixes
+
+* ad-hoc codesign binary on macOS, move PATH hint to end ([#52](https://github.com/clawvisor/clawvisor/issues/52)) ([2ae3baa](https://github.com/clawvisor/clawvisor/commit/2ae3baae9f63ec2a639bd978ff9c70f00b193124))
+
 ## [0.7.3](https://github.com/clawvisor/clawvisor/compare/v0.7.2...v0.7.3) (2026-03-25)
 
 
