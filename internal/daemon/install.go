@@ -368,9 +368,9 @@ func printAgentSetupInstructions(dataDir string) {
 	fmt.Println()
 	fmt.Println(green.Padding(0, 2).Render("✓ Installation complete"))
 	fmt.Println()
-	fmt.Println("  To get started, provide the following instruction to your AI agent:")
+	fmt.Println("  To get started, copy the following message to your AI agent:")
 	fmt.Println()
-	fmt.Printf("  \"I'd like to set up Clawvisor. Please navigate to %s\n", green.Render(setupURL))
-	fmt.Println("   and follow the setup instructions.\"")
+	fmt.Println(dim.Padding(0, 4).Render("I'd like to set up Clawvisor. Please navigate to the following URL and follow the setup instructions:"))
+	fmt.Println(green.Padding(0, 4).Render(setupURL))
 	fmt.Println()
 }
