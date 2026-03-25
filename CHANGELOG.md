@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/clawvisor/clawvisor/compare/v0.7.2...v0.7.3) (2026-03-25)
+
+
+### Bug Fixes
+
+* build release binaries inline and add make install ([#50](https://github.com/clawvisor/clawvisor/issues/50)) ([69ac925](https://github.com/clawvisor/clawvisor/commit/69ac9254d9eeda39adba97a8dec4aed0f6528b69))
+
 ## [0.7.2](https://github.com/clawvisor/clawvisor/compare/v0.7.1...v0.7.2) (2026-03-25)
 
 
