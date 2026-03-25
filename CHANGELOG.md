@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/clawvisor/clawvisor/compare/v0.6.1...v0.6.2) (2026-03-25)
+
+
+### Features
+
+* run service setup wizard during `clawvisor install` ([#41](https://github.com/clawvisor/clawvisor/issues/41)) ([99df13d](https://github.com/clawvisor/clawvisor/commit/99df13d74da7de8affa1d6bc269d3e4219efa053))
+
 ## [0.6.1](https://github.com/clawvisor/clawvisor/compare/v0.6.0...v0.6.1) (2026-03-24)
 
 
