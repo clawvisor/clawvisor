@@ -130,12 +130,23 @@ func Install() error {
 
 	switch runtime.GOOS {
 	case "darwin":
-		return installLaunchd(home, data)
+		if err := installLaunchd(home, data); err != nil {
+			return err
+		}
 	case "linux":
-		return installSystemd(home, data)
+		if err := installSystemd(home, data); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor start`")
 	}
+
+	// Start the daemon and print the agent setup URL.
+	if err := Start(); err != nil {
+		return err
+	}
+	printAgentSetupInstructions(dataDir)
+	return nil
 }
 
 func installLaunchd(home string, data installData) error {
@@ -342,4 +353,24 @@ func Stop() error {
 
 	fmt.Println("  Daemon stopped.")
 	return nil
+}
+
+// printAgentSetupInstructions prints the URL that users should give to their
+// AI agent to begin the Clawvisor setup flow.
+func printAgentSetupInstructions(dataDir string) {
+	daemonID, relayHost, err := readRelayConfig(dataDir)
+	if err != nil || daemonID == "" || relayHost == "" {
+		return
+	}
+
+	setupURL := fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID)
+
+	fmt.Println()
+	fmt.Println(green.Padding(0, 2).Render("✓ Installation complete"))
+	fmt.Println()
+	fmt.Println("  To get started, provide the following instruction to your AI agent:")
+	fmt.Println()
+	fmt.Printf("  \"I'd like to set up Clawvisor. Please navigate to %s\n", green.Render(setupURL))
+	fmt.Println("   and follow the setup instructions.\"")
+	fmt.Println()
 }
