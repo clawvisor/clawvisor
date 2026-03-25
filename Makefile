@@ -18,9 +18,10 @@ web/dist: $(shell find web/src -type f)
 install: build
 	mkdir -p $(HOME)/.clawvisor/bin $(HOME)/.clawvisor/logs
 	cp bin/clawvisor $(HOME)/.clawvisor/bin/clawvisor
-	@echo "Installed to $(HOME)/.clawvisor/bin/clawvisor"
-	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
+	[ "$$(uname)" = "Darwin" ] && codesign -s - $(HOME)/.clawvisor/bin/clawvisor 2>/dev/null || true
 	$(HOME)/.clawvisor/bin/clawvisor install
+	@echo ""
+	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
 
 # ── Test ───────────────────────────────────────────────────────────────────────
 
