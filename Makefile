@@ -1,4 +1,4 @@
-.PHONY: build test run run-sqlite migrate lint clean setup tui eval-intent release
+.PHONY: build install test run run-sqlite migrate lint clean setup tui eval-intent release
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION)"
@@ -14,6 +14,13 @@ build-server: web/dist
 web/dist: $(shell find web/src -type f)
 	cd web && npm install && npm run build
 	@touch web/dist
+
+install: build
+	mkdir -p $(HOME)/.clawvisor/bin $(HOME)/.clawvisor/logs
+	cp bin/clawvisor $(HOME)/.clawvisor/bin/clawvisor
+	@echo "Installed to $(HOME)/.clawvisor/bin/clawvisor"
+	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
+	$(HOME)/.clawvisor/bin/clawvisor install
 
 # ── Test ───────────────────────────────────────────────────────────────────────
 
