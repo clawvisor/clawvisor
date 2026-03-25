@@ -87,6 +87,10 @@ func Install() error {
 	}
 
 	if firstRun {
+		// Stop any running daemon so the setup-phase server can bind the
+		// port and the magic token matches the new in-memory store.
+		_ = Stop()
+
 		cfgPath := filepath.Join(dataDir, "config.yaml")
 		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
