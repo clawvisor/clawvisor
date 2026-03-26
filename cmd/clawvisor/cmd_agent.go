@@ -1,19 +1,13 @@
 package main
 
 import (
-	"context"
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/pkg/clawvisor"
-	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/internal/daemon"
 )
 
 var agentCmd = &cobra.Command{
@@ -33,69 +27,44 @@ var agentCreateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-		_, st, err := clawvisor.ConnectStore(logger)
-		if err != nil {
-			return fmt.Errorf("connecting to database: %w", err)
-		}
-		defer st.Close()
-
-		ctx := context.Background()
-		user, err := ensureAdminUser(ctx, st)
+		cl, err := daemon.NewAPIClient()
 		if err != nil {
 			return err
 		}
 
 		// If --replace, delete any existing agent with the same name first.
 		if agentCreateReplace {
-			existing, _ := st.ListAgents(ctx, user.ID)
+			existing, _ := cl.GetAgents()
 			for _, a := range existing {
 				if a.Name == name {
-					_ = st.DeleteAgent(ctx, a.ID, user.ID)
+					_ = cl.DeleteAgent(a.ID)
 				}
 			}
 		}
 
-		rawToken, err := auth.GenerateAgentToken()
-		if err != nil {
-			return fmt.Errorf("generating token: %w", err)
-		}
-
-		agent, err := st.CreateAgent(ctx, user.ID, name, auth.HashToken(rawToken))
+		agent, err := cl.CreateAgentWithOpts(name, agentCreateWithCallback)
 		if err != nil {
 			return fmt.Errorf("creating agent: %w", err)
-		}
-
-		var callbackSecret string
-		if agentCreateWithCallback {
-			secret, err := auth.GenerateCallbackSecret()
-			if err != nil {
-				return fmt.Errorf("generating callback secret: %w", err)
-			}
-			if err := st.SetAgentCallbackSecret(ctx, agent.ID, secret); err != nil {
-				return fmt.Errorf("storing callback secret: %w", err)
-			}
-			callbackSecret = secret
 		}
 
 		if agentCreateJSON {
 			out := map[string]string{
 				"id":    agent.ID,
 				"name":  agent.Name,
-				"token": rawToken,
+				"token": agent.Token,
 			}
-			if callbackSecret != "" {
-				out["callback_secret"] = callbackSecret
+			if agent.CallbackSecret != "" {
+				out["callback_secret"] = agent.CallbackSecret
 			}
 			enc := json.NewEncoder(os.Stdout)
 			return enc.Encode(out)
 		}
 
 		fmt.Printf("Agent created: %s (id: %s)\n", agent.Name, agent.ID)
-		fmt.Printf("Token: %s\n", rawToken)
-		if callbackSecret != "" {
-			fmt.Printf("Callback secret: %s\n", callbackSecret)
+		fmt.Printf("Token: %s\n", agent.Token)
+		if agent.CallbackSecret != "" {
+			fmt.Printf("Callback secret: %s\n", agent.CallbackSecret)
 		}
 		return nil
 	},
@@ -109,21 +78,12 @@ var agentListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all agents",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-		_, st, err := clawvisor.ConnectStore(logger)
-		if err != nil {
-			return fmt.Errorf("connecting to database: %w", err)
-		}
-		defer st.Close()
-
-		ctx := context.Background()
-		user, err := ensureAdminUser(ctx, st)
+		cl, err := daemon.NewAPIClient()
 		if err != nil {
 			return err
 		}
 
-		agents, err := st.ListAgents(ctx, user.ID)
+		agents, err := cl.GetAgents()
 		if err != nil {
 			return fmt.Errorf("listing agents: %w", err)
 		}
@@ -155,21 +115,13 @@ var agentDeleteCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := args[0]
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-		_, st, err := clawvisor.ConnectStore(logger)
-		if err != nil {
-			return fmt.Errorf("connecting to database: %w", err)
-		}
-		defer st.Close()
-
-		ctx := context.Background()
-		user, err := ensureAdminUser(ctx, st)
+		cl, err := daemon.NewAPIClient()
 		if err != nil {
 			return err
 		}
 
-		agents, err := st.ListAgents(ctx, user.ID)
+		agents, err := cl.GetAgents()
 		if err != nil {
 			return fmt.Errorf("listing agents: %w", err)
 		}
@@ -185,40 +137,12 @@ var agentDeleteCmd = &cobra.Command{
 			return fmt.Errorf("agent %q not found", target)
 		}
 
-		if err := st.DeleteAgent(ctx, agentID, user.ID); err != nil {
+		if err := cl.DeleteAgent(agentID); err != nil {
 			return fmt.Errorf("deleting agent: %w", err)
 		}
 		fmt.Printf("Agent %q deleted.\n", target)
 		return nil
 	},
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-// ensureAdminUser finds admin@local, creating it if missing (same pattern as
-// internal/server/run.go).
-func ensureAdminUser(ctx context.Context, st store.Store) (*store.User, error) {
-	const localEmail = "admin@local"
-
-	user, err := st.GetUserByEmail(ctx, localEmail)
-	if err == nil {
-		return user, nil
-	}
-
-	// Create the admin user with a random password.
-	randPw := make([]byte, 32)
-	if _, err := cryptorand.Read(randPw); err != nil {
-		return nil, fmt.Errorf("generating random password: %w", err)
-	}
-	hash, err := auth.HashPassword(hex.EncodeToString(randPw))
-	if err != nil {
-		return nil, fmt.Errorf("hashing password: %w", err)
-	}
-	if _, err := st.CreateUser(ctx, localEmail, hash); err != nil {
-		return nil, fmt.Errorf("creating admin user: %w", err)
-	}
-
-	return st.GetUserByEmail(ctx, localEmail)
 }
 
 func init() {

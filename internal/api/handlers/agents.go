@@ -30,7 +30,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name string `json:"name"`
+		Name               string `json:"name"`
+		WithCallbackSecret bool   `json:"with_callback_secret"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -52,14 +53,29 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the raw token here — it is never stored in plaintext and is shown only once.
-	writeJSON(w, http.StatusCreated, map[string]any{
+	resp := map[string]any{
 		"id":         agent.ID,
 		"user_id":    agent.UserID,
 		"name":       agent.Name,
 		"created_at": agent.CreatedAt,
 		"token":      rawToken,
-	})
+	}
+
+	if body.WithCallbackSecret {
+		secret, err := auth.GenerateCallbackSecret()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate callback secret")
+			return
+		}
+		if err := h.st.SetAgentCallbackSecret(r.Context(), agent.ID, secret); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not store callback secret")
+			return
+		}
+		resp["callback_secret"] = secret
+	}
+
+	// Return the raw token here — it is never stored in plaintext and is shown only once.
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // List returns all agents belonging to the authenticated user.
