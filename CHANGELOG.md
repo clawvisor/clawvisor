@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.5](https://github.com/clawvisor/clawvisor/compare/v0.7.4...v0.7.5) (2026-03-26)
+
+
+### Features
+
+* prompt to open dashboard after install ([#54](https://github.com/clawvisor/clawvisor/issues/54)) ([f6160f7](https://github.com/clawvisor/clawvisor/commit/f6160f73702646228b082b11e78aeec79ddba4a1))
+
+
+### Bug Fixes
+
+* pass bundle_id to push service for correct APNs topic ([#55](https://github.com/clawvisor/clawvisor/issues/55)) ([f5fa243](https://github.com/clawvisor/clawvisor/commit/f5fa2431316ff24f89eb771632994deb805683ff))
+
 ## [0.7.4](https://github.com/clawvisor/clawvisor/compare/v0.7.3...v0.7.4) (2026-03-25)
 
 
