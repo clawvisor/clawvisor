@@ -29,7 +29,7 @@ func Register(name string) (*Registration, error) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(baseURL+"/v1/register", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(baseURL+"/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("connecting to haiku proxy: %w", err)
 	}
