@@ -6,10 +6,11 @@ package intent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
-	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -56,24 +57,30 @@ func (NoopVerifier) Verify(_ context.Context, _ VerifyRequest) (*VerificationVer
 
 // LLMVerifier performs intent verification via an LLM provider.
 type LLMVerifier struct {
-	cfg   config.VerificationConfig
-	cache *verdictCache
+	health *llm.Health
+	logger *slog.Logger
+	cache  *verdictCache
 }
 
 // NewLLMVerifier creates an LLM-backed intent verifier.
-func NewLLMVerifier(cfg config.VerificationConfig) *LLMVerifier {
+// It reads its config from health on each call, so runtime config updates
+// take effect immediately.
+func NewLLMVerifier(health *llm.Health, logger *slog.Logger) *LLMVerifier {
+	cfg := health.VerificationConfig()
 	ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
 	if ttl <= 0 {
 		ttl = 60 * time.Second
 	}
 	return &LLMVerifier{
-		cfg:   cfg,
-		cache: newVerdictCache(ttl),
+		health: health,
+		logger: logger,
+		cache:  newVerdictCache(ttl),
 	}
 }
 
 func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*VerificationVerdict, error) {
-	if !v.cfg.Enabled {
+	cfg := v.health.VerificationConfig()
+	if !cfg.Enabled {
 		return nil, nil
 	}
 
@@ -85,7 +92,7 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 
 	start := time.Now()
 
-	client := llm.NewClient(v.cfg.LLMProviderConfig)
+	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildVerificationUserMessage(req)
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: verificationSystemPrompt},
@@ -97,6 +104,10 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		raw, err := client.Complete(ctx, messages)
 		if err != nil {
 			lastErr = err
+			if errors.Is(err, llm.ErrSpendCapExhausted) {
+				v.health.SetSpendCapExhausted()
+				break // no point retrying a spend cap error
+			}
 			if attempt == 0 {
 				continue
 			}
@@ -112,7 +123,7 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 			break
 		}
 
-		verdict.Model = v.cfg.Model
+		verdict.Model = cfg.Model
 		verdict.LatencyMS = int(time.Since(start).Milliseconds())
 		verdict.Cached = false
 
@@ -120,12 +131,18 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		return verdict, nil
 	}
 
+	v.logger.Warn("intent verification failed after retry",
+		"error", lastErr,
+		"service", req.Service,
+		"action", req.Action,
+		"task_id", req.TaskID,
+	)
 	return &VerificationVerdict{
 		Allow:           false,
 		ParamScope:      "n/a",
 		ReasonCoherence: "n/a",
 		Explanation:     "Verification failed after retry: " + lastErr.Error(),
-		Model:           v.cfg.Model,
+		Model:           cfg.Model,
 		LatencyMS:       int(time.Since(start).Milliseconds()),
 	}, nil
 }

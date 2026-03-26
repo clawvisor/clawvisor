@@ -362,6 +362,22 @@ export interface VersionInfo {
   upgrade_command?: string
 }
 
+export interface LLMUsage {
+  spend_cap: number
+  total_spent: number
+  remaining: number
+  pct_used: number
+}
+
+export interface LLMStatus {
+  status: 'ok' | 'spend_cap_exhausted'
+  is_haiku_proxy: boolean
+  spend_cap_exhausted: boolean
+  provider: string
+  model: string
+  usage?: LLMUsage
+}
+
 export interface ActivityBucket {
   bucket: string
   outcome: string
@@ -542,6 +558,11 @@ export const api = {
   },
   version: {
     get: () => get<VersionInfo>('/api/version'),
+  },
+  llm: {
+    status: () => get<LLMStatus>('/api/llm/status'),
+    update: (provider: string, endpoint: string, apiKey: string, model: string) =>
+      put<{ status: string; warning?: string }>('/api/llm', { provider, endpoint, api_key: apiKey, model }),
   },
   features: {
     get: () => get<FeatureSet>('/api/features'),

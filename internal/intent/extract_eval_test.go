@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -78,16 +79,24 @@ func TestEvalExtraction(t *testing.T) {
 	}
 
 	// Build extractor.
-	extractor := NewLLMExtractor(config.ChainContextConfig{
-		LLMProviderConfig: config.LLMProviderConfig{
-			Enabled:        true,
-			Provider:       provider,
-			Endpoint:       endpoint,
-			APIKey:         apiKey,
-			Model:          model,
-			TimeoutSeconds: 30,
+	health := llm.NewHealth(config.LLMConfig{
+		Provider:       provider,
+		Endpoint:       endpoint,
+		APIKey:         apiKey,
+		Model:          model,
+		TimeoutSeconds: 30,
+		ChainContext: config.ChainContextConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       provider,
+				Endpoint:       endpoint,
+				APIKey:         apiKey,
+				Model:          model,
+				TimeoutSeconds: 30,
+			},
 		},
-	}, slog.Default())
+	})
+	extractor := NewLLMExtractor(health, slog.Default())
 
 	results := make([]extractEvalResult, 0, len(cases))
 

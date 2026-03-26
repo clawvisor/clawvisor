@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	tuiconfig "github.com/clawvisor/clawvisor/internal/tui/config"
+	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
 )
 
 var (
@@ -375,6 +376,7 @@ func stepLLM(cfg *config) error {
 			huh.NewSelect[string]().
 				Title("Which model?").
 				Options(
+					huh.NewOption("Quick start (free)", "quickstart"),
 					huh.NewOption("Claude Haiku — claude-haiku-4-5-20251001", "haiku"),
 					huh.NewOption("Gemini Flash — gemini-2.0-flash", "flash"),
 					huh.NewOption("GPT-4o Mini  — gpt-4o-mini", "mini"),
@@ -388,6 +390,23 @@ func stepLLM(cfg *config) error {
 	}
 
 	switch model {
+	case "quickstart":
+		cfg.llmProvider = "anthropic"
+		cfg.llmEndpoint = haikuproxy.BaseURL()
+		cfg.llmModel = "claude-haiku-4-5-20251001"
+
+		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		reg, err := haikuproxy.Register("clawvisor-setup")
+		if err != nil {
+			fmt.Println(yellow.Padding(0, 2).Render(fmt.Sprintf("  Registration failed: %v", err)))
+			fmt.Println(yellow.Padding(0, 2).Render("  Falling back to manual API key entry."))
+			fmt.Println()
+			cfg.llmEndpoint = "https://api.anthropic.com/v1"
+		} else {
+			cfg.llmAPIKey = reg.Key
+			fmt.Println(green.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+			fmt.Println()
+		}
 	case "haiku":
 		cfg.llmProvider = "anthropic"
 		cfg.llmEndpoint = "https://api.anthropic.com/v1"
@@ -435,22 +454,25 @@ func stepLLM(cfg *config) error {
 		}
 	}
 
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("API key").
-				EchoMode(huh.EchoModePassword).
-				Value(&cfg.llmAPIKey).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("required")
-					}
-					return nil
-				}),
-		),
-	).Run()
-	if err != nil {
-		return err
+	// Skip API key prompt if already set (e.g. from quickstart registration).
+	if cfg.llmAPIKey == "" {
+		err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("API key").
+					EchoMode(huh.EchoModePassword).
+					Value(&cfg.llmAPIKey).
+					Validate(func(s string) error {
+						if s == "" {
+							return fmt.Errorf("required")
+						}
+						return nil
+					}),
+			),
+		).Run()
+		if err != nil {
+			return err
+		}
 	}
 
 	cfg.taskRiskEnabled = true

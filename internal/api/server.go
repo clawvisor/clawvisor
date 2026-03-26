@@ -19,6 +19,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
@@ -46,6 +47,7 @@ type Server struct {
 	adapterReg *adapters.Registry
 	notifier   notify.Notifier
 	llmCfg     config.LLMConfig
+	llmHealth  *llm.Health
 	logger     *slog.Logger
 	http       *http.Server
 
@@ -186,6 +188,7 @@ func New(
 		adapterReg: adapterReg,
 		notifier:   notifier,
 		llmCfg:     llmCfg,
+		llmHealth:  llm.NewHealth(llmCfg),
 		magicStore: magicStore,
 		logger:     logger,
 		eventHub:   events.NewHub(),
@@ -249,13 +252,13 @@ func (s *Server) routes() http.Handler {
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
-		verifier = intent.NewLLMVerifier(s.llmCfg.Verification)
+		verifier = intent.NewLLMVerifier(s.llmHealth, s.logger)
 	}
 
 	// Construct chain context extractor (noop if disabled).
 	var extractor intent.Extractor = intent.NoopExtractor{}
 	if s.llmCfg.ChainContext.Enabled {
-		extractor = intent.NewLLMExtractor(s.llmCfg.ChainContext, s.logger)
+		extractor = intent.NewLLMExtractor(s.llmHealth, s.logger)
 	}
 
 	gatewayHandler := handlers.NewGatewayHandler(
@@ -270,7 +273,7 @@ func (s *Server) routes() http.Handler {
 	// Construct task risk assessor (noop if disabled).
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
-		assessor = taskrisk.NewLLMAssessor(s.llmCfg.TaskRisk, s.logger)
+		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.logger)
 	}
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
@@ -324,6 +327,15 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /ready", healthHandler.Ready)
 	mux.HandleFunc("GET /api/config/public", healthHandler.ConfigPublic)
 	mux.HandleFunc("GET /api/version", healthHandler.Version)
+
+	// LLM status and runtime config update
+	configPath := os.Getenv("CONFIG_FILE")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+	llmHandler := handlers.NewLLMHandler(s.llmHealth, configPath)
+	mux.Handle("GET /api/llm/status", user(llmHandler.Status))
+	mux.Handle("PUT /api/llm", user(llmHandler.Update))
 
 	// Auth — core routes (always registered)
 	mux.Handle("POST /api/auth/refresh", authRateLimited(authHandler.Refresh))

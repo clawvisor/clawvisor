@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,11 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
+
+// ErrSpendCapExhausted is returned when a haiku proxy key (hkp_) has exceeded
+// its spend cap. Callers should check for this with errors.Is to surface a
+// user-facing prompt to provide their own API key.
+var ErrSpendCapExhausted = errors.New("haiku proxy spend cap exhausted")
 
 const anthropicVersion = "2023-06-01"
 
@@ -84,6 +90,17 @@ func NewClient(cfg config.LLMProviderConfig) *Client {
 	return c
 }
 
+// statusError builds an error for a non-200 LLM response. If the key is a
+// haiku proxy key and the status indicates the spend cap is exhausted (402 or
+// 429), it wraps ErrSpendCapExhausted so callers can detect it with errors.Is.
+func (c *Client) statusError(statusCode int, body []byte) error {
+	base := fmt.Errorf("llm: %s %s status %d: %s", c.provider, c.model, statusCode, body)
+	if strings.HasPrefix(c.apiKey, "hkp_") && (statusCode == http.StatusPaymentRequired || statusCode == http.StatusTooManyRequests) {
+		return fmt.Errorf("%w: %w", ErrSpendCapExhausted, base)
+	}
+	return base
+}
+
 // Complete sends a chat completion request and returns the assistant's reply.
 func (c *Client) Complete(ctx context.Context, messages []ChatMessage) (string, error) {
 	switch c.provider {
@@ -130,7 +147,7 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("llm: status %d: %s", resp.StatusCode, b)
+		return "", c.statusError(resp.StatusCode, b)
 	}
 
 	var out struct {
@@ -202,7 +219,7 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("llm: status %d: %s", resp.StatusCode, b)
+		return "", c.statusError(resp.StatusCode, b)
 	}
 
 	// Anthropic response: {"content": [{"type": "text", "text": "..."}], ...}
@@ -284,7 +301,7 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("llm: status %d: %s", resp.StatusCode, b)
+		return "", c.statusError(resp.StatusCode, b)
 	}
 
 	// Response format is the same as Anthropic Messages API.

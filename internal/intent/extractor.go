@@ -3,6 +3,7 @@ package intent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
-	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -46,13 +46,13 @@ func (NoopExtractor) Extract(_ context.Context, _ ExtractRequest) ([]*store.Chai
 
 // LLMExtractor uses an LLM to extract structural facts from adapter results.
 type LLMExtractor struct {
-	cfg    config.ChainContextConfig
+	health *llm.Health
 	logger *slog.Logger
 }
 
 // NewLLMExtractor creates an LLM-backed chain context extractor.
-func NewLLMExtractor(cfg config.ChainContextConfig, logger *slog.Logger) *LLMExtractor {
-	return &LLMExtractor{cfg: cfg, logger: logger}
+func NewLLMExtractor(health *llm.Health, logger *slog.Logger) *LLMExtractor {
+	return &LLMExtractor{health: health, logger: logger}
 }
 
 const extractionSystemPrompt = `You are a data extraction assistant for a security system. You will be given the result of an API action (e.g., listing emails, fetching contacts). Your job is to extract structural references from the result.
@@ -91,7 +91,8 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 
 	userMsg := fmt.Sprintf("Service: %s\nAction: %s\n\nResult:\n%s", req.Service, req.Action, result)
 
-	client := llm.NewClient(e.cfg.LLMProviderConfig)
+	cfg := e.health.ChainContextConfig()
+	client := llm.NewClient(cfg.LLMProviderConfig)
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: extractionSystemPrompt},
 		{Role: "user", Content: userMsg},
@@ -99,6 +100,9 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 
 	raw, err := client.Complete(ctx, messages)
 	if err != nil {
+		if errors.Is(err, llm.ErrSpendCapExhausted) {
+			e.health.SetSpendCapExhausted()
+		}
 		e.logger.Warn("chain context extraction LLM call failed", "err", err, "task_id", req.TaskID)
 		return nil, nil // fail-safe
 	}

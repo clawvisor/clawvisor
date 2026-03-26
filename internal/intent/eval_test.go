@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/adapters/stripe"
 	"github.com/clawvisor/clawvisor/internal/adapters/twilio"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -130,17 +132,25 @@ func TestEvalIntentVerification(t *testing.T) {
 	}
 
 	// Build verifier with cache TTL=0 so every case hits the LLM.
-	verifier := NewLLMVerifier(config.VerificationConfig{
-		LLMProviderConfig: config.LLMProviderConfig{
-			Enabled:        true,
-			Provider:       provider,
-			Endpoint:       endpoint,
-			APIKey:         apiKey,
-			Model:          model,
-			TimeoutSeconds: 30,
+	health := llm.NewHealth(config.LLMConfig{
+		Provider:       provider,
+		Endpoint:       endpoint,
+		APIKey:         apiKey,
+		Model:          model,
+		TimeoutSeconds: 30,
+		Verification: config.VerificationConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       provider,
+				Endpoint:       endpoint,
+				APIKey:         apiKey,
+				Model:          model,
+				TimeoutSeconds: 30,
+			},
+			CacheTTLSeconds: 0,
 		},
-		CacheTTLSeconds: 0,
 	})
+	verifier := NewLLMVerifier(health, slog.Default())
 
 	results := make([]evalResult, 0, len(cases))
 
