@@ -28,6 +28,12 @@ const continueOption = "__continue__"
 // It returns needsRestart=true when Google OAuth credentials were collected
 // and the server must be restarted with the updated config.
 func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart bool, err error) {
+	if nonInteractive() {
+		fmt.Println(dim.Padding(0, 2).Render("  Skipping interactive service setup (non-interactive mode)."))
+		fmt.Println(dim.Padding(0, 2).Render("  Connect services later with: clawvisor setup"))
+		return false, nil
+	}
+
 	fmt.Println()
 	fmt.Println(bold.Padding(0, 2).Render("Connect services"))
 	fmt.Println(dim.Padding(0, 2).Render("Connect the services you want Clawvisor to manage."))

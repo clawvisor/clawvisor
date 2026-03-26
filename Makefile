@@ -1,4 +1,4 @@
-.PHONY: build install test run run-sqlite migrate lint clean setup tui eval-intent release
+.PHONY: build install test run run-sqlite migrate lint clean setup tui eval-intent release test-e2e-install
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION)"
@@ -33,6 +33,11 @@ test-verbose:
 
 eval-intent:
 	go test -v -run TestEvalIntentVerification -count=1 -timeout=300s ./internal/intent/
+
+test-e2e-install: web/dist
+	docker build -f e2e/install/Dockerfile -t clawvisor-e2e-install .
+	docker run --rm clawvisor-e2e-install /home/testuser/test_clawvisor_install.sh
+	docker run --rm clawvisor-e2e-install /home/testuser/test_curl_install.sh
 
 # ── Run ────────────────────────────────────────────────────────────────────────
 

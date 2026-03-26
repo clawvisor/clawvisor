@@ -1,0 +1,49 @@
+name: E2E Install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e-install:
+    name: E2E Install (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build E2E test image
+        run: docker build -f e2e/install/Dockerfile -t clawvisor-e2e-install .
+
+      - name: "Test: clawvisor install (fresh machine)"
+        run: docker run --rm clawvisor-e2e-install /home/testuser/test_clawvisor_install.sh
+
+      - name: "Test: curl | sh install (fresh machine)"
+        run: docker run --rm clawvisor-e2e-install /home/testuser/test_curl_install.sh
+
+  install-unit-tests:
+    name: Installer Unit Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
+      - name: Run installer tests
+        run: go test -v -run 'TestIsGoRunBinary|TestInstallLaunchd|TestInstallSystemd|TestEnsureVaultKey|TestWriteDaemonConfig|TestYamlQuote' ./internal/daemon/

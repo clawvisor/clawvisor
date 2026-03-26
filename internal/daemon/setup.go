@@ -243,37 +243,65 @@ func promptAddAgent(existing []knownAgent) (*knownAgent, error) {
 	return nil, nil
 }
 
+// nonInteractive reports whether the setup wizard should run without
+// interactive prompts, reading configuration from environment variables
+// instead. Set CLAWVISOR_NON_INTERACTIVE=1 to enable.
+//
+// Required env vars in non-interactive mode:
+//
+//	CLAWVISOR_LLM_PROVIDER   — "anthropic" or "openai"
+//	CLAWVISOR_LLM_ENDPOINT   — e.g. "https://api.anthropic.com/v1"
+//	CLAWVISOR_LLM_MODEL      — e.g. "claude-haiku-4-5-20251001"
+//	CLAWVISOR_LLM_API_KEY    — the API key
+//
+// Optional:
+//
+//	CLAWVISOR_TELEMETRY      — "true" or "false" (default: true)
+//	CLAWVISOR_CHAIN_CONTEXT  — "true" or "false" (default: true)
+func nonInteractive() bool {
+	return os.Getenv("CLAWVISOR_NON_INTERACTIVE") == "1"
+}
+
 // runDaemonSetup runs the streamlined daemon setup wizard and writes
 // config.yaml + vault.key into dataDir. Everything that can be
 // auto-configured (SQLite, local vault, host/port, JWT) is hardcoded.
 func runDaemonSetup(dataDir string) error {
 	configPath := filepath.Join(dataDir, "config.yaml")
 
-	// Step 0: welcome / explainer.
-	if err := stepWelcome(); err != nil {
-		if err == huh.ErrUserAborted {
-			fmt.Println("\n  Aborted. No files were written.")
-		}
-		return err
-	}
+	var agents []knownAgent
+	relayEnabled := true
 
-	// Step 1: detect and manage agents.
-	agents, err := stepAgents()
-	if err != nil {
-		if err == huh.ErrUserAborted {
-			fmt.Println("\n  Aborted. No files were written.")
+	if nonInteractive() {
+		fmt.Println(dim.Padding(0, 2).Render("Non-interactive mode: skipping interactive steps."))
+		relayEnabled = os.Getenv("CLAWVISOR_RELAY") != "false"
+	} else {
+		// Step 0: welcome / explainer.
+		if err := stepWelcome(); err != nil {
+			if err == huh.ErrUserAborted {
+				fmt.Println("\n  Aborted. No files were written.")
+			}
+			return err
 		}
-		return err
-	}
 
-	// Step 2: relay opt-in.
-	relayEnabled, err := stepRelayOptIn()
-	if err != nil {
-		if err == huh.ErrUserAborted {
-			fmt.Println("\n  Aborted. No files were written.")
-			return huh.ErrUserAborted
+		// Step 1: detect and manage agents.
+		var err error
+		agents, err = stepAgents()
+		if err != nil {
+			if err == huh.ErrUserAborted {
+				fmt.Println("\n  Aborted. No files were written.")
+			}
+			return err
 		}
-		return err
+
+		// Step 2: relay opt-in.
+		relayEnabled, err = stepRelayOptIn()
+		if err != nil {
+			if err == huh.ErrUserAborted {
+				fmt.Println("\n  Aborted. No files were written.")
+				return huh.ErrUserAborted
+			}
+			return err
+		}
 	}
 
 	cfg, err := collectDaemonConfig()
@@ -450,6 +478,10 @@ func stepWelcome() error {
 }
 
 func collectDaemonConfig() (*daemonConfig, error) {
+	if nonInteractive() {
+		return collectDaemonConfigFromEnv()
+	}
+
 	cfg := &daemonConfig{}
 
 	if err := stepDaemonLLM(cfg); err != nil {
@@ -458,6 +490,28 @@ func collectDaemonConfig() (*daemonConfig, error) {
 	if err := stepDaemonTelemetry(cfg); err != nil {
 		return nil, err
 	}
+	return cfg, nil
+}
+
+// collectDaemonConfigFromEnv builds a daemonConfig from environment
+// variables, used in non-interactive mode.
+func collectDaemonConfigFromEnv() (*daemonConfig, error) {
+	cfg := &daemonConfig{
+		llmProvider: os.Getenv("CLAWVISOR_LLM_PROVIDER"),
+		llmEndpoint: os.Getenv("CLAWVISOR_LLM_ENDPOINT"),
+		llmModel:    os.Getenv("CLAWVISOR_LLM_MODEL"),
+		llmAPIKey:   os.Getenv("CLAWVISOR_LLM_API_KEY"),
+	}
+
+	if cfg.llmProvider == "" || cfg.llmEndpoint == "" || cfg.llmModel == "" || cfg.llmAPIKey == "" {
+		return nil, fmt.Errorf("non-interactive mode requires CLAWVISOR_LLM_PROVIDER, CLAWVISOR_LLM_ENDPOINT, CLAWVISOR_LLM_MODEL, and CLAWVISOR_LLM_API_KEY")
+	}
+
+	cfg.taskRiskEnabled = true
+	cfg.chainContextEnabled = os.Getenv("CLAWVISOR_CHAIN_CONTEXT") != "false"
+	cfg.telemetryEnabled = os.Getenv("CLAWVISOR_TELEMETRY") != "false"
+
+	fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  LLM: %s (%s)", cfg.llmModel, cfg.llmProvider)))
 	return cfg, nil
 }
 
