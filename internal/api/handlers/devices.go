@@ -136,6 +136,7 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 		Code         string `json:"code"`
 		DeviceName   string `json:"device_name"`
 		DeviceToken  string `json:"device_token"`
+		BundleID     string `json:"bundle_id"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -198,6 +199,10 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	bundleID := body.BundleID
+	if bundleID == "" {
+		bundleID = "com.clawvisor.app"
+	}
 	device := &store.PairedDevice{
 		UserID:        session.UserID,
 		DeviceName:    body.DeviceName,
@@ -211,7 +216,7 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 
 	// Register with push service if available.
 	if h.pushN != nil {
-		if err := h.pushN.RegisterDevice(r.Context(), body.DeviceToken); err != nil {
+		if err := h.pushN.RegisterDevice(r.Context(), body.DeviceToken, bundleID); err != nil {
 			h.logger.Warn("failed to register device with push service", "err", err)
 		}
 	}

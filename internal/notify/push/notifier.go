@@ -62,10 +62,11 @@ func (n *Notifier) EmitDecision(d notify.CallbackDecision) {
 }
 
 // RegisterDevice registers a device token with the push service.
-func (n *Notifier) RegisterDevice(ctx context.Context, deviceToken string) error {
+func (n *Notifier) RegisterDevice(ctx context.Context, deviceToken, bundleID string) error {
 	payload := map[string]string{
 		"daemon_id":    n.daemonID,
 		"device_token": deviceToken,
+		"bundle_id":    bundleID,
 	}
 	body, _ := json.Marshal(payload)
 	return n.signedPost(ctx, "/api/tokens/register", body)

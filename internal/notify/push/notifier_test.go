@@ -185,7 +185,7 @@ func TestRegisterDevice(t *testing.T) {
 
 	n, _ := testNotifier(t, srv, nil)
 
-	err := n.RegisterDevice(context.Background(), "apns-token-abc")
+	err := n.RegisterDevice(context.Background(), "apns-token-abc", "com.clawvisor.app.Clip")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,6 +197,9 @@ func TestRegisterDevice(t *testing.T) {
 	}
 	if receivedBody["device_token"] != "apns-token-abc" {
 		t.Errorf("expected device_token 'apns-token-abc', got %q", receivedBody["device_token"])
+	}
+	if receivedBody["bundle_id"] != "com.clawvisor.app.Clip" {
+		t.Errorf("expected bundle_id 'com.clawvisor.app.Clip', got %q", receivedBody["bundle_id"])
 	}
 }
 
