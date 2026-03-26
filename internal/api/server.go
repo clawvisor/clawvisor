@@ -252,7 +252,7 @@ func (s *Server) routes() http.Handler {
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
-		verifier = intent.NewLLMVerifier(s.llmHealth)
+		verifier = intent.NewLLMVerifier(s.llmHealth, s.logger)
 	}
 
 	// Construct chain context extractor (noop if disabled).

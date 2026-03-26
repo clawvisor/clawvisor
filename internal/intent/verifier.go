@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
@@ -57,13 +58,14 @@ func (NoopVerifier) Verify(_ context.Context, _ VerifyRequest) (*VerificationVer
 // LLMVerifier performs intent verification via an LLM provider.
 type LLMVerifier struct {
 	health *llm.Health
+	logger *slog.Logger
 	cache  *verdictCache
 }
 
 // NewLLMVerifier creates an LLM-backed intent verifier.
 // It reads its config from health on each call, so runtime config updates
 // take effect immediately.
-func NewLLMVerifier(health *llm.Health) *LLMVerifier {
+func NewLLMVerifier(health *llm.Health, logger *slog.Logger) *LLMVerifier {
 	cfg := health.VerificationConfig()
 	ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
 	if ttl <= 0 {
@@ -71,6 +73,7 @@ func NewLLMVerifier(health *llm.Health) *LLMVerifier {
 	}
 	return &LLMVerifier{
 		health: health,
+		logger: logger,
 		cache:  newVerdictCache(ttl),
 	}
 }
@@ -128,6 +131,12 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		return verdict, nil
 	}
 
+	v.logger.Warn("intent verification failed after retry",
+		"error", lastErr,
+		"service", req.Service,
+		"action", req.Action,
+		"task_id", req.TaskID,
+	)
 	return &VerificationVerdict{
 		Allow:           false,
 		ParamScope:      "n/a",

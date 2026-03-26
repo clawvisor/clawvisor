@@ -94,7 +94,7 @@ func NewClient(cfg config.LLMProviderConfig) *Client {
 // haiku proxy key and the status indicates the spend cap is exhausted (402 or
 // 429), it wraps ErrSpendCapExhausted so callers can detect it with errors.Is.
 func (c *Client) statusError(statusCode int, body []byte) error {
-	base := fmt.Errorf("llm: status %d: %s", statusCode, body)
+	base := fmt.Errorf("llm: %s %s status %d: %s", c.provider, c.model, statusCode, body)
 	if strings.HasPrefix(c.apiKey, "hkp_") && (statusCode == http.StatusPaymentRequired || statusCode == http.StatusTooManyRequests) {
 		return fmt.Errorf("%w: %w", ErrSpendCapExhausted, base)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -149,7 +150,7 @@ func TestEvalIntentVerification(t *testing.T) {
 			CacheTTLSeconds: 0,
 		},
 	})
-	verifier := NewLLMVerifier(health)
+	verifier := NewLLMVerifier(health, slog.Default())
 
 	results := make([]evalResult, 0, len(cases))
 
