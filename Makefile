@@ -50,7 +50,12 @@ tui:
 
 # ── Docker / Cloud ─────────────────────────────────────────────────────────────
 
-# Start Postgres + app with docker compose
+# Run clawvisor in Docker with ~/.clawvisor mounted (SQLite, single container)
+docker:
+	@test -f $(HOME)/.clawvisor/config.yaml || { echo "Error: ~/.clawvisor/config.yaml not found. Run 'make setup' first."; exit 1; }
+	docker compose -f deploy/docker-compose.local.yml up --build
+
+# Start Postgres + app with docker compose (production-like)
 up:
 	docker compose -f deploy/docker-compose.yml up --build
 

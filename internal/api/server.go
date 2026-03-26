@@ -228,7 +228,7 @@ func (s *Server) routes() http.Handler {
 	}
 
 	// Handlers
-	authHandler := handlers.NewAuthHandler(s.jwtSvc, s.store, s.cfg.Auth, s.magicStore, baseURL)
+	authHandler := handlers.NewAuthHandler(s.jwtSvc, s.store, s.cfg.Auth, s.magicStore, baseURL, s.cfg.Server.IsLocal())
 	authMode := "magic_link"
 	if s.features.Passkeys {
 		authMode = "passkey"

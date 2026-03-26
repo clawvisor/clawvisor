@@ -1,0 +1,22 @@
+services:
+  app:
+    container_name: clawvisor
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "25297:25297"
+    environment:
+      CONFIG_FILE: "/data/config.yaml"
+      SERVER_HOST: "0.0.0.0"
+      SQLITE_PATH: "/data/clawvisor.db"
+      VAULT_KEY_FILE: "/data/vault.key"
+      CLAWVISOR_RELAY_KEY_FILE: "/data/daemon-ed25519.key"
+      CLAWVISOR_RELAY_E2E_KEY_FILE: "/data/daemon-x25519.key"
+      CLAWVISOR_DAEMON_DATA_DIR: "/data"
+      CALLBACK_ALLOW_PRIVATE_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      CALLBACK_REQUIRE_HTTPS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ~/.clawvisor:/data
