@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
+
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 var (
@@ -340,7 +342,7 @@ func runDaemonSetup(dataDir string) error {
 		// Register with relay to get daemon_id.
 		relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
 		if relayURL == "" {
-			relayURL = "wss://relay.clawvisor.com"
+			relayURL = version.RelayURL()
 		}
 		if err := registerWithRelay(dataDir, relayURL); err != nil {
 			fmt.Println(dim.Padding(0, 2).Render("  Warning: relay registration failed: " + err.Error()))
@@ -714,21 +716,11 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
 	if cfg.relayEnabled {
-		relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
-		if relayURL == "" {
-			relayURL = "wss://relay.clawvisor.com"
-		}
-		pushURL := os.Getenv("CLAWVISOR_PUSH_URL")
-		if pushURL == "" {
-			pushURL = "https://push.clawvisor.com"
-		}
 		fmt.Fprintf(&b, "\npush:\n")
 		fmt.Fprintf(&b, "  enabled: true\n")
-		fmt.Fprintf(&b, "  url: %s\n", yamlQuote(pushURL))
 
 		fmt.Fprintf(&b, "\nrelay:\n")
 		fmt.Fprintf(&b, "  enabled: true\n")
-		fmt.Fprintf(&b, "  url: %s\n", yamlQuote(relayURL))
 		fmt.Fprintf(&b, "  key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-ed25519.key")))
 		fmt.Fprintf(&b, "  e2e_key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-x25519.key")))
 	} else {

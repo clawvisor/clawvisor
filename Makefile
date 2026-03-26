@@ -1,12 +1,16 @@
-.PHONY: build install test run run-sqlite migrate lint clean setup tui eval-intent release test-e2e-install
+.PHONY: build build-staging install test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
-LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION)"
+ENVIRONMENT ?= production
+LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT)"
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 
 build: web/dist
 	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
+
+build-staging: web/dist
+	$(MAKE) build ENVIRONMENT=staging
 
 build-server: web/dist
 	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server
@@ -45,6 +49,9 @@ test-e2e-install: web/dist
 # Use OPEN=1 to auto-open the magic link in a browser: make run OPEN=1
 run: web/dist
 	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server $(if $(OPEN),--open,)
+
+run-staging: web/dist
+	@$(MAKE) run ENVIRONMENT=staging
 
 run-sqlite:
 	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
