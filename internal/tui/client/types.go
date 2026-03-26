@@ -231,11 +231,12 @@ type ActivityBucket struct {
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 type Agent struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	Token     string    `json:"token,omitempty"` // only on creation
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	Name           string    `json:"name"`
+	CreatedAt      time.Time `json:"created_at"`
+	Token          string    `json:"token,omitempty"`           // only on creation
+	CallbackSecret string    `json:"callback_secret,omitempty"` // only on creation with callback
 }
 
 // ── Devices ─────────────────────────────────────────────────────────────────

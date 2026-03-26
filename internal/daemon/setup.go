@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,7 +19,13 @@ var (
 	bold    = lipgloss.NewStyle().Bold(true)
 	dim     = lipgloss.NewStyle().Faint(true)
 	green   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	yellow  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	section = lipgloss.NewStyle().Faint(true).Padding(0, 2)
+	warnBox = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("3")).
+		Padding(1, 2).
+		Margin(0, 2)
 )
 
 type daemonConfig struct {
@@ -31,6 +38,209 @@ type daemonConfig struct {
 	chainContextEnabled bool
 
 	telemetryEnabled bool
+	relayEnabled     bool
+}
+
+// knownAgent describes a coding agent that Clawvisor can work with.
+type knownAgent struct {
+	Binary      string // executable name to look up via PATH
+	DisplayName string // human-readable name shown in the installer
+}
+
+// knownAgents is the list of coding agents we try to detect on the user's machine.
+var knownAgents = []knownAgent{
+	{"claude", "Claude Code"},
+	{"cursor", "Cursor"},
+	{"windsurf", "Windsurf"},
+	{"code", "VS Code (Copilot / Cline / etc.)"},
+	{"aider", "Aider"},
+}
+
+// appBundleAgents are agents detected by checking for an installed application
+// rather than a binary on PATH.
+var appBundleAgents = []struct {
+	knownAgent
+	Paths []string // paths to check (macOS .app bundles, Linux .desktop files, etc.)
+}{
+	{
+		knownAgent{Binary: "claude-desktop", DisplayName: "Claude Desktop"},
+		[]string{
+			"/Applications/Claude.app",
+			"/usr/share/applications/claude.desktop", // Snap / .deb on Linux
+		},
+	},
+}
+
+// detectAgents returns the known agents found on $PATH or installed as app bundles.
+func detectAgents() []knownAgent {
+	var found []knownAgent
+	for _, a := range knownAgents {
+		if _, err := exec.LookPath(a.Binary); err == nil {
+			found = append(found, a)
+		}
+	}
+	for _, a := range appBundleAgents {
+		for _, p := range a.Paths {
+			if _, err := os.Stat(p); err == nil {
+				found = append(found, a.knownAgent)
+				break
+			}
+		}
+	}
+	return found
+}
+
+const agentContinueOption = "__agent_continue__"
+const agentAddOption = "__agent_add__"
+
+// stepAgents auto-detects agents and lets the user add more via an interactive
+// menu (similar to the service connector). Returns the final list of agents.
+func stepAgents() ([]knownAgent, error) {
+	agents := detectAgents()
+
+	fmt.Println()
+	fmt.Println(bold.Padding(0, 2).Render("Agents"))
+	fmt.Println(dim.Padding(0, 2).Render("Clawvisor detected the following coding agents on this machine."))
+	fmt.Println(dim.Padding(0, 2).Render("You can add others that weren't auto-detected."))
+	fmt.Println()
+
+	if len(agents) == 0 {
+		fmt.Println(dim.Padding(0, 2).Render("  No known agents detected."))
+		fmt.Println()
+	} else {
+		for _, a := range agents {
+			fmt.Println(green.Padding(0, 2).Render("  ✓ " + a.DisplayName))
+		}
+		fmt.Println()
+	}
+
+	for {
+		selected, err := presentAgentMenu(agents)
+		if err != nil {
+			return agents, err
+		}
+		if selected == agentContinueOption {
+			return agents, nil
+		}
+		if selected == agentAddOption {
+			added, err := promptAddAgent(agents)
+			if err != nil {
+				if err == huh.ErrUserAborted {
+					continue
+				}
+				return agents, err
+			}
+			if added != nil {
+				agents = append(agents, *added)
+				fmt.Println(green.Padding(0, 2).Render("  ✓ Added " + added.DisplayName))
+				fmt.Println()
+			}
+			continue
+		}
+	}
+}
+
+// presentAgentMenu shows the agent list with a prominent continue option
+// and an option to add more.
+func presentAgentMenu(agents []knownAgent) (string, error) {
+	var opts []huh.Option[string]
+
+	// Continue is prominent at the top.
+	continueLabel := bold.Render("Continue →")
+	if len(agents) > 0 {
+		continueLabel = bold.Render(fmt.Sprintf("Continue with %d agent(s) →", len(agents)))
+	}
+	opts = append(opts, huh.NewOption(continueLabel, agentContinueOption))
+
+	// Show detected agents (informational, not selectable for action).
+	for _, a := range agents {
+		label := fmt.Sprintf("%s  %s", green.Render("✓"), a.DisplayName)
+		opts = append(opts, huh.NewOption(label, "agent:"+a.Binary))
+	}
+
+	// Add more option.
+	opts = append(opts, huh.NewOption(dim.Render("+ Add an agent"), agentAddOption))
+
+	var choice string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Agents to configure").
+				Options(opts...).
+				Value(&choice),
+		),
+	).Run(); err != nil {
+		return "", err
+	}
+
+	// If they selected an existing agent, just re-show the menu.
+	if strings.HasPrefix(choice, "agent:") {
+		return choice, nil
+	}
+	return choice, nil
+}
+
+// promptAddAgent asks the user to pick from known agents not yet in the list,
+// or enter a custom agent name.
+func promptAddAgent(existing []knownAgent) (*knownAgent, error) {
+	have := make(map[string]bool, len(existing))
+	for _, a := range existing {
+		have[a.Binary] = true
+	}
+
+	var opts []huh.Option[string]
+
+	// Show known agents that weren't detected.
+	for _, a := range knownAgents {
+		if !have[a.Binary] {
+			opts = append(opts, huh.NewOption(a.DisplayName, a.Binary))
+		}
+	}
+	opts = append(opts, huh.NewOption("Other (enter name)", "__custom__"))
+	opts = append(opts, huh.NewOption("← Cancel", "__cancel__"))
+
+	var choice string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Add an agent").
+				Options(opts...).
+				Value(&choice),
+		),
+	).Run(); err != nil {
+		return nil, err
+	}
+
+	if choice == "__cancel__" {
+		return nil, nil
+	}
+
+	if choice == "__custom__" {
+		var name string
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Agent name").
+					Description("A display name for this agent (e.g. \"Devin\")").
+					Value(&name),
+			),
+		).Run(); err != nil {
+			return nil, err
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, nil
+		}
+		return &knownAgent{Binary: "", DisplayName: name}, nil
+	}
+
+	// Known agent picked from the list.
+	for _, a := range knownAgents {
+		if a.Binary == choice {
+			return &a, nil
+		}
+	}
+	return nil, nil
 }
 
 // runDaemonSetup runs the streamlined daemon setup wizard and writes
@@ -39,29 +249,31 @@ type daemonConfig struct {
 func runDaemonSetup(dataDir string) error {
 	configPath := filepath.Join(dataDir, "config.yaml")
 
-	printDaemonBanner()
-
-	fmt.Println(dim.Padding(0, 2).Render("By continuing, you agree to the Clawvisor Terms of Service"))
-	fmt.Println(dim.Padding(0, 2).Render("and Privacy Policy:"))
-	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/terms"))
-	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/privacy"))
-	fmt.Println()
-
-	accepted := false
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Do you agree to the Terms of Service and Privacy Policy?").
-				Affirmative("I agree").
-				Negative("Cancel").
-				Value(&accepted),
-		),
-	).Run(); err != nil {
+	// Step 0: welcome / explainer.
+	if err := stepWelcome(); err != nil {
+		if err == huh.ErrUserAborted {
+			fmt.Println("\n  Aborted. No files were written.")
+		}
 		return err
 	}
-	if !accepted {
-		fmt.Println("\n  Setup cancelled.")
-		return huh.ErrUserAborted
+
+	// Step 1: detect and manage agents.
+	agents, err := stepAgents()
+	if err != nil {
+		if err == huh.ErrUserAborted {
+			fmt.Println("\n  Aborted. No files were written.")
+		}
+		return err
+	}
+
+	// Step 2: relay opt-in.
+	relayEnabled, err := stepRelayOptIn()
+	if err != nil {
+		if err == huh.ErrUserAborted {
+			fmt.Println("\n  Aborted. No files were written.")
+			return huh.ErrUserAborted
+		}
+		return err
 	}
 
 	cfg, err := collectDaemonConfig()
@@ -72,6 +284,7 @@ func runDaemonSetup(dataDir string) error {
 		}
 		return err
 	}
+	cfg.relayEnabled = relayEnabled
 
 	// Generate JWT secret.
 	jwtSecret, err := generateRandomBase64(32)
@@ -90,19 +303,28 @@ func runDaemonSetup(dataDir string) error {
 		return fmt.Errorf("generating vault key: %w", err)
 	}
 
-	// Generate relay keys (Ed25519 for auth, X25519 for E2E).
-	if err := ensureRelayKeys(dataDir); err != nil {
-		return fmt.Errorf("generating relay keys: %w", err)
+	if cfg.relayEnabled {
+		// Generate relay keys (Ed25519 for auth, X25519 for E2E).
+		if err := ensureRelayKeys(dataDir); err != nil {
+			return fmt.Errorf("generating relay keys: %w", err)
+		}
+
+		// Register with relay to get daemon_id.
+		relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
+		if relayURL == "" {
+			relayURL = "wss://relay.clawvisor.com"
+		}
+		if err := registerWithRelay(dataDir, relayURL); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: relay registration failed: " + err.Error()))
+			fmt.Println(dim.Padding(0, 2).Render("  Daemon will work locally. Re-run setup to try again."))
+		}
 	}
 
-	// Register with relay to get daemon_id.
-	relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
-	if relayURL == "" {
-		relayURL = "wss://relay.clawvisor.com"
-	}
-	if err := registerWithRelay(dataDir, relayURL); err != nil {
-		fmt.Println(dim.Padding(0, 2).Render("  Warning: relay registration failed: " + err.Error()))
-		fmt.Println(dim.Padding(0, 2).Render("  Daemon will work locally. Re-run setup to try again."))
+	// Offer to install the Claude Code slash command if detected.
+	if hasClaudeCode(agents) {
+		if err := offerClaudeCodeSetup(dataDir); err != nil && err != huh.ErrUserAborted {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not install Claude Code command: " + err.Error()))
+		}
 	}
 
 	fmt.Println()
@@ -112,32 +334,119 @@ func runDaemonSetup(dataDir string) error {
 	return nil
 }
 
-func printDaemonBanner() {
+// stepRelayOptIn asks the user whether to connect to the public relay. If they
+// decline, a warning is shown. If they accept, TOS/PP acceptance is required.
+func stepRelayOptIn() (enabled bool, err error) {
+	useRelay := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Connect to the Clawvisor relay?").
+				Description("The relay lets you access Clawvisor remotely and receive\nmobile push notifications. Traffic is end-to-end encrypted\nwhen your client supports it.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&useRelay),
+		),
+	).Run(); err != nil {
+		return false, err
+	}
+
+	if !useRelay {
+		fmt.Println()
+		fmt.Println(warnBox.Render(
+			yellow.Bold(true).Render("⚠  Local-only mode") + "\n\n" +
+				"Without the relay, agents must connect to Clawvisor\n" +
+				"over your local network. You will need to:\n\n" +
+				"  • Ensure agents can reach this machine's IP/port\n" +
+				"  • Handle firewalls and NAT traversal yourself\n" +
+				"  • Forego mobile push notifications\n\n" +
+				"You can enable the relay later by re-running setup."))
+		fmt.Println()
+
+		confirmSkip := false
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Continue without the relay?").
+					Affirmative("Yes, local-only").
+					Negative("Go back").
+					Value(&confirmSkip),
+			),
+		).Run(); err != nil {
+			return false, err
+		}
+		if !confirmSkip {
+			// Let them reconsider — recurse back to the relay question.
+			return stepRelayOptIn()
+		}
+		return false, nil
+	}
+
+	// Relay requires TOS/PP acceptance.
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("The relay is operated by Clawvisor. By connecting, you agree"))
+	fmt.Println(dim.Padding(0, 2).Render("to the Terms of Service and Privacy Policy:"))
+	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/terms"))
+	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/privacy"))
+	fmt.Println()
+
+	accepted := false
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Do you agree to the Terms of Service and Privacy Policy?").
+				Affirmative("I agree").
+				Negative("Cancel").
+				Value(&accepted),
+		),
+	).Run(); err != nil {
+		return false, err
+	}
+	if !accepted {
+		// Declining TOS brings you back to the relay question.
+		return stepRelayOptIn()
+	}
+
+	return true, nil
+}
+
+func stepWelcome() error {
 	fmt.Println()
 	fmt.Println(bold.Padding(0, 2).Render("Clawvisor Setup"))
 	fmt.Println(section.Render("─────────────────────────────────────────"))
 	fmt.Println()
 
 	fmt.Println(bold.Padding(0, 2).Render("How Clawvisor Works"))
-	fmt.Println(dim.Padding(0, 2).Render("Clawvisor is a credential-vaulting gateway that runs locally on this"))
-	fmt.Println(dim.Padding(0, 2).Render("machine. It stores API credentials in an encrypted local vault and"))
-	fmt.Println(dim.Padding(0, 2).Render("proxies requests from AI agents to external APIs (Google, GitHub,"))
-	fmt.Println(dim.Padding(0, 2).Render("Slack, etc.), enforcing authorization policies and human approval."))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("Clawvisor is a credential-vaulting gateway that runs locally on"))
+	fmt.Println(dim.Padding(0, 2).Render("your machine. AI coding agents don't get raw API keys — instead,"))
+	fmt.Println(dim.Padding(0, 2).Render("they make requests through Clawvisor, which:"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("  • Stores credentials in an encrypted local vault"))
+	fmt.Println(dim.Padding(0, 2).Render("  • Proxies agent requests to external APIs (Gmail, GitHub, Slack, …)"))
+	fmt.Println(dim.Padding(0, 2).Render("  • Enforces authorization policies and requires human approval"))
+	fmt.Println(dim.Padding(0, 2).Render("  • Logs an audit trail of every action an agent takes"))
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render("This wizard will help you detect your agents, configure the daemon,"))
+	fmt.Println(dim.Padding(0, 2).Render("and connect services."))
 	fmt.Println()
 
-	fmt.Println(bold.Padding(0, 2).Render("Public Relay"))
-	fmt.Println(dim.Padding(0, 2).Render("This instance will connect to relay.clawvisor.com so you can"))
-	fmt.Println(dim.Padding(0, 2).Render("access it remotely and receive mobile push notifications."))
-	fmt.Println(dim.Padding(0, 2).Render("The relay sees connection metadata (daemon ID, public key, IP)."))
-	fmt.Println(dim.Padding(0, 2).Render("Tunnel traffic is end-to-end encrypted when your client supports"))
-	fmt.Println(dim.Padding(0, 2).Render("it, but some clients (e.g. Claude Desktop) do not yet support"))
-	fmt.Println(dim.Padding(0, 2).Render("E2E encryption — in that case traffic is TLS-encrypted in transit"))
-	fmt.Println(dim.Padding(0, 2).Render("but readable by the relay."))
-	fmt.Println()
-
-	fmt.Println(dim.Padding(0, 2).Render("SQLite, vault, and networking are auto-configured."))
-	fmt.Println(dim.Padding(0, 2).Render("You just need to provide an LLM API key."))
-	fmt.Println()
+	cont := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Ready to get started?").
+				Affirmative("Continue").
+				Negative("Cancel").
+				Value(&cont),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !cont {
+		return huh.ErrUserAborted
+	}
+	return nil
 }
 
 func collectDaemonConfig() (*daemonConfig, error) {
@@ -219,26 +528,34 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 		}
 	}
 
-	// Build a provider-specific title and hint for the API key prompt.
-	var keyTitle, keyHint string
+	// Build a provider-specific title, hint, and setup URL for the API key prompt.
+	var keyTitle, keyHint, keyURL string
 	switch model {
 	case "haiku":
 		keyTitle = "Anthropic API key"
 		keyHint = "Starts with sk-ant-..."
+		keyURL = "https://console.anthropic.com/settings/keys"
 	case "flash":
 		keyTitle = "Google AI API key"
 		keyHint = "From Google AI Studio"
+		keyURL = "https://aistudio.google.com/apikey"
 	case "mini":
 		keyTitle = "OpenAI API key"
 		keyHint = "Starts with sk-..."
+		keyURL = "https://platform.openai.com/api-keys"
 	default:
 		if cfg.llmProvider == "anthropic" {
 			keyTitle = "Anthropic API key"
 			keyHint = "Starts with sk-ant-..."
+			keyURL = "https://console.anthropic.com/settings/keys"
 		} else {
 			keyTitle = "API key"
 			keyHint = "For " + cfg.llmEndpoint
 		}
+	}
+
+	if keyURL != "" {
+		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Get your API key at: %s", keyURL)))
 	}
 
 	err = huh.NewForm(
@@ -342,23 +659,31 @@ func writeDaemonConfig(cfg *daemonConfig, dataDir, jwtSecret, path string) error
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
-	relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
-	if relayURL == "" {
-		relayURL = "wss://relay.clawvisor.com"
-	}
-	pushURL := os.Getenv("CLAWVISOR_PUSH_URL")
-	if pushURL == "" {
-		pushURL = "https://push.clawvisor.com"
-	}
-	fmt.Fprintf(&b, "\npush:\n")
-	fmt.Fprintf(&b, "  enabled: true\n")
-	fmt.Fprintf(&b, "  url: %s\n", yamlQuote(pushURL))
+	if cfg.relayEnabled {
+		relayURL := os.Getenv("CLAWVISOR_RELAY_URL")
+		if relayURL == "" {
+			relayURL = "wss://relay.clawvisor.com"
+		}
+		pushURL := os.Getenv("CLAWVISOR_PUSH_URL")
+		if pushURL == "" {
+			pushURL = "https://push.clawvisor.com"
+		}
+		fmt.Fprintf(&b, "\npush:\n")
+		fmt.Fprintf(&b, "  enabled: true\n")
+		fmt.Fprintf(&b, "  url: %s\n", yamlQuote(pushURL))
 
-	fmt.Fprintf(&b, "\nrelay:\n")
-	fmt.Fprintf(&b, "  enabled: true\n")
-	fmt.Fprintf(&b, "  url: %s\n", yamlQuote(relayURL))
-	fmt.Fprintf(&b, "  key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-ed25519.key")))
-	fmt.Fprintf(&b, "  e2e_key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-x25519.key")))
+		fmt.Fprintf(&b, "\nrelay:\n")
+		fmt.Fprintf(&b, "  enabled: true\n")
+		fmt.Fprintf(&b, "  url: %s\n", yamlQuote(relayURL))
+		fmt.Fprintf(&b, "  key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-ed25519.key")))
+		fmt.Fprintf(&b, "  e2e_key_file: %s\n", yamlQuote(filepath.Join(dataDir, "daemon-x25519.key")))
+	} else {
+		fmt.Fprintf(&b, "\npush:\n")
+		fmt.Fprintf(&b, "  enabled: false\n")
+
+		fmt.Fprintf(&b, "\nrelay:\n")
+		fmt.Fprintf(&b, "  enabled: false\n")
+	}
 
 	return os.WriteFile(path, []byte(b.String()), 0600)
 }

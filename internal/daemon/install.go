@@ -266,17 +266,15 @@ func promptDashboardOpen(dataDir string) {
 	}
 
 	// The daemon was just started via the service manager — wait for it to
-	// become ready and write the local session file before requesting a token.
-	fmt.Println(dim.Padding(0, 2).Render("Waiting for daemon to start..."))
-	ready := false
-	for i := 0; i < 30; i++ {
-		if serverURL, _, err := readLocalSession(dataDir); err == nil && serverURL != "" {
-			ready = true
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
+	// actually be healthy before requesting a magic token. We can't just
+	// check for .local-session because the setup-phase server already wrote
+	// one that's now stale.
+	serverURL, _, _ := readLocalSession(dataDir)
+	if serverURL == "" {
+		serverURL = "http://127.0.0.1:25297"
 	}
-	if !ready {
+	fmt.Println(dim.Padding(0, 2).Render("Waiting for daemon to start..."))
+	if err := waitForServer(serverURL); err != nil {
 		fmt.Println(dim.Padding(0, 2).Render("Daemon hasn't started yet. Run `clawvisor dashboard` once it's ready."))
 		return
 	}
@@ -404,20 +402,46 @@ func Stop() error {
 	return nil
 }
 
-// printAgentSetupInstructions prints the URL that users should give to their
-// AI agent to begin the Clawvisor setup flow.
+// printAgentSetupInstructions prints instructions for connecting agents.
+// If the Claude Code slash command is installed, it mentions /clawvisor-setup.
+// Otherwise, if the relay is configured, it prints the setup URL.
 func printAgentSetupInstructions(dataDir string) {
+	fmt.Println()
+	fmt.Println(green.Padding(0, 2).Render("✓ Installation complete"))
+	fmt.Println()
+
+	home, _ := os.UserHomeDir()
+
+	// Check if the Claude Code command was installed.
+	claudeCmdPath := filepath.Join(home, ".claude", "commands", "clawvisor-setup.md")
+	if _, err := os.Stat(claudeCmdPath); err == nil {
+		fmt.Println(bold.Padding(0, 2).Render("Connect Claude Code"))
+		fmt.Println(dim.Padding(0, 2).Render("  Run /clawvisor-setup in any Claude Code project."))
+		fmt.Println()
+	}
+
+	// Check if Claude Desktop was detected during setup.
+	for _, a := range appBundleAgents {
+		if a.Binary != "claude-desktop" {
+			continue
+		}
+		for _, p := range a.Paths {
+			if _, err := os.Stat(p); err == nil {
+				offerClaudeDesktopSetup()
+				break
+			}
+		}
+		break
+	}
+
 	daemonID, relayHost, err := readRelayConfig(dataDir)
 	if err != nil || daemonID == "" || relayHost == "" {
 		return
 	}
 
 	setupURL := fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID)
-
-	fmt.Println()
-	fmt.Println(green.Padding(0, 2).Render("✓ Installation complete"))
-	fmt.Println()
-	fmt.Println("  To get started, copy the following message to your AI agent:")
+	fmt.Println(bold.Padding(0, 2).Render("Connect other agents"))
+	fmt.Println(dim.Padding(0, 2).Render("  Copy the following to your AI agent:"))
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 4).Render("I'd like to set up Clawvisor. Please navigate to the following URL and follow the setup instructions:"))
 	fmt.Println(green.Padding(0, 4).Render(setupURL))

@@ -129,8 +129,8 @@ func presentServiceMenu(services []client.ServiceInfo) (selected string, err err
 
 	var opts []huh.Option[string]
 
-	// Continue at the top.
-	opts = append(opts, huh.NewOption(dim.Render("── Done connecting services →"), continueOption))
+	// Continue is prominent at the top.
+	opts = append(opts, huh.NewOption(bold.Render("Done connecting services →"), continueOption))
 
 	// Google services first.
 	for _, list := range [][]client.ServiceInfo{google, other} {
@@ -191,8 +191,22 @@ func activateCredentialFreeService(apiClient *client.Client, svc client.ServiceI
 	return nil
 }
 
+// apiKeySetupURLs maps service IDs to the pages where users can create API keys.
+var apiKeySetupURLs = map[string]string{
+	"github": "https://github.com/settings/tokens",
+	"slack":  "https://api.slack.com/apps",
+	"notion": "https://www.notion.so/profile/integrations",
+	"linear": "https://linear.app/settings/api",
+	"stripe": "https://dashboard.stripe.com/apikeys",
+	"twilio": "https://console.twilio.com",
+}
+
 // activateAPIKeyService prompts for an API key/token and activates the service.
 func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) error {
+	if url, ok := apiKeySetupURLs[svc.ID]; ok {
+		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Create an API key at: %s", url)))
+	}
+
 	var token string
 	if err := huh.NewForm(
 		huh.NewGroup(
@@ -293,10 +307,12 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 func collectAndPatchGoogleCreds(configPath, serviceName string) (restart bool, err error) {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf(
-		"  %s requires Google OAuth credentials (client_id and client_secret).\n"+
-			"  Create them at https://console.cloud.google.com → APIs & Services → Credentials.",
+		"  %s requires Google OAuth credentials (client_id and client_secret).",
 		serviceName,
 	)))
+	fmt.Println(dim.Padding(0, 2).Render(
+		"  Follow the setup guide: https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md",
+	))
 	fmt.Println()
 
 	var clientID, clientSecret string

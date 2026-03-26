@@ -357,7 +357,15 @@ func (c *Client) GetAgents() ([]Agent, error) {
 }
 
 func (c *Client) CreateAgent(name string) (*Agent, error) {
-	body := map[string]string{"name": name}
+	return c.CreateAgentWithOpts(name, false)
+}
+
+// CreateAgentWithOpts creates an agent, optionally generating a callback secret.
+func (c *Client) CreateAgentWithOpts(name string, withCallbackSecret bool) (*Agent, error) {
+	body := map[string]any{"name": name}
+	if withCallbackSecret {
+		body["with_callback_secret"] = true
+	}
 	var resp Agent
 	if err := c.post("/api/agents", body, &resp); err != nil {
 		return nil, err
