@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.6](https://github.com/clawvisor/clawvisor/compare/v0.7.5...v0.7.6) (2026-03-26)
+
+
+### Features
+
+* add `make docker` to run clawvisor with ~/.clawvisor mounted ([#57](https://github.com/clawvisor/clawvisor/issues/57)) ([b26dcc4](https://github.com/clawvisor/clawvisor/commit/b26dcc409e09d1c4f9ac2e8f9c6206a1041b32da))
+* add build-time staging environment support ([#62](https://github.com/clawvisor/clawvisor/issues/62)) ([5b8d1ad](https://github.com/clawvisor/clawvisor/commit/5b8d1ad452c08b0ee8db42bb127ca7a4b42e354e))
+* add end-to-end installer tests with Docker isolation ([#61](https://github.com/clawvisor/clawvisor/issues/61)) ([93eff6a](https://github.com/clawvisor/clawvisor/commit/93eff6a085e2755a7de14be33cec5f8e58787217))
+* add free Haiku proxy quick-start option to setup wizards ([#63](https://github.com/clawvisor/clawvisor/issues/63)) ([b04a9e1](https://github.com/clawvisor/clawvisor/commit/b04a9e1d4653bc9aae20b9adfa36d2e5b91acd9b))
+* auto-register daemon with relay on startup ([#64](https://github.com/clawvisor/clawvisor/issues/64)) ([5763617](https://github.com/clawvisor/clawvisor/commit/57636174e3c5aa26b79d2d5529a0eb12e7a37b71))
+* rework installer flow with welcome, agent detection, and setup links ([#60](https://github.com/clawvisor/clawvisor/issues/60)) ([25919bd](https://github.com/clawvisor/clawvisor/commit/25919bdcc634c090083464401573d777fb82da60))
+
+
+### Bug Fixes
+
+* correct OAuth callback URL in Google OAuth setup docs ([#58](https://github.com/clawvisor/clawvisor/issues/58)) ([1f06d8f](https://github.com/clawvisor/clawvisor/commit/1f06d8fa3ecb383abc7b3930f0ea511dc43124a4))
+
 ## [0.7.5](https://github.com/clawvisor/clawvisor/compare/v0.7.4...v0.7.5) (2026-03-26)
 
 
