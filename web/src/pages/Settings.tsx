@@ -144,6 +144,22 @@ function LLMSection() {
                 : <span className="text-success">Active</span>}
             </p>
           </div>
+          {status?.usage && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-text-tertiary">
+                <span>Free credit</span>
+                <span>{Math.round(100 - status.usage.pct_used)}% remaining</span>
+              </div>
+              <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    status.usage.pct_used >= 90 ? 'bg-danger' : status.usage.pct_used >= 70 ? 'bg-warning' : 'bg-brand'
+                  }`}
+                  style={{ width: `${Math.min(status.usage.pct_used, 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
           <button
             onClick={startEditing}
             className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"

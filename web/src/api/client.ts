@@ -362,12 +362,20 @@ export interface VersionInfo {
   upgrade_command?: string
 }
 
+export interface LLMUsage {
+  spend_cap: number
+  total_spent: number
+  remaining: number
+  pct_used: number
+}
+
 export interface LLMStatus {
   status: 'ok' | 'spend_cap_exhausted'
   is_haiku_proxy: boolean
   spend_cap_exhausted: boolean
   provider: string
   model: string
+  usage?: LLMUsage
 }
 
 export interface ActivityBucket {

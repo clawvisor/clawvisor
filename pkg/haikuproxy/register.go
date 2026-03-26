@@ -49,6 +49,41 @@ func Register(name string) (*Registration, error) {
 	return &reg, nil
 }
 
+// Usage holds the spend information for a haiku proxy key.
+type Usage struct {
+	SpendCap   float64 `json:"spend_cap"`
+	TotalSpent float64 `json:"total_spent"`
+	Remaining  float64 `json:"remaining"`
+}
+
+// GetUsage fetches the current spend for a haiku proxy key.
+func GetUsage(apiKey string) (*Usage, error) {
+	baseURL := version.HaikuProxyURL()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/usage", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to haiku proxy: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("haiku proxy usage returned HTTP %d", resp.StatusCode)
+	}
+
+	var usage Usage
+	if err := json.NewDecoder(resp.Body).Decode(&usage); err != nil {
+		return nil, fmt.Errorf("decoding usage response: %w", err)
+	}
+	return &usage, nil
+}
+
 // BaseURL returns the haiku proxy base URL for the current environment.
 func BaseURL() string {
 	return version.HaikuProxyURL()

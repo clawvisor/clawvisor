@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
 )
 
 // LLMHandler exposes LLM health status and allows runtime config updates.
@@ -24,11 +25,20 @@ func NewLLMHandler(health *llm.Health, configPath string) *LLMHandler {
 
 // LLMStatus is the JSON response for GET /api/llm/status.
 type LLMStatus struct {
-	Status             string `json:"status"` // "ok" | "spend_cap_exhausted"
-	IsHaikuProxy       bool   `json:"is_haiku_proxy"`
-	SpendCapExhausted  bool   `json:"spend_cap_exhausted"`
-	Provider           string `json:"provider"`
-	Model              string `json:"model"`
+	Status            string   `json:"status"` // "ok" | "spend_cap_exhausted"
+	IsHaikuProxy      bool     `json:"is_haiku_proxy"`
+	SpendCapExhausted bool     `json:"spend_cap_exhausted"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	Usage             *LLMUsage `json:"usage,omitempty"` // only for haiku proxy keys
+}
+
+// LLMUsage is the spend information for a haiku proxy key.
+type LLMUsage struct {
+	SpendCap   float64 `json:"spend_cap"`
+	TotalSpent float64 `json:"total_spent"`
+	Remaining  float64 `json:"remaining"`
+	PctUsed    float64 `json:"pct_used"` // 0-100
 }
 
 // Status returns the current LLM health status.
@@ -39,13 +49,32 @@ func (h *LLMHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if exhausted {
 		status = "spend_cap_exhausted"
 	}
-	writeJSON(w, http.StatusOK, LLMStatus{
+
+	resp := LLMStatus{
 		Status:            status,
 		IsHaikuProxy:      h.health.IsHaikuProxy(),
 		SpendCapExhausted: exhausted,
 		Provider:          cfg.Provider,
 		Model:             cfg.Model,
-	})
+	}
+
+	// Fetch live usage for haiku proxy keys (best-effort).
+	if h.health.IsHaikuProxy() {
+		if usage, err := haikuproxy.GetUsage(cfg.APIKey); err == nil {
+			pct := 0.0
+			if usage.SpendCap > 0 {
+				pct = (usage.TotalSpent / usage.SpendCap) * 100
+			}
+			resp.Usage = &LLMUsage{
+				SpendCap:   usage.SpendCap,
+				TotalSpent: usage.TotalSpent,
+				Remaining:  usage.Remaining,
+				PctUsed:    pct,
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // UpdateRequest is the JSON body for PUT /api/llm.
