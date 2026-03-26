@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 
+	"github.com/clawvisor/clawvisor/pkg/haikuproxy"
 	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
@@ -496,7 +497,8 @@ func collectDaemonConfig() (*daemonConfig, error) {
 }
 
 // collectDaemonConfigFromEnv builds a daemonConfig from environment
-// variables, used in non-interactive mode.
+// variables, used in non-interactive mode. If CLAWVISOR_LLM_QUICKSTART=1
+// is set, the haiku proxy is used and no LLM env vars are required.
 func collectDaemonConfigFromEnv() (*daemonConfig, error) {
 	cfg := &daemonConfig{
 		llmProvider: os.Getenv("CLAWVISOR_LLM_PROVIDER"),
@@ -505,8 +507,20 @@ func collectDaemonConfigFromEnv() (*daemonConfig, error) {
 		llmAPIKey:   os.Getenv("CLAWVISOR_LLM_API_KEY"),
 	}
 
-	if cfg.llmProvider == "" || cfg.llmEndpoint == "" || cfg.llmModel == "" || cfg.llmAPIKey == "" {
-		return nil, fmt.Errorf("non-interactive mode requires CLAWVISOR_LLM_PROVIDER, CLAWVISOR_LLM_ENDPOINT, CLAWVISOR_LLM_MODEL, and CLAWVISOR_LLM_API_KEY")
+	if os.Getenv("CLAWVISOR_LLM_QUICKSTART") == "1" {
+		cfg.llmProvider = "anthropic"
+		cfg.llmEndpoint = haikuproxy.BaseURL()
+		cfg.llmModel = "claude-haiku-4-5-20251001"
+
+		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		reg, err := haikuproxy.Register("clawvisor-setup")
+		if err != nil {
+			return nil, fmt.Errorf("haiku proxy registration failed: %w", err)
+		}
+		cfg.llmAPIKey = reg.Key
+		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+	} else if cfg.llmProvider == "" || cfg.llmEndpoint == "" || cfg.llmModel == "" || cfg.llmAPIKey == "" {
+		return nil, fmt.Errorf("non-interactive mode requires CLAWVISOR_LLM_PROVIDER, CLAWVISOR_LLM_ENDPOINT, CLAWVISOR_LLM_MODEL, and CLAWVISOR_LLM_API_KEY (or set CLAWVISOR_LLM_QUICKSTART=1 to use the free Haiku proxy)")
 	}
 
 	cfg.taskRiskEnabled = true
@@ -524,6 +538,7 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 			huh.NewSelect[string]().
 				Title("Which LLM to use for verification and risk assessment?").
 				Options(
+					huh.NewOption("Quick start (free) — Claude Haiku, no API key needed", "quickstart"),
 					huh.NewOption("Claude Haiku — claude-haiku-4-5-20251001", "haiku"),
 					huh.NewOption("Gemini Flash — gemini-2.0-flash", "flash"),
 					huh.NewOption("GPT-4o Mini  — gpt-4o-mini", "mini"),
@@ -537,6 +552,23 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 	}
 
 	switch model {
+	case "quickstart":
+		cfg.llmProvider = "anthropic"
+		cfg.llmEndpoint = haikuproxy.BaseURL()
+		cfg.llmModel = "claude-haiku-4-5-20251001"
+
+		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		reg, err := haikuproxy.Register("clawvisor-setup")
+		if err != nil {
+			fmt.Println(yellow.Padding(0, 2).Render(fmt.Sprintf("  Registration failed: %v", err)))
+			fmt.Println(yellow.Padding(0, 2).Render("  Falling back to manual API key entry."))
+			fmt.Println()
+			cfg.llmEndpoint = "https://api.anthropic.com/v1"
+		} else {
+			cfg.llmAPIKey = reg.Key
+			fmt.Println(green.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+			fmt.Println()
+		}
 	case "haiku":
 		cfg.llmProvider = "anthropic"
 		cfg.llmEndpoint = "https://api.anthropic.com/v1"
@@ -584,53 +616,56 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 		}
 	}
 
-	// Build a provider-specific title, hint, and setup URL for the API key prompt.
-	var keyTitle, keyHint, keyURL string
-	switch model {
-	case "haiku":
-		keyTitle = "Anthropic API key"
-		keyHint = "Starts with sk-ant-..."
-		keyURL = "https://console.anthropic.com/settings/keys"
-	case "flash":
-		keyTitle = "Google AI API key"
-		keyHint = "From Google AI Studio"
-		keyURL = "https://aistudio.google.com/apikey"
-	case "mini":
-		keyTitle = "OpenAI API key"
-		keyHint = "Starts with sk-..."
-		keyURL = "https://platform.openai.com/api-keys"
-	default:
-		if cfg.llmProvider == "anthropic" {
+	// Skip API key prompt if already set (e.g. from quickstart registration).
+	if cfg.llmAPIKey == "" {
+		// Build a provider-specific title, hint, and setup URL for the API key prompt.
+		var keyTitle, keyHint, keyURL string
+		switch model {
+		case "haiku":
 			keyTitle = "Anthropic API key"
 			keyHint = "Starts with sk-ant-..."
 			keyURL = "https://console.anthropic.com/settings/keys"
-		} else {
-			keyTitle = "API key"
-			keyHint = "For " + cfg.llmEndpoint
+		case "flash":
+			keyTitle = "Google AI API key"
+			keyHint = "From Google AI Studio"
+			keyURL = "https://aistudio.google.com/apikey"
+		case "mini":
+			keyTitle = "OpenAI API key"
+			keyHint = "Starts with sk-..."
+			keyURL = "https://platform.openai.com/api-keys"
+		default:
+			if cfg.llmProvider == "anthropic" {
+				keyTitle = "Anthropic API key"
+				keyHint = "Starts with sk-ant-..."
+				keyURL = "https://console.anthropic.com/settings/keys"
+			} else {
+				keyTitle = "API key"
+				keyHint = "For " + cfg.llmEndpoint
+			}
 		}
-	}
 
-	if keyURL != "" {
-		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Get your API key at: %s", keyURL)))
-	}
+		if keyURL != "" {
+			fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Get your API key at: %s", keyURL)))
+		}
 
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title(keyTitle).
-				Description(keyHint).
-				EchoMode(huh.EchoModePassword).
-				Value(&cfg.llmAPIKey).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("required")
-					}
-					return nil
-				}),
-		),
-	).Run()
-	if err != nil {
-		return err
+		err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title(keyTitle).
+					Description(keyHint).
+					EchoMode(huh.EchoModePassword).
+					Value(&cfg.llmAPIKey).
+					Validate(func(s string) error {
+						if s == "" {
+							return fmt.Errorf("required")
+						}
+						return nil
+					}),
+			),
+		).Run()
+		if err != nil {
+			return err
+		}
 	}
 
 	cfg.taskRiskEnabled = true
