@@ -1,13 +1,16 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Clawvisor daemon installer — curl-pipe-sh friendly.
-# Usage: curl -fsSL https://clawvisor.com/install | sh
+# Must be POSIX sh compatible (dash, ash, etc.) since `curl | sh` ignores shebangs.
+# Usage: curl -fsSL https://clawvisor.com/install.sh | sh
 
 INSTALL_DIR="${CLAWVISOR_INSTALL_DIR:-$HOME/.clawvisor/bin}"
 DATA_DIR="${CLAWVISOR_DATA_DIR:-$HOME/.clawvisor}"
-REPO="clawvisor/clawvisor"
+REPO="${CLAWVISOR_REPO:-clawvisor/clawvisor}"
 BINARY="clawvisor"
+API_BASE="${CLAWVISOR_API_BASE:-https://api.github.com}"
+DOWNLOAD_BASE="${CLAWVISOR_DOWNLOAD_BASE:-https://github.com}"
 
 # Detect OS and architecture.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -32,7 +35,7 @@ esac
 echo "  Installing Clawvisor daemon ($OS/$ARCH)..."
 
 # Fetch latest release tag.
-LATEST="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
+LATEST="$(curl -fsSL "${API_BASE}/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
 if [ -z "$LATEST" ]; then
   echo "Error: could not determine latest release" >&2
   exit 1
@@ -40,7 +43,7 @@ fi
 echo "  Version: $LATEST"
 
 ASSET="${BINARY}_${LATEST#v}_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET}"
+URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/${ASSET}"
 
 # Download and extract.
 mkdir -p "$INSTALL_DIR"
@@ -95,6 +98,12 @@ fi
 echo ""
 echo "  Starting Clawvisor daemon for first-run setup..."
 echo ""
+
+# Allow tests to stop here without exec'ing into the daemon.
+if [ "${CLAWVISOR_SKIP_START:-}" = "1" ]; then
+  echo "  Skipping daemon start (CLAWVISOR_SKIP_START=1)."
+  exit 0
+fi
 
 # Start the daemon in the foreground for first-run.
 exec "$INSTALL_DIR/$BINARY" start

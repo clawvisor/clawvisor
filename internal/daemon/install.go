@@ -244,6 +244,11 @@ func installSystemd(home string, data installData) error {
 // promptDashboardOpen asks the user whether they want to open the dashboard
 // now, and either opens it or prints the command to do so later.
 func promptDashboardOpen(dataDir string) {
+	if nonInteractive() {
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		return
+	}
+
 	openNow := true
 	err := huh.NewForm(
 		huh.NewGroup(
