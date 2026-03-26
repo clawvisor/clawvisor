@@ -1,8 +1,10 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,10 +55,11 @@ type Client struct {
 	maxDelay     time.Duration
 	authTimeout  time.Duration // overridable for tests; defaults to authTimeout const
 
-	mu        sync.Mutex
-	conn      *websocket.Conn
-	connected bool
-	connClose context.CancelFunc // cancels the per-connection context to tear down on write error
+	mu         sync.Mutex
+	conn       *websocket.Conn
+	connected  bool
+	connClose  context.CancelFunc // cancels the per-connection context to tear down on write error
+	registered bool               // true after successful registration with this relay
 }
 
 // New creates a relay client. The handler can be nil at construction time
@@ -91,9 +94,62 @@ func (c *Client) SetHandler(h http.Handler) {
 	c.handler = h
 }
 
+// register posts the daemon's Ed25519 public key to the relay's registration
+// endpoint. If the relay already knows this key it returns the existing
+// daemon_id; otherwise it creates a new one. The client updates its daemonID
+// in-memory so subsequent connections use the correct identity.
+func (c *Client) register(ctx context.Context) error {
+	pub := c.privateKey.Public().(ed25519.PublicKey)
+	body, _ := json.Marshal(map[string]string{
+		"public_key": base64.StdEncoding.EncodeToString(pub),
+		"version":    "1.0.0",
+	})
+
+	httpURL := strings.Replace(c.relayURL, "wss://", "https://", 1)
+	httpURL = strings.Replace(httpURL, "ws://", "http://", 1)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpURL+"/api/relay/register", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("registering with relay: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("relay registration failed: status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		DaemonID string `json:"daemon_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("parsing relay response: %w", err)
+	}
+
+	c.daemonID = result.DaemonID
+	c.registered = true
+	c.logger.Info("relay: registered with relay", "daemon_id", result.DaemonID)
+	return nil
+}
+
 // Run connects to the relay and blocks until ctx is cancelled.
 // Handles reconnection with exponential backoff.
 func (c *Client) Run(ctx context.Context) error {
+	// Register with the relay on first startup to ensure this daemon's key
+	// is known. This is idempotent — re-registering returns the existing
+	// daemon_id if the key is already known.
+	if !c.registered {
+		if err := c.register(ctx); err != nil {
+			c.logger.Warn("relay: initial registration failed, will retry on auth failure", "err", err)
+		}
+	}
+
 	delay := c.baseDelay
 	consecutiveAuthFailures := 0
 
@@ -103,9 +159,13 @@ func (c *Client) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		// Track consecutive auth failures to distinguish permanent from transient.
+		// On auth failure, try re-registering to get a valid daemon_id
+		// for this relay (e.g. after switching from production to staging).
 		if err != nil && isAuthError(err) {
 			consecutiveAuthFailures++
+			if regErr := c.register(ctx); regErr != nil {
+				c.logger.Warn("relay: re-registration failed", "err", regErr)
+			}
 			if consecutiveAuthFailures >= maxConsecutiveAuthFailures {
 				c.logger.Error("relay auth failing repeatedly — check daemon key/config",
 					"err", err, "consecutive_failures", consecutiveAuthFailures)
