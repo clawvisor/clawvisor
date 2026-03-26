@@ -403,8 +403,8 @@ func stepRelayOptIn() (enabled bool, err error) {
 		return false, err
 	}
 	if !accepted {
-		fmt.Println("\n  Setup cancelled.")
-		return false, huh.ErrUserAborted
+		// Declining TOS brings you back to the relay question.
+		return stepRelayOptIn()
 	}
 
 	return true, nil
@@ -432,7 +432,7 @@ func stepWelcome() error {
 	fmt.Println()
 
 	cont := true
-	return huh.NewForm(
+	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Ready to get started?").
@@ -440,7 +440,13 @@ func stepWelcome() error {
 				Negative("Cancel").
 				Value(&cont),
 		),
-	).Run()
+	).Run(); err != nil {
+		return err
+	}
+	if !cont {
+		return huh.ErrUserAborted
+	}
+	return nil
 }
 
 func collectDaemonConfig() (*daemonConfig, error) {
