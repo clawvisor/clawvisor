@@ -14,6 +14,39 @@ import (
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Version=0.3.0"
 var Version = "dev"
 
+// Environment is set at build time via -ldflags. Valid values: "production" (default), "staging".
+// Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Environment=staging"
+var Environment = "production"
+
+// IsStaging returns true when the binary was built for the staging environment.
+func IsStaging() bool {
+	return Environment == "staging"
+}
+
+// RelayURL returns the default relay WebSocket URL for the current environment.
+func RelayURL() string {
+	if IsStaging() {
+		return "wss://relay.staging.clawvisor.com"
+	}
+	return "wss://relay.clawvisor.com"
+}
+
+// PushURL returns the default push service URL for the current environment.
+func PushURL() string {
+	if IsStaging() {
+		return "https://push.staging.clawvisor.com"
+	}
+	return "https://push.clawvisor.com"
+}
+
+// CORSOrigins returns the allowed CORS origins for the current environment.
+func CORSOrigins() []string {
+	if IsStaging() {
+		return []string{"https://relay.staging.clawvisor.com", "https://app.staging.clawvisor.com"}
+	}
+	return []string{"https://relay.clawvisor.com", "https://app.clawvisor.com"}
+}
+
 const (
 	githubOwner = "clawvisor"
 	githubRepo  = "clawvisor"

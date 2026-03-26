@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 // AutoConfigured tracks which settings were auto-resolved (not explicitly set).
@@ -287,7 +289,7 @@ func Default() *Config {
 			Auth:      RateLimitBucket{Limit: 5, Window: 60},
 		},
 		Relay: RelayConfig{
-			URL:                "wss://relay.clawvisor.com",
+			URL:                version.RelayURL(),
 			KeyFile:            "daemon-ed25519.key",
 			E2EKeyFile:         "daemon-x25519.key",
 			ReconnectBaseDelay: "1s",
@@ -299,7 +301,7 @@ func Default() *Config {
 			LogFile: "logs/daemon.log",
 		},
 		Push: PushConfig{
-			URL: "https://push.clawvisor.com",
+			URL: version.PushURL(),
 		},
 		Services: ServicesConfig{
 			GitHub:   GitHubServicesConfig{Enabled: true},

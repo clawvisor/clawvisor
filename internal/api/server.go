@@ -24,6 +24,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -394,7 +395,7 @@ func (s *Server) routes() http.Handler {
 	var pairingHandler *handlers.PairingHandler
 	if s.daemonID != "" {
 		pairingHandler = handlers.NewPairingHandler(s.daemonID)
-		corsOrigins := []string{"https://relay.clawvisor.com", "https://app.clawvisor.com"}
+		corsOrigins := version.CORSOrigins()
 		mux.Handle("GET /api/pairing/code",
 			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(pairingHandler.GenerateCode)))
 		mux.Handle("OPTIONS /api/pairing/code",

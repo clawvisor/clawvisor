@@ -6,6 +6,9 @@ set -euo pipefail
 #
 # By default, discovers the installed binary path from the launchd plist
 # (macOS) or systemd unit (Linux). Override with CLAWVISOR_BIN.
+#
+# Set CLAWVISOR_ENV to "staging" to build against staging services.
+# Example: CLAWVISOR_ENV=staging ./scripts/upgrade.sh
 
 PLIST="$HOME/Library/LaunchAgents/com.clawvisor.daemon.plist"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/clawvisor.service"
@@ -59,8 +62,12 @@ if [[ -f "$WEBDIR/package.json" ]]; then
     cp -R "$WEBDIR/dist/." "$FRONTEND_INSTALL_DIR/"
 fi
 
-echo "  Building backend from $REPO_ROOT ..."
-(cd "$REPO_ROOT" && go build -o "$BIN" ./cmd/clawvisor/)
+ENVIRONMENT="${CLAWVISOR_ENV:-production}"
+VERSION="$(cd "$REPO_ROOT" && git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)"
+LDFLAGS="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION} -X github.com/clawvisor/clawvisor/pkg/version.Environment=${ENVIRONMENT}"
+
+echo "  Building backend from $REPO_ROOT (env=$ENVIRONMENT) ..."
+(cd "$REPO_ROOT" && go build -ldflags="$LDFLAGS" -o "$BIN" ./cmd/clawvisor/)
 echo "  Built $(${BIN} --version 2>/dev/null || echo 'ok')"
 
 echo "  Restarting daemon..."
