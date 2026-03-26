@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+
+	"github.com/charmbracelet/huh"
 )
 
 const launchdLabel = "com.clawvisor.daemon"
@@ -146,6 +148,7 @@ func Install() error {
 		return err
 	}
 	printAgentSetupInstructions(dataDir)
+	promptDashboardOpen(dataDir)
 	return nil
 }
 
@@ -236,6 +239,52 @@ func installSystemd(home string, data installData) error {
 	fmt.Println("  To start now: clawvisor start")
 	fmt.Println("  To stop:      clawvisor stop")
 	return nil
+}
+
+// promptDashboardOpen asks the user whether they want to open the dashboard
+// now, and either opens it or prints the command to do so later.
+func promptDashboardOpen(dataDir string) {
+	openNow := true
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Open the dashboard now?").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&openNow),
+		),
+	).Run()
+	if err != nil {
+		// User aborted or input error — just print the hint.
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		return
+	}
+
+	if !openNow {
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		return
+	}
+
+	// The daemon was just started via the service manager — wait for it to
+	// become ready and write the local session file before requesting a token.
+	fmt.Println(dim.Padding(0, 2).Render("Waiting for daemon to start..."))
+	ready := false
+	for i := 0; i < 30; i++ {
+		if serverURL, _, err := readLocalSession(dataDir); err == nil && serverURL != "" {
+			ready = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !ready {
+		fmt.Println(dim.Padding(0, 2).Render("Daemon hasn't started yet. Run `clawvisor dashboard` once it's ready."))
+		return
+	}
+
+	if err := Dashboard(false); err != nil {
+		fmt.Println(dim.Padding(0, 2).Render("Could not open dashboard: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to try again."))
+	}
 }
 
 // Uninstall removes the service definition.
