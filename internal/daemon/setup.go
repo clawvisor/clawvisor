@@ -61,7 +61,7 @@ func runDaemonSetup(dataDir string) error {
 	}
 	if !accepted {
 		fmt.Println("\n  Setup cancelled.")
-		return nil
+		return huh.ErrUserAborted
 	}
 
 	cfg, err := collectDaemonConfig()

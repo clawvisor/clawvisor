@@ -311,6 +311,12 @@ func Setup(opts SetupOptions) error {
 	fmt.Println(green.Padding(0, 2).Render("✓ Setup complete"))
 	fmt.Println()
 
+	// Skip daemon install/start when running inside a container — there's
+	// no launchd/systemd and the server will be started via docker compose.
+	if os.Getenv("CLAWVISOR_CONTAINER") == "1" {
+		return nil
+	}
+
 	// Offer to install and start the daemon as a background service.
 	install := true
 	if err := huh.NewForm(

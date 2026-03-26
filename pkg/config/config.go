@@ -336,6 +336,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("DATABASE_DRIVER"); v != "" {
 		cfg.Database.Driver = v
 	}
+	if v := os.Getenv("SQLITE_PATH"); v != "" {
+		cfg.Database.SQLitePath = v
+	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.Auth.JWTSecret = v
 	}
@@ -493,6 +496,12 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_RELAY_DAEMON_ID"); v != "" {
 		cfg.Relay.DaemonID = v
+	}
+	if v := os.Getenv("CLAWVISOR_RELAY_KEY_FILE"); v != "" {
+		cfg.Relay.KeyFile = v
+	}
+	if v := os.Getenv("CLAWVISOR_RELAY_E2E_KEY_FILE"); v != "" {
+		cfg.Relay.E2EKeyFile = v
 	}
 	if v := os.Getenv("CLAWVISOR_PUSH_ENABLED"); v != "" {
 		cfg.Push.Enabled = v == "true" || v == "1"

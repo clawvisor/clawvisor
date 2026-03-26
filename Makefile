@@ -50,7 +50,22 @@ tui:
 
 # ── Docker / Cloud ─────────────────────────────────────────────────────────────
 
-# Start Postgres + app with docker compose
+# Run any clawvisor command in Docker (no local Go/Node needed)
+# Usage: make docker-exec CMD="version"
+docker-exec:
+	@mkdir -p $(HOME)/.clawvisor
+	docker compose -f deploy/docker-compose.local.yml run --rm -it --build --entrypoint /clawvisor app $(CMD)
+
+# First-time setup via Docker (no local Go/Node needed)
+docker-setup:
+	$(MAKE) docker-exec CMD="setup"
+
+# Run clawvisor in Docker with ~/.clawvisor mounted (SQLite, single container)
+docker:
+	@test -f $(HOME)/.clawvisor/config.yaml || { echo "Error: ~/.clawvisor/config.yaml not found. Run 'make docker-setup' first."; exit 1; }
+	docker compose -f deploy/docker-compose.local.yml up --build
+
+# Start Postgres + app with docker compose (production-like)
 up:
 	docker compose -f deploy/docker-compose.yml up --build
 

@@ -22,10 +22,11 @@ type AuthHandler struct {
 	cfg        config.AuthConfig
 	magicStore pkgauth.MagicTokenStore // nil when magic link auth is disabled
 	baseURL    string
+	isLocal    bool // true when server is bound to loopback/wildcard (allows Docker bridge IPs for magic local auth)
 }
 
-func NewAuthHandler(jwtSvc pkgauth.TokenService, st store.Store, cfg config.AuthConfig, magicStore pkgauth.MagicTokenStore, baseURL string) *AuthHandler {
-	return &AuthHandler{jwtSvc: jwtSvc, st: st, cfg: cfg, magicStore: magicStore, baseURL: baseURL}
+func NewAuthHandler(jwtSvc pkgauth.TokenService, st store.Store, cfg config.AuthConfig, magicStore pkgauth.MagicTokenStore, baseURL string, isLocal bool) *AuthHandler {
+	return &AuthHandler{jwtSvc: jwtSvc, st: st, cfg: cfg, magicStore: magicStore, baseURL: baseURL, isLocal: isLocal}
 }
 
 type authResponse struct {
@@ -352,18 +353,22 @@ func (h *AuthHandler) GenerateMagicLocal(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Only allow requests from localhost.
-	host := r.RemoteAddr
-	// RemoteAddr is "host:port"; strip the port.
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
-	// Strip brackets from IPv6 addresses (e.g. "[::1]" → "::1").
-	host = strings.TrimPrefix(host, "[")
-	host = strings.TrimSuffix(host, "]")
-	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
-		writeError(w, http.StatusForbidden, "FORBIDDEN", "this endpoint is only available from localhost")
-		return
+	// Only allow requests from localhost. When the server is in local mode
+	// (bound to loopback or 0.0.0.0), skip the check — this covers Docker
+	// port-mapping where the remote address is the bridge IP, not 127.0.0.1.
+	if !h.isLocal {
+		host := r.RemoteAddr
+		// RemoteAddr is "host:port"; strip the port.
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+		// Strip brackets from IPv6 addresses (e.g. "[::1]" → "::1").
+		host = strings.TrimPrefix(host, "[")
+		host = strings.TrimSuffix(host, "]")
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "this endpoint is only available from localhost")
+			return
+		}
 	}
 
 	const localEmail = "admin@local"
