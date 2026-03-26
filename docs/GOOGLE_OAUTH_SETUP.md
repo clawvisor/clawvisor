@@ -60,9 +60,9 @@ You'll configure three sections: **Branding**, **Audience**, and **Data Access**
 3. Application type: **Web application**
 4. Name: `Clawvisor`
 5. Under **Authorized redirect URIs**, add:
-   - `http://localhost:25297/api/oauth/google/callback` (for local development)
+   - `http://localhost:25297/api/oauth/callback` (for local development)
    - If you're running Clawvisor on a different host/port, adjust accordingly
-     (e.g. `https://clawvisor.yourdomain.com/api/oauth/google/callback`)
+     (e.g. `https://clawvisor.yourdomain.com/api/oauth/callback`)
 6. Click **Create**
 7. Copy the **Client ID** and **Client Secret**
 
@@ -108,7 +108,7 @@ The redirect URI in your OAuth credentials doesn't match what Clawvisor is
 using. Check that:
 - The URI in Google Cloud matches your Clawvisor URL exactly
 - You're using `http` (not `https`) for localhost
-- The path is `/api/oauth/google/callback`
+- The path is `/api/oauth/callback`
 - Changes to redirect URIs can take 5 minutes to a few hours to take effect
 
 **"This app isn't verified"**
