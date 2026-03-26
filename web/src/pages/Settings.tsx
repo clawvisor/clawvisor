@@ -16,6 +16,7 @@ export default function Settings() {
     <div className="p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
       <DaemonInfo />
+      <LLMSection />
       <DevicePairing />
       <TelegramSection />
       {passwordAuth && <PasswordSection />}
@@ -62,6 +63,154 @@ function DaemonInfo() {
           {copied ? 'Copied!' : 'Copy'}
         </button>
       </div>
+    </section>
+  )
+}
+
+// ── LLM configuration ───────────────────────────────────────────────────────
+
+function LLMSection() {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [provider, setProvider] = useState('')
+  const [endpoint, setEndpoint] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  const { data: status } = useQuery({
+    queryKey: ['llm-status'],
+    queryFn: () => api.llm.status(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
+  const updateMut = useMutation({
+    mutationFn: () => api.llm.update(provider, endpoint, apiKey, model),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['llm-status'] })
+      setEditing(false)
+      setApiKey('')
+      setError(null)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 5000)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  function startEditing() {
+    setProvider(status?.provider ?? 'anthropic')
+    setEndpoint('')
+    setApiKey('')
+    setModel(status?.model ?? '')
+    setError(null)
+    setEditing(true)
+  }
+
+  function handleSubmit() {
+    if (!apiKey) { setError('API key is required'); return }
+    setError(null)
+    updateMut.mutate()
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">LLM Configuration</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          API key used for intent verification and risk assessment.
+        </p>
+      </div>
+
+      {error && <div className="text-sm text-danger max-w-lg">{error}</div>}
+      {success && <div className="text-sm text-success max-w-lg">LLM configuration updated.</div>}
+
+      {status?.spend_cap_exhausted && !editing && (
+        <div className="max-w-lg px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 text-sm text-text-primary">
+          Free LLM credit exhausted. Add your own API key to restore verification and risk assessment.
+        </div>
+      )}
+
+      {!editing ? (
+        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
+          <div className="text-sm text-text-secondary space-y-1">
+            <p><span className="font-medium text-text-tertiary">Provider:</span> {status?.provider ?? '—'}</p>
+            <p><span className="font-medium text-text-tertiary">Model:</span> {status?.model ?? '—'}</p>
+            <p>
+              <span className="font-medium text-text-tertiary">Status:</span>{' '}
+              {status?.spend_cap_exhausted
+                ? <span className="text-warning">Credit exhausted</span>
+                : <span className="text-success">Active</span>}
+            </p>
+          </div>
+          <button
+            onClick={startEditing}
+            className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"
+          >
+            {status?.spend_cap_exhausted ? 'Configure API key' : 'Update'}
+          </button>
+        </div>
+      ) : (
+        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">Provider</label>
+            <select
+              value={provider}
+              onChange={e => setProvider(e.target.value)}
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">Endpoint <span className="text-text-tertiary font-normal">(optional, leave blank for default)</span></label>
+            <input
+              type="text"
+              value={endpoint}
+              onChange={e => setEndpoint(e.target.value)}
+              placeholder={provider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com/v1'}
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">API Key</label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={e => { setApiKey(e.target.value); setError(null) }}
+              placeholder="sk-..."
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">Model <span className="text-text-tertiary font-normal">(optional)</span></label>
+            <input
+              type="text"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              placeholder="claude-haiku-4-5-20251001"
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            />
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={handleSubmit}
+              disabled={updateMut.isPending || !apiKey}
+              className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {updateMut.isPending ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setEditing(false); setError(null) }}
+              className="text-sm text-text-tertiary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

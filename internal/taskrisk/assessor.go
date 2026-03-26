@@ -7,13 +7,13 @@ package taskrisk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
-	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -55,23 +55,24 @@ func (NoopAssessor) Assess(_ context.Context, _ AssessRequest) (*RiskAssessment,
 
 // LLMAssessor performs task risk assessment via an LLM provider.
 type LLMAssessor struct {
-	cfg    config.TaskRiskConfig
+	health *llm.Health
 	logger *slog.Logger
 }
 
 // NewLLMAssessor creates an LLM-backed task risk assessor.
-func NewLLMAssessor(cfg config.TaskRiskConfig, logger *slog.Logger) *LLMAssessor {
-	return &LLMAssessor{cfg: cfg, logger: logger}
+func NewLLMAssessor(health *llm.Health, logger *slog.Logger) *LLMAssessor {
+	return &LLMAssessor{health: health, logger: logger}
 }
 
 func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAssessment, error) {
-	if !a.cfg.Enabled {
+	cfg := a.health.TaskRiskConfig()
+	if !cfg.Enabled {
 		return nil, nil
 	}
 
 	start := time.Now()
 
-	client := llm.NewClient(a.cfg.LLMProviderConfig)
+	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildAssessUserMessage(req)
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: formattedSystemPrompt},
@@ -83,6 +84,10 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 		raw, err := client.Complete(ctx, messages)
 		if err != nil {
 			lastErr = err
+			if errors.Is(err, llm.ErrSpendCapExhausted) {
+				a.health.SetSpendCapExhausted()
+				break
+			}
 			if attempt == 0 {
 				continue
 			}
@@ -98,7 +103,7 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 			break
 		}
 
-		assessment.Model = a.cfg.Model
+		assessment.Model = cfg.Model
 		assessment.LatencyMS = int(time.Since(start).Milliseconds())
 		return assessment, nil
 	}
@@ -107,7 +112,7 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 	return &RiskAssessment{
 		RiskLevel:   "unknown",
 		Explanation: "Risk assessment failed: " + lastErr.Error(),
-		Model:       a.cfg.Model,
+		Model:       cfg.Model,
 		LatencyMS:   int(time.Since(start).Milliseconds()),
 	}, nil
 }

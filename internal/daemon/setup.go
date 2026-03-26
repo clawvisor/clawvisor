@@ -538,7 +538,7 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 			huh.NewSelect[string]().
 				Title("Which LLM to use for verification and risk assessment?").
 				Options(
-					huh.NewOption("Quick start (free) — Claude Haiku, no API key needed", "quickstart"),
+					huh.NewOption("Quick start (free)", "quickstart"),
 					huh.NewOption("Claude Haiku — claude-haiku-4-5-20251001", "haiku"),
 					huh.NewOption("Gemini Flash — gemini-2.0-flash", "flash"),
 					huh.NewOption("GPT-4o Mini  — gpt-4o-mini", "mini"),

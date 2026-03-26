@@ -376,7 +376,7 @@ func stepLLM(cfg *config) error {
 			huh.NewSelect[string]().
 				Title("Which model?").
 				Options(
-					huh.NewOption("Quick start (free) — Claude Haiku, no API key needed", "quickstart"),
+					huh.NewOption("Quick start (free)", "quickstart"),
 					huh.NewOption("Claude Haiku — claude-haiku-4-5-20251001", "haiku"),
 					huh.NewOption("Gemini Flash — gemini-2.0-flash", "flash"),
 					huh.NewOption("GPT-4o Mini  — gpt-4o-mini", "mini"),

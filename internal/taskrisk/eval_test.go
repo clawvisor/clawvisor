@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -83,16 +84,24 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 	}
 
 	// Build assessor.
-	assessor := NewLLMAssessor(config.TaskRiskConfig{
-		LLMProviderConfig: config.LLMProviderConfig{
-			Enabled:        true,
-			Provider:       provider,
-			Endpoint:       endpoint,
-			APIKey:         apiKey,
-			Model:          model,
-			TimeoutSeconds: 30,
+	health := llm.NewHealth(config.LLMConfig{
+		Provider:       provider,
+		Endpoint:       endpoint,
+		APIKey:         apiKey,
+		Model:          model,
+		TimeoutSeconds: 30,
+		TaskRisk: config.TaskRiskConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       provider,
+				Endpoint:       endpoint,
+				APIKey:         apiKey,
+				Model:          model,
+				TimeoutSeconds: 30,
+			},
 		},
-	}, slog.Default())
+	})
+	assessor := NewLLMAssessor(health, slog.Default())
 
 	results := make([]evalResult, 0, len(cases))
 

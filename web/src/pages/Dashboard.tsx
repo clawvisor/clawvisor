@@ -45,6 +45,14 @@ export default function Dashboard() {
     staleTime: 3600_000,
   })
 
+  // Check LLM health (for haiku proxy spend cap exhaustion)
+  const { data: llmStatus } = useQuery({
+    queryKey: ['llm-status'],
+    queryFn: () => api.llm.status(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
   return (
     <div className="min-h-screen bg-surface-0 flex">
       {/* Sidebar */}
@@ -139,6 +147,20 @@ export default function Dashboard() {
                 </a>
               )}
             </span>
+          </div>
+        )}
+        {llmStatus?.spend_cap_exhausted && (
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex items-center justify-between text-sm">
+            <span className="text-text-primary">
+              <span className="font-medium">Free LLM credit exhausted</span>
+              <span className="text-text-secondary"> — verification and risk assessment are paused. Add your own API key to restore them.</span>
+            </span>
+            <NavLink
+              to="/dashboard/settings"
+              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap ml-3"
+            >
+              Configure API key
+            </NavLink>
           </div>
         )}
         <Routes>
