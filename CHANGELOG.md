@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.7](https://github.com/clawvisor/clawvisor/compare/v0.7.6...v0.7.7) (2026-03-27)
+
+
+### Features
+
+* add curl auto-approve, smoke test, and setup cleanup ([#65](https://github.com/clawvisor/clawvisor/issues/65)) ([bfde881](https://github.com/clawvisor/clawvisor/commit/bfde881c1585fccd4f9d942cf90fd77e9b023158))
+* automate Claude Desktop MCP setup in installer ([#67](https://github.com/clawvisor/clawvisor/issues/67)) ([4d9b30a](https://github.com/clawvisor/clawvisor/commit/4d9b30aa278839f57f6028b43e88aa83614757e4))
+* show completed tasks on dashboard for 60 seconds before removing ([#68](https://github.com/clawvisor/clawvisor/issues/68)) ([0c5707b](https://github.com/clawvisor/clawvisor/commit/0c5707b521e4eef929163bfeabeec26bd64f3fe0))
+
 ## [0.7.6](https://github.com/clawvisor/clawvisor/compare/v0.7.5...v0.7.6) (2026-03-26)
 
 
