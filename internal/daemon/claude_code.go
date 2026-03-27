@@ -2,9 +2,14 @@ package daemon
 
 import (
 	"bufio"
+	"crypto/md5" //nolint:gosec // used only for cache key derivation matching mcp-remote's convention
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -186,11 +191,225 @@ func hasClaudeDesktop(agents []knownAgent) bool {
 	return false
 }
 
-// offerClaudeDesktopSetup prints instructions for installing the Clawvisor
-// cowork plugin in Claude Desktop.
+// claudeDesktopConfigPath returns the platform-specific path to
+// claude_desktop_config.json, or "" if unsupported.
+func claudeDesktopConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "linux":
+		// XDG default for Claude Desktop on Linux.
+		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+			return filepath.Join(xdg, "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
+	default:
+		return ""
+	}
+}
+
+// installClaudeDesktopMCPConfig adds the clawvisor-local MCP server entry to
+// Claude Desktop's config file, merging with any existing configuration.
+func installClaudeDesktopMCPConfig(configPath string) error {
+	// Read existing config or start with an empty object.
+	existing := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing existing config: %w", err)
+		}
+	}
+
+	// Parse existing mcpServers or start fresh.
+	servers := make(map[string]json.RawMessage)
+	if raw, ok := existing["mcpServers"]; ok {
+		if err := json.Unmarshal(raw, &servers); err != nil {
+			return fmt.Errorf("parsing mcpServers: %w", err)
+		}
+	}
+
+	// Add/overwrite the clawvisor-local entry.
+	entry := map[string]any{
+		"command": "npx",
+		"args":    []string{"mcp-remote", "http://localhost:25297/mcp"},
+	}
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshalling MCP entry: %w", err)
+	}
+	servers["clawvisor-local"] = json.RawMessage(entryJSON)
+
+	// Write servers back into the top-level config.
+	serversJSON, err := json.Marshal(servers)
+	if err != nil {
+		return fmt.Errorf("marshalling mcpServers: %w", err)
+	}
+	existing["mcpServers"] = json.RawMessage(serversJSON)
+
+	// Ensure the parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	out, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling config: %w", err)
+	}
+	return os.WriteFile(configPath, append(out, '\n'), 0644)
+}
+
+// clearMCPRemoteCache removes mcp-remote's cached OAuth state for the local
+// daemon. mcp-remote caches client_info, tokens, and lock files under
+// ~/.mcp-auth/<version>/<md5(server_url)>_*.json. If the daemon's database
+// was recreated, the cached client_id becomes stale and causes "unknown
+// client_id" errors during OAuth authorization. Clearing forces mcp-remote
+// to re-register via /oauth/register on next startup.
+func clearMCPRemoteCache() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	authDir := filepath.Join(home, ".mcp-auth")
+	entries, err := os.ReadDir(authDir)
+	if err != nil {
+		return
+	}
+
+	// MD5 of the MCP endpoint URL, matching mcp-remote's key derivation.
+	h := md5.Sum([]byte("http://localhost:25297/mcp")) //nolint:gosec
+	prefix := hex.EncodeToString(h[:]) + "_"
+
+	for _, versionDir := range entries {
+		if !versionDir.IsDir() {
+			continue
+		}
+		dir := filepath.Join(authDir, versionDir.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if strings.HasPrefix(f.Name(), prefix) {
+				_ = os.Remove(filepath.Join(dir, f.Name()))
+			}
+		}
+	}
+}
+
+// restartClaudeDesktop kills and relaunches Claude Desktop so it picks up
+// the new MCP config.
+func restartClaudeDesktop() error {
+	switch runtime.GOOS {
+	case "darwin":
+		// Quit gracefully via AppleScript, then reopen.
+		_ = exec.Command("osascript", "-e", `tell application "Claude" to quit`).Run()
+		// Brief pause to let the process exit.
+		exec.Command("sleep", "1").Run()
+		return exec.Command("open", "-a", "Claude").Start()
+	case "linux":
+		_ = exec.Command("pkill", "-f", "claude-desktop").Run()
+		exec.Command("sleep", "1").Run()
+		return exec.Command("claude-desktop").Start()
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
+}
+
+// offerClaudeDesktopSetup interactively configures the MCP connection for
+// Claude Desktop. It writes the MCP server entry to claude_desktop_config.json
+// and optionally restarts Claude Desktop. The user only needs to click
+// "Authorize" on the OAuth prompt that appears after restart.
 func offerClaudeDesktopSetup() {
+	if nonInteractive() {
+		configPath := claudeDesktopConfigPath()
+		if configPath == "" {
+			return
+		}
+		if err := installClaudeDesktopMCPConfig(configPath); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not configure Claude Desktop: " + err.Error()))
+			return
+		}
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Configured Claude Desktop MCP"))
+		fmt.Println(dim.Padding(0, 2).Render("  Restart Claude Desktop and authorize when prompted."))
+		return
+	}
+
+	configPath := claudeDesktopConfigPath()
+	if configPath == "" {
+		// Unsupported platform — fall back to manual instructions.
+		printClaudeDesktopManualInstructions()
+		return
+	}
+
 	fmt.Println()
 	fmt.Println(bold.Padding(0, 2).Render("Claude Desktop"))
+
+	configure := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Configure Claude Desktop to connect via MCP?").
+				Description("Adds the Clawvisor MCP server to Claude Desktop's config.\nAfter restart, Claude Desktop will prompt you to authorize via OAuth.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&configure),
+		),
+	).Run(); err != nil || !configure {
+		if !configure {
+			printClaudeDesktopManualInstructions()
+		}
+		return
+	}
+
+	if err := installClaudeDesktopMCPConfig(configPath); err != nil {
+		fmt.Println(yellow.Padding(0, 2).Render("  Could not write config: " + err.Error()))
+		fmt.Println()
+		printClaudeDesktopManualInstructions()
+		return
+	}
+
+	fmt.Println(green.Padding(0, 2).Render("  ✓ MCP server added to Claude Desktop config"))
+	fmt.Println(dim.Padding(0, 2).Render("  " + configPath))
+	fmt.Println()
+
+	// Offer to restart Claude Desktop.
+	restart := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Restart Claude Desktop now?").
+				Description("Claude Desktop needs to restart to pick up the new config.\nIt will prompt you to authorize Clawvisor via OAuth.").
+				Affirmative("Yes").
+				Negative("I'll restart later").
+				Value(&restart),
+		),
+	).Run(); err != nil || !restart {
+		fmt.Println(dim.Padding(0, 2).Render("  Restart Claude Desktop when you're ready — it will prompt you to authorize."))
+		fmt.Println()
+		return
+	}
+
+	// Clear stale mcp-remote OAuth cache so it re-registers with the
+	// current daemon instead of reusing a client_id from a previous DB.
+	clearMCPRemoteCache()
+
+	if err := restartClaudeDesktop(); err != nil {
+		fmt.Println(yellow.Padding(0, 2).Render("  Could not restart: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Restart Claude Desktop manually — it will prompt you to authorize."))
+	} else {
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Claude Desktop restarting"))
+		fmt.Println(dim.Padding(0, 2).Render("  Authorize Clawvisor when the OAuth prompt appears."))
+	}
+	fmt.Println()
+}
+
+// printClaudeDesktopManualInstructions prints the fallback manual setup steps.
+func printClaudeDesktopManualInstructions() {
+	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  To connect Claude Desktop to Clawvisor, install the cowork plugin:"))
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  1. Download the plugin:"))

@@ -425,14 +425,25 @@ func printAgentSetupInstructions(dataDir string) {
 		fmt.Println()
 	}
 
-	// Check if Claude Desktop was detected during setup.
+	// Offer to configure Claude Desktop MCP if detected. We wait for the
+	// daemon to be healthy first so that mcp-remote can register an OAuth
+	// client when Claude Desktop restarts.
 	for _, a := range appBundleAgents {
 		if a.Binary != "claude-desktop" {
 			continue
 		}
 		for _, p := range a.Paths {
 			if _, err := os.Stat(p); err == nil {
-				offerClaudeDesktopSetup()
+				serverURL, _, _ := readLocalSession(dataDir)
+				if serverURL == "" {
+					serverURL = "http://127.0.0.1:25297"
+				}
+				if err := waitForServer(serverURL); err != nil {
+					// Daemon not ready — fall back to manual instructions.
+					printClaudeDesktopManualInstructions()
+				} else {
+					offerClaudeDesktopSetup()
+				}
 				break
 			}
 		}

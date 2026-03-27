@@ -358,6 +358,10 @@ func runDaemonSetup(dataDir string) error {
 		}
 	}
 
+	// Claude Desktop MCP setup is deferred to printAgentSetupInstructions
+	// (after the daemon is fully running) so that mcp-remote can register
+	// via OAuth when Claude Desktop restarts.
+
 	fmt.Println()
 	fmt.Println(green.Padding(0, 2).Render("✓ Daemon configured"))
 	fmt.Println(dim.Padding(0, 2).Render("  " + configPath))
