@@ -41,6 +41,7 @@ TODO.md
 
 # Security scan reports
 security/zap/reports/
+security/semgrep/reports/
 
 # OS
 .DS_Store
