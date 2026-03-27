@@ -50,6 +50,9 @@ mkdir -p .claude/skills/clawvisor
 cp {{SKILL_PATH}} .claude/skills/clawvisor/SKILL.md
 ` + "```" + `
 
+After copying, read ` + "`.claude/skills/clawvisor/SKILL.md`" + ` so you understand how
+to use the Clawvisor skill in the smoke test later.
+
 ### 4. Set environment variables
 
 Write the agent token and daemon URL to ` + "`.claude/.env`" + `:
@@ -86,7 +89,7 @@ wrong. If it fails to connect, the daemon is not running.
 
 First, check whether auto-approve rules already exist. Read
 ` + "`~/.claude/settings.json`" + ` and look for entries matching
-` + "`Bash(curl * http://localhost:25297/*)`" + ` in ` + "`permissions.allow`" + `.
+` + "`Bash(curl *http://localhost:25297/*)`" + ` in ` + "`permissions.allow`" + `.
 
 If the rules are already present, skip this step silently.
 
@@ -100,8 +103,8 @@ ensure both ` + "`~/.claude/settings.json`" + ` (user-level) and
 {
   "permissions": {
     "allow": [
-      "Bash(curl * http://localhost:25297/*)",
-      "Bash(curl * {{RELAY_ORIGIN}}/*)"
+      "Bash(curl *http://localhost:25297/*)",
+      "Bash(curl *{{RELAY_ORIGIN}}/*)"
     ]
   }
 }
@@ -233,6 +236,13 @@ func writeStrippedSkill(dest string) error {
 		}
 	}
 
+	// Append Claude Code-specific guidance about curl formatting.
+	b.WriteString("\n## Important: Single-line curl commands\n\n")
+	b.WriteString("Always write curl commands as a **single line** — do not use `\\` line\n")
+	b.WriteString("continuations. Claude Code's permission auto-approve rules use glob patterns\n")
+	b.WriteString("where `*` does not match newline characters, so multi-line commands will\n")
+	b.WriteString("trigger a manual approval prompt even when a matching rule exists.\n")
+
 	return os.WriteFile(dest, []byte(b.String()), 0644)
 }
 
@@ -344,8 +354,8 @@ func offerClaudeCodeCurlPermission() error {
 	}
 
 	rules := []string{
-		"Bash(curl * http://localhost:25297/*)",
-		fmt.Sprintf("Bash(curl * %s/*)", relayOrigin),
+		"Bash(curl *http://localhost:25297/*)",
+		fmt.Sprintf("Bash(curl *%s/*)", relayOrigin),
 	}
 
 	if err := addClaudePermissionRules(settingsPath, rules); err != nil {
