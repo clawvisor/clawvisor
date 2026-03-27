@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
+import { api, type Task, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
@@ -106,6 +106,41 @@ export default function Overview() {
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
 
+  // Track tasks that disappear from active_tasks and show them as "completed" for 60s
+  const prevActiveRef = useRef<Map<string, Task>>(new Map())
+  const [recentlyCompleted, setRecentlyCompleted] = useState<Task[]>([])
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  const removeCompleted = useCallback((id: string) => {
+    setRecentlyCompleted(prev => prev.filter(t => t.id !== id))
+    timersRef.current.delete(id)
+  }, [])
+
+  useEffect(() => {
+    const prevMap = prevActiveRef.current
+    const currentIds = new Set(activeTasks.map(t => t.id))
+
+    // Find tasks that were previously active but are now gone
+    for (const [id, task] of prevMap) {
+      if (!currentIds.has(id) && !timersRef.current.has(id)) {
+        const completed = { ...task, status: 'completed' as const }
+        setRecentlyCompleted(prev => [...prev, completed])
+        timersRef.current.set(id, setTimeout(() => removeCompleted(id), 60_000))
+      }
+    }
+
+    // Update prev ref
+    const nextMap = new Map<string, Task>()
+    for (const t of activeTasks) nextMap.set(t.id, t)
+    prevActiveRef.current = nextMap
+  }, [activeTasks, removeCompleted])
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => { for (const t of timers.values()) clearTimeout(t) }
+  }, [])
+
   return (
     <div className="p-8 space-y-8">
       <h1 className="text-2xl font-bold text-text-primary">Dashboard</h1>
@@ -202,6 +237,25 @@ export default function Overview() {
                 +{activeTasks.length - 5} more
               </Link>
             )}
+          </div>
+        </section>
+      )}
+
+      {/* Recently completed tasks */}
+      {recentlyCompleted.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold text-text-primary mb-3">
+            Recently completed
+            <span className="ml-2 text-sm font-normal text-text-tertiary">{recentlyCompleted.length}</span>
+          </h2>
+          <div className="space-y-3">
+            {recentlyCompleted.map(task => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                agentName={agentMap.get(task.agent_id) ?? task.agent_id.slice(0, 8)}
+              />
+            ))}
           </div>
         </section>
       )}
