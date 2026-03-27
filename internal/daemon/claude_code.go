@@ -110,7 +110,30 @@ ensure both ` + "`~/.claude/settings.json`" + ` (user-level) and
 Merge with any existing settings — don't overwrite other entries. If an entry
 already exists, skip it.
 
-### 7. Done
+### 7. End-to-end smoke test
+
+Now that everything is configured, run a quick smoke test to prove the full
+flow works. Use the Clawvisor skill to:
+
+1. **Create a test task** — pick any connected service visible in the catalog
+   (e.g. Gmail, Calendar, GitHub) and create a task with a narrow scope such as
+   "read my most recent email subject" or "list my GitHub notifications".
+   Tell the user to approve the task in the Clawvisor dashboard or mobile app,
+   then wait for approval before continuing.
+
+2. **Make an in-scope request** — once approved, make a gateway call that falls
+   within the task's approved scope. Show the user the successful response.
+
+3. **Make an out-of-scope request** — make a second gateway call using the same
+   task that is clearly outside the approved scope (e.g. sending an email when
+   the task only allows reading). Show the user that this request is rejected,
+   demonstrating that Clawvisor enforces task boundaries.
+
+Summarize the results: the in-scope call should have succeeded and the
+out-of-scope call should have been denied. If either result is unexpected,
+help the user debug.
+
+### 8. Done
 
 Tell the user setup is complete. The Clawvisor skill will be loaded
 automatically when relevant, or they can invoke it explicitly. Remind them to:
@@ -119,7 +142,7 @@ automatically when relevant, or they can invoke it explicitly. Remind them to:
   you to use them
 - Approve tasks in the dashboard or via mobile when you request them
 
-### 8. Offer to uninstall /clawvisor-setup (optional)
+### 9. Offer to uninstall /clawvisor-setup (optional)
 
 Now that setup is complete, ask the user if they'd like to remove the
 ` + "`/clawvisor-setup`" + ` slash command since it's no longer needed. If they agree:
