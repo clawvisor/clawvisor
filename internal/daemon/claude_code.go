@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/clawvisor/clawvisor/skills"
 )
 
@@ -80,7 +82,35 @@ curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
 This should return a JSON service catalog. If it returns 401, the token is
 wrong. If it fails to connect, the daemon is not running.
 
-### 6. Done
+### 6. Auto-approve Clawvisor curl requests (optional)
+
+First, check whether auto-approve rules already exist. Read
+` + "`~/.claude/settings.json`" + ` and look for entries matching
+` + "`Bash(curl * http://localhost:25297/*)`" + ` in ` + "`permissions.allow`" + `.
+
+If the rules are already present, skip this step silently.
+
+If not, ask the user if they'd like to auto-approve curl requests to the
+Clawvisor daemon so Claude Code won't prompt for each one. If they agree,
+ensure both ` + "`~/.claude/settings.json`" + ` (user-level) and
+` + "`.claude/settings.json`" + ` (project-level) have the following entries in
+` + "`permissions.allow`" + `:
+
+` + "```json" + `
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl * http://localhost:25297/*)",
+      "Bash(curl * {{RELAY_ORIGIN}}/*)"
+    ]
+  }
+}
+` + "```" + `
+
+Merge with any existing settings — don't overwrite other entries. If an entry
+already exists, skip it.
+
+### 7. Done
 
 Tell the user setup is complete. The Clawvisor skill will be loaded
 automatically when relevant, or they can invoke it explicitly. Remind them to:
@@ -88,6 +118,17 @@ automatically when relevant, or they can invoke it explicitly. Remind them to:
 - Connect services in the Clawvisor dashboard (Services tab) before asking
   you to use them
 - Approve tasks in the dashboard or via mobile when you request them
+
+### 8. Offer to uninstall /clawvisor-setup (optional)
+
+Now that setup is complete, ask the user if they'd like to remove the
+` + "`/clawvisor-setup`" + ` slash command since it's no longer needed. If they agree:
+
+` + "```bash" + `
+rm ~/.claude/commands/clawvisor-setup.md
+` + "```" + `
+
+If they decline, remind them they can delete it later with the same command.
 `
 
 // installClaudeCodeCommand writes the /clawvisor-setup slash command to
@@ -127,9 +168,15 @@ func installClaudeCodeCommand(dataDir string) error {
 		}
 	}
 
+	relayOrigin := "https://relay.clawvisor.com"
+	if version.IsStaging() {
+		relayOrigin = "https://relay.staging.clawvisor.com"
+	}
+
 	content := claudeCodeSetupCommand
 	content = strings.ReplaceAll(content, "{{CLAWVISOR_BINARY}}", binary)
 	content = strings.ReplaceAll(content, "{{SKILL_PATH}}", skillDest)
+	content = strings.ReplaceAll(content, "{{RELAY_ORIGIN}}", relayOrigin)
 
 	dest := filepath.Join(commandsDir, "clawvisor-setup.md")
 	if err := os.WriteFile(dest, []byte(content), 0644); err != nil {
@@ -231,5 +278,115 @@ func offerClaudeCodeSetup(dataDir string) error {
 	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
 	fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect a project."))
 	fmt.Println()
+
+	// Offer to auto-approve Clawvisor curl requests globally.
+	if err := offerClaudeCodeCurlPermission(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// offerClaudeCodeCurlPermission prompts the user to add auto-approval rules
+// for Clawvisor curl requests to ~/.claude/settings.json so Claude Code won't
+// prompt for each one.
+func offerClaudeCodeCurlPermission() error {
+	allowCurl := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Auto-approve curl requests to the Clawvisor daemon?").
+				Description("Adds permission rules to ~/.claude/settings.json so\nClaude Code won't prompt for each Clawvisor API call.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&allowCurl),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !allowCurl {
+		return nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
+	}
+
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	relayOrigin := "https://relay.clawvisor.com"
+	if version.IsStaging() {
+		relayOrigin = "https://relay.staging.clawvisor.com"
+	}
+
+	rules := []string{
+		"Bash(curl * http://localhost:25297/*)",
+		fmt.Sprintf("Bash(curl * %s/*)", relayOrigin),
+	}
+
+	if err := addClaudePermissionRules(settingsPath, rules); err != nil {
+		return fmt.Errorf("updating Claude Code settings: %w", err)
+	}
+
+	fmt.Println(green.Padding(0, 2).Render("  ✓ Auto-approve rules added to ~/.claude/settings.json"))
+	fmt.Println()
+	return nil
+}
+
+// addClaudePermissionRules reads a Claude Code settings.json file, adds the
+// given rules to permissions.allow (deduplicating), and writes it back.
+func addClaudePermissionRules(path string, rules []string) error {
+	// Read existing settings or start fresh.
+	var settings map[string]any
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("parsing %s: %w", path, err)
+		}
+	} else if os.IsNotExist(err) {
+		settings = make(map[string]any)
+	} else {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	// Navigate to permissions.allow, creating intermediate objects as needed.
+	perms, ok := settings["permissions"].(map[string]any)
+	if !ok {
+		perms = make(map[string]any)
+		settings["permissions"] = perms
+	}
+
+	var allow []any
+	if existing, ok := perms["allow"].([]any); ok {
+		allow = existing
+	}
+
+	// Build a set of existing entries for dedup.
+	existing := make(map[string]bool, len(allow))
+	for _, v := range allow {
+		if s, ok := v.(string); ok {
+			existing[s] = true
+		}
+	}
+
+	for _, rule := range rules {
+		if !existing[rule] {
+			allow = append(allow, rule)
+		}
+	}
+	perms["allow"] = allow
+
+	// Write back with indentation.
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling settings: %w", err)
+	}
+
+	// Ensure parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, append(out, '\n'), 0644)
 }
