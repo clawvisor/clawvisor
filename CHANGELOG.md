@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.8](https://github.com/clawvisor/clawvisor/compare/v0.7.7...v0.7.8) (2026-03-27)
+
+
+### Features
+
+* add OWASP ZAP security scanning and fix HSTS on deployed instances ([a84f901](https://github.com/clawvisor/clawvisor/commit/a84f901e577a163332fe3fbb94cee7c987b3d26b))
+
+
+### Bug Fixes
+
+* add missing CSP directives (frame-ancestors, form-action) ([f223602](https://github.com/clawvisor/clawvisor/commit/f223602710615a04fd36865661b544c1545107f6))
+* show "clawvisor update" in update banner instead of raw go install command ([#70](https://github.com/clawvisor/clawvisor/issues/70)) ([38fc580](https://github.com/clawvisor/clawvisor/commit/38fc580c51308ad01f29eeee4cc70979d968e942))
+
 ## [0.7.7](https://github.com/clawvisor/clawvisor/compare/v0.7.6...v0.7.7) (2026-03-27)
 
 
