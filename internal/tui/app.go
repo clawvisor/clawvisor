@@ -363,8 +363,8 @@ func (a *App) renderStatusBar(hints []string) string {
 		content = StyleRed.Render("Reconnecting...") + sep + content
 	}
 
-	if a.updateAvail && a.upgradeCmd != "" {
-		content = StyleGreen.Render("Update: "+a.upgradeCmd) + sep + content
+	if a.updateAvail && a.latestVersion != "" {
+		content = StyleGreen.Render("Update available ("+a.latestVersion+") — run `clawvisor update` to get the latest version") + sep + content
 	}
 
 	if a.status != "" {
