@@ -29,11 +29,10 @@ export default function Dashboard() {
   // SSE event stream for instant dashboard updates
   useEventStream()
 
-  // Poll queue count for sidebar badge (fallback; SSE pushes invalidations)
+  // Queue count for sidebar badge (SSE pushes invalidations)
   const { data: queueData } = useQuery({
     queryKey: ['queue'],
     queryFn: () => api.queue.list(),
-    refetchInterval: 60_000,
   })
   const queueCount = queueData?.total ?? 0
 
@@ -49,8 +48,6 @@ export default function Dashboard() {
   const { data: llmStatus } = useQuery({
     queryKey: ['llm-status'],
     queryFn: () => api.llm.status(),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
   })
 
   return (

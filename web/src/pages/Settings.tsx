@@ -82,8 +82,6 @@ function LLMSection() {
   const { data: status } = useQuery({
     queryKey: ['llm-status'],
     queryFn: () => api.llm.status(),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
   })
 
   const updateMut = useMutation({
