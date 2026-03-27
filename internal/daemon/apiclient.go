@@ -22,9 +22,12 @@ type cliSession struct {
 // it is close to expiring (within 60 seconds).
 //
 // The flow is:
-//  1. Read cached session — if the JWT is still valid, reuse it.
-//  2. Otherwise: POST /api/auth/magic/local (localhost-only, no auth) to get
-//     a magic token, then POST /api/auth/magic to exchange it for a JWT.
+//  1. Read cached session — if the JWT is still valid, validate it with a
+//     lightweight authenticated call. If accepted, reuse it.
+//  2. If the cached session is expired, missing, or rejected by the server
+//     (e.g. daemon restarted): POST /api/auth/magic/local (localhost-only,
+//     no auth) to get a magic token, then POST /api/auth/magic to exchange
+//     it for a JWT.
 //  3. Cache the new JWT for future calls.
 func NewAPIClient() (*client.Client, error) {
 	home, err := os.UserHomeDir()
@@ -39,10 +42,20 @@ func NewAPIClient() (*client.Client, error) {
 		if time.Now().Unix() < sess.ExpiresAt-60 {
 			cl := client.New(sess.ServerURL, "")
 			cl.SetAccessToken(sess.AccessToken)
-			return cl, nil
+			// Validate the token is still accepted by the server.
+			if _, err := cl.GetAgents(); err == nil {
+				return cl, nil
+			}
+			// Stale session — clear cache and fall through to re-auth.
+			_ = os.Remove(sessionPath)
 		}
 	}
 
+	return freshAPIClient(dataDir, sessionPath)
+}
+
+// freshAPIClient obtains a new session via the magic token flow and caches it.
+func freshAPIClient(dataDir, sessionPath string) (*client.Client, error) {
 	// Resolve the server URL from the local session file.
 	serverURL, _, _ := readLocalSession(dataDir)
 	if serverURL == "" {
