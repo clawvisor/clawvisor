@@ -85,35 +85,7 @@ curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
 This should return a JSON service catalog. If it returns 401, the token is
 wrong. If it fails to connect, the daemon is not running.
 
-### 6. Auto-approve Clawvisor curl requests (optional)
-
-First, check whether auto-approve rules already exist. Read
-` + "`~/.claude/settings.json`" + ` and look for entries matching
-` + "`Bash(curl *http://localhost:25297/*)`" + ` in ` + "`permissions.allow`" + `.
-
-If the rules are already present, skip this step silently.
-
-If not, ask the user if they'd like to auto-approve curl requests to the
-Clawvisor daemon so Claude Code won't prompt for each one. If they agree,
-ensure both ` + "`~/.claude/settings.json`" + ` (user-level) and
-` + "`.claude/settings.json`" + ` (project-level) have the following entries in
-` + "`permissions.allow`" + `:
-
-` + "```json" + `
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl *http://localhost:25297/*)",
-      "Bash(curl *{{RELAY_ORIGIN}}/*)"
-    ]
-  }
-}
-` + "```" + `
-
-Merge with any existing settings — don't overwrite other entries. If an entry
-already exists, skip it.
-
-### 7. End-to-end smoke test
+### 6. End-to-end smoke test
 
 Now that everything is configured, run a quick smoke test to prove the full
 flow works. Use the Clawvisor skill to:
@@ -136,7 +108,7 @@ Summarize the results: the in-scope call should have succeeded and the
 out-of-scope call should have been denied. If either result is unexpected,
 help the user debug.
 
-### 8. Done
+### 7. Done
 
 Tell the user setup is complete. The Clawvisor skill will be loaded
 automatically when relevant, or they can invoke it explicitly. Remind them to:
@@ -145,7 +117,7 @@ automatically when relevant, or they can invoke it explicitly. Remind them to:
   you to use them
 - Approve tasks in the dashboard or via mobile when you request them
 
-### 9. Offer to uninstall /clawvisor-setup (optional)
+### 8. Offer to uninstall /clawvisor-setup (optional)
 
 Now that setup is complete, ask the user if they'd like to remove the
 ` + "`/clawvisor-setup`" + ` slash command since it's no longer needed. If they agree:
