@@ -1,24 +1,20 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/clawvisor/clawvisor/internal/server"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
-	"github.com/clawvisor/clawvisor/pkg/clawvisor"
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 // RunOptions controls daemon startup behavior.
@@ -44,14 +40,10 @@ func Run(opts RunOptions) error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	if firstRun {
-		// Phase 1 (and optionally Phase 2 for Google OAuth restart):
-		// start server in background, run service setup, then hand off.
-		if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
-			return err
-		}
 		fmt.Println()
-		fmt.Println(green.Padding(0, 2).Render("✓ Setup complete"))
-		fmt.Println(dim.Padding(0, 2).Render("  Starting daemon..."))
+		fmt.Println(dim.Padding(0, 2).Render("Tip: connect services and agents after the daemon starts:"))
+		fmt.Println(dim.Padding(0, 2).Render("  clawvisor services    — connect GitHub, Gmail, Slack, etc."))
+		fmt.Println(dim.Padding(0, 2).Render("  clawvisor integrate   — set up Claude Code, Claude Desktop, etc."))
 		fmt.Println()
 	}
 
@@ -64,89 +56,6 @@ func Run(opts RunOptions) error {
 
 	// Final production run — blocks until SIGINT/SIGTERM.
 	return server.Run(logger, server.RunOptions{ConfigPath: cfgPath})
-}
-
-// runWithServiceSetup starts the server with a cancellable context, waits for
-// it to be healthy, runs the interactive service-setup wizard, then shuts it
-// down cleanly. phase should be 1 on first call; 2 on the restart triggered
-// by Google OAuth credential collection. Passing phase >= 2 disables further
-// restarts, preventing infinite loops if something goes wrong.
-func runWithServiceSetup(dataDir, cfgPath string, logger *slog.Logger, phase int) error {
-	// Re-read DefaultOptions so the server picks up any config changes (e.g.
-	// Google creds written between phases). Use a discarding logger so server
-	// request logs don't clutter the interactive setup output.
-	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srvOpts, err := clawvisor.DefaultOptions(quietLogger, cfgPath)
-	if err != nil {
-		return fmt.Errorf("building server options: %w", err)
-	}
-	srvOpts.Quiet = true
-
-	// Set up local auth: create admin@local, write .local-session.
-	authResult, err := server.SetupLocalAuth(srvOpts, logger)
-	if err != nil {
-		return fmt.Errorf("local auth setup: %w", err)
-	}
-
-	// Start server in background with a caller-controlled context.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Also cancel on SIGINT/SIGTERM so Ctrl+C during setup is clean.
-	sigCtx, sigStop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer sigStop()
-
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- clawvisor.RunWithContext(sigCtx, srvOpts)
-	}()
-
-	// Wait for the server to be healthy before running the setup wizard.
-	if err := waitForServer(authResult.ServerURL); err != nil {
-		cancel()
-		<-serverErrCh
-		return fmt.Errorf("server failed to start: %w", err)
-	}
-
-	// Create an authenticated API client using the local magic token.
-	apiClient, err := authenticateClient(authResult.ServerURL, authResult.MagicToken)
-	if err != nil {
-		cancel()
-		<-serverErrCh
-		return fmt.Errorf("authenticating API client: %w", err)
-	}
-
-	// Run the interactive service setup wizard.
-	needsRestart, err := runServiceSetup(apiClient, dataDir)
-	if err == huh.ErrUserAborted {
-		cancel()
-		<-serverErrCh
-		return huh.ErrUserAborted
-	}
-	if err != nil {
-		logger.Warn("service setup error", "err", err)
-		// Non-fatal: user can configure services later via 'clawvisor setup'.
-	}
-
-	// Shut down the setup-phase server cleanly.
-	cancel()
-	if srvErr := <-serverErrCh; srvErr != nil && srvErr != context.Canceled {
-		logger.Warn("server error during setup phase", "err", srvErr)
-	}
-
-	if needsRestart {
-		if phase >= 2 {
-			// Guard: do not restart again. The user can finish Google OAuth
-			// from the dashboard. Log a warning but continue.
-			logger.Warn("Google OAuth config written but server restart capped at phase 2 — complete OAuth from the dashboard")
-			return nil
-		}
-		fmt.Println()
-		fmt.Println(dim.Padding(0, 2).Render("  Restarting with updated configuration..."))
-		fmt.Println()
-		return runWithServiceSetup(dataDir, cfgPath, logger, phase+1)
-	}
-
-	return nil
 }
 
 // waitForServer polls the /health endpoint until it returns 200 or the
@@ -255,16 +164,11 @@ func ensureSetup(dataDir string) (firstRun bool, err error) {
 	return true, runDaemonSetup(dataDir)
 }
 
-// SetupOptions configures the daemon setup wizard.
-type SetupOptions struct {
-	Pair bool // chain into device pairing after setup and print agent setup URL
-}
-
-// Setup explicitly re-runs the full daemon setup wizard (config + services)
-// from the top. If a config already exists, the user is asked whether to
-// overwrite it. It spins up a temporary server for service setup, so it
-// works identically whether or not a daemon is already running.
-func Setup(opts SetupOptions) error {
+// Setup explicitly re-runs the core daemon config wizard (LLM, relay,
+// telemetry). If a config already exists, the user is asked whether to
+// overwrite it. Use `clawvisor services` and `clawvisor integrate` to
+// connect services and agents separately.
+func Setup() error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
@@ -290,89 +194,65 @@ func Setup(opts SetupOptions) error {
 		}
 	}
 
-	// Stop any running daemon so the setup-phase server can bind the port
-	// and the magic token matches the new JWT secret.
-	_ = Stop()
-
 	if err := runDaemonSetup(dataDir); err != nil {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	// Start a temporary server and run the service setup wizard against it,
-	// just like the first-run path. This avoids depending on a running daemon
-	// that may have stale config.
-	if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
-		return err
-	}
-
-	fmt.Println()
 	fmt.Println(green.Padding(0, 2).Render("✓ Setup complete"))
 	fmt.Println()
-
-	// Skip daemon install/start when running inside a container — there's
-	// no launchd/systemd and the server will be started via docker compose.
-	if os.Getenv("CLAWVISOR_CONTAINER") == "1" {
-		return nil
-	}
-
-	// Offer to install and start the daemon as a background service.
-	install := true
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Install and start the daemon as a background service?").
-				Affirmative("Yes").
-				Negative("No").
-				Value(&install),
-		),
-	).Run(); err != nil {
-		return err
-	}
-	if !install {
-		fmt.Println(dim.Padding(0, 2).Render("  You can install later with: clawvisor install"))
-		fmt.Println()
-		return nil
-	}
-
-	if err := Install(); err != nil {
-		return fmt.Errorf("installing daemon: %w", err)
-	}
-	if err := Start(); err != nil {
-		return err
-	}
-
-	if opts.Pair {
-		// Wait briefly for the daemon to be ready before starting the pair flow.
-		time.Sleep(2 * time.Second)
-
-		if err := Pair(); err != nil {
-			return err
-		}
-
-		// Print the agent setup URL.
-		printAgentSetupURL(dataDir)
-	}
-
+	fmt.Println(dim.Padding(0, 2).Render("Next steps:"))
+	fmt.Println(dim.Padding(0, 2).Render("  clawvisor install     — install and start the daemon"))
+	fmt.Println(dim.Padding(0, 2).Render("  clawvisor services    — connect services"))
+	fmt.Println(dim.Padding(0, 2).Render("  clawvisor integrate   — set up agent integrations"))
+	fmt.Println()
 	return nil
 }
 
-// printAgentSetupURL reads the relay config and prints the setup URL
-// that users should give to their agent.
-func printAgentSetupURL(dataDir string) {
+// relaySetupURL returns the setup URL for agents that connect via the relay.
+func relaySetupURL(dataDir string) (string, bool) {
 	daemonID, relayHost, err := readRelayConfig(dataDir)
-	if err != nil || daemonID == "" || relayHost == "" {
+	if err != nil || daemonID == "" {
+		return "", false
+	}
+
+	// config.yaml doesn't store the relay URL — derive it from the build-time default.
+	if relayHost == "" {
+		relayHost = strings.TrimPrefix(version.RelayURL(), "wss://")
+		relayHost = strings.TrimPrefix(relayHost, "ws://")
+	}
+
+	return fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID), true
+}
+
+// printAgentSetupPrompt prints a pasteable prompt that users can give to
+// any other coding agent to complete Clawvisor setup.
+func printAgentSetupPrompt(dataDir string) {
+	setupURL, ok := relaySetupURL(dataDir)
+	if !ok {
+		return
+	}
+
+	fmt.Println(bold.Padding(0, 2).Render("For all other agents"))
+	fmt.Println(dim.Padding(0, 2).Render("Paste the following to your agent to complete setup:"))
+	fmt.Println()
+	fmt.Println(green.Padding(0, 4).Render(fmt.Sprintf(
+		"I'd like to set up Clawvisor as the trusted gateway for using data\n"+
+			"and services. Please follow the instructions at:\n"+
+			"%s", setupURL)))
+	fmt.Println()
+}
+
+// printAgentSetupURL prints the raw setup URL for use in non-interactive
+// contexts (e.g. after pairing).
+func printAgentSetupURL(dataDir string) {
+	setupURL, ok := relaySetupURL(dataDir)
+	if !ok {
 		fmt.Println(dim.Padding(0, 2).Render("  Could not determine agent setup URL — relay not configured."))
 		return
 	}
 
-	setupURL := fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID)
-
 	fmt.Println()
-	fmt.Println(bold.Padding(0, 2).Render("Connect an agent"))
-	fmt.Println(dim.Padding(0, 2).Render("Copy this to your agent:"))
-	fmt.Println()
-	fmt.Printf("  Follow the instructions at %s\n", green.Render(setupURL))
+	fmt.Println(bold.Padding(0, 2).Render("Agent setup URL"))
+	fmt.Printf("  %s\n", green.Render(setupURL))
 	fmt.Println()
 }

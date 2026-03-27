@@ -30,6 +30,8 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(healthcheckCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(servicesCmd)
+	rootCmd.AddCommand(integrateCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(tuiCmd)
 }

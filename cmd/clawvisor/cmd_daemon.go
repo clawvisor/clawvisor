@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/charmbracelet/huh"
 	"github.com/clawvisor/clawvisor/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -54,10 +55,17 @@ var statusCmd = &cobra.Command{
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install the daemon as a system service (launchd on macOS, systemd on Linux)",
+	Short: "Guided setup: configure, install, start, connect services, and integrate agents",
+	Long:  "Run the full guided setup flow: configure the daemon, install it as\na system service, start it, connect services, and set up agent\nintegrations. This is the recommended way to get started.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return daemon.Install()
+		pair, _ := cmd.Flags().GetBool("pair")
+		err := daemon.Install(daemon.InstallOptions{Pair: pair})
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
 	},
+	SilenceUsage: true,
 }
 
 var uninstallCmd = &cobra.Command{
@@ -87,5 +95,6 @@ var dashboardCmd = &cobra.Command{
 
 func init() {
 	startCmd.Flags().Bool("foreground", false, "Run in the foreground instead of starting the background service")
+	installCmd.Flags().Bool("pair", false, "Pair a mobile device after install and print the agent setup URL")
 	dashboardCmd.Flags().Bool("no-open", false, "Print the URL instead of opening the browser")
 }
