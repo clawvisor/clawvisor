@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clawvisor/clawvisor/pkg/version"
 	qrterminal "github.com/mdp/qrterminal/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -137,9 +138,13 @@ func readRelayConfig(dataDir string) (daemonID, relayHost string, err error) {
 	}
 
 	// Extract host from relay URL (strip scheme).
-	host := cfg.Relay.URL
-	host = strings.TrimPrefix(host, "wss://")
-	host = strings.TrimPrefix(host, "ws://")
+	// Fall back to the default relay URL when config.yaml omits it
+	// (setup only writes daemon_id, not the relay URL).
+	relayURL := cfg.Relay.URL
+	if relayURL == "" {
+		relayURL = version.RelayURL()
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(relayURL, "wss://"), "ws://")
 
 	return cfg.Relay.DaemonID, host, nil
 }

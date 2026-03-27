@@ -417,7 +417,7 @@ func (s *Server) routes() http.Handler {
 	// Device pairing and management
 	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.eventHub, s.logger, baseURL, s.jwtSvc)
 	if s.daemonID != "" {
-		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
+		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		devicesHandler.SetRelayInfo(s.daemonID, relayHost)
 	}
 	s.devicesHandler = devicesHandler
@@ -504,12 +504,7 @@ func (s *Server) routes() http.Handler {
 		http.Redirect(w, r, "/skill/SKILL.md", http.StatusFound)
 	})
 	if s.daemonID != "" {
-		relayHost := ""
-		if s.cfg.Relay.URL != "" {
-			relayHost = s.cfg.Relay.URL
-			relayHost = strings.TrimPrefix(relayHost, "wss://")
-			relayHost = strings.TrimPrefix(relayHost, "ws://")
-		}
+		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 	}
@@ -786,4 +781,14 @@ func newKeyedLimiterFromBucket(b config.RateLimitBucket) *ratelimit.KeyedLimiter
 		rate.Limit(float64(b.Limit)/float64(b.Window)),
 		b.Limit,
 	)
+}
+
+// relayHostFromCfg returns the relay hostname, falling back to the default
+// relay URL when config.yaml omits the relay url field.
+func relayHostFromCfg(cfgURL string) string {
+	u := cfgURL
+	if u == "" {
+		u = version.RelayURL()
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(u, "wss://"), "ws://")
 }
