@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.9](https://github.com/clawvisor/clawvisor/compare/v0.7.8...v0.7.9) (2026-03-27)
+
+
+### Features
+
+* split setup into composable subcommands (services, integrate) ([#71](https://github.com/clawvisor/clawvisor/issues/71)) ([fbcdd75](https://github.com/clawvisor/clawvisor/commit/fbcdd75a2c701dcf11a8ce0c702b6856622b03f2))
+
+
+### Bug Fixes
+
+* fall back to default relay URL when config omits it ([#73](https://github.com/clawvisor/clawvisor/issues/73)) ([84014c2](https://github.com/clawvisor/clawvisor/commit/84014c2f364116f74c439012e6fba9e2cb202589))
+* remove unnecessary polling for queue and LLM status endpoints ([#74](https://github.com/clawvisor/clawvisor/issues/74)) ([dd2752c](https://github.com/clawvisor/clawvisor/commit/dd2752c4c703913059b4e126ada2df1ab11f3642))
+
 ## [0.7.8](https://github.com/clawvisor/clawvisor/compare/v0.7.7...v0.7.8) (2026-03-27)
 
 
