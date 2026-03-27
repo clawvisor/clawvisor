@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/clawvisor/clawvisor/internal/server"
+	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 )
 
 const launchdLabel = "com.clawvisor.daemon"
@@ -143,25 +147,50 @@ func Install(opts InstallOptions) error {
 		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor start`")
 	}
 
-	// Step 3: Start the daemon.
-	if err := Start(); err != nil {
-		return err
+	// Step 3: Set up local auth (creates admin user, writes .local-session).
+	// This must happen before the daemon starts so the magic token matches
+	// the JWT secret in config.yaml.
+	cfgPath := filepath.Join(dataDir, "config.yaml")
+	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if srvOpts, err := clawvisor.DefaultOptions(quietLogger, cfgPath); err == nil {
+		if _, err := server.SetupLocalAuth(srvOpts, quietLogger); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not set up local auth: " + err.Error()))
+		}
 	}
 
-	// Wait for the daemon to be healthy before running interactive steps.
-	serverURL, _, _ := readLocalSession(dataDir)
-	if serverURL == "" {
-		serverURL = "http://127.0.0.1:25297"
+	// Step 4: Start the daemon. This may fail in environments without a
+	// service manager (e.g. Docker) — that's OK, the user can start it
+	// manually with `clawvisor start --foreground`.
+	daemonRunning := false
+	if err := Start(); err != nil {
+		fmt.Println(dim.Padding(0, 2).Render("  Could not start daemon via service manager: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Start manually with: clawvisor start --foreground"))
+	} else {
+		// Wait for the daemon to be healthy before running interactive steps.
+		serverURL, _, _ := readLocalSession(dataDir)
+		if serverURL == "" {
+			serverURL = "http://127.0.0.1:25297"
+		}
+		fmt.Println(dim.Padding(0, 2).Render("  Waiting for daemon..."))
+		if err := waitForServer(serverURL); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Daemon not ready yet. You can connect services later with: clawvisor services"))
+		} else {
+			daemonRunning = true
+			fmt.Println()
+			fmt.Println(green.Padding(0, 2).Render("✓ Daemon running"))
+			fmt.Println()
+		}
 	}
-	fmt.Println(dim.Padding(0, 2).Render("  Waiting for daemon..."))
-	if err := waitForServer(serverURL); err != nil {
-		fmt.Println(yellow.Padding(0, 2).Render("  Daemon not ready yet. You can connect services later with: clawvisor services"))
+
+	if !daemonRunning {
+		fmt.Println()
+		fmt.Println(green.Padding(0, 2).Render("✓ Install complete"))
+		fmt.Println(dim.Padding(0, 2).Render("  Once the daemon is running, use:"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor services    — connect services"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor integrate   — set up agent integrations"))
+		fmt.Println()
 		return nil
 	}
-
-	fmt.Println()
-	fmt.Println(green.Padding(0, 2).Render("✓ Daemon running"))
-	fmt.Println()
 
 	// Step 4: Connect services (interactive).
 	if err := Services(); err != nil && err != huh.ErrUserAborted {
