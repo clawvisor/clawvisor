@@ -131,11 +131,9 @@ export default function Dashboard() {
               {versionData.current && <span className="text-text-secondary"> (current: v{versionData.current})</span>}
             </span>
             <span className="flex items-center gap-3">
-              {versionData.upgrade_command && (
-                <code className="text-xs bg-surface-2 px-2 py-1 rounded text-text-secondary font-mono">
-                  {versionData.upgrade_command}
-                </code>
-              )}
+              <span className="text-text-secondary">
+                Run <code className="text-xs bg-surface-2 px-2 py-1 rounded font-mono">clawvisor update</code> to get the latest version
+              </span>
               {versionData.release_url && (
                 <a
                   href={versionData.release_url}
