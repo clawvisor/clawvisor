@@ -477,6 +477,9 @@ func printClaudeDesktopManualInstructions() {
 // offerClaudeCodeSetup prompts the user to install the /clawvisor-setup
 // slash command for Claude Code.
 func offerClaudeCodeSetup(dataDir string) error {
+	fmt.Println()
+	fmt.Println(bold.Padding(0, 2).Render("Claude Code"))
+
 	install := true
 	if err := huh.NewForm(
 		huh.NewGroup(

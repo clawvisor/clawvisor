@@ -8,18 +8,14 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Run the first-time setup wizard",
+	Short: "Configure the daemon (LLM, relay, telemetry)",
+	Long:  "Run the core configuration wizard to set up LLM provider, relay,\nand telemetry preferences. Use `clawvisor services` and\n`clawvisor integrate` to connect services and agents.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		pair, _ := cmd.Flags().GetBool("pair")
-		err := daemon.Setup(daemon.SetupOptions{Pair: pair})
+		err := daemon.Setup()
 		if err == huh.ErrUserAborted {
 			return nil
 		}
 		return err
 	},
 	SilenceUsage: true,
-}
-
-func init() {
-	setupCmd.Flags().Bool("pair", false, "Pair a mobile device after setup and print the agent setup URL")
 }

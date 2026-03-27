@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/clawvisor/clawvisor/internal/server"
+	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 )
 
 const launchdLabel = "com.clawvisor.daemon"
@@ -76,33 +79,34 @@ func isGoRunBinary(path string) bool {
 	return strings.Contains(path, "go-build") || strings.Contains(path, "/exe/")
 }
 
-// Install writes a service definition so the daemon starts at login.
-// If no config.yaml exists in ~/.clawvisor, the setup wizard runs first.
-func Install() error {
+// InstallOptions configures the guided install flow.
+type InstallOptions struct {
+	Pair bool // chain into device pairing after install
+}
+
+// Install runs the guided end-to-end setup and installation flow:
+// setup → write system service → start daemon → connect services → integrate agents.
+// This is the primary entry point for `curl | sh` first-time installs.
+func Install(opts InstallOptions) error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
 	}
-	firstRun, err := ensureSetup(dataDir)
+
+	// Step 1: Core config (if not already configured).
+	_, err = ensureSetup(dataDir)
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
 
-	if firstRun {
-		// Stop any running daemon so the setup-phase server can bind the
-		// port and the magic token matches the new in-memory store.
-		_ = Stop()
-
-		cfgPath := filepath.Join(dataDir, "config.yaml")
-		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-		if err := runWithServiceSetup(dataDir, cfgPath, logger, 1); err != nil {
-			return fmt.Errorf("service setup: %w", err)
-		}
-		fmt.Println()
-		fmt.Println(green.Padding(0, 2).Render("✓ Setup complete"))
-		fmt.Println()
+	// Skip daemon install/start when running inside a container — there's
+	// no launchd/systemd and the server will be started via docker compose.
+	if os.Getenv("CLAWVISOR_CONTAINER") == "1" {
+		fmt.Println(green.Padding(0, 2).Render("✓ Setup complete (container mode)"))
+		return nil
 	}
 
+	// Step 2: Write system service definition.
 	binary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolving executable path: %w", err)
@@ -143,12 +147,73 @@ func Install() error {
 		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor start`")
 	}
 
-	// Start the daemon and print the agent setup URL.
-	if err := Start(); err != nil {
-		return err
+	// Step 3: Set up local auth (creates admin user, writes .local-session).
+	// This must happen before the daemon starts so the magic token matches
+	// the JWT secret in config.yaml.
+	cfgPath := filepath.Join(dataDir, "config.yaml")
+	quietLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if srvOpts, err := clawvisor.DefaultOptions(quietLogger, cfgPath); err == nil {
+		if _, err := server.SetupLocalAuth(srvOpts, quietLogger); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not set up local auth: " + err.Error()))
+		}
 	}
-	printAgentSetupInstructions(dataDir)
+
+	// Step 4: Start the daemon. This may fail in environments without a
+	// service manager (e.g. Docker) — that's OK, the user can start it
+	// manually with `clawvisor start --foreground`.
+	daemonRunning := false
+	if err := Start(); err != nil {
+		fmt.Println(dim.Padding(0, 2).Render("  Could not start daemon via service manager: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  Start manually with: clawvisor start --foreground"))
+	} else {
+		// Wait for the daemon to be healthy before running interactive steps.
+		serverURL, _, _ := readLocalSession(dataDir)
+		if serverURL == "" {
+			serverURL = "http://127.0.0.1:25297"
+		}
+		fmt.Println(dim.Padding(0, 2).Render("  Waiting for daemon..."))
+		if err := waitForServer(serverURL); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Daemon not ready yet. You can connect services later with: clawvisor services"))
+		} else {
+			daemonRunning = true
+			fmt.Println()
+			fmt.Println(green.Padding(0, 2).Render("✓ Daemon running"))
+			fmt.Println()
+		}
+	}
+
+	if !daemonRunning {
+		fmt.Println()
+		fmt.Println(green.Padding(0, 2).Render("✓ Install complete"))
+		fmt.Println(dim.Padding(0, 2).Render("  Once the daemon is running, use:"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor services    — connect services"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor integrate   — set up agent integrations"))
+		fmt.Println()
+		return nil
+	}
+
+	// Step 4: Connect services (interactive).
+	if err := Services(); err != nil && err != huh.ErrUserAborted {
+		fmt.Println(dim.Padding(0, 2).Render("  Service setup skipped. Run `clawvisor services` later."))
+	}
+
+	// Step 5: Integrate agents (auto-detect + walk through).
+	if err := Integrate(); err != nil && err != huh.ErrUserAborted {
+		fmt.Println(dim.Padding(0, 2).Render("  Agent integration skipped. Run `clawvisor integrate` later."))
+	}
+
+	// Step 6: Optional pairing.
+	if opts.Pair {
+		time.Sleep(2 * time.Second)
+		if err := Pair(); err != nil {
+			return err
+		}
+		printAgentSetupURL(dataDir)
+	}
+
+	// Step 7: Offer to open dashboard.
 	promptDashboardOpen(dataDir)
+
 	return nil
 }
 
@@ -174,8 +239,6 @@ func installLaunchd(home string, data installData) error {
 	}
 
 	fmt.Printf("  Installed launch agent: %s\n", plistPath)
-	fmt.Println("  To start now: clawvisor start")
-	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }
 
@@ -236,8 +299,6 @@ func installSystemd(home string, data installData) error {
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
 
 	fmt.Printf("  Installed systemd user service: %s\n", unitPath)
-	fmt.Println("  To start now: clawvisor start")
-	fmt.Println("  To stop:      clawvisor stop")
 	return nil
 }
 
@@ -271,14 +332,11 @@ func promptDashboardOpen(dataDir string) {
 	}
 
 	// The daemon was just started via the service manager — wait for it to
-	// actually be healthy before requesting a magic token. We can't just
-	// check for .local-session because the setup-phase server already wrote
-	// one that's now stale.
+	// actually be healthy before requesting a magic token.
 	serverURL, _, _ := readLocalSession(dataDir)
 	if serverURL == "" {
 		serverURL = "http://127.0.0.1:25297"
 	}
-	fmt.Println(dim.Padding(0, 2).Render("Waiting for daemon to start..."))
 	if err := waitForServer(serverURL); err != nil {
 		fmt.Println(dim.Padding(0, 2).Render("Daemon hasn't started yet. Run `clawvisor dashboard` once it's ready."))
 		return
@@ -405,61 +463,4 @@ func Stop() error {
 
 	fmt.Println("  Daemon stopped.")
 	return nil
-}
-
-// printAgentSetupInstructions prints instructions for connecting agents.
-// If the Claude Code slash command is installed, it mentions /clawvisor-setup.
-// Otherwise, if the relay is configured, it prints the setup URL.
-func printAgentSetupInstructions(dataDir string) {
-	fmt.Println()
-	fmt.Println(green.Padding(0, 2).Render("✓ Installation complete"))
-	fmt.Println()
-
-	home, _ := os.UserHomeDir()
-
-	// Check if the Claude Code command was installed.
-	claudeCmdPath := filepath.Join(home, ".claude", "commands", "clawvisor-setup.md")
-	if _, err := os.Stat(claudeCmdPath); err == nil {
-		fmt.Println(bold.Padding(0, 2).Render("Connect Claude Code"))
-		fmt.Println(dim.Padding(0, 2).Render("  Run /clawvisor-setup in any Claude Code project."))
-		fmt.Println()
-	}
-
-	// Offer to configure Claude Desktop MCP if detected. We wait for the
-	// daemon to be healthy first so that mcp-remote can register an OAuth
-	// client when Claude Desktop restarts.
-	for _, a := range appBundleAgents {
-		if a.Binary != "claude-desktop" {
-			continue
-		}
-		for _, p := range a.Paths {
-			if _, err := os.Stat(p); err == nil {
-				serverURL, _, _ := readLocalSession(dataDir)
-				if serverURL == "" {
-					serverURL = "http://127.0.0.1:25297"
-				}
-				if err := waitForServer(serverURL); err != nil {
-					// Daemon not ready — fall back to manual instructions.
-					printClaudeDesktopManualInstructions()
-				} else {
-					offerClaudeDesktopSetup()
-				}
-				break
-			}
-		}
-		break
-	}
-
-	daemonID, relayHost, err := readRelayConfig(dataDir)
-	if err != nil || daemonID == "" || relayHost == "" {
-		return
-	}
-
-	setupURL := fmt.Sprintf("https://%s/d/%s/skill/setup", relayHost, daemonID)
-	fmt.Println(bold.Padding(0, 2).Render("Connect other agents"))
-	fmt.Println(dim.Padding(0, 2).Render("  Copy the following to your AI agent:"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 4).Render("I'd like to set up Clawvisor. Please navigate to the following URL and follow the setup instructions:"))
-	fmt.Println(green.Padding(0, 4).Render(setupURL))
-	fmt.Println()
 }

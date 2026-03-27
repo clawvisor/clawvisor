@@ -271,7 +271,6 @@ func nonInteractive() bool {
 func runDaemonSetup(dataDir string) error {
 	configPath := filepath.Join(dataDir, "config.yaml")
 
-	var agents []knownAgent
 	relayEnabled := true
 
 	if nonInteractive() {
@@ -286,17 +285,8 @@ func runDaemonSetup(dataDir string) error {
 			return err
 		}
 
-		// Step 1: detect and manage agents.
+		// Step 1: relay opt-in.
 		var err error
-		agents, err = stepAgents()
-		if err != nil {
-			if err == huh.ErrUserAborted {
-				fmt.Println("\n  Aborted. No files were written.")
-			}
-			return err
-		}
-
-		// Step 2: relay opt-in.
 		relayEnabled, err = stepRelayOptIn()
 		if err != nil {
 			if err == huh.ErrUserAborted {
@@ -350,17 +340,6 @@ func runDaemonSetup(dataDir string) error {
 			fmt.Println(dim.Padding(0, 2).Render("  Daemon will work locally. Re-run setup to try again."))
 		}
 	}
-
-	// Offer to install the Claude Code slash command if detected.
-	if hasClaudeCode(agents) {
-		if err := offerClaudeCodeSetup(dataDir); err != nil && err != huh.ErrUserAborted {
-			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not install Claude Code command: " + err.Error()))
-		}
-	}
-
-	// Claude Desktop MCP setup is deferred to printAgentSetupInstructions
-	// (after the daemon is fully running) so that mcp-remote can register
-	// via OAuth when Claude Desktop restarts.
 
 	fmt.Println()
 	fmt.Println(green.Padding(0, 2).Render("✓ Daemon configured"))
