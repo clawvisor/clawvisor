@@ -335,7 +335,11 @@ func (s *Server) routes() http.Handler {
 	}
 	llmHandler := handlers.NewLLMHandler(s.llmHealth, configPath)
 	mux.Handle("GET /api/llm/status", user(llmHandler.Status))
-	mux.Handle("PUT /api/llm", user(llmHandler.Update))
+	// Cloud (multi-tenant) deployments manage LLM config centrally;
+	// only self-hosted installs may update it through the dashboard.
+	if !s.features.MultiTenant {
+		mux.Handle("PUT /api/llm", user(llmHandler.Update))
+	}
 
 	// Auth — core routes (always registered)
 	mux.Handle("POST /api/auth/refresh", authRateLimited(authHandler.Refresh))

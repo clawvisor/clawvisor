@@ -16,7 +16,7 @@ export default function Settings() {
     <div className="p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
       <DaemonInfo />
-      <LLMSection />
+      <LLMSection canEdit={!features?.multi_tenant} />
       <DevicePairing />
       <TelegramSection />
       {passwordAuth && <PasswordSection />}
@@ -69,7 +69,7 @@ function DaemonInfo() {
 
 // ── LLM configuration ───────────────────────────────────────────────────────
 
-function LLMSection() {
+function LLMSection({ canEdit = true }: { canEdit?: boolean }) {
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [provider, setProvider] = useState('')
@@ -124,7 +124,7 @@ function LLMSection() {
       {error && <div className="text-sm text-danger max-w-lg">{error}</div>}
       {success && <div className="text-sm text-success max-w-lg">LLM configuration updated.</div>}
 
-      {status?.spend_cap_exhausted && !editing && (
+      {canEdit && status?.spend_cap_exhausted && !editing && (
         <div className="max-w-lg px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 text-sm text-text-primary">
           Free LLM credit exhausted. Add your own API key to restore verification and risk assessment.
         </div>
@@ -158,12 +158,14 @@ function LLMSection() {
               </div>
             </div>
           )}
-          <button
-            onClick={startEditing}
-            className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"
-          >
-            {status?.spend_cap_exhausted ? 'Configure API key' : 'Update'}
-          </button>
+          {canEdit && (
+            <button
+              onClick={startEditing}
+              className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"
+            >
+              {status?.spend_cap_exhausted ? 'Configure API key' : 'Update'}
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
