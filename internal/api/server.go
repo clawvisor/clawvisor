@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"archive/zip"
 	"io/fs"
 	"log/slog"
 	"strings"
@@ -508,6 +509,24 @@ func (s *Server) routes() http.Handler {
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 	}
+	mux.HandleFunc("GET /skill/skill.zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="skill.zip"`)
+		zw := zip.NewWriter(w)
+		for _, name := range []string{"SKILL.md", "e2e.mjs"} {
+			data, err := fs.ReadFile(skillFS, name)
+			if err != nil {
+				http.Error(w, "missing "+name, http.StatusInternalServerError)
+				return
+			}
+			f, err := zw.Create(name)
+			if err != nil {
+				return
+			}
+			f.Write(data)
+		}
+		zw.Close()
+	})
 	mux.Handle("/skill/", skillFileHandler)
 
 	// Key discovery endpoint (no auth — agents need the public key for E2E).

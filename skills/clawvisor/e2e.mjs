@@ -156,10 +156,13 @@ export async function createClient(daemonURL, agentToken) {
 
     const resp = await httpReq(`${daemonURL}${endpoint}`, method, headers, reqBody);
 
-    if (resp.headers['x-clawvisor-e2e']) {
-      return JSON.parse(decrypt(resp.body, shared));
-    }
-    return JSON.parse(resp.body);
+    const raw = resp.headers['x-clawvisor-e2e']
+      ? decrypt(resp.body, shared)
+      : resp.body;
+
+    const ct = resp.headers['content-type'] || '';
+    if (ct.includes('json')) return JSON.parse(raw);
+    return raw;
   }
 
   async function requestWithRetry(method, endpoint, body) {
