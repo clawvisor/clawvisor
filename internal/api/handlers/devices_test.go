@@ -57,6 +57,16 @@ func (s *devicesTestStore) ListPairedDevices(_ context.Context, userID string) (
 	return result, nil
 }
 
+func (s *devicesTestStore) ListPairedDevicesByDeviceToken(_ context.Context, deviceToken string) ([]*store.PairedDevice, error) {
+	var result []*store.PairedDevice
+	for _, d := range s.devices {
+		if d.DeviceToken == deviceToken {
+			result = append(result, d)
+		}
+	}
+	return result, nil
+}
+
 func (s *devicesTestStore) DeletePairedDevice(_ context.Context, id string) error {
 	delete(s.devices, id)
 	return nil
@@ -382,6 +392,56 @@ func TestDeleteForbidden(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestCompletePairingDeduplicatesByDeviceToken(t *testing.T) {
+	st := newDevicesTestStore()
+	h := NewDevicesHandler(st, nil, events.NewHub(), slog.Default(), "http://localhost:9090", nil)
+
+	// Pre-seed a device for a different user with the same device_token.
+	st.devices["old-dev"] = &store.PairedDevice{
+		ID:          "old-dev",
+		UserID:      "other-user",
+		DeviceName:  "Old iPhone",
+		DeviceToken: "shared-apns-token",
+	}
+
+	// Start pairing for user u1.
+	req := httptest.NewRequest("POST", "/api/devices/pair", nil)
+	req = req.WithContext(withUser(req.Context(), &store.User{ID: "u1"}))
+	w := httptest.NewRecorder()
+	h.StartPairing(w, req)
+
+	var startResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &startResp)
+	token := startResp["pairing_token"].(string)
+	code := startResp["code"].(string)
+
+	// Complete pairing with the same device_token.
+	completeBody, _ := json.Marshal(map[string]string{
+		"pairing_token": token,
+		"code":          code,
+		"device_name":   "New iPhone",
+		"device_token":  "shared-apns-token",
+	})
+	req = httptest.NewRequest("POST", "/api/devices/pair/complete", bytes.NewReader(completeBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.CompletePairing(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The old device should have been removed.
+	if _, ok := st.devices["old-dev"]; ok {
+		t.Error("expected old device with same device_token to be removed")
+	}
+
+	// Only one device should remain (the new one).
+	if len(st.devices) != 1 {
+		t.Errorf("expected 1 device, got %d", len(st.devices))
 	}
 }
 

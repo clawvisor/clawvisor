@@ -189,7 +189,19 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 	}
 	hmacKeyHex := hex.EncodeToString(hmacKey)
 
-	// Remove stale devices (and their push tokens) before creating the new one.
+	// Deduplicate by device_token: remove any existing registrations for this
+	// physical device (across all users) so we don't accumulate stale entries
+	// that cause duplicate push notifications.
+	if existing, err := h.st.ListPairedDevicesByDeviceToken(r.Context(), body.DeviceToken); err == nil {
+		for _, old := range existing {
+			if h.pushN != nil {
+				_ = h.pushN.DeregisterDevice(r.Context(), old.DeviceToken)
+			}
+			_ = h.st.DeletePairedDevice(r.Context(), old.ID)
+		}
+	}
+
+	// Remove any remaining devices for this user (different tokens).
 	if existing, err := h.st.ListPairedDevices(r.Context(), session.UserID); err == nil {
 		for _, old := range existing {
 			if h.pushN != nil {

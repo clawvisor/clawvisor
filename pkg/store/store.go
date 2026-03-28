@@ -96,6 +96,7 @@ type Store interface {
 	GetPairedDevice(ctx context.Context, id string) (*PairedDevice, error)
 	ListPairedDevices(ctx context.Context, userID string) ([]*PairedDevice, error)
 	DeletePairedDevice(ctx context.Context, id string) error
+	ListPairedDevicesByDeviceToken(ctx context.Context, deviceToken string) ([]*PairedDevice, error)
 	UpdatePairedDeviceLastSeen(ctx context.Context, id string) error
 	UpdatePairedDevicePushToStartToken(ctx context.Context, id, token string) error
 
