@@ -1311,6 +1311,28 @@ func (s *Store) ListPairedDevices(ctx context.Context, userID string) ([]*store.
 	return devices, rows.Err()
 }
 
+func (s *Store) ListPairedDevicesByDeviceToken(ctx context.Context, deviceToken string) ([]*store.PairedDevice, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, device_name, device_token, device_hmac_key, push_to_start_token, paired_at, last_seen_at
+		FROM paired_devices WHERE device_token = $1 ORDER BY paired_at DESC
+	`, deviceToken)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*store.PairedDevice
+	for rows.Next() {
+		d := &store.PairedDevice{}
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.DeviceToken, &d.DeviceHMACKey, &d.PushToStartToken,
+			&d.PairedAt, &d.LastSeenAt); err != nil {
+			return nil, err
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
 func (s *Store) DeletePairedDevice(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM paired_devices WHERE id = $1`, id)
 	if err != nil {
