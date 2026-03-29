@@ -83,6 +83,9 @@ func (a *IMessageAdapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 func (a *IMessageAdapter) ValidateCredential(_ []byte) error { return nil }
 
 func (a *IMessageAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
+	if !a.Available() {
+		return nil, fmt.Errorf("imessage: not available — grant Full Disk Access to Clawvisor in System Settings → Privacy & Security → Full Disk Access, then restart")
+	}
 	switch req.Action {
 	case "search_messages":
 		return a.searchMessages(ctx, req.Params)
@@ -418,7 +421,7 @@ func (a *IMessageAdapter) getThread(ctx context.Context, params map[string]any) 
 			JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
 			JOIN handle ch ON ch.ROWID = chj.handle_id AND ch.id IN (%s)
 			WHERE m.date > ?
-			ORDER BY m.date ASC
+			ORDER BY m.date DESC
 			LIMIT ?`, strings.Join(placeholders, ","))
 	} else {
 		args = []any{threadID, sinceApple, maxResults}
@@ -430,7 +433,7 @@ func (a *IMessageAdapter) getThread(ctx context.Context, params map[string]any) 
 			LEFT JOIN handle h ON h.ROWID = m.handle_id
 			WHERE c.chat_identifier = ?
 			  AND m.date > ?
-			ORDER BY m.date ASC
+			ORDER BY m.date DESC
 			LIMIT ?`
 	}
 
@@ -557,10 +560,17 @@ func (a *IMessageAdapter) formatMessages(msgs []rawMessage, nameMap map[string]s
 		if m.text.Valid {
 			text = strings.TrimSpace(m.text.String)
 		}
-		if text == "" {
-			text = extractTextFromAttributedBody(m.attributedBody)
+		// U+FFFC (object replacement character) alone means the text column
+		// only has an attachment placeholder — real text may be in attributedBody.
+		// Additionally, macOS sometimes stores a truncated version in the text
+		// column while attributedBody has the full content. Always check
+		// attributedBody and prefer it if it yields a longer result.
+		if extracted := extractTextFromAttributedBody(m.attributedBody); extracted != "" {
+			if text == "" || isOnlyObjectReplacement(text) || len(extracted) > len(text) {
+				text = extracted
+			}
 		}
-		if text == "" {
+		if text == "" || isOnlyObjectReplacement(text) {
 			text = "[attachment]"
 		}
 		ts := coredataEpoch.Add(time.Duration(m.dateNS))
@@ -622,12 +632,24 @@ func (a *IMessageAdapter) lookupHandleNames(handleIDs map[string]bool) map[strin
 
 	for id := range handleIDs {
 		var firstName, lastName sql.NullString
+		// Strip formatting from both sides for comparison: the handle ID
+		// is typically "+18016047809" while AddressBook stores "(801) 604-7809".
+		// Normalize the stored number in SQL and match against the trailing
+		// digits of the handle. Using the last 10 digits avoids country-code
+		// mismatches (works for any country, not just +1).
+		digits := normalizePhone(id)
+		digits = strings.TrimPrefix(digits, "+")
+		if len(digits) > 10 {
+			digits = digits[len(digits)-10:]
+		}
 		err := abDB.QueryRow(`
 			SELECT p.ZFIRSTNAME, p.ZLASTNAME
 			FROM ZABCDRECORD p
 			JOIN ZABCDPHONENUMBER pn ON pn.ZOWNER = p.Z_PK
-			WHERE pn.ZFULLNUMBER LIKE ?
-			LIMIT 1`, "%"+normalizePhone(id)+"%").
+			WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+			        pn.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')
+			      LIKE ?
+			LIMIT 1`, "%"+digits+"%").
 			Scan(&firstName, &lastName)
 		if err != nil {
 			// Try email
@@ -807,6 +829,33 @@ func emptyCredential() []byte {
 	return b
 }
 
+// isOnlyObjectReplacement returns true if s consists entirely of U+FFFC
+// (object replacement character) — Apple uses this as an inline attachment
+// placeholder when the real text is in attributedBody.
+func isOnlyObjectReplacement(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r != '\uFFFC' {
+			return false
+		}
+	}
+	return true
+}
+
+// stripObjectReplacement removes U+FFFC characters and collapses surrounding
+// whitespace.
+func stripObjectReplacement(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != '\uFFFC' {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // extractTextFromAttributedBody extracts plain text from the attributedBody
 // BLOB column in chat.db. This column stores an NSAttributedString in Apple's
 // typedstream format. In macOS 16+ the text column is often NULL and the
@@ -819,6 +868,7 @@ func emptyCredential() []byte {
 //
 // We locate the NSString class declaration, then scan forward for the '+'
 // (0x2B) string marker followed by a length-prefixed UTF-8 string.
+// If that fails, we try a broader scan for any length-prefixed UTF-8 run.
 func extractTextFromAttributedBody(data []byte) string {
 	if len(data) < 30 {
 		return ""
@@ -830,10 +880,28 @@ func extractTextFromAttributedBody(data []byte) string {
 		return ""
 	}
 
-	// Scan past class hierarchy for the '+' (0x2B) string marker followed
-	// by a length-prefixed UTF-8 string.
-	for i := idx + len("NSString"); i < len(data)-1; i++ {
-		if data[i] != 0x2B {
+	// Primary approach: scan past class hierarchy for the '+' (0x2B) string
+	// marker followed by a length-prefixed UTF-8 string.
+	if s := scanForStringMarker(data, idx+len("NSString"), 0x2B); s != "" {
+		return s
+	}
+
+	// Fallback: some typedstream variants use 0x84 or 0x85 as the string
+	// type marker, or omit the marker entirely and just have the length.
+	// Try scanning for any length-prefixed UTF-8 string after NSString.
+	if s := scanForLengthPrefixedUTF8(data, idx+len("NSString")); s != "" {
+		return s
+	}
+
+	return ""
+}
+
+// scanForStringMarker scans data[start:] for a specific marker byte followed
+// by a length-prefixed UTF-8 string.
+func scanForStringMarker(data []byte, start int, marker byte) string {
+	var best string
+	for i := start; i < len(data)-1; i++ {
+		if data[i] != marker {
 			continue
 		}
 
@@ -844,13 +912,54 @@ func extractTextFromAttributedBody(data []byte) string {
 
 		candidate := data[i+1+skip : i+1+skip+length]
 		if utf8.Valid(candidate) {
-			s := strings.TrimSpace(string(candidate))
-			if s != "" {
-				return s
+			s := stripObjectReplacement(string(candidate))
+			if s != "" && len(s) > len(best) {
+				best = s
 			}
 		}
 	}
-	return ""
+	return best
+}
+
+// scanForLengthPrefixedUTF8 scans data[start:] for any byte that could be a
+// typedstream length prefix leading to a valid UTF-8 string of at least 2
+// characters. Returns the longest candidate found.
+func scanForLengthPrefixedUTF8(data []byte, start int) string {
+	var best string
+	for i := start; i < len(data)-1; i++ {
+		length, skip := readTypedStreamLength(data[i:])
+		if length < 2 || i+skip+length > len(data) {
+			continue
+		}
+		candidate := data[i+skip : i+skip+length]
+		if !utf8.Valid(candidate) {
+			continue
+		}
+		s := stripObjectReplacement(string(candidate))
+		if len(s) > len(best) && looksLikeText(s) {
+			best = s
+		}
+	}
+	return best
+}
+
+// looksLikeText returns true if s appears to be human-readable text rather
+// than binary data that happens to be valid UTF-8. It checks that most runes
+// are printable.
+func looksLikeText(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	printable := 0
+	total := 0
+	for _, r := range s {
+		total++
+		// Allow printable characters, common whitespace, and emoji.
+		if r >= ' ' || r == '\n' || r == '\r' || r == '\t' {
+			printable++
+		}
+	}
+	return total > 0 && float64(printable)/float64(total) >= 0.8
 }
 
 // readTypedStreamLength reads a length value from Apple's typedstream format.
@@ -873,7 +982,14 @@ func readTypedStreamLength(data []byte) (int, int) {
 	for j := 1; j <= n; j++ {
 		length = length<<8 | int(data[j])
 	}
-	return length, n + 1
+	skip := n + 1
+	// Multi-byte lengths in Apple's typedstream format are followed by a
+	// 0x00 encoding-tag byte before the string data. Skip it if present so
+	// callers read from the actual string start.
+	if skip < len(data) && data[skip] == 0x00 {
+		skip++
+	}
+	return length, skip
 }
 
 func truncate(s string, max int) string {
