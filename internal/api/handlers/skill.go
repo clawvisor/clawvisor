@@ -123,9 +123,18 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	for _, a := range allAdapters {
 		credentialFree := a.ValidateCredential(nil) == nil
 		if credentialFree {
+			// Credential-free services (e.g. iMessage) require explicit
+			// activation via service_meta, same as the gateway check.
+			activated := false
+			for _, m := range metas {
+				if m.ServiceID == a.ServiceID() {
+					activated = true
+					break
+				}
+			}
 			services = append(services, catalogService{
 				id: a.ServiceID(), baseID: a.ServiceID(),
-				actions: a.SupportedActions(), activated: true,
+				actions: a.SupportedActions(), activated: activated,
 			})
 			continue
 		}

@@ -162,10 +162,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		adapterReg.Register(twilioadapter.New())
 	}
 	if cfg.Services.IMessage.Enabled {
-		imsg := imessageadapter.New()
-		if imsg.Available() {
-			adapterReg.Register(imsg)
-		}
+		adapterReg.Register(imessageadapter.New())
 	}
 
 	// ── Ed25519 key (shared by push + relay) ─────────────────────────────────
