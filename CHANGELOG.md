@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.10](https://github.com/clawvisor/clawvisor/compare/v0.7.9...v0.7.10) (2026-03-29)
+
+
+### Bug Fixes
+
+* deduplicate paired devices by device_token during pairing ([#78](https://github.com/clawvisor/clawvisor/issues/78)) ([3d8d361](https://github.com/clawvisor/clawvisor/commit/3d8d361bc07eacfbf6a77b2c0b897e5f051b938d))
+* hide LLM config editing in cloud deployments ([#75](https://github.com/clawvisor/clawvisor/issues/75)) ([a3fc893](https://github.com/clawvisor/clawvisor/commit/a3fc893645bca855cf8f01bf9d6b36f5717dc6bd))
+* improve setup script clarity and add skill.zip endpoint ([#76](https://github.com/clawvisor/clawvisor/issues/76)) ([59fef4f](https://github.com/clawvisor/clawvisor/commit/59fef4f7ba105bb9f4d6d37b8dd7b1a67f34824c))
+* return JSON content type for E2E middleware error responses ([#79](https://github.com/clawvisor/clawvisor/issues/79)) ([08c3f46](https://github.com/clawvisor/clawvisor/commit/08c3f46b65d4b47282e866bcdfa30fc9fea3ceb4))
+
 ## [0.7.9](https://github.com/clawvisor/clawvisor/compare/v0.7.8...v0.7.9) (2026-03-27)
 
 
