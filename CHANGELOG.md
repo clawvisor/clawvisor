@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.11](https://github.com/clawvisor/clawvisor/compare/v0.7.10...v0.7.11) (2026-03-29)
+
+
+### Bug Fixes
+
+* improve iMessage adapter reliability and contact resolution ([#80](https://github.com/clawvisor/clawvisor/issues/80)) ([6b88290](https://github.com/clawvisor/clawvisor/commit/6b882909ad1ca546a3d7ca5920f18cfaff5ad485))
+
 ## [0.7.10](https://github.com/clawvisor/clawvisor/compare/v0.7.9...v0.7.10) (2026-03-29)
 
 
