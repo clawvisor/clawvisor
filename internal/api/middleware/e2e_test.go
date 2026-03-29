@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -188,5 +189,72 @@ func TestE2E_MissingEphemeralKey(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400", rec.Code)
+	}
+}
+
+func TestE2E_ErrorResponsesAreJSON(t *testing.T) {
+	// E2E error responses must have Content-Type: application/json so that
+	// clients using content-type sniffing can JSON.parse and detect the
+	// E2E_ERROR code for retry logic.
+	daemonKey, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	handler := E2E(daemonKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called")
+	}))
+
+	tests := []struct {
+		name    string
+		setup   func(r *http.Request)
+		wantCT  string
+		wantKey string // expected "code" field in JSON response
+	}{
+		{
+			name: "missing ephemeral key",
+			setup: func(r *http.Request) {
+				r.Header.Set("X-Clawvisor-E2E", "aes-256-gcm")
+			},
+			wantCT:  "application/json",
+			wantKey: "E2E_ERROR",
+		},
+		{
+			name: "invalid ephemeral key encoding",
+			setup: func(r *http.Request) {
+				r.Header.Set("X-Clawvisor-E2E", "aes-256-gcm")
+				r.Header.Set("X-Clawvisor-Ephemeral-Key", "not-valid-base64!!!")
+			},
+			wantCT:  "application/json",
+			wantKey: "E2E_ERROR",
+		},
+		{
+			name: "relay without E2E",
+			setup: func(r *http.Request) {
+				ctx := relay.WithViaRelay(r.Context())
+				*r = *r.WithContext(ctx)
+			},
+			wantCT:  "application/json",
+			wantKey: "E2E_REQUIRED",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/gateway/request", bytes.NewReader([]byte("test")))
+			tt.setup(req)
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			ct := rec.Header().Get("Content-Type")
+			if ct != tt.wantCT {
+				t.Errorf("Content-Type: got %q, want %q", ct, tt.wantCT)
+			}
+
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not valid JSON: %v\nbody: %s", err, rec.Body.String())
+			}
+			if resp["code"] != tt.wantKey {
+				t.Errorf("code: got %q, want %q", resp["code"], tt.wantKey)
+			}
+		})
 	}
 }

@@ -15,6 +15,15 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// e2eError writes a JSON error response with the correct content type so that
+// clients using content-type sniffing can detect and retry E2E failures.
+func e2eError(w http.ResponseWriter, body string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write([]byte(body))
+	w.Write([]byte("\n"))
+}
+
 // E2E wraps a gateway handler to transparently decrypt E2E-encrypted request
 // bodies and encrypt response bodies. The gateway handler is unaware of E2E —
 // it sees plaintext requests and writes plaintext responses.
@@ -25,7 +34,7 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 
 			if r.Header.Get("X-Clawvisor-E2E") == "" {
 				if viaRelay {
-					http.Error(w, `{"error":"E2E encryption required for requests through relay","code":"E2E_REQUIRED"}`, http.StatusForbidden)
+					e2eError(w, `{"error":"E2E encryption required for requests through relay","code":"E2E_REQUIRED"}`, http.StatusForbidden)
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -35,31 +44,31 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 			// Read ephemeral public key from header.
 			ephKeyB64 := r.Header.Get("X-Clawvisor-Ephemeral-Key")
 			if ephKeyB64 == "" {
-				http.Error(w, `{"error":"missing X-Clawvisor-Ephemeral-Key header","code":"E2E_ERROR"}`, http.StatusBadRequest)
+				e2eError(w, `{"error":"missing X-Clawvisor-Ephemeral-Key header","code":"E2E_ERROR"}`, http.StatusBadRequest)
 				return
 			}
 
 			ephKeyBytes, err := base64.StdEncoding.DecodeString(ephKeyB64)
 			if err != nil {
-				http.Error(w, `{"error":"invalid ephemeral key encoding","code":"E2E_ERROR"}`, http.StatusBadRequest)
+				e2eError(w, `{"error":"invalid ephemeral key encoding","code":"E2E_ERROR"}`, http.StatusBadRequest)
 				return
 			}
 
 			ephPub, err := ecdh.X25519().NewPublicKey(ephKeyBytes)
 			if err != nil {
-				http.Error(w, `{"error":"invalid ephemeral public key","code":"E2E_ERROR"}`, http.StatusBadRequest)
+				e2eError(w, `{"error":"invalid ephemeral public key","code":"E2E_ERROR"}`, http.StatusBadRequest)
 				return
 			}
 
 			// ECDH → shared secret → HKDF derived key.
 			rawShared, err := x25519Key.ECDH(ephPub)
 			if err != nil {
-				http.Error(w, `{"error":"ECDH key exchange failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
+				e2eError(w, `{"error":"ECDH key exchange failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
 				return
 			}
 			shared := make([]byte, 32)
 			if _, err := io.ReadFull(hkdf.New(sha256.New, rawShared, nil, []byte("clawvisor-e2e-v1")), shared); err != nil {
-				http.Error(w, `{"error":"key derivation failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
+				e2eError(w, `{"error":"key derivation failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
 				return
 			}
 
@@ -68,7 +77,7 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 			if r.Body != nil && r.ContentLength != 0 {
 				ciphertextB64, err := io.ReadAll(r.Body)
 				if err != nil {
-					http.Error(w, `{"error":"failed to read request body","code":"E2E_ERROR"}`, http.StatusBadRequest)
+					e2eError(w, `{"error":"failed to read request body","code":"E2E_ERROR"}`, http.StatusBadRequest)
 					return
 				}
 				r.Body.Close()
@@ -76,12 +85,12 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 				if len(ciphertextB64) > 0 {
 					ciphertext, err := base64.StdEncoding.DecodeString(string(ciphertextB64))
 					if err != nil {
-						http.Error(w, `{"error":"invalid ciphertext encoding","code":"E2E_ERROR"}`, http.StatusBadRequest)
+						e2eError(w, `{"error":"invalid ciphertext encoding","code":"E2E_ERROR"}`, http.StatusBadRequest)
 						return
 					}
 
 					if len(ciphertext) < 12+16 {
-						http.Error(w, `{"error":"ciphertext too short","code":"E2E_ERROR"}`, http.StatusBadRequest)
+						e2eError(w, `{"error":"ciphertext too short","code":"E2E_ERROR"}`, http.StatusBadRequest)
 						return
 					}
 
@@ -90,18 +99,18 @@ func E2E(x25519Key *ecdh.PrivateKey) func(http.Handler) http.Handler {
 
 					block, err := aes.NewCipher(shared)
 					if err != nil {
-						http.Error(w, `{"error":"cipher init failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
+						e2eError(w, `{"error":"cipher init failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
 						return
 					}
 					gcm, err := cipher.NewGCM(block)
 					if err != nil {
-						http.Error(w, `{"error":"GCM init failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
+						e2eError(w, `{"error":"GCM init failed","code":"E2E_ERROR"}`, http.StatusInternalServerError)
 						return
 					}
 
 					plaintext, err := gcm.Open(nil, nonce, encData, nil)
 					if err != nil {
-						http.Error(w, `{"error":"decryption failed","code":"E2E_ERROR"}`, http.StatusBadRequest)
+						e2eError(w, `{"error":"decryption failed","code":"E2E_ERROR"}`, http.StatusBadRequest)
 						return
 					}
 
