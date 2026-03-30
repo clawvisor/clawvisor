@@ -241,7 +241,7 @@ Every response has a `status` field. Handle each case as follows:
 | Status | Meaning | What to do |
 |---|---|---|
 | `executed` | Action completed successfully | Use `result.summary` and `result.data`. Report to the user. |
-| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." If you used `?wait=true` on the original POST, the request is already blocking and will return the result once approved. Otherwise, call `POST /api/gateway/request/{request_id}/execute?wait=true` to block until approved and get the result. Do **not** send a new request. |
+| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." If you used `?wait=true` on the original POST, the request is already blocking and will return the result once approved. If the long-poll timed out and you got this status back, re-initiate with `POST /api/gateway/request/{request_id}/execute?wait=true`. Do **not** send a new request. |
 | `blocked` | A restriction blocks this action | Tell the user: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround. |
 | `restricted` | Intent verification rejected the request | Your params or reason were inconsistent with the task's approved purpose. Adjust and retry with a new `request_id`. |
 | `pending_task_approval` | Task not yet approved | Tell the user and long-poll `GET /api/tasks/{id}?wait=true` until approved. |
@@ -269,8 +269,9 @@ the wait (default & max 120 seconds).
 POST /api/tasks?wait=true&timeout=120
 ```
 
-If the timeout elapses while still pending, long-poll `GET /api/tasks/{id}?wait=true`
-until `status` changes — just call again to keep waiting.
+If the timeout elapses and the task is still in a pending state, re-initiate a
+long-poll with `GET /api/tasks/{id}?wait=true` and repeat until `status` changes.
+A timeout is not a rejection — it just means the user hasn't decided yet.
 
 ### Gateway requests
 
@@ -283,9 +284,11 @@ POST /api/gateway/request?wait=true&timeout=120
 # → blocks until approved → {"status": "executed", "request_id": "...", "result": {...}}
 ```
 
-If the timeout elapses while still pending, the response has `"status": "pending"`.
-Call `POST /api/gateway/request/{request_id}/execute?wait=true` to resume waiting
-and get the result once approved.
+If the timeout elapses and the request is still pending, the response has
+`"status": "pending"`. Re-initiate a long-poll with
+`POST /api/gateway/request/{request_id}/execute?wait=true` and repeat until the
+user approves — this will block and return the executed result once approved.
+A timeout is not a rejection — it just means the user hasn't decided yet.
 
 ### Fallback endpoints
 
