@@ -1102,10 +1102,21 @@ func CheckTaskScope(task *store.Task, serviceType, alias, action string) TaskSco
 	if alias != "" && alias != "default" {
 		fullService = serviceType + ":" + alias
 	}
+	// First pass: look for an exact match on the full service (including alias).
 	for i := range task.AuthorizedActions {
 		a := &task.AuthorizedActions[i]
-		if (a.Service == fullService || a.Service == serviceType) && (a.Action == action || a.Action == "*") {
+		if a.Service == fullService && (a.Action == action || a.Action == "*") {
 			return TaskScopeMatch{InScope: true, AutoExecute: a.AutoExecute, MatchedAction: a}
+		}
+	}
+	// Second pass: fall back to base service type only when the request
+	// didn't include an alias or no exact match was found.
+	if fullService != serviceType {
+		for i := range task.AuthorizedActions {
+			a := &task.AuthorizedActions[i]
+			if a.Service == serviceType && (a.Action == action || a.Action == "*") {
+				return TaskScopeMatch{InScope: true, AutoExecute: a.AutoExecute, MatchedAction: a}
+			}
 		}
 	}
 	return TaskScopeMatch{InScope: false}
