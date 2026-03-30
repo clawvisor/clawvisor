@@ -260,7 +260,7 @@ Requests without a `task_id` go to per-request approval automatically.
 | Status | Meaning |
 |---|---|
 | `executed` | Action completed. Result in `result.summary` and `result.data`. |
-| `pending` | Awaiting human approval. Wait for callback or poll with same `request_id`. |
+| `pending` | Awaiting human approval. Use `?wait=true` on the original POST to block until resolved, or call `POST /api/gateway/request/{request_id}/execute` after approval. |
 | `blocked` | A restriction blocks this action. Do not retry. |
 | `restricted` | Intent verification rejected the request. Adjust params/reason and retry with a new `request_id`. |
 | `pending_task_approval` | Task declared but not yet approved by the user. |
