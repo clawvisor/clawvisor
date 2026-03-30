@@ -35,7 +35,10 @@ func Integrate() error {
 	fmt.Println()
 
 	if hasClaudeCode(agents) {
-		if err := IntegrateClaudeCode(); err != nil && err != huh.ErrUserAborted {
+		if err := IntegrateClaudeCode(); err != nil {
+			if err == huh.ErrUserAborted {
+				return nil
+			}
 			fmt.Println(dim.Padding(0, 2).Render("  Warning: Claude Code integration failed: " + err.Error()))
 		}
 	}

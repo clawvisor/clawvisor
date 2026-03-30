@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"crypto/md5" //nolint:gosec // used only for cache key derivation matching mcp-remote's convention
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,10 +20,9 @@ import (
 	"github.com/clawvisor/clawvisor/skills"
 )
 
-// claudeCodeSetupCommand is the markdown template for the Claude Code
+// claudeCodeSetupCommand is the markdown content for the Claude Code
 // /clawvisor-setup slash command. It is written to ~/.claude/commands/
-// during daemon install when Claude Code is detected. The placeholders
-// {{CLAWVISOR_BINARY}} and {{SKILL_PATH}} are replaced at install time.
+// during daemon install when Claude Code is detected.
 const claudeCodeSetupCommand = `Set up Clawvisor in the current project so Claude Code can make gated API
 requests (Gmail, Calendar, Drive, GitHub, Slack, etc.) through the Clawvisor
 gateway with task-scoped authorization and human approval.
@@ -40,50 +38,46 @@ curl -sf http://localhost:25297/ready 2>/dev/null && echo "RUNNING" || echo "NOT
 If NOT RUNNING, tell the user to start it with ` + "`clawvisor start`" + ` and wait
 for them to confirm before continuing.
 
-### 2. Create an agent token
+### 2. Connect as an agent
+
+Register with the daemon and wait for the user to approve:
 
 ` + "```bash" + `
-{{CLAWVISOR_BINARY}} agent create claude-code --replace --json
+curl -s -X POST "http://localhost:25297/api/agents/connect?wait=true&timeout=120" -H "Content-Type: application/json" -d '{"name": "claude-code", "description": "Claude Code agent"}'
 ` + "```" + `
 
-Parse the JSON output and save the ` + "`token`" + ` value — you will need it below.
-If this fails, the daemon may not be running or the binary may not be on PATH.
+This sends a connection request to the daemon. The user will be notified
+to approve. The ` + "`?wait=true`" + ` parameter makes the request block until the
+user approves (or the timeout elapses).
 
-### 3. Install the Clawvisor skill
+Parse the JSON response. If ` + "`status`" + ` is ` + "`approved`" + `, save the ` + "`token`" + `
+value — you will need it below. If the timeout elapses and ` + "`status`" + ` is
+still ` + "`pending`" + `, tell the user to approve the connection request in the
+Clawvisor dashboard and long-poll ` + "`GET /api/agents/connect/{connection_id}/status`" + `
+until it resolves.
 
-Copy the pre-installed skill file into this project:
+### 3. Set environment variables
 
-` + "```bash" + `
-mkdir -p .claude/skills/clawvisor
-cp {{SKILL_PATH}} .claude/skills/clawvisor/SKILL.md
+Save the agent token and daemon URL to ` + "`~/.claude/settings.json`" + ` so they
+persist across all Claude Code sessions and projects.
+
+Read ` + "`~/.claude/settings.json`" + ` (create it if it doesn't exist). Merge the
+following into the ` + "`env`" + ` object at the top level, preserving all other keys:
+
+` + "```json" + `
+{
+  "env": {
+    "CLAWVISOR_URL": "http://localhost:25297",
+    "CLAWVISOR_AGENT_TOKEN": "<token from step 2>"
+  }
+}
 ` + "```" + `
 
-After copying, read ` + "`.claude/skills/clawvisor/SKILL.md`" + ` so you understand how
-to use the Clawvisor skill in the smoke test later.
+Write the updated JSON back to ` + "`~/.claude/settings.json`" + `. The variables
+will be available in every future Claude Code session without any per-project
+setup.
 
-### 4. Set environment variables
-
-Write the agent token and daemon URL to ` + "`.claude/.env`" + `:
-
-` + "```bash" + `
-# Remove any previous Clawvisor lines
-grep -v '^CLAWVISOR_' .claude/.env > /tmp/claude-env.tmp 2>/dev/null || true
-mv /tmp/claude-env.tmp .claude/.env 2>/dev/null || true
-
-# Append new values
-cat >> .claude/.env <<EOF
-CLAWVISOR_URL=http://localhost:25297
-CLAWVISOR_AGENT_TOKEN=<token from step 2>
-EOF
-` + "```" + `
-
-Then ensure ` + "`.claude/.env`" + ` is in ` + "`.gitignore`" + `:
-
-` + "```bash" + `
-grep -q '\\.claude/\\.env' .gitignore 2>/dev/null || echo '.claude/.env' >> .gitignore
-` + "```" + `
-
-### 5. Verify
+### 4. Verify
 
 ` + "```bash" + `
 curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
@@ -93,7 +87,7 @@ curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
 This should return a JSON service catalog. If it returns 401, the token is
 wrong. If it fails to connect, the daemon is not running.
 
-### 6. End-to-end smoke test
+### 5. End-to-end smoke test
 
 Now that everything is configured, run a quick smoke test to prove the full
 flow works. Use the Clawvisor skill to:
@@ -116,7 +110,7 @@ Summarize the results: the in-scope call should have succeeded and the
 out-of-scope call should have been denied. If either result is unexpected,
 help the user debug.
 
-### 7. Done
+### 6. Done
 
 Tell the user setup is complete. The Clawvisor skill will be loaded
 automatically when relevant, or they can invoke it explicitly. Remind them to:
@@ -125,7 +119,7 @@ automatically when relevant, or they can invoke it explicitly. Remind them to:
   you to use them
 - Approve tasks in the dashboard or via mobile when you request them
 
-### 8. Offer to uninstall /clawvisor-setup (optional)
+### 7. Offer to uninstall /clawvisor-setup (optional)
 
 Now that setup is complete, ask the user if they'd like to remove the
 ` + "`/clawvisor-setup`" + ` slash command since it's no longer needed. If they agree:
@@ -137,21 +131,27 @@ rm ~/.claude/commands/clawvisor-setup.md
 If they decline, remind them they can delete it later with the same command.
 `
 
-// installClaudeCodeCommand writes the /clawvisor-setup slash command to
-// ~/.claude/commands/clawvisor-setup.md and a stripped copy of SKILL.md to
-// ~/.clawvisor/SKILL.md. It resolves the current binary path and bakes both
-// paths into the command template.
-func installClaudeCodeCommand(dataDir string) error {
+// installClaudeCodeSkill writes the Clawvisor skill globally to
+// ~/.claude/skills/clawvisor/SKILL.md so it's available in all projects.
+func installClaudeCodeSkill() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
 	}
 
-	// Write the stripped SKILL.md into the daemon data directory so the
-	// slash command can copy it into projects without curling the daemon.
-	skillDest := filepath.Join(dataDir, "SKILL.md")
-	if err := writeStrippedSkill(skillDest); err != nil {
-		return fmt.Errorf("writing skill file: %w", err)
+	skillDir := filepath.Join(home, ".claude", "skills", "clawvisor")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return fmt.Errorf("creating skill directory: %w", err)
+	}
+	return writeSkillWithCurlGuidance(filepath.Join(skillDir, "SKILL.md"))
+}
+
+// installClaudeCodeSetupCommand writes the /clawvisor-setup slash command to
+// ~/.claude/commands/clawvisor-setup.md.
+func installClaudeCodeSetupCommand() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
 	}
 
 	commandsDir := filepath.Join(home, ".claude", "commands")
@@ -159,63 +159,25 @@ func installClaudeCodeCommand(dataDir string) error {
 		return fmt.Errorf("creating commands directory: %w", err)
 	}
 
-	// Resolve the clawvisor binary path.
-	binary, err := os.Executable()
-	if err != nil {
-		binary = "clawvisor" // fallback to PATH lookup
-	} else {
-		resolved, err := filepath.EvalSymlinks(binary)
-		if err == nil {
-			binary = resolved
-		}
-		// If this is a go-run temp binary, fall back to bare name.
-		if isGoRunBinary(binary) {
-			binary = "clawvisor"
-		}
-	}
-
-	relayOrigin := "https://relay.clawvisor.com"
-	if version.IsStaging() {
-		relayOrigin = "https://relay.staging.clawvisor.com"
-	}
-
-	content := claudeCodeSetupCommand
-	content = strings.ReplaceAll(content, "{{CLAWVISOR_BINARY}}", binary)
-	content = strings.ReplaceAll(content, "{{SKILL_PATH}}", skillDest)
-	content = strings.ReplaceAll(content, "{{RELAY_ORIGIN}}", relayOrigin)
-
 	dest := filepath.Join(commandsDir, "clawvisor-setup.md")
-	if err := os.WriteFile(dest, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dest, []byte(claudeCodeSetupCommand), 0644); err != nil {
 		return fmt.Errorf("writing command file: %w", err)
 	}
 
 	return nil
 }
 
-// writeStrippedSkill renders the SKILL.md template for Claude Code, strips the
-// YAML frontmatter, appends Claude Code-specific guidance, and writes the
-// result to dest.
-func writeStrippedSkill(dest string) error {
+// writeSkillWithCurlGuidance renders the SKILL.md template for Claude Code,
+// preserves the YAML frontmatter (required for Claude Code to recognize the
+// skill), appends Claude Code-specific guidance, and writes the result to dest.
+func writeSkillWithCurlGuidance(dest string) error {
 	rendered, err := skills.Render(skills.TargetClaudeCode)
 	if err != nil {
 		return fmt.Errorf("rendering SKILL.md: %w", err)
 	}
 
-	// Strip YAML frontmatter (the --- delimited block at the top).
 	var b strings.Builder
-	scanner := bufio.NewScanner(strings.NewReader(rendered))
-	fences := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "---" {
-			fences++
-			continue
-		}
-		if fences >= 2 {
-			b.WriteString(line)
-			b.WriteByte('\n')
-		}
-	}
+	b.WriteString(rendered)
 
 	// Append Claude Code-specific guidance about curl formatting.
 	b.WriteString("\n## Important: Single-line curl commands\n\n")
@@ -476,54 +438,70 @@ func offerClaudeDesktopSetup() {
 	fmt.Println()
 }
 
-// printClaudeDesktopManualInstructions prints the fallback manual setup steps.
+// printClaudeDesktopManualInstructions prints a short pointer to the
+// dedicated integrate subcommand.
 func printClaudeDesktopManualInstructions() {
 	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  To connect Claude Desktop to Clawvisor, install the cowork plugin:"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  1. Download the plugin:"))
-	fmt.Println(green.Padding(0, 2).Render("     https://github.com/clawvisor/cowork-plugin"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  2. In Claude Desktop: Settings → Plugins → Install from local source"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  3. Restart Claude Desktop — it will prompt you to authorize via OAuth"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  Full guide: https://github.com/clawvisor/clawvisor/blob/main/docs/INTEGRATE_CLAUDE_COWORK.md"))
+	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Desktop later, run:"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor integrate claude-desktop"))
 	fmt.Println()
 }
 
-// offerClaudeCodeSetup prompts the user to install the /clawvisor-setup
-// slash command for Claude Code.
-func offerClaudeCodeSetup(dataDir string) error {
+// offerClaudeCodeSetup walks the user through Claude Code integration:
+// 1. Install the Clawvisor skill globally
+// 2. Install the /clawvisor-setup slash command
+// 3. Add auto-approve rules for curl requests
+func offerClaudeCodeSetup(_ string) error {
 	fmt.Println()
 	fmt.Println(bold.Padding(0, 2).Render("Claude Code"))
 
-	install := true
+	// 1. Offer to install the skill globally.
+	installSkill := true
 	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Install the /clawvisor-setup command for Claude Code?").
-				Description("Adds a slash command so you can run /clawvisor-setup\nin any project to connect Claude Code to this daemon.").
+				Title("Install the Clawvisor skill for Claude Code?").
+				Description("Writes the skill to ~/.claude/skills/clawvisor/SKILL.md\nso Claude Code can use Clawvisor in any project.").
 				Affirmative("Yes").
 				Negative("No").
-				Value(&install),
+				Value(&installSkill),
 		),
 	).Run(); err != nil {
 		return err
 	}
-	if !install {
+	if !installSkill {
 		return nil
 	}
 
-	if err := installClaudeCodeCommand(dataDir); err != nil {
+	if err := installClaudeCodeSkill(); err != nil {
 		return err
 	}
+	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed Clawvisor skill to ~/.claude/skills/clawvisor/SKILL.md"))
 
-	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
-	fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect a project."))
+	// 2. Offer to install the /clawvisor-setup slash command.
+	installSetup := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Install the /clawvisor-setup command?").
+				Description("Adds a slash command so you can run /clawvisor-setup\nin Claude Code to create an agent token and connect.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&installSetup),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if installSetup {
+		if err := installClaudeCodeSetupCommand(); err != nil {
+			return err
+		}
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
+		fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect."))
+	}
 	fmt.Println()
 
-	// Offer to auto-approve Clawvisor curl requests globally.
+	// 3. Offer to auto-approve Clawvisor curl requests globally.
 	if err := offerClaudeCodeCurlPermission(); err != nil {
 		return err
 	}
@@ -566,6 +544,7 @@ func offerClaudeCodeCurlPermission() error {
 
 	rules := []string{
 		"Bash(curl *http://localhost:25297/*)",
+		"Bash(curl *$CLAWVISOR_URL/*)",
 		fmt.Sprintf("Bash(curl *%s/*)", relayOrigin),
 	}
 
