@@ -760,3 +760,239 @@ func TestReady(t *testing.T) {
 		t.Errorf("ready: expected status=ok, got %v", body["status"])
 	}
 }
+
+// ── Audit integrity ───────────────────────────────────────────────────────────
+//
+// Every gateway request MUST produce an audit entry linked to its task, with
+// the correct final outcome. These tests guard against regressions where
+// requests silently disappear from the audit log.
+
+func TestAudit_ApproveExecute_HasCorrectOutcomeAndTaskID(t *testing.T) {
+	// Full approve+execute flow: the audit entry must end with outcome=executed
+	// and be linked to the originating task.
+	adapter := newMockAdapter("mock.audit", "run").withResult("ok", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "audit-exec")
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit", "run", false)
+	reqID := fmt.Sprintf("audit-exec-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.audit", "run", taskID)
+
+	// Approve.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Verify audit shows "approved" before execute.
+	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	entries := arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: no entries found for task after approve")
+	}
+	entry := entries[0].(map[string]any)
+	if entry["outcome"] != "approved" {
+		t.Errorf("audit after approve: expected outcome=approved, got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit after approve: expected task_id=%s, got %v", taskID, entry["task_id"])
+	}
+
+	// Execute.
+	resp = env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Verify audit updated to "executed" and still linked to the task.
+	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body = mustStatus(t, resp, http.StatusOK)
+	entries = arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: no entries found for task after execute")
+	}
+	entry = entries[0].(map[string]any)
+	if entry["outcome"] != "executed" {
+		t.Errorf("audit after execute: expected outcome=executed, got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit after execute: expected task_id=%s, got %v", taskID, entry["task_id"])
+	}
+	if entry["request_id"] != reqID {
+		t.Errorf("audit after execute: expected request_id=%s, got %v", reqID, entry["request_id"])
+	}
+	if entry["service"] != "mock.audit" {
+		t.Errorf("audit after execute: expected service=mock.audit, got %v", entry["service"])
+	}
+}
+
+func TestAudit_ApproveExecute_AdapterError_RecordedInAudit(t *testing.T) {
+	// When the adapter fails during execute, the audit must show outcome=error
+	// with the error message — not silently disappear.
+	adapter := newMockAdapter("mock.audit-err", "run").
+		withError(fmt.Errorf("adapter exploded"))
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "audit-err")
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit-err", "run", false)
+	reqID := fmt.Sprintf("audit-err-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.audit-err", "run", taskID)
+
+	// Approve + execute.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+	resp = env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	execBody := mustStatus(t, resp, http.StatusOK)
+	if execBody["status"] != "error" {
+		t.Fatalf("execute: expected status=error, got %v", execBody["status"])
+	}
+
+	// Verify audit records the error.
+	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	entries := arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: no entries found for task after failed execute")
+	}
+	entry := entries[0].(map[string]any)
+	if entry["outcome"] != "error" {
+		t.Errorf("audit after error: expected outcome=error, got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit after error: expected task_id=%s, got %v", taskID, entry["task_id"])
+	}
+	errMsg, _ := entry["error_msg"].(string)
+	if errMsg == "" {
+		t.Error("audit after error: error_msg should be populated")
+	}
+}
+
+func TestAudit_AutoExecute_HasTaskID(t *testing.T) {
+	// Auto-executed requests must also be linked to the task in the audit log.
+	adapter := newMockAdapter("mock.audit-auto", "run").withResult("ok", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "audit-auto")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.audit-auto", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit-auto", "run", true)
+	reqID := fmt.Sprintf("audit-auto-%s", randSuffix())
+	result := sc.gatewayRequestWithTask(env, reqID, "mock.audit-auto", "run", taskID)
+	if result["status"] != "executed" {
+		t.Fatalf("auto-execute: expected status=executed, got %v", result["status"])
+	}
+
+	resp := sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	entries := arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: no entries found for auto-executed request")
+	}
+	entry := entries[0].(map[string]any)
+	if entry["outcome"] != "executed" {
+		t.Errorf("audit auto-execute: expected outcome=executed, got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit auto-execute: expected task_id=%s, got %v", taskID, entry["task_id"])
+	}
+	if entry["request_id"] != reqID {
+		t.Errorf("audit auto-execute: expected request_id=%s, got %v", reqID, entry["request_id"])
+	}
+}
+
+func TestAudit_Deny_HasTaskID(t *testing.T) {
+	// Denied requests must remain in the audit log linked to the task.
+	env := newTestEnv(t, newMockAdapter("mock.audit-deny", "run"))
+	sc := newScenario(t, env, "audit-deny")
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit-deny", "run", false)
+	reqID := fmt.Sprintf("audit-deny-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.audit-deny", "run", taskID)
+
+	// Deny.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/deny", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	entries := arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: no entries found for denied request")
+	}
+	entry := entries[0].(map[string]any)
+	if entry["outcome"] != "denied" {
+		t.Errorf("audit deny: expected outcome=denied, got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit deny: expected task_id=%s, got %v", taskID, entry["task_id"])
+	}
+}
+
+func TestAudit_Execute_NotApproved_NoAuditCorruption(t *testing.T) {
+	// Calling /execute on a pending (not yet approved) request must fail
+	// without corrupting the audit entry.
+	env := newTestEnv(t, newMockAdapter("mock.audit-noexec", "run"))
+	sc := newScenario(t, env, "audit-noexec")
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit-noexec", "run", false)
+	reqID := fmt.Sprintf("audit-noexec-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.audit-noexec", "run", taskID)
+
+	// Try to execute without approving first.
+	resp := env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	mustStatus(t, resp, http.StatusConflict)
+
+	// Audit entry should still be "pending" and intact.
+	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	entries := arr(t, body, "entries")
+	if len(entries) == 0 {
+		t.Fatal("audit: entry disappeared after rejected execute attempt")
+	}
+	entry := entries[0].(map[string]any)
+	if entry["outcome"] != "pending" {
+		t.Errorf("audit: expected outcome=pending (unchanged), got %v", entry["outcome"])
+	}
+	if entry["task_id"] != taskID {
+		t.Errorf("audit: task_id should be intact, got %v", entry["task_id"])
+	}
+}
+
+func TestAudit_StatusEndpoint_ReflectsApproval(t *testing.T) {
+	// The status endpoint must reflect the "approved" state after approval
+	// and "executed" after the agent calls execute.
+	adapter := newMockAdapter("mock.audit-status", "run").withResult("ok", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "audit-status")
+
+	taskID := sc.createApprovedTask(t, env, "mock.audit-status", "run", false)
+	reqID := fmt.Sprintf("audit-status-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.audit-status", "run", taskID)
+
+	// Status before approval: pending.
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "pending" {
+		t.Errorf("status before approve: expected pending, got %v", body["status"])
+	}
+
+	// Approve.
+	resp = sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Status after approval: approved.
+	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	body = mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "approved" {
+		t.Errorf("status after approve: expected approved, got %v", body["status"])
+	}
+
+	// Execute.
+	resp = env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Status after execute: executed.
+	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	body = mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "executed" {
+		t.Errorf("status after execute: expected executed, got %v", body["status"])
+	}
+}
