@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ type pendingRequestBlob struct {
 	AgentID     string         `json:"agent_id"`
 	AgentName   string         `json:"agent_name"`
 	RequestID   string         `json:"request_id"`
+	TaskID      string         `json:"task_id"`
 	Reason      string         `json:"reason"`
 	CallbackURL  string                    `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
@@ -125,10 +127,22 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	if req.RequestID == "" {
 		req.RequestID = uuid.New().String()
 	} else {
-		// Dedup: if this request_id was already processed, return the existing outcome.
+		// Dedup: if this request_id was already processed under the same task,
+		// return the existing outcome without re-processing. This prevents
+		// duplicate audit entries and re-execution of side-effect actions when
+		// the agent retries after a network timeout.
+		//
+		// The dedup is scoped to the same task_id so that reusing a request_id
+		// across different tasks/sessions is treated as a fresh request.
+		// Pre-task outcomes (e.g. "blocked" by restriction) have no task_id
+		// and are always dedup'd since they're stateless checks.
 		if existing, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
-			writeGatewayStatusResponse(w, existing)
-			return
+			preTask := existing.TaskID == nil // blocked/error before task scope
+			sameTask := req.TaskID != "" && existing.TaskID != nil && *existing.TaskID == req.TaskID
+			if preTask || sameTask {
+				writeGatewayStatusResponse(w, existing)
+				return
+			}
 		}
 	}
 	middleware.AddLogField(ctx, "request_id", req.RequestID)
@@ -510,6 +524,25 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict); routeErr != nil {
 		h.logger.Warn("route to approval failed", "err", routeErr)
 	}
+	// If wait=true, long-poll for approval then execute inline.
+	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, time.Duration(timeout)*time.Second)
+		if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
+			h.executeAndRespond(w, r.Context(), pa)
+			return
+		}
+		// pa == nil means the row was deleted (denied/expired). Check the audit
+		// entry so we return the real outcome instead of a misleading "pending".
+		if pa == nil {
+			if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), req.RequestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+				writeGatewayStatusResponse(w, entry)
+				return
+			}
+		}
+		// Still pending (timeout elapsed) — fall through to pending response.
+	}
+
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":     "pending",
 		"request_id": req.RequestID,
@@ -518,11 +551,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleStatus returns the current status of a gateway request by request_id.
+// HandleGet returns the current status of a gateway request by request_id.
+// This is read-only — it never executes the adapter.
 //
-// GET /api/gateway/request/{request_id}/status
+// GET /api/gateway/request/{request_id}
+// Query params:
+//
+//	wait=true    – long-poll until the request leaves the "pending" state (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//
 // Auth: agent bearer token
-func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
+func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
@@ -538,7 +577,184 @@ func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not fetch request status")
 		return
 	}
+
+	// Long-poll: if wait=true and request is still pending, block until it
+	// transitions or the timeout elapses.
+	if r.URL.Query().Get("wait") == "true" && entry.Outcome == "pending" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+	}
+
 	writeGatewayStatusResponse(w, entry)
+}
+
+// waitForRequestResolution long-polls until the audit entry for a gateway
+// request leaves the "pending" state or the timeout expires.
+func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID, userID string, timeout time.Duration) *store.AuditEntry {
+	return events.WaitFor(ctx, h.eventHub, userID, timeout,
+		[]string{"audit"},
+		func(c context.Context) (*store.AuditEntry, bool) {
+			e, err := h.store.GetAuditEntryByRequestID(c, requestID, userID)
+			if err != nil {
+				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}, false
+			}
+			return e, e.Outcome != "pending"
+		},
+	)
+}
+
+// parseLongPollTimeout extracts the timeout query param, clamped to [1, 120].
+func parseLongPollTimeout(r *http.Request) int {
+	timeout := 120
+	if v := r.URL.Query().Get("timeout"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = n
+		}
+	}
+	if timeout > 120 {
+		timeout = 120
+	}
+	return timeout
+}
+
+// waitForApprovalDecision long-polls until the pending approval leaves the
+// "pending" state (approved/denied/deleted) or the timeout expires.
+func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID, userID string, timeout time.Duration) *store.PendingApproval {
+	return events.WaitFor(ctx, h.eventHub, userID, timeout,
+		[]string{"audit", "queue"},
+		func(c context.Context) (*store.PendingApproval, bool) {
+			pa, err := h.store.GetPendingApproval(c, requestID)
+			if err != nil {
+				return nil, true // row deleted (denied/expired)
+			}
+			return pa, pa.Status != "pending"
+		},
+	)
+}
+
+// executeAndRespond atomically claims an approved pending approval, runs the
+// adapter, and writes the result as JSON. The atomic claim prevents double-
+// execution when multiple code paths race (e.g. wait=true long-poll + /execute).
+// Shared by HandleRequest (wait=true) and HandleExecuteApproved.
+func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Context, pa *store.PendingApproval) {
+	// Atomic claim: only one caller wins. Prevents double-execution of
+	// non-idempotent actions (emails, payments, etc.).
+	claimed, claimErr := h.store.ClaimPendingApprovalForExecution(ctx, pa.RequestID)
+	if claimErr != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not claim approval")
+		return
+	}
+	if !claimed {
+		// Another caller already claimed it — return conflict.
+		writeError(w, http.StatusConflict, "ALREADY_EXECUTING", "this request is already being executed")
+		return
+	}
+
+	var blob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
+		return
+	}
+
+	serviceType, alias := parseServiceAlias(blob.Service)
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
+
+	start := time.Now()
+	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
+	dur := int(time.Since(start).Milliseconds())
+
+	outcome := "executed"
+	errMsg := ""
+	if execErr != nil {
+		outcome = "error"
+		errMsg = execErr.Error()
+	}
+
+	_ = h.store.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur)
+	_ = h.store.DeletePendingApproval(ctx, pa.RequestID)
+	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
+
+	resp := map[string]any{
+		"status":     outcome,
+		"request_id": pa.RequestID,
+		"audit_id":   pa.AuditID,
+	}
+	if execErr != nil {
+		resp["error"] = errMsg
+	} else {
+		resp["result"] = result
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// HandleExecuteApproved executes an approved pending request and returns the
+// result synchronously. The agent sends only the request_id; the original
+// params are loaded from the stored request blob and cannot be mutated.
+//
+// Query params:
+//
+//	wait=true    – long-poll until the request is approved, then execute (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//
+// POST /api/gateway/request/{request_id}/execute
+// Auth: agent bearer token
+func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	requestID := r.PathValue("request_id")
+	pa, err := h.store.GetPendingApproval(r.Context(), requestID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+		return
+	}
+
+	if pa.UserID != agent.UserID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
+		return
+	}
+
+	// If still pending and wait=true, long-poll until approval decision.
+	if pa.Status == "pending" && r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		pa = h.waitForApprovalDecision(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+		if pa == nil {
+			// Row deleted (denied/expired) — check the audit entry for the real outcome.
+			if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), requestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+				writeGatewayStatusResponse(w, entry)
+				return
+			}
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+			return
+		}
+	}
+
+	if pa.Status == "pending" {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":     "pending",
+			"request_id": requestID,
+			"audit_id":   pa.AuditID,
+		})
+		return
+	}
+	if pa.Status != "approved" {
+		writeError(w, http.StatusConflict, "NOT_APPROVED", "request was not approved")
+		return
+	}
+	if time.Now().After(pa.ExpiresAt) {
+		writeError(w, http.StatusGone, "APPROVAL_EXPIRED", "this approval request has expired")
+		return
+	}
+
+	h.executeAndRespond(w, r.Context(), pa)
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.
@@ -842,6 +1058,7 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		AgentID:     agent.ID,
 		AgentName:   agent.Name,
 		RequestID:   req.RequestID,
+		TaskID:      req.TaskID,
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}

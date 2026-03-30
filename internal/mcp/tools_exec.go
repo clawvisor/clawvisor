@@ -124,7 +124,11 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"GET", "/api/skill/catalog", "GET /api/skill/catalog", nil}, nil, nil
 
 	case "create_task":
-		return internalRoute{"POST", "/api/tasks", "POST /api/tasks", nil}, arguments, nil
+		path := "/api/tasks"
+		path += buildWaitQuery(args, getString, true)
+		// Remove wait/timeout from body — they're query params, not task fields.
+		body := stripKeys(args, "wait", "timeout")
+		return internalRoute{"POST", path, "POST /api/tasks", nil}, body, nil
 
 	case "get_task":
 		id := getString("task_id")
@@ -132,17 +136,8 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 			return internalRoute{}, nil, err
 		}
 		path := "/api/tasks/" + id
-		// Forward optional long-poll query params.
-		var qp []string
-		if w := getString("wait"); w == "true" {
-			qp = append(qp, "wait=true")
-		}
-		if t := getString("timeout"); t != "" {
-			qp = append(qp, "timeout="+t)
-		}
-		if len(qp) > 0 {
-			path += "?" + strings.Join(qp, "&")
-		}
+		// get_task defaults wait to false (it's a status check, not a creation).
+		path += buildWaitQuery(args, getString, false)
 		return internalRoute{"GET", path, "GET /api/tasks/{id}",
 			map[string]string{"id": id}}, nil, nil
 
@@ -159,23 +154,70 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		if err := validatePathParam(id, "task_id"); err != nil {
 			return internalRoute{}, nil, err
 		}
-		// Remove task_id from the body — the handler reads it from the path.
-		body := make(map[string]json.RawMessage)
-		for k, v := range args {
-			if k != "task_id" {
-				body[k] = v
-			}
-		}
-		b, _ := json.Marshal(body)
-		return internalRoute{"POST", "/api/tasks/" + id + "/expand", "POST /api/tasks/{id}/expand",
-			map[string]string{"id": id}}, b, nil
+		path := "/api/tasks/" + id + "/expand"
+		path += buildWaitQuery(args, getString, true)
+		// Remove task_id, wait, timeout from the body — they're path/query params.
+		body := stripKeys(args, "task_id", "wait", "timeout")
+		return internalRoute{"POST", path, "POST /api/tasks/{id}/expand",
+			map[string]string{"id": id}}, body, nil
 
 	case "gateway_request":
-		return internalRoute{"POST", "/api/gateway/request", "POST /api/gateway/request", nil}, arguments, nil
+		path := "/api/gateway/request"
+		path += buildWaitQuery(args, getString, true)
+		// Remove wait/timeout from body — they're query params, not request fields.
+		body := stripKeys(args, "wait", "timeout")
+		return internalRoute{"POST", path, "POST /api/gateway/request", nil}, body, nil
+
+	case "execute_request":
+		id := getString("request_id")
+		if err := validatePathParam(id, "request_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		path := "/api/gateway/request/" + id + "/execute"
+		path += buildWaitQuery(args, getString, true)
+		return internalRoute{"POST", path, "POST /api/gateway/request/{request_id}/execute",
+			map[string]string{"request_id": id}}, nil, nil
 
 	default:
 		return internalRoute{}, nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
+}
+
+// buildWaitQuery constructs the ?wait=true&timeout=N query string from MCP
+// tool arguments. When defaultWait is true and the caller did not explicitly
+// set wait=false, wait defaults to true (the natural fit for MCP tool calls).
+func buildWaitQuery(args map[string]json.RawMessage, getString func(string) string, defaultWait bool) string {
+	wait := defaultWait
+	if w, ok := args["wait"]; ok {
+		var b bool
+		if json.Unmarshal(w, &b) == nil {
+			wait = b
+		}
+	}
+	if !wait {
+		return ""
+	}
+	q := "?wait=true"
+	if t := getString("timeout"); t != "" {
+		q += "&timeout=" + t
+	}
+	return q
+}
+
+// stripKeys returns the JSON-encoded args map with the given keys removed.
+func stripKeys(args map[string]json.RawMessage, keys ...string) []byte {
+	drop := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		drop[k] = true
+	}
+	body := make(map[string]json.RawMessage)
+	for k, v := range args {
+		if !drop[k] {
+			body[k] = v
+		}
+	}
+	b, _ := json.Marshal(body)
+	return b
 }
 
 // validatePathParam checks that a path parameter is non-empty and contains

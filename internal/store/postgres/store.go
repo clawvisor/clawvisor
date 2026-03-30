@@ -851,11 +851,14 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 	if pa.ID == "" {
 		pa.ID = uuid.New().String()
 	}
+	if pa.Status == "" {
+		pa.Status = "pending"
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, []byte(pa.RequestBlob),
-		pa.CallbackURL, pa.ExpiresAt)
+		pa.CallbackURL, pa.Status, pa.ExpiresAt)
 	return err
 }
 
@@ -863,11 +866,11 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	pa := &store.PendingApproval{}
 	var requestBlob []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE request_id = $1
 	`, requestID).Scan(
 		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
-		&pa.CallbackURL, &pa.ExpiresAt, &pa.CreatedAt)
+		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -886,8 +889,8 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) err
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, expires_at, created_at
-		FROM pending_approvals WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at ASC`, userID)
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		FROM pending_approvals WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW() ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -897,8 +900,8 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, expires_at, created_at
-		FROM pending_approvals WHERE expires_at < NOW()`)
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		FROM pending_approvals WHERE status = 'pending' AND expires_at < NOW()`)
 	if err != nil {
 		return nil, err
 	}
@@ -1033,7 +1036,7 @@ func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 		var requestBlob []byte
 		if err := rows.Scan(
 			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
-			&pa.CallbackURL, &pa.ExpiresAt, &pa.CreatedAt,
+			&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1041,6 +1044,21 @@ func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 		pas = append(pas, pa)
 	}
 	return pas, rows.Err()
+}
+
+func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2`, status, requestID)
+	return err
+}
+
+func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET status = 'executing' WHERE request_id = $1 AND status = 'approved'`, requestID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // ── OAuth ────────────────────────────────────────────────────────────────────

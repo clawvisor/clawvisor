@@ -31,7 +31,7 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "create_task",
-			Description: "Create a new task for scoped authorization. The task must be approved by the user before gateway requests can be made.",
+			Description: "Create a new task for scoped authorization. Use wait=true (recommended) to block until the user approves or denies.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -51,7 +51,9 @@ func toolDefs() []Tool {
 						"description": "Actions this task is authorized to perform"
 					},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
-					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"}
+					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
+					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
 				"required": ["purpose", "authorized_actions"]
 			}`),
@@ -82,7 +84,7 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "expand_task",
-			Description: "Request adding a new action to an existing task's scope. Requires user approval.",
+			Description: "Request adding a new action to an existing task's scope. Use wait=true (recommended) to block until the user approves or denies.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -90,14 +92,16 @@ func toolDefs() []Tool {
 					"service": {"type": "string", "description": "Service ID for the new action"},
 					"action": {"type": "string", "description": "Action name for the new action"},
 					"auto_execute": {"type": "boolean", "description": "Execute without per-request approval"},
-					"reason": {"type": "string", "description": "Why this action is needed"}
+					"reason": {"type": "string", "description": "Why this action is needed"},
+					"wait": {"type": "boolean", "description": "Block until the expansion is approved or denied (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
 				"required": ["task_id", "service", "action", "reason"]
 			}`),
 		},
 		{
 			Name:        "gateway_request",
-			Description: "Execute a service action through the gateway. Requires an active task with matching scope.",
+			Description: "Execute a service action through the gateway. Requires an active task with matching scope. Use wait=true (recommended) to block until approval and return the result in one call.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -107,9 +111,25 @@ func toolDefs() []Tool {
 					"reason": {"type": "string", "description": "Why this action is being performed"},
 					"request_id": {"type": "string", "description": "Unique request ID for idempotency"},
 					"task_id": {"type": "string", "description": "Task ID authorizing this request"},
-					"context": {"type": "string", "description": "Optional context about what the agent is working on"}
+					"context": {"type": "object", "description": "Optional context (source, data_origin, callback_url)"},
+					"session_id": {"type": "string", "description": "Consistent UUID for chain context on standing tasks"},
+					"wait": {"type": "boolean", "description": "Block until approved and return executed result (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
 				"required": ["service", "action", "params", "reason", "request_id", "task_id"]
+			}`),
+		},
+		{
+			Name:        "execute_request",
+			Description: "Execute a previously approved gateway request and return the result. Use this when a gateway_request returned status=pending and has since been approved. Supports wait=true to block until approved.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"request_id": {"type": "string", "description": "The request ID from the original gateway_request"},
+					"wait": {"type": "boolean", "description": "Block until the request is approved, then execute (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+				},
+				"required": ["request_id"]
 			}`),
 		},
 	}

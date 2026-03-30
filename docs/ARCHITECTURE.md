@@ -112,9 +112,11 @@ When a request is authorized (either via task auto-execute or human approval), e
 
 When a request is pending approval, it can be resolved three ways:
 
-1. **Human approves** (via dashboard or Telegram): The serialized request blob is re-executed through the adapter, and the result is delivered to the agent's callback URL.
-2. **Human denies**: The agent's callback receives `status: "denied"`.
+1. **Human approves** (via dashboard or Telegram): The pending approval is marked as `"approved"`. The agent is expected to call `POST /api/gateway/request/{request_id}/execute` to claim the result — the original params are loaded from the stored request blob (immutable). If the agent registered a callback URL, it receives a notification with `status: "approved"` so it knows to call the execute endpoint.
+2. **Human denies**: The pending approval is deleted and the audit entry updated. If a callback URL is registered, the agent receives `status: "denied"`.
 3. **Timeout** (default 5 minutes): A background goroutine runs every 60 seconds, finds expired pending approvals, marks them as timed out, and delivers `status: "timeout"` callbacks.
+
+The agent can long-poll `GET /api/gateway/request/{request_id}?wait=true` to check status, or use `POST /api/gateway/request?wait=true` to block until the result is ready in a single round-trip. Agents that prefer explicit control can call `POST /api/gateway/request/{request_id}/execute` after approval.
 
 The Telegram message is updated in-place to reflect the outcome (green checkmark for approved, red X for denied, clock for timeout).
 
@@ -391,7 +393,7 @@ Migrations are embedded in the binary and run automatically on startup. Each mig
 - `vault_entries` — encrypted credentials. Unique on `(user_id, service_id)`.
 
 **Approval queue:**
-- `pending_approvals` — serialized request blobs awaiting human decision. Includes callback URL, expiry, and audit ID. Unique on `request_id`.
+- `pending_approvals` — serialized request blobs awaiting human decision. Includes callback URL, status (`pending` or `approved`), expiry, and audit ID. Unique on `request_id`.
 
 **Audit:**
 - `audit_log` — every gateway request. Includes service, action, sanitized params, decision, outcome, verification verdict, duration, and error messages. Legacy columns (`safety_flagged`, `safety_reason`, `filters_applied`) are retained for backward compatibility but no longer populated. `request_id` has a UNIQUE constraint. Indexed on `(user_id, timestamp)`, `(user_id, outcome)`, `(user_id, service)`.
@@ -414,6 +416,7 @@ Migrations are embedded in the binary and run automatically on startup. Each mig
 | 008 | Notification messages table (replaces inline telegram_msg_id) |
 | 009 | Intent verification column on audit_log |
 | 012 | Task risk assessment columns (risk_level, risk_details) on tasks |
+| 019 | Approval status column on pending_approvals for poll-then-execute flow |
 
 ---
 

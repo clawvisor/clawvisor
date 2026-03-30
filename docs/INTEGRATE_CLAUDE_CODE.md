@@ -221,10 +221,11 @@ Explain how it works:
   the user can invoke `/clawvisor` explicitly.
 - Claude creates tasks, the user approves them in the dashboard, and Claude
   makes gateway requests under the approved scope.
-- **Async handling**: Claude Code doesn't receive webhook callbacks. Instead it
-  uses polling — when a request returns `pending` (awaiting approval), Claude
-  re-sends the same request with the same `request_id`. Clawvisor recognizes
-  the duplicate and returns the current status without re-executing.
+- **Async handling**: Claude Code doesn't receive webhook callbacks. Instead,
+  submit with `POST /api/gateway/request?wait=true` — if approval is needed,
+  the request blocks until approved and returns the result in a single
+  round-trip. Alternatively, poll `GET /api/gateway/request/{request_id}?wait=true`
+  to check status, then call `POST /api/gateway/request/{request_id}/execute`.
 
 Remind the user to:
 - Connect services in the Clawvisor dashboard under the **Services** tab

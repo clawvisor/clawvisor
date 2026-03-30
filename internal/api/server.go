@@ -445,8 +445,10 @@ func (s *Server) routes() http.Handler {
 	// Gateway (agent token, rate-limited, E2E on relay traffic)
 	mux.Handle("POST /api/gateway/request", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleRequest)))))
-	mux.Handle("GET /api/gateway/request/{request_id}/status", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
-		e2e(http.HandlerFunc(gatewayHandler.HandleStatus)))))
+	mux.Handle("GET /api/gateway/request/{request_id}", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleGet)))))
+	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
@@ -549,12 +551,13 @@ func (s *Server) routes() http.Handler {
 		// No auth middleware here: the MCP handler already authenticates the agent
 		// and injects it into the context before tool execution.
 		mcpHandlers := map[string]http.Handler{
-			"GET /api/skill/catalog":        http.HandlerFunc(skillHandler.Catalog),
-			"POST /api/tasks":               http.HandlerFunc(tasksHandler.Create),
-			"GET /api/tasks/{id}":           http.HandlerFunc(tasksHandler.Get),
-			"POST /api/tasks/{id}/complete": http.HandlerFunc(tasksHandler.Complete),
-			"POST /api/tasks/{id}/expand":   http.HandlerFunc(tasksHandler.Expand),
-			"POST /api/gateway/request":     http.HandlerFunc(gatewayHandler.HandleRequest),
+			"GET /api/skill/catalog":                           http.HandlerFunc(skillHandler.Catalog),
+			"POST /api/tasks":                                  http.HandlerFunc(tasksHandler.Create),
+			"GET /api/tasks/{id}":                              http.HandlerFunc(tasksHandler.Get),
+			"POST /api/tasks/{id}/complete":                    http.HandlerFunc(tasksHandler.Complete),
+			"POST /api/tasks/{id}/expand":                      http.HandlerFunc(tasksHandler.Expand),
+			"POST /api/gateway/request":                        http.HandlerFunc(gatewayHandler.HandleRequest),
+			"POST /api/gateway/request/{request_id}/execute":   http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
 		}
 
 		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)

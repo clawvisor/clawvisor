@@ -142,7 +142,7 @@ func TestE2E_GETStatusViaRelay(t *testing.T) {
 	shared := make([]byte, 32)
 	io.ReadFull(hkdf.New(sha256.New, rawShared, nil, []byte("clawvisor-e2e-v1")), shared)
 
-	req := httptest.NewRequest("GET", "/api/gateway/request/abc/status", nil)
+	req := httptest.NewRequest("GET", "/api/gateway/request/abc", nil)
 	ctx := relay.WithViaRelay(req.Context())
 	req = req.WithContext(ctx)
 	req.Header.Set("X-Clawvisor-E2E", "aes-256-gcm")

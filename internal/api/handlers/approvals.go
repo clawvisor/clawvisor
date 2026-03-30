@@ -56,7 +56,9 @@ func (h *ApprovalsHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Approve executes a pending request and delivers the result to the callback URL.
+// Approve marks a pending request as approved. The agent is expected to call
+// POST /api/gateway/request/{request_id}/execute to claim the result. If the
+// agent registered a callback URL, a notification is also delivered there.
 //
 // POST /api/approvals/{request_id}/approve
 // Auth: user JWT
@@ -87,24 +89,13 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, outcome, errMsg := h.executeApproval(r.Context(), pa)
+	h.markApproved(r.Context(), pa)
 	h.publishQueueAndAudit(user.ID, pa.AuditID)
 
-	if outcome == "error" {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":     "error",
-			"request_id": requestID,
-			"audit_id":   pa.AuditID,
-			"error":      errMsg,
-		})
-		return
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":     "executed",
+		"status":     "approved",
 		"request_id": requestID,
 		"audit_id":   pa.AuditID,
-		"result":     result,
 	})
 }
 
@@ -122,9 +113,39 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 		return errors.New("approval expired")
 	}
 
-	h.executeApproval(ctx, pa)
+	h.markApproved(ctx, pa)
 	h.publishQueueAndAudit(userID, pa.AuditID)
 	return nil
+}
+
+// markApproved transitions a pending approval to the "approved" state without
+// executing it. The agent is expected to call HandleExecuteApproved to claim
+// the result. If a callback URL is registered, a notification is sent.
+func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval) {
+	_ = h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved")
+	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0)
+
+	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, "✅ <b>Approved</b> — waiting for agent to execute.")
+	h.decrementNotifierPolling(pa.UserID)
+
+	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
+		var blob pendingRequestBlob
+		if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+			return
+		}
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, blob.AgentID)
+		requestID := pa.RequestID
+		auditID := pa.AuditID
+		callbackURL := *pa.CallbackURL
+		go func() {
+			_ = callback.DeliverResult(context.Background(), callbackURL, &callback.Payload{
+				Type:      "request",
+				RequestID: requestID,
+				Status:    "approved",
+				AuditID:   auditID,
+			}, cbKey)
+		}()
+	}
 }
 
 // DenyByRequestID is the core deny logic, callable from both the HTTP handler

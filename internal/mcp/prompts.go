@@ -50,10 +50,9 @@ Two layers, applied in order:
 ## Typical Flow
 
 1. **Fetch the catalog** — use the ` + "`fetch_catalog`" + ` tool to see available services, actions, and restrictions
-2. **Create a task** — use ` + "`create_task`" + ` to declare your purpose and the actions you need
-3. **Wait for approval** — use ` + "`get_task`" + ` with ` + "`wait: true`" + ` to long-poll until the user approves (or denies) the task
-4. **Make gateway requests** — use ` + "`gateway_request`" + ` for each action, under the approved task scope
-5. **Complete the task** — use ` + "`complete_task`" + ` when done
+2. **Create a task** — use ` + "`create_task`" + ` — this blocks until the user approves or denies
+3. **Make gateway requests** — use ` + "`gateway_request`" + ` for each action — auto-execute actions return immediately; actions requiring approval block until approved and return the result
+4. **Complete the task** — use ` + "`complete_task`" + ` when done
 
 ## Creating Tasks
 
@@ -66,7 +65,7 @@ When calling ` + "`create_task`" + `:
 - **` + "`lifetime`" + `** — ` + "`\"session\"`" + ` (default, expires) or ` + "`\"standing\"`" + ` (no expiry, persists until revoked)
 - **` + "`expires_in_seconds`" + `** — TTL for session tasks (default 1800)
 
-All tasks start as ` + "`pending_approval`" + `. Long-poll with ` + "`get_task`" + ` (` + "`wait: true`" + `) until status changes to ` + "`active`" + ` or ` + "`denied`" + `.
+All tasks start as ` + "`pending_approval`" + `. The ` + "`create_task`" + ` tool blocks by default until the task is approved or denied. If the long-poll times out while still pending, call ` + "`get_task`" + ` with ` + "`wait: true`" + ` to resume waiting.
 
 ### Standing Tasks
 
@@ -74,7 +73,7 @@ For recurring workflows, set ` + "`lifetime: \"standing\"`" + `. Standing tasks 
 
 ### Scope Expansion
 
-If you need an action not in the original task scope, use ` + "`expand_task`" + ` with the new action and a reason. The user will be prompted to approve.
+If you need an action not in the original task scope, use ` + "`expand_task`" + ` with the new action and a reason. This blocks until the user approves or denies the expansion.
 
 ## Gateway Requests
 
@@ -92,10 +91,10 @@ Every gateway response has a ` + "`status`" + ` field:
 | Status | Meaning | What to do |
 |---|---|---|
 | ` + "`executed`" + ` | Action completed | Use the result. Report to the user. |
-| ` + "`pending`" + ` | Awaiting human approval | Tell the user. Re-send same request_id to poll. |
+| ` + "`pending`" + ` | Awaiting human approval | Tell the user. If the long-poll timed out, use ` + "`execute_request`" + ` with the same request_id to resume waiting and get the result once approved. Do not send a new gateway_request. |
 | ` + "`blocked`" + ` | A restriction blocks this | Tell the user. Do not retry or work around it. |
 | ` + "`restricted`" + ` | Intent verification rejected | Your params/reason were inconsistent with the task purpose. Adjust and retry with a new request_id. |
-| ` + "`pending_task_approval`" + ` | Task not yet approved | Long-poll get_task until approved. |
+| ` + "`pending_task_approval`" + ` | Task not yet approved | Use ` + "`get_task`" + ` with ` + "`wait: true`" + ` until approved. |
 | ` + "`pending_scope_expansion`" + ` | Action outside task scope | Use expand_task. |
 | ` + "`task_expired`" + ` | Task TTL exceeded | Expand or create a new task. |
 | ` + "`error`" + ` | Something went wrong | Report the error to the user. Do not silently retry. |
