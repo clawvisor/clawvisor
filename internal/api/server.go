@@ -447,6 +447,8 @@ func (s *Server) routes() http.Handler {
 		e2e(http.HandlerFunc(gatewayHandler.HandleRequest)))))
 	mux.Handle("GET /api/gateway/request/{request_id}/status", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleStatus)))))
+	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))

@@ -6,7 +6,7 @@ description: >
   Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
   manages task scopes, and injects credentials — the agent never handles
   secrets directly.
-version: 0.6.1
+version: 0.7.0
 homepage: https://github.com/clawvisor/clawvisor
 metadata:
   {
@@ -239,7 +239,7 @@ Every response has a `status` field. Handle each case as follows:
 | Status | Meaning | What to do |
 |---|---|---|
 | `executed` | Action completed successfully | Use `result.summary` and `result.data`. Report to the user. |
-| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." Poll with the same `request_id` until resolved. Do **not** send a new request. |
+| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." Long-poll `GET /api/gateway/request/{request_id}/status?wait=true` until status is `approved`, then call `POST /api/gateway/request/{request_id}/execute` to get the result. Do **not** send a new request. |
 | `blocked` | A restriction blocks this action | Tell the user: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround. |
 | `restricted` | Intent verification rejected the request | Your params or reason were inconsistent with the task's approved purpose. Adjust and retry with a new `request_id`. |
 | `pending_task_approval` | Task not yet approved | Tell the user and long-poll `GET /api/tasks/{id}?wait=true` until approved. |
@@ -267,9 +267,24 @@ the current (still-pending) task — just call again to keep waiting.
 **Tasks (legacy polling):** Poll `GET /api/tasks/{id}` until `status` changes
 from `pending_approval` to `active` (or `denied`).
 
-**Gateway requests:** Re-send the same gateway request with the same
-`request_id`. Clawvisor recognizes the duplicate and returns the current status
-without re-executing.
+**Gateway requests (preferred — long-poll + execute):**
+
+1. Long-poll for approval: `GET /api/gateway/request/{request_id}/status?wait=true&timeout=120`. Blocks server-side until the request leaves `pending` state. Returns a JSON object with the current `status`.
+2. Once status is `approved`, execute the request: `POST /api/gateway/request/{request_id}/execute`. This uses the original params stored when the request was created — you only need to send the `request_id`. Returns the adapter result synchronously, just like an auto-executed request.
+
+```
+GET /api/gateway/request/{request_id}/status?wait=true&timeout=120
+# → {"status": "approved", "request_id": "...", "audit_id": "..."}
+
+POST /api/gateway/request/{request_id}/execute
+# → {"status": "executed", "request_id": "...", "result": {...}}
+```
+
+If the long-poll times out while still pending, the response has `"status": "pending"` — just call again to keep waiting.
+
+**Gateway requests (legacy dedup):** Re-send the same gateway request with the
+same `request_id`. Clawvisor recognizes the duplicate and returns the current
+status without re-executing.
 
 ---
 
@@ -282,17 +297,19 @@ requests if your environment supports receiving callbacks.**
 Callbacks cover two categories: **gateway request resolutions** and **task
 lifecycle changes**. Each includes a `type` field (`"request"` or `"task"`).
 
-**Request resolved:**
+**Request approved (waiting for agent to execute):**
 ```json
 {
   "type": "request",
   "request_id": "send-email-5678",
-  "status": "executed",
-  "result": { "summary": "Email sent to alice@example.com", "data": { ... } },
+  "status": "approved",
   "audit_id": "a8f3..."
 }
 ```
-Request callback statuses: `executed`, `denied`, `timeout`, or `error`.
+When you receive this, call `POST /api/gateway/request/{request_id}/execute` to
+execute the request and get the result.
+
+Request callback statuses: `approved`, `denied`, `timeout`, or `error`.
 
 **Task lifecycle change:**
 ```json
@@ -310,8 +327,9 @@ Task callback statuses: `approved`, `denied`, `scope_expanded`, `scope_expansion
    header: it should equal `sha256=` + HMAC-SHA256(body, CLAWVISOR_CALLBACK_SECRET).
 2. Check the `type` field: `"request"` → match `request_id` to your pending
    request. `"task"` → match `task_id` to your task.
-3. For request callbacks: if `status` is `executed`, continue with the `result`
-   data. If `denied`, `timeout`, or `error`, tell the user the outcome and stop.
+3. For request callbacks: if `status` is `approved`, call
+   `POST /api/gateway/request/{request_id}/execute` to get the result.
+   If `denied`, `timeout`, or `error`, tell the user the outcome and stop.
 4. For task callbacks: if `approved` or `scope_expanded`, proceed with your
    task. If `denied`, `scope_expansion_denied`, or `expired`, inform the user.
 

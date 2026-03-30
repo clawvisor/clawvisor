@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -521,6 +522,11 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 // HandleStatus returns the current status of a gateway request by request_id.
 //
 // GET /api/gateway/request/{request_id}/status
+// Query params:
+//
+//	wait=true    – long-poll until the request leaves the "pending" state (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//
 // Auth: agent bearer token
 func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	agent := middleware.AgentFromContext(r.Context())
@@ -538,7 +544,144 @@ func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not fetch request status")
 		return
 	}
+
+	// Long-poll: if wait=true and request is still pending, block until it
+	// transitions or the timeout elapses.
+	if r.URL.Query().Get("wait") == "true" && entry.Outcome == "pending" && h.eventHub != nil {
+		timeout := 120
+		if v := r.URL.Query().Get("timeout"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				timeout = n
+			}
+		}
+		if timeout > 120 {
+			timeout = 120
+		}
+		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+	}
+
 	writeGatewayStatusResponse(w, entry)
+}
+
+// waitForRequestResolution subscribes to the event hub and re-fetches the
+// audit entry each time an "audit" event fires. Returns as soon as the
+// request leaves the "pending" state or the timeout / request context expires.
+func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID, userID string, timeout time.Duration) *store.AuditEntry {
+	ch, unsub := h.eventHub.Subscribe(userID)
+	defer unsub()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			e, err := h.store.GetAuditEntryByRequestID(ctx, requestID, userID)
+			if err != nil {
+				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
+			}
+			return e
+		case <-timer.C:
+			e, err := h.store.GetAuditEntryByRequestID(context.Background(), requestID, userID)
+			if err != nil {
+				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
+			}
+			return e
+		case evt, ok := <-ch:
+			if !ok {
+				e, err := h.store.GetAuditEntryByRequestID(context.Background(), requestID, userID)
+				if err != nil {
+					return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
+				}
+				return e
+			}
+			if evt.Type != "audit" {
+				continue
+			}
+			e, err := h.store.GetAuditEntryByRequestID(ctx, requestID, userID)
+			if err != nil {
+				continue
+			}
+			if e.Outcome != "pending" {
+				return e
+			}
+		}
+	}
+}
+
+// HandleExecuteApproved executes an approved pending request and returns the
+// result synchronously. The agent sends only the request_id; the original
+// params are loaded from the stored request blob and cannot be mutated.
+//
+// POST /api/gateway/request/{request_id}/execute
+// Auth: agent bearer token
+func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	requestID := r.PathValue("request_id")
+	pa, err := h.store.GetPendingApproval(r.Context(), requestID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+		return
+	}
+
+	if pa.UserID != agent.UserID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
+		return
+	}
+	if pa.Status != "approved" {
+		writeError(w, http.StatusConflict, "NOT_APPROVED", "request has not been approved yet")
+		return
+	}
+	if time.Now().After(pa.ExpiresAt) {
+		writeError(w, http.StatusGone, "APPROVAL_EXPIRED", "this approval request has expired")
+		return
+	}
+
+	var blob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
+		return
+	}
+
+	serviceType, alias := parseServiceAlias(blob.Service)
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
+
+	start := time.Now()
+	result, execErr := executeAdapterRequest(r.Context(), h.vault, h.adapterReg,
+		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
+	dur := int(time.Since(start).Milliseconds())
+
+	outcome := "executed"
+	errMsg := ""
+	if execErr != nil {
+		outcome = "error"
+		errMsg = execErr.Error()
+	}
+
+	_ = h.store.UpdateAuditOutcome(r.Context(), pa.AuditID, outcome, errMsg, dur)
+	_ = h.store.DeletePendingApproval(r.Context(), pa.RequestID)
+	h.publishAuditAndQueue(pa.UserID, pa.AuditID)
+
+	resp := map[string]any{
+		"status":     outcome,
+		"request_id": requestID,
+		"audit_id":   pa.AuditID,
+	}
+	if execErr != nil {
+		resp["error"] = errMsg
+	} else {
+		resp["result"] = result
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.

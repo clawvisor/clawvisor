@@ -282,9 +282,16 @@ func TestApproval_AliasPreserved(t *testing.T) {
 		t.Fatalf("expected status=pending, got %v (full: %v)", result["status"], result)
 	}
 
-	// Approve — should execute successfully using the aliased vault key.
+	// Approve — marks as approved.
 	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
 	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "approved" {
+		t.Errorf("expected status=approved, got %v (error=%v)", body["status"], body["error"])
+	}
+
+	// Agent calls execute — should succeed using the aliased vault key.
+	resp = env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	body = mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "executed" {
 		t.Errorf("expected status=executed, got %v (error=%v)", body["status"], body["error"])
 	}
@@ -533,14 +540,21 @@ func TestApprovals_Approve_WithMockAdapter(t *testing.T) {
 	reqID := fmt.Sprintf("req-app-%s", randSuffix())
 	sc.gatewayRequestWithTask(env, reqID, "mock.ok", "run", taskID)
 
-	// Approve it — should execute successfully
+	// Approve it — marks as approved but does not execute.
 	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
 	body := mustStatus(t, resp, http.StatusOK)
+	if body["status"] != "approved" {
+		t.Errorf("approve: expected status=approved, got %v", body["status"])
+	}
+
+	// Agent calls execute to claim the result.
+	resp = env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+	body = mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "executed" {
-		t.Errorf("approve+execute: expected status=executed, got %v", body["status"])
+		t.Errorf("execute: expected status=executed, got %v", body["status"])
 	}
 	if body["result"] == nil {
-		t.Error("approve+execute: result field missing")
+		t.Error("execute: result field missing")
 	}
 }
 

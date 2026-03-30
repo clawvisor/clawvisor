@@ -81,6 +81,7 @@ type Store interface {
 	ListPendingApprovals(ctx context.Context, userID string) ([]*PendingApproval, error)
 	DeletePendingApproval(ctx context.Context, requestID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
+	UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error
 
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
@@ -260,6 +261,7 @@ type PendingApproval struct {
 	AuditID       string          `json:"audit_id"`
 	RequestBlob   json.RawMessage `json:"request_blob"`
 	CallbackURL   *string         `json:"callback_url,omitempty"`
+	Status        string          `json:"status"` // "pending" or "approved"
 	ExpiresAt     time.Time       `json:"expires_at"`
 	CreatedAt     time.Time       `json:"created_at"`
 }

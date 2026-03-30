@@ -388,8 +388,8 @@ func TestApprovals_Approve_CallbackHMACSigned(t *testing.T) {
 		if payload["type"] != "request" {
 			t.Errorf("approve callback: expected type=request, got %v", payload["type"])
 		}
-		if payload["status"] != "executed" {
-			t.Errorf("approve callback: expected status=executed, got %v", payload["status"])
+		if payload["status"] != "approved" {
+			t.Errorf("approve callback: expected status=approved, got %v", payload["status"])
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("approve callback not received within 3s")
