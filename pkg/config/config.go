@@ -27,6 +27,7 @@ type Config struct {
 	Approval  ApprovalConfig  `yaml:"approval"`
 	Callback  CallbackConfig  `yaml:"callback"`
 	Task      TaskConfig      `yaml:"task"`
+	Gateway   GatewayConfig   `yaml:"gateway"`
 	LLM       LLMConfig       `yaml:"llm"`
 	MCP       MCPConfig       `yaml:"mcp"`
 	Services  ServicesConfig  `yaml:"services"`
@@ -37,6 +38,11 @@ type Config struct {
 	Push      PushConfig      `yaml:"push"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
+}
+
+// GatewayConfig holds settings for the gateway request handler.
+type GatewayConfig struct {
+	ContentDedupTTLSeconds int `yaml:"content_dedup_ttl_seconds"` // default: 5
 }
 
 // RelayConfig holds settings for the cloud relay connection.
@@ -257,6 +263,9 @@ func Default() *Config {
 		},
 		Task: TaskConfig{
 			DefaultExpirySeconds: 1800,
+		},
+		Gateway: GatewayConfig{
+			ContentDedupTTLSeconds: 5,
 		},
 		LLM: LLMConfig{
 			Provider:       "anthropic",

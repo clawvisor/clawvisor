@@ -35,15 +35,16 @@ func RequiresHardcodedApproval(service, action string) bool {
 
 // TasksHandler manages task-scoped authorization.
 type TasksHandler struct {
-	st         store.Store
-	vault      vault.Vault
-	adapterReg *adapters.Registry
-	notifier   notify.Notifier
-	cfg        config.Config
-	logger     *slog.Logger
-	baseURL    string
-	eventHub   *events.Hub
-	assessor   taskrisk.Assessor
+	st           store.Store
+	vault        vault.Vault
+	adapterReg   *adapters.Registry
+	notifier     notify.Notifier
+	cfg          config.Config
+	logger       *slog.Logger
+	baseURL      string
+	eventHub     *events.Hub
+	assessor     taskrisk.Assessor
+	contentDedup *dedupCache
 }
 
 func NewTasksHandler(
@@ -57,9 +58,14 @@ func NewTasksHandler(
 	eventHub *events.Hub,
 	assessor taskrisk.Assessor,
 ) *TasksHandler {
+	dedupTTL := time.Duration(cfg.Gateway.ContentDedupTTLSeconds) * time.Second
+	if dedupTTL <= 0 {
+		dedupTTL = 5 * time.Second
+	}
 	return &TasksHandler{
 		st: st, vault: v, adapterReg: adapterReg, notifier: notifier, cfg: cfg, logger: logger, baseURL: baseURL,
 		eventHub: eventHub, assessor: assessor,
+		contentDedup: newDedupCache(dedupTTL),
 	}
 }
 
@@ -144,6 +150,15 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Content-based dedup: if an identical task creation request was recently made
+	// by the same agent, return the existing task instead of creating a duplicate.
+	taskDedupKey := buildDedupKey("task", agent.ID, req.Purpose, req.AuthorizedActions, lifetime)
+	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
+		resp := cached.(map[string]any)
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
 	expiresIn := req.ExpiresInSeconds
 	if expiresIn <= 0 {
 		expiresIn = h.cfg.Task.DefaultExpirySeconds
@@ -214,11 +229,13 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	h.publishTasksAndQueue(agent.UserID)
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	resp := map[string]any{
 		"task_id": task.ID,
 		"status":  "pending_approval",
 		"message": "Task approval requested. Waiting for human review.",
-	})
+	}
+	h.contentDedup.Put(taskDedupKey, resp)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ── Get ───────────────────────────────────────────────────────────────────────

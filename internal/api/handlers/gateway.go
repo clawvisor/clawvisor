@@ -43,16 +43,16 @@ type pendingRequestBlob struct {
 
 // GatewayHandler handles POST /api/gateway/request.
 type GatewayHandler struct {
-	store      store.Store
-	vault      vault.Vault
-	adapterReg *adapters.Registry
-	notifier   notify.Notifier // may be nil if Telegram not configured
-	verifier   intent.Verifier
-	extractor  intent.Extractor
-	cfg        config.Config
-	logger     *slog.Logger
-	baseURL    string
-	eventHub   *events.Hub
+	store        store.Store
+	vault        vault.Vault
+	adapterReg   *adapters.Registry
+	notifier     notify.Notifier // may be nil if Telegram not configured
+	verifier     intent.Verifier
+	extractor    intent.Extractor
+	cfg          config.Config
+	logger       *slog.Logger
+	baseURL  string
+	eventHub *events.Hub
 }
 
 func NewGatewayHandler(
