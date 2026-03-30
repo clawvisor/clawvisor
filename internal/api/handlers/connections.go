@@ -270,43 +270,23 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// waitForConnectionResolution subscribes to the event hub and re-fetches the
-// connection request until it leaves the "pending" state or the timeout expires.
+// waitForConnectionResolution long-polls until the connection request leaves
+// the "pending" state or the timeout expires.
 func (h *ConnectionsHandler) waitForConnectionResolution(ctx context.Context, connID, userID string, timeout time.Duration) *store.ConnectionRequest {
-	ch, unsub := h.eventHub.Subscribe(userID)
-	defer unsub()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	fetch := func(c context.Context) *store.ConnectionRequest {
-		cr, err := h.st.GetConnectionRequest(c, connID)
-		if err != nil {
-			return &store.ConnectionRequest{ID: connID, Status: "pending"}
-		}
-		if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
-			_ = h.st.UpdateConnectionRequestStatus(c, connID, "expired", "")
-			cr.Status = "expired"
-		}
-		return cr
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fetch(context.Background())
-		case <-timer.C:
-			return fetch(context.Background())
-		case _, ok := <-ch:
-			if !ok {
-				return fetch(context.Background())
+	return events.WaitFor(ctx, h.eventHub, userID, timeout,
+		nil, // any event type
+		func(c context.Context) (*store.ConnectionRequest, bool) {
+			cr, err := h.st.GetConnectionRequest(c, connID)
+			if err != nil {
+				return &store.ConnectionRequest{ID: connID, Status: "pending"}, false
 			}
-			cr := fetch(ctx)
-			if cr.Status != "pending" {
-				return cr
+			if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
+				_ = h.st.UpdateConnectionRequestStatus(c, connID, "expired", "")
+				cr.Status = "expired"
 			}
-		}
-	}
+			return cr, cr.Status != "pending"
+		},
+	)
 }
 
 // Approve handles POST /api/agents/connect/{id}/approve (user JWT).

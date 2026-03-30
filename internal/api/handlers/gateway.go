@@ -588,50 +588,19 @@ func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	writeGatewayStatusResponse(w, entry)
 }
 
-// waitForRequestResolution subscribes to the event hub and re-fetches the
-// audit entry each time an "audit" event fires. Returns as soon as the
-// request leaves the "pending" state or the timeout / request context expires.
+// waitForRequestResolution long-polls until the audit entry for a gateway
+// request leaves the "pending" state or the timeout expires.
 func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID, userID string, timeout time.Duration) *store.AuditEntry {
-	ch, unsub := h.eventHub.Subscribe(userID)
-	defer unsub()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			e, err := h.store.GetAuditEntryByRequestID(ctx, requestID, userID)
+	return events.WaitFor(ctx, h.eventHub, userID, timeout,
+		[]string{"audit"},
+		func(c context.Context) (*store.AuditEntry, bool) {
+			e, err := h.store.GetAuditEntryByRequestID(c, requestID, userID)
 			if err != nil {
-				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
+				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}, false
 			}
-			return e
-		case <-timer.C:
-			e, err := h.store.GetAuditEntryByRequestID(context.Background(), requestID, userID)
-			if err != nil {
-				return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
-			}
-			return e
-		case evt, ok := <-ch:
-			if !ok {
-				e, err := h.store.GetAuditEntryByRequestID(context.Background(), requestID, userID)
-				if err != nil {
-					return &store.AuditEntry{RequestID: requestID, Outcome: "pending"}
-				}
-				return e
-			}
-			if evt.Type != "audit" {
-				continue
-			}
-			e, err := h.store.GetAuditEntryByRequestID(ctx, requestID, userID)
-			if err != nil {
-				continue
-			}
-			if e.Outcome != "pending" {
-				return e
-			}
-		}
-	}
+			return e, e.Outcome != "pending"
+		},
+	)
 }
 
 // parseLongPollTimeout extracts the timeout query param, clamped to [1, 120].
@@ -648,43 +617,19 @@ func parseLongPollTimeout(r *http.Request) int {
 	return timeout
 }
 
-// waitForApprovalDecision subscribes to the event hub and re-fetches the
-// pending approval each time an "audit" or "queue" event fires. Returns as
-// soon as the approval leaves the "pending" state or the timeout expires.
+// waitForApprovalDecision long-polls until the pending approval leaves the
+// "pending" state (approved/denied/deleted) or the timeout expires.
 func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID, userID string, timeout time.Duration) *store.PendingApproval {
-	ch, unsub := h.eventHub.Subscribe(userID)
-	defer unsub()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	fetch := func(c context.Context) *store.PendingApproval {
-		pa, err := h.store.GetPendingApproval(c, requestID)
-		if err != nil {
-			return nil
-		}
-		return pa
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fetch(context.Background())
-		case <-timer.C:
-			return fetch(context.Background())
-		case evt, ok := <-ch:
-			if !ok {
-				return fetch(context.Background())
+	return events.WaitFor(ctx, h.eventHub, userID, timeout,
+		[]string{"audit", "queue"},
+		func(c context.Context) (*store.PendingApproval, bool) {
+			pa, err := h.store.GetPendingApproval(c, requestID)
+			if err != nil {
+				return nil, true // row deleted (denied/expired)
 			}
-			if evt.Type != "audit" && evt.Type != "queue" {
-				continue
-			}
-			pa := fetch(ctx)
-			if pa == nil || pa.Status != "pending" {
-				return pa
-			}
-		}
-	}
+			return pa, pa.Status != "pending"
+		},
+	)
 }
 
 // executeAndRespond atomically claims an approved pending approval, runs the
