@@ -434,19 +434,12 @@ func offerClaudeDesktopSetup() {
 	fmt.Println()
 }
 
-// printClaudeDesktopManualInstructions prints the fallback manual setup steps.
+// printClaudeDesktopManualInstructions prints a short pointer to the
+// dedicated integrate subcommand.
 func printClaudeDesktopManualInstructions() {
 	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  To connect Claude Desktop to Clawvisor, install the cowork plugin:"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  1. Download the plugin:"))
-	fmt.Println(green.Padding(0, 2).Render("     https://github.com/clawvisor/cowork-plugin"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  2. In Claude Desktop: Settings → Plugins → Install from local source"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  3. Restart Claude Desktop — it will prompt you to authorize via OAuth"))
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("  Full guide: https://github.com/clawvisor/clawvisor/blob/main/docs/INTEGRATE_CLAUDE_COWORK.md"))
+	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Desktop later, run:"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor integrate claude-desktop"))
 	fmt.Println()
 }
 
@@ -477,6 +470,7 @@ func offerClaudeCodeSetup(dataDir string) error {
 		return err
 	}
 
+	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed Clawvisor skill to ~/.claude/skills/clawvisor/SKILL.md"))
 	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
 	fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect a project."))
 	fmt.Println()
