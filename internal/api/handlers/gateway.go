@@ -127,10 +127,22 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	if req.RequestID == "" {
 		req.RequestID = uuid.New().String()
 	} else {
-		// Dedup: if this request_id was already processed, return the existing outcome.
+		// Dedup: if this request_id was already processed under the same task,
+		// return the existing outcome without re-processing. This prevents
+		// duplicate audit entries and re-execution of side-effect actions when
+		// the agent retries after a network timeout.
+		//
+		// The dedup is scoped to the same task_id so that reusing a request_id
+		// across different tasks/sessions is treated as a fresh request.
+		// Pre-task outcomes (e.g. "blocked" by restriction) have no task_id
+		// and are always dedup'd since they're stateless checks.
 		if existing, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
-			writeGatewayStatusResponse(w, existing)
-			return
+			preTask := existing.TaskID == nil // blocked/error before task scope
+			sameTask := req.TaskID != "" && existing.TaskID != nil && *existing.TaskID == req.TaskID
+			if preTask || sameTask {
+				writeGatewayStatusResponse(w, existing)
+				return
+			}
 		}
 	}
 	middleware.AddLogField(ctx, "request_id", req.RequestID)

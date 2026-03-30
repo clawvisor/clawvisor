@@ -146,6 +146,53 @@ func TestGateway_Dedup_DifferentRequestIDs_NotDeduplicated(t *testing.T) {
 	}
 }
 
+func TestGateway_Dedup_SameRequestID_DifferentTask_NotDeduplicated(t *testing.T) {
+	// A request_id reused under a different task should NOT be dedup'd.
+	// This prevents stale audit entries from prior sessions leaking into new ones.
+	adapter := newMockAdapter("mock.dedup-task", "run").withResult("fresh-result", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "dedup-task")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.dedup-task", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	reqID := fmt.Sprintf("dedup-xtask-%s", randSuffix())
+
+	// First task: auto-execute → creates an "executed" audit entry.
+	taskID1 := sc.createApprovedTask(t, env, "mock.dedup-task", "run", true)
+	first := sc.gatewayRequestWithTask(env, reqID, "mock.dedup-task", "run", taskID1)
+	if first["status"] != "executed" {
+		t.Fatalf("first request: expected executed, got %v", first["status"])
+	}
+
+	// Second task (different purpose to avoid task content dedup) with the
+	// same request_id — should NOT be dedup'd against the first task's entry.
+	time.Sleep(10 * time.Millisecond) // ensure content dedup TTL separation
+	sc.activateService(t, env, "mock.dedup-task")
+	taskResp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "second task with different purpose",
+		"authorized_actions": []map[string]any{{
+			"service": "mock.dedup-task", "action": "run", "auto_execute": true,
+		}},
+	})
+	taskBody := mustStatus(t, taskResp, http.StatusCreated)
+	taskID2 := str(t, taskBody, "task_id")
+	taskResp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID2), nil)
+	mustStatus(t, taskResp, http.StatusOK)
+	second := sc.gatewayRequestWithTask(env, reqID, "mock.dedup-task", "run", taskID2)
+	if second["status"] != "executed" {
+		t.Errorf("cross-task reuse: expected fresh executed, got %v", second["status"])
+	}
+	// Must be a NEW audit entry, not the cached one.
+	if second["audit_id"] == first["audit_id"] {
+		t.Error("cross-task reuse: should produce a new audit entry, got same audit_id")
+	}
+	// Fresh execution should include result data.
+	if second["result"] == nil {
+		t.Error("cross-task reuse: result should be present (not dedup cache)")
+	}
+}
+
 // ── GET /api/gateway/request/{request_id} ────────────────────────────────────
 
 func TestGateway_Status_NotFound(t *testing.T) {
