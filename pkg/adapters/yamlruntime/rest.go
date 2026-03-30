@@ -17,8 +17,31 @@ import (
 
 // executeREST executes a REST action as defined in the YAML spec.
 func executeREST(ctx context.Context, client *http.Client, baseURL string, action yamldef.Action, params map[string]any, credFields map[string]string, ca *compiledAction) (*adapters.Result, error) {
+	// Resolve path-parameter defaults before interpolation so that callers
+	// who omit a path param with a default (e.g. calendar_id="primary") still
+	// get the placeholder replaced.
+	pathParams := make(map[string]any, len(params))
+	for k, v := range params {
+		pathParams[k] = v
+	}
+	for name, paramDef := range action.Params {
+		if paramDef.Location != "path" {
+			continue
+		}
+		if _, ok := pathParams[name]; ok {
+			continue // caller provided it
+		}
+		val, _ := resolveParamWithExpr(params, name, paramDef, ca)
+		if val != nil {
+			pathParams[name] = val
+		}
+	}
+
 	// Build the URL path with parameter interpolation.
-	path := interpolatePath(action.Path, params, credFields)
+	path := interpolatePath(action.Path, pathParams, credFields)
+	if unresolved := findUnresolvedPlaceholders(path); len(unresolved) > 0 {
+		return nil, fmt.Errorf("missing required path parameter(s): %s", strings.Join(unresolved, ", "))
+	}
 	fullURL := strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 
 	// Separate params by location.
@@ -45,7 +68,7 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 		case "body":
 			bodyParams[apiKey] = val
 		case "path":
-			// Already handled by interpolatePath.
+			// Already handled above.
 		}
 	}
 
@@ -366,6 +389,27 @@ func toInt(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// findUnresolvedPlaceholders returns the names of any {{.xxx}} placeholders
+// still present in path after interpolation. An empty slice means all
+// placeholders were resolved.
+func findUnresolvedPlaceholders(path string) []string {
+	var names []string
+	for rest := path; ; {
+		start := strings.Index(rest, "{{.")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(rest[start:], "}}")
+		if end < 0 {
+			break
+		}
+		name := rest[start+3 : start+end]
+		names = append(names, name)
+		rest = rest[start+end+2:]
+	}
+	return names
 }
 
 func truncate(s string, max int) string {

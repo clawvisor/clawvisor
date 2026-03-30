@@ -971,6 +971,91 @@ func TestYAMLAdapter_GmailGetMessage(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_PathParamDefault(t *testing.T) {
+	// Regression: when a path param has a default and the caller omits it,
+	// the placeholder must still be replaced (was causing 404s for Calendar).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/calendars/primary/events" {
+			t.Errorf("unexpected path: %s (want /v3/calendars/primary/events)", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"items": []any{},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "google.calendar"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL + "/v3", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list_events": {
+				Method: "GET",
+				Path:   "/calendars/{{.calendar_id}}/events",
+				Params: map[string]yamldef.Param{
+					"calendar_id": {Type: "string", Default: "primary", Location: "path"},
+					"max_results": {Type: "int", Default: 10, MapTo: "maxResults", Location: "query"},
+				},
+				Response: yamldef.ResponseDef{
+					DataPath: "items",
+					Summary:  "{{len .Data}} event(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	// Call WITHOUT calendar_id — should default to "primary".
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action:     "list_events",
+		Params:     map[string]any{},
+		Credential: testCred("test-token"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestYAMLAdapter_UnresolvedPathParam(t *testing.T) {
+	// When a required path param is missing and has no default, the error
+	// should mention the parameter name, not silently send a broken URL.
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test.svc"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: "http://unused", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"get_item": {
+				Method: "GET",
+				Path:   "/items/{{.item_id}}",
+				Params: map[string]yamldef.Param{
+					"item_id": {Type: "string", Location: "path"},
+				},
+				Response: yamldef.ResponseDef{},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action:     "get_item",
+		Params:     map[string]any{},
+		Credential: testCred("test-token"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing path param, got nil")
+	}
+	if !contains(err.Error(), "item_id") {
+		t.Errorf("error should mention 'item_id', got: %s", err.Error())
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
 }
