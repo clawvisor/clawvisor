@@ -544,6 +544,7 @@ func offerClaudeCodeCurlPermission() error {
 
 	rules := []string{
 		"Bash(curl *http://localhost:25297/*)",
+		"Bash(curl *$CLAWVISOR_URL/*)",
 		fmt.Sprintf("Bash(curl *%s/*)", relayOrigin),
 	}
 
