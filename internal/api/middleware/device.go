@@ -12,10 +12,30 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+var replayCache sync.Map
+
+func init() {
+	go evictExpiredReplays()
+}
+
+func evictExpiredReplays() {
+	for {
+		time.Sleep(time.Minute)
+		cutoff := time.Now().Add(-2 * deviceTimestampSkew)
+		replayCache.Range(func(key, value any) bool {
+			if value.(time.Time).Before(cutoff) {
+				replayCache.Delete(key)
+			}
+			return true
+		})
+	}
+}
 
 const (
 	// DeviceContextKey is the context key for the authenticated paired device.
@@ -62,6 +82,13 @@ func RequireDevice(st store.Store) func(http.Handler) http.Handler {
 			diff := time.Since(time.Unix(tsUnix, 0))
 			if math.Abs(diff.Seconds()) > deviceTimestampSkew.Seconds() {
 				http.Error(w, `{"error":"timestamp out of range","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Replay protection: reject duplicate (device, timestamp, hmac) tuples.
+			cacheKey := deviceID + ":" + tsStr + ":" + providedHMAC
+			if _, loaded := replayCache.LoadOrStore(cacheKey, time.Now()); loaded {
+				http.Error(w, `{"error":"replayed request","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
 				return
 			}
 
