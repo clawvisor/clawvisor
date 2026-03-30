@@ -21,14 +21,92 @@ actions:
   list_contacts:
     display_name: "List contacts"
     risk: { category: read, sensitivity: low, description: "List contacts" }
-    override: go
+    method: GET
+    path: "/people/me/connections"
+    params:
+      max_results: { type: int, default: 20, max: 100, map_to: pageSize, location: query }
+      person_fields:
+        type: string
+        default: "names,emailAddresses,phoneNumbers"
+        location: query
+        map_to: personFields
+      sort_order:
+        type: string
+        default: "LAST_NAME_ASCENDING"
+        location: query
+        map_to: sortOrder
+    response:
+      data_path: "connections"
+      fields:
+        - name: id
+          expr: "resourceName"
+        - name: name
+          expr: "names[0]?.displayName ?? ''"
+          sanitize: true
+        - name: email
+          expr: "emailAddresses[0]?.value ?? ''"
+        - name: phone
+          expr: "phoneNumbers[0]?.value ?? ''"
+          optional: true
+      summary: "{{len .Data}} contact(s)"
 
   get_contact:
     display_name: "Get contact"
     risk: { category: read, sensitivity: low, description: "Read a specific contact" }
-    override: go
+    method: GET
+    path: "/{{.contact_id}}"
+    params:
+      contact_id: { type: string, required: true, location: path }
+      person_fields:
+        type: string
+        default: "names,emailAddresses,phoneNumbers,organizations,biographies"
+        location: query
+        map_to: personFields
+    response:
+      fields:
+        - name: id
+          expr: "resourceName"
+        - name: name
+          expr: "names[0]?.displayName ?? ''"
+          sanitize: true
+        - name: email_addresses
+          expr: "emailAddresses"
+          optional: true
+        - name: phone_numbers
+          expr: "phoneNumbers"
+          optional: true
+        - name: organization
+          expr: "organizations[0]?.name ?? ''"
+          optional: true
+        - name: title
+          expr: "organizations[0]?.title ?? ''"
+          optional: true
+      summary: "Contact: {{.name}}"
 
   search_contacts:
     display_name: "Search contacts"
     risk: { category: search, sensitivity: low, description: "Search contacts" }
-    override: go
+    method: GET
+    path: "/people:searchContacts"
+    params:
+      query: { type: string, required: true, location: query }
+      max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      read_mask:
+        type: string
+        default: "names,emailAddresses,phoneNumbers"
+        location: query
+        map_to: readMask
+    response:
+      data_path: "results"
+      fields:
+        - name: id
+          expr: "person.resourceName"
+        - name: name
+          expr: "person.names[0]?.displayName ?? ''"
+          sanitize: true
+        - name: email
+          expr: "person.emailAddresses[0]?.value ?? ''"
+        - name: phone
+          expr: "person.phoneNumbers[0]?.value ?? ''"
+          optional: true
+      summary: "{{len .Data}} contact(s)"

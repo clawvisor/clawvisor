@@ -18,8 +18,6 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
-	calendaradapter "github.com/clawvisor/clawvisor/internal/adapters/google/calendar"
-	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
 	"github.com/clawvisor/clawvisor/internal/auth"
@@ -139,26 +137,19 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// Reads credentials lazily — supports adding OAuth creds without restart.
 	oauthProvider := adapters.NewVaultOAuthProvider(v, googleRedirectURL)
 
-	// Build Go action overrides for Google services (complex MIME/multipart logic).
-	// These are always registered; the provider returns empty creds when not configured,
-	// causing OAuthConfig() to return nil (service shows as "needs_setup").
+	// Build Go action overrides for Google services that need complex logic
+	// (MIME encoding, multipart uploads, dual API calls) beyond what YAML
+	// expressions can handle. Calendar, Contacts, Drive search_files, and
+	// Gmail get_message are now fully YAML-driven with expr-lang transforms.
 	goOverrides := map[string]yamlruntime.ActionFunc{}
 
 	gmail := gmailadapter.New(oauthProvider)
-	for _, action := range gmail.SupportedActions() {
+	for _, action := range []string{"list_messages", "send_message", "create_draft"} {
 		goOverrides["google.gmail:"+action] = gmail.Execute
 	}
-	cal := calendaradapter.New(oauthProvider)
-	for _, action := range []string{"list_events", "create_event", "update_event"} {
-		goOverrides["google.calendar:"+action] = cal.Execute
-	}
 	drive := driveadapter.New(oauthProvider)
-	for _, action := range []string{"get_file", "create_file", "update_file", "search_files"} {
+	for _, action := range []string{"get_file", "create_file", "update_file"} {
 		goOverrides["google.drive:"+action] = drive.Execute
-	}
-	contacts := contactsadapter.New(oauthProvider)
-	for _, action := range contacts.SupportedActions() {
-		goOverrides["google.contacts:"+action] = contacts.Execute
 	}
 
 	// Load YAML adapter definitions from embedded FS + user-local directory.

@@ -16,7 +16,7 @@ import (
 )
 
 // executeREST executes a REST action as defined in the YAML spec.
-func executeREST(ctx context.Context, client *http.Client, baseURL string, action yamldef.Action, params map[string]any, credFields map[string]string) (*adapters.Result, error) {
+func executeREST(ctx context.Context, client *http.Client, baseURL string, action yamldef.Action, params map[string]any, credFields map[string]string, ca *compiledAction) (*adapters.Result, error) {
 	// Build the URL path with parameter interpolation.
 	path := interpolatePath(action.Path, params, credFields)
 	fullURL := strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
@@ -26,15 +26,24 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	bodyParams := map[string]any{}
 
 	for name, paramDef := range action.Params {
-		val, ok := resolveParam(params, name, paramDef)
-		if !ok {
+		val, provided := resolveParamWithExpr(params, name, paramDef, ca)
+		if val == nil {
 			continue
+		}
+		// In sparse body mode, skip unprovided body params.
+		if !provided && action.BodyMode == "sparse" && paramDef.Location == "body" {
+			continue
+		}
+
+		apiKey := name
+		if paramDef.MapTo != "" {
+			apiKey = paramDef.MapTo
 		}
 		switch paramDef.Location {
 		case "query":
-			queryParams.Set(name, fmt.Sprintf("%v", val))
+			queryParams.Set(apiKey, fmt.Sprintf("%v", val))
 		case "body":
-			bodyParams[name] = val
+			bodyParams[apiKey] = val
 		case "path":
 			// Already handled by interpolatePath.
 		}
@@ -105,7 +114,7 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	}
 
 	// Extract data from the response.
-	data := extractData(raw, action.Response)
+	data := extractData(raw, action.Response, ca)
 	summary := renderSummary(action.Response.Summary, data)
 
 	return &adapters.Result{
@@ -126,17 +135,32 @@ func interpolatePath(path string, params map[string]any, credFields map[string]s
 	return result
 }
 
-// resolveParam extracts a parameter value from the input, applying defaults and validation.
-func resolveParam(params map[string]any, name string, def yamldef.Param) (any, bool) {
+// resolveParamWithExpr extracts a parameter value from the input, applying
+// defaults (static or expr), int constraints, and transform expressions.
+// Returns (value, provided) where provided indicates the caller explicitly
+// supplied this param (used for body_mode: sparse).
+func resolveParamWithExpr(params map[string]any, name string, def yamldef.Param, ca *compiledAction) (any, bool) {
 	val, ok := params[name]
+	provided := ok && val != nil
+
 	if !ok || val == nil {
-		if def.Default != nil {
-			return def.Default, true
+		// Try dynamic default first, then static.
+		if ca != nil {
+			if prog, has := ca.paramDefaults[name]; has {
+				result, err := evalExpr(prog, params)
+				if err == nil && result != nil {
+					val = result
+					ok = true
+				}
+			}
 		}
-		if def.Required {
-			return nil, false // caller will get an error from missing required check
+		if !ok && def.Default != nil {
+			val = def.Default
+			ok = true
 		}
-		return nil, false
+		if !ok {
+			return nil, false
+		}
 	}
 
 	// Apply int constraints.
@@ -148,10 +172,25 @@ func resolveParam(params map[string]any, name string, def yamldef.Param) (any, b
 		if def.Max != nil && intVal > *def.Max {
 			intVal = *def.Max
 		}
-		return intVal, true
+		val = intVal
 	}
 
-	return val, true
+	// Apply transform expression.
+	if ca != nil {
+		if prog, has := ca.paramTransforms[name]; has {
+			env := map[string]any{}
+			for k, v := range params {
+				env[k] = v
+			}
+			env[name] = val // ensure the (possibly defaulted) value is available
+			result, err := evalExpr(prog, env)
+			if err == nil {
+				val = result
+			}
+		}
+	}
+
+	return val, provided
 }
 
 // checkResponseError checks for API-level errors in the response body.
@@ -177,7 +216,7 @@ func checkResponseError(raw any, check *yamldef.ErrorCheckDef) error {
 }
 
 // extractData navigates to the data_path in the response and extracts fields.
-func extractData(raw any, respDef yamldef.ResponseDef) any {
+func extractData(raw any, respDef yamldef.ResponseDef, ca *compiledAction) any {
 	if raw == nil {
 		return nil
 	}
@@ -204,7 +243,7 @@ func extractData(raw any, respDef yamldef.ResponseDef) any {
 				break
 			}
 			if obj, ok := item.(map[string]any); ok {
-				items = append(items, extractFields(obj, respDef.Fields))
+				items = append(items, extractFields(obj, respDef.Fields, ca))
 			}
 		}
 		return items
@@ -212,26 +251,58 @@ func extractData(raw any, respDef yamldef.ResponseDef) any {
 
 	// Handle single object.
 	if obj, ok := data.(map[string]any); ok {
-		return extractFields(obj, respDef.Fields)
+		return extractFields(obj, respDef.Fields, ca)
 	}
 
 	return data
 }
 
 // extractFields extracts and transforms the specified fields from a JSON object.
-func extractFields(obj map[string]any, fields []yamldef.FieldDef) map[string]any {
+func extractFields(obj map[string]any, fields []yamldef.FieldDef, ca *compiledAction) map[string]any {
 	result := make(map[string]any, len(fields))
-	for _, f := range fields {
+	for i, f := range fields {
 		outputKey := f.Name
 		if f.Rename != "" {
 			outputKey = f.Rename
 		}
 
 		var val any
+
+		// Expr takes precedence over path/name lookup.
+		if ca != nil {
+			if prog, ok := ca.fieldExprs[i]; ok {
+				v, err := evalExpr(prog, obj)
+				if err == nil {
+					val = v
+				}
+				if val == nil && f.Optional {
+					continue // omit optional nil fields
+				}
+				if val == nil && f.Nullable {
+					result[outputKey] = ""
+					continue
+				}
+				if f.Sanitize {
+					if s, ok := val.(string); ok {
+						val = format.SanitizeText(s, format.MaxFieldLen)
+					}
+				}
+				if f.Transform != "" {
+					val = applyTransform(f.Transform, val)
+				}
+				result[outputKey] = val
+				continue
+			}
+		}
+
 		if f.Path != "" {
 			val, _ = navigatePath(obj, f.Path)
 		} else {
 			val = obj[f.Name]
+		}
+
+		if val == nil && f.Optional {
+			continue
 		}
 
 		if val == nil && f.Nullable {

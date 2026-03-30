@@ -20,8 +20,8 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 	inputObj := map[string]any{}
 
 	for name, paramDef := range action.Params {
-		val, ok := resolveParam(params, name, paramDef)
-		if !ok {
+		val, _ := resolveParamWithExpr(params, name, paramDef, nil)
+		if val == nil {
 			continue
 		}
 
@@ -84,7 +84,7 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 		return nil, fmt.Errorf("parsing GraphQL response: %w", err)
 	}
 
-	data := extractData(raw, action.Response)
+	data := extractData(raw, action.Response, nil)
 	summary := renderSummary(action.Response.Summary, data)
 
 	return &adapters.Result{

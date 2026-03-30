@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -24,15 +26,30 @@ type YAMLAdapter struct {
 	def           yamldef.ServiceDef
 	overrides     map[string]ActionFunc              // action_name → Go override
 	oauthProvider adapters.OAuthCredentialProvider    // lazy OAuth credential source
+	compiled      map[string]*compiledAction          // action_name → compiled exprs (nil if none)
 }
 
 // New creates a YAMLAdapter from a parsed service definition.
 // overrides maps action names to Go functions for actions too complex for YAML.
-func New(def yamldef.ServiceDef, overrides map[string]ActionFunc) *YAMLAdapter {
+// Returns an error if any expr expression fails to compile.
+func New(def yamldef.ServiceDef, overrides map[string]ActionFunc) (*YAMLAdapter, error) {
 	if overrides == nil {
 		overrides = map[string]ActionFunc{}
 	}
-	return &YAMLAdapter{def: def, overrides: overrides}
+	compiled := make(map[string]*compiledAction, len(def.Actions))
+	for name, action := range def.Actions {
+		if action.Override == "go" {
+			continue
+		}
+		ca, err := compileAction(action)
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", def.Service.ID, name, err)
+		}
+		if ca != nil {
+			compiled[name] = ca
+		}
+	}
+	return &YAMLAdapter{def: def, overrides: overrides, compiled: compiled}, nil
 }
 
 func (a *YAMLAdapter) ServiceID() string { return a.def.Service.ID }
@@ -69,7 +86,7 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	}
 
 	// Build the authenticated HTTP client.
-	client, err := buildHTTPClient(a.def.Auth, req.Credential)
+	client, err := a.buildAuthClient(ctx, req.Credential)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", a.def.Service.ID, err)
 	}
@@ -79,7 +96,7 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 
 	switch a.def.API.Type {
 	case "rest":
-		return executeREST(ctx, client, a.def.API.BaseURL, action, req.Params, credFields)
+		return executeREST(ctx, client, a.def.API.BaseURL, action, req.Params, credFields, a.compiled[req.Action])
 	case "graphql":
 		return executeGraphQL(ctx, client, a.def.API.BaseURL, action, req.Params, a.def.Service.ID)
 	default:
@@ -174,6 +191,39 @@ func (a *YAMLAdapter) RequiredScopes() []string {
 	// Return scopes from the definition directly — these are known regardless
 	// of whether OAuth app credentials are configured in the vault yet.
 	return a.def.Auth.OAuth.Scopes
+}
+
+// buildAuthClient creates an *http.Client with proper authentication.
+// For OAuth2 services, this uses the OAuthConfig token source which handles
+// automatic token refresh. For other auth types, delegates to buildHTTPClient.
+func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte) (*http.Client, error) {
+	if a.def.Auth.Type == "oauth2" {
+		oauthCfg := a.OAuthConfig()
+		if oauthCfg == nil {
+			return nil, fmt.Errorf("OAuth not configured — missing app credentials")
+		}
+		var stored struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			Expiry       string `json:"expiry"`
+		}
+		if err := json.Unmarshal(credBytes, &stored); err != nil {
+			return nil, fmt.Errorf("parsing oauth2 credential: %w", err)
+		}
+		token := &oauth2.Token{
+			AccessToken:  stored.AccessToken,
+			RefreshToken: stored.RefreshToken,
+			TokenType:    "Bearer",
+		}
+		if stored.Expiry != "" {
+			if t, err := time.Parse(time.RFC3339, stored.Expiry); err == nil {
+				token.Expiry = t
+			}
+		}
+		ts := oauthCfg.TokenSource(ctx, token)
+		return oauth2.NewClient(ctx, ts), nil
+	}
+	return buildHTTPClient(a.def.Auth, credBytes)
 }
 
 // ── MetadataProvider implementation ─────────────────────────────────────────

@@ -25,8 +25,13 @@ actions:
     method: GET
     path: "/files"
     params:
-      query: { type: string, location: query }
-      max_results: { type: int, default: 10, max: 50, location: query }
+      query: { type: string, map_to: q, location: query }
+      max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      fields_param:
+        type: string
+        default: "files(id,name,mimeType,modifiedTime,size,webViewLink)"
+        map_to: fields
+        location: query
     response:
       data_path: "files"
       fields:
@@ -56,4 +61,28 @@ actions:
   search_files:
     display_name: "Search files"
     risk: { category: search, sensitivity: low, description: "Search files in Google Drive" }
-    override: go
+    method: GET
+    path: "/files"
+    params:
+      query:
+        type: string
+        required: true
+        location: query
+        transform: "'fullText contains \\'' + replace(query, \"'\", \"\\\\'\") + '\\''"
+        map_to: q
+      max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      fields_param:
+        type: string
+        default: "files(id,name,mimeType,modifiedTime,size,webViewLink)"
+        map_to: fields
+        location: query
+    response:
+      data_path: "files"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: mimeType }
+        - { name: modifiedTime }
+        - { name: size }
+        - { name: webViewLink }
+      summary: "{{len .Data}} file(s)"

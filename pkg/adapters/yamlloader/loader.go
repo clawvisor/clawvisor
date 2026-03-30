@@ -114,7 +114,12 @@ func (l *Loader) LoadAll() error {
 				}
 			}
 		}
-		l.adapters = append(l.adapters, yamlruntime.New(def, actionOverrides))
+		adapter, err := yamlruntime.New(def, actionOverrides)
+		if err != nil {
+			l.logger.Warn("skipping adapter: expression compilation failed", "service", def.Service.ID, "err", err)
+			continue
+		}
+		l.adapters = append(l.adapters, adapter)
 	}
 
 	l.logger.Info("loaded adapter definitions", "count", len(l.adapters))

@@ -22,7 +22,40 @@ actions:
   list_events:
     display_name: "List events"
     risk: { category: read, sensitivity: low, description: "List calendar events" }
-    override: go
+    method: GET
+    path: "/calendars/{{.calendar_id}}/events"
+    params:
+      calendar_id: { type: string, default: "primary", location: path }
+      from:
+        type: string
+        default_expr: "now()"
+        transform: "rfc3339(from)"
+        map_to: timeMin
+        location: query
+      to:
+        type: string
+        transform: "endOfDay(to)"
+        map_to: timeMax
+        location: query
+      max_results: { type: int, default: 10, max: 50, map_to: maxResults, location: query }
+      single_events: { type: string, default: "true", map_to: singleEvents, location: query }
+      order_by: { type: string, default: "startTime", map_to: orderBy, location: query }
+    response:
+      data_path: "items"
+      fields:
+        - { name: id }
+        - { name: summary, sanitize: true }
+        - name: start
+          expr: "start.dateTime ?? start.date ?? ''"
+        - name: end
+          expr: "end.dateTime ?? end.date ?? ''"
+        - { name: location, sanitize: true, optional: true }
+        - { name: description, sanitize: true, optional: true }
+        - name: attendees
+          expr: "attendees"
+          optional: true
+        - { name: status }
+      summary: "{{len .Data}} event(s)"
 
   get_event:
     display_name: "Get event"
@@ -36,8 +69,10 @@ actions:
       fields:
         - { name: id }
         - { name: summary, sanitize: true }
-        - { name: start }
-        - { name: end }
+        - name: start
+          expr: "start.dateTime ?? start.date ?? ''"
+        - name: end
+          expr: "end.dateTime ?? end.date ?? ''"
         - { name: location, sanitize: true }
         - { name: description, sanitize: true }
         - { name: attendees }
@@ -47,12 +82,57 @@ actions:
   create_event:
     display_name: "Create event"
     risk: { category: write, sensitivity: medium, description: "Create a calendar event" }
-    override: go
+    method: POST
+    path: "/calendars/{{.calendar_id}}/events"
+    params:
+      calendar_id: { type: string, default: "primary", location: path }
+      summary: { type: string, required: true, location: body }
+      description: { type: string, location: body }
+      start:
+        type: string
+        required: true
+        location: body
+        transform: "isAllDay(start) ? {date: start} : {dateTime: rfc3339(start)}"
+      end:
+        type: string
+        required: true
+        location: body
+        transform: "isAllDay(end) ? {date: end} : {dateTime: rfc3339(end)}"
+      attendees:
+        type: array
+        location: body
+        transform: "emailList(attendees)"
+    response:
+      fields:
+        - { name: id, rename: event_id }
+        - { name: summary }
+        - { name: htmlLink, rename: link }
+      summary: "Created event: {{.summary}}"
 
   update_event:
     display_name: "Update event"
     risk: { category: write, sensitivity: medium, description: "Update a calendar event" }
-    override: go
+    method: PATCH
+    path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
+    body_mode: sparse
+    params:
+      event_id: { type: string, required: true, location: path }
+      calendar_id: { type: string, default: "primary", location: path }
+      summary: { type: string, location: body }
+      description: { type: string, location: body }
+      start:
+        type: string
+        location: body
+        transform: "isAllDay(start) ? {date: start} : {dateTime: rfc3339(start)}"
+      end:
+        type: string
+        location: body
+        transform: "isAllDay(end) ? {date: end} : {dateTime: rfc3339(end)}"
+    response:
+      fields:
+        - { name: id, rename: event_id }
+        - { name: summary }
+      summary: "Updated event: {{.summary}}"
 
   delete_event:
     display_name: "Delete event"

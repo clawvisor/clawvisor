@@ -60,9 +60,10 @@ type Action struct {
 	Override    string            `yaml:"override,omitempty"` // "go" signals delegation to a registered Go function
 
 	// REST fields
-	Method   string `yaml:"method,omitempty"`   // GET, POST, PUT, PATCH, DELETE
-	Path     string `yaml:"path,omitempty"`     // URL path with {{.param}} interpolation
-	Encoding string `yaml:"encoding,omitempty"` // "form" or "json" (default "json")
+	Method   string `yaml:"method,omitempty"`    // GET, POST, PUT, PATCH, DELETE
+	Path     string `yaml:"path,omitempty"`      // URL path with {{.param}} interpolation
+	Encoding string `yaml:"encoding,omitempty"`  // "form" or "json" (default "json")
+	BodyMode string `yaml:"body_mode,omitempty"` // "sparse" = only include provided params in body
 
 	// GraphQL fields
 	Query    string `yaml:"query,omitempty"`    // GraphQL query/mutation string
@@ -91,6 +92,10 @@ type Param struct {
 	Max      *int   `yaml:"max,omitempty"`
 	Location string `yaml:"location,omitempty"` // "query", "body", "path"
 
+	MapTo       string `yaml:"map_to,omitempty"`       // API-side parameter name (if different from YAML name)
+	Transform   string `yaml:"transform,omitempty"`     // expr expression applied to the resolved value
+	DefaultExpr string `yaml:"default_expr,omitempty"` // expr expression for dynamic default (e.g. "rfc3339(now())")
+
 	// GraphQL-specific
 	GraphQLVar bool   `yaml:"graphql_var,omitempty"` // pass as a top-level GraphQL variable
 	FilterPath string `yaml:"filter_path,omitempty"` // e.g. "team.id.eq" — builds nested filter object
@@ -108,12 +113,14 @@ type ResponseDef struct {
 
 // FieldDef describes a single field to extract from the response.
 type FieldDef struct {
-	Name     string `yaml:"name"`
-	Path     string `yaml:"path,omitempty"`      // nested access path (e.g. "state.name")
-	Rename   string `yaml:"rename,omitempty"`     // output key name (defaults to Name)
-	Sanitize bool   `yaml:"sanitize,omitempty"`   // apply format.SanitizeText
-	Nullable bool   `yaml:"nullable,omitempty"`   // tolerate nil without error
-	Transform string `yaml:"transform,omitempty"` // named transform (e.g. "money", "upper")
+	Name      string `yaml:"name"`
+	Path      string `yaml:"path,omitempty"`      // nested access path (e.g. "state.name")
+	Rename    string `yaml:"rename,omitempty"`     // output key name (defaults to Name)
+	Sanitize  bool   `yaml:"sanitize,omitempty"`   // apply format.SanitizeText
+	Nullable  bool   `yaml:"nullable,omitempty"`   // tolerate nil without error
+	Transform string `yaml:"transform,omitempty"`  // named transform (e.g. "money", "upper")
+	Expr      string `yaml:"expr,omitempty"`       // expr-lang expression evaluated against the response object
+	Optional  bool   `yaml:"optional,omitempty"`   // omit field from output if expr returns nil
 }
 
 // ErrorCheckDef describes how to check for API-level errors in the response envelope.

@@ -70,7 +70,10 @@ func TestYAMLAdapter_RESTListAction(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	if adapter.ServiceID() != "stripe" {
 		t.Fatalf("expected service ID 'stripe', got %q", adapter.ServiceID())
@@ -136,7 +139,10 @@ func TestYAMLAdapter_RESTGetWithPathParam(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	result, err := adapter.Execute(context.Background(), adapters.Request{
 		Action:     "get_customer",
 		Params:     map[string]any{"customer_id": "cus_abc"},
@@ -195,7 +201,10 @@ func TestYAMLAdapter_RESTFormPost(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	result, err := adapter.Execute(context.Background(), adapters.Request{
 		Action:     "create_refund",
 		Params:     map[string]any{"charge": "ch_123", "amount": 1000},
@@ -260,7 +269,10 @@ func TestYAMLAdapter_GraphQLAction(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	result, err := adapter.Execute(context.Background(), adapters.Request{
 		Action:     "list_issues",
 		Params:     map[string]any{},
@@ -314,7 +326,10 @@ func TestYAMLAdapter_BasicAuth(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	result, err := adapter.Execute(context.Background(), adapters.Request{
 		Action:     "send_sms",
 		Params:     map[string]any{"to": "+1234", "body": "hello"},
@@ -358,8 +373,11 @@ func TestYAMLAdapter_ErrorCheckSlackStyle(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
-	_, err := adapter.Execute(context.Background(), adapters.Request{
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
 		Action:     "list_channels",
 		Params:     map[string]any{},
 		Credential: testCred("xoxb-test"),
@@ -388,7 +406,10 @@ func TestYAMLAdapter_GoOverride(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, overrides)
+	adapter, err := New(def, overrides)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	result, err := adapter.Execute(context.Background(), adapters.Request{
 		Action:     "custom_action",
 		Params:     map[string]any{},
@@ -420,7 +441,10 @@ func TestYAMLAdapter_ServiceMetadata(t *testing.T) {
 		},
 	}
 
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	meta := adapter.ServiceMetadata()
 
 	if meta.DisplayName != "Stripe" {
@@ -443,7 +467,10 @@ func TestYAMLAdapter_ValidateCredential(t *testing.T) {
 		Service: yamldef.ServiceInfo{ID: "test"},
 		Auth:    yamldef.AuthDef{Type: "api_key"},
 	}
-	adapter := New(def, nil)
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	if err := adapter.ValidateCredential(testCred("valid")); err != nil {
 		t.Errorf("expected valid credential: %v", err)
@@ -453,6 +480,494 @@ func TestYAMLAdapter_ValidateCredential(t *testing.T) {
 	}
 	if err := adapter.ValidateCredential(nil); err == nil {
 		t.Error("expected error for nil credential")
+	}
+}
+
+// ── Expr-lang integration tests ──────────────────────────────────────────────
+
+func TestYAMLAdapter_ExprFieldExtraction(t *testing.T) {
+	// Simulate a Contacts-style API with nested arrays.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"connections": []map[string]any{
+				{
+					"resourceName": "people/123",
+					"names":        []map[string]any{{"displayName": "Alice Smith"}},
+					"emailAddresses": []map[string]any{{"value": "alice@example.com"}},
+					"phoneNumbers":   []map[string]any{{"value": "+1234567890"}},
+				},
+				{
+					"resourceName": "people/456",
+					"names":        []map[string]any{{"displayName": "Bob Jones"}},
+					"emailAddresses": []map[string]any{{"value": "bob@example.com"}},
+					// No phone number — tests optional field omission.
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "contacts"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET",
+				Path:   "/connections",
+				Response: yamldef.ResponseDef{
+					DataPath: "connections",
+					Fields: []yamldef.FieldDef{
+						{Name: "id", Expr: "resourceName"},
+						{Name: "name", Expr: "names[0]?.displayName ?? ''", Sanitize: true},
+						{Name: "email", Expr: "emailAddresses[0]?.value ?? ''"},
+						{Name: "phone", Expr: "phoneNumbers[0]?.value ?? ''", Optional: true},
+					},
+					Summary: "{{len .Data}} contact(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	items, ok := result.Data.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", result.Data)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	if items[0]["id"] != "people/123" {
+		t.Errorf("expected people/123, got %v", items[0]["id"])
+	}
+	if items[0]["name"] != "Alice Smith" {
+		t.Errorf("expected Alice Smith, got %v", items[0]["name"])
+	}
+	if items[0]["email"] != "alice@example.com" {
+		t.Errorf("expected alice@example.com, got %v", items[0]["email"])
+	}
+	if items[0]["phone"] != "+1234567890" {
+		t.Errorf("expected +1234567890, got %v", items[0]["phone"])
+	}
+	// Bob has no phone — optional field should be omitted.
+	if _, hasPhone := items[1]["phone"]; hasPhone {
+		t.Errorf("expected phone to be omitted for Bob, got %v", items[1]["phone"])
+	}
+
+	if result.Summary != "2 contact(s)" {
+		t.Errorf("unexpected summary: %q", result.Summary)
+	}
+}
+
+func TestYAMLAdapter_ParamMapToAndTransform(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify map_to renamed the param.
+		if r.URL.Query().Get("pageSize") != "5" {
+			t.Errorf("expected pageSize=5, got %q", r.URL.Query().Get("pageSize"))
+		}
+		// Verify the original param name is NOT in the query.
+		if r.URL.Query().Get("max_results") != "" {
+			t.Errorf("original param name 'max_results' should not appear in query")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/items",
+				Params: map[string]yamldef.Param{
+					"max_results": {Type: "int", Default: 10, Max: intPtr(50), MapTo: "pageSize", Location: "query"},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{"max_results": 5}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestYAMLAdapter_SparseBodyMode(t *testing.T) {
+	var receivedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"id": "1", "summary": "Updated"})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"update": {
+				Method: "PATCH", Path: "/items/{{.id}}",
+				BodyMode: "sparse",
+				Params: map[string]yamldef.Param{
+					"id":      {Type: "string", Required: true, Location: "path"},
+					"title":   {Type: "string", Location: "body"},
+					"summary": {Type: "string", Location: "body"},
+					"status":  {Type: "string", Location: "body"},
+				},
+				Response: yamldef.ResponseDef{
+					Fields:  []yamldef.FieldDef{{Name: "id"}, {Name: "summary"}},
+					Summary: "updated",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	// Only provide "title" — other body params should be omitted in sparse mode.
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "update",
+		Params: map[string]any{"id": "42", "title": "New Title"},
+		Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if _, has := receivedBody["title"]; !has {
+		t.Error("expected 'title' in body")
+	}
+	if _, has := receivedBody["summary"]; has {
+		t.Error("'summary' should NOT be in sparse body (not provided)")
+	}
+	if _, has := receivedBody["status"]; has {
+		t.Error("'status' should NOT be in sparse body (not provided)")
+	}
+}
+
+func TestYAMLAdapter_ParamTransformExpr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timeMin := r.URL.Query().Get("timeMin")
+		// The transform should have converted "2024-06-15" to RFC3339.
+		if timeMin != "2024-06-15T00:00:00Z" {
+			t.Errorf("expected RFC3339 timeMin, got %q", timeMin)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/events",
+				Params: map[string]yamldef.Param{
+					"from": {Type: "string", Transform: "rfc3339(from)", MapTo: "timeMin", Location: "query"},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{"from": "2024-06-15"}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestCustomFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(...any) (any, error)
+		args []any
+		want any
+	}{
+		{"rfc3339 passthrough", rfc3339Func, []any{"2024-01-01T00:00:00Z"}, "2024-01-01T00:00:00Z"},
+		{"rfc3339 date only", rfc3339Func, []any{"2024-01-01"}, "2024-01-01T00:00:00Z"},
+		{"rfc3339 empty", rfc3339Func, []any{""}, ""},
+		{"endOfDay date", endOfDayFunc, []any{"2024-01-01"}, "2024-01-01T23:59:59Z"},
+		{"endOfDay passthrough", endOfDayFunc, []any{"2024-01-01T12:00:00Z"}, "2024-01-01T12:00:00Z"},
+		{"isAllDay true", isAllDayFunc, []any{"2024-01-01"}, true},
+		{"isAllDay false", isAllDayFunc, []any{"2024-01-01T12:00:00Z"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.fn(tt.args...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGmailExprFunctions(t *testing.T) {
+	t.Run("findHeader", func(t *testing.T) {
+		headers := []any{
+			map[string]any{"name": "From", "value": "alice@example.com"},
+			map[string]any{"name": "Subject", "value": "Hello"},
+			map[string]any{"name": "Date", "value": "Mon, 1 Jan 2024"},
+		}
+		got, err := findHeaderFunc(headers, "from") // case-insensitive
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "alice@example.com" {
+			t.Errorf("got %q, want alice@example.com", got)
+		}
+
+		got, _ = findHeaderFunc(headers, "X-Missing")
+		if got != "" {
+			t.Errorf("missing header: got %q, want empty", got)
+		}
+	})
+
+	t.Run("base64Decode", func(t *testing.T) {
+		// URL-safe base64 for "Hello, World!"
+		got, err := base64DecodeFunc("SGVsbG8sIFdvcmxkIQ==")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "Hello, World!" {
+			t.Errorf("got %q, want %q", got, "Hello, World!")
+		}
+	})
+
+	t.Run("stripHTML", func(t *testing.T) {
+		html := "<html><body><style>body{color:red}</style><p>Hello <b>world</b></p><script>alert(1)</script></body></html>"
+		got, err := stripHTMLFunc(html)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := got.(string)
+		if !contains(s, "Hello") || !contains(s, "world") {
+			t.Errorf("expected 'Hello' and 'world' in %q", s)
+		}
+		if contains(s, "<") || contains(s, "script") || contains(s, "style") {
+			t.Errorf("HTML not stripped: %q", s)
+		}
+	})
+
+	t.Run("extractMimeBody_plaintext", func(t *testing.T) {
+		// Simulate a Gmail payload with direct text/plain body.
+		payload := map[string]any{
+			"mimeType": "text/plain",
+			"body":     map[string]any{"data": "SGVsbG8gd29ybGQ="}, // "Hello world"
+		}
+		got, err := extractMimeBodyFunc(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "Hello world" {
+			t.Errorf("got %q, want %q", got, "Hello world")
+		}
+	})
+
+	t.Run("extractMimeBody_multipart_plain", func(t *testing.T) {
+		// Multipart message with text/plain part.
+		payload := map[string]any{
+			"mimeType": "multipart/alternative",
+			"body":     map[string]any{},
+			"parts": []any{
+				map[string]any{
+					"mimeType": "text/html",
+					"body":     map[string]any{"data": "PHA+SFRNTDWVCD4="}, // "<p>HTML</p>"
+				},
+				map[string]any{
+					"mimeType": "text/plain",
+					"body":     map[string]any{"data": "UGxhaW4gdGV4dA=="}, // "Plain text"
+				},
+			},
+		}
+		got, _ := extractMimeBodyFunc(payload)
+		if got != "Plain text" {
+			t.Errorf("got %q, want %q", got, "Plain text")
+		}
+	})
+
+	t.Run("extractMimeBody_html_fallback", func(t *testing.T) {
+		// Only HTML part — should strip HTML.
+		payload := map[string]any{
+			"mimeType": "multipart/alternative",
+			"body":     map[string]any{},
+			"parts": []any{
+				map[string]any{
+					"mimeType": "text/html",
+					"body":     map[string]any{"data": "PHA+SGVsbG88L3A+"}, // "<p>Hello</p>"
+				},
+			},
+		}
+		got, _ := extractMimeBodyFunc(payload)
+		s := got.(string)
+		if !contains(s, "Hello") {
+			t.Errorf("expected 'Hello' in %q", s)
+		}
+		if contains(s, "<p>") {
+			t.Errorf("HTML not stripped: %q", s)
+		}
+	})
+
+	t.Run("extractMimeBody_nested_multipart", func(t *testing.T) {
+		// Nested multipart — text/plain is 2 levels deep.
+		payload := map[string]any{
+			"mimeType": "multipart/mixed",
+			"body":     map[string]any{},
+			"parts": []any{
+				map[string]any{
+					"mimeType": "multipart/alternative",
+					"body":     map[string]any{},
+					"parts": []any{
+						map[string]any{
+							"mimeType": "text/plain",
+							"body":     map[string]any{"data": "TmVzdGVk"}, // "Nested"
+						},
+					},
+				},
+			},
+		}
+		got, _ := extractMimeBodyFunc(payload)
+		if got != "Nested" {
+			t.Errorf("got %q, want %q", got, "Nested")
+		}
+	})
+}
+
+// TestYAMLAdapter_GmailGetMessage tests the full get_message action with a mock Gmail API.
+func TestYAMLAdapter_GmailGetMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{
+			"id":       "msg123",
+			"threadId": "thread456",
+			"snippet":  "Hey there...",
+			"labelIds": []string{"INBOX", "UNREAD"},
+			"payload": map[string]any{
+				"mimeType": "multipart/alternative",
+				"headers": []map[string]any{
+					{"name": "From", "value": "alice@example.com"},
+					{"name": "To", "value": "bob@example.com"},
+					{"name": "Subject", "value": "Test Subject"},
+					{"name": "Date", "value": "Mon, 1 Jan 2024 12:00:00 +0000"},
+				},
+				"body": map[string]any{},
+				"parts": []map[string]any{
+					{
+						"mimeType": "text/plain",
+						"body":     map[string]any{"data": "SGVsbG8gZnJvbSBHbWFpbA=="}, // "Hello from Gmail"
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test.gmail"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"get_message": {
+				Method: "GET",
+				Path:   "/users/me/messages/{{.message_id}}",
+				Params: map[string]yamldef.Param{
+					"message_id": {Type: "string", Required: true, Location: "path"},
+					"format":     {Type: "string", Default: "full", Location: "query"},
+				},
+				Response: yamldef.ResponseDef{
+					Fields: []yamldef.FieldDef{
+						{Name: "id"},
+						{Name: "from", Expr: "findHeader(payload.headers, 'From')", Sanitize: true},
+						{Name: "to", Expr: "findHeader(payload.headers, 'To')", Sanitize: true},
+						{Name: "subject", Expr: "findHeader(payload.headers, 'Subject')", Sanitize: true},
+						{Name: "date", Expr: "findHeader(payload.headers, 'Date')"},
+						{Name: "body", Expr: "sanitize(extractMimeBody(payload) != '' ? extractMimeBody(payload) : snippet, 2000)"},
+						{Name: "is_unread", Expr: "'UNREAD' in labelIds"},
+						{Name: "threadId", Rename: "thread_id"},
+					},
+					Summary: "Email from {{.from}}: {{.subject}}",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action:     "get_message",
+		Params:     map[string]any{"message_id": "msg123"},
+		Credential: testCred("test-token"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	data, ok := result.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map result, got %T", result.Data)
+	}
+
+	checks := map[string]string{
+		"id":        "msg123",
+		"from":      "alice@example.com",
+		"to":        "bob@example.com",
+		"subject":   "Test Subject",
+		"date":      "Mon, 1 Jan 2024 12:00:00 +0000",
+		"body":      "Hello from Gmail",
+		"thread_id": "thread456",
+	}
+	for key, want := range checks {
+		got, _ := data[key].(string)
+		if got != want {
+			t.Errorf("%s: got %q, want %q", key, got, want)
+		}
+	}
+
+	isUnread, ok := data["is_unread"].(bool)
+	if !ok || !isUnread {
+		t.Errorf("is_unread: got %v, want true", data["is_unread"])
+	}
+
+	if !contains(result.Summary, "alice@example.com") {
+		t.Errorf("summary missing sender: %q", result.Summary)
 	}
 }
 
