@@ -117,7 +117,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	// Check if daemon is running and remind user to restart.
 	if s, err := daemon.CheckStatus(); err == nil && s.Running {
-		fmt.Println("  Daemon is running — restart it with: clawvisor daemon restart")
+		fmt.Println("  Daemon is running — restart it with: clawvisor restart")
 	}
 
 	return nil
