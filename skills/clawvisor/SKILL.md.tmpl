@@ -73,6 +73,8 @@ The authorization model has two layers — applied in order:
 
 ## Typical Flow
 {{ if .UseCurl }}
+> **Execute all curl commands as a single line.** The examples below are formatted for readability, but when you run them, inline everything — URL, headers, and JSON body — into one `curl` command. Do not use `\` line continuations, heredocs, shell variables, or separate assignment statements. Multi-line commands trigger a separate approval prompt for each line.
+
 1. Fetch the catalog — confirm the service is active and the action isn't restricted
 2. Create a task with `POST /api/tasks?wait=true` — this blocks until the user approves
 3. Make gateway requests with `POST /api/gateway/request?wait=true` — in-scope auto-execute actions return immediately; actions requiring approval block until approved and return the result
@@ -371,6 +373,7 @@ without re-executing.
 {{ if not .Condensed }}
 ## Important Rules
 
+- **Always execute curl commands as a single line** — the examples in this document are multi-line for readability, but when running them, inline all variables, headers, and JSON bodies into one command. Never use `\` line continuations, heredocs, or separate variable assignments — each triggers a separate approval prompt.
 - Always fetch the catalog first to know what's available and restricted
 - Never attempt to bypass restrictions — they are hard blocks set by the user
 - Always create a task before making gateway requests
