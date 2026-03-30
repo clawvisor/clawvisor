@@ -1,0 +1,11 @@
+{
+  "name": "clawvisor",
+  "version": "0.2.0",
+  "description": "Route actions through Clawvisor for credential vaulting, task-scoped authorization, and human approval flows. Access Gmail, Calendar, Drive, GitHub, Slack, Notion, Linear, and more — without holding credentials.",
+  "author": {
+    "name": "Clawvisor",
+    "url": "https://github.com/clawvisor"
+  },
+  "homepage": "https://github.com/clawvisor/clawvisor",
+  "license": "MIT"
+}

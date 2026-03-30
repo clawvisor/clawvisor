@@ -4,5 +4,5 @@ package skills
 
 import "embed"
 
-//go:embed clawvisor
+//go:embed all:clawvisor
 var FS embed.FS

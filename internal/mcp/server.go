@@ -85,7 +85,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request, req *R
 			"name":    "clawvisor",
 			"version": "1.0.0",
 		},
-		"instructions": workflowPrompt,
+		"instructions": getWorkflowPrompt(),
 	})
 }
 
