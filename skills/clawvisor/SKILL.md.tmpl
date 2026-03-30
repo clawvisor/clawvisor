@@ -73,7 +73,7 @@ The authorization model has two layers — applied in order:
 
 ## Typical Flow
 {{ if .UseCurl }}
-> **Single-line curl commands only.** Always inline `$CLAWVISOR_URL`, `$CLAWVISOR_AGENT_TOKEN`, JSON bodies, and all other variables directly into a single `curl` command — do not use shell variables, multi-line formatting with `\`, heredocs, or separate assignment statements. This avoids requiring separate approval for each line.
+> **Execute all curl commands as a single line.** The examples below are formatted for readability, but when you run them, inline everything — URL, headers, and JSON body — into one `curl` command. Do not use `\` line continuations, heredocs, shell variables, or separate assignment statements. Multi-line commands trigger a separate approval prompt for each line.
 
 1. Fetch the catalog — confirm the service is active and the action isn't restricted
 2. Create a task with `POST /api/tasks?wait=true` — this blocks until the user approves
@@ -119,7 +119,17 @@ Before making gateway requests,
 actions you need:
 
 ```bash
-curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d '{"purpose":"Review last 30 iMessage threads and classify reply status","authorized_actions":[{"service":"apple.imessage","action":"list_threads","auto_execute":true,"expected_use":"List recent iMessage threads to find ones needing replies"},{"service":"apple.imessage","action":"get_thread","auto_execute":true,"expected_use":"Read individual thread messages to classify reply status"}],"expires_in_seconds":1800}'
+curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "Review last 30 iMessage threads and classify reply status",
+    "authorized_actions": [
+      {"service": "apple.imessage", "action": "list_threads", "auto_execute": true, "expected_use": "List recent iMessage threads to find ones needing replies"},
+      {"service": "apple.imessage", "action": "get_thread", "auto_execute": true, "expected_use": "Read individual thread messages to classify reply status"}
+    ],
+    "expires_in_seconds": 1800
+  }'
 ```
 {{ else }} create a task declaring your purpose and the
 actions you need using `create_task`:
@@ -145,7 +155,17 @@ For recurring workflows,
 {{- if .UseCurl }} create a **standing task** that does not expire:
 
 ```bash
-curl -s -X POST "$CLAWVISOR_URL/api/tasks" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d '{"purpose":"Ongoing email triage","lifetime":"standing","authorized_actions":[{"service":"google.gmail","action":"list_messages","auto_execute":true,"expected_use":"List recent emails to identify ones needing attention"},{"service":"google.gmail","action":"get_message","auto_execute":true,"expected_use":"Read individual emails to triage and summarize"}]}'
+curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "purpose": "Ongoing email triage",
+    "lifetime": "standing",
+    "authorized_actions": [
+      {"service": "google.gmail", "action": "list_messages", "auto_execute": true, "expected_use": "List recent emails to identify ones needing attention"},
+      {"service": "google.gmail", "action": "get_message", "auto_execute": true, "expected_use": "Read individual emails to triage and summarize"}
+    ]
+  }'
 ```
 
 Standing tasks remain active until the user revokes them from the dashboard.
@@ -173,7 +193,15 @@ If you need an action not in the original task scope,
 {{- if .UseCurl }}
 
 ```bash
-curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand?wait=true" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d '{"service":"apple.imessage","action":"send_message","auto_execute":false,"reason":"John Doe asked a question that warrants a reply"}'
+curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand?wait=true" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service": "apple.imessage",
+    "action": "send_message",
+    "auto_execute": false,
+    "reason": "John Doe asked a question that warrants a reply"
+  }'
 ```
 
 The user will be notified to approve the expansion. With `?wait=true`, the
@@ -190,7 +218,8 @@ When you're done,
 {{- if .UseCurl }} mark the task as completed:
 
 ```bash
-curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/complete" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN"
+curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/complete" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN"
 ```
 {{- else }} use `complete_task` to mark the task as completed. This cleans
 up the authorization scope and any chain context facts.
@@ -203,7 +232,22 @@ up the authorization scope and any chain context facts.
 Every gateway request must include a `task_id` from an approved task.
 {{ if .UseCurl }}
 ```bash
-curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d '{"service":"<service_id>","action":"<action_name>","params":{...},"reason":"One sentence explaining why","request_id":"<unique ID you generate>","task_id":"<task-uuid>","session_id":"<consistent UUID for multi-step flows>","context":{"source":"user_message","data_origin":null}}'
+curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service": "<service_id>",
+    "action": "<action_name>",
+    "params": { ... },
+    "reason": "One sentence explaining why",
+    "request_id": "<unique ID you generate>",
+    "task_id": "<task-uuid>",
+    "session_id": "<consistent UUID for multi-step flows>",
+    "context": {
+      "source": "user_message",
+      "data_origin": null
+    }
+  }'
 ```
 
 ### Required fields
@@ -329,7 +373,7 @@ without re-executing.
 {{ if not .Condensed }}
 ## Important Rules
 
-- **Always use single-line curl commands** — inline all variables, headers, and JSON bodies into one line. Never use `\` line continuations, heredocs, or separate variable assignments. Each multi-line command triggers a separate approval prompt.
+- **Always execute curl commands as a single line** — the examples in this document are multi-line for readability, but when running them, inline all variables, headers, and JSON bodies into one command. Never use `\` line continuations, heredocs, or separate variable assignments — each triggers a separate approval prompt.
 - Always fetch the catalog first to know what's available and restricted
 - Never attempt to bypass restrictions — they are hard blocks set by the user
 - Always create a task before making gateway requests
