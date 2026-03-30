@@ -120,7 +120,9 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Notify owner via SSE and push notification.
-	h.eventHub.Publish(owner.ID, events.Event{Type: "queue"})
+	if h.eventHub != nil {
+		h.eventHub.Publish(owner.ID, events.Event{Type: "queue"})
+	}
 	if h.notifier != nil {
 		if _, err := h.notifier.SendConnectionRequest(r.Context(), notify.ConnectionRequest{
 			ConnectionID: req.ID,
@@ -133,7 +135,7 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	// If wait=true, long-poll until the connection request is resolved.
-	if r.URL.Query().Get("wait") == "true" {
+	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		resolved := h.waitForConnectionResolution(r.Context(), req.ID, owner.ID, time.Duration(timeout)*time.Second)
 		resp := map[string]any{
@@ -242,6 +244,10 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.eventHub == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+		return
+	}
 	ch, unsub := h.eventHub.Subscribe(cr.UserID)
 	defer unsub()
 
@@ -359,7 +365,9 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 
 	go h.cleanExpiredTokens()
 
-	h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	}
 
 	return agent.ID, nil
 }
@@ -408,7 +416,9 @@ func (h *ConnectionsHandler) DenyByID(ctx context.Context, id, userID string) er
 		return fmt.Errorf("update status: %w", err)
 	}
 
-	h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	}
 	return nil
 }
 
