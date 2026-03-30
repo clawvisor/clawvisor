@@ -56,6 +56,7 @@ var actionContext = map[string]ActionMeta{
 	"google.gmail:list_messages": {Category: "read", Sensitivity: "low", Description: "List email messages"},
 	"google.gmail:get_message":   {Category: "read", Sensitivity: "low", Description: "Read a specific email message"},
 	"google.gmail:send_message":  {Category: "write", Sensitivity: "high", Description: "Send email as the user"},
+	"google.gmail:create_draft":  {Category: "write", Sensitivity: "low", Description: "Create an email draft (not sent)"},
 
 	// Google Calendar
 	"google.calendar:list_events":    {Category: "read", Sensitivity: "low", Description: "List calendar events"},
