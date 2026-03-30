@@ -82,6 +82,10 @@ type Store interface {
 	DeletePendingApproval(ctx context.Context, requestID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
 	UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error
+	// ClaimPendingApprovalForExecution atomically transitions a pending approval
+	// from "approved" to "executing". Returns true if the caller won the claim,
+	// false if another caller already claimed it (or the row is not "approved").
+	ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error)
 
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error

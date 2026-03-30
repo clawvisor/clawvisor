@@ -1052,6 +1052,15 @@ func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, stat
 	return err
 }
 
+func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET status = 'executing' WHERE request_id = $1 AND status = 'approved'`, requestID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ── OAuth ────────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateOAuthClient(ctx context.Context, client *store.OAuthClient) error {

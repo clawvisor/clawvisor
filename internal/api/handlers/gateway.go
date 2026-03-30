@@ -520,7 +520,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			h.executeAndRespond(w, r.Context(), pa)
 			return
 		}
-		// Timed out or denied — fall through to pending response.
+		// pa == nil means the row was deleted (denied/expired). Check the audit
+		// entry so we return the real outcome instead of a misleading "pending".
+		if pa == nil {
+			if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), req.RequestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+				writeGatewayStatusResponse(w, entry)
+				return
+			}
+		}
+		// Still pending (timeout elapsed) — fall through to pending response.
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
@@ -667,10 +675,24 @@ func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID,
 	}
 }
 
-// executeAndRespond runs the adapter for an approved pending approval and
-// writes the result as JSON. Shared by HandleRequest (wait=true) and
-// HandleExecuteApproved.
+// executeAndRespond atomically claims an approved pending approval, runs the
+// adapter, and writes the result as JSON. The atomic claim prevents double-
+// execution when multiple code paths race (e.g. wait=true long-poll + /execute).
+// Shared by HandleRequest (wait=true) and HandleExecuteApproved.
 func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Context, pa *store.PendingApproval) {
+	// Atomic claim: only one caller wins. Prevents double-execution of
+	// non-idempotent actions (emails, payments, etc.).
+	claimed, claimErr := h.store.ClaimPendingApprovalForExecution(ctx, pa.RequestID)
+	if claimErr != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not claim approval")
+		return
+	}
+	if !claimed {
+		// Another caller already claimed it — return conflict.
+		writeError(w, http.StatusConflict, "ALREADY_EXECUTING", "this request is already being executed")
+		return
+	}
+
 	var blob pendingRequestBlob
 	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
@@ -748,6 +770,11 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 		timeout := parseLongPollTimeout(r)
 		pa = h.waitForApprovalDecision(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
 		if pa == nil {
+			// Row deleted (denied/expired) — check the audit entry for the real outcome.
+			if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), requestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+				writeGatewayStatusResponse(w, entry)
+				return
+			}
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
 			return
 		}

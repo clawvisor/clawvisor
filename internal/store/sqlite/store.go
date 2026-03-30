@@ -1092,6 +1092,19 @@ func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, stat
 	return err
 }
 
+func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pending_approvals SET status = 'executing' WHERE request_id = ? AND status = 'approved'`, requestID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // ── Notification Messages ──────────────────────────────────────────────────────
 
 func (s *Store) SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error {

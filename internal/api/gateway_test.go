@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // ── Restrictions ──────────────────────────────────────────────────────────────
@@ -997,5 +999,99 @@ func TestAudit_StatusEndpoint_ReflectsApproval(t *testing.T) {
 	body = mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "executed" {
 		t.Errorf("status after execute: expected executed, got %v", body["status"])
+	}
+}
+
+func TestGateway_WaitTrue_DeniedRequest_ReturnsDenied(t *testing.T) {
+	// Bug regression: when a request is denied while an agent is long-polling
+	// with wait=true, the deny deletes the pending_approvals row. The long-poll
+	// must detect this via the audit entry and return "denied", not "pending".
+	adapter := newMockAdapter("mock.deny-wait", "run")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "bot")
+
+	taskID := sc.createApprovedTask(t, env, "mock.deny-wait", "run", false)
+	reqID := fmt.Sprintf("deny-wait-%s", randSuffix())
+
+	// Start a wait=true gateway request in a goroutine.
+	var (
+		wg       sync.WaitGroup
+		pollResp *http.Response
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pollResp = env.do("POST", "/api/gateway/request?wait=true&timeout=10",
+			sc.AgentToken, map[string]any{
+				"service":    "mock.deny-wait",
+				"action":     "run",
+				"reason":     "test deny during wait",
+				"request_id": reqID,
+				"task_id":    taskID,
+			})
+	}()
+
+	// Give the long-poll a moment to subscribe, then deny.
+	time.Sleep(300 * time.Millisecond)
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/deny", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	wg.Wait()
+	body := mustStatus(t, pollResp, http.StatusOK)
+	if body["status"] != "denied" {
+		t.Errorf("wait=true after deny: expected status=denied, got %v", body["status"])
+	}
+}
+
+func TestGateway_Execute_DoubleExecution_Blocked(t *testing.T) {
+	// Bug regression: two concurrent /execute calls on the same approved request
+	// must not both execute the adapter. The atomic claim ensures only one wins.
+	adapter := newMockAdapter("mock.double", "run").
+		withResult("ok", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "bot")
+
+	taskID := sc.createApprovedTask(t, env, "mock.double", "run", false)
+	reqID := fmt.Sprintf("double-exec-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.double", "run", taskID)
+
+	// Approve.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Race two /execute calls.
+	var wg sync.WaitGroup
+	type result struct {
+		status int
+		body   map[string]any
+	}
+	results := make([]result, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			r := env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
+			results[idx] = result{status: r.StatusCode, body: mustStatus(t, r, r.StatusCode)}
+		}(i)
+	}
+	wg.Wait()
+
+	// Exactly one should succeed with "executed". The other should be blocked —
+	// either 409 Conflict (claim race) or 404 Not Found (row already deleted
+	// after the winner finished executing).
+	executed := 0
+	blocked := 0
+	for i := 0; i < 2; i++ {
+		if results[i].status == http.StatusOK && results[i].body["status"] == "executed" {
+			executed++
+		} else if results[i].status == http.StatusConflict || results[i].status == http.StatusNotFound {
+			blocked++
+		}
+	}
+	if executed != 1 {
+		t.Errorf("expected exactly 1 executed, got %d (results: %+v)", executed, results)
+	}
+	if blocked != 1 {
+		t.Errorf("expected exactly 1 blocked (409 or 404), got %d (results: %+v)", blocked, results)
 	}
 }
