@@ -11,17 +11,13 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
-	"github.com/clawvisor/clawvisor/internal/adapters/github"
+	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/calendar"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
-	"github.com/clawvisor/clawvisor/internal/adapters/linear"
-	"github.com/clawvisor/clawvisor/internal/adapters/notion"
-	"github.com/clawvisor/clawvisor/internal/adapters/slack"
-	"github.com/clawvisor/clawvisor/internal/adapters/stripe"
-	"github.com/clawvisor/clawvisor/internal/adapters/twilio"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -95,21 +91,23 @@ func TestEvalIntentVerification(t *testing.T) {
 	}
 
 	// Build adapter hint lookup — mirrors the gateway's VerificationHinter check.
-	// All adapters are included so hints are picked up automatically.
-	// Google adapters get dummy OAuth args (we only call ServiceID/VerificationHints).
-	allAdapters := []adapters.Adapter{
-		slack.New(),
-		github.New(),
-		stripe.New(),
-		twilio.New(),
-		notion.New(),
-		linear.New(),
+	// Load YAML-defined adapters + Go-only adapters.
+	loader := yamlloader.New(definitions.FS, "", nil, nil)
+	if err := loader.LoadAll(); err != nil {
+		t.Fatalf("loading YAML adapter definitions: %v", err)
+	}
+	var allAdapters []adapters.Adapter
+	for _, ya := range loader.Adapters() {
+		allAdapters = append(allAdapters, ya)
+	}
+	// Go-only adapters.
+	allAdapters = append(allAdapters,
 		imessage.New(),
 		gmail.New(adapters.NoopOAuthProvider{}),
 		calendar.New(adapters.NoopOAuthProvider{}),
 		drive.New(adapters.NoopOAuthProvider{}),
 		contacts.New(adapters.NoopOAuthProvider{}),
-	}
+	)
 	adaptersByService := make(map[string]bool)
 	hintsByService := make(map[string]string)
 	for _, ada := range allAdapters {
