@@ -34,6 +34,21 @@ jobs:
       - name: Build binaries and checksums
         run: scripts/build-release.sh "${{ inputs.version }}"
 
+      - name: Create release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "${{ inputs.version }}" > /dev/null 2>&1; then
+            prerelease_flag=""
+            case "${{ inputs.version }}" in
+              *-*) prerelease_flag="--prerelease" ;;
+            esac
+            gh release create "${{ inputs.version }}" \
+              --title "${{ inputs.version }}" \
+              --generate-notes \
+              $prerelease_flag
+          fi
+
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
