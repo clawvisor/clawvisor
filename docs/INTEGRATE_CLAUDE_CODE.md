@@ -14,9 +14,8 @@ When setup is complete, the user should have:
 
 1. Clawvisor running (locally or in the cloud)
 2. An agent token created for Claude Code
-3. The Clawvisor skill installed at `.claude/skills/clawvisor/SKILL.md` in
-   their project
-4. Environment variables (`CLAWVISOR_URL`, `CLAWVISOR_AGENT_TOKEN`) configured
+3. The Clawvisor skill installed globally at `~/.claude/skills/clawvisor/SKILL.md`
+4. Environment variables (`CLAWVISOR_URL`, `CLAWVISOR_AGENT_TOKEN`) in `~/.claude/settings.json`
 5. Claude Code able to make gateway requests via the skill
 
 ---
@@ -66,74 +65,29 @@ Save the `token` value from the JSON output — it is shown only once.
 
 ---
 
-## Step 3: Locate the Clawvisor skill source
+## Step 3: Install the skill globally
 
-The skill file is at `skills/clawvisor/SKILL.md` in the Clawvisor repository.
-It needs to be copied to the user's project with the OpenClaw-specific YAML
-frontmatter stripped.
-
-First, check if the Clawvisor repository is accessible locally:
+The skill is installed globally to `~/.claude/skills/clawvisor/SKILL.md` during
+`clawvisor setup` (or `clawvisor integrate`). Verify it's present:
 
 ```bash
-ls "$CLAWVISOR_REPO/skills/clawvisor/SKILL.md" 2>/dev/null
+ls ~/.claude/skills/clawvisor/SKILL.md
 ```
 
-If not, search common locations:
+If missing, re-run `clawvisor integrate` or copy it manually from the
+Clawvisor repository:
 
 ```bash
-ls -d ~/code/clawvisor/skills/clawvisor/SKILL.md 2>/dev/null \
-  || ls -d ~/clawvisor/skills/clawvisor/SKILL.md 2>/dev/null \
-  || ls -d ~/projects/clawvisor/skills/clawvisor/SKILL.md 2>/dev/null
+mkdir -p ~/.claude/skills/clawvisor
+cp "$CLAWVISOR_REPO/skills/clawvisor/SKILL.md" ~/.claude/skills/clawvisor/SKILL.md
 ```
 
-Also check for alternate naming (`clawvisor-public`, `clawvisor-oss`).
-
-If found locally, use that path. If not, you'll fetch it from GitHub in the
-next step.
+The YAML frontmatter must be preserved — Claude Code uses it to recognize the
+skill name, description, and required environment variables.
 
 ---
 
-## Step 4: Install the skill
-
-Determine the user's project root — this is where `.claude/` lives (or will
-be created). If ambiguous, ask the user.
-
-```bash
-mkdir -p "$PROJECT_ROOT/.claude/skills/clawvisor"
-```
-
-**If the Clawvisor repo is available locally:**
-
-Strip the YAML frontmatter (the `---` delimited block at the top, which
-contains OpenClaw-specific metadata) and copy:
-
-```bash
-awk 'BEGIN{s=0} /^---$/{s++;next} s>=2' "$CLAWVISOR_REPO/skills/clawvisor/SKILL.md" \
-  > "$PROJECT_ROOT/.claude/skills/clawvisor/SKILL.md"
-```
-
-**If the repo is not available locally:**
-
-Fetch from GitHub and strip frontmatter:
-
-```bash
-curl -sL https://raw.githubusercontent.com/clawvisor/clawvisor/main/skills/clawvisor/SKILL.md \
-  | awk 'BEGIN{s=0} /^---$/{s++;next} s>=2' \
-  > "$PROJECT_ROOT/.claude/skills/clawvisor/SKILL.md"
-```
-
-Verify the skill was installed:
-
-```bash
-head -5 "$PROJECT_ROOT/.claude/skills/clawvisor/SKILL.md"
-```
-
-The first line should be `# Clawvisor Skill` (not `---`). If it starts with
-`---`, the frontmatter was not stripped — re-run the sed command.
-
----
-
-## Step 5: Set environment variables
+## Step 4: Set environment variables
 
 Claude Code needs two environment variables:
 
@@ -142,40 +96,21 @@ Claude Code needs two environment variables:
 | `CLAWVISOR_URL` | The Clawvisor instance URL (e.g. `http://localhost:25297`) |
 | `CLAWVISOR_AGENT_TOKEN` | The agent bearer token from Step 2 |
 
-Ask the user how they'd like to configure them:
+### Option A: `~/.claude/settings.json` (recommended)
 
-### Option A: Project-level `.claude/.env` (recommended)
+Add both variables to the `env` object in `~/.claude/settings.json`. This
+persists across all sessions and all projects automatically:
 
-Write the variables to `.claude/.env` in the project root. This keeps them
-scoped to the project and out of the user's global shell.
-
-First, strip any previous Clawvisor-related lines to make this idempotent:
-
-```bash
-grep -v '^CLAWVISOR_' "$PROJECT_ROOT/.claude/.env" > /tmp/claude-env.tmp 2>/dev/null || true
-mv /tmp/claude-env.tmp "$PROJECT_ROOT/.claude/.env" 2>/dev/null || true
+```json
+{
+  "env": {
+    "CLAWVISOR_URL": "http://localhost:25297",
+    "CLAWVISOR_AGENT_TOKEN": "<token from Step 2>"
+  }
+}
 ```
 
-Then append:
-
-```bash
-cat >> "$PROJECT_ROOT/.claude/.env" <<EOF
-CLAWVISOR_URL=$CLAWVISOR_URL
-CLAWVISOR_AGENT_TOKEN=<token from Step 2>
-EOF
-```
-
-Check if `.claude/.env` is in `.gitignore`. If not, warn the user:
-
-```bash
-grep -q '\.claude/\.env' "$PROJECT_ROOT/.gitignore" 2>/dev/null || echo "WARNING: .claude/.env is not in .gitignore — the agent token may be committed"
-```
-
-If not ignored, offer to add it:
-
-```bash
-echo '.claude/.env' >> "$PROJECT_ROOT/.gitignore"
-```
+Merge with any existing keys in the file — do not overwrite other settings.
 
 ### Option B: Shell profile (all projects)
 
@@ -188,7 +123,7 @@ export CLAWVISOR_AGENT_TOKEN=<token from Step 2>
 
 ---
 
-## Step 6: Verify
+## Step 5: Verify
 
 Confirm Claude Code can reach Clawvisor by testing the agent token:
 
@@ -203,7 +138,7 @@ server isn't running.
 
 ---
 
-## Step 7: Summary
+## Step 6: Summary
 
 Present the user with:
 
@@ -212,8 +147,8 @@ Clawvisor + Claude Code Setup Complete
 ────────────────────────────────────────
 Clawvisor:  <CLAWVISOR_URL>
 Agent:      claude-code
-Skill:      <PROJECT_ROOT>/.claude/skills/clawvisor/SKILL.md
-Env:        <where vars were written>
+Skill:      ~/.claude/skills/clawvisor/SKILL.md
+Env:        ~/.claude/settings.json
 ```
 
 Explain how it works:
