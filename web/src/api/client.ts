@@ -2,6 +2,8 @@
 // Access token is stored in memory (React state); refresh token in localStorage.
 // On 401, the caller should trigger a token refresh.
 
+import { populateFromServices } from '../lib/services'
+
 let accessToken: string | null = null
 
 export function setAccessToken(token: string | null) {
@@ -509,7 +511,6 @@ export const api = {
     list: async () => {
       const result = await get<{ services: ServiceInfo[] }>('/api/services')
       // Populate the display metadata cache from the API response.
-      const { populateFromServices } = await import('../lib/services')
       populateFromServices(result.services)
       return result
     },
