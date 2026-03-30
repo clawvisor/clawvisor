@@ -37,6 +37,7 @@ type pendingRequestBlob struct {
 	AgentID     string         `json:"agent_id"`
 	AgentName   string         `json:"agent_name"`
 	RequestID   string         `json:"request_id"`
+	TaskID      string         `json:"task_id"`
 	Reason      string         `json:"reason"`
 	CallbackURL  string                    `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
@@ -669,7 +670,7 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 
 	_ = h.store.UpdateAuditOutcome(r.Context(), pa.AuditID, outcome, errMsg, dur)
 	_ = h.store.DeletePendingApproval(r.Context(), pa.RequestID)
-	h.publishAuditAndQueue(pa.UserID, pa.AuditID)
+	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
 
 	resp := map[string]any{
 		"status":     outcome,
@@ -985,6 +986,7 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		AgentID:     agent.ID,
 		AgentName:   agent.Name,
 		RequestID:   req.RequestID,
+		TaskID:      req.TaskID,
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}
