@@ -116,7 +116,7 @@ When a request is pending approval, it can be resolved three ways:
 2. **Human denies**: The pending approval is deleted and the audit entry updated. If a callback URL is registered, the agent receives `status: "denied"`.
 3. **Timeout** (default 5 minutes): A background goroutine runs every 60 seconds, finds expired pending approvals, marks them as timed out, and delivers `status: "timeout"` callbacks.
 
-The agent can long-poll `GET /api/gateway/request/{request_id}/status?wait=true` to block until the request leaves the `"pending"` state, similar to task approval polling.
+The agent can long-poll `GET /api/gateway/request/{request_id}?wait=true` to check status, or use `POST /api/gateway/request?wait=true` to block until the result is ready in a single round-trip. Agents that prefer explicit control can call `POST /api/gateway/request/{request_id}/execute` after approval.
 
 The Telegram message is updated in-place to reflect the outcome (green checkmark for approved, red X for denied, clock for timeout).
 

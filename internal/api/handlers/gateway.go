@@ -512,6 +512,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict); routeErr != nil {
 		h.logger.Warn("route to approval failed", "err", routeErr)
 	}
+	// If wait=true, long-poll for approval then execute inline.
+	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, time.Duration(timeout)*time.Second)
+		if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
+			h.executeAndRespond(w, r.Context(), pa)
+			return
+		}
+		// Timed out or denied — fall through to pending response.
+	}
+
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":     "pending",
 		"request_id": req.RequestID,
@@ -520,16 +531,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleStatus returns the current status of a gateway request by request_id.
+// HandleGet returns the current status of a gateway request by request_id.
+// This is read-only — it never executes the adapter.
 //
-// GET /api/gateway/request/{request_id}/status
+// GET /api/gateway/request/{request_id}
 // Query params:
 //
 //	wait=true    – long-poll until the request leaves the "pending" state (or timeout)
 //	timeout=N    – wait timeout in seconds (default 120, max 120)
 //
 // Auth: agent bearer token
-func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
+func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
@@ -549,15 +561,7 @@ func (h *GatewayHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	// Long-poll: if wait=true and request is still pending, block until it
 	// transitions or the timeout elapses.
 	if r.URL.Query().Get("wait") == "true" && entry.Outcome == "pending" && h.eventHub != nil {
-		timeout := 120
-		if v := r.URL.Query().Get("timeout"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				timeout = n
-			}
-		}
-		if timeout > 120 {
-			timeout = 120
-		}
+		timeout := parseLongPollTimeout(r)
 		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
 	}
 
@@ -610,9 +614,109 @@ func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID
 	}
 }
 
+// parseLongPollTimeout extracts the timeout query param, clamped to [1, 120].
+func parseLongPollTimeout(r *http.Request) int {
+	timeout := 120
+	if v := r.URL.Query().Get("timeout"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = n
+		}
+	}
+	if timeout > 120 {
+		timeout = 120
+	}
+	return timeout
+}
+
+// waitForApprovalDecision subscribes to the event hub and re-fetches the
+// pending approval each time an "audit" or "queue" event fires. Returns as
+// soon as the approval leaves the "pending" state or the timeout expires.
+func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID, userID string, timeout time.Duration) *store.PendingApproval {
+	ch, unsub := h.eventHub.Subscribe(userID)
+	defer unsub()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	fetch := func(c context.Context) *store.PendingApproval {
+		pa, err := h.store.GetPendingApproval(c, requestID)
+		if err != nil {
+			return nil
+		}
+		return pa
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fetch(context.Background())
+		case <-timer.C:
+			return fetch(context.Background())
+		case evt, ok := <-ch:
+			if !ok {
+				return fetch(context.Background())
+			}
+			if evt.Type != "audit" && evt.Type != "queue" {
+				continue
+			}
+			pa := fetch(ctx)
+			if pa == nil || pa.Status != "pending" {
+				return pa
+			}
+		}
+	}
+}
+
+// executeAndRespond runs the adapter for an approved pending approval and
+// writes the result as JSON. Shared by HandleRequest (wait=true) and
+// HandleExecuteApproved.
+func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Context, pa *store.PendingApproval) {
+	var blob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
+		return
+	}
+
+	serviceType, alias := parseServiceAlias(blob.Service)
+	vKey := vaultKeyForServiceAlias(serviceType, alias)
+
+	start := time.Now()
+	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
+	dur := int(time.Since(start).Milliseconds())
+
+	outcome := "executed"
+	errMsg := ""
+	if execErr != nil {
+		outcome = "error"
+		errMsg = execErr.Error()
+	}
+
+	_ = h.store.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur)
+	_ = h.store.DeletePendingApproval(ctx, pa.RequestID)
+	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
+
+	resp := map[string]any{
+		"status":     outcome,
+		"request_id": pa.RequestID,
+		"audit_id":   pa.AuditID,
+	}
+	if execErr != nil {
+		resp["error"] = errMsg
+	} else {
+		resp["result"] = result
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // HandleExecuteApproved executes an approved pending request and returns the
 // result synchronously. The agent sends only the request_id; the original
 // params are loaded from the stored request blob and cannot be mutated.
+//
+// Query params:
+//
+//	wait=true    – long-poll until the request is approved, then execute (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
 //
 // POST /api/gateway/request/{request_id}/execute
 // Auth: agent bearer token
@@ -638,8 +742,27 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
 		return
 	}
+
+	// If still pending and wait=true, long-poll until approval decision.
+	if pa.Status == "pending" && r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		pa = h.waitForApprovalDecision(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+		if pa == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+			return
+		}
+	}
+
+	if pa.Status == "pending" {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":     "pending",
+			"request_id": requestID,
+			"audit_id":   pa.AuditID,
+		})
+		return
+	}
 	if pa.Status != "approved" {
-		writeError(w, http.StatusConflict, "NOT_APPROVED", "request has not been approved yet")
+		writeError(w, http.StatusConflict, "NOT_APPROVED", "request was not approved")
 		return
 	}
 	if time.Now().After(pa.ExpiresAt) {
@@ -647,42 +770,7 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var blob pendingRequestBlob
-	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
-		return
-	}
-
-	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := vaultKeyForServiceAlias(serviceType, alias)
-
-	start := time.Now()
-	result, execErr := executeAdapterRequest(r.Context(), h.vault, h.adapterReg,
-		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
-	dur := int(time.Since(start).Milliseconds())
-
-	outcome := "executed"
-	errMsg := ""
-	if execErr != nil {
-		outcome = "error"
-		errMsg = execErr.Error()
-	}
-
-	_ = h.store.UpdateAuditOutcome(r.Context(), pa.AuditID, outcome, errMsg, dur)
-	_ = h.store.DeletePendingApproval(r.Context(), pa.RequestID)
-	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
-
-	resp := map[string]any{
-		"status":     outcome,
-		"request_id": requestID,
-		"audit_id":   pa.AuditID,
-	}
-	if execErr != nil {
-		resp["error"] = errMsg
-	} else {
-		resp["result"] = result
-	}
-	writeJSON(w, http.StatusOK, resp)
+	h.executeAndRespond(w, r.Context(), pa)
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.

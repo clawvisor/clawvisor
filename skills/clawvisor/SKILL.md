@@ -239,7 +239,7 @@ Every response has a `status` field. Handle each case as follows:
 | Status | Meaning | What to do |
 |---|---|---|
 | `executed` | Action completed successfully | Use `result.summary` and `result.data`. Report to the user. |
-| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." Long-poll `GET /api/gateway/request/{request_id}/status?wait=true` until status is `approved`, then call `POST /api/gateway/request/{request_id}/execute` to get the result. Do **not** send a new request. |
+| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." If you used `?wait=true` on the original POST, the request is already blocking and will return the result once approved. Otherwise, call `POST /api/gateway/request/{request_id}/execute?wait=true` to block until approved and get the result. Do **not** send a new request. |
 | `blocked` | A restriction blocks this action | Tell the user: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround. |
 | `restricted` | Intent verification rejected the request | Your params or reason were inconsistent with the task's approved purpose. Adjust and retry with a new `request_id`. |
 | `pending_task_approval` | Task not yet approved | Tell the user and long-poll `GET /api/tasks/{id}?wait=true` until approved. |
@@ -267,20 +267,26 @@ the current (still-pending) task — just call again to keep waiting.
 **Tasks (legacy polling):** Poll `GET /api/tasks/{id}` until `status` changes
 from `pending_approval` to `active` (or `denied`).
 
-**Gateway requests (preferred — long-poll + execute):**
-
-1. Long-poll for approval: `GET /api/gateway/request/{request_id}/status?wait=true&timeout=120`. Blocks server-side until the request leaves `pending` state. Returns a JSON object with the current `status`.
-2. Once status is `approved`, execute the request: `POST /api/gateway/request/{request_id}/execute`. This uses the original params stored when the request was created — you only need to send the `request_id`. Returns the adapter result synchronously, just like an auto-executed request.
+**Gateway requests (preferred — single round-trip):** Add `?wait=true` to the
+original `POST /api/gateway/request`. If approval is needed, the request blocks
+server-side until the user approves (or the timeout elapses), then executes and
+returns the result — all in one round-trip.
 
 ```
-GET /api/gateway/request/{request_id}/status?wait=true&timeout=120
-# → {"status": "approved", "request_id": "...", "audit_id": "..."}
-
-POST /api/gateway/request/{request_id}/execute
-# → {"status": "executed", "request_id": "...", "result": {...}}
+POST /api/gateway/request?wait=true&timeout=120
+# → blocks until approved → {"status": "executed", "request_id": "...", "result": {...}}
 ```
 
-If the long-poll times out while still pending, the response has `"status": "pending"` — just call again to keep waiting.
+If the timeout elapses while still pending, the response has `"status": "pending"` — just call again to keep waiting.
+
+**Gateway requests (two-step):** If you didn't use `?wait=true` on the original
+POST, call `POST /api/gateway/request/{request_id}/execute?wait=true` to block
+until approved and get the result. Or omit `?wait=true` to get an immediate
+`"pending"` / `"approved"` status without blocking.
+
+**Read-only status check:** `GET /api/gateway/request/{request_id}` returns the
+current status without executing. Supports `?wait=true` to block until the
+request leaves `pending` state.
 
 **Gateway requests (legacy dedup):** Re-send the same gateway request with the
 same `request_id`. Clawvisor recognizes the duplicate and returns the current

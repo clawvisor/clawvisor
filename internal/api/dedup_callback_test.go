@@ -146,20 +146,20 @@ func TestGateway_Dedup_DifferentRequestIDs_NotDeduplicated(t *testing.T) {
 	}
 }
 
-// ── GET /api/gateway/request/{request_id}/status ─────────────────────────────
+// ── GET /api/gateway/request/{request_id} ────────────────────────────────────
 
 func TestGateway_Status_NotFound(t *testing.T) {
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "status-notfound")
 
-	resp := env.do("GET", "/api/gateway/request/nonexistent-id/status", sc.AgentToken, nil)
+	resp := env.do("GET", "/api/gateway/request/nonexistent-id", sc.AgentToken, nil)
 	mustStatus(t, resp, http.StatusNotFound)
 }
 
 func TestGateway_Status_RequiresAgentToken(t *testing.T) {
 	env := newTestEnv(t)
 
-	resp := env.do("GET", "/api/gateway/request/some-id/status", "", nil)
+	resp := env.do("GET", "/api/gateway/request/some-id", "", nil)
 	mustStatus(t, resp, http.StatusUnauthorized)
 }
 
@@ -171,7 +171,7 @@ func TestGateway_Status_Blocked(t *testing.T) {
 	reqID := fmt.Sprintf("status-blk-%s", randSuffix())
 	sc.gatewayRequest(env, reqID, "mock.svc", "run")
 
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body := mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "blocked" {
 		t.Errorf("status: expected blocked, got %v", body["status"])
@@ -193,7 +193,7 @@ func TestGateway_Status_Pending(t *testing.T) {
 	reqID := fmt.Sprintf("status-pend-%s", randSuffix())
 	sc.gatewayRequestWithTask(env, reqID, "mock.svc", "run", taskID)
 
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body := mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "pending" {
 		t.Errorf("status: expected pending, got %v", body["status"])
@@ -213,7 +213,7 @@ func TestGateway_Status_Executed(t *testing.T) {
 	reqID := fmt.Sprintf("status-exec-%s", randSuffix())
 	sc.gatewayRequestWithTask(env, reqID, "mock.status-exec", "run", taskID)
 
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body := mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "executed" {
 		t.Errorf("status: expected executed, got %v", body["status"])
@@ -232,7 +232,7 @@ func TestGateway_Status_UpdatesAfterDeny(t *testing.T) {
 
 	sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/deny", reqID), nil)
 
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body := mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "denied" {
 		t.Errorf("status after deny: expected denied, got %v", body["status"])
@@ -249,7 +249,7 @@ func TestGateway_Status_IsolatedByUser(t *testing.T) {
 	sc1.gatewayRequest(env, reqID, "mock.svc", "run")
 
 	sc2 := newScenario(t, env, "status-iso2")
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc2.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc2.AgentToken, nil)
 	mustStatus(t, resp, http.StatusNotFound)
 }
 

@@ -445,8 +445,8 @@ func (s *Server) routes() http.Handler {
 	// Gateway (agent token, rate-limited, E2E on relay traffic)
 	mux.Handle("POST /api/gateway/request", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleRequest)))))
-	mux.Handle("GET /api/gateway/request/{request_id}/status", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
-		e2e(http.HandlerFunc(gatewayHandler.HandleStatus)))))
+	mux.Handle("GET /api/gateway/request/{request_id}", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleGet)))))
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 

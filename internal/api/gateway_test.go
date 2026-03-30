@@ -936,9 +936,12 @@ func TestAudit_Execute_NotApproved_NoAuditCorruption(t *testing.T) {
 	reqID := fmt.Sprintf("audit-noexec-%s", randSuffix())
 	sc.gatewayRequestWithTask(env, reqID, "mock.audit-noexec", "run", taskID)
 
-	// Try to execute without approving first.
+	// Try to execute without approving first — returns pending, not executed.
 	resp := env.do("POST", fmt.Sprintf("/api/gateway/request/%s/execute", reqID), sc.AgentToken, nil)
-	mustStatus(t, resp, http.StatusConflict)
+	execBody := mustStatus(t, resp, http.StatusAccepted)
+	if execBody["status"] != "pending" {
+		t.Errorf("execute before approve: expected status=pending, got %v", execBody["status"])
+	}
 
 	// Audit entry should still be "pending" and intact.
 	resp = sc.session.do("GET", fmt.Sprintf("/api/audit?task_id=%s", taskID), nil)
@@ -968,7 +971,7 @@ func TestAudit_StatusEndpoint_ReflectsApproval(t *testing.T) {
 	sc.gatewayRequestWithTask(env, reqID, "mock.audit-status", "run", taskID)
 
 	// Status before approval: pending.
-	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp := env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body := mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "pending" {
 		t.Errorf("status before approve: expected pending, got %v", body["status"])
@@ -979,7 +982,7 @@ func TestAudit_StatusEndpoint_ReflectsApproval(t *testing.T) {
 	mustStatus(t, resp, http.StatusOK)
 
 	// Status after approval: approved.
-	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body = mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "approved" {
 		t.Errorf("status after approve: expected approved, got %v", body["status"])
@@ -990,7 +993,7 @@ func TestAudit_StatusEndpoint_ReflectsApproval(t *testing.T) {
 	mustStatus(t, resp, http.StatusOK)
 
 	// Status after execute: executed.
-	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s/status", reqID), sc.AgentToken, nil)
+	resp = env.do("GET", fmt.Sprintf("/api/gateway/request/%s", reqID), sc.AgentToken, nil)
 	body = mustStatus(t, resp, http.StatusOK)
 	if body["status"] != "executed" {
 		t.Errorf("status after execute: expected executed, got %v", body["status"])
