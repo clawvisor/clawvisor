@@ -131,25 +131,29 @@ rm ~/.claude/commands/clawvisor-setup.md
 If they decline, remind them they can delete it later with the same command.
 `
 
-// installClaudeCodeCommand writes the /clawvisor-setup slash command to
-// ~/.claude/commands/clawvisor-setup.md and the Clawvisor skill globally to
-// ~/.claude/skills/clawvisor/SKILL.md.
-func installClaudeCodeCommand(dataDir string) error {
+// installClaudeCodeSkill writes the Clawvisor skill globally to
+// ~/.claude/skills/clawvisor/SKILL.md so it's available in all projects.
+func installClaudeCodeSkill() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
 	}
 
-	// Install the skill globally so it's available in all projects.
 	skillDir := filepath.Join(home, ".claude", "skills", "clawvisor")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		return fmt.Errorf("creating skill directory: %w", err)
 	}
-	if err := writeSkillWithCurlGuidance(filepath.Join(skillDir, "SKILL.md")); err != nil {
-		return fmt.Errorf("writing skill file: %w", err)
+	return writeSkillWithCurlGuidance(filepath.Join(skillDir, "SKILL.md"))
+}
+
+// installClaudeCodeSetupCommand writes the /clawvisor-setup slash command to
+// ~/.claude/commands/clawvisor-setup.md.
+func installClaudeCodeSetupCommand() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
 	}
 
-	// Write the setup slash command.
 	commandsDir := filepath.Join(home, ".claude", "commands")
 	if err := os.MkdirAll(commandsDir, 0755); err != nil {
 		return fmt.Errorf("creating commands directory: %w", err)
@@ -443,39 +447,61 @@ func printClaudeDesktopManualInstructions() {
 	fmt.Println()
 }
 
-// offerClaudeCodeSetup prompts the user to install the /clawvisor-setup
-// slash command for Claude Code.
-func offerClaudeCodeSetup(dataDir string) error {
+// offerClaudeCodeSetup walks the user through Claude Code integration:
+// 1. Install the Clawvisor skill globally
+// 2. Install the /clawvisor-setup slash command
+// 3. Add auto-approve rules for curl requests
+func offerClaudeCodeSetup(_ string) error {
 	fmt.Println()
 	fmt.Println(bold.Padding(0, 2).Render("Claude Code"))
 
-	install := true
+	// 1. Offer to install the skill globally.
+	installSkill := true
 	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Install the /clawvisor-setup command for Claude Code?").
-				Description("Adds a slash command so you can run /clawvisor-setup\nin any project to connect Claude Code to this daemon.").
+				Title("Install the Clawvisor skill for Claude Code?").
+				Description("Writes the skill to ~/.claude/skills/clawvisor/SKILL.md\nso Claude Code can use Clawvisor in any project.").
 				Affirmative("Yes").
 				Negative("No").
-				Value(&install),
+				Value(&installSkill),
 		),
 	).Run(); err != nil {
 		return err
 	}
-	if !install {
+	if !installSkill {
 		return nil
 	}
 
-	if err := installClaudeCodeCommand(dataDir); err != nil {
+	if err := installClaudeCodeSkill(); err != nil {
 		return err
 	}
-
 	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed Clawvisor skill to ~/.claude/skills/clawvisor/SKILL.md"))
-	fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
-	fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect a project."))
+
+	// 2. Offer to install the /clawvisor-setup slash command.
+	installSetup := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Install the /clawvisor-setup command?").
+				Description("Adds a slash command so you can run /clawvisor-setup\nin Claude Code to create an agent token and connect.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&installSetup),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if installSetup {
+		if err := installClaudeCodeSetupCommand(); err != nil {
+			return err
+		}
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Installed /clawvisor-setup command"))
+		fmt.Println(dim.Padding(0, 2).Render("    Run /clawvisor-setup in Claude Code to connect."))
+	}
 	fmt.Println()
 
-	// Offer to auto-approve Clawvisor curl requests globally.
+	// 3. Offer to auto-approve Clawvisor curl requests globally.
 	if err := offerClaudeCodeCurlPermission(); err != nil {
 		return err
 	}
