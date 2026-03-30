@@ -10,8 +10,9 @@ import (
 	"archive/zip"
 	"io/fs"
 	"log/slog"
-	"strings"
+	"net"
 	"net/http"
+	"strings"
 	"os"
 	"time"
 
@@ -297,7 +298,11 @@ func (s *Server) routes() http.Handler {
 	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
 
 	ipKeyFn := func(r *http.Request) string {
-		return r.RemoteAddr
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return r.RemoteAddr
+		}
+		return host
 	}
 	agentKeyFn := func(r *http.Request) string {
 		if a := middleware.AgentFromContext(r.Context()); a != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -209,7 +210,10 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Per-IP concurrent poll limit (max 3).
-	ip := r.RemoteAddr
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
 	h.ipPollsMu.Lock()
 	if h.ipPolls[ip] >= 3 {
 		h.ipPollsMu.Unlock()

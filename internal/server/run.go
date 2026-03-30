@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/browser"
+	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/telemetry"
 	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -116,6 +117,13 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// ── Callback security ──────────────────────────────────────────────────
+	callback.Init(
+		opts.Config.Callback.AllowPrivateCIDRs,
+		!opts.Config.Server.IsLocal(), // require HTTPS in non-local mode
+		!opts.Config.Server.IsLocal(), // block loopback in non-local mode
+	)
 
 	// ── Banner ─────────────────────────────────────────────────────────────
 	if opts.Config.Server.IsLocal() {
