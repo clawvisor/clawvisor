@@ -551,12 +551,13 @@ func (s *Server) routes() http.Handler {
 		// No auth middleware here: the MCP handler already authenticates the agent
 		// and injects it into the context before tool execution.
 		mcpHandlers := map[string]http.Handler{
-			"GET /api/skill/catalog":        http.HandlerFunc(skillHandler.Catalog),
-			"POST /api/tasks":               http.HandlerFunc(tasksHandler.Create),
-			"GET /api/tasks/{id}":           http.HandlerFunc(tasksHandler.Get),
-			"POST /api/tasks/{id}/complete": http.HandlerFunc(tasksHandler.Complete),
-			"POST /api/tasks/{id}/expand":   http.HandlerFunc(tasksHandler.Expand),
-			"POST /api/gateway/request":     http.HandlerFunc(gatewayHandler.HandleRequest),
+			"GET /api/skill/catalog":                           http.HandlerFunc(skillHandler.Catalog),
+			"POST /api/tasks":                                  http.HandlerFunc(tasksHandler.Create),
+			"GET /api/tasks/{id}":                              http.HandlerFunc(tasksHandler.Get),
+			"POST /api/tasks/{id}/complete":                    http.HandlerFunc(tasksHandler.Complete),
+			"POST /api/tasks/{id}/expand":                      http.HandlerFunc(tasksHandler.Expand),
+			"POST /api/gateway/request":                        http.HandlerFunc(gatewayHandler.HandleRequest),
+			"POST /api/gateway/request/{request_id}/execute":   http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
 		}
 
 		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)
