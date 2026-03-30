@@ -168,7 +168,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			ID:                 a.ServiceID(),
 			Name:               name,
 			Description:        desc,
-			OAuth:              a.OAuthConfig() != nil,
+			OAuth:              len(a.RequiredScopes()) > 0,
 			RequiresActivation: true,
 			Actions:            actions,
 			SetupURL:           setupURL,

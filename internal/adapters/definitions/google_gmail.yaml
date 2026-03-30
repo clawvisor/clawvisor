@@ -2,6 +2,7 @@ service:
   id: google.gmail
   display_name: Gmail
   description: "Read, search, send, and draft email"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
 
 auth:
   type: oauth2

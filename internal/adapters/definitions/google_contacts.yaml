@@ -2,6 +2,7 @@ service:
   id: google.contacts
   display_name: Google Contacts
   description: "Search and view contacts"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
 
 auth:
   type: oauth2

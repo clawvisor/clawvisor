@@ -2,6 +2,7 @@ service:
   id: google.drive
   display_name: Google Drive
   description: "List, search, and manage files"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
 
 auth:
   type: oauth2

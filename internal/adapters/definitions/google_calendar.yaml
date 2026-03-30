@@ -2,6 +2,7 @@ service:
   id: google.calendar
   display_name: Google Calendar
   description: "View and manage calendar events"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
 
 auth:
   type: oauth2

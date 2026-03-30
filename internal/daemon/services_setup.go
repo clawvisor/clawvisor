@@ -219,6 +219,11 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 			if err := collectAndStoreGoogleCreds(apiClient, svc.Name); err != nil {
 				return err
 			}
+			// Re-check — user may have left fields blank.
+			configured, _ = apiClient.GoogleOAuthConfigured()
+			if !configured {
+				return nil // user skipped, back to menu
+			}
 		}
 	}
 

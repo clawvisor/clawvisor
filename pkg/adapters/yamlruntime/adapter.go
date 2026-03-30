@@ -171,11 +171,9 @@ func (a *YAMLAdapter) RequiredScopes() []string {
 	if a.def.Auth.Type != "oauth2" || a.def.Auth.OAuth == nil {
 		return nil
 	}
-	config := a.OAuthConfig()
-	if config == nil {
-		return nil
-	}
-	return config.Scopes
+	// Return scopes from the definition directly — these are known regardless
+	// of whether OAuth app credentials are configured in the vault yet.
+	return a.def.Auth.OAuth.Scopes
 }
 
 // ── MetadataProvider implementation ─────────────────────────────────────────
