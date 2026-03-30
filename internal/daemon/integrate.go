@@ -23,6 +23,7 @@ func Integrate() error {
 	if len(agents) == 0 {
 		fmt.Println(dim.Padding(0, 2).Render("No known agents detected on this machine."))
 		fmt.Println()
+		printAgentSetupPrompt(dataDir)
 		return nil
 	}
 
