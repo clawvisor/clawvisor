@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "clawvisor-local": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:25297/mcp"]
+    }
+  }
+}

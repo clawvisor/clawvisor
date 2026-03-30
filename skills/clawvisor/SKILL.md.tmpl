@@ -1,3 +1,4 @@
+{{- if eq .Target "claude-code" -}}
 ---
 name: clawvisor
 description: >
@@ -18,7 +19,18 @@ metadata:
       },
   }
 ---
-
+{{- else if eq .Target "cowork" -}}
+---
+name: clawvisor
+description: >
+  Route tool requests through Clawvisor for credential vaulting, task-scoped
+  authorization, and human approval flows. Use for Gmail, Calendar, Drive,
+  Contacts, GitHub, Slack, Notion, Linear, Stripe, Twilio, and iMessage.
+  Clawvisor enforces restrictions, manages task scopes, and injects
+  credentials — you never handle secrets directly.
+---
+{{- end }}
+{{ if eq .Target "claude-code" -}}
 # Clawvisor Skill
 
 ## Setup
@@ -42,6 +54,12 @@ If you were given a setup URL (e.g. `https://relay.clawvisor.com/d/<id>/skill/se
 
 ## Overview
 
+{{ else -}}
+# Clawvisor
+
+{{ end -}}
+{{ if eq .Target "mcp" -}}
+You are connected to Clawvisor via MCP. {{ end -}}
 Clawvisor is a gatekeeper between you and external services. Every action goes
 through Clawvisor, which checks restrictions, validates task scopes, injects
 credentials, optionally routes to the user for approval, and returns a clean
@@ -54,16 +72,23 @@ The authorization model has two layers — applied in order:
 ---
 
 ## Typical Flow
-
+{{ if .UseCurl }}
 1. Fetch the catalog — confirm the service is active and the action isn't restricted
 2. Create a task with `POST /api/tasks?wait=true` — this blocks until the user approves
 3. Make gateway requests with `POST /api/gateway/request?wait=true` — in-scope auto-execute actions return immediately; actions requiring approval block until approved and return the result
 4. Mark the task complete when done
+{{ else }}
+1. **Fetch the catalog** — use `fetch_catalog` to see available services, actions, and restrictions
+2. **Create a task** — use `create_task` to declare your purpose and the actions you need
+3. **Wait for approval** — use `get_task` with `wait: true` to long-poll until the user approves (or denies) the task
+4. **Make gateway requests** — use `gateway_request` for each action, under the approved task scope
+5. **Complete the task** — use `complete_task` when done
+{{ end -}}
 
 ---
 
 ## Getting Your Service Catalog
-
+{{ if .UseCurl }}
 At the start of each session, fetch your personalized service catalog:
 
 ```
@@ -75,12 +100,20 @@ This returns the services available to you, their supported actions, which
 actions are restricted (blocked), and a list of services you can ask the user
 to activate. Always fetch this before making gateway requests so you know
 what's available and what is restricted.
+{{ else }}
+At the start of each session, use `fetch_catalog` to see what's available. This
+returns the services available to you, their supported actions, which actions are
+restricted (blocked), and a list of services you can ask the user to activate.
+Always check this before making gateway requests so you know what's available and
+what is restricted.
+{{ end -}}
 
 ---
 
 ## Task-Scoped Access
 
-Before making gateway requests, declare a task scope with your purpose and the
+Before making gateway requests,
+{{- if .UseCurl }} declare a task scope with your purpose and the
 actions you need:
 
 ```bash
@@ -96,22 +129,28 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
     "expires_in_seconds": 1800
   }'
 ```
-
-- **`purpose`** — shown to the user during approval and used by intent verification to ensure requests stay consistent with declared intent. Be specific.
+{{ else }} create a task declaring your purpose and the
+actions you need using `create_task`:
+{{ end }}
+- **`purpose`** — shown to the user during approval and used by intent verification to ensure requests stay consistent with declared intent. Be specific: "Review last 30 iMessage threads and classify reply status" is better than "Use iMessage."
 - **`expected_use`** — per-action description of how you'll use it. Shown during approval and checked by intent verification against your actual request params. Be specific: "Fetch today's calendar events" is better than "Use the calendar API."
 - **`auto_execute`** — `true` runs in-scope requests immediately; `false` still requires per-request approval (use for destructive actions like `send_message`).
 - **`expires_in_seconds`** — task TTL. Omit and set `"lifetime": "standing"` for a task that persists until the user revokes it (see below).
-- **`callback_url`** — *(optional, only if callbacks are configured)* Clawvisor posts task lifecycle events here. Otherwise, long-poll with `GET /api/tasks/{id}?wait=true`.
 
-All tasks start as `pending_approval` — the user is notified to approve the
+All tasks start as `pending_approval`
+{{- if .UseCurl }} — the user is notified to approve the
 scope before it becomes active. **Always use `?wait=true`** on `POST /api/tasks`
 to block until the task is approved or denied in a single round-trip. If the
 timeout elapses while still pending, long-poll `GET /api/tasks/{id}?wait=true`
 until `status` changes to `active` (or `denied`).
+{{- else }}. Long-poll with `get_task` (`wait: true`)
+until status changes to `active` or `denied`.
+{{- end }}
 
 ### Standing tasks
 
-For recurring workflows, create a **standing task** that does not expire:
+For recurring workflows,
+{{- if .UseCurl }} create a **standing task** that does not expire:
 
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
@@ -128,6 +167,11 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
 ```
 
 Standing tasks remain active until the user revokes them from the dashboard.
+{{- else }} set `lifetime: "standing"`. Standing tasks require a
+`session_id` in gateway requests to enable chain context verification across
+related requests. Use a consistent `session_id` (e.g., a UUID you generate once
+per workflow) across all related requests in a single invocation.
+{{- end }}
 
 ### Chain context verification
 
@@ -143,7 +187,8 @@ If you omit `session_id` on a standing task, chain context is disabled and inten
 
 ### Scope expansion
 
-If you need an action not in the original task scope:
+If you need an action not in the original task scope,
+{{- if .UseCurl }}
 
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand?wait=true" \
@@ -160,22 +205,30 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand?wait=true" \
 The user will be notified to approve the expansion. With `?wait=true`, the
 request blocks until approved or denied. On approval, the action is added to
 the task scope and the expiry is reset.
+{{- else }} use `expand_task` with the
+new action and a reason. The user will be prompted to approve. On approval, the
+action is added to the task scope and the expiry is reset.
+{{- end }}
 
 ### Completing a task
 
-When you're done, mark the task as completed:
+When you're done,
+{{- if .UseCurl }} mark the task as completed:
 
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/complete" \
   -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN"
 ```
+{{- else }} use `complete_task` to mark the task as completed. This cleans
+up the authorization scope and any chain context facts.
+{{- end }}
 
 ---
 
 ## Gateway Requests
 
 Every gateway request must include a `task_id` from an approved task.
-
+{{ if .UseCurl }}
 ```bash
 curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
   -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
@@ -196,7 +249,9 @@ curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
 ```
 
 ### Required fields
-
+{{ else }}
+Use `gateway_request` for each action. Required fields:
+{{ end }}
 | Field | Description |
 |---|---|
 | `service` | Service identifier (from your catalog) |
@@ -205,7 +260,7 @@ curl -s -X POST "$CLAWVISOR_URL/api/gateway/request" \
 | `reason` | One sentence explaining why. Shown in approvals and audit log. Be specific. |
 | `request_id` | A unique ID you generate (e.g. UUID). Must be unique across all your requests. |
 | `task_id` | The approved task ID this request belongs to. |
-| `session_id` | *(Standing tasks only)* A consistent UUID across related requests in a single invocation. Required for chain context on standing tasks. Not needed for ephemeral tasks (chain context is automatic). |
+| `session_id` | *(Standing tasks only)* A consistent UUID across related requests in a single invocation.{{ if .UseCurl }} Required for chain context on standing tasks. Not needed for ephemeral tasks (chain context is automatic).{{ end }} |
 
 ### Context fields
 
@@ -214,8 +269,7 @@ Always include the `context` object. All fields are optional but strongly recomm
 | Field | Description |
 |---|---|
 | `data_origin` | Source of any external data you are acting on (see below). |
-| `source` | What triggered this request: `"user_message"`, `"scheduled_task"`, `"callback"`, etc. |
-| `callback_url` | *(Only if callbacks are configured.)* URL where Clawvisor posts the result after async approval. |
+| `source` | What triggered this request: `"user_message"`, `"scheduled_task"`, etc. |
 
 ### data_origin — always populate when processing external content
 
@@ -236,25 +290,27 @@ the data origin — set it.
 
 ## Handling Responses
 
-Every response has a `status` field. Handle each case as follows:
+Every {{ if .UseCurl -}} response has a `status` field. Handle each case as follows
+{{- else -}} gateway response has a `status` field
+{{- end }}:
 
 | Status | Meaning | What to do |
 |---|---|---|
-| `executed` | Action completed successfully | Use `result.summary` and `result.data`. Report to the user. |
-| `pending` | Awaiting human approval | Tell the user: "I've requested approval for [action]." If you used `?wait=true` on the original POST, the request is already blocking and will return the result once approved. If the long-poll timed out and you got this status back, re-initiate with `POST /api/gateway/request/{request_id}/execute?wait=true`. Do **not** send a new request. |
-| `blocked` | A restriction blocks this action | Tell the user: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround. |
-| `restricted` | Intent verification rejected the request | Your params or reason were inconsistent with the task's approved purpose. Adjust and retry with a new `request_id`. |
-| `pending_task_approval` | Task not yet approved | Tell the user and long-poll `GET /api/tasks/{id}?wait=true` until approved. |
-| `pending_scope_expansion` | Request outside task scope | Call `POST /api/tasks/{id}/expand` with the new action. |
-| `task_expired` | Task has passed its expiry | Expand the task to extend, or create a new task. |
-| `error` (`SERVICE_NOT_CONFIGURED`) | Service not yet connected | Tell the user: "[Service] isn't activated yet. Connect it in the Clawvisor dashboard." |
-| `error` (`EXECUTION_ERROR`) | Adapter failed | Report the error to the user. Do not silently retry. |
-| `error` (other) | Something went wrong | Report the error message to the user. Do not silently retry. |
-
+| `executed` | Action completed{{ if .UseCurl }} successfully{{ end }} | Use {{ if .UseCurl }}`result.summary` and `result.data`. Report to the user{{ else }}the result. Report to the user{{ end }}. |
+| `pending` | Awaiting human approval | Tell the user{{ if .UseCurl }}: "I've requested approval for [action]." If you used `?wait=true` on the original POST, the request is already blocking and will return the result once approved. If the long-poll timed out and you got this status back, re-initiate with `POST /api/gateway/request/{request_id}/execute?wait=true`. Do **not** send a new request{{ else }}. Re-send same request_id to poll{{ end }}. |
+| `blocked` | A restriction blocks this{{ if .UseCurl }} action{{ end }} | Tell the user{{ if .UseCurl }}: "I wasn't allowed to [action] — [reason]." Do **not** retry or attempt a workaround{{ else }}. Do not retry or work around it{{ end }}. |
+| `restricted` | Intent verification rejected{{ if .UseCurl }} the request{{ end }} | Your params{{ if .UseCurl }} or reason were{{ else }}/reason were{{ end }} inconsistent with the task{{ if .UseCurl }}'s approved{{ end }} purpose. Adjust and retry with a new request_id. |
+| `pending_task_approval` | Task not yet approved | {{ if .UseCurl }}Tell the user and long-poll `GET /api/tasks/{id}?wait=true` until approved{{ else }}Long-poll get_task until approved{{ end }}. |
+| `pending_scope_expansion` | {{ if .UseCurl }}Request outside{{ else }}Action outside{{ end }} task scope | {{ if .UseCurl }}Call `POST /api/tasks/{id}/expand` with the new action{{ else }}Use expand_task{{ end }}. |
+| `task_expired` | Task {{ if .UseCurl }}has passed its expiry{{ else }}TTL exceeded{{ end }} | Expand{{ if .UseCurl }} the task to extend,{{ end }} or create a new task. |
+| `error` (`SERVICE_NOT_CONFIGURED`) | Service not {{ if .UseCurl }}yet {{ end }}connected | Tell the user{{ if .UseCurl }}: "[Service] isn't activated yet. Connect it in the Clawvisor dashboard."{{ else }} to connect it in the Clawvisor dashboard{{ end }}. |
+| `error` (`EXECUTION_ERROR`) | Adapter failed | Report the error{{ if .UseCurl }} to the user{{ end }}. Do not silently retry. |
+| `error` (other) | Something went wrong | Report the error{{ if .UseCurl }} message to the user{{ end }}. Do not silently retry. |
+{{ if not .Condensed }}
 ---
 
-## Waiting for approval
-
+## Waiting for Approval
+{{ if .UseCurl }}
 **Always use `?wait=true`** on requests that require approval. This is the
 simplest and most efficient pattern — the server holds the connection until the
 user decides, then returns the resolved result in a single round-trip.
@@ -297,79 +353,34 @@ These are available if you didn't use `?wait=true` on the original POST:
 - **Execute after approval:** `POST /api/gateway/request/{request_id}/execute?wait=true` blocks until approved, then executes and returns the result.
 - **Read-only status:** `GET /api/gateway/request/{request_id}` returns the current status without executing. Supports `?wait=true` to block until the request leaves `pending` state.
 - **Legacy dedup:** Re-sending the same gateway request with the same `request_id` returns the current status without re-executing.
+{{ else }}
+**Tasks (preferred — long-poll):** `get_task` with `wait: true` blocks
+server-side until the task leaves `pending_approval` / `pending_scope_expansion`.
+Set `timeout` to control the wait (default & max 120 seconds).
+
+If the timeout elapses while still pending, the response is a normal pending
+status — just call again to keep waiting.
+
+**Gateway requests:** Re-send the same gateway request with the same
+`request_id`. Clawvisor recognizes the duplicate and returns the current status
+without re-executing.
+{{ end -}}
+{{ end -}}
 
 ---
+{{ if not .Condensed }}
+## Important Rules
 
-## Callbacks (optional)
-
-If callbacks have been configured (e.g. via OpenClaw), Clawvisor can push
-status changes instead of requiring polling. **Only include `callback_url` in
-requests if your environment supports receiving callbacks.**
-
-Callbacks cover two categories: **gateway request resolutions** and **task
-lifecycle changes**. Each includes a `type` field (`"request"` or `"task"`).
-
-**Request approved (waiting for agent to execute):**
-```json
-{
-  "type": "request",
-  "request_id": "send-email-5678",
-  "status": "approved",
-  "audit_id": "a8f3..."
-}
-```
-When you receive this, call `POST /api/gateway/request/{request_id}/execute` to
-execute the request and get the result.
-
-Request callback statuses: `approved`, `denied`, `timeout`, or `error`.
-
-**Task lifecycle change:**
-```json
-{
-  "type": "task",
-  "task_id": "<task-id>",
-  "status": "approved"
-}
-```
-Task callback statuses: `approved`, `denied`, `scope_expanded`, `scope_expansion_denied`, `expired`.
-
-### Handling callbacks
-
-1. If you registered a callback secret, verify the `X-Clawvisor-Signature`
-   header: it should equal `sha256=` + HMAC-SHA256(body, CLAWVISOR_CALLBACK_SECRET).
-2. Check the `type` field: `"request"` → match `request_id` to your pending
-   request. `"task"` → match `task_id` to your task.
-3. For request callbacks: if `status` is `approved`, call
-   `POST /api/gateway/request/{request_id}/execute` to get the result.
-   If `denied`, `timeout`, or `error`, tell the user the outcome and stop.
-4. For task callbacks: if `approved` or `scope_expanded`, proceed with your
-   task. If `denied`, `scope_expansion_denied`, or `expired`, inform the user.
-
-### Callback verification
-
-Register a signing secret to verify callbacks are genuinely from Clawvisor:
-
-```
-POST $CLAWVISOR_URL/api/callbacks/register
-Authorization: Bearer $CLAWVISOR_AGENT_TOKEN
-```
-
-Response: `{"callback_secret": "cbsec_..."}`
-
-Store this as `CLAWVISOR_CALLBACK_SECRET`. Calling this endpoint again rotates
-the secret.
-
-### OpenClaw callback URL
-
-Build your `callback_url` using the `OPENCLAW_HOOKS_URL` environment variable
-and your session key (shown in `session_status` as the Session field):
-
-```
-${OPENCLAW_HOOKS_URL}/clawvisor/callback?session=<session_key>
-```
+- Always fetch the catalog first to know what's available and restricted
+- Never attempt to bypass restrictions — they are hard blocks set by the user
+- Always create a task before making gateway requests
+- Use `auto_execute: false` for any action that sends, modifies, or deletes data
+- Generate unique request_ids for every gateway request
+- Complete tasks when done to clean up authorization scope
+- Always set `data_origin` when processing content from external sources
 
 ---
-
+{{ end }}
 ## Authorization Model Summary
 
 | Condition | Gateway `status` |

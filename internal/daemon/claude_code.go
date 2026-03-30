@@ -3,16 +3,20 @@ package daemon
 import (
 	"bufio"
 	"crypto/md5" //nolint:gosec // used only for cache key derivation matching mcp-remote's convention
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/clawvisor/clawvisor/coworkplugin"
 	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/clawvisor/clawvisor/skills"
 )
@@ -188,17 +192,18 @@ func installClaudeCodeCommand(dataDir string) error {
 	return nil
 }
 
-// writeStrippedSkill reads the embedded SKILL.md, strips the YAML frontmatter,
-// and writes the result to dest.
+// writeStrippedSkill renders the SKILL.md template for Claude Code, strips the
+// YAML frontmatter, appends Claude Code-specific guidance, and writes the
+// result to dest.
 func writeStrippedSkill(dest string) error {
-	raw, err := skills.FS.ReadFile("clawvisor/SKILL.md")
+	rendered, err := skills.Render(skills.TargetClaudeCode)
 	if err != nil {
-		return fmt.Errorf("reading embedded SKILL.md: %w", err)
+		return fmt.Errorf("rendering SKILL.md: %w", err)
 	}
 
 	// Strip YAML frontmatter (the --- delimited block at the top).
 	var b strings.Builder
-	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+	scanner := bufio.NewScanner(strings.NewReader(rendered))
 	fences := 0
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -385,6 +390,11 @@ func offerClaudeDesktopSetup() {
 			return
 		}
 		fmt.Println(green.Padding(0, 2).Render("  ✓ Configured Claude Desktop MCP"))
+		if err := installCoworkPlugin(); err != nil {
+			fmt.Println(dim.Padding(0, 2).Render("  Warning: could not install Cowork plugin: " + err.Error()))
+		} else {
+			fmt.Println(green.Padding(0, 2).Render("  ✓ Installed Clawvisor Cowork plugin"))
+		}
 		fmt.Println(dim.Padding(0, 2).Render("  Restart Claude Desktop and authorize when prompted."))
 		return
 	}
@@ -425,6 +435,14 @@ func offerClaudeDesktopSetup() {
 
 	fmt.Println(green.Padding(0, 2).Render("  ✓ MCP server added to Claude Desktop config"))
 	fmt.Println(dim.Padding(0, 2).Render("  " + configPath))
+
+	// Install the Cowork plugin (commands, skills, CLAUDE.md).
+	if err := installCoworkPlugin(); err != nil {
+		fmt.Println(yellow.Padding(0, 2).Render("  Could not install Cowork plugin: " + err.Error()))
+		fmt.Println(dim.Padding(0, 2).Render("  You can install it manually: Settings → Plugins → Install from local source"))
+	} else {
+		fmt.Println(green.Padding(0, 2).Render("  ✓ Installed Clawvisor Cowork plugin"))
+	}
 	fmt.Println()
 
 	// Offer to restart Claude Desktop.
@@ -558,6 +576,241 @@ func offerClaudeCodeCurlPermission() error {
 	fmt.Println(green.Padding(0, 2).Render("  ✓ Auto-approve rules added to ~/.claude/settings.json"))
 	fmt.Println()
 	return nil
+}
+
+// installCoworkPlugin copies the embedded Clawvisor Cowork plugin into Claude
+// Desktop's plugin directories. The plugin system uses three locations:
+//
+//  1. marketplaces/local-desktop-app-uploads/<name>/ — the marketplace source
+//  2. cache/local-desktop-app-uploads/<name>/<version>/ — the installed copy
+//  3. installed_plugins.json — the registry of installed plugins
+//  4. .install-manifests/<name>@local-desktop-app-uploads.json — file checksums
+//
+// All four must be populated for Claude Desktop to recognize the plugin.
+func installCoworkPlugin() error {
+	pluginsDir, err := findCoworkPluginsDir()
+	if err != nil {
+		return err
+	}
+
+	// Read the plugin version from the embedded plugin.json.
+	pluginJSON, err := coworkplugin.FS.ReadFile("plugin/.claude-plugin/plugin.json")
+	if err != nil {
+		return fmt.Errorf("reading embedded plugin.json: %w", err)
+	}
+	var meta struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(pluginJSON, &meta); err != nil {
+		return fmt.Errorf("parsing plugin.json: %w", err)
+	}
+
+	cacheDir := filepath.Join(pluginsDir, "cache", "local-desktop-app-uploads", meta.Name, meta.Version)
+	marketplaceDir := filepath.Join(pluginsDir, "marketplaces", "local-desktop-app-uploads", meta.Name)
+
+	// Render the SKILL.md from the shared template for the Cowork target.
+	renderedSkill, err := skills.Render(skills.TargetCowork)
+	if err != nil {
+		return fmt.Errorf("rendering SKILL.md: %w", err)
+	}
+
+	// Copy embedded files to both the cache and marketplace directories.
+	// The SKILL.md is replaced with the rendered version from the template.
+	// Track file hashes for the install manifest.
+	fileHashes := make(map[string]string)
+
+	writeFile := func(rel string, data []byte) error {
+		h := sha256.Sum256(data)
+		fileHashes[rel] = hex.EncodeToString(h[:])
+
+		for _, dir := range []string{cacheDir, marketplaceDir} {
+			dest := filepath.Join(dir, rel)
+			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(dest, data, 0644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if err := fs.WalkDir(coworkplugin.FS, "plugin", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel("plugin", path)
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			if err := os.MkdirAll(filepath.Join(cacheDir, rel), 0755); err != nil {
+				return err
+			}
+			return os.MkdirAll(filepath.Join(marketplaceDir, rel), 0755)
+		}
+
+		// Replace the embedded SKILL.md with the template-rendered version.
+		if rel == filepath.Join("skills", "clawvisor", "SKILL.md") {
+			return writeFile(rel, []byte(renderedSkill))
+		}
+
+		data, err := coworkplugin.FS.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading embedded %s: %w", path, err)
+		}
+
+		return writeFile(rel, data)
+	}); err != nil {
+		return fmt.Errorf("copying plugin files: %w", err)
+	}
+
+	// Update installed_plugins.json registry.
+	pluginID := meta.Name + "@local-desktop-app-uploads"
+	now := nowUTC()
+	if err := updateInstalledPlugins(pluginsDir, pluginID, cacheDir, meta.Version, now); err != nil {
+		return fmt.Errorf("updating plugin registry: %w", err)
+	}
+
+	// Write install manifest.
+	if err := writeInstallManifest(pluginsDir, pluginID, fileHashes, now); err != nil {
+		return fmt.Errorf("writing install manifest: %w", err)
+	}
+
+	return nil
+}
+
+// nowUTC returns the current time formatted as an RFC3339 string with
+// millisecond precision, matching the format used by Claude Desktop.
+func nowUTC() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// updateInstalledPlugins adds or updates the plugin entry in installed_plugins.json.
+func updateInstalledPlugins(pluginsDir, pluginID, installPath, version, now string) error {
+	path := filepath.Join(pluginsDir, "installed_plugins.json")
+
+	var registry struct {
+		Version int                        `json:"version"`
+		Plugins map[string]json.RawMessage `json:"plugins"`
+	}
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(data, &registry); err != nil {
+			return fmt.Errorf("parsing installed_plugins.json: %w", err)
+		}
+	} else if os.IsNotExist(err) {
+		registry.Version = 2
+		registry.Plugins = make(map[string]json.RawMessage)
+	} else {
+		return err
+	}
+
+	if registry.Plugins == nil {
+		registry.Plugins = make(map[string]json.RawMessage)
+	}
+
+	entry := []map[string]any{
+		{
+			"scope":       "user",
+			"installPath": installPath,
+			"version":     version,
+			"installedAt": now,
+			"lastUpdated": now,
+		},
+	}
+
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	registry.Plugins[pluginID] = json.RawMessage(entryJSON)
+
+	out, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0644)
+}
+
+// writeInstallManifest creates the .install-manifests/<pluginID>.json file
+// with SHA-256 checksums of all plugin files.
+func writeInstallManifest(pluginsDir, pluginID string, fileHashes map[string]string, now string) error {
+	manifestDir := filepath.Join(pluginsDir, ".install-manifests")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		return err
+	}
+
+	manifest := map[string]any{
+		"pluginId":  pluginID,
+		"createdAt": now,
+		"files":     fileHashes,
+	}
+
+	out, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	path := filepath.Join(manifestDir, pluginID+".json")
+	return os.WriteFile(path, append(out, '\n'), 0644)
+}
+
+// findCoworkPluginsDir searches for the cowork_plugins directory under
+// Claude Desktop's Application Support directory. The path includes
+// session-specific UUIDs, so we search for the directory rather than
+// constructing it.
+func findCoworkPluginsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+
+	var baseDir string
+	switch runtime.GOOS {
+	case "darwin":
+		baseDir = filepath.Join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
+	case "linux":
+		xdg := os.Getenv("XDG_CONFIG_HOME")
+		if xdg == "" {
+			xdg = filepath.Join(home, ".config")
+		}
+		baseDir = filepath.Join(xdg, "Claude", "local-agent-mode-sessions")
+	default:
+		return "", fmt.Errorf("unsupported platform")
+	}
+
+	// Search for the cowork_plugins directory. There should be exactly one
+	// under the session hierarchy: <org-id>/<user-id>/cowork_plugins/
+	var found string
+	_ = filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip inaccessible directories
+		}
+		if d.IsDir() && d.Name() == "cowork_plugins" {
+			found = path
+			return filepath.SkipAll
+		}
+		// Don't descend into cowork_plugins subdirectories or session data.
+		if d.IsDir() {
+			// Allow descending into org/user UUID dirs (2 levels deep).
+			depth := strings.Count(strings.TrimPrefix(path, baseDir), string(filepath.Separator))
+			if depth > 2 {
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+
+	if found == "" {
+		return "", fmt.Errorf("could not find cowork_plugins directory under %s", baseDir)
+	}
+
+	return found, nil
 }
 
 // addClaudePermissionRules reads a Claude Code settings.json file, adds the
