@@ -1,0 +1,231 @@
+service:
+  id: linear
+  display_name: Linear
+  description: "Issues, projects, and teams"
+  setup_url: "https://linear.app/settings/api"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: ""
+  extra_headers:
+    Content-Type: "application/json"
+
+api:
+  base_url: "https://api.linear.app/graphql"
+  type: graphql
+
+actions:
+  list_issues:
+    display_name: "List issues"
+    risk: { category: read, sensitivity: low, description: "List Linear issues" }
+    query: |
+      query($first: Int!, $filter: IssueFilter) {
+        issues(first: $first, filter: $filter) {
+          nodes {
+            id identifier title
+            state { name }
+            priority
+            assignee { name }
+            team { name key }
+            createdAt url
+          }
+        }
+      }
+    params:
+      first: { type: int, default: 50, max: 250, graphql_var: true }
+      team_id: { type: string, filter_path: "team.id.eq" }
+      state: { type: string, filter_path: "state.name.eq" }
+      assignee_id: { type: string, filter_path: "assignee.id.eq" }
+    response:
+      data_path: "data.issues.nodes"
+      fields:
+        - { name: id }
+        - { name: identifier }
+        - { name: title, sanitize: true }
+        - { name: state, path: "state.name" }
+        - { name: priority }
+        - { name: assignee, path: "assignee.name", nullable: true }
+        - { name: team, path: "team.name" }
+        - { name: createdAt, rename: created_at }
+        - { name: url }
+      summary: "{{len .Data}} issue(s)"
+
+  get_issue:
+    display_name: "Get issue"
+    risk: { category: read, sensitivity: low, description: "Read a specific Linear issue" }
+    query: |
+      query($id: String!) {
+        issue(id: $id) {
+          id identifier title description
+          state { name }
+          priority
+          assignee { name }
+          team { name key }
+          project { name }
+          createdAt url
+        }
+      }
+    params:
+      issue_id: { type: string, required: true, graphql_var: true }
+    response:
+      data_path: "data.issue"
+      fields:
+        - { name: id }
+        - { name: identifier }
+        - { name: title, sanitize: true }
+        - { name: description, sanitize: true }
+        - { name: state, path: "state.name" }
+        - { name: priority }
+        - { name: assignee, path: "assignee.name", nullable: true }
+        - { name: team, path: "team.name" }
+        - { name: project, path: "project.name", nullable: true }
+        - { name: createdAt, rename: created_at }
+        - { name: url }
+      summary: "{{.identifier}}: {{.title}} [{{.state}}]"
+
+  create_issue:
+    display_name: "Create issue"
+    risk: { category: write, sensitivity: medium, description: "Create a Linear issue" }
+    mutation: true
+    query: |
+      mutation($input: IssueCreateInput!) {
+        issueCreate(input: $input) {
+          success
+          issue { id identifier title url }
+        }
+      }
+    params:
+      title: { type: string, required: true, input_field: "title" }
+      team_id: { type: string, required: true, input_field: "teamId" }
+      description: { type: string, input_field: "description" }
+      priority: { type: int, input_field: "priority" }
+      assignee_id: { type: string, input_field: "assigneeId" }
+      state_id: { type: string, input_field: "stateId" }
+    response:
+      data_path: "data.issueCreate.issue"
+      fields:
+        - { name: id }
+        - { name: identifier }
+        - { name: title }
+        - { name: url }
+      summary: "Created {{.identifier}}: {{.title}}"
+
+  update_issue:
+    display_name: "Update issue"
+    risk: { category: write, sensitivity: medium, description: "Update a Linear issue" }
+    mutation: true
+    query: |
+      mutation($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) {
+          success
+          issue { id identifier title url }
+        }
+      }
+    params:
+      issue_id: { type: string, required: true, graphql_var: true }
+      title: { type: string, input_field: "title" }
+      description: { type: string, input_field: "description" }
+      state_id: { type: string, input_field: "stateId" }
+      priority: { type: int, input_field: "priority" }
+      assignee_id: { type: string, input_field: "assigneeId" }
+    response:
+      data_path: "data.issueUpdate.issue"
+      fields:
+        - { name: id }
+        - { name: identifier }
+        - { name: title }
+        - { name: url }
+      summary: "Updated {{.identifier}}: {{.title}}"
+
+  add_comment:
+    display_name: "Add comment"
+    risk: { category: write, sensitivity: medium, description: "Add a comment to a Linear issue" }
+    mutation: true
+    query: |
+      mutation($input: CommentCreateInput!) {
+        commentCreate(input: $input) {
+          success
+          comment { id url }
+        }
+      }
+    params:
+      issue_id: { type: string, required: true, input_field: "issueId" }
+      body: { type: string, required: true, input_field: "body" }
+    response:
+      data_path: "data.commentCreate.comment"
+      fields:
+        - { name: id }
+        - { name: url }
+      summary: "Added comment to issue"
+
+  list_teams:
+    display_name: "List teams"
+    risk: { category: read, sensitivity: low, description: "List Linear teams" }
+    query: |
+      query {
+        teams {
+          nodes { id name key }
+        }
+      }
+    response:
+      data_path: "data.teams.nodes"
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: key }
+      summary: "{{len .Data}} team(s)"
+
+  list_projects:
+    display_name: "List projects"
+    risk: { category: read, sensitivity: low, description: "List Linear projects" }
+    query: |
+      query($first: Int!) {
+        projects(first: $first) {
+          nodes { id name state startDate targetDate url }
+        }
+      }
+    params:
+      first: { type: int, default: 50, max: 250, graphql_var: true }
+    response:
+      data_path: "data.projects.nodes"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: state }
+        - { name: startDate, rename: start_date }
+        - { name: targetDate, rename: target_date }
+        - { name: url }
+      summary: "{{len .Data}} project(s)"
+
+  search_issues:
+    display_name: "Search issues"
+    risk: { category: search, sensitivity: low, description: "Search Linear issues" }
+    query: |
+      query($first: Int!, $filter: IssueFilter!) {
+        issues(first: $first, filter: $filter) {
+          nodes {
+            id identifier title
+            state { name }
+            priority
+            assignee { name }
+            team { name key }
+            url
+          }
+        }
+      }
+    params:
+      query: { type: string, required: true }
+      first: { type: int, default: 20, max: 250, graphql_var: true }
+    response:
+      data_path: "data.issues.nodes"
+      fields:
+        - { name: id }
+        - { name: identifier }
+        - { name: title, sanitize: true }
+        - { name: state, path: "state.name" }
+        - { name: priority }
+        - { name: assignee, path: "assignee.name", nullable: true }
+        - { name: team, path: "team.name" }
+        - { name: url }
+      summary: "{{len .Data}} result(s)"

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -55,13 +56,15 @@ func (NoopAssessor) Assess(_ context.Context, _ AssessRequest) (*RiskAssessment,
 
 // LLMAssessor performs task risk assessment via an LLM provider.
 type LLMAssessor struct {
-	health *llm.Health
-	logger *slog.Logger
+	health   *llm.Health
+	registry *adapters.Registry
+	logger   *slog.Logger
 }
 
 // NewLLMAssessor creates an LLM-backed task risk assessor.
-func NewLLMAssessor(health *llm.Health, logger *slog.Logger) *LLMAssessor {
-	return &LLMAssessor{health: health, logger: logger}
+// The registry is used to read action metadata from adapters that implement MetadataProvider.
+func NewLLMAssessor(health *llm.Health, registry *adapters.Registry, logger *slog.Logger) *LLMAssessor {
+	return &LLMAssessor{health: health, registry: registry, logger: logger}
 }
 
 func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAssessment, error) {
@@ -72,10 +75,11 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	start := time.Now()
 
+	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(a.registry))
 	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildAssessUserMessage(req)
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: formattedSystemPrompt},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userMsg},
 	}
 

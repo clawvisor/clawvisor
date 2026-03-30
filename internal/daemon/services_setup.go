@@ -2,36 +2,21 @@ package daemon
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/clawvisor/clawvisor/internal/browser"
-	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
-	"gopkg.in/yaml.v3"
 )
-
-// knownGoogleServices are always shown in the setup menu even when the server
-// hasn't registered their adapters (which requires client_id/secret in config).
-var knownGoogleServices = []client.ServiceInfo{
-	{ID: "google.gmail", Name: display.ServiceName("google.gmail"), Description: display.ServiceDescription("google.gmail"), OAuth: true, RequiresActivation: true, Status: "not_activated"},
-	{ID: "google.calendar", Name: display.ServiceName("google.calendar"), Description: display.ServiceDescription("google.calendar"), OAuth: true, RequiresActivation: true, Status: "not_activated"},
-	{ID: "google.drive", Name: display.ServiceName("google.drive"), Description: display.ServiceDescription("google.drive"), OAuth: true, RequiresActivation: true, Status: "not_activated"},
-	{ID: "google.contacts", Name: display.ServiceName("google.contacts"), Description: display.ServiceDescription("google.contacts"), OAuth: true, RequiresActivation: true, Status: "not_activated"},
-}
 
 const continueOption = "__continue__"
 
 // runServiceSetup presents the interactive service-selection loop.
-// It returns needsRestart=true when Google OAuth credentials were collected
-// and the server must be restarted with the updated config.
-func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart bool, err error) {
+func runServiceSetup(apiClient *client.Client, dataDir string) error {
 	if nonInteractive() {
 		fmt.Println(dim.Padding(0, 2).Render("  Skipping interactive service setup (non-interactive mode)."))
 		fmt.Println(dim.Padding(0, 2).Render("  Connect services later with: clawvisor setup"))
-		return false, nil
+		return nil
 	}
 
 	fmt.Println()
@@ -42,12 +27,10 @@ func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart boo
 	for {
 		resp, err := apiClient.GetServices()
 		if err != nil {
-			return false, fmt.Errorf("fetching services: %w", err)
+			return fmt.Errorf("fetching services: %w", err)
 		}
 
-		// Inject known Google services that the server doesn't list (because
-		// their adapters aren't registered without client_id/secret in config).
-		services := injectMissingGoogleServices(resp.Services)
+		services := resp.Services
 
 		// If there are no services at all, confirm the user wants to skip.
 		if len(services) == 0 {
@@ -61,21 +44,21 @@ func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart boo
 						Value(&skip),
 				),
 			).Run(); err != nil || skip {
-				return false, nil
+				return nil
 			}
-			return false, nil
+			return nil
 		}
 
 		selected, err := presentServiceMenu(services)
 		if err != nil {
 			if err == huh.ErrUserAborted {
-				return needsRestart, huh.ErrUserAborted
+				return huh.ErrUserAborted
 			}
-			return false, err
+			return err
 		}
 
 		if selected == continueOption {
-			return needsRestart, nil
+			return nil
 		}
 
 		// Find the selected service (use composite key for multi-account).
@@ -99,15 +82,9 @@ func runServiceSetup(apiClient *client.Client, dataDir string) (needsRestart boo
 			continue
 		}
 
-		restart, err := activateService(apiClient, svc, dataDir)
-		if err != nil {
+		if err := activateService(apiClient, svc, dataDir); err != nil {
 			fmt.Printf("\n  %s\n\n", dim.Render("Could not connect: "+err.Error()))
 			continue
-		}
-		if restart {
-			// Google creds were written — must restart the server before
-			// OAuth can proceed. The service setup loop will resume after restart.
-			return true, nil
 		}
 	}
 }
@@ -176,14 +153,14 @@ func serviceLabel(s client.ServiceInfo) string {
 }
 
 // activateService dispatches to the correct activation flow for the service.
-func activateService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) (needsRestart bool, err error) {
+func activateService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {
 	switch {
 	case svc.CredentialFree:
-		return false, activateCredentialFreeService(apiClient, svc)
+		return activateCredentialFreeService(apiClient, svc)
 	case svc.OAuth:
 		return activateOAuthService(apiClient, svc, dataDir)
 	default:
-		return false, activateAPIKeyService(apiClient, svc)
+		return activateAPIKeyService(apiClient, svc)
 	}
 }
 
@@ -197,20 +174,10 @@ func activateCredentialFreeService(apiClient *client.Client, svc client.ServiceI
 	return nil
 }
 
-// apiKeySetupURLs maps service IDs to the pages where users can create API keys.
-var apiKeySetupURLs = map[string]string{
-	"github": "https://github.com/settings/tokens",
-	"slack":  "https://api.slack.com/apps",
-	"notion": "https://www.notion.so/profile/integrations",
-	"linear": "https://linear.app/settings/api",
-	"stripe": "https://dashboard.stripe.com/apikeys",
-	"twilio": "https://console.twilio.com",
-}
-
 // activateAPIKeyService prompts for an API key/token and activates the service.
 func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) error {
-	if url, ok := apiKeySetupURLs[svc.ID]; ok {
-		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Create an API key at: %s", url)))
+	if svc.SetupURL != "" {
+		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Create an API key at: %s", svc.SetupURL)))
 	}
 
 	var token string
@@ -238,29 +205,20 @@ func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) err
 }
 
 // activateOAuthService handles OAuth activation. For Google services, if
-// client_id/client_secret are missing from config, it collects them, patches
-// config.yaml, and returns needsRestart=true so the server can be restarted
-// with the updated adapter configuration.
-func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) (needsRestart bool, err error) {
-	// Google OAuth requires client_id/secret in config before the server starts
-	// (adapters are immutable singletons). If they're absent, collect them and
-	// request a config-reload restart.
+// OAuth app credentials aren't configured yet, it collects them and stores
+// them in the system vault (no restart required).
+func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {
+	// Google OAuth requires app credentials (client_id/secret) in the system vault.
+	// If they're absent, collect them via prompt and store via the API.
 	if strings.HasPrefix(svc.ID, "google.") {
-		configPath := filepath.Join(dataDir, "config.yaml")
-		hasCreds, err := googleCredsPresent(configPath)
+		configured, err := apiClient.GoogleOAuthConfigured()
 		if err != nil {
-			return false, fmt.Errorf("reading config: %w", err)
+			return fmt.Errorf("checking Google OAuth config: %w", err)
 		}
-		if !hasCreds {
-			restart, err := collectAndPatchGoogleCreds(configPath, svc.Name)
-			if err != nil {
-				return false, err
+		if !configured {
+			if err := collectAndStoreGoogleCreds(apiClient, svc.Name); err != nil {
+				return err
 			}
-			if restart {
-				return true, nil
-			}
-			// User left creds blank — skip.
-			return false, nil
 		}
 	}
 
@@ -275,10 +233,10 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 				Value(&proceed),
 		),
 	).Run(); err != nil {
-		return false, err
+		return err
 	}
 	if !proceed {
-		return false, nil
+		return nil
 	}
 
 	// Start a local callback listener so the OAuth HTML page can signal us.
@@ -288,11 +246,11 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 	cliCallback := fmt.Sprintf("http://127.0.0.1:%d/oauth-done", port)
 	oauthResp, err := apiClient.GetOAuthURL(svc.ID, "", cliCallback)
 	if err != nil {
-		return false, fmt.Errorf("getting OAuth URL: %w", err)
+		return fmt.Errorf("getting OAuth URL: %w", err)
 	}
 	if oauthResp.AlreadyAuthorized {
 		fmt.Printf("  %s %s already authorized.\n\n", green.Render("✓"), svc.Name)
-		return false, nil
+		return nil
 	}
 
 	fmt.Printf("\n  Opening browser for %s OAuth...\n", svc.Name)
@@ -305,12 +263,12 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 	<-doneCh
 
 	fmt.Printf("  %s %s connected.\n\n", green.Render("✓"), svc.Name)
-	return false, nil
+	return nil
 }
 
-// collectAndPatchGoogleCreds prompts for Google OAuth client_id/secret,
-// patches config.yaml, and returns true so the caller triggers a server restart.
-func collectAndPatchGoogleCreds(configPath, serviceName string) (restart bool, err error) {
+// collectAndStoreGoogleCreds prompts for Google OAuth client_id/secret and
+// stores them in the system vault via the API.
+func collectAndStoreGoogleCreds(apiClient *client.Client, serviceName string) error {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf(
 		"  %s requires Google OAuth credentials (client_id and client_secret).",
@@ -333,19 +291,21 @@ func collectAndPatchGoogleCreds(configPath, serviceName string) (restart bool, e
 				Value(&clientSecret),
 		),
 	).Run(); err != nil {
-		return false, err
+		return err
 	}
 
 	clientID = strings.TrimSpace(clientID)
 	clientSecret = strings.TrimSpace(clientSecret)
 	if clientID == "" || clientSecret == "" {
-		return false, nil
+		return nil
 	}
 
-	if err := patchGoogleConfig(configPath, clientID, clientSecret); err != nil {
-		return false, fmt.Errorf("patching config: %w", err)
+	if err := apiClient.SetGoogleOAuthConfig(clientID, clientSecret); err != nil {
+		return fmt.Errorf("storing Google OAuth credentials: %w", err)
 	}
-	return true, nil
+
+	fmt.Printf("  %s Google OAuth credentials saved.\n\n", green.Render("✓"))
+	return nil
 }
 
 // manageConnectedService shows options for an already-connected service:
@@ -369,8 +329,7 @@ func manageConnectedService(apiClient *client.Client, svc client.ServiceInfo, da
 
 	switch action {
 	case "add":
-		_, err := activateService(apiClient, svc, dataDir)
-		return err
+		return activateService(apiClient, svc, dataDir)
 	case "disconnect":
 		confirmed := false
 		if err := huh.NewForm(
@@ -393,122 +352,4 @@ func manageConnectedService(apiClient *client.Client, svc client.ServiceInfo, da
 		fmt.Printf("  %s disconnected.\n\n", svc.Name)
 	}
 	return nil
-}
-
-// googleCredsPresent reports whether services.google.client_id is set in the
-// config file at configPath.
-func googleCredsPresent(configPath string) (bool, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false, err
-	}
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return false, err
-	}
-	services, ok := raw["services"].(map[string]interface{})
-	if !ok {
-		return false, nil
-	}
-	google, ok := services["google"].(map[string]interface{})
-	if !ok {
-		return false, nil
-	}
-	id, _ := google["client_id"].(string)
-	return strings.TrimSpace(id) != "", nil
-}
-
-// patchGoogleConfig inserts or replaces the google: block under services: in
-// the daemon config file. Uses yaml.Node to make structural edits while
-// preserving comments and formatting of unrelated sections.
-func patchGoogleConfig(configPath, clientID, clientSecret string) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parsing config YAML: %w", err)
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return fmt.Errorf("unexpected YAML structure in %s", configPath)
-	}
-	root := doc.Content[0] // mapping node
-
-	// Find or create the "services" key.
-	servicesNode := yamlMapGet(root, "services")
-	if servicesNode == nil {
-		root.Content = append(root.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "services"},
-			&yaml.Node{Kind: yaml.MappingNode},
-		)
-		servicesNode = root.Content[len(root.Content)-1]
-	}
-
-	// Find or create the "google" key under services.
-	googleNode := yamlMapGet(servicesNode, "google")
-	if googleNode == nil {
-		servicesNode.Content = append(servicesNode.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "google"},
-			&yaml.Node{Kind: yaml.MappingNode},
-		)
-		googleNode = servicesNode.Content[len(servicesNode.Content)-1]
-	}
-
-	// Set client_id and client_secret.
-	yamlMapSet(googleNode, "client_id", clientID)
-	yamlMapSet(googleNode, "client_secret", clientSecret)
-
-	out, err := yaml.Marshal(&doc)
-	if err != nil {
-		return fmt.Errorf("marshaling config YAML: %w", err)
-	}
-	return os.WriteFile(configPath, out, 0600)
-}
-
-// yamlMapGet returns the value node for the given key in a mapping node,
-// or nil if not found.
-func yamlMapGet(mapping *yaml.Node, key string) *yaml.Node {
-	if mapping.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			return mapping.Content[i+1]
-		}
-	}
-	return nil
-}
-
-// yamlMapSet sets or inserts a scalar key-value pair in a mapping node.
-func yamlMapSet(mapping *yaml.Node, key, value string) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			mapping.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Value: value}
-			return
-		}
-	}
-	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		&yaml.Node{Kind: yaml.ScalarNode, Value: value},
-	)
-}
-
-// injectMissingGoogleServices prepends known Google services to the list if
-// the server didn't return them (because adapters aren't registered without
-// OAuth creds in the config).
-func injectMissingGoogleServices(services []client.ServiceInfo) []client.ServiceInfo {
-	have := make(map[string]bool, len(services))
-	for _, s := range services {
-		have[s.ID] = true
-	}
-	var missing []client.ServiceInfo
-	for _, gs := range knownGoogleServices {
-		if !have[gs.ID] {
-			missing = append(missing, gs)
-		}
-	}
-	// Prepend so Google services appear first.
-	return append(missing, services...)
 }

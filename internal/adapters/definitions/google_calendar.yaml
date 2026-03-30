@@ -1,0 +1,78 @@
+service:
+  id: google.calendar
+  display_name: Google Calendar
+  description: "View and manage calendar events"
+
+auth:
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://www.googleapis.com/auth/calendar.readonly"
+      - "https://www.googleapis.com/auth/calendar.events"
+    endpoint: google
+    vault_key: google
+    scope_merge: true
+
+api:
+  base_url: "https://www.googleapis.com/calendar/v3"
+  type: rest
+
+actions:
+  list_events:
+    display_name: "List events"
+    risk: { category: read, sensitivity: low, description: "List calendar events" }
+    override: go
+
+  get_event:
+    display_name: "Get event"
+    risk: { category: read, sensitivity: low, description: "Read a specific calendar event" }
+    method: GET
+    path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
+    params:
+      event_id: { type: string, required: true, location: path }
+      calendar_id: { type: string, default: "primary", location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: summary, sanitize: true }
+        - { name: start }
+        - { name: end }
+        - { name: location, sanitize: true }
+        - { name: description, sanitize: true }
+        - { name: attendees }
+        - { name: status }
+      summary: "Event: {{.summary}}"
+
+  create_event:
+    display_name: "Create event"
+    risk: { category: write, sensitivity: medium, description: "Create a calendar event" }
+    override: go
+
+  update_event:
+    display_name: "Update event"
+    risk: { category: write, sensitivity: medium, description: "Update a calendar event" }
+    override: go
+
+  delete_event:
+    display_name: "Delete event"
+    risk: { category: delete, sensitivity: high, description: "Delete a calendar event" }
+    method: DELETE
+    path: "/calendars/{{.calendar_id}}/events/{{.event_id}}"
+    params:
+      event_id: { type: string, required: true, location: path }
+      calendar_id: { type: string, default: "primary", location: path }
+    response:
+      summary: "Deleted event {{.event_id}}"
+
+  list_calendars:
+    display_name: "List calendars"
+    risk: { category: read, sensitivity: low, description: "List available calendars" }
+    method: GET
+    path: "/users/me/calendarList"
+    response:
+      data_path: "items"
+      fields:
+        - { name: id }
+        - { name: summary }
+        - { name: primary }
+      summary: "{{len .Data}} calendar(s)"

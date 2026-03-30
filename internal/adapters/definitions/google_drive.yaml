@@ -1,0 +1,72 @@
+service:
+  id: google.drive
+  display_name: Google Drive
+  description: "List, search, and manage files"
+
+auth:
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://www.googleapis.com/auth/drive.readonly"
+      - "https://www.googleapis.com/auth/drive.file"
+    endpoint: google
+    vault_key: google
+    scope_merge: true
+
+api:
+  base_url: "https://www.googleapis.com/drive/v3"
+  type: rest
+
+actions:
+  list_files:
+    display_name: "List files"
+    risk: { category: read, sensitivity: low, description: "List files in Google Drive" }
+    method: GET
+    path: "/files"
+    params:
+      query: { type: string, location: query }
+      max_results: { type: int, default: 10, max: 50, location: query }
+    response:
+      data_path: "files"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: mimeType }
+        - { name: modifiedTime }
+        - { name: size }
+        - { name: webViewLink }
+      summary: "{{len .Data}} file(s)"
+
+  get_file:
+    display_name: "Get file"
+    risk: { category: read, sensitivity: low, description: "Read a specific file from Google Drive" }
+    override: go
+
+  create_file:
+    display_name: "Create file"
+    risk: { category: write, sensitivity: medium, description: "Create a file in Google Drive" }
+    override: go
+
+  update_file:
+    display_name: "Update file"
+    risk: { category: write, sensitivity: medium, description: "Update a file in Google Drive" }
+    override: go
+
+  search_files:
+    display_name: "Search files"
+    risk: { category: search, sensitivity: low, description: "Search files in Google Drive" }
+    method: GET
+    path: "/files"
+    params:
+      query: { type: string, required: true, location: query }
+      max_results: { type: int, default: 10, max: 50, location: query }
+    response:
+      data_path: "files"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: mimeType }
+        - { name: modifiedTime }
+        - { name: size }
+        - { name: webViewLink }
+      summary: "{{len .Data}} file(s)"

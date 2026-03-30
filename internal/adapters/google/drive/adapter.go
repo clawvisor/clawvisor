@@ -29,13 +29,11 @@ var driveScopes = []string{
 
 // DriveAdapter implements adapters.Adapter for Google Drive.
 type DriveAdapter struct {
-	clientID     string
-	clientSecret string
-	redirectURL  string
+	oauthProvider adapters.OAuthCredentialProvider
 }
 
-func New(clientID, clientSecret, redirectURL string) *DriveAdapter {
-	return &DriveAdapter{clientID: clientID, clientSecret: clientSecret, redirectURL: redirectURL}
+func New(provider adapters.OAuthCredentialProvider) *DriveAdapter {
+	return &DriveAdapter{oauthProvider: provider}
 }
 
 func (a *DriveAdapter) ServiceID() string { return serviceID }
@@ -47,10 +45,14 @@ func (a *DriveAdapter) SupportedActions() []string {
 func (a *DriveAdapter) RequiredScopes() []string { return driveScopes }
 
 func (a *DriveAdapter) OAuthConfig() *oauth2.Config {
+	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	if clientID == "" {
+		return nil
+	}
 	return &oauth2.Config{
-		ClientID:     a.clientID,
-		ClientSecret: a.clientSecret,
-		RedirectURL:  a.redirectURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
 		Scopes:       driveScopes,
 		Endpoint:     google.Endpoint,
 	}

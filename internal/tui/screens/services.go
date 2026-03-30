@@ -730,9 +730,9 @@ func (s *ServicesScreen) showDetail() {
 		b.WriteString(tui.StyleDim.Render("Activated:   ") + svc.ActivatedAt + "\n")
 	}
 
-	if len(svc.Actions) > 0 {
+	if actionNames := svc.ActionDisplayNames(); len(actionNames) > 0 {
 		b.WriteString("\n" + tui.StyleBold.Render("Available Actions") + "\n")
-		for _, a := range svc.Actions {
+		for _, a := range actionNames {
 			b.WriteString("  " + a + "\n")
 		}
 	}

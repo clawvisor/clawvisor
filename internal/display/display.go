@@ -1,8 +1,22 @@
 // Package display provides human-readable names for services and actions.
 // It is the single source of truth used by both API responses and notifications.
+// When Init is called with an adapter registry, metadata is read from adapters
+// that implement MetadataProvider; hardcoded maps serve as fallbacks.
 package display
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+)
+
+var registry *adapters.Registry
+
+// Init sets the adapter registry for metadata lookups. Call once at startup
+// after all adapters are registered.
+func Init(reg *adapters.Registry) {
+	registry = reg
+}
 
 var serviceNames = map[string]string{
 	"google.gmail":     "Gmail",
@@ -99,8 +113,18 @@ var actionNames = map[string]string{
 }
 
 // ServiceName returns the human-readable name for a service ID.
-// Falls back to the raw ID if unknown.
+// Checks the adapter registry first, then falls back to the hardcoded map,
+// then to the raw ID.
 func ServiceName(id string) string {
+	if registry != nil {
+		if a, ok := registry.Get(id); ok {
+			if mp, ok := a.(adapters.MetadataProvider); ok {
+				if name := mp.ServiceMetadata().DisplayName; name != "" {
+					return name
+				}
+			}
+		}
+	}
 	if name, ok := serviceNames[id]; ok {
 		return name
 	}
@@ -109,6 +133,15 @@ func ServiceName(id string) string {
 
 // ServiceDescription returns a one-line description for a service ID.
 func ServiceDescription(id string) string {
+	if registry != nil {
+		if a, ok := registry.Get(id); ok {
+			if mp, ok := a.(adapters.MetadataProvider); ok {
+				if desc := mp.ServiceMetadata().Description; desc != "" {
+					return desc
+				}
+			}
+		}
+	}
 	return serviceDescriptions[id]
 }
 

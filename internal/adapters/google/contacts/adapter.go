@@ -28,13 +28,11 @@ var contactsScopes = []string{
 // ContactsAdapter implements adapters.Adapter for Google Contacts.
 // It also implements adapters.ContactsChecker to support the recipient_in_contacts policy condition.
 type ContactsAdapter struct {
-	clientID     string
-	clientSecret string
-	redirectURL  string
+	oauthProvider adapters.OAuthCredentialProvider
 }
 
-func New(clientID, clientSecret, redirectURL string) *ContactsAdapter {
-	return &ContactsAdapter{clientID: clientID, clientSecret: clientSecret, redirectURL: redirectURL}
+func New(provider adapters.OAuthCredentialProvider) *ContactsAdapter {
+	return &ContactsAdapter{oauthProvider: provider}
 }
 
 func (a *ContactsAdapter) ServiceID() string { return serviceID }
@@ -46,10 +44,14 @@ func (a *ContactsAdapter) SupportedActions() []string {
 func (a *ContactsAdapter) RequiredScopes() []string { return contactsScopes }
 
 func (a *ContactsAdapter) OAuthConfig() *oauth2.Config {
+	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	if clientID == "" {
+		return nil
+	}
 	return &oauth2.Config{
-		ClientID:     a.clientID,
-		ClientSecret: a.clientSecret,
-		RedirectURL:  a.redirectURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
 		Scopes:       contactsScopes,
 		Endpoint:     google.Endpoint,
 	}

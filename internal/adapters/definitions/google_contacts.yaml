@@ -1,0 +1,33 @@
+service:
+  id: google.contacts
+  display_name: Google Contacts
+  description: "Search and view contacts"
+
+auth:
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://www.googleapis.com/auth/contacts.readonly"
+    endpoint: google
+    vault_key: google
+    scope_merge: true
+
+api:
+  base_url: "https://people.googleapis.com/v1"
+  type: rest
+
+actions:
+  list_contacts:
+    display_name: "List contacts"
+    risk: { category: read, sensitivity: low, description: "List contacts" }
+    override: go
+
+  get_contact:
+    display_name: "Get contact"
+    risk: { category: read, sensitivity: low, description: "Read a specific contact" }
+    override: go
+
+  search_contacts:
+    display_name: "Search contacts"
+    risk: { category: search, sensitivity: low, description: "Search contacts" }
+    override: go

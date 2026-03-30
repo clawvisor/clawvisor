@@ -111,17 +111,68 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		metaByKey[m.ServiceID+":"+m.Alias] = m
 	}
 
+	type actionEntry struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Category    string `json:"category,omitempty"`
+		Sensitivity string `json:"sensitivity,omitempty"`
+	}
+
 	type serviceEntry struct {
-		ID                 string     `json:"id"`
-		Name               string     `json:"name"`
-		Description        string     `json:"description"`
-		Alias              string     `json:"alias,omitempty"`
-		OAuth              bool       `json:"oauth"`
-		RequiresActivation bool       `json:"requires_activation"`
-		CredentialFree     bool       `json:"credential_free"`
-		Actions            []string   `json:"actions"`
-		Status             string     `json:"status"`
-		ActivatedAt        *time.Time `json:"activated_at,omitempty"`
+		ID                 string        `json:"id"`
+		Name               string        `json:"name"`
+		Description        string        `json:"description"`
+		Alias              string        `json:"alias,omitempty"`
+		OAuth              bool          `json:"oauth"`
+		RequiresActivation bool          `json:"requires_activation"`
+		CredentialFree     bool          `json:"credential_free"`
+		Actions            []actionEntry `json:"actions"`
+		Status             string        `json:"status"`
+		ActivatedAt        *time.Time    `json:"activated_at,omitempty"`
+		SetupURL           string        `json:"setup_url,omitempty"`
+	}
+
+	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
+	buildEntry := func(a adapters.Adapter) serviceEntry {
+		name := display.ServiceName(a.ServiceID())
+		desc := display.ServiceDescription(a.ServiceID())
+		var setupURL string
+		actionNames := map[string]adapters.ActionMeta{}
+
+		if mp, ok := a.(adapters.MetadataProvider); ok {
+			meta := mp.ServiceMetadata()
+			if meta.DisplayName != "" {
+				name = meta.DisplayName
+			}
+			if meta.Description != "" {
+				desc = meta.Description
+			}
+			setupURL = meta.SetupURL
+			actionNames = meta.ActionMeta
+		}
+
+		actions := make([]actionEntry, 0, len(a.SupportedActions()))
+		for _, actionID := range a.SupportedActions() {
+			ae := actionEntry{ID: actionID, DisplayName: display.ActionName(actionID)}
+			if am, ok := actionNames[actionID]; ok {
+				if am.DisplayName != "" {
+					ae.DisplayName = am.DisplayName
+				}
+				ae.Category = am.Category
+				ae.Sensitivity = am.Sensitivity
+			}
+			actions = append(actions, ae)
+		}
+
+		return serviceEntry{
+			ID:                 a.ServiceID(),
+			Name:               name,
+			Description:        desc,
+			OAuth:              a.OAuthConfig() != nil,
+			RequiresActivation: true,
+			Actions:            actions,
+			SetupURL:           setupURL,
+		}
 	}
 
 	services := make([]serviceEntry, 0)
@@ -129,29 +180,20 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		credentialFree := a.ValidateCredential(nil) == nil
 
 		if credentialFree {
-			// Credential-free services (e.g. iMessage) require explicit activation
-			// via service_meta — no vault credential needed.
 			status := "not_activated"
 			var activatedAt *time.Time
 			if m, ok := metaByKey[a.ServiceID()+":default"]; ok {
 				status = "activated"
 				activatedAt = &m.ActivatedAt
 			}
-			services = append(services, serviceEntry{
-				ID:                 a.ServiceID(),
-				Name:               display.ServiceName(a.ServiceID()),
-				Description:        display.ServiceDescription(a.ServiceID()),
-				OAuth:              a.OAuthConfig() != nil,
-				RequiresActivation: true,
-				CredentialFree:     true,
-				Actions:            a.SupportedActions(),
-				Status:             status,
-				ActivatedAt:        activatedAt,
-			})
+			entry := buildEntry(a)
+			entry.CredentialFree = true
+			entry.Status = status
+			entry.ActivatedAt = activatedAt
+			services = append(services, entry)
 			continue
 		}
 
-		// Show each activated alias as a separate entry.
 		shown := false
 		for _, m := range metas {
 			if m.ServiceID != a.ServiceID() {
@@ -167,23 +209,13 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 				alias = m.Alias
 			}
 			activatedAt := m.ActivatedAt
-			services = append(services, serviceEntry{
-				ID:                 a.ServiceID(),
-				Name:               display.ServiceName(a.ServiceID()),
-				Description:        display.ServiceDescription(a.ServiceID()),
-				Alias:              alias,
-				OAuth:              a.OAuthConfig() != nil,
-				RequiresActivation: true,
-				Actions:            a.SupportedActions(),
-				Status:             "activated",
-				ActivatedAt:        &activatedAt,
-			})
+			entry := buildEntry(a)
+			entry.Alias = alias
+			entry.Status = "activated"
+			entry.ActivatedAt = &activatedAt
+			services = append(services, entry)
 		}
 
-		// Also check if the base vault key is activated but has no meta record.
-		// Skip this fallback for Google services that share a vault key — presence
-		// of vault key "google" does not mean all Google services are activated;
-		// only those with a service_meta record are.
 		baseKey := vaultKeyForService(a.ServiceID())
 		usesSharedKey := baseKey != a.ServiceID()
 		if !shown && !usesSharedKey && keySet[baseKey] {
@@ -191,29 +223,17 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			if m, ok := metaByKey[a.ServiceID()+":default"]; ok {
 				activatedAt = &m.ActivatedAt
 			}
-			services = append(services, serviceEntry{
-				ID:                 a.ServiceID(),
-				Name:               display.ServiceName(a.ServiceID()),
-				Description:        display.ServiceDescription(a.ServiceID()),
-				OAuth:              a.OAuthConfig() != nil,
-				RequiresActivation: true,
-				Actions:            a.SupportedActions(),
-				Status:             "activated",
-				ActivatedAt:        activatedAt,
-			})
+			entry := buildEntry(a)
+			entry.Status = "activated"
+			entry.ActivatedAt = activatedAt
+			services = append(services, entry)
 			shown = true
 		}
 
 		if !shown {
-			services = append(services, serviceEntry{
-				ID:                 a.ServiceID(),
-				Name:               display.ServiceName(a.ServiceID()),
-				Description:        display.ServiceDescription(a.ServiceID()),
-				OAuth:              a.OAuthConfig() != nil,
-				RequiresActivation: true,
-				Actions:            a.SupportedActions(),
-				Status:             "not_activated",
-			})
+			entry := buildEntry(a)
+			entry.Status = "not_activated"
+			services = append(services, entry)
 		}
 	}
 	sort.Slice(services, func(i, j int) bool {
@@ -866,4 +886,48 @@ func (h *ServicesHandler) removeAdapterScopes(ctx context.Context, userID, vKey 
 		return
 	}
 	_ = h.vault.Set(ctx, userID, vKey, updated)
+}
+
+// ── System OAuth Config ──────────────────────────────────────────────────────
+
+// GetGoogleOAuthConfig checks whether Google OAuth app credentials are configured.
+//
+// GET /api/system/google-oauth
+// Auth: user JWT
+// Response: {"configured": true} or {"configured": false}
+func (h *ServicesHandler) GetGoogleOAuthConfig(w http.ResponseWriter, r *http.Request) {
+	clientID, _ := adapters.GetGoogleOAuthCredentials(r.Context(), h.vault)
+	writeJSON(w, http.StatusOK, map[string]any{"configured": clientID != ""})
+}
+
+// SetGoogleOAuthConfig stores Google OAuth app credentials in the system vault.
+// Once stored, Google adapters will immediately start returning OAuth configs
+// (no restart required).
+//
+// POST /api/system/google-oauth
+// Auth: user JWT
+// Body: {"client_id": "...", "client_secret": "..."}
+// Response: {"ok": true}
+func (h *ServicesHandler) SetGoogleOAuthConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.ClientID == "" || body.ClientSecret == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "client_id and client_secret are required")
+		return
+	}
+
+	if err := adapters.SetGoogleOAuthCredentials(r.Context(), h.vault, body.ClientID, body.ClientSecret); err != nil {
+		h.logger.Error("failed to store Google OAuth credentials", "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
+		return
+	}
+
+	h.logger.Info("Google OAuth credentials stored in system vault")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

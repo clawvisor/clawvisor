@@ -16,27 +16,25 @@ import (
 
 	"github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/internal/callback"
-	"github.com/clawvisor/clawvisor/internal/relay"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
-	githubadapter "github.com/clawvisor/clawvisor/internal/adapters/github"
 	calendaradapter "github.com/clawvisor/clawvisor/internal/adapters/google/calendar"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
-	linearadapter "github.com/clawvisor/clawvisor/internal/adapters/linear"
-	notionadapter "github.com/clawvisor/clawvisor/internal/adapters/notion"
-	slackadapter "github.com/clawvisor/clawvisor/internal/adapters/slack"
-	stripeadapter "github.com/clawvisor/clawvisor/internal/adapters/stripe"
-	twilioadapter "github.com/clawvisor/clawvisor/internal/adapters/twilio"
+	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/display"
+	"github.com/clawvisor/clawvisor/internal/relay"
+	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -129,41 +127,63 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	// ── Adapter Registry ─────────────────────────────────────────────────────
 	adapterReg := adapters.NewRegistry()
-	if cfg.Services.Google.ClientID != "" {
-		redirectURL := cfg.Services.Google.RedirectURL
-		if redirectURL == "" {
-			host := cfg.Server.Host
-			if host == "0.0.0.0" || host == "127.0.0.1" || host == "" {
-				host = "localhost"
-			}
-			redirectURL = fmt.Sprintf("http://%s:%d/api/oauth/callback", host, cfg.Server.Port)
+
+	// Build the Google OAuth redirect URL (used for all Google services).
+	host := cfg.Server.Host
+	if host == "0.0.0.0" || host == "127.0.0.1" || host == "" {
+		host = "localhost"
+	}
+	googleRedirectURL := fmt.Sprintf("http://%s:%d/api/oauth/callback", host, cfg.Server.Port)
+
+	// Create a vault-backed OAuth provider for Google services.
+	// Reads credentials lazily — supports adding OAuth creds without restart.
+	oauthProvider := adapters.NewVaultOAuthProvider(v, googleRedirectURL)
+
+	// Build Go action overrides for Google services (complex MIME/multipart logic).
+	// These are always registered; the provider returns empty creds when not configured,
+	// causing OAuthConfig() to return nil (service shows as "needs_setup").
+	goOverrides := map[string]yamlruntime.ActionFunc{}
+
+	gmail := gmailadapter.New(oauthProvider)
+	for _, action := range gmail.SupportedActions() {
+		goOverrides["google.gmail:"+action] = gmail.Execute
+	}
+	cal := calendaradapter.New(oauthProvider)
+	for _, action := range []string{"list_events", "create_event", "update_event"} {
+		goOverrides["google.calendar:"+action] = cal.Execute
+	}
+	drive := driveadapter.New(oauthProvider)
+	for _, action := range []string{"list_files", "get_file", "create_file"} {
+		goOverrides["google.drive:"+action] = drive.Execute
+	}
+	contacts := contactsadapter.New(oauthProvider)
+	for _, action := range contacts.SupportedActions() {
+		goOverrides["google.contacts:"+action] = contacts.Execute
+	}
+
+	// Load YAML adapter definitions from embedded FS + user-local directory.
+	home, _ := os.UserHomeDir()
+	userAdaptersDir := filepath.Join(home, ".clawvisor", "adapters")
+	yamlLoader := yamlloader.New(definitions.FS, userAdaptersDir, goOverrides, logger)
+	if err := yamlLoader.LoadAll(); err != nil {
+		return nil, fmt.Errorf("loading adapter definitions: %w", err)
+	}
+
+	// Register all YAML adapters. No enabled/disabled check — presence of the
+	// YAML definition means the service is available. OAuth services that lack
+	// credentials will show as "needs_setup" in the UI.
+	for _, ya := range yamlLoader.Adapters() {
+		if strings.HasPrefix(ya.ServiceID(), "google.") {
+			ya.SetOAuthProvider(oauthProvider)
 		}
-		adapterReg.Register(gmailadapter.New(cfg.Services.Google.ClientID, cfg.Services.Google.ClientSecret, redirectURL))
-		adapterReg.Register(calendaradapter.New(cfg.Services.Google.ClientID, cfg.Services.Google.ClientSecret, redirectURL))
-		adapterReg.Register(driveadapter.New(cfg.Services.Google.ClientID, cfg.Services.Google.ClientSecret, redirectURL))
-		adapterReg.Register(contactsadapter.New(cfg.Services.Google.ClientID, cfg.Services.Google.ClientSecret, redirectURL))
+		adapterReg.Register(ya)
 	}
-	if cfg.Services.GitHub.Enabled {
-		adapterReg.Register(githubadapter.New())
-	}
-	if cfg.Services.Slack.Enabled {
-		adapterReg.Register(slackadapter.New())
-	}
-	if cfg.Services.Notion.Enabled {
-		adapterReg.Register(notionadapter.New())
-	}
-	if cfg.Services.Linear.Enabled {
-		adapterReg.Register(linearadapter.New())
-	}
-	if cfg.Services.Stripe.Enabled {
-		adapterReg.Register(stripeadapter.New())
-	}
-	if cfg.Services.Twilio.Enabled {
-		adapterReg.Register(twilioadapter.New())
-	}
-	if cfg.Services.IMessage.Enabled {
-		adapterReg.Register(imessageadapter.New())
-	}
+
+	// Go-only adapters (not YAML-driven).
+	adapterReg.Register(imessageadapter.New())
+
+	// Initialize the display package with the adapter registry.
+	display.Init(adapterReg)
 
 	// ── Ed25519 key (shared by push + relay) ─────────────────────────────────
 	var ed25519Key ed25519.PrivateKey

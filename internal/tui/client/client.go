@@ -346,6 +346,31 @@ func (c *Client) DeleteRestriction(id string) error {
 	return c.delete("/api/restrictions/" + id)
 }
 
+// ── System OAuth Config ─────────────────────────────────────────────────
+
+// GoogleOAuthConfigured checks whether Google OAuth app credentials are stored.
+func (c *Client) GoogleOAuthConfigured() (bool, error) {
+	var resp struct {
+		Configured bool `json:"configured"`
+	}
+	if err := c.get("/api/system/google-oauth", nil, &resp); err != nil {
+		return false, err
+	}
+	return resp.Configured, nil
+}
+
+// SetGoogleOAuthConfig stores Google OAuth app credentials in the system vault.
+func (c *Client) SetGoogleOAuthConfig(clientID, clientSecret string) error {
+	body := map[string]string{
+		"client_id":     clientID,
+		"client_secret": clientSecret,
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	return c.post("/api/system/google-oauth", body, &resp)
+}
+
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 func (c *Client) GetAgents() ([]Agent, error) {

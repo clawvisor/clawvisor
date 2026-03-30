@@ -274,7 +274,7 @@ func (s *Server) routes() http.Handler {
 	// Construct task risk assessor (noop if disabled).
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
-		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.logger)
+		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
@@ -459,6 +459,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
+
+	// System-level OAuth config (user JWT)
+	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
+	mux.Handle("POST /api/system/google-oauth", user(servicesHandler.SetGoogleOAuthConfig))
 
 	// Skill catalog (agent token)
 	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))

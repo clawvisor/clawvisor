@@ -105,10 +105,10 @@ func TestEvalIntentVerification(t *testing.T) {
 		notion.New(),
 		linear.New(),
 		imessage.New(),
-		gmail.New("", "", ""),
-		calendar.New("", "", ""),
-		drive.New("", "", ""),
-		contacts.New("", "", ""),
+		gmail.New(adapters.NoopOAuthProvider{}),
+		calendar.New(adapters.NoopOAuthProvider{}),
+		drive.New(adapters.NoopOAuthProvider{}),
+		contacts.New(adapters.NoopOAuthProvider{}),
 	}
 	adaptersByService := make(map[string]bool)
 	hintsByService := make(map[string]string)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
 const riskAssessmentSystemPrompt = `You are a security risk assessor for an AI agent authorization system.
@@ -137,25 +139,49 @@ var actionContext = map[string]ActionMeta{
 	"apple.imessage:send_message":    {Category: "write", Sensitivity: "high", Description: "Send an iMessage (requires per-request approval)"},
 }
 
-// buildActionContextBlock formats the action context map for injection into the system prompt.
-func buildActionContextBlock() string {
-	// Sort keys for deterministic output.
-	keys := make([]string, 0, len(actionContext))
-	for k := range actionContext {
+// buildActionContextFromRegistry builds the action context block by reading
+// ActionMeta from adapters that implement MetadataProvider, falling back to
+// the hardcoded actionContext map for adapters that don't (e.g. iMessage).
+func buildActionContextFromRegistry(reg *adapters.Registry) string {
+	entries := map[string]ActionMeta{}
+
+	// Seed with hardcoded fallback (covers iMessage and any unregistered adapters).
+	for k, v := range actionContext {
+		entries[k] = v
+	}
+
+	// Override/extend from registry metadata.
+	if reg != nil {
+		for _, a := range reg.All() {
+			mp, ok := a.(adapters.MetadataProvider)
+			if !ok {
+				continue
+			}
+			meta := mp.ServiceMetadata()
+			for actionID, am := range meta.ActionMeta {
+				key := a.ServiceID() + ":" + actionID
+				entries[key] = ActionMeta{
+					Category:    am.Category,
+					Sensitivity: am.Sensitivity,
+					Description: am.Description,
+				}
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	var b strings.Builder
 	for _, k := range keys {
-		m := actionContext[k]
+		m := entries[k]
 		fmt.Fprintf(&b, "  %s — [%s, %s] %s\n", k, m.Category, m.Sensitivity, m.Description)
 	}
 	return b.String()
 }
-
-// formattedSystemPrompt is the system prompt with the action context table injected.
-var formattedSystemPrompt = fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextBlock())
 
 // buildAssessUserMessage constructs the user message for task risk assessment.
 func buildAssessUserMessage(req AssessRequest) string {

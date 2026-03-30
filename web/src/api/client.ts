@@ -214,15 +214,25 @@ export interface ConnectionRequest {
   expires_at: string
 }
 
+export interface ServiceActionInfo {
+  id: string
+  display_name: string
+  category?: string
+  sensitivity?: string
+}
+
 export interface ServiceInfo {
   id: string
+  name: string
+  description: string
   alias?: string
   oauth: boolean
   requires_activation?: boolean
   credential_free?: boolean
-  actions: string[]
+  actions: ServiceActionInfo[]
   status: 'activated' | 'not_activated'
   activated_at?: string
+  setup_url?: string
 }
 
 export interface Restriction {
@@ -496,7 +506,13 @@ export const api = {
       post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
   },
   services: {
-    list: () => get<{ services: ServiceInfo[] }>('/api/services'),
+    list: async () => {
+      const result = await get<{ services: ServiceInfo[] }>('/api/services')
+      // Populate the display metadata cache from the API response.
+      const { populateFromServices } = await import('../lib/services')
+      populateFromServices(result.services)
+      return result
+    },
     // Returns the OAuth consent URL via authenticated fetch (fixes missing-auth-header issue).
     // If the user already has all required scopes, returns {already_authorized: true} instead.
     oauthGetUrl: (serviceID: string, pendingReqId?: string, alias?: string) =>

@@ -1,0 +1,159 @@
+service:
+  id: stripe
+  display_name: Stripe
+  description: "Customers, charges, and subscriptions"
+  setup_url: "https://dashboard.stripe.com/apikeys"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+
+api:
+  base_url: "https://api.stripe.com/v1"
+  type: rest
+
+actions:
+  list_customers:
+    display_name: "List customers"
+    risk: { category: read, sensitivity: medium, description: "List Stripe customers" }
+    method: GET
+    path: "/customers"
+    params:
+      limit: { type: int, default: 25, max: 100, location: query }
+      email: { type: string, location: query }
+      starting_after: { type: string, location: query }
+    response:
+      data_path: "data"
+      fields:
+        - { name: id }
+        - { name: email }
+        - { name: name, sanitize: true }
+        - { name: created }
+      summary: "{{len .Data}} customer(s)"
+
+  get_customer:
+    display_name: "Get customer"
+    risk: { category: read, sensitivity: medium, description: "Read a specific Stripe customer" }
+    method: GET
+    path: "/customers/{{.customer_id}}"
+    params:
+      customer_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: email }
+        - { name: name, sanitize: true }
+        - { name: phone }
+        - { name: created }
+        - { name: balance, transform: money }
+        - { name: currency }
+      summary: "Customer {{.id}}: {{.email}}"
+
+  list_charges:
+    display_name: "List charges"
+    risk: { category: read, sensitivity: medium, description: "List Stripe charges" }
+    method: GET
+    path: "/charges"
+    params:
+      limit: { type: int, default: 25, max: 100, location: query }
+      customer: { type: string, location: query }
+      starting_after: { type: string, location: query }
+    response:
+      data_path: "data"
+      fields:
+        - { name: id }
+        - { name: amount, transform: money }
+        - { name: currency }
+        - { name: status }
+        - { name: customer }
+        - { name: created }
+      summary: "{{len .Data}} charge(s)"
+
+  get_charge:
+    display_name: "Get charge"
+    risk: { category: read, sensitivity: medium, description: "Read a specific Stripe charge" }
+    method: GET
+    path: "/charges/{{.charge_id}}"
+    params:
+      charge_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: amount, transform: money }
+        - { name: amount_refunded, transform: money }
+        - { name: currency }
+        - { name: status }
+        - { name: customer }
+        - { name: description, sanitize: true }
+        - { name: created }
+        - { name: refunded }
+      summary: "Charge {{.id}}: {{.amount}} {{.currency | upper}} [{{.status}}]"
+
+  list_subscriptions:
+    display_name: "List subscriptions"
+    risk: { category: read, sensitivity: medium, description: "List Stripe subscriptions" }
+    method: GET
+    path: "/subscriptions"
+    params:
+      limit: { type: int, default: 25, max: 100, location: query }
+      customer: { type: string, location: query }
+      status: { type: string, location: query }
+    response:
+      data_path: "data"
+      fields:
+        - { name: id }
+        - { name: status }
+        - { name: customer }
+        - { name: current_period_start }
+        - { name: current_period_end }
+        - { name: created }
+      summary: "{{len .Data}} subscription(s)"
+
+  get_subscription:
+    display_name: "Get subscription"
+    risk: { category: read, sensitivity: medium, description: "Read a specific Stripe subscription" }
+    method: GET
+    path: "/subscriptions/{{.subscription_id}}"
+    params:
+      subscription_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: status }
+        - { name: customer }
+        - { name: current_period_start }
+        - { name: current_period_end }
+        - { name: cancel_at_period_end }
+        - { name: created }
+      summary: "Subscription {{.id}} [{{.status}}]"
+
+  create_refund:
+    display_name: "Create refund"
+    risk: { category: write, sensitivity: high, description: "Create a Stripe refund (moves money)" }
+    method: POST
+    path: "/refunds"
+    encoding: form
+    params:
+      charge: { type: string, required: true, location: body }
+      amount: { type: int, location: body }
+      reason: { type: string, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: amount, transform: money }
+        - { name: currency }
+        - { name: charge }
+        - { name: status }
+      summary: "Refund {{.id}}: {{.amount}} {{.currency | upper}} for charge {{.charge}}"
+
+  get_balance:
+    display_name: "Get balance"
+    risk: { category: read, sensitivity: medium, description: "Read Stripe account balance" }
+    method: GET
+    path: "/balance"
+    response:
+      fields:
+        - { name: available }
+        - { name: pending }
+      summary: "Balance"

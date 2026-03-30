@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, type Restriction, type ServiceInfo } from '../api/client'
-import { serviceName, actionName, serviceBrand } from '../lib/services'
+import { serviceName, actionName } from '../lib/services'
 
 function Toggle({
   checked,
@@ -209,7 +209,6 @@ function ServiceGroup({
   svc: ServiceInfo
   restrictions: Restriction[]
 }) {
-  const brand = serviceBrand(svc.id)
   // The restriction service key includes the alias when present (e.g. "google.gmail:personal").
   const svcKey = svc.alias ? `${svc.id}:${svc.alias}` : svc.id
 
@@ -225,7 +224,7 @@ function ServiceGroup({
   const hasWildcard = !!wildcardId
 
   return (
-    <div className={`bg-surface-1 border border-border-default rounded-md overflow-hidden border-l-4 ${brand.border}`}>
+    <div className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
       <div className="px-4 py-3 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-text-primary">{serviceName(svc.id, svc.alias)}</h3>
@@ -236,10 +235,10 @@ function ServiceGroup({
       <div className="border-t border-border-default divide-y divide-border-subtle">
         {svc.actions.map(action => (
           <ActionRow
-            key={action}
+            key={action.id}
             serviceId={svcKey}
-            action={action}
-            restrictionId={lookup.get(`${svcKey}:${action}`) ?? null}
+            action={action.id}
+            restrictionId={lookup.get(`${svcKey}:${action.id}`) ?? null}
             disabled={hasWildcard}
           />
         ))}

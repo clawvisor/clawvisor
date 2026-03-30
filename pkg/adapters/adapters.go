@@ -2,9 +2,66 @@ package adapters
 
 import (
 	"context"
+	"sync"
 
 	"golang.org/x/oauth2"
 )
+
+// ── Metadata types ──────────────────────────────────────────────────────────
+
+// MetadataProvider is an optional interface adapters can implement to provide
+// display, branding, and risk metadata. YAML adapters implement this automatically;
+// Go-only adapters can opt in.
+type MetadataProvider interface {
+	ServiceMetadata() ServiceMetadata
+}
+
+// ServiceMetadata holds all display and risk metadata for a service.
+type ServiceMetadata struct {
+	DisplayName       string
+	Description       string
+	SetupURL          string
+	ActionMeta        map[string]ActionMeta // action_id → metadata
+	VerificationHints string
+}
+
+// ActionMeta holds display and risk metadata for a single action.
+type ActionMeta struct {
+	DisplayName string // "List customers"
+	Category    string // "read", "write", "delete", "search"
+	Sensitivity string // "low", "medium", "high"
+	Description string // "List Stripe customers" (for risk assessment)
+}
+
+// ActionInfo is returned by the service catalog with per-action metadata.
+type ActionInfo struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Category    string `json:"category"`
+	Sensitivity string `json:"sensitivity"`
+}
+
+// OAuthCredentialProvider supplies OAuth app credentials (client_id, client_secret)
+// on demand. This allows the server to read credentials from the vault lazily
+// instead of requiring them at startup.
+type OAuthCredentialProvider interface {
+	// OAuthClientCredentials returns (clientID, clientSecret, redirectURL).
+	// Returns empty strings if not yet configured.
+	OAuthClientCredentials() (clientID, clientSecret, redirectURL string)
+}
+
+// NoopOAuthProvider is a provider that always returns empty credentials.
+// Useful in tests where OAuth configuration is not needed.
+type NoopOAuthProvider struct{}
+
+func (NoopOAuthProvider) OAuthClientCredentials() (string, string, string) { return "", "", "" }
+
+// SystemUserID is the well-known user ID for system-level vault entries
+// (e.g. Google OAuth app credentials). Not a real user.
+const SystemUserID = "__system__"
+
+// SystemVaultKeyGoogleOAuth is the vault key for Google OAuth app credentials.
+const SystemVaultKeyGoogleOAuth = "google.oauth"
 
 // Request is passed to an adapter's Execute method.
 // Credential is injected by the gateway; never logged or returned to the caller.
@@ -69,7 +126,9 @@ type ServiceInfo struct {
 }
 
 // Registry holds all registered adapters, keyed by service ID.
+// It is safe for concurrent use.
 type Registry struct {
+	mu       sync.RWMutex
 	adapters map[string]Adapter
 }
 
@@ -78,20 +137,33 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) Register(a Adapter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.adapters[a.ServiceID()] = a
 }
 
 func (r *Registry) Get(serviceID string) (Adapter, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	a, ok := r.adapters[serviceID]
 	return a, ok
 }
 
 func (r *Registry) All() []Adapter {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]Adapter, 0, len(r.adapters))
 	for _, a := range r.adapters {
 		out = append(out, a)
 	}
 	return out
+}
+
+// Replace swaps an adapter in the registry (used for hot-reload).
+func (r *Registry) Replace(a Adapter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.adapters[a.ServiceID()] = a
 }
 
 func (r *Registry) SupportedServices() []ServiceInfo {

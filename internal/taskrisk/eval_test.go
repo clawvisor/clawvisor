@@ -101,7 +101,7 @@ func TestEvalTaskRiskAssessment(t *testing.T) {
 			},
 		},
 	})
-	assessor := NewLLMAssessor(health, slog.Default())
+	assessor := NewLLMAssessor(health, nil, slog.Default())
 
 	results := make([]evalResult, 0, len(cases))
 

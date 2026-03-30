@@ -182,16 +182,49 @@ type ServicesResponse struct {
 }
 
 type ServiceInfo struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Alias              string   `json:"alias,omitempty"`
-	OAuth              bool     `json:"oauth"`
-	RequiresActivation bool     `json:"requires_activation"`
-	CredentialFree     bool     `json:"credential_free"`
-	Actions            []string `json:"actions"`
-	Status             string   `json:"status"` // "activated" or "not_activated"
-	ActivatedAt        string   `json:"activated_at,omitempty"`
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Description        string            `json:"description"`
+	Alias              string            `json:"alias,omitempty"`
+	OAuth              bool              `json:"oauth"`
+	RequiresActivation bool              `json:"requires_activation"`
+	CredentialFree     bool              `json:"credential_free"`
+	Actions            json.RawMessage   `json:"actions"`
+	Status             string            `json:"status"` // "activated" or "not_activated"
+	ActivatedAt        string            `json:"activated_at,omitempty"`
+	SetupURL           string            `json:"setup_url,omitempty"`
+}
+
+// ActionDisplayNames parses the Actions field (which may be []string or []object)
+// and returns human-readable display names.
+func (s ServiceInfo) ActionDisplayNames() []string {
+	if len(s.Actions) == 0 {
+		return nil
+	}
+	// Try new format: [{id, display_name, ...}, ...]
+	var rich []struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal(s.Actions, &rich); err == nil && len(rich) > 0 {
+		if rich[0].ID != "" { // confirms it's the rich format
+			names := make([]string, len(rich))
+			for i, r := range rich {
+				if r.DisplayName != "" {
+					names[i] = r.DisplayName
+				} else {
+					names[i] = r.ID
+				}
+			}
+			return names
+		}
+	}
+	// Fall back to legacy format: ["action_id", ...]
+	var plain []string
+	if err := json.Unmarshal(s.Actions, &plain); err == nil {
+		return plain
+	}
+	return nil
 }
 
 // ── OAuth URL ───────────────────────────────────────────────────────────────

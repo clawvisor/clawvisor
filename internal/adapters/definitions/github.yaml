@@ -1,0 +1,164 @@
+service:
+  id: github
+  display_name: GitHub
+  description: "Issues, PRs, and code review"
+  setup_url: "https://github.com/settings/tokens"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "token "
+  extra_headers:
+    Accept: "application/vnd.github.v3+json"
+
+api:
+  base_url: "https://api.github.com"
+  type: rest
+
+actions:
+  list_issues:
+    display_name: "List issues"
+    risk: { category: read, sensitivity: low, description: "List GitHub issues" }
+    method: GET
+    path: "/repos/{{.owner}}/{{.repo}}/issues"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      state: { type: string, default: "open", location: query }
+      max_results: { type: int, default: 30, max: 100, location: query }
+      labels: { type: string, location: query }
+      assignee: { type: string, location: query }
+    response:
+      fields:
+        - { name: number }
+        - { name: title, sanitize: true }
+        - { name: state }
+        - { name: created_at }
+        - { name: html_url, rename: url }
+      summary: "{{len .Data}} issue(s)"
+
+  get_issue:
+    display_name: "Get issue"
+    risk: { category: read, sensitivity: low, description: "Read a specific GitHub issue" }
+    method: GET
+    path: "/repos/{{.owner}}/{{.repo}}/issues/{{.number}}"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      number: { type: int, required: true, location: path }
+    response:
+      fields:
+        - { name: number }
+        - { name: title, sanitize: true }
+        - { name: body, sanitize: true }
+        - { name: state }
+        - { name: created_at }
+        - { name: html_url, rename: url }
+      summary: "Issue #{{.number}}: {{.title}} [{{.state}}]"
+
+  create_issue:
+    display_name: "Create issue"
+    risk: { category: write, sensitivity: medium, description: "Create a GitHub issue" }
+    method: POST
+    path: "/repos/{{.owner}}/{{.repo}}/issues"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      title: { type: string, required: true, location: body }
+      body: { type: string, location: body }
+      labels: { type: array, location: body }
+      assignees: { type: array, location: body }
+    response:
+      fields:
+        - { name: number }
+        - { name: title }
+        - { name: html_url, rename: url }
+      summary: "Created issue #{{.number}}: {{.title}}"
+
+  comment_issue:
+    display_name: "Comment on issue"
+    risk: { category: write, sensitivity: medium, description: "Comment on a GitHub issue" }
+    method: POST
+    path: "/repos/{{.owner}}/{{.repo}}/issues/{{.number}}/comments"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      number: { type: int, required: true, location: path }
+      body: { type: string, required: true, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: html_url, rename: url }
+      summary: "Added comment to issue #{{.number}}"
+
+  list_prs:
+    display_name: "List PRs"
+    risk: { category: read, sensitivity: low, description: "List pull requests" }
+    method: GET
+    path: "/repos/{{.owner}}/{{.repo}}/pulls"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      state: { type: string, default: "open", location: query }
+      max_results: { type: int, default: 30, max: 100, location: query }
+    response:
+      fields:
+        - { name: number }
+        - { name: title, sanitize: true }
+        - { name: state }
+        - { name: created_at }
+        - { name: html_url, rename: url }
+      summary: "{{len .Data}} PR(s)"
+
+  get_pr:
+    display_name: "Get PR"
+    risk: { category: read, sensitivity: low, description: "Read a specific pull request" }
+    method: GET
+    path: "/repos/{{.owner}}/{{.repo}}/pulls/{{.number}}"
+    params:
+      owner: { type: string, required: true, location: path }
+      repo: { type: string, required: true, location: path }
+      number: { type: int, required: true, location: path }
+    response:
+      fields:
+        - { name: number }
+        - { name: title, sanitize: true }
+        - { name: body, sanitize: true }
+        - { name: state }
+        - { name: merged }
+        - { name: created_at }
+        - { name: html_url, rename: url }
+      summary: "PR #{{.number}}: {{.title}} [{{.state}}]"
+
+  list_repos:
+    display_name: "List repos"
+    risk: { category: read, sensitivity: low, description: "List repositories" }
+    method: GET
+    path: "/user/repos"
+    params:
+      max_results: { type: int, default: 30, max: 100, location: query }
+    response:
+      fields:
+        - { name: name }
+        - { name: full_name }
+        - { name: description, sanitize: true }
+        - { name: private }
+        - { name: language }
+        - { name: stargazers_count, rename: stars }
+        - { name: html_url, rename: url }
+      summary: "{{len .Data}} repository(ies)"
+
+  search_code:
+    display_name: "Search code"
+    risk: { category: search, sensitivity: low, description: "Search code across repositories" }
+    method: GET
+    path: "/search/code"
+    params:
+      query: { type: string, required: true, location: query }
+    response:
+      data_path: "items"
+      fields:
+        - { name: name, rename: file }
+        - { name: path }
+        - { name: html_url, rename: url }
+      summary: "{{len .Data}} code result(s)"

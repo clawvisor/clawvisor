@@ -1,0 +1,128 @@
+service:
+  id: slack
+  display_name: Slack
+  description: "Channels, messages, and search"
+  setup_url: "https://api.slack.com/apps"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+  extra_headers:
+    Content-Type: "application/json; charset=utf-8"
+
+verification_hints: >
+  Thread-level parameters (e.g. thread_ts) are within the scope of the channel
+  they belong to. Accessing thread replies is not a scope escalation beyond
+  channel-level access — threads are part of a channel conversation.
+
+api:
+  base_url: "https://slack.com/api"
+  type: rest
+
+actions:
+  list_channels:
+    display_name: "List channels"
+    risk: { category: read, sensitivity: low, description: "List Slack channels" }
+    method: GET
+    path: "/conversations.list"
+    params:
+      limit: { type: int, default: 100, max: 1000, location: query }
+      types: { type: string, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "channels"
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: num_members }
+        - { name: is_private }
+      summary: "{{len .Data}} channel(s)"
+
+  get_channel:
+    display_name: "Get channel"
+    risk: { category: read, sensitivity: low, description: "Read a specific Slack channel" }
+    method: GET
+    path: "/conversations.info"
+    params:
+      channel: { type: string, required: true, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "channel"
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: num_members }
+        - { name: is_private }
+        - { name: is_archived }
+      summary: "Channel #{{.name}}"
+
+  list_messages:
+    display_name: "List messages"
+    risk: { category: read, sensitivity: low, description: "List messages in a Slack channel" }
+    method: GET
+    path: "/conversations.history"
+    params:
+      channel: { type: string, required: true, location: query }
+      limit: { type: int, default: 50, max: 1000, location: query }
+      oldest: { type: string, location: query }
+      latest: { type: string, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "messages"
+      fields:
+        - { name: user }
+        - { name: text, sanitize: true }
+        - { name: ts }
+      summary: "{{len .Data}} message(s)"
+
+  send_message:
+    display_name: "Send message"
+    risk: { category: write, sensitivity: medium, description: "Send a Slack message" }
+    method: POST
+    path: "/chat.postMessage"
+    params:
+      channel: { type: string, required: true, location: body }
+      text: { type: string, required: true, location: body }
+      thread_ts: { type: string, location: body }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      fields:
+        - { name: channel }
+        - { name: ts }
+      summary: "Message sent to {{.channel}}"
+
+  search_messages:
+    display_name: "Search messages"
+    risk: { category: search, sensitivity: low, description: "Search Slack messages" }
+    method: GET
+    path: "/search.messages"
+    params:
+      query: { type: string, required: true, location: query }
+      count: { type: int, default: 20, max: 100, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "messages.matches"
+      fields:
+        - { name: text, sanitize: true }
+        - { name: ts }
+        - { name: username }
+      summary: "{{len .Data}} result(s)"
+
+  list_users:
+    display_name: "List users"
+    risk: { category: read, sensitivity: low, description: "List Slack workspace users" }
+    method: GET
+    path: "/users.list"
+    params:
+      limit: { type: int, default: 100, max: 1000, location: query }
+    error_check: { success_path: "ok", error_path: "error" }
+    response:
+      data_path: "members"
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: real_name }
+        - { name: is_bot }
+        - { name: is_admin }
+      summary: "{{len .Data}} user(s)"

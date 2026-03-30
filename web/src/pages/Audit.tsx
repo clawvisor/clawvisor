@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AuditEntry } from '../api/client'
 import { formatDistanceToNow, format } from 'date-fns'
-import { serviceName, actionName, serviceBrand, formatServiceAction } from '../lib/services'
+import { serviceName, actionName, formatServiceAction } from '../lib/services'
 
 const OUTCOMES = ['', 'executed', 'blocked', 'restricted', 'pending', 'denied', 'error', 'timeout']
 
@@ -37,7 +37,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
         </td>
         <td className="px-4 py-2 text-sm">
           <span className="inline-flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${serviceBrand(entry.service).dot}`} />
+            <span className="w-2 h-2 rounded-full shrink-0 bg-text-tertiary" />
             {serviceName(entry.service)}
           </span>
         </td>

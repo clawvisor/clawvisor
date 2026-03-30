@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ServiceInfo } from '../api/client'
+import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, actionName, serviceDescription } from '../lib/services'
 
@@ -70,7 +70,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
               {svc.id}{svc.alias && svc.alias !== 'default' ? `:${svc.alias}` : ''}
             </span>
           </div>
-          <p className="text-xs text-text-tertiary mt-0.5">{svc.actions.map(a => actionName(a)).join(' · ')}</p>
+          <p className="text-xs text-text-tertiary mt-0.5">{svc.actions.map(a => a.display_name || actionName(a.id, svc.id)).join(' · ')}</p>
         </div>
 
         {/* Activated time */}
@@ -141,7 +141,7 @@ interface ServiceType {
   oauth: boolean
   requiresActivation: boolean
   credentialFree: boolean
-  actions: string[]
+  actions: ServiceActionInfo[]
   activatedCount: number
 }
 

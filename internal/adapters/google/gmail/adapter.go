@@ -46,17 +46,11 @@ func gmailScopes() []string {
 
 // GmailAdapter implements adapters.Adapter for Gmail.
 type GmailAdapter struct {
-	clientID     string
-	clientSecret string
-	redirectURL  string
+	oauthProvider adapters.OAuthCredentialProvider
 }
 
-func New(clientID, clientSecret, redirectURL string) *GmailAdapter {
-	return &GmailAdapter{
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		redirectURL:  redirectURL,
-	}
+func New(provider adapters.OAuthCredentialProvider) *GmailAdapter {
+	return &GmailAdapter{oauthProvider: provider}
 }
 
 func (a *GmailAdapter) ServiceID() string { return serviceID }
@@ -72,10 +66,14 @@ func (a *GmailAdapter) SupportedActions() []string {
 func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes() }
 
 func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
+	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	if clientID == "" {
+		return nil
+	}
 	return &oauth2.Config{
-		ClientID:     a.clientID,
-		ClientSecret: a.clientSecret,
-		RedirectURL:  a.redirectURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
 		Scopes:       gmailScopes(),
 		Endpoint:     google.Endpoint,
 	}

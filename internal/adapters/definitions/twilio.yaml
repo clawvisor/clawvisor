@@ -1,0 +1,90 @@
+service:
+  id: twilio
+  display_name: Twilio
+  description: "SMS, WhatsApp, and messaging"
+  setup_url: "https://console.twilio.com"
+
+auth:
+  type: basic
+
+api:
+  base_url: "https://api.twilio.com/2010-04-01/Accounts/{{.credential.sid}}"
+  type: rest
+
+actions:
+  send_sms:
+    display_name: "Send SMS"
+    risk: { category: write, sensitivity: high, description: "Send an SMS message (costs money)" }
+    method: POST
+    path: "/Messages.json"
+    encoding: form
+    params:
+      to: { type: string, required: true, location: body }
+      body: { type: string, required: true, location: body }
+      from: { type: string, location: body }
+    response:
+      fields:
+        - { name: sid }
+        - { name: status }
+        - { name: to }
+        - { name: from }
+      summary: "SMS sent to {{.to}} (status: {{.status}})"
+
+  send_whatsapp:
+    display_name: "Send WhatsApp"
+    risk: { category: write, sensitivity: high, description: "Send a WhatsApp message (costs money)" }
+    method: POST
+    path: "/Messages.json"
+    encoding: form
+    params:
+      to: { type: string, required: true, location: body }
+      body: { type: string, required: true, location: body }
+      from: { type: string, location: body }
+    response:
+      fields:
+        - { name: sid }
+        - { name: status }
+        - { name: to }
+        - { name: from }
+      summary: "WhatsApp message sent to {{.to}} (status: {{.status}})"
+
+  list_messages:
+    display_name: "List messages"
+    risk: { category: read, sensitivity: low, description: "List Twilio messages" }
+    method: GET
+    path: "/Messages.json"
+    params:
+      page_size: { type: int, default: 20, max: 1000, location: query }
+      to: { type: string, location: query }
+      from: { type: string, location: query }
+    response:
+      data_path: "messages"
+      fields:
+        - { name: sid }
+        - { name: to }
+        - { name: from }
+        - { name: body, sanitize: true }
+        - { name: status }
+        - { name: direction }
+        - { name: date_sent }
+      summary: "{{len .Data}} message(s)"
+
+  get_message:
+    display_name: "Get message"
+    risk: { category: read, sensitivity: low, description: "Read a specific Twilio message" }
+    method: GET
+    path: "/Messages/{{.sid}}.json"
+    params:
+      sid: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: sid }
+        - { name: to }
+        - { name: from }
+        - { name: body, sanitize: true }
+        - { name: status }
+        - { name: direction }
+        - { name: date_sent }
+        - { name: price }
+        - { name: price_unit }
+      summary: "Message {{.sid}}: {{.from}} → {{.to}} [{{.status}}]"

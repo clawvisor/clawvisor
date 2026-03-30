@@ -1,0 +1,43 @@
+service:
+  id: google.gmail
+  display_name: Gmail
+  description: "Read, search, send, and draft email"
+
+auth:
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://www.googleapis.com/auth/gmail.readonly"
+      - "https://www.googleapis.com/auth/gmail.send"
+    conditional_scopes:
+      - scope: "https://www.googleapis.com/auth/gmail.compose"
+        env_gate: "GMAIL_DRAFTS_ENABLED"
+        default: true
+    endpoint: google
+    vault_key: google
+    scope_merge: true
+
+api:
+  base_url: "https://gmail.googleapis.com/gmail/v1"
+  type: rest
+
+actions:
+  list_messages:
+    display_name: "List messages"
+    risk: { category: read, sensitivity: low, description: "List email messages" }
+    override: go
+
+  get_message:
+    display_name: "Get message"
+    risk: { category: read, sensitivity: low, description: "Read a specific email message" }
+    override: go
+
+  send_message:
+    display_name: "Send message"
+    risk: { category: write, sensitivity: high, description: "Send email as the user" }
+    override: go
+
+  create_draft:
+    display_name: "Create draft"
+    risk: { category: write, sensitivity: low, description: "Create an email draft (not sent)" }
+    override: go

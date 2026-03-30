@@ -1,0 +1,113 @@
+service:
+  id: notion
+  display_name: Notion
+  description: "Pages, databases, and search"
+  setup_url: "https://www.notion.so/profile/integrations"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+  extra_headers:
+    Notion-Version: "2022-06-28"
+    Content-Type: "application/json"
+
+api:
+  base_url: "https://api.notion.com/v1"
+  type: rest
+
+actions:
+  search:
+    display_name: "Search"
+    risk: { category: search, sensitivity: low, description: "Search Notion pages and databases" }
+    method: POST
+    path: "/search"
+    params:
+      query: { type: string, location: body }
+      filter: { type: object, location: body }
+      page_size: { type: int, default: 20, max: 100, location: body }
+    response:
+      data_path: "results"
+      fields:
+        - { name: id }
+        - { name: object }
+        - { name: url }
+      summary: "{{len .Data}} search result(s)"
+
+  get_page:
+    display_name: "Get page"
+    risk: { category: read, sensitivity: low, description: "Read a Notion page" }
+    method: GET
+    path: "/pages/{{.page_id}}"
+    params:
+      page_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: url }
+        - { name: created_time }
+        - { name: archived }
+        - { name: properties, transform: notion_flatten_properties }
+      summary: "Page {{.id}}"
+
+  create_page:
+    display_name: "Create page"
+    risk: { category: write, sensitivity: medium, description: "Create a Notion page" }
+    method: POST
+    path: "/pages"
+    params:
+      parent: { type: object, required: true, location: body }
+      properties: { type: object, required: true, location: body }
+      children: { type: array, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: url }
+      summary: "Created page {{.id}}"
+
+  update_page:
+    display_name: "Update page"
+    risk: { category: write, sensitivity: medium, description: "Update a Notion page" }
+    method: PATCH
+    path: "/pages/{{.page_id}}"
+    params:
+      page_id: { type: string, required: true, location: path }
+      properties: { type: object, required: true, location: body }
+      archived: { type: bool, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: url }
+      summary: "Updated page {{.id}}"
+
+  query_database:
+    display_name: "Query database"
+    risk: { category: read, sensitivity: low, description: "Query a Notion database" }
+    method: POST
+    path: "/databases/{{.database_id}}/query"
+    params:
+      database_id: { type: string, required: true, location: path }
+      filter: { type: object, location: body }
+      sorts: { type: array, location: body }
+      page_size: { type: int, default: 50, max: 100, location: body }
+    response:
+      data_path: "results"
+      fields:
+        - { name: id }
+        - { name: url }
+        - { name: properties, transform: notion_flatten_properties }
+      summary: "{{len .Data}} row(s)"
+
+  list_databases:
+    display_name: "List databases"
+    risk: { category: read, sensitivity: low, description: "List Notion databases" }
+    method: POST
+    path: "/search"
+    params:
+      page_size: { type: int, default: 20, max: 100, location: body }
+    response:
+      data_path: "results"
+      fields:
+        - { name: id }
+        - { name: url }
+      summary: "{{len .Data}} database(s)"

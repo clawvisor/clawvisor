@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
-import { api, type ServiceInfo } from '../api/client'
+import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
 import { serviceName, serviceDescription } from '../lib/services'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -8,7 +8,7 @@ import { serviceName, serviceDescription } from '../lib/services'
 interface ServiceType {
   baseId: string
   oauth: boolean
-  actions: string[]
+  actions: ServiceActionInfo[]
   activatedCount: number
 }
 

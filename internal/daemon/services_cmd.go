@@ -9,9 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// Services runs the interactive service connection menu. Requires a running
-// daemon. If Google OAuth credentials are collected, the daemon is restarted
-// automatically so the new adapters are loaded.
+// Services runs the interactive service connection menu. Requires a running daemon.
 func Services() error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
@@ -23,44 +21,11 @@ func Services() error {
 		return err
 	}
 
-	needsRestart, err := runServiceSetup(apiClient, dataDir)
+	err = runServiceSetup(apiClient, dataDir)
 	if err == huh.ErrUserAborted {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-
-	if needsRestart {
-		fmt.Println()
-		fmt.Println(dim.Padding(0, 2).Render("  Restarting daemon with updated configuration..."))
-		if err := restartDaemon(); err != nil {
-			return fmt.Errorf("restarting daemon: %w", err)
-		}
-
-		// Wait for the daemon to be fully healthy before reconnecting.
-		serverURL, _, _ := readLocalSession(dataDir)
-		if serverURL == "" {
-			serverURL = "http://127.0.0.1:25297"
-		}
-		if err := waitForServer(serverURL); err != nil {
-			return fmt.Errorf("daemon did not become healthy after restart: %w", err)
-		}
-
-		fmt.Println(green.Padding(0, 2).Render("  ✓ Daemon restarted"))
-		fmt.Println()
-
-		// Re-authenticate after restart and resume service setup.
-		apiClient, err = NewAPIClient()
-		if err != nil {
-			return fmt.Errorf("reconnecting after restart: %w", err)
-		}
-		if _, err := runServiceSetup(apiClient, dataDir); err != nil && err != huh.ErrUserAborted {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 // ServicesList prints connected and available services.
@@ -75,7 +40,7 @@ func ServicesList(asJSON bool) error {
 		return fmt.Errorf("fetching services: %w", err)
 	}
 
-	services := injectMissingGoogleServices(resp.Services)
+	services := resp.Services
 
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -123,7 +88,7 @@ func ServicesAdd(serviceID string) error {
 		return fmt.Errorf("fetching services: %w", err)
 	}
 
-	services := injectMissingGoogleServices(resp.Services)
+	services := resp.Services
 
 	if serviceID == "" {
 		// Interactive picker — show only unconnected services.
@@ -156,48 +121,16 @@ func ServicesAdd(serviceID string) error {
 	}
 
 	// Find the service.
-	var found bool
 	for _, s := range services {
 		if serviceKey(s) == serviceID || s.ID == serviceID || strings.EqualFold(s.Name, serviceID) {
-			needsRestart, err := activateService(apiClient, s, dataDir)
-			if err != nil {
+			if err := activateService(apiClient, s, dataDir); err != nil {
 				return fmt.Errorf("connecting %s: %w", s.Name, err)
 			}
-			if needsRestart {
-				fmt.Println(dim.Padding(0, 2).Render("  Restarting daemon with updated configuration..."))
-				if err := restartDaemon(); err != nil {
-					return fmt.Errorf("restarting daemon: %w", err)
-				}
-
-				serverURL, _, _ := readLocalSession(dataDir)
-				if serverURL == "" {
-					serverURL = "http://127.0.0.1:25297"
-				}
-				if err := waitForServer(serverURL); err != nil {
-					return fmt.Errorf("daemon did not become healthy after restart: %w", err)
-				}
-
-				fmt.Println(green.Padding(0, 2).Render("  ✓ Daemon restarted"))
-				fmt.Println()
-
-				// Re-authenticate and activate the service now that creds are loaded.
-				apiClient, err = NewAPIClient()
-				if err != nil {
-					return fmt.Errorf("reconnecting after restart: %w", err)
-				}
-				if _, activateErr := activateService(apiClient, s, dataDir); activateErr != nil {
-					return fmt.Errorf("connecting %s after restart: %w", s.Name, activateErr)
-				}
-			}
-			found = true
-			break
+			return nil
 		}
 	}
 
-	if !found {
-		return fmt.Errorf("service %q not found", serviceID)
-	}
-	return nil
+	return fmt.Errorf("service %q not found", serviceID)
 }
 
 // ServicesRemove disconnects a service. Requires a running daemon.
@@ -227,13 +160,4 @@ func ServicesRemove(serviceID string) error {
 	}
 
 	return fmt.Errorf("service %q not found", serviceID)
-}
-
-// restartDaemon stops and starts the daemon service so it picks up config
-// changes (e.g. new Google OAuth credentials).
-func restartDaemon() error {
-	if err := Stop(); err != nil {
-		return err
-	}
-	return Start()
 }

@@ -29,13 +29,11 @@ var calendarScopes = []string{
 
 // CalendarAdapter implements adapters.Adapter for Google Calendar.
 type CalendarAdapter struct {
-	clientID     string
-	clientSecret string
-	redirectURL  string
+	oauthProvider adapters.OAuthCredentialProvider
 }
 
-func New(clientID, clientSecret, redirectURL string) *CalendarAdapter {
-	return &CalendarAdapter{clientID: clientID, clientSecret: clientSecret, redirectURL: redirectURL}
+func New(provider adapters.OAuthCredentialProvider) *CalendarAdapter {
+	return &CalendarAdapter{oauthProvider: provider}
 }
 
 func (a *CalendarAdapter) ServiceID() string { return serviceID }
@@ -47,10 +45,14 @@ func (a *CalendarAdapter) SupportedActions() []string {
 func (a *CalendarAdapter) RequiredScopes() []string { return calendarScopes }
 
 func (a *CalendarAdapter) OAuthConfig() *oauth2.Config {
+	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	if clientID == "" {
+		return nil
+	}
 	return &oauth2.Config{
-		ClientID:     a.clientID,
-		ClientSecret: a.clientSecret,
-		RedirectURL:  a.redirectURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
 		Scopes:       calendarScopes,
 		Endpoint:     google.Endpoint,
 	}
