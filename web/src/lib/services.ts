@@ -1,6 +1,5 @@
 // Shared service/action display utilities. Zero React dependencies.
-// Metadata is read from the API response (ServiceInfo) when available,
-// falling back to hardcoded defaults for services not yet loaded.
+// Metadata is read from the API response (ServiceInfo) when available.
 
 import type { ServiceInfo } from '../api/client'
 
@@ -31,36 +30,6 @@ export function populateFromServices(services: ServiceInfo[]) {
   }
 }
 
-// ── Hardcoded fallbacks (for services not yet loaded from API) ─────────────
-
-const FALLBACK_NAMES: Record<string, string> = {
-  'google.gmail': 'Gmail',
-  'google.calendar': 'Google Calendar',
-  'google.drive': 'Google Drive',
-  'google.contacts': 'Google Contacts',
-  'github': 'GitHub',
-  'apple.imessage': 'iMessage',
-  'slack': 'Slack',
-  'notion': 'Notion',
-  'linear': 'Linear',
-  'stripe': 'Stripe',
-  'twilio': 'Twilio',
-}
-
-const FALLBACK_DESCRIPTIONS: Record<string, string> = {
-  'google.gmail': 'Read, search, send, and draft email',
-  'google.calendar': 'View and manage calendar events',
-  'google.drive': 'List, search, and manage files',
-  'google.contacts': 'Search and view contacts',
-  'github': 'Issues, PRs, and code review',
-  'apple.imessage': 'Search and read iMessage threads',
-  'slack': 'Channels, messages, and search',
-  'notion': 'Pages, databases, and search',
-  'linear': 'Issues, projects, and teams',
-  'stripe': 'Customers, charges, and subscriptions',
-  'twilio': 'SMS, WhatsApp, and messaging',
-}
-
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export function serviceName(id: string, alias?: string): string {
@@ -68,10 +37,10 @@ export function serviceName(id: string, alias?: string): string {
   if (colonIdx >= 0) {
     const base = id.slice(0, colonIdx)
     const a = id.slice(colonIdx + 1)
-    const name = _names[base] ?? FALLBACK_NAMES[base] ?? base
+    const name = _names[base] ?? base
     return `${name} (${a})`
   }
-  const name = _names[id] ?? FALLBACK_NAMES[id] ?? id
+  const name = _names[id] ?? id
   if (alias && alias !== 'default') {
     return `${name} (${alias})`
   }
@@ -80,7 +49,7 @@ export function serviceName(id: string, alias?: string): string {
 
 export function serviceDescription(id: string): string {
   const base = id.includes(':') ? id.slice(0, id.indexOf(':')) : id
-  return _descriptions[base] ?? FALLBACK_DESCRIPTIONS[base] ?? ''
+  return _descriptions[base] ?? ''
 }
 
 export function actionName(action: string, service?: string): string {

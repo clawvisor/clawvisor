@@ -98,13 +98,13 @@ func serviceKey(s client.ServiceInfo) string {
 }
 
 // presentServiceMenu builds a flat huh.Select list with ✓/○ status icons,
-// Google services first, then others, with "── Continue →" at the top.
+// OAuth services first, then others, with "── Continue →" at the top.
 func presentServiceMenu(services []client.ServiceInfo) (selected string, err error) {
-	// Partition: Google first, then the rest.
-	var google, other []client.ServiceInfo
+	// Partition: OAuth services first, then the rest.
+	var oauth, other []client.ServiceInfo
 	for _, s := range services {
-		if strings.HasPrefix(s.ID, "google.") {
-			google = append(google, s)
+		if s.OAuth {
+			oauth = append(oauth, s)
 		} else {
 			other = append(other, s)
 		}
@@ -115,8 +115,8 @@ func presentServiceMenu(services []client.ServiceInfo) (selected string, err err
 	// Continue is prominent at the top.
 	opts = append(opts, huh.NewOption(bold.Render("Done connecting services →"), continueOption))
 
-	// Google services first.
-	for _, list := range [][]client.ServiceInfo{google, other} {
+	// OAuth services first.
+	for _, list := range [][]client.ServiceInfo{oauth, other} {
 		for _, s := range list {
 			opts = append(opts, huh.NewOption(serviceLabel(s), serviceKey(s)))
 		}
@@ -204,13 +204,13 @@ func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) err
 	return nil
 }
 
-// activateOAuthService handles OAuth activation. For Google services, if
-// OAuth app credentials aren't configured yet, it collects them and stores
-// them in the system vault (no restart required).
+// activateOAuthService handles OAuth activation. For services using the
+// Google OAuth endpoint, if app credentials aren't configured yet, it
+// collects them and stores them in the system vault (no restart required).
 func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {
 	// Google OAuth requires app credentials (client_id/secret) in the system vault.
 	// If they're absent, collect them via prompt and store via the API.
-	if strings.HasPrefix(svc.ID, "google.") {
+	if svc.OAuthEndpoint == "google" {
 		configured, err := apiClient.GoogleOAuthConfigured()
 		if err != nil {
 			return fmt.Errorf("checking Google OAuth config: %w", err)

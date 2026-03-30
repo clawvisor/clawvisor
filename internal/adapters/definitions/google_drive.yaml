@@ -56,18 +56,4 @@ actions:
   search_files:
     display_name: "Search files"
     risk: { category: search, sensitivity: low, description: "Search files in Google Drive" }
-    method: GET
-    path: "/files"
-    params:
-      query: { type: string, required: true, location: query }
-      max_results: { type: int, default: 10, max: 50, location: query }
-    response:
-      data_path: "files"
-      fields:
-        - { name: id }
-        - { name: name, sanitize: true }
-        - { name: mimeType }
-        - { name: modifiedTime }
-        - { name: size }
-        - { name: webViewLink }
-      summary: "{{len .Data}} file(s)"
+    override: go

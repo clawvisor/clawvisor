@@ -134,10 +134,11 @@ func TestMarshalAssessment_Nil(t *testing.T) {
 	}
 }
 
-func TestActionContextCompleteness(t *testing.T) {
-	// The design doc specifies at least 57 entries (11 adapters × ~5 actions each).
-	if len(actionContext) < 57 {
-		t.Errorf("actionContext has %d entries, want >= 57", len(actionContext))
+func TestBuildActionContextFromRegistry(t *testing.T) {
+	// With a nil registry, buildActionContextFromRegistry should return empty.
+	result := buildActionContextFromRegistry(nil)
+	if result != "" {
+		t.Errorf("expected empty string for nil registry, got %q", result)
 	}
 }
 

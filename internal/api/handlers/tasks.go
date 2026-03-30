@@ -1080,7 +1080,7 @@ func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType
 		return err == nil
 	}
 	// Credential-backed: check vault.
-	vKey := vaultKeyForServiceAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 	_, err := h.vault.Get(ctx, userID, vKey)
 	return err == nil
 }

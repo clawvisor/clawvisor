@@ -124,6 +124,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Description        string        `json:"description"`
 		Alias              string        `json:"alias,omitempty"`
 		OAuth              bool          `json:"oauth"`
+		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
 		Actions            []actionEntry `json:"actions"`
@@ -136,7 +137,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	buildEntry := func(a adapters.Adapter) serviceEntry {
 		name := display.ServiceName(a.ServiceID())
 		desc := display.ServiceDescription(a.ServiceID())
-		var setupURL string
+		var setupURL, oauthEndpoint string
 		actionNames := map[string]adapters.ActionMeta{}
 
 		if mp, ok := a.(adapters.MetadataProvider); ok {
@@ -148,6 +149,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 				desc = meta.Description
 			}
 			setupURL = meta.SetupURL
+			oauthEndpoint = meta.OAuthEndpoint
 			actionNames = meta.ActionMeta
 		}
 
@@ -169,6 +171,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			Name:               name,
 			Description:        desc,
 			OAuth:              len(a.RequiredScopes()) > 0,
+			OAuthEndpoint:      oauthEndpoint,
 			RequiresActivation: true,
 			Actions:            actions,
 			SetupURL:           setupURL,
@@ -199,7 +202,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			if m.ServiceID != a.ServiceID() {
 				continue
 			}
-			vKey := vaultKeyForServiceAlias(a.ServiceID(), m.Alias)
+			vKey := h.adapterReg.VaultKeyWithAlias(a.ServiceID(), m.Alias)
 			if !keySet[vKey] {
 				continue
 			}
@@ -216,7 +219,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			services = append(services, entry)
 		}
 
-		baseKey := vaultKeyForService(a.ServiceID())
+		baseKey := h.adapterReg.VaultKey(a.ServiceID())
 		usesSharedKey := baseKey != a.ServiceID()
 		if !shown && !usesSharedKey && keySet[baseKey] {
 			var activatedAt *time.Time
@@ -443,7 +446,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	vKey := vaultKeyForServiceAlias(entry.ServiceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("vault set failed", "service", entry.ServiceID, "err", err)
 		oauthPopupClose(w, "Failed to store credential in vault.", "")
@@ -640,7 +643,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	vKey := vaultKeyForServiceAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	if err := h.vault.Set(r.Context(), user.ID, vKey, credBytes); err != nil {
 		h.logger.Warn("vault set failed (api key)", "service", serviceID, "err", err)
 		writeError(w, http.StatusInternalServerError, "VAULT_ERROR", "failed to store credential")
@@ -699,11 +702,11 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	// deactivated service's scopes from the stored credential instead of
 	// deleting it. This ensures resolveOAuthScopes will re-request consent
 	// if the service is re-activated later.
-	vKey := vaultKeyForServiceAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	metas, _ := h.st.ListServiceMetas(r.Context(), user.ID)
 	otherUsesKey := false
 	for _, m := range metas {
-		if vaultKeyForServiceAlias(m.ServiceID, m.Alias) == vKey {
+		if h.adapterReg.VaultKeyWithAlias(m.ServiceID, m.Alias) == vKey {
 			otherUsesKey = true
 			break
 		}
@@ -738,7 +741,7 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := vaultKeyForServiceAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
 		userID, blob.Service, blob.Action, blob.Params, vKey)
 
@@ -786,7 +789,7 @@ func (h *ServicesHandler) resolveOAuthScopes(
 	}
 
 	// Check for existing credential in the vault.
-	vKey := vaultKeyForServiceAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	existingBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil || len(existingBytes) == 0 {
 		// No existing credential — just use this adapter's scopes.
@@ -839,7 +842,7 @@ func oauthAuthURL(cfg *oauth2.Config, stateToken, alias string) string {
 // loadExistingRefreshToken retrieves the refresh token from an existing vault
 // credential, if any. Google may not re-issue a refresh token on re-consent.
 func (h *ServicesHandler) loadExistingRefreshToken(ctx context.Context, userID, serviceID, alias string) string {
-	vKey := vaultKeyForServiceAlias(serviceID, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	existingBytes, err := h.vault.Get(ctx, userID, vKey)
 	if err != nil || len(existingBytes) == 0 {
 		return ""

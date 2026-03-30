@@ -187,6 +187,7 @@ type ServiceInfo struct {
 	Description        string            `json:"description"`
 	Alias              string            `json:"alias,omitempty"`
 	OAuth              bool              `json:"oauth"`
+	OAuthEndpoint      string            `json:"oauth_endpoint,omitempty"`
 	RequiresActivation bool              `json:"requires_activation"`
 	CredentialFree     bool              `json:"credential_free"`
 	Actions            json.RawMessage   `json:"actions"`

@@ -153,7 +153,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		goOverrides["google.calendar:"+action] = cal.Execute
 	}
 	drive := driveadapter.New(oauthProvider)
-	for _, action := range []string{"list_files", "get_file", "create_file"} {
+	for _, action := range []string{"get_file", "create_file", "update_file", "search_files"} {
 		goOverrides["google.drive:"+action] = drive.Execute
 	}
 	contacts := contactsadapter.New(oauthProvider)
@@ -173,7 +173,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// YAML definition means the service is available. OAuth services that lack
 	// credentials will show as "needs_setup" in the UI.
 	for _, ya := range yamlLoader.Adapters() {
-		if strings.HasPrefix(ya.ServiceID(), "google.") {
+		meta := ya.ServiceMetadata()
+		if meta.OAuthEndpoint == "google" {
 			ya.SetOAuthProvider(oauthProvider)
 		}
 		adapterReg.Register(ya)

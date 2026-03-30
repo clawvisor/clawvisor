@@ -82,6 +82,20 @@ func (a *IMessageAdapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 // ValidateCredential accepts any non-nil byte slice (no stored credential needed).
 func (a *IMessageAdapter) ValidateCredential(_ []byte) error { return nil }
 
+// ServiceMetadata returns display and risk metadata for iMessage.
+func (a *IMessageAdapter) ServiceMetadata() adapters.ServiceMetadata {
+	return adapters.ServiceMetadata{
+		DisplayName: "iMessage",
+		Description: "Search and read iMessage threads",
+		ActionMeta: map[string]adapters.ActionMeta{
+			"search_messages": {DisplayName: "Search messages", Category: "search", Sensitivity: "low", Description: "Search iMessage history"},
+			"list_threads":    {DisplayName: "List threads", Category: "read", Sensitivity: "low", Description: "List iMessage conversation threads"},
+			"get_thread":      {DisplayName: "Get thread", Category: "read", Sensitivity: "low", Description: "Read a specific iMessage thread"},
+			"send_message":    {DisplayName: "Send message", Category: "write", Sensitivity: "high", Description: "Send an iMessage (requires per-request approval)"},
+		},
+	}
+}
+
 func (a *IMessageAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
 	if !a.Available() {
 		return nil, fmt.Errorf("imessage: not available — grant Full Disk Access to Clawvisor in System Settings → Privacy & Security → Full Disk Access, then restart")

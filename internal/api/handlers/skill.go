@@ -32,63 +32,8 @@ func NewSkillHandler(
 	}
 }
 
-// actionMeta provides static descriptions and parameter docs for each service action.
-// These will move to the Adapter interface (ActionDescription/ActionSchema) in Phase 8.
-var actionMeta = map[string]struct{ Desc, Params string }{
-	// google.gmail
-	"google.gmail:list_messages": {"List and search emails", "query (string, optional), max_results (int, default 10)"},
-	"google.gmail:get_message":   {"Fetch a single email by ID", "message_id (string, required)"},
-	"google.gmail:send_message":  {"Send an email", "to (string, required), subject (string, required), body (string, required), cc (string, optional)"},
-
-	// google.calendar
-	"google.calendar:list_events":    {"List upcoming calendar events", "calendar_id (string, default \"primary\"), from (date YYYY-MM-DD, optional), to (date YYYY-MM-DD, optional), max_results (int, default 10)"},
-	"google.calendar:list_calendars": {"List all calendars", "(none)"},
-	"google.calendar:get_event":      {"Fetch a single event by ID", "calendar_id (string, required), event_id (string, required)"},
-	"google.calendar:create_event":   {"Create a calendar event", "calendar_id (string, required), summary (string, required), start (RFC3339 datetime, required), end (RFC3339 datetime, required), description (string, optional), attendees ([]string, optional)"},
-	"google.calendar:update_event":   {"Update an existing event", "calendar_id (string, required), event_id (string, required), plus fields to update"},
-	"google.calendar:delete_event":   {"Delete a calendar event", "calendar_id (string, required), event_id (string, required)"},
-
-	// google.drive
-	"google.drive:list_files":   {"List files matching a query", "query (string, optional), max_results (int, default 10)"},
-	"google.drive:get_file":     {"Get file metadata and content", "file_id (string, required)"},
-	"google.drive:create_file":  {"Create a file", "name (string, required), content (string, required), mime_type (string, required), parent_id (string, optional)"},
-	"google.drive:update_file":  {"Update file content", "file_id (string, required), content (string, required)"},
-	"google.drive:search_files": {"Search files by name or content", "query (string, required), max_results (int, default 10)"},
-
-	// google.contacts
-	"google.contacts:list_contacts":   {"List contacts", "query (string, optional), max_results (int, default 10)"},
-	"google.contacts:get_contact":     {"Get a contact's details", "contact_id (string, required)"},
-	"google.contacts:search_contacts": {"Search contacts by name or email", "query (string, required), max_results (int, default 10)"},
-
-	// github
-	"github:list_issues":  {"List issues on a repo", "owner (string, required), repo (string, required), state (string, optional)"},
-	"github:get_issue":    {"Get issue details", "owner (string, required), repo (string, required), number (int, required)"},
-	"github:create_issue": {"Create an issue", "owner (string, required), repo (string, required), title (string, required), body (string, required)"},
-	"github:comment_issue": {"Add a comment to an issue", "owner (string, required), repo (string, required), number (int, required), body (string, required)"},
-	"github:list_prs":     {"List pull requests", "owner (string, required), repo (string, required), state (string, optional)"},
-	"github:get_pr":       {"Get PR details", "owner (string, required), repo (string, required), number (int, required)"},
-	"github:list_repos":   {"List repositories", "org (string, optional)"},
-	"github:search_code":  {"Search code", "query (string, required), repo (string, optional)"},
-
-	// apple.imessage
-	"apple.imessage:search_messages": {"Search messages by content/sender", "query (string, required), contact (string, optional), days_back (int, optional)"},
-	"apple.imessage:list_threads":    {"List recent conversation threads", "max_results (int, optional)"},
-	"apple.imessage:get_thread":      {"Get messages from a conversation", "contact (string) or thread_id (string), days_back (int, optional)"},
-	"apple.imessage:send_message":    {"Send an iMessage (always requires approval)", "to (string, required), text (string, required)"},
-}
-
-// serviceDesc provides one-line summaries for the "not activated" section.
-var serviceDesc = map[string]string{
-	"google.gmail":     "Gmail — read, search, and send email",
-	"google.calendar":  "Google Calendar — events and scheduling",
-	"google.drive":     "Google Drive — file access (list, read, upload)",
-	"google.contacts":  "Google Contacts — contact management",
-	"github":           "GitHub — issues, PRs, and code review",
-	"apple.imessage":   "iMessage — read and send messages (macOS only)",
-}
-
-// Catalog returns a personalized markdown document listing the agent's
-// activated services (with restriction-filtered actions) and available services.
+// Catalog returns a personalized markdown document listing only the agent's
+// activated services (with restriction-filtered actions).
 //
 // GET /api/skill/catalog
 // Auth: agent bearer token
@@ -112,30 +57,36 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	metas, _ := h.st.ListServiceMetas(ctx, agent.UserID)
 
 	type catalogService struct {
-		id        string // display ID, e.g. "google.gmail" or "google.gmail:personal"
-		baseID    string // adapter service ID, e.g. "google.gmail"
-		actions   []string
-		activated bool
+		id      string // display ID, e.g. "google.gmail" or "google.gmail:personal"
+		baseID  string // adapter service ID, e.g. "google.gmail"
+		actions []string
 	}
 
+	// Build the adapter metadata index for action descriptions.
+	adapterMeta := map[string]adapters.ServiceMetadata{} // serviceID → metadata
 	allAdapters := h.adapterReg.All()
-	services := make([]catalogService, 0, len(allAdapters))
+	for _, a := range allAdapters {
+		if mp, ok := a.(adapters.MetadataProvider); ok {
+			adapterMeta[a.ServiceID()] = mp.ServiceMetadata()
+		}
+	}
+
+	// Only collect activated services.
+	var services []catalogService
 	for _, a := range allAdapters {
 		credentialFree := a.ValidateCredential(nil) == nil
 		if credentialFree {
 			// Credential-free services (e.g. iMessage) require explicit
 			// activation via service_meta, same as the gateway check.
-			activated := false
 			for _, m := range metas {
 				if m.ServiceID == a.ServiceID() {
-					activated = true
+					services = append(services, catalogService{
+						id: a.ServiceID(), baseID: a.ServiceID(),
+						actions: a.SupportedActions(),
+					})
 					break
 				}
 			}
-			services = append(services, catalogService{
-				id: a.ServiceID(), baseID: a.ServiceID(),
-				actions: a.SupportedActions(), activated: activated,
-			})
 			continue
 		}
 
@@ -145,7 +96,7 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 			if m.ServiceID != a.ServiceID() {
 				continue
 			}
-			vKey := vaultKeyForServiceAlias(a.ServiceID(), m.Alias)
+			vKey := h.adapterReg.VaultKeyWithAlias(a.ServiceID(), m.Alias)
 			if !keySet[vKey] {
 				continue
 			}
@@ -156,25 +107,22 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 			}
 			services = append(services, catalogService{
 				id: displayID, baseID: a.ServiceID(),
-				actions: a.SupportedActions(), activated: true,
+				actions: a.SupportedActions(),
 			})
 		}
 
-		// Fallback: check base vault key.
-		baseKey := vaultKeyForService(a.ServiceID())
-		if !shown && keySet[baseKey] {
-			services = append(services, catalogService{
-				id: a.ServiceID(), baseID: a.ServiceID(),
-				actions: a.SupportedActions(), activated: true,
-			})
-			shown = true
-		}
-
+		// Fallback: check base vault key (handles pre-existing activations
+		// that may not have a service_meta row). Skip when the service uses
+		// a shared vault key (e.g. all google.* services share "google").
 		if !shown {
-			services = append(services, catalogService{
-				id: a.ServiceID(), baseID: a.ServiceID(),
-				actions: a.SupportedActions(), activated: false,
-			})
+			baseKey := h.adapterReg.VaultKey(a.ServiceID())
+			usesSharedKey := baseKey != a.ServiceID()
+			if !usesSharedKey && keySet[baseKey] {
+				services = append(services, catalogService{
+					id: a.ServiceID(), baseID: a.ServiceID(),
+					actions: a.SupportedActions(),
+				})
+			}
 		}
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].id < services[j].id })
@@ -182,62 +130,46 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	var buf strings.Builder
 	buf.WriteString("# Your Clawvisor Service Catalog\n\n")
 
-	// Active services
-	buf.WriteString("## Active Services\n")
-	anyActive := false
-	for _, svc := range services {
-		if !svc.activated {
-			continue
-		}
-		anyActive = true
-		buf.WriteString(fmt.Sprintf("\n### %s\n\n", svc.id))
-		for _, action := range svc.actions {
-			// If a restriction matches this action (exact or base service), skip it.
-			restriction, _ := h.st.MatchRestriction(ctx, agent.UserID, svc.id, action)
-			if restriction == nil && svc.id != svc.baseID {
-				restriction, _ = h.st.MatchRestriction(ctx, agent.UserID, svc.baseID, action)
+	if len(services) == 0 {
+		buf.WriteString("No services are currently activated.\n\n")
+		buf.WriteString("To activate a service, direct the user to the Clawvisor dashboard.\n")
+	} else {
+		for _, svc := range services {
+			// Service heading — include description if available.
+			buf.WriteString(fmt.Sprintf("## %s\n", svc.id))
+			if meta, ok := adapterMeta[svc.baseID]; ok && meta.Description != "" {
+				buf.WriteString(fmt.Sprintf("_%s_\n", meta.Description))
 			}
-			if restriction != nil {
-				continue
-			}
+			buf.WriteString("\n")
 
-			key := svc.baseID + ":" + action
-			meta, hasMeta := actionMeta[key]
+			for _, action := range svc.actions {
+				// If a restriction matches this action (exact or base service), skip it.
+				restriction, _ := h.st.MatchRestriction(ctx, agent.UserID, svc.id, action)
+				if restriction == nil && svc.id != svc.baseID {
+					restriction, _ = h.st.MatchRestriction(ctx, agent.UserID, svc.baseID, action)
+				}
+				if restriction != nil {
+					continue
+				}
 
-			// All non-restricted actions require approval unless covered by a task.
-			label := " (requires approval or task)"
+				// All non-restricted actions require approval unless covered by a task.
+				label := " (requires approval or task)"
 
-			if hasMeta {
-				buf.WriteString(fmt.Sprintf("**%s**%s — %s\n", action, label, meta.Desc))
-				buf.WriteString(fmt.Sprintf("  Params: %s\n\n", meta.Params))
-			} else {
+				// Read action metadata from MetadataProvider.
+				if meta, ok := adapterMeta[svc.baseID]; ok {
+					if am, ok := meta.ActionMeta[action]; ok {
+						desc := am.Description
+						if desc == "" {
+							desc = am.DisplayName
+						}
+						buf.WriteString(fmt.Sprintf("**%s**%s — %s\n", action, label, desc))
+						buf.WriteString(fmt.Sprintf("  Category: %s, Sensitivity: %s\n\n", am.Category, am.Sensitivity))
+						continue
+					}
+				}
 				buf.WriteString(fmt.Sprintf("**%s**%s\n\n", action, label))
 			}
 		}
-	}
-	if !anyActive {
-		buf.WriteString("\nNo services are currently activated.\n")
-	}
-
-	// Available (not activated) services
-	buf.WriteString("---\n\n")
-	buf.WriteString("## Available Services (not activated)\n\n")
-	anyAvailable := false
-	for _, svc := range services {
-		if svc.activated {
-			continue
-		}
-		anyAvailable = true
-		desc := serviceDesc[svc.id]
-		if desc == "" {
-			desc = svc.id
-		}
-		buf.WriteString(fmt.Sprintf("- **%s** — %s\n", svc.id, desc))
-	}
-	if !anyAvailable {
-		buf.WriteString("All supported services are activated.\n")
-	} else {
-		buf.WriteString("\nTo activate a service, direct the user to the Clawvisor dashboard.\n")
 	}
 
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")

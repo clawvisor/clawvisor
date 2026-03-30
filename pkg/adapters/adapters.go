@@ -21,6 +21,8 @@ type ServiceMetadata struct {
 	DisplayName       string
 	Description       string
 	SetupURL          string
+	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
+	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 }
@@ -164,6 +166,33 @@ func (r *Registry) Replace(a Adapter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.adapters[a.ServiceID()] = a
+}
+
+// VaultKey returns the vault key for a service ID. If the adapter implements
+// MetadataProvider and declares a VaultKey, that is used; otherwise the
+// service ID itself is the vault key.
+func (r *Registry) VaultKey(serviceID string) string {
+	r.mu.RLock()
+	a, ok := r.adapters[serviceID]
+	r.mu.RUnlock()
+	if ok {
+		if mp, ok := a.(MetadataProvider); ok {
+			if vk := mp.ServiceMetadata().VaultKey; vk != "" {
+				return vk
+			}
+		}
+	}
+	return serviceID
+}
+
+// VaultKeyWithAlias returns the vault key for a service ID + alias pair.
+// "default" or empty alias maps to the plain vault key for backward compatibility.
+func (r *Registry) VaultKeyWithAlias(serviceID, alias string) string {
+	base := r.VaultKey(serviceID)
+	if alias == "" || alias == "default" {
+		return base
+	}
+	return base + ":" + alias
 }
 
 func (r *Registry) SupportedServices() []ServiceInfo {

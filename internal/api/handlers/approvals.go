@@ -249,7 +249,7 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := vaultKeyForServiceAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 
 	start := time.Now()
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,

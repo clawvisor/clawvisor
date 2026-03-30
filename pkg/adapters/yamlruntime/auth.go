@@ -64,6 +64,28 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte) (*http.Client, e
 			},
 		}, nil
 
+	case "oauth2":
+		// OAuth credentials are stored as JSON with access_token, refresh_token, etc.
+		// Extract the access token and use it as a Bearer token.
+		var oauthCred struct {
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.Unmarshal(credBytes, &oauthCred); err != nil {
+			return nil, fmt.Errorf("parsing oauth2 credential: %w", err)
+		}
+		if oauthCred.AccessToken == "" {
+			return nil, fmt.Errorf("oauth2 credential missing access_token")
+		}
+		return &http.Client{
+			Transport: &headerTransport{
+				header:       "Authorization",
+				headerPrefix: "Bearer ",
+				token:        oauthCred.AccessToken,
+				extraHeaders: authDef.ExtraHeaders,
+				base:         http.DefaultTransport,
+			},
+		}, nil
+
 	case "none":
 		return &http.Client{
 			Transport: &headerTransport{

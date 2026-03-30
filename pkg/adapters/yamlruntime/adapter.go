@@ -190,10 +190,18 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		}
 	}
 
+	var vaultKey, oauthEndpoint string
+	if a.def.Auth.OAuth != nil {
+		vaultKey = a.def.Auth.OAuth.VaultKey
+		oauthEndpoint = a.def.Auth.OAuth.Endpoint
+	}
+
 	return adapters.ServiceMetadata{
 		DisplayName:       a.def.Service.DisplayName,
 		Description:       a.def.Service.Description,
 		SetupURL:          a.def.Service.SetupURL,
+		VaultKey:          vaultKey,
+		OAuthEndpoint:     oauthEndpoint,
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
 	}

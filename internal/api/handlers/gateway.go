@@ -309,7 +309,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					dur := int(time.Since(start).Milliseconds())
 					e := baseEntry("block", "error", taskIDPtr)
 					e.DurationMS = dur
-					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
+					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
 					e.ErrorMsg = &auditMsg
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
@@ -326,7 +326,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
+			vKey := h.adapterReg.VaultKeyWithAlias(serviceType, serviceAlias)
 			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
 				agent.UserID, serviceType, req.Action, req.Params, vKey)
 			dur := int(time.Since(start).Milliseconds())
@@ -338,7 +338,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
 						e := baseEntry("block", "error", taskIDPtr)
 						e.DurationMS = dur
-						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
+						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
 						e.ErrorMsg = &auditMsg
 						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 							h.logger.Warn("audit log failed", "err", logErr)
@@ -477,7 +477,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				notActivated = true
 			}
 		} else {
-			vKey := vaultKeyForServiceAlias(serviceType, serviceAlias)
+			vKey := h.adapterReg.VaultKeyWithAlias(serviceType, serviceAlias)
 			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
 				notActivated = true
 			}
@@ -485,7 +485,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		if notActivated {
 			e := baseEntry("block", "error", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
+			code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
 			e.ErrorMsg = &auditMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
@@ -657,7 +657,7 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := vaultKeyForServiceAlias(serviceType, alias)
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 
 	start := time.Now()
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
@@ -883,7 +883,7 @@ func executeAdapterRequest(
 
 	vKey := vaultKey
 	if vKey == "" {
-		vKey = vaultKeyForService(serviceType)
+		vKey = reg.VaultKey(serviceType)
 	}
 	cred, err := v.Get(ctx, userID, vKey)
 	if err != nil {
@@ -981,32 +981,10 @@ func parseServiceAlias(service string) (serviceType, alias string) {
 	return service, "default"
 }
 
-// vaultKeyForService returns the vault key for a service type (no alias).
-// Google services share the "google" base key.
-func vaultKeyForService(serviceID string) string {
-	if strings.HasPrefix(serviceID, "google.") {
-		return "google"
-	}
-	return serviceID
-}
-
-// vaultKeyForServiceAlias returns the vault key for a service type + alias.
-// "default" alias maps to the plain base key for backward compatibility.
-func vaultKeyForServiceAlias(serviceType, alias string) string {
-	base := serviceType
-	if strings.HasPrefix(serviceType, "google.") {
-		base = "google"
-	}
-	if alias == "" || alias == "default" {
-		return base
-	}
-	return base + ":" + alias
-}
-
 // hasAnyAlias reports whether any vault entry exists for the given service type
 // (under any alias). It uses vault.List and checks for matching key prefixes.
-func hasAnyAlias(ctx context.Context, v vault.Vault, userID, serviceType string) bool {
-	base := vaultKeyForService(serviceType)
+func hasAnyAlias(ctx context.Context, v vault.Vault, reg *adapters.Registry, userID, serviceType string) bool {
+	base := reg.VaultKey(serviceType)
 	keys, err := v.List(ctx, userID)
 	if err != nil {
 		return false
@@ -1026,6 +1004,7 @@ func serviceNotActivatedResponse(
 	ctx context.Context,
 	v vault.Vault,
 	st store.Store,
+	reg *adapters.Registry,
 	userID, serviceType, serviceAlias, serviceDisplay string,
 	adapter adapters.Adapter,
 ) (code, userErr, auditMsg string) {
@@ -1035,7 +1014,7 @@ func serviceNotActivatedResponse(
 			isAlias = true
 		}
 	} else {
-		if hasAnyAlias(ctx, v, userID, serviceType) {
+		if hasAnyAlias(ctx, v, reg, userID, serviceType) {
 			isAlias = true
 		}
 	}
