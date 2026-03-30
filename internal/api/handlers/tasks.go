@@ -229,6 +229,15 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	h.publishTasksAndQueue(agent.UserID)
 
+	// If wait=true, long-poll until the task is approved or denied.
+	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		resolved := h.waitForTaskResolution(ctx, task.ID, agent.UserID, time.Duration(timeout)*time.Second)
+		sanitizeTaskForResponse(resolved)
+		writeJSON(w, http.StatusCreated, resolved)
+		return
+	}
+
 	resp := map[string]any{
 		"task_id": task.ID,
 		"status":  "pending_approval",
@@ -719,6 +728,15 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publishTasksAndQueue(agent.UserID)
+
+	// If wait=true, long-poll until the expansion is approved or denied.
+	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+		timeout := parseLongPollTimeout(r)
+		resolved := h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+		sanitizeTaskForResponse(resolved)
+		writeJSON(w, http.StatusOK, resolved)
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"task_id": taskID,

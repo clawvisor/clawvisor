@@ -132,6 +132,27 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// If wait=true, long-poll until the connection request is resolved.
+	if r.URL.Query().Get("wait") == "true" {
+		timeout := parseLongPollTimeout(r)
+		resolved := h.waitForConnectionResolution(r.Context(), req.ID, owner.ID, time.Duration(timeout)*time.Second)
+		resp := map[string]any{
+			"connection_id": req.ID,
+			"status":        resolved.Status,
+			"expires_at":    resolved.ExpiresAt,
+		}
+		if resolved.Status == "approved" {
+			h.tokensMu.RLock()
+			tok, ok := h.tokens[req.ID]
+			h.tokensMu.RUnlock()
+			if ok && time.Since(tok.approvedAt) < connectionTokenWindow {
+				resp["token"] = tok.raw
+			}
+		}
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"connection_id": req.ID,
 		"status":        req.Status,
@@ -244,6 +265,45 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 			}
 			if respond() {
 				return
+			}
+		}
+	}
+}
+
+// waitForConnectionResolution subscribes to the event hub and re-fetches the
+// connection request until it leaves the "pending" state or the timeout expires.
+func (h *ConnectionsHandler) waitForConnectionResolution(ctx context.Context, connID, userID string, timeout time.Duration) *store.ConnectionRequest {
+	ch, unsub := h.eventHub.Subscribe(userID)
+	defer unsub()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	fetch := func(c context.Context) *store.ConnectionRequest {
+		cr, err := h.st.GetConnectionRequest(c, connID)
+		if err != nil {
+			return &store.ConnectionRequest{ID: connID, Status: "pending"}
+		}
+		if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
+			_ = h.st.UpdateConnectionRequestStatus(c, connID, "expired", "")
+			cr.Status = "expired"
+		}
+		return cr
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fetch(context.Background())
+		case <-timer.C:
+			return fetch(context.Background())
+		case _, ok := <-ch:
+			if !ok {
+				return fetch(context.Background())
+			}
+			cr := fetch(ctx)
+			if cr.Status != "pending" {
+				return cr
 			}
 		}
 	}

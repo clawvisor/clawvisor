@@ -105,8 +105,10 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
 - **`callback_url`** — *(optional, only if callbacks are configured)* Clawvisor posts task lifecycle events here. Otherwise, long-poll with `GET /api/tasks/{id}?wait=true`.
 
 All tasks start as `pending_approval` — the user is notified to approve the
-scope before it becomes active. Long-poll `GET /api/tasks/{id}?wait=true`
-until `status` changes to `active` (or `denied`).
+scope before it becomes active. Add `?wait=true` to `POST /api/tasks` to block
+until the task is approved or denied, returning the resolved task in a single
+round-trip. Alternatively, long-poll `GET /api/tasks/{id}?wait=true` until
+`status` changes to `active` (or `denied`).
 
 ### Standing tasks
 
@@ -156,8 +158,9 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand" \
   }'
 ```
 
-The user will be notified to approve the expansion. On approval, the action is
-added to the task scope and the expiry is reset.
+The user will be notified to approve the expansion. Add `?wait=true` to block
+until the expansion is approved or denied. On approval, the action is added to
+the task scope and the expiry is reset.
 
 ### Completing a task
 
