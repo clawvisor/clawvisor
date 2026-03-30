@@ -101,7 +101,7 @@ export const SERVICE_BRAND_COLORS: Record<string, {
 }
 
 export const SERVICE_DESCRIPTIONS: Record<string, string> = {
-  'google.gmail': 'Read, search, and send email',
+  'google.gmail': 'Read, search, send, and draft email',
   'google.calendar': 'View and manage calendar events',
   'google.drive': 'List, search, and manage files',
   'google.contacts': 'Search and view contacts',
@@ -124,6 +124,7 @@ export const ACTION_DISPLAY_NAMES: Record<string, string> = {
   list_messages: 'List messages',
   get_message: 'Get message',
   send_message: 'Send message',
+  create_draft: 'Create draft',
   // Calendar
   list_events: 'List events',
   get_event: 'Get event',

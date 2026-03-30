@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -21,10 +22,26 @@ import (
 
 const serviceID = "google.gmail"
 
-// gmailScopes are the OAuth scopes required by the Gmail adapter.
-var gmailScopes = []string{
+// gmailBaseScopes are always requested.
+var gmailBaseScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
+}
+
+// draftsEnabled reports whether the create_draft action is available.
+// Set GMAIL_DRAFTS_ENABLED=false to disable in environments where the
+// gmail.compose scope has not yet been approved.
+func draftsEnabled() bool {
+	return os.Getenv("GMAIL_DRAFTS_ENABLED") != "false"
+}
+
+// gmailScopes returns the scopes to request, including gmail.compose
+// only when drafts are enabled.
+func gmailScopes() []string {
+	if !draftsEnabled() {
+		return gmailBaseScopes
+	}
+	return append(gmailBaseScopes, "https://www.googleapis.com/auth/gmail.compose")
 }
 
 // GmailAdapter implements adapters.Adapter for Gmail.
@@ -45,23 +62,27 @@ func New(clientID, clientSecret, redirectURL string) *GmailAdapter {
 func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
-	return []string{"list_messages", "get_message", "send_message"}
+	actions := []string{"list_messages", "get_message", "send_message"}
+	if draftsEnabled() {
+		actions = append(actions, "create_draft")
+	}
+	return actions
 }
 
-func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes }
+func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes() }
 
 func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     a.clientID,
 		ClientSecret: a.clientSecret,
 		RedirectURL:  a.redirectURL,
-		Scopes:       gmailScopes,
+		Scopes:       gmailScopes(),
 		Endpoint:     google.Endpoint,
 	}
 }
 
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, gmailScopes)
+	return credential.FromToken(token, gmailScopes())
 }
 
 func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
@@ -82,6 +103,11 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.getMessage(ctx, client, req.Params)
 	case "send_message":
 		return a.sendMessage(ctx, client, req.Params)
+	case "create_draft":
+		if err := a.requireComposeScope(req.Credential); err != nil {
+			return nil, err
+		}
+		return a.createDraft(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("gmail: unsupported action %q", req.Action)
 	}
@@ -288,6 +314,63 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 		"subject":    subject,
 	}
 	summary := format.Summary("Email sent to %s (subject: %q)", to, subject)
+	return &adapters.Result{Summary: summary, Data: result}, nil
+}
+
+// requireComposeScope checks whether the stored credential includes the
+// gmail.compose scope. Legacy tokens that only have gmail.send will fail
+// with a descriptive error prompting the user to reconnect.
+func (a *GmailAdapter) requireComposeScope(credBytes []byte) error {
+	cred, err := credential.Parse(credBytes)
+	if err != nil {
+		return fmt.Errorf("gmail create_draft: %w", err)
+	}
+	if !credential.HasAllScopes(cred.Scopes, []string{"https://www.googleapis.com/auth/gmail.compose"}) {
+		return fmt.Errorf("gmail create_draft: the gmail.compose scope is required — please reconnect your Google account to grant draft permissions")
+	}
+	return nil
+}
+
+// ── create_draft ──────────────────────────────────────────────────────────────
+
+func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	to, _ := params["to"].(string)
+	subject, _ := params["subject"].(string)
+	body, _ := params["body"].(string)
+	inReplyTo, _ := params["in_reply_to"].(string)
+
+	if to == "" {
+		return nil, fmt.Errorf("gmail create_draft: to is required")
+	}
+	if subject == "" {
+		return nil, fmt.Errorf("gmail create_draft: subject is required")
+	}
+
+	raw := buildMIMEMessage(to, subject, body, inReplyTo)
+	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+
+	payload := map[string]any{
+		"message": map[string]string{"raw": encoded},
+	}
+
+	var draftResp struct {
+		ID      string `json:"id"`
+		Message struct {
+			ID string `json:"id"`
+		} `json:"message"`
+	}
+	if err := gmailPOST(ctx, client, "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+		payload, &draftResp); err != nil {
+		return nil, fmt.Errorf("gmail create_draft: %w", err)
+	}
+
+	result := map[string]string{
+		"draft_id":   draftResp.ID,
+		"message_id": draftResp.Message.ID,
+		"to":         to,
+		"subject":    subject,
+	}
+	summary := format.Summary("Draft created for %s (subject: %q)", to, subject)
 	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 
