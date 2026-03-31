@@ -1144,7 +1144,13 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Success: store the token as an api_key credential.
+	// Success: validate and store the token as an api_key credential.
+	if tokenResp.AccessToken == "" {
+		h.logger.Warn("device flow: provider returned empty access token", "service", entry.ServiceID)
+		h.deviceFlows.Delete(body.FlowID)
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "provider returned empty access token")
+		return
+	}
 	credBytes, err := json.Marshal(map[string]string{
 		"type":  "api_key",
 		"token": tokenResp.AccessToken,
