@@ -21,4 +21,5 @@ FROM gcr.io/distroless/static-debian12
 COPY --from=go-builder /app/clawvisor /clawvisor
 COPY --from=web-builder /web/dist /web/dist
 EXPOSE 25297
+USER nonroot
 ENTRYPOINT ["/clawvisor", "server"]

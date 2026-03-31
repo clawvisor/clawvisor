@@ -130,11 +130,6 @@ This typically takes 30–60 seconds on first build.
 Postgres data is persisted in the `postgres_data` Docker volume. The vault
 master key is provided via the `VAULT_KEY` environment variable.
 
-> **OpenClaw users:** If you're integrating with OpenClaw, use
-> `docker-compose.openclaw.yml` instead — it includes private-network
-> callback support and a shared data volume. See
-> [INTEGRATE_OPENCLAW.md](INTEGRATE_OPENCLAW.md) for the full guide.
-
 ---
 
 ## Step 5: Extract the magic link

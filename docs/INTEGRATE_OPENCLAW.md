@@ -7,8 +7,7 @@ user for clarification when the environment is ambiguous — do not guess
 silently.
 
 **Prerequisite:** Clawvisor must be running. If it isn't, set it up first —
-see [SETUP.md](SETUP.md). For the simplest path with OpenClaw, use
-`docker-compose.openclaw.yml` via [SETUP_DOCKER.md](SETUP_DOCKER.md).
+see [SETUP.md](SETUP.md).
 
 ---
 
