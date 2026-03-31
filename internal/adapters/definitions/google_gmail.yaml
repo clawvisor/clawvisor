@@ -27,6 +27,9 @@ actions:
     display_name: "List messages"
     risk: { category: read, sensitivity: low, description: "List email messages" }
     override: go
+    params:
+      query: { type: string }
+      max_results: { type: int, default: 10, max: 50 }
 
   get_message:
     display_name: "Get message"
@@ -61,8 +64,18 @@ actions:
     display_name: "Send message"
     risk: { category: write, sensitivity: high, description: "Send email as the user" }
     override: go
+    params:
+      to: { type: string, required: true }
+      subject: { type: string, required: true }
+      body: { type: string }
+      in_reply_to: { type: string }
 
   create_draft:
     display_name: "Create draft"
     risk: { category: write, sensitivity: low, description: "Create an email draft (not sent)" }
     override: go
+    params:
+      to: { type: string, required: true }
+      subject: { type: string, required: true }
+      body: { type: string }
+      in_reply_to: { type: string }

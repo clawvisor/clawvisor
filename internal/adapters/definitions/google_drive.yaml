@@ -47,16 +47,26 @@ actions:
     display_name: "Get file"
     risk: { category: read, sensitivity: low, description: "Read a specific file from Google Drive" }
     override: go
+    params:
+      file_id: { type: string, required: true }
 
   create_file:
     display_name: "Create file"
     risk: { category: write, sensitivity: medium, description: "Create a file in Google Drive" }
     override: go
+    params:
+      name: { type: string, required: true }
+      content: { type: string, required: true }
+      mime_type: { type: string }
+      parent_folder_id: { type: string }
 
   update_file:
     display_name: "Update file"
     risk: { category: write, sensitivity: medium, description: "Update a file in Google Drive" }
     override: go
+    params:
+      file_id: { type: string, required: true }
+      content: { type: string, required: true }
 
   search_files:
     display_name: "Search files"

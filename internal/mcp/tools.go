@@ -26,8 +26,8 @@ func toolDefs() []Tool {
 	return []Tool{
 		{
 			Name:        "fetch_catalog",
-			Description: "Fetch the service catalog showing all available services, actions, and their parameters for this user.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			Description: "Fetch the service catalog. Returns an overview of all activated services with compact parameter signatures. Pass a service ID to get detailed parameter docs for that service.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"service":{"type":"string","description":"Optional service ID (e.g. google.gmail) to get detailed parameter documentation for a single service"}}}`),
 		},
 		{
 			Name:        "create_task",
