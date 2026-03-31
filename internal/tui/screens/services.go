@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -39,14 +40,26 @@ type oauthURLMsg struct {
 
 type oauthDoneMsg struct{}
 
+type deviceFlowStartedMsg struct {
+	resp *client.DeviceFlowStartResponse
+	err  error
+}
+
+type deviceFlowPollMsg struct {
+	resp *client.DeviceFlowPollResponse
+	err  error
+}
+
 // ── Input steps ─────────────────────────────────────────────────────────────
 
 const (
-	stepNone         = 0
-	stepAlias        = 1
-	stepKeyEntry     = 2
-	stepOAuthConfirm = 3
-	stepOAuthWaiting = 4
+	stepNone               = 0
+	stepAlias              = 1
+	stepKeyEntry           = 2
+	stepOAuthConfirm       = 3
+	stepOAuthWaiting       = 4
+	stepDeviceFlowChoice   = 5
+	stepDeviceFlowWaiting  = 6
 )
 
 // ── Model ───────────────────────────────────────────────────────────────────
@@ -76,6 +89,13 @@ type ServicesScreen struct {
 	// OAuth completion listener.
 	oauthDoneCh chan struct{}
 	oauthCleanup func()
+
+	// Device flow state.
+	deviceFlowUserCode string
+	deviceFlowURI      string
+	deviceFlowID       string
+	deviceFlowInterval int
+	deviceFlowChoice   int // 0 = device flow (default), 1 = API key
 }
 
 func NewServicesScreen(c *client.Client) *ServicesScreen {
@@ -215,6 +235,59 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		}
 	}
 
+	// Device flow choice overlay.
+	if s.inputStep == stepDeviceFlowChoice {
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			switch msg.String() {
+			case "esc":
+				s.resetActivation()
+				return s, nil
+			case "up", "k":
+				if s.deviceFlowChoice > 0 {
+					s.deviceFlowChoice--
+				}
+				return s, nil
+			case "down", "j":
+				if s.deviceFlowChoice < 1 {
+					s.deviceFlowChoice++
+				}
+				return s, nil
+			case "enter":
+				if s.deviceFlowChoice == 1 {
+					// API key path.
+					s.inputStep = stepKeyEntry
+					ki := textinput.New()
+					ki.Placeholder = "paste token here"
+					ki.EchoMode = textinput.EchoPassword
+					ki.Focus()
+					s.keyInput = &ki
+					return s, nil
+				}
+				// Device flow path.
+				cl := s.client
+				serviceID := s.activatingService.ID
+				alias := s.pendingAlias
+				return s, func() tea.Msg {
+					resp, err := cl.DeviceFlowStart(serviceID, alias)
+					return deviceFlowStartedMsg{resp: resp, err: err}
+				}
+			}
+			return s, nil
+		}
+	}
+
+	// Device flow waiting overlay.
+	if s.inputStep == stepDeviceFlowWaiting {
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			switch msg.String() {
+			case "esc":
+				s.resetActivation()
+				return s, nil
+			}
+			return s, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
@@ -282,6 +355,45 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		cmds = append(cmds, s.fetchServices())
 		return s, tea.Batch(cmds...)
 
+	case deviceFlowStartedMsg:
+		if msg.err != nil {
+			s.err = msg.err
+			s.resetActivation()
+			return s, nil
+		}
+		s.deviceFlowUserCode = msg.resp.UserCode
+		s.deviceFlowURI = msg.resp.VerificationURI
+		s.deviceFlowID = msg.resp.FlowID
+		s.deviceFlowInterval = msg.resp.Interval
+		s.inputStep = stepDeviceFlowWaiting
+		browser.Open(msg.resp.VerificationURI)
+		return s, s.pollDeviceFlow()
+
+	case deviceFlowPollMsg:
+		if msg.err != nil {
+			s.err = msg.err
+			s.resetActivation()
+			return s, nil
+		}
+		switch msg.resp.Status {
+		case "complete":
+			s.resetActivation()
+			cmds = append(cmds, func() tea.Msg {
+				return tui.StatusMsg("Service connected")
+			})
+			cmds = append(cmds, s.fetchServices())
+			return s, tea.Batch(cmds...)
+		case "pending":
+			return s, s.pollDeviceFlow()
+		case "slow_down":
+			s.deviceFlowInterval = msg.resp.Interval
+			return s, s.pollDeviceFlow()
+		default: // expired, denied, error
+			s.err = fmt.Errorf("device flow: %s", msg.resp.Status)
+			s.resetActivation()
+			return s, nil
+		}
+
 	case svcActivatedMsg:
 		s.resetActivation()
 		if msg.err != nil {
@@ -333,6 +445,12 @@ func (s *ServicesScreen) View() string {
 	}
 	if s.inputStep == stepOAuthWaiting {
 		return s.viewOAuthWaiting()
+	}
+	if s.inputStep == stepDeviceFlowChoice {
+		return s.viewDeviceFlowChoice()
+	}
+	if s.inputStep == stepDeviceFlowWaiting {
+		return s.viewDeviceFlowWaiting()
 	}
 
 	var b strings.Builder
@@ -522,6 +640,66 @@ func (s *ServicesScreen) viewOAuthWaiting() string {
 	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
 }
 
+func (s *ServicesScreen) viewDeviceFlowChoice() string {
+	svcName := ""
+	if s.activatingService != nil {
+		svcName = s.activatingService.Name
+	}
+	title := lipgloss.NewStyle().
+		Foreground(tui.ColorBrand).
+		Bold(true).
+		Render("Connect " + svcName)
+
+	opts := []string{"Sign in with GitHub (browser)", "Paste a Personal Access Token"}
+	var optLines strings.Builder
+	for i, opt := range opts {
+		cursor := "  "
+		if i == s.deviceFlowChoice {
+			cursor = tui.StyleBrand.Render("> ")
+		}
+		optLines.WriteString(cursor + opt + "\n")
+	}
+
+	content := fmt.Sprintf("%s\n\n%s\n%s",
+		title,
+		optLines.String(),
+		tui.StyleDim.Render("[enter] Select  [esc] Cancel"),
+	)
+	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
+}
+
+func (s *ServicesScreen) viewDeviceFlowWaiting() string {
+	svcName := ""
+	if s.activatingService != nil {
+		svcName = s.activatingService.Name
+	}
+	title := lipgloss.NewStyle().
+		Foreground(tui.ColorBrand).
+		Bold(true).
+		Render("Connect " + svcName)
+
+	content := fmt.Sprintf("%s\n\n%s\n%s\n\n%s\n\n%s",
+		title,
+		"Enter this code in your browser:",
+		lipgloss.NewStyle().Bold(true).Render("  "+s.deviceFlowUserCode),
+		tui.StyleDim.Render(s.deviceFlowURI),
+		tui.StyleAmber.Render("Waiting for authorization...  ")+tui.StyleDim.Render("[esc] Cancel"),
+	)
+	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
+}
+
+func (s *ServicesScreen) pollDeviceFlow() tea.Cmd {
+	cl := s.client
+	serviceID := s.activatingService.ID
+	flowID := s.deviceFlowID
+	interval := s.deviceFlowInterval
+	return func() tea.Msg {
+		time.Sleep(time.Duration(interval) * time.Second)
+		resp, err := cl.DeviceFlowPoll(serviceID, flowID)
+		return deviceFlowPollMsg{resp: resp, err: err}
+	}
+}
+
 // ── Activation flow ─────────────────────────────────────────────────────────
 
 func (s *ServicesScreen) startActivation() tea.Cmd {
@@ -573,6 +751,13 @@ func (s *ServicesScreen) proceedAfterAlias() tea.Cmd {
 			resp, err := cl.GetOAuthURL(serviceID, alias, cliCallback)
 			return oauthURLMsg{resp: resp, err: err}
 		}
+	}
+
+	if svc.DeviceFlow {
+		// Show choice: device flow or API key.
+		s.inputStep = stepDeviceFlowChoice
+		s.deviceFlowChoice = 0
+		return nil
 	}
 
 	// API key service — show key input.
@@ -676,6 +861,11 @@ func (s *ServicesScreen) resetActivation() {
 	s.pendingAlias = ""
 	s.pendingOAuthURL = ""
 	s.activatingService = nil
+	s.deviceFlowUserCode = ""
+	s.deviceFlowURI = ""
+	s.deviceFlowID = ""
+	s.deviceFlowInterval = 0
+	s.deviceFlowChoice = 0
 }
 
 func (s *ServicesScreen) stopOAuthListener() {
@@ -721,6 +911,8 @@ func (s *ServicesScreen) showDetail() {
 		b.WriteString("None (local)")
 	} else if svc.OAuth {
 		b.WriteString("OAuth")
+	} else if svc.DeviceFlow {
+		b.WriteString("OAuth (device flow) or API key")
 	} else {
 		b.WriteString("API key")
 	}

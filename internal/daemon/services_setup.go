@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/clawvisor/clawvisor/internal/browser"
@@ -159,6 +160,8 @@ func activateService(apiClient *client.Client, svc client.ServiceInfo, dataDir s
 		return activateCredentialFreeService(apiClient, svc)
 	case svc.OAuth:
 		return activateOAuthService(apiClient, svc, dataDir)
+	case svc.DeviceFlow:
+		return activateDeviceFlowOrAPIKey(apiClient, svc)
 	default:
 		return activateAPIKeyService(apiClient, svc)
 	}
@@ -202,6 +205,71 @@ func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) err
 	}
 	fmt.Printf("  %s %s connected.\n\n", green.Render("✓"), svc.Name)
 	return nil
+}
+
+// activateDeviceFlowOrAPIKey lets the user choose between device flow (browser)
+// and pasting a personal access token.
+func activateDeviceFlowOrAPIKey(apiClient *client.Client, svc client.ServiceInfo) error {
+	var method string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title(fmt.Sprintf("How would you like to connect %s?", svc.Name)).
+				Options(
+					huh.NewOption("Sign in with GitHub (browser)", "device_flow"),
+					huh.NewOption("Paste a Personal Access Token", "api_key"),
+				).
+				Value(&method),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	if method == "api_key" {
+		return activateAPIKeyService(apiClient, svc)
+	}
+
+	// Device flow.
+	dfResp, err := apiClient.DeviceFlowStart(svc.ID, "")
+	if err != nil {
+		return fmt.Errorf("starting device flow: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println(bold.Padding(0, 2).Render(fmt.Sprintf("  Enter code: %s", dfResp.UserCode)))
+	fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  at: %s", dfResp.VerificationURI)))
+	fmt.Println()
+
+	browser.Open(dfResp.VerificationURI)
+
+	fmt.Println(dim.Padding(0, 2).Render("  Waiting for authorization..."))
+
+	interval := dfResp.Interval
+	for {
+		time.Sleep(time.Duration(interval) * time.Second)
+
+		pollResp, err := apiClient.DeviceFlowPoll(svc.ID, dfResp.FlowID)
+		if err != nil {
+			return fmt.Errorf("polling device flow: %w", err)
+		}
+
+		switch pollResp.Status {
+		case "complete":
+			fmt.Printf("  %s %s connected.\n\n", green.Render("✓"), svc.Name)
+			return nil
+		case "pending":
+			continue
+		case "slow_down":
+			interval = pollResp.Interval
+			continue
+		case "expired":
+			return fmt.Errorf("authorization expired — please try again")
+		case "denied":
+			return fmt.Errorf("authorization was denied")
+		default:
+			return fmt.Errorf("unexpected status: %s", pollResp.Status)
+		}
+	}
 }
 
 // activateOAuthService handles OAuth activation. For services using the

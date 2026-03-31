@@ -24,11 +24,23 @@ type AuthDef struct {
 	Header       string            `yaml:"header,omitempty"`
 	HeaderPrefix string            `yaml:"header_prefix,omitempty"`
 	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
-	OAuth        *OAuthDef         `yaml:"oauth,omitempty"`
+	OAuth      *OAuthDef      `yaml:"oauth,omitempty"`
+	DeviceFlow *DeviceFlowDef `yaml:"device_flow,omitempty"`
 
 	// For basic auth where the credential is a composite "user:pass" string.
 	// The token field is split on ":" to produce user/pass for BasicAuth.
 	BasicSplit bool `yaml:"basic_split,omitempty"`
+}
+
+// DeviceFlowDef holds configuration for OAuth2 device authorization grant (RFC 8628).
+// This allows CLI/native apps to authenticate without a client secret.
+type DeviceFlowDef struct {
+	ClientID      string   `yaml:"client_id,omitempty"`       // hardcoded client_id (public, safe to ship)
+	ClientIDEnv   string   `yaml:"client_id_env,omitempty"`   // env var name for client_id override
+	Scopes        []string `yaml:"scopes"`                    // requested OAuth scopes
+	DeviceCodeURL string   `yaml:"device_code_url"`           // e.g. "https://github.com/login/device/code"
+	TokenURL      string   `yaml:"token_url"`                 // e.g. "https://github.com/login/oauth/access_token"
+	GrantType     string   `yaml:"grant_type,omitempty"`      // default: "urn:ietf:params:oauth:grant-type:device_code"
 }
 
 // OAuthDef holds OAuth2-specific configuration.

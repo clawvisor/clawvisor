@@ -319,6 +319,31 @@ func (c *Client) DeactivateService(serviceID, alias string) error {
 	return c.post("/api/services/"+serviceID+"/deactivate", body, &resp)
 }
 
+// ── Device Flow ─────────────────────────────────────────────────────────────
+
+// DeviceFlowStart initiates a device authorization flow for the given service.
+func (c *Client) DeviceFlowStart(serviceID, alias string) (*DeviceFlowStartResponse, error) {
+	body := map[string]string{}
+	if alias != "" {
+		body["alias"] = alias
+	}
+	var resp DeviceFlowStartResponse
+	if err := c.post("/api/services/"+serviceID+"/device-flow/start", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeviceFlowPoll polls for device flow completion.
+func (c *Client) DeviceFlowPoll(serviceID, flowID string) (*DeviceFlowPollResponse, error) {
+	body := map[string]string{"flow_id": flowID}
+	var resp DeviceFlowPollResponse
+	if err := c.post("/api/services/"+serviceID+"/device-flow/poll", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ── Restrictions ────────────────────────────────────────────────────────────
 
 func (c *Client) GetRestrictions() ([]Restriction, error) {

@@ -466,6 +466,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
+	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))
+	mux.Handle("POST /api/services/{serviceID}/device-flow/poll", user(servicesHandler.DeviceFlowPoll))
 
 	// System-level OAuth config (user JWT)
 	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
