@@ -84,14 +84,42 @@ func (a *IMessageAdapter) ValidateCredential(_ []byte) error { return nil }
 
 // ServiceMetadata returns display and risk metadata for iMessage.
 func (a *IMessageAdapter) ServiceMetadata() adapters.ServiceMetadata {
+	maxThreads := 50
 	return adapters.ServiceMetadata{
 		DisplayName: "iMessage",
 		Description: "Search and read iMessage threads",
 		ActionMeta: map[string]adapters.ActionMeta{
-			"search_messages": {DisplayName: "Search messages", Category: "search", Sensitivity: "low", Description: "Search iMessage history"},
-			"list_threads":    {DisplayName: "List threads", Category: "read", Sensitivity: "low", Description: "List iMessage conversation threads"},
-			"get_thread":      {DisplayName: "Get thread", Category: "read", Sensitivity: "low", Description: "Read a specific iMessage thread"},
-			"send_message":    {DisplayName: "Send message", Category: "write", Sensitivity: "high", Description: "Send an iMessage (requires per-request approval)"},
+			"search_messages": {
+				DisplayName: "Search messages", Category: "search", Sensitivity: "low",
+				Description: "Search iMessage history",
+				Params: []adapters.ParamMeta{
+					{Name: "query", Type: "string", Required: true},
+					{Name: "contact", Type: "string"},
+				},
+			},
+			"list_threads": {
+				DisplayName: "List threads", Category: "read", Sensitivity: "low",
+				Description: "List iMessage conversation threads",
+				Params: []adapters.ParamMeta{
+					{Name: "max_results", Type: "int", Default: 20, Max: &maxThreads},
+				},
+			},
+			"get_thread": {
+				DisplayName: "Get thread", Category: "read", Sensitivity: "low",
+				Description: "Read a specific iMessage thread",
+				Params: []adapters.ParamMeta{
+					{Name: "contact", Type: "string"},
+					{Name: "thread_id", Type: "string"},
+				},
+			},
+			"send_message": {
+				DisplayName: "Send message", Category: "write", Sensitivity: "high",
+				Description: "Send an iMessage (requires per-request approval)",
+				Params: []adapters.ParamMeta{
+					{Name: "to", Type: "string", Required: true},
+					{Name: "text", Type: "string", Required: true},
+				},
+			},
 		},
 	}
 }

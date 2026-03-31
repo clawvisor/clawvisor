@@ -32,10 +32,21 @@ type ServiceMetadata struct {
 
 // ActionMeta holds display and risk metadata for a single action.
 type ActionMeta struct {
-	DisplayName string // "List customers"
-	Category    string // "read", "write", "delete", "search"
-	Sensitivity string // "low", "medium", "high"
-	Description string // "List Stripe customers" (for risk assessment)
+	DisplayName string      // "List customers"
+	Category    string      // "read", "write", "delete", "search"
+	Sensitivity string      // "low", "medium", "high"
+	Description string      // "List Stripe customers" (for risk assessment)
+	Params      []ParamMeta // ordered parameter documentation
+}
+
+// ParamMeta holds documentation metadata for a single action parameter.
+type ParamMeta struct {
+	Name     string // parameter name as passed in the request
+	Type     string // "string", "int", "bool", "object", "array"
+	Required bool
+	Default  any    // default value, nil if none
+	Min      *int   // minimum value (for int params)
+	Max      *int   // maximum value (for int params)
 }
 
 // ActionInfo is returned by the service catalog with per-action metadata.

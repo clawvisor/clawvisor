@@ -121,7 +121,11 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 
 	switch toolName {
 	case "fetch_catalog":
-		return internalRoute{"GET", "/api/skill/catalog", "GET /api/skill/catalog", nil}, nil, nil
+		path := "/api/skill/catalog"
+		if svc := getString("service"); svc != "" {
+			path += "?service=" + svc
+		}
+		return internalRoute{"GET", path, "GET /api/skill/catalog", nil}, nil, nil
 
 	case "create_task":
 		path := "/api/tasks"

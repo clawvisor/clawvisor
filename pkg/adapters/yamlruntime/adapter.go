@@ -232,12 +232,42 @@ func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte) (*h
 func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 	actionMeta := make(map[string]adapters.ActionMeta, len(a.def.Actions))
 	for name, action := range a.def.Actions {
-		actionMeta[name] = adapters.ActionMeta{
+		am := adapters.ActionMeta{
 			DisplayName: action.DisplayName,
 			Category:    action.Risk.Category,
 			Sensitivity: action.Risk.Sensitivity,
 			Description: action.Risk.Description,
 		}
+		// Build ordered parameter metadata from YAML params.
+		if len(action.Params) > 0 {
+			names := make([]string, 0, len(action.Params))
+			for pn := range action.Params {
+				names = append(names, pn)
+			}
+			sort.Strings(names)
+			// Put required params first, then optional, preserving alpha within each group.
+			sort.SliceStable(names, func(i, j int) bool {
+				ri := action.Params[names[i]].Required
+				rj := action.Params[names[j]].Required
+				if ri != rj {
+					return ri
+				}
+				return false
+			})
+			am.Params = make([]adapters.ParamMeta, 0, len(names))
+			for _, pn := range names {
+				p := action.Params[pn]
+				am.Params = append(am.Params, adapters.ParamMeta{
+					Name:     pn,
+					Type:     p.Type,
+					Required: p.Required,
+					Default:  p.Default,
+					Min:      p.Min,
+					Max:      p.Max,
+				})
+			}
+		}
+		actionMeta[name] = am
 	}
 
 	var vaultKey, oauthEndpoint string
