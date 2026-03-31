@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -36,6 +37,9 @@ type ServicesHandler struct {
 
 	// oauthStates holds temporary OAuth2 state tokens (in-memory; Phase 3 only).
 	oauthStates sync.Map // stateToken (string) → oauthStateEntry
+
+	// deviceFlows holds pending device flow entries keyed by flow ID.
+	deviceFlows sync.Map // flowID (string) → deviceFlowEntry
 }
 
 type oauthStateEntry struct {
@@ -125,6 +129,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Alias              string        `json:"alias,omitempty"`
 		OAuth              bool          `json:"oauth"`
 		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
+		DeviceFlow         bool          `json:"device_flow,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
 		Actions            []actionEntry `json:"actions"`
@@ -166,12 +171,18 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			actions = append(actions, ae)
 		}
 
+		var deviceFlow bool
+		if mp, ok2 := a.(adapters.MetadataProvider); ok2 {
+			deviceFlow = mp.ServiceMetadata().DeviceFlow
+		}
+
 		return serviceEntry{
 			ID:                 a.ServiceID(),
 			Name:               name,
 			Description:        desc,
 			OAuth:              len(a.RequiredScopes()) > 0,
 			OAuthEndpoint:      oauthEndpoint,
+			DeviceFlow:         deviceFlow,
 			RequiresActivation: true,
 			Actions:            actions,
 			SetupURL:           setupURL,
@@ -889,6 +900,271 @@ func (h *ServicesHandler) removeAdapterScopes(ctx context.Context, userID, vKey 
 		return
 	}
 	_ = h.vault.Set(ctx, userID, vKey, updated)
+}
+
+// ── Device Flow (RFC 8628) ───────────────────────────────────────────────────
+
+type deviceFlowEntry struct {
+	UserID     string
+	ServiceID  string
+	Alias      string
+	DeviceCode string
+	ClientID   string
+	TokenURL   string
+	GrantType  string
+	Interval   int
+	ExpiresAt  time.Time
+}
+
+// DeviceFlowStart initiates a device authorization flow.
+//
+// POST /api/services/{serviceID}/device-flow/start
+// Auth: user JWT
+// Body: {"alias": "..."} (optional)
+// Response: {"flow_id": "...", "user_code": "ABCD-1234", "verification_uri": "...", "interval": 5, "expires_in": 900}
+func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	serviceID := r.PathValue("serviceID")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "serviceID is required")
+		return
+	}
+
+	adapter, ok := h.adapterReg.Get(serviceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
+		return
+	}
+
+	dfp, ok := adapter.(adapters.DeviceFlowProvider)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not support device flow")
+		return
+	}
+	dfCfg := dfp.DeviceFlowConfig()
+	if dfCfg == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "device flow not configured (missing client_id)")
+		return
+	}
+
+	var body struct {
+		Alias string `json:"alias"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	alias := body.Alias
+	if alias == "" {
+		alias = "default"
+	}
+	if !validAlias(alias) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters")
+		return
+	}
+
+	// Resolve client_id.
+	clientID := dfCfg.ClientID
+	if dfCfg.ClientIDEnv != "" {
+		if v := os.Getenv(dfCfg.ClientIDEnv); v != "" {
+			clientID = v
+		}
+	}
+
+	// Request device code from the provider.
+	form := url.Values{
+		"client_id": {clientID},
+		"scope":     {strings.Join(dfCfg.Scopes, " ")},
+	}
+	req, err := http.NewRequestWithContext(r.Context(), "POST", dfCfg.DeviceCodeURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to build request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Warn("device flow: request to provider failed", "err", err)
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
+		return
+	}
+	defer resp.Body.Close()
+
+	var dfResp struct {
+		DeviceCode      string `json:"device_code"`
+		UserCode        string `json:"user_code"`
+		VerificationURI string `json:"verification_uri"`
+		ExpiresIn       int    `json:"expires_in"`
+		Interval        int    `json:"interval"`
+		Error           string `json:"error"`
+		ErrorDesc       string `json:"error_description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&dfResp); err != nil {
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "invalid response from provider")
+		return
+	}
+	if dfResp.Error != "" {
+		h.logger.Warn("device flow: provider error", "error", dfResp.Error, "desc", dfResp.ErrorDesc)
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", dfResp.ErrorDesc)
+		return
+	}
+
+	grantType := dfCfg.GrantType
+	if grantType == "" {
+		grantType = "urn:ietf:params:oauth:grant-type:device_code"
+	}
+	interval := dfResp.Interval
+	if interval < 5 {
+		interval = 5
+	}
+
+	flowID := uuid.New().String()
+	h.deviceFlows.Store(flowID, deviceFlowEntry{
+		UserID:     user.ID,
+		ServiceID:  serviceID,
+		Alias:      alias,
+		DeviceCode: dfResp.DeviceCode,
+		ClientID:   clientID,
+		TokenURL:   dfCfg.TokenURL,
+		GrantType:  grantType,
+		Interval:   interval,
+		ExpiresAt:  time.Now().Add(time.Duration(dfResp.ExpiresIn) * time.Second),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"flow_id":          flowID,
+		"user_code":        dfResp.UserCode,
+		"verification_uri": dfResp.VerificationURI,
+		"interval":         interval,
+		"expires_in":       dfResp.ExpiresIn,
+	})
+}
+
+// DeviceFlowPoll polls for device flow completion.
+//
+// POST /api/services/{serviceID}/device-flow/poll
+// Auth: user JWT
+// Body: {"flow_id": "..."}
+// Response: {"status": "pending|complete|expired|denied|slow_down", "interval": ...}
+func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	var body struct {
+		FlowID string `json:"flow_id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.FlowID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "flow_id is required")
+		return
+	}
+
+	val, ok := h.deviceFlows.Load(body.FlowID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown or expired flow")
+		return
+	}
+	entry := val.(deviceFlowEntry)
+
+	if entry.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "flow does not belong to this user")
+		return
+	}
+	if time.Now().After(entry.ExpiresAt) {
+		h.deviceFlows.Delete(body.FlowID)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "expired"})
+		return
+	}
+
+	// Poll the provider's token endpoint.
+	form := url.Values{
+		"client_id":   {entry.ClientID},
+		"device_code": {entry.DeviceCode},
+		"grant_type":  {entry.GrantType},
+	}
+	req, err := http.NewRequestWithContext(r.Context(), "POST", entry.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to build request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Warn("device flow poll: request failed", "err", err)
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
+		return
+	}
+	defer resp.Body.Close()
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		Scope       string `json:"scope"`
+		Error       string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "invalid response from provider")
+		return
+	}
+
+	switch tokenResp.Error {
+	case "authorization_pending":
+		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+		return
+	case "slow_down":
+		// Increase interval by 5 seconds per spec.
+		entry.Interval += 5
+		h.deviceFlows.Store(body.FlowID, entry)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "slow_down", "interval": entry.Interval})
+		return
+	case "expired_token":
+		h.deviceFlows.Delete(body.FlowID)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "expired"})
+		return
+	case "access_denied":
+		h.deviceFlows.Delete(body.FlowID)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
+		return
+	case "":
+		// Success — fall through.
+	default:
+		h.deviceFlows.Delete(body.FlowID)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": tokenResp.Error})
+		return
+	}
+
+	// Success: store the token as an api_key credential.
+	credBytes, err := json.Marshal(map[string]string{
+		"type":  "api_key",
+		"token": tokenResp.AccessToken,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to encode credential")
+		return
+	}
+
+	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, entry.Alias)
+	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
+		h.logger.Warn("device flow: vault set failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "VAULT_ERROR", "failed to store credential")
+		return
+	}
+	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, entry.Alias, time.Now())
+	h.deviceFlows.Delete(body.FlowID)
+
+	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "complete"})
 }
 
 // ── System OAuth Config ──────────────────────────────────────────────────────

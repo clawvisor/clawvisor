@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"golang.org/x/oauth2"
+
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 )
 
 // ── Metadata types ──────────────────────────────────────────────────────────
@@ -23,6 +25,7 @@ type ServiceMetadata struct {
 	SetupURL          string
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
+	DeviceFlow        bool                  // whether device flow activation is available
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 }
@@ -41,6 +44,12 @@ type ActionInfo struct {
 	DisplayName string `json:"display_name"`
 	Category    string `json:"category"`
 	Sensitivity string `json:"sensitivity"`
+}
+
+// DeviceFlowProvider is an optional interface for adapters that support
+// OAuth2 device authorization grant (RFC 8628).
+type DeviceFlowProvider interface {
+	DeviceFlowConfig() *yamldef.DeviceFlowDef
 }
 
 // OAuthCredentialProvider supplies OAuth app credentials (client_id, client_secret)

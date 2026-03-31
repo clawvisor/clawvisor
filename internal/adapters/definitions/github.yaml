@@ -10,6 +10,12 @@ auth:
   header_prefix: "token "
   extra_headers:
     Accept: "application/vnd.github.v3+json"
+  device_flow:
+    client_id: "Ov23lilVGK2hqWMGk9Qk"
+    client_id_env: "GITHUB_CLIENT_ID"
+    scopes: ["repo", "read:org", "read:user"]
+    device_code_url: "https://github.com/login/device/code"
+    token_url: "https://github.com/login/oauth/access_token"
 
 api:
   base_url: "https://api.github.com"
@@ -154,7 +160,7 @@ actions:
     method: GET
     path: "/search/code"
     params:
-      query: { type: string, required: true, location: query }
+      query: { type: string, required: true, location: query, map_to: "q" }
     response:
       data_path: "items"
       fields:

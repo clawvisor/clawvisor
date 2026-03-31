@@ -188,12 +188,29 @@ type ServiceInfo struct {
 	Alias              string            `json:"alias,omitempty"`
 	OAuth              bool              `json:"oauth"`
 	OAuthEndpoint      string            `json:"oauth_endpoint,omitempty"`
+	DeviceFlow         bool              `json:"device_flow,omitempty"`
 	RequiresActivation bool              `json:"requires_activation"`
 	CredentialFree     bool              `json:"credential_free"`
 	Actions            json.RawMessage   `json:"actions"`
 	Status             string            `json:"status"` // "activated" or "not_activated"
 	ActivatedAt        string            `json:"activated_at,omitempty"`
 	SetupURL           string            `json:"setup_url,omitempty"`
+}
+
+// DeviceFlowStartResponse is returned by DeviceFlowStart.
+type DeviceFlowStartResponse struct {
+	FlowID          string `json:"flow_id"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	Interval        int    `json:"interval"`
+	ExpiresIn       int    `json:"expires_in"`
+}
+
+// DeviceFlowPollResponse is returned by DeviceFlowPoll.
+type DeviceFlowPollResponse struct {
+	Status   string `json:"status"` // "pending", "slow_down", "expired", "denied", "complete", "error"
+	Interval int    `json:"interval,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // ActionDisplayNames parses the Actions field (which may be []string or []object)

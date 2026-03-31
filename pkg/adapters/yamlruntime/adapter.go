@@ -252,6 +252,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		SetupURL:          a.def.Service.SetupURL,
 		VaultKey:          vaultKey,
 		OAuthEndpoint:     oauthEndpoint,
+		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
 	}
@@ -267,6 +268,33 @@ func (a *YAMLAdapter) VerificationHints() string {
 // SetOAuthProvider sets the provider that supplies OAuth app credentials lazily.
 func (a *YAMLAdapter) SetOAuthProvider(p adapters.OAuthCredentialProvider) {
 	a.oauthProvider = p
+}
+
+// DeviceFlowConfig returns the device flow configuration if available and
+// a client_id can be resolved. Implements adapters.DeviceFlowProvider.
+func (a *YAMLAdapter) DeviceFlowConfig() *yamldef.DeviceFlowDef {
+	if a.def.Auth.DeviceFlow == nil {
+		return nil
+	}
+	if a.resolveDeviceFlowClientID() == "" {
+		return nil
+	}
+	return a.def.Auth.DeviceFlow
+}
+
+// resolveDeviceFlowClientID returns the client_id for device flow,
+// checking env var first then the hardcoded value.
+func (a *YAMLAdapter) resolveDeviceFlowClientID() string {
+	df := a.def.Auth.DeviceFlow
+	if df == nil {
+		return ""
+	}
+	if df.ClientIDEnv != "" {
+		if v := os.Getenv(df.ClientIDEnv); v != "" {
+			return v
+		}
+	}
+	return df.ClientID
 }
 
 // Def returns the underlying YAML definition (for the loader/tests).
