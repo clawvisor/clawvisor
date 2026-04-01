@@ -189,6 +189,7 @@ type ServiceInfo struct {
 	OAuth              bool              `json:"oauth"`
 	OAuthEndpoint      string            `json:"oauth_endpoint,omitempty"`
 	DeviceFlow         bool              `json:"device_flow,omitempty"`
+	PKCEFlow           bool              `json:"pkce_flow,omitempty"`
 	RequiresActivation bool              `json:"requires_activation"`
 	CredentialFree     bool              `json:"credential_free"`
 	Actions            json.RawMessage   `json:"actions"`
@@ -204,6 +205,12 @@ type DeviceFlowStartResponse struct {
 	VerificationURI string `json:"verification_uri"`
 	Interval        int    `json:"interval"`
 	ExpiresIn       int    `json:"expires_in"`
+}
+
+// PKCEFlowStartResponse is returned by PKCEFlowStart.
+type PKCEFlowStartResponse struct {
+	AuthorizeURL string `json:"authorize_url"`
+	State        string `json:"state"`
 }
 
 // DeviceFlowPollResponse is returned by DeviceFlowPoll.

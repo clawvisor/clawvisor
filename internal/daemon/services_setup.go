@@ -162,6 +162,8 @@ func activateService(apiClient *client.Client, svc client.ServiceInfo, dataDir s
 		return activateOAuthService(apiClient, svc, dataDir)
 	case svc.DeviceFlow:
 		return activateDeviceFlowOrAPIKey(apiClient, svc)
+	case svc.PKCEFlow:
+		return activatePKCEFlowOrAPIKey(apiClient, svc)
 	default:
 		return activateAPIKeyService(apiClient, svc)
 	}
@@ -270,6 +272,51 @@ func activateDeviceFlowOrAPIKey(apiClient *client.Client, svc client.ServiceInfo
 			return fmt.Errorf("unexpected status: %s", pollResp.Status)
 		}
 	}
+}
+
+// activatePKCEFlowOrAPIKey lets the user choose between PKCE browser flow
+// and pasting an API key/token.
+func activatePKCEFlowOrAPIKey(apiClient *client.Client, svc client.ServiceInfo) error {
+	var method string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title(fmt.Sprintf("How would you like to connect %s?", svc.Name)).
+				Options(
+					huh.NewOption("Sign in with "+svc.Name+" (browser)", "pkce_flow"),
+					huh.NewOption("Paste an API token", "api_key"),
+				).
+				Value(&method),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	if method == "api_key" {
+		return activateAPIKeyService(apiClient, svc)
+	}
+
+	// PKCE flow: start local listener, get authorize URL, open browser, wait.
+	port, doneCh, cleanup := startOAuthListener()
+	defer cleanup()
+
+	cliCallback := fmt.Sprintf("http://127.0.0.1:%d/oauth-done", port)
+	pkceResp, err := apiClient.PKCEFlowStart(svc.ID, "", cliCallback)
+	if err != nil {
+		return fmt.Errorf("starting PKCE flow: %w", err)
+	}
+
+	fmt.Printf("\n  Opening browser for %s authorization...\n", svc.Name)
+	if !browser.Open(pkceResp.AuthorizeURL) {
+		fmt.Println(dim.Padding(0, 2).Render("  Could not open browser. Visit the URL manually:"))
+		fmt.Println(dim.Padding(0, 2).Render("  " + pkceResp.AuthorizeURL))
+	}
+
+	fmt.Println(dim.Padding(0, 2).Render("  Waiting for authorization to complete..."))
+	<-doneCh
+
+	fmt.Printf("  %s %s connected.\n\n", green.Render("✓"), svc.Name)
+	return nil
 }
 
 // activateOAuthService handles OAuth activation. For services using the

@@ -50,6 +50,11 @@ type deviceFlowPollMsg struct {
 	err  error
 }
 
+type pkceFlowStartedMsg struct {
+	resp *client.PKCEFlowStartResponse
+	err  error
+}
+
 // ── Input steps ─────────────────────────────────────────────────────────────
 
 const (
@@ -60,6 +65,8 @@ const (
 	stepOAuthWaiting       = 4
 	stepDeviceFlowChoice   = 5
 	stepDeviceFlowWaiting  = 6
+	stepPKCEFlowChoice     = 7
+	stepPKCEFlowWaiting    = 8
 )
 
 // ── Model ───────────────────────────────────────────────────────────────────
@@ -96,6 +103,9 @@ type ServicesScreen struct {
 	deviceFlowID       string
 	deviceFlowInterval int
 	deviceFlowChoice   int // 0 = device flow (default), 1 = API key
+
+	// PKCE flow state.
+	pkceFlowChoice int // 0 = PKCE (default), 1 = API key
 }
 
 func NewServicesScreen(c *client.Client) *ServicesScreen {
@@ -288,6 +298,64 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		}
 	}
 
+	// PKCE flow choice overlay.
+	if s.inputStep == stepPKCEFlowChoice {
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			switch msg.String() {
+			case "esc":
+				s.resetActivation()
+				return s, nil
+			case "up", "k":
+				if s.pkceFlowChoice > 0 {
+					s.pkceFlowChoice--
+				}
+				return s, nil
+			case "down", "j":
+				if s.pkceFlowChoice < 1 {
+					s.pkceFlowChoice++
+				}
+				return s, nil
+			case "enter":
+				if s.pkceFlowChoice == 1 {
+					// API key path.
+					s.inputStep = stepKeyEntry
+					ki := textinput.New()
+					ki.Placeholder = "paste token here"
+					ki.EchoMode = textinput.EchoPassword
+					ki.Focus()
+					s.keyInput = &ki
+					return s, nil
+				}
+				// PKCE flow path: start listener, get URL from server.
+				port, done, cleanup := startOAuthListener()
+				s.oauthDoneCh = done
+				s.oauthCleanup = cleanup
+				cliCallback := fmt.Sprintf("http://127.0.0.1:%d/oauth-done", port)
+				cl := s.client
+				serviceID := s.activatingService.ID
+				alias := s.pendingAlias
+				return s, func() tea.Msg {
+					resp, err := cl.PKCEFlowStart(serviceID, alias, cliCallback)
+					return pkceFlowStartedMsg{resp: resp, err: err}
+				}
+			}
+			return s, nil
+		}
+	}
+
+	// PKCE flow waiting overlay.
+	if s.inputStep == stepPKCEFlowWaiting {
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			switch msg.String() {
+			case "esc":
+				s.stopOAuthListener()
+				s.resetActivation()
+				return s, nil
+			}
+			return s, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
@@ -394,6 +462,17 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 			return s, nil
 		}
 
+	case pkceFlowStartedMsg:
+		if msg.err != nil {
+			s.err = msg.err
+			s.stopOAuthListener()
+			s.resetActivation()
+			return s, nil
+		}
+		s.inputStep = stepPKCEFlowWaiting
+		browser.Open(msg.resp.AuthorizeURL)
+		return s, s.waitForOAuth()
+
 	case svcActivatedMsg:
 		s.resetActivation()
 		if msg.err != nil {
@@ -451,6 +530,12 @@ func (s *ServicesScreen) View() string {
 	}
 	if s.inputStep == stepDeviceFlowWaiting {
 		return s.viewDeviceFlowWaiting()
+	}
+	if s.inputStep == stepPKCEFlowChoice {
+		return s.viewPKCEFlowChoice()
+	}
+	if s.inputStep == stepPKCEFlowWaiting {
+		return s.viewPKCEFlowWaiting()
 	}
 
 	var b strings.Builder
@@ -688,6 +773,52 @@ func (s *ServicesScreen) viewDeviceFlowWaiting() string {
 	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
 }
 
+func (s *ServicesScreen) viewPKCEFlowChoice() string {
+	svcName := ""
+	if s.activatingService != nil {
+		svcName = s.activatingService.Name
+	}
+	title := lipgloss.NewStyle().
+		Foreground(tui.ColorBrand).
+		Bold(true).
+		Render("Connect " + svcName)
+
+	opts := []string{"Sign in with " + svcName + " (browser)", "Paste an API token"}
+	var optLines strings.Builder
+	for i, opt := range opts {
+		cursor := "  "
+		if i == s.pkceFlowChoice {
+			cursor = tui.StyleBrand.Render("> ")
+		}
+		optLines.WriteString(cursor + opt + "\n")
+	}
+
+	content := fmt.Sprintf("%s\n\n%s\n%s",
+		title,
+		optLines.String(),
+		tui.StyleDim.Render("[enter] Select  [esc] Cancel"),
+	)
+	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
+}
+
+func (s *ServicesScreen) viewPKCEFlowWaiting() string {
+	svcName := ""
+	if s.activatingService != nil {
+		svcName = s.activatingService.Name
+	}
+	title := lipgloss.NewStyle().
+		Foreground(tui.ColorBrand).
+		Bold(true).
+		Render("Connect " + svcName)
+
+	content := fmt.Sprintf("%s\n\n%s\n\n%s",
+		title,
+		tui.StyleAmber.Render("Waiting for authorization in browser..."),
+		tui.StyleDim.Render("[esc] Cancel"),
+	)
+	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
+}
+
 func (s *ServicesScreen) pollDeviceFlow() tea.Cmd {
 	cl := s.client
 	serviceID := s.activatingService.ID
@@ -757,6 +888,13 @@ func (s *ServicesScreen) proceedAfterAlias() tea.Cmd {
 		// Show choice: device flow or API key.
 		s.inputStep = stepDeviceFlowChoice
 		s.deviceFlowChoice = 0
+		return nil
+	}
+
+	if svc.PKCEFlow {
+		// Show choice: PKCE browser flow or API key.
+		s.inputStep = stepPKCEFlowChoice
+		s.pkceFlowChoice = 0
 		return nil
 	}
 
@@ -866,6 +1004,7 @@ func (s *ServicesScreen) resetActivation() {
 	s.deviceFlowID = ""
 	s.deviceFlowInterval = 0
 	s.deviceFlowChoice = 0
+	s.pkceFlowChoice = 0
 }
 
 func (s *ServicesScreen) stopOAuthListener() {
@@ -913,6 +1052,8 @@ func (s *ServicesScreen) showDetail() {
 		b.WriteString("OAuth")
 	} else if svc.DeviceFlow {
 		b.WriteString("OAuth (device flow) or API key")
+	} else if svc.PKCEFlow {
+		b.WriteString("OAuth (PKCE) or API token")
 	} else {
 		b.WriteString("API key")
 	}

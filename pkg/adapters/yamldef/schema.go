@@ -26,6 +26,7 @@ type AuthDef struct {
 	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
 	OAuth      *OAuthDef      `yaml:"oauth,omitempty"`
 	DeviceFlow *DeviceFlowDef `yaml:"device_flow,omitempty"`
+	PKCEFlow   *PKCEFlowDef  `yaml:"pkce_flow,omitempty"`
 
 	// For basic auth where the credential is a composite "user:pass" string.
 	// The token field is split on ":" to produce user/pass for BasicAuth.
@@ -41,6 +42,17 @@ type DeviceFlowDef struct {
 	DeviceCodeURL string   `yaml:"device_code_url"`           // e.g. "https://github.com/login/device/code"
 	TokenURL      string   `yaml:"token_url"`                 // e.g. "https://github.com/login/oauth/access_token"
 	GrantType     string   `yaml:"grant_type,omitempty"`      // default: "urn:ietf:params:oauth:grant-type:device_code"
+}
+
+// PKCEFlowDef holds configuration for OAuth2 authorization code flow with PKCE (RFC 7636).
+// This allows CLI/native apps to authenticate without shipping a client secret.
+type PKCEFlowDef struct {
+	ClientID     string   `yaml:"client_id,omitempty"`      // hardcoded client_id (public, safe to ship)
+	ClientIDEnv  string   `yaml:"client_id_env,omitempty"`  // env var name for client_id override
+	Scopes       []string `yaml:"scopes"`                   // requested OAuth scopes
+	AuthorizeURL string   `yaml:"authorize_url"`            // e.g. "https://slack.com/oauth/v2/authorize"
+	TokenURL     string   `yaml:"token_url"`                // e.g. "https://slack.com/api/oauth.v2.access"
+	TokenPath    string   `yaml:"token_path,omitempty"`     // JSON path to access token in response (e.g. "authed_user.access_token")
 }
 
 // OAuthDef holds OAuth2-specific configuration.

@@ -344,6 +344,24 @@ func (c *Client) DeviceFlowPoll(serviceID, flowID string) (*DeviceFlowPollRespon
 	return &resp, nil
 }
 
+// ── PKCE Flow ───────────────────────────────────────────────────────────────
+
+// PKCEFlowStart initiates a PKCE authorization code flow for the given service.
+func (c *Client) PKCEFlowStart(serviceID, alias, cliCallback string) (*PKCEFlowStartResponse, error) {
+	body := map[string]string{}
+	if alias != "" {
+		body["alias"] = alias
+	}
+	if cliCallback != "" {
+		body["cli_callback"] = cliCallback
+	}
+	var resp PKCEFlowStartResponse
+	if err := c.post("/api/services/"+serviceID+"/pkce-flow/start", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ── Restrictions ────────────────────────────────────────────────────────────
 
 func (c *Client) GetRestrictions() ([]Restriction, error) {
