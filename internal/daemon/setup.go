@@ -20,10 +20,10 @@ import (
 
 var (
 	bold    = lipgloss.NewStyle().Bold(true)
-	dim     = lipgloss.NewStyle().Faint(true)
+	dim     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	green   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	yellow  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	section = lipgloss.NewStyle().Faint(true).Padding(0, 2)
+	section = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 2)
 )
 
 type daemonConfig struct {

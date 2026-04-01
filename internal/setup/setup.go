@@ -18,11 +18,11 @@ import (
 
 var (
 	bold    = lipgloss.NewStyle().Bold(true)
-	dim     = lipgloss.NewStyle().Faint(true)
+	dim     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	green   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	yellow  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	banner  = lipgloss.NewStyle().Bold(true).Padding(0, 2)
-	section = lipgloss.NewStyle().Faint(true).Padding(0, 2)
+	section = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 2)
 	warnBox = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("3")).
