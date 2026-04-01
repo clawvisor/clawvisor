@@ -60,6 +60,24 @@ mkdir -p "$DATA_DIR/logs"
 
 echo "  Installed to $INSTALL_DIR/$BINARY"
 
+# Try to symlink into an existing user-writable PATH directory so the binary
+# is available immediately — no terminal restart needed.
+link_into_path() {
+  for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
+    # Must already be on PATH, exist, and be writable.
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *) continue ;;
+    esac
+    if [ -d "$dir" ] && [ -w "$dir" ]; then
+      ln -sf "$INSTALL_DIR/$BINARY" "$dir/$BINARY"
+      echo "  Symlinked $dir/$BINARY → $INSTALL_DIR/$BINARY"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Add to PATH if not already present.
 add_to_path() {
   local rc_file="$1"
@@ -74,24 +92,27 @@ add_to_path() {
 }
 
 if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-  SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
-  case "$SHELL_NAME" in
-    zsh)  add_to_path "$HOME/.zshrc" ;;
-    bash)
-      if [ -f "$HOME/.bash_profile" ]; then
-        add_to_path "$HOME/.bash_profile"
-      else
-        add_to_path "$HOME/.bashrc"
-      fi
-      ;;
-    *)
-      echo ""
-      echo "  Could not auto-configure PATH for $SHELL_NAME."
-      echo "  Add this to your shell config:"
-      echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
-      echo ""
-      ;;
-  esac
+  if ! link_into_path; then
+    # No writable PATH dir found — fall back to editing shell rc.
+    SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
+    case "$SHELL_NAME" in
+      zsh)  add_to_path "$HOME/.zshrc" ;;
+      bash)
+        if [ -f "$HOME/.bash_profile" ]; then
+          add_to_path "$HOME/.bash_profile"
+        else
+          add_to_path "$HOME/.bashrc"
+        fi
+        ;;
+      *)
+        echo ""
+        echo "  Could not auto-configure PATH for $SHELL_NAME."
+        echo "  Add this to your shell config:"
+        echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
+        echo ""
+        ;;
+    esac
+  fi
   export PATH="$INSTALL_DIR:$PATH"
 fi
 

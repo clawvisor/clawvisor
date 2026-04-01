@@ -24,11 +24,6 @@ var (
 	green   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	yellow  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	section = lipgloss.NewStyle().Faint(true).Padding(0, 2)
-	warnBox = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("3")).
-		Padding(1, 2).
-		Margin(0, 2)
 )
 
 type daemonConfig struct {
@@ -285,16 +280,7 @@ func runDaemonSetup(dataDir string) error {
 			return err
 		}
 
-		// Step 1: relay opt-in.
-		var err error
-		relayEnabled, err = stepRelayOptIn()
-		if err != nil {
-			if err == huh.ErrUserAborted {
-				fmt.Println("\n  Aborted. No files were written.")
-				return huh.ErrUserAborted
-			}
-			return err
-		}
+		// Relay is enabled by default — users can disable in config.yaml.
 	}
 
 	cfg, err := collectDaemonConfig()
@@ -346,82 +332,6 @@ func runDaemonSetup(dataDir string) error {
 	fmt.Println(dim.Padding(0, 2).Render("  " + configPath))
 	fmt.Println()
 	return nil
-}
-
-// stepRelayOptIn asks the user whether to connect to the public relay. If they
-// decline, a warning is shown. If they accept, TOS/PP acceptance is required.
-func stepRelayOptIn() (enabled bool, err error) {
-	useRelay := true
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Connect to the Clawvisor relay?").
-				Description("The relay lets you access Clawvisor remotely and receive\nmobile push notifications. Traffic is end-to-end encrypted\nwhen your client supports it.").
-				Affirmative("Yes").
-				Negative("No").
-				Value(&useRelay),
-		),
-	).Run(); err != nil {
-		return false, err
-	}
-
-	if !useRelay {
-		fmt.Println()
-		fmt.Println(warnBox.Render(
-			yellow.Bold(true).Render("⚠  Local-only mode") + "\n\n" +
-				"Without the relay, agents must connect to Clawvisor\n" +
-				"over your local network. You will need to:\n\n" +
-				"  • Ensure agents can reach this machine's IP/port\n" +
-				"  • Handle firewalls and NAT traversal yourself\n" +
-				"  • Forego mobile push notifications\n\n" +
-				"You can enable the relay later by re-running setup."))
-		fmt.Println()
-
-		confirmSkip := false
-		if err := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Continue without the relay?").
-					Affirmative("Yes, local-only").
-					Negative("Go back").
-					Value(&confirmSkip),
-			),
-		).Run(); err != nil {
-			return false, err
-		}
-		if !confirmSkip {
-			// Let them reconsider — recurse back to the relay question.
-			return stepRelayOptIn()
-		}
-		return false, nil
-	}
-
-	// Relay requires TOS/PP acceptance.
-	fmt.Println()
-	fmt.Println(dim.Padding(0, 2).Render("The relay is operated by Clawvisor. By connecting, you agree"))
-	fmt.Println(dim.Padding(0, 2).Render("to the Terms of Service and Privacy Policy:"))
-	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/terms"))
-	fmt.Println(dim.Padding(0, 2).Render("  https://clawvisor.com/privacy"))
-	fmt.Println()
-
-	accepted := false
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Do you agree to the Terms of Service and Privacy Policy?").
-				Affirmative("I agree").
-				Negative("Cancel").
-				Value(&accepted),
-		),
-	).Run(); err != nil {
-		return false, err
-	}
-	if !accepted {
-		// Declining TOS brings you back to the relay question.
-		return stepRelayOptIn()
-	}
-
-	return true, nil
 }
 
 func stepWelcome() error {
@@ -495,13 +405,13 @@ func collectDaemonConfigFromEnv() (*daemonConfig, error) {
 		cfg.llmEndpoint = haikuproxy.BaseURL()
 		cfg.llmModel = "claude-haiku-4-5-20251001"
 
-		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		fmt.Println(dim.Padding(0, 2).Render("  Registering free API key..."))
 		reg, err := haikuproxy.Register("clawvisor-setup")
 		if err != nil {
-			return nil, fmt.Errorf("haiku proxy registration failed: %w", err)
+			return nil, fmt.Errorf("API key registration failed: %w", err)
 		}
 		cfg.llmAPIKey = reg.Key
-		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+		fmt.Println(dim.Padding(0, 2).Render("  ✓ Registered"))
 	} else if cfg.llmProvider == "" || cfg.llmEndpoint == "" || cfg.llmModel == "" || cfg.llmAPIKey == "" {
 		return nil, fmt.Errorf("non-interactive mode requires CLAWVISOR_LLM_PROVIDER, CLAWVISOR_LLM_ENDPOINT, CLAWVISOR_LLM_MODEL, and CLAWVISOR_LLM_API_KEY (or set CLAWVISOR_LLM_QUICKSTART=1 to use the free Haiku proxy)")
 	}
@@ -540,7 +450,7 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 		cfg.llmEndpoint = haikuproxy.BaseURL()
 		cfg.llmModel = "claude-haiku-4-5-20251001"
 
-		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		fmt.Println(dim.Padding(0, 2).Render("  Registering free API key..."))
 		reg, err := haikuproxy.Register("clawvisor-setup")
 		if err != nil {
 			fmt.Println(yellow.Padding(0, 2).Render(fmt.Sprintf("  Registration failed: %v", err)))
@@ -549,7 +459,7 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 			cfg.llmEndpoint = "https://api.anthropic.com/v1"
 		} else {
 			cfg.llmAPIKey = reg.Key
-			fmt.Println(green.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+			fmt.Println(green.Padding(0, 2).Render("  ✓ Registered"))
 			fmt.Println()
 		}
 	case "haiku":
@@ -653,16 +563,7 @@ func stepDaemonLLM(cfg *daemonConfig) error {
 
 	cfg.taskRiskEnabled = true
 	cfg.chainContextEnabled = true
-	return huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Enable chain context tracking?").
-				Description("Sends API call output to your LLM provider to extract entity references\n(IDs, emails, etc.) for multi-step task validation. Disable in config.yaml later.").
-				Affirmative("Yes").
-				Negative("No").
-				Value(&cfg.chainContextEnabled),
-		),
-	).Run()
+	return nil
 }
 
 func stepDaemonTelemetry(cfg *daemonConfig) error {

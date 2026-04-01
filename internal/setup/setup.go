@@ -395,7 +395,7 @@ func stepLLM(cfg *config) error {
 		cfg.llmEndpoint = haikuproxy.BaseURL()
 		cfg.llmModel = "claude-haiku-4-5-20251001"
 
-		fmt.Println(dim.Padding(0, 2).Render("  Registering a free Haiku proxy key..."))
+		fmt.Println(dim.Padding(0, 2).Render("  Registering free API key..."))
 		reg, err := haikuproxy.Register("clawvisor-setup")
 		if err != nil {
 			fmt.Println(yellow.Padding(0, 2).Render(fmt.Sprintf("  Registration failed: %v", err)))
@@ -404,7 +404,7 @@ func stepLLM(cfg *config) error {
 			cfg.llmEndpoint = "https://api.anthropic.com/v1"
 		} else {
 			cfg.llmAPIKey = reg.Key
-			fmt.Println(green.Padding(0, 2).Render(fmt.Sprintf("  ✓ Registered (spend cap: $%.2f)", reg.SpendCap)))
+			fmt.Println(green.Padding(0, 2).Render("  ✓ Registered"))
 			fmt.Println()
 		}
 	case "haiku":
