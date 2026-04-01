@@ -18,6 +18,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
+	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
 	"github.com/clawvisor/clawvisor/internal/auth"
@@ -173,6 +174,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	// Go-only adapters (not YAML-driven).
 	adapterReg.Register(imessageadapter.New())
+	adapterReg.Register(sqladapter.New())
 
 	// Initialize the display package with the adapter registry.
 	display.Init(adapterReg)
