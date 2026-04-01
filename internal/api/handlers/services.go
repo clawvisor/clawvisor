@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -40,6 +43,13 @@ type ServicesHandler struct {
 
 	// deviceFlows holds pending device flow entries keyed by flow ID.
 	deviceFlows sync.Map // flowID (string) → deviceFlowEntry
+
+	// pkceFlows holds pending PKCE authorization code flow entries keyed by state token.
+	pkceFlows sync.Map // stateToken (string) → pkceFlowEntry
+
+	// relayDaemonURL is the public HTTPS URL via the relay (e.g. "https://relay.clawvisor.com/d/DAEMON_ID").
+	// Used as redirect_uri for PKCE flows that require HTTPS. Empty when relay is not configured.
+	relayDaemonURL string
 }
 
 type oauthStateEntry struct {
@@ -89,6 +99,9 @@ func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Regi
 	}
 }
 
+// SetRelayDaemonURL sets the public HTTPS relay URL used for PKCE flow redirects.
+func (h *ServicesHandler) SetRelayDaemonURL(u string) { h.relayDaemonURL = u }
+
 // List returns the service catalog with per-user activation status.
 //
 // GET /api/services
@@ -130,6 +143,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		OAuth              bool          `json:"oauth"`
 		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
 		DeviceFlow         bool          `json:"device_flow,omitempty"`
+		PKCEFlow           bool          `json:"pkce_flow,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
 		Actions            []actionEntry `json:"actions"`
@@ -171,9 +185,11 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			actions = append(actions, ae)
 		}
 
-		var deviceFlow bool
+		var deviceFlow, pkceFlow bool
 		if mp, ok2 := a.(adapters.MetadataProvider); ok2 {
-			deviceFlow = mp.ServiceMetadata().DeviceFlow
+			meta := mp.ServiceMetadata()
+			deviceFlow = meta.DeviceFlow
+			pkceFlow = meta.PKCEFlow
 		}
 
 		return serviceEntry{
@@ -183,6 +199,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			OAuth:              len(a.RequiredScopes()) > 0,
 			OAuthEndpoint:      oauthEndpoint,
 			DeviceFlow:         deviceFlow,
+			PKCEFlow:           pkceFlow,
 			RequiresActivation: true,
 			Actions:            actions,
 			SetupURL:           setupURL,
@@ -1171,6 +1188,256 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 
 	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "complete"})
+}
+
+// ── PKCE Flow (RFC 7636) ─────────────────────────────────────────────────────
+
+type pkceFlowEntry struct {
+	UserID       string
+	ServiceID    string
+	Alias        string
+	CodeVerifier string
+	CLICallback  string
+	TokenURL     string
+	TokenPath    string // JSON path to access token (e.g. "authed_user.access_token")
+	ClientID     string
+	RedirectURI  string
+	ExpiresAt    time.Time
+}
+
+// PKCEFlowStart initiates a PKCE authorization code flow.
+//
+// POST /api/services/{serviceID}/pkce-flow/start
+// Auth: user JWT
+// Body: {"alias": "...", "cli_callback": "http://127.0.0.1:PORT/oauth-done"}
+// Response: {"authorize_url": "https://...", "state": "..."}
+func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	serviceID := r.PathValue("serviceID")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "serviceID is required")
+		return
+	}
+
+	adapter, ok := h.adapterReg.Get(serviceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
+		return
+	}
+
+	pfp, ok := adapter.(adapters.PKCEFlowProvider)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not support PKCE flow")
+		return
+	}
+	pfCfg := pfp.PKCEFlowConfig()
+	if pfCfg == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow not configured (missing client_id)")
+		return
+	}
+
+	var body struct {
+		Alias       string `json:"alias"`
+		CLICallback string `json:"cli_callback"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	alias := body.Alias
+	if alias == "" {
+		alias = "default"
+	}
+	if !validAlias(alias) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters")
+		return
+	}
+
+	// Resolve client_id.
+	clientID := pfCfg.ClientID
+	if pfCfg.ClientIDEnv != "" {
+		if v := os.Getenv(pfCfg.ClientIDEnv); v != "" {
+			clientID = v
+		}
+	}
+
+	// Generate PKCE code verifier and challenge.
+	verifierBytes := make([]byte, 32)
+	if _, err := rand.Read(verifierBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate PKCE verifier")
+		return
+	}
+	codeVerifier := base64.RawURLEncoding.EncodeToString(verifierBytes)
+	challengeHash := sha256.Sum256([]byte(codeVerifier))
+	codeChallenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
+
+	stateToken := uuid.New().String()
+
+	// PKCE flows require HTTPS redirect URIs (e.g. Slack). Use the relay
+	// daemon URL when available, falling back to the local baseURL.
+	redirectBase := h.relayDaemonURL
+	if redirectBase == "" {
+		redirectBase = h.baseURL
+	}
+	redirectURI := redirectBase + "/api/pkce-flow/callback"
+
+	h.pkceFlows.Store(stateToken, pkceFlowEntry{
+		UserID:       user.ID,
+		ServiceID:    serviceID,
+		Alias:        alias,
+		CodeVerifier: codeVerifier,
+		CLICallback:  validateCLICallback(body.CLICallback),
+		TokenURL:     pfCfg.TokenURL,
+		TokenPath:    pfCfg.TokenPath,
+		ClientID:     clientID,
+		RedirectURI:  redirectURI,
+		ExpiresAt:    time.Now().Add(10 * time.Minute),
+	})
+
+	// Build authorize URL.
+	params := url.Values{
+		"client_id":             {clientID},
+		"scope":                 {strings.Join(pfCfg.Scopes, " ")},
+		"redirect_uri":         {redirectURI},
+		"state":                 {stateToken},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
+		"response_type":         {"code"},
+	}
+	// Slack PKCE requires user_scope instead of scope for user tokens.
+	if strings.Contains(pfCfg.AuthorizeURL, "slack.com") {
+		params.Del("scope")
+		params.Set("user_scope", strings.Join(pfCfg.Scopes, " "))
+	}
+	authorizeURL := pfCfg.AuthorizeURL + "?" + params.Encode()
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"authorize_url": authorizeURL,
+		"state":         stateToken,
+	})
+}
+
+// PKCEFlowCallback handles the OAuth redirect after user authorization.
+// It exchanges the authorization code + PKCE verifier for an access token,
+// stores the credential, and serves a success/error HTML page.
+//
+// GET /api/pkce-flow/callback?code=...&state=...
+func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	code := r.URL.Query().Get("code")
+
+	if state == "" || code == "" {
+		oauthPopupClose(w, "Missing PKCE callback parameters.", "")
+		return
+	}
+
+	val, ok := h.pkceFlows.LoadAndDelete(state)
+	if !ok {
+		oauthPopupClose(w, "Invalid or expired PKCE state. Please try again.", "")
+		return
+	}
+	entry := val.(pkceFlowEntry)
+	if time.Now().After(entry.ExpiresAt) {
+		oauthPopupClose(w, "PKCE session expired. Please try again.", "")
+		return
+	}
+
+	// Exchange authorization code for access token using PKCE.
+	form := url.Values{
+		"client_id":     {entry.ClientID},
+		"code":          {code},
+		"code_verifier": {entry.CodeVerifier},
+		"redirect_uri":  {entry.RedirectURI},
+		"grant_type":    {"authorization_code"},
+	}
+	tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", entry.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		oauthPopupClose(w, "Failed to build token request.", "")
+		return
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(tokenReq)
+	if err != nil {
+		h.logger.Warn("pkce flow: token exchange failed", "err", err)
+		oauthPopupClose(w, "Failed to contact token endpoint.", "")
+		return
+	}
+	defer resp.Body.Close()
+
+	var rawResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rawResp); err != nil {
+		oauthPopupClose(w, "Invalid response from token endpoint.", "")
+		return
+	}
+
+	// Check for error in response.
+	if errVal, ok := rawResp["error"].(string); ok && errVal != "" {
+		desc, _ := rawResp["error_description"].(string)
+		if desc == "" {
+			desc = errVal
+		}
+		h.logger.Warn("pkce flow: provider returned error", "error", errVal, "desc", desc)
+		oauthPopupClose(w, "Authorization failed: "+desc, "")
+		return
+	}
+
+	// Extract access token using token_path.
+	accessToken := extractTokenFromPath(rawResp, entry.TokenPath)
+	if accessToken == "" {
+		h.logger.Warn("pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
+		oauthPopupClose(w, "Provider returned empty access token.", "")
+		return
+	}
+
+	// Store as api_key credential (same format as device flow / PAT).
+	credBytes, err := json.Marshal(map[string]string{
+		"type":  "api_key",
+		"token": accessToken,
+	})
+	if err != nil {
+		oauthPopupClose(w, "Failed to encode credential.", "")
+		return
+	}
+
+	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, entry.Alias)
+	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
+		h.logger.Warn("pkce flow: vault set failed", "err", err)
+		oauthPopupClose(w, "Failed to store credential.", "")
+		return
+	}
+	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, entry.Alias, time.Now())
+
+	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID)
+	oauthPopupClose(w, "", entry.CLICallback)
+}
+
+// extractTokenFromPath navigates a nested map using a dot-separated path
+// and returns the string value at that path.
+func extractTokenFromPath(m map[string]any, path string) string {
+	if path == "" {
+		// Default: look for "access_token" at the top level.
+		if v, ok := m["access_token"].(string); ok {
+			return v
+		}
+		return ""
+	}
+	parts := strings.Split(path, ".")
+	var current any = m
+	for _, part := range parts {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = obj[part]
+	}
+	if s, ok := current.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // ── System OAuth Config ──────────────────────────────────────────────────────

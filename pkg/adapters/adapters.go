@@ -26,6 +26,7 @@ type ServiceMetadata struct {
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
 	DeviceFlow        bool                  // whether device flow activation is available
+	PKCEFlow          bool                  // whether PKCE authorization code flow is available
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 }
@@ -61,6 +62,12 @@ type ActionInfo struct {
 // OAuth2 device authorization grant (RFC 8628).
 type DeviceFlowProvider interface {
 	DeviceFlowConfig() *yamldef.DeviceFlowDef
+}
+
+// PKCEFlowProvider is an optional interface for adapters that support
+// OAuth2 authorization code flow with PKCE (RFC 7636).
+type PKCEFlowProvider interface {
+	PKCEFlowConfig() *yamldef.PKCEFlowDef
 }
 
 // OAuthCredentialProvider supplies OAuth app credentials (client_id, client_secret)

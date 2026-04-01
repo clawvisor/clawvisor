@@ -10,6 +10,13 @@ auth:
   header_prefix: "Bearer "
   extra_headers:
     Content-Type: "application/json; charset=utf-8"
+  pkce_flow:
+    client_id: "10583998234834.10816798669877"
+    client_id_env: "SLACK_CLIENT_ID"
+    scopes: ["channels:read", "channels:history", "groups:read", "groups:history", "im:read", "im:history", "chat:write", "search:read", "users:read", "reactions:write", "files:read"]
+    authorize_url: "https://slack.com/oauth/v2/authorize"
+    token_url: "https://slack.com/api/oauth.v2.access"
+    token_path: "authed_user.access_token"
 
 verification_hints: >
   Thread-level parameters (e.g. thread_ts) are within the scope of the channel

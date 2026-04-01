@@ -283,6 +283,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		VaultKey:          vaultKey,
 		OAuthEndpoint:     oauthEndpoint,
 		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",
+		PKCEFlow:          a.def.Auth.PKCEFlow != nil && a.resolvePKCEFlowClientID() != "",
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
 	}
@@ -325,6 +326,33 @@ func (a *YAMLAdapter) resolveDeviceFlowClientID() string {
 		}
 	}
 	return df.ClientID
+}
+
+// PKCEFlowConfig returns the PKCE flow configuration if available and
+// a client_id can be resolved. Implements adapters.PKCEFlowProvider.
+func (a *YAMLAdapter) PKCEFlowConfig() *yamldef.PKCEFlowDef {
+	if a.def.Auth.PKCEFlow == nil {
+		return nil
+	}
+	if a.resolvePKCEFlowClientID() == "" {
+		return nil
+	}
+	return a.def.Auth.PKCEFlow
+}
+
+// resolvePKCEFlowClientID returns the client_id for PKCE flow,
+// checking env var first then the hardcoded value.
+func (a *YAMLAdapter) resolvePKCEFlowClientID() string {
+	pf := a.def.Auth.PKCEFlow
+	if pf == nil {
+		return ""
+	}
+	if pf.ClientIDEnv != "" {
+		if v := os.Getenv(pf.ClientIDEnv); v != "" {
+			return v
+		}
+	}
+	return pf.ClientID
 }
 
 // Def returns the underlying YAML definition (for the loader/tests).

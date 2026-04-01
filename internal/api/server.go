@@ -268,6 +268,11 @@ func (s *Server) routes() http.Handler {
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL)
+	// Set relay daemon URL for PKCE flows that require HTTPS redirect URIs.
+	if s.cfg.Relay.Enabled && s.cfg.Relay.URL != "" && s.cfg.Relay.DaemonID != "" {
+		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
+		servicesHandler.SetRelayDaemonURL(fmt.Sprintf("https://%s/d/%s", relayHost, s.cfg.Relay.DaemonID))
+	}
 	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.logger)
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger, s.eventHub)
 	s.approvalsHandler = approvalsHandler
@@ -468,6 +473,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/poll", user(servicesHandler.DeviceFlowPoll))
+	mux.Handle("POST /api/services/{serviceID}/pkce-flow/start", user(servicesHandler.PKCEFlowStart))
+	mux.HandleFunc("GET /api/pkce-flow/callback", servicesHandler.PKCEFlowCallback) // no auth: browser redirect
 
 	// System-level OAuth config (user JWT)
 	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
