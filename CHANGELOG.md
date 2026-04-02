@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.1](https://github.com/clawvisor/clawvisor/compare/v0.8.0...v0.8.1) (2026-04-02)
+
+
+### Features
+
+* add parameter docs to skill catalog with compact overview and detail view ([#101](https://github.com/clawvisor/clawvisor/issues/101)) ([ccdf498](https://github.com/clawvisor/clawvisor/commit/ccdf498851c63e9a1a9e37ca82eb0d8897d2d836))
+* add Slack OAuth PKCE flow with relay support ([#104](https://github.com/clawvisor/clawvisor/issues/104)) ([97e8fe3](https://github.com/clawvisor/clawvisor/commit/97e8fe3b5af09e91508427b6a907c591e95a9111))
+* add SQL adapter for Postgres, MySQL, and SQLite ([#103](https://github.com/clawvisor/clawvisor/issues/103)) ([c7ca037](https://github.com/clawvisor/clawvisor/commit/c7ca037c4e89a2d07bc75c959dbce70d447d1cb0))
+* GitHub OAuth device flow ([#100](https://github.com/clawvisor/clawvisor/issues/100)) ([e3024d5](https://github.com/clawvisor/clawvisor/commit/e3024d59909735a6a503d9b910a47417f3a6da9e))
+
+
+### Bug Fixes
+
+* add USER nonroot to Dockerfile, remove stale openclaw compose ([de1c4d6](https://github.com/clawvisor/clawvisor/commit/de1c4d6ba51efa37afb35cd34bbb320e1beaddab))
+
 ## [0.8.0](https://github.com/clawvisor/clawvisor/compare/v0.7.11...v0.8.0) (2026-03-30)
 
 
