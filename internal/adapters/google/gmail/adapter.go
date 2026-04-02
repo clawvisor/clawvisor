@@ -66,14 +66,13 @@ func (a *GmailAdapter) SupportedActions() []string {
 func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes() }
 
 func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
-	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
 	if clientID == "" {
 		return nil
 	}
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
 		Scopes:       gmailScopes(),
 		Endpoint:     google.Endpoint,
 	}

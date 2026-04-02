@@ -18,33 +18,32 @@ type googleOAuthCred struct {
 // system user. Falls back to env vars (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
 // for backward compatibility with Docker Compose deployments.
 type VaultOAuthProvider struct {
-	vault       vault.Vault
-	redirectURL string // derived from server host:port, not a secret
+	vault vault.Vault
 }
 
 // NewVaultOAuthProvider creates a provider that reads Google OAuth creds from the vault.
-func NewVaultOAuthProvider(v vault.Vault, redirectURL string) *VaultOAuthProvider {
-	return &VaultOAuthProvider{vault: v, redirectURL: redirectURL}
+func NewVaultOAuthProvider(v vault.Vault) *VaultOAuthProvider {
+	return &VaultOAuthProvider{vault: v}
 }
 
-func (p *VaultOAuthProvider) OAuthClientCredentials() (clientID, clientSecret, redirectURL string) {
+func (p *VaultOAuthProvider) OAuthClientCredentials() (clientID, clientSecret string) {
 	// Check env vars first (backward compat for Docker/CI).
 	if id := os.Getenv("GOOGLE_CLIENT_ID"); id != "" {
-		return id, os.Getenv("GOOGLE_CLIENT_SECRET"), p.redirectURL
+		return id, os.Getenv("GOOGLE_CLIENT_SECRET")
 	}
 
 	// Read from vault.
 	data, err := p.vault.Get(context.Background(), SystemUserID, SystemVaultKeyGoogleOAuth)
 	if err != nil || len(data) == 0 {
-		return "", "", ""
+		return "", ""
 	}
 
 	var cred googleOAuthCred
 	if err := json.Unmarshal(data, &cred); err != nil {
-		return "", "", ""
+		return "", ""
 	}
 
-	return cred.ClientID, cred.ClientSecret, p.redirectURL
+	return cred.ClientID, cred.ClientSecret
 }
 
 // SetGoogleOAuthCredentials stores Google OAuth app credentials in the system vault.

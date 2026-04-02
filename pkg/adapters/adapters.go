@@ -74,16 +74,16 @@ type PKCEFlowProvider interface {
 // on demand. This allows the server to read credentials from the vault lazily
 // instead of requiring them at startup.
 type OAuthCredentialProvider interface {
-	// OAuthClientCredentials returns (clientID, clientSecret, redirectURL).
+	// OAuthClientCredentials returns (clientID, clientSecret).
 	// Returns empty strings if not yet configured.
-	OAuthClientCredentials() (clientID, clientSecret, redirectURL string)
+	OAuthClientCredentials() (clientID, clientSecret string)
 }
 
 // NoopOAuthProvider is a provider that always returns empty credentials.
 // Useful in tests where OAuth configuration is not needed.
 type NoopOAuthProvider struct{}
 
-func (NoopOAuthProvider) OAuthClientCredentials() (string, string, string) { return "", "", "" }
+func (NoopOAuthProvider) OAuthClientCredentials() (string, string) { return "", "" }
 
 // SystemUserID is the well-known user ID for system-level vault entries
 // (e.g. Google OAuth app credentials). Not a real user.

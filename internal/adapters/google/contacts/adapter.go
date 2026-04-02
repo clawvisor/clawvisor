@@ -44,14 +44,13 @@ func (a *ContactsAdapter) SupportedActions() []string {
 func (a *ContactsAdapter) RequiredScopes() []string { return contactsScopes }
 
 func (a *ContactsAdapter) OAuthConfig() *oauth2.Config {
-	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
 	if clientID == "" {
 		return nil
 	}
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
 		Scopes:       contactsScopes,
 		Endpoint:     google.Endpoint,
 	}

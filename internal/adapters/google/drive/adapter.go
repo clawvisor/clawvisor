@@ -45,14 +45,13 @@ func (a *DriveAdapter) SupportedActions() []string {
 func (a *DriveAdapter) RequiredScopes() []string { return driveScopes }
 
 func (a *DriveAdapter) OAuthConfig() *oauth2.Config {
-	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
 	if clientID == "" {
 		return nil
 	}
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
 		Scopes:       driveScopes,
 		Endpoint:     google.Endpoint,
 	}

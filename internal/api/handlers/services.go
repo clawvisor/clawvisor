@@ -102,6 +102,11 @@ func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Regi
 // SetRelayDaemonURL sets the public HTTPS relay URL used for PKCE flow redirects.
 func (h *ServicesHandler) SetRelayDaemonURL(u string) { h.relayDaemonURL = u }
 
+// oauthRedirectURL returns the OAuth callback URL derived from the server's base URL.
+func (h *ServicesHandler) oauthRedirectURL() string {
+	return strings.TrimRight(h.baseURL, "/") + "/api/oauth/callback"
+}
+
 // List returns the service catalog with per-user activation status.
 //
 // GET /api/services
@@ -313,6 +318,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
 		return
 	}
+	oauthCfg.RedirectURL = h.oauthRedirectURL()
 
 	alias := r.URL.Query().Get("alias")
 	if alias == "" {
@@ -380,6 +386,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
 		return
 	}
+	oauthCfg.RedirectURL = h.oauthRedirectURL()
 
 	alias := r.URL.Query().Get("alias")
 	if alias == "" {
@@ -439,6 +446,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	oauthCfg := adapter.OAuthConfig()
+	oauthCfg.RedirectURL = h.oauthRedirectURL()
 	// Use the merged scopes stored during URL generation.
 	if len(entry.Scopes) > 0 {
 		oauthCfg.Scopes = entry.Scopes
@@ -594,6 +602,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
 		oauthCfg := adapter.OAuthConfig()
+		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
 		authURL := oauthAuthURL(oauthCfg, stateToken, alias)
 		writeJSON(w, http.StatusOK, map[string]string{"url": authURL})

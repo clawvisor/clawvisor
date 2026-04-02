@@ -110,9 +110,9 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 	}
 
 	// Read OAuth app credentials lazily from the provider.
-	var clientID, clientSecret, redirectURL string
+	var clientID, clientSecret string
 	if a.oauthProvider != nil {
-		clientID, clientSecret, redirectURL = a.oauthProvider.OAuthClientCredentials()
+		clientID, clientSecret = a.oauthProvider.OAuthClientCredentials()
 	}
 	if clientID == "" {
 		return nil // OAuth not yet configured
@@ -144,7 +144,6 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
 		Scopes:       scopes,
 		Endpoint:     endpoint,
 	}

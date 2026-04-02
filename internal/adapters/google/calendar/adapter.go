@@ -45,14 +45,13 @@ func (a *CalendarAdapter) SupportedActions() []string {
 func (a *CalendarAdapter) RequiredScopes() []string { return calendarScopes }
 
 func (a *CalendarAdapter) OAuthConfig() *oauth2.Config {
-	clientID, clientSecret, redirectURL := a.oauthProvider.OAuthClientCredentials()
+	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
 	if clientID == "" {
 		return nil
 	}
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
 		Scopes:       calendarScopes,
 		Endpoint:     google.Endpoint,
 	}

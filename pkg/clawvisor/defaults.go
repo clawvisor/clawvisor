@@ -127,16 +127,9 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// ── Adapter Registry ─────────────────────────────────────────────────────
 	adapterReg := adapters.NewRegistry()
 
-	// Build the Google OAuth redirect URL (used for all Google services).
-	host := cfg.Server.Host
-	if host == "0.0.0.0" || host == "127.0.0.1" || host == "" {
-		host = "localhost"
-	}
-	googleRedirectURL := fmt.Sprintf("http://%s:%d/api/oauth/callback", host, cfg.Server.Port)
-
 	// Create a vault-backed OAuth provider for Google services.
 	// Reads credentials lazily — supports adding OAuth creds without restart.
-	oauthProvider := adapters.NewVaultOAuthProvider(v, googleRedirectURL)
+	oauthProvider := adapters.NewVaultOAuthProvider(v)
 
 	// Build Go action overrides for Google services that need complex logic
 	// (MIME encoding, multipart uploads, dual API calls) beyond what YAML
