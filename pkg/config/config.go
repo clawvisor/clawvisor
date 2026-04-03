@@ -311,6 +311,8 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("PUBLIC_URL"); v != "" {
 		cfg.Server.PublicURL = v
+	} else if v := os.Getenv("RENDER_EXTERNAL_URL"); v != "" {
+		cfg.Server.PublicURL = v
 	}
 	if v := os.Getenv("AUTH_MODE"); v != "" {
 		cfg.Server.AuthMode = v
