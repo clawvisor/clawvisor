@@ -19,6 +19,7 @@ auth:
   jwt_secret: ""           # from env: JWT_SECRET  (auto-generated locally; required in prod)
   access_token_ttl: "15m"
   refresh_token_ttl: "720h"
+  max_users: 0             # from env: MAX_USERS — 0 = unlimited; set to 1 for single-user deployments
 
 approval:
   timeout: 300             # seconds before approval request expires

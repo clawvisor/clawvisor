@@ -53,6 +53,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.cfg.MaxUsers > 0 {
+		count, err := h.st.CountUsers(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check user count")
+			return
+		}
+		if count >= h.cfg.MaxUsers {
+			writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "maximum number of users reached")
+			return
+		}
+	}
+
 	if len(h.cfg.AllowedEmails) > 0 {
 		allowed := false
 		for _, e := range h.cfg.AllowedEmails {
