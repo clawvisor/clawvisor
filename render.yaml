@@ -10,7 +10,7 @@ services:
     name: clawvisor
     runtime: docker
     plan: starter
-    dockerfilePath: ./deploy/Dockerfile
+    dockerfilePath: ./render/Dockerfile
     envVars:
       - key: SERVER_HOST
         value: "0.0.0.0"
@@ -18,6 +18,8 @@ services:
         fromDatabase:
           name: clawvisor-db
           property: connectionString
+      - key: AUTH_MODE
+        value: password
       - key: DATABASE_DRIVER
         value: postgres
       - key: JWT_SECRET
@@ -26,5 +28,9 @@ services:
         value: local
       - key: VAULT_KEY
         generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
       - key: CALLBACK_REQUIRE_HTTPS
         value: "true"
