@@ -916,22 +916,36 @@ func extractTextFromAttributedBody(data []byte) string {
 		return ""
 	}
 
-	// Find the NSString class name — the string data follows its declaration.
-	idx := bytes.Index(data, []byte("NSString"))
-	if idx < 0 {
-		return ""
+	// Try each known string class name. macOS versions vary: older releases
+	// store the class hierarchy as …NSMutableString → NSString → NSObject,
+	// while newer releases (macOS 16+) may list only NSMutableString or
+	// omit the separate NSString entry entirely.
+	for _, className := range []string{"NSString", "NSMutableString"} {
+		idx := bytes.Index(data, []byte(className))
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(className)
+
+		// Primary: scan for '+' (0x2B) string marker after the class name.
+		if s := scanForStringMarker(data, start, 0x2B); s != "" {
+			return s
+		}
+		// Some typedstream variants use 0x84 or 0x85 as the string type
+		// marker, or omit the marker entirely and just have the length.
+		if s := scanForLengthPrefixedUTF8(data, start); s != "" {
+			return s
+		}
 	}
 
-	// Primary approach: scan past class hierarchy for the '+' (0x2B) string
-	// marker followed by a length-prefixed UTF-8 string.
-	if s := scanForStringMarker(data, idx+len("NSString"), 0x2B); s != "" {
+	// Broader fallback: scan the entire blob for '+'-prefixed strings,
+	// then for any length-prefixed UTF-8 run. Handles format changes
+	// where the class name is unrecognised. Require whitespace to avoid
+	// false positives from class names embedded in the typedstream.
+	if s := scanForStringMarker(data, 0, 0x2B); s != "" && containsWhitespace(s) {
 		return s
 	}
-
-	// Fallback: some typedstream variants use 0x84 or 0x85 as the string
-	// type marker, or omit the marker entirely and just have the length.
-	// Try scanning for any length-prefixed UTF-8 string after NSString.
-	if s := scanForLengthPrefixedUTF8(data, idx+len("NSString")); s != "" {
+	if s := scanForLengthPrefixedUTF8(data, 0); s != "" && containsWhitespace(s) {
 		return s
 	}
 
@@ -1004,10 +1018,17 @@ func looksLikeText(s string) bool {
 	return total > 0 && float64(printable)/float64(total) >= 0.8
 }
 
+// containsWhitespace returns true if s contains a space, newline, or tab.
+func containsWhitespace(s string) bool {
+	return strings.ContainsAny(s, " \n\t")
+}
+
 // readTypedStreamLength reads a length value from Apple's typedstream format.
-// Short lengths (< 128) are a single byte. For longer strings the first byte
-// has the high bit set and the low 7 bits indicate how many following bytes
-// encode the length in big-endian order.
+// Short lengths (< 128) are a single byte. For longer values the first byte
+// is a tag indicating the width of the following little-endian integer:
+//
+//	0x81 → 2-byte (int16) little-endian
+//	0x82 → 4-byte (int32) little-endian
 func readTypedStreamLength(data []byte) (int, int) {
 	if len(data) == 0 {
 		return 0, 0
@@ -1016,22 +1037,23 @@ func readTypedStreamLength(data []byte) (int, int) {
 	if b < 0x80 {
 		return int(b), 1
 	}
-	n := int(b & 0x7F)
-	if n == 0 || n > 4 || n+1 > len(data) {
+	var nBytes int
+	switch b {
+	case 0x81:
+		nBytes = 2
+	case 0x82:
+		nBytes = 4
+	default:
+		return 0, 0
+	}
+	if 1+nBytes > len(data) {
 		return 0, 0
 	}
 	length := 0
-	for j := 1; j <= n; j++ {
-		length = length<<8 | int(data[j])
+	for j := 0; j < nBytes; j++ {
+		length |= int(data[1+j]) << (8 * j)
 	}
-	skip := n + 1
-	// Multi-byte lengths in Apple's typedstream format are followed by a
-	// 0x00 encoding-tag byte before the string data. Skip it if present so
-	// callers read from the actual string start.
-	if skip < len(data) && data[skip] == 0x00 {
-		skip++
-	}
-	return length, skip
+	return length, 1 + nBytes
 }
 
 func truncate(s string, max int) string {
@@ -1040,3 +1062,4 @@ func truncate(s string, max int) string {
 	}
 	return s
 }
+
