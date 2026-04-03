@@ -17,6 +17,7 @@ export default function Settings() {
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}
+      {!features?.multi_tenant && <GoogleOAuthSection />}
       <DevicePairing />
       <TelegramSection />
       {passwordAuth && <PasswordSection />}
@@ -215,6 +216,96 @@ function LLMSection() {
               className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
             >
               {updateMut.isPending ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setEditing(false); setError(null) }}
+              className="text-sm text-text-tertiary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ── Google OAuth credentials ─────────────────────────────────────────────────
+
+function GoogleOAuthSection() {
+  const [editing, setEditing] = useState(false)
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  const saveMut = useMutation({
+    mutationFn: () => api.system.setGoogleOAuth(clientId, clientSecret),
+    onSuccess: () => {
+      setEditing(false)
+      setClientId('')
+      setClientSecret('')
+      setError(null)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 5000)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  function handleSubmit() {
+    if (!clientId || !clientSecret) { setError('Both fields are required'); return }
+    setError(null)
+    saveMut.mutate()
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Google OAuth</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Configure Google OAuth credentials to enable Gmail, Calendar, Drive, and Contacts adapters.
+        </p>
+      </div>
+
+      {error && <div className="text-sm text-danger max-w-lg">{error}</div>}
+      {success && <div className="text-sm text-success max-w-lg">Google OAuth credentials saved.</div>}
+
+      {!editing ? (
+        <button
+          onClick={() => { setEditing(true); setError(null); setSuccess(false) }}
+          className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"
+        >
+          Configure
+        </button>
+      ) : (
+        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">Client ID</label>
+            <input
+              type="text"
+              value={clientId}
+              onChange={e => { setClientId(e.target.value); setError(null) }}
+              placeholder="123456789.apps.googleusercontent.com"
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-text-tertiary">Client Secret</label>
+            <input
+              type="password"
+              value={clientSecret}
+              onChange={e => { setClientSecret(e.target.value); setError(null) }}
+              placeholder="GOCSPX-..."
+              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            />
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={handleSubmit}
+              disabled={saveMut.isPending || !clientId || !clientSecret}
+              className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saveMut.isPending ? 'Saving…' : 'Save'}
             </button>
             <button
               onClick={() => { setEditing(false); setError(null) }}
