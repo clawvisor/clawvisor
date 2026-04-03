@@ -26,9 +26,5 @@ services:
         value: local
       - key: VAULT_KEY
         generateValue: true
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
       - key: CALLBACK_REQUIRE_HTTPS
         value: "true"
