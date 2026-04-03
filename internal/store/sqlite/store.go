@@ -104,6 +104,12 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash 
 	return nil
 }
 
+func (s *Store) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID)
 	if err != nil {

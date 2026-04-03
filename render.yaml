@@ -20,6 +20,8 @@ services:
           property: connectionString
       - key: AUTH_MODE
         value: password
+      - key: MAX_USERS
+        value: "1"
       - key: DATABASE_DRIVER
         value: postgres
       - key: JWT_SECRET

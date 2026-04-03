@@ -22,6 +22,7 @@ type Store interface {
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	UpdateUserPassword(ctx context.Context, userID, newPasswordHash string) error
 	DeleteUser(ctx context.Context, userID string) error
+	CountUsers(ctx context.Context) (int, error)
 
 	// Restrictions
 	CreateRestriction(ctx context.Context, r *Restriction) (*Restriction, error)

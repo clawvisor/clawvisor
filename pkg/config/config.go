@@ -112,6 +112,7 @@ type AuthConfig struct {
 	AccessTokenTTL  string   `yaml:"access_token_ttl"`
 	RefreshTokenTTL string   `yaml:"refresh_token_ttl"`
 	AllowedEmails   []string `yaml:"allowed_emails"`
+	MaxUsers        int      `yaml:"max_users"` // 0 = unlimited
 }
 
 type ApprovalConfig struct {
@@ -319,6 +320,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("ALLOWED_EMAILS"); v != "" {
 		cfg.Auth.AllowedEmails = strings.Split(v, ",")
+	}
+	if v := os.Getenv("MAX_USERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Auth.MaxUsers = n
+		}
 	}
 
 	if v := os.Getenv("CALLBACK_ALLOW_PRIVATE_CIDRS"); v != "" {
