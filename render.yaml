@@ -32,5 +32,7 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      - key: IMESSAGE_ENABLED
+        value: "false"
       - key: CALLBACK_REQUIRE_HTTPS
         value: "true"
