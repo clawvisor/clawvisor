@@ -6,26 +6,28 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
 
 const (
-	MaxBodyLen    = 2000
+	MaxBodyLen    = 8000
 	MaxSnippetLen = 300
 	MaxFieldLen   = 500
 	MaxArrayItems = 50
 	MaxDataBytes  = 100 * 1024
 )
 
-// SanitizeText strips HTML, removes dangerous Unicode, and truncates to maxLen.
+// SanitizeText strips HTML, removes dangerous Unicode, and truncates to maxLen runes.
 // If maxLen <= 0, only sanitization is applied (no truncation).
 func SanitizeText(s string, maxLen int) string {
 	s = stripHTML(s)
 	s = removeDangerousUnicode(s)
 	s = strings.TrimSpace(s)
-	if maxLen > 0 && len(s) > maxLen {
-		s = s[:maxLen] + " [truncated]"
+	if maxLen > 0 && utf8.RuneCountInString(s) > maxLen {
+		runes := []rune(s)
+		s = string(runes[:maxLen]) + " [truncated]"
 	}
 	return s
 }
