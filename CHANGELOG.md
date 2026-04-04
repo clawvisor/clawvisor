@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.2](https://github.com/clawvisor/clawvisor/compare/v0.8.1...v0.8.2) (2026-04-04)
+
+
+### Bug Fixes
+
+* render SKILL.md template instead of serving missing static file ([#108](https://github.com/clawvisor/clawvisor/issues/108)) ([c841da1](https://github.com/clawvisor/clawvisor/commit/c841da1f50a5b1a79d099d9c48a74eacc277a653))
+* resolve iMessage truncation for messages over 128 bytes ([#106](https://github.com/clawvisor/clawvisor/issues/106)) ([4c3323a](https://github.com/clawvisor/clawvisor/commit/4c3323a789e8bf5b45e2194dda7ab632c8c4e061))
+
 ## [0.8.1](https://github.com/clawvisor/clawvisor/compare/v0.8.0...v0.8.1) (2026-04-02)
 
 
