@@ -533,21 +533,38 @@ func (s *Server) routes() http.Handler {
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 	}
+	mux.HandleFunc("GET /skill/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
+		rendered, err := skillfiles.Render(skillfiles.TargetClaudeCode)
+		if err != nil {
+			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Write([]byte(rendered))
+	})
 	mux.HandleFunc("GET /skill/skill.zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", `attachment; filename="skill.zip"`)
+		rendered, err := skillfiles.Render(skillfiles.TargetClaudeCode)
+		if err != nil {
+			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		zw := zip.NewWriter(w)
-		for _, name := range []string{"SKILL.md", "e2e.mjs"} {
-			data, err := fs.ReadFile(skillFS, name)
-			if err != nil {
-				http.Error(w, "missing "+name, http.StatusInternalServerError)
-				return
-			}
-			f, err := zw.Create(name)
+		for _, entry := range []struct{ name, content string }{
+			{"SKILL.md", rendered},
+		} {
+			f, err := zw.Create(entry.name)
 			if err != nil {
 				return
 			}
-			f.Write(data)
+			f.Write([]byte(entry.content))
+		}
+		// e2e.mjs is a static file — read from the embedded FS.
+		if data, err := fs.ReadFile(skillFS, "e2e.mjs"); err == nil {
+			if f, err := zw.Create("e2e.mjs"); err == nil {
+				f.Write(data)
+			}
 		}
 		zw.Close()
 	})
