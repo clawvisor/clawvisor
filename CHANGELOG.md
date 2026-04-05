@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/clawvisor/clawvisor/compare/v0.8.2...v0.8.3) (2026-04-05)
+
+
+### Features
+
+* add CI-compatible e2e tests with mock test adapters ([#110](https://github.com/clawvisor/clawvisor/issues/110)) ([34abfad](https://github.com/clawvisor/clawvisor/commit/34abfadc54b4ee06d69cc683a6f2980d83ef9b87))
+
 ## [0.8.2](https://github.com/clawvisor/clawvisor/compare/v0.8.1...v0.8.2) (2026-04-04)
 
 
