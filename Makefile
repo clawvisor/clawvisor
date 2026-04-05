@@ -1,4 +1,4 @@
-.PHONY: build build-staging install test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install
+.PHONY: build build-staging install test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
@@ -37,6 +37,12 @@ test-verbose:
 
 eval-intent:
 	go test -v -run TestEvalIntentVerification -count=1 -timeout=300s ./internal/intent/
+
+test-e2e: build
+	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor go test -v -count=1 -timeout=120s ./e2e/smoke/
+
+test-e2e-ci: build
+	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor go test -v -count=1 -timeout=120s -run '^TestCI' ./e2e/smoke/
 
 test-e2e-install: web/dist
 	docker build -f e2e/install/Dockerfile -t clawvisor-e2e-install .

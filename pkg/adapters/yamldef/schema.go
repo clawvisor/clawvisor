@@ -59,9 +59,17 @@ type PKCEFlowDef struct {
 type OAuthDef struct {
 	Scopes            []string           `yaml:"scopes"`
 	ConditionalScopes []ConditionalScope `yaml:"conditional_scopes,omitempty"`
-	Endpoint          string             `yaml:"endpoint"`    // "google" — maps to well-known endpoints
-	VaultKey          string             `yaml:"vault_key"`   // shared vault key (e.g. "google")
-	ScopeMerge        bool               `yaml:"scope_merge"` // whether to merge scopes with existing credential
+	Endpoint          string             `yaml:"endpoint,omitempty"`    // "google" — maps to well-known endpoints
+	VaultKey          string             `yaml:"vault_key,omitempty"`   // shared vault key (e.g. "google")
+	ScopeMerge        bool               `yaml:"scope_merge,omitempty"` // whether to merge scopes with existing credential
+
+	// Custom OAuth endpoint fields — used when Endpoint is not a well-known provider.
+	ClientID        string `yaml:"client_id,omitempty"`
+	ClientIDEnv     string `yaml:"client_id_env,omitempty"`
+	ClientSecret    string `yaml:"client_secret,omitempty"`
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty"`
+	AuthorizeURL    string `yaml:"authorize_url,omitempty"`
+	TokenURL        string `yaml:"token_url,omitempty"`
 }
 
 // ConditionalScope is a scope that is only included when an env var condition is met.
