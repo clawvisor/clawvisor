@@ -581,6 +581,10 @@ export const api = {
     update: (provider: string, endpoint: string, apiKey: string, model: string) =>
       put<{ status: string; warning?: string }>('/api/llm', { provider, endpoint, api_key: apiKey, model }),
   },
+  system: {
+    setGoogleOAuth: (clientId: string, clientSecret: string) =>
+      post<{ ok: boolean }>('/api/system/google-oauth', { client_id: clientId, client_secret: clientSecret }),
+  },
   features: {
     get: () => get<FeatureSet>('/api/features'),
   },

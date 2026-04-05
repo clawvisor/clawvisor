@@ -1,0 +1,40 @@
+databases:
+  - name: clawvisor-db
+    plan: basic-256mb
+    databaseName: clawvisor
+    user: clawvisor
+    ipAllowList: []
+
+services:
+  - type: web
+    name: clawvisor
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./render/Dockerfile
+    envVars:
+      - key: SERVER_HOST
+        value: "0.0.0.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clawvisor-db
+          property: connectionString
+      - key: AUTH_MODE
+        value: password
+      - key: MAX_USERS
+        value: "1"
+      - key: DATABASE_DRIVER
+        value: postgres
+      - key: JWT_SECRET
+        generateValue: true
+      - key: VAULT_BACKEND
+        value: local
+      - key: VAULT_KEY
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: IMESSAGE_ENABLED
+        value: "false"
+      - key: CALLBACK_REQUIRE_HTTPS
+        value: "true"
