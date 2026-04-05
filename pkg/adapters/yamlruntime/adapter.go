@@ -109,16 +109,28 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 		return nil
 	}
 
-	// Read OAuth app credentials lazily from the provider.
-	var clientID, clientSecret string
-	if a.oauthProvider != nil {
+	oauthDef := a.def.Auth.OAuth
+
+	// Try inline credentials first (custom OAuth endpoints), then provider (Google).
+	clientID := oauthDef.ClientID
+	clientSecret := oauthDef.ClientSecret
+	if oauthDef.ClientIDEnv != "" {
+		if v := os.Getenv(oauthDef.ClientIDEnv); v != "" {
+			clientID = v
+		}
+	}
+	if oauthDef.ClientSecretEnv != "" {
+		if v := os.Getenv(oauthDef.ClientSecretEnv); v != "" {
+			clientSecret = v
+		}
+	}
+	if clientID == "" && a.oauthProvider != nil {
 		clientID, clientSecret = a.oauthProvider.OAuthClientCredentials()
 	}
 	if clientID == "" {
 		return nil // OAuth not yet configured
 	}
 
-	oauthDef := a.def.Auth.OAuth
 	scopes := make([]string, len(oauthDef.Scopes))
 	copy(scopes, oauthDef.Scopes)
 
@@ -138,7 +150,10 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 	case "google":
 		endpoint = google.Endpoint
 	default:
-		// Future: support custom endpoint URLs.
+		endpoint = oauth2.Endpoint{
+			AuthURL:  oauthDef.AuthorizeURL,
+			TokenURL: oauthDef.TokenURL,
+		}
 	}
 
 	return &oauth2.Config{
