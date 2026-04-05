@@ -52,3 +52,50 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ needs.release-please.outputs.tag_name }}" dist/* --clobber
+
+  publish-skill:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 2
+
+      - name: Check for skill changes
+        id: skill-changes
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -qE '^skills/clawvisor/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: steps.skill-changes.outputs.changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node.js
+        if: steps.skill-changes.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare skill folder
+        if: steps.skill-changes.outputs.changed == 'true'
+        run: |
+          mkdir -p dist/skill
+          go run ./cmd/render-skill claude-code > dist/skill/SKILL.md
+          cp skills/clawvisor/README.md dist/skill/README.md
+          cp -r skills/clawvisor/policies dist/skill/policies
+
+      - name: Publish to ClawHub
+        if: steps.skill-changes.outputs.changed == 'true'
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          VERSION=$(jq -r '."."' .release-please-manifest.json)
+          npx clawhub publish dist/skill --slug clawvisor --version "$VERSION"
