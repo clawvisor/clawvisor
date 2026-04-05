@@ -15,7 +15,7 @@ const (
 	MaxBodyLen    = 8000
 	MaxSnippetLen = 300
 	MaxFieldLen   = 500
-	MaxArrayItems = 50
+	MaxArrayItems = 200
 	MaxDataBytes  = 100 * 1024
 )
 

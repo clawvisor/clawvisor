@@ -34,8 +34,9 @@ actions:
     method: GET
     path: "/conversations.list"
     params:
-      limit: { type: int, default: 100, max: 1000, location: query }
-      types: { type: string, location: query }
+      limit: { type: int, default: 200, max: 1000, location: query }
+      types: { type: string, default: "public_channel,private_channel", location: query }
+      cursor: { type: string, location: query }
     error_check: { success_path: "ok", error_path: "error" }
     response:
       data_path: "channels"
@@ -74,6 +75,7 @@ actions:
       limit: { type: int, default: 50, max: 1000, location: query }
       oldest: { type: string, location: query }
       latest: { type: string, location: query }
+      cursor: { type: string, location: query }
     error_check: { success_path: "ok", error_path: "error" }
     response:
       data_path: "messages"
@@ -123,6 +125,7 @@ actions:
     path: "/users.list"
     params:
       limit: { type: int, default: 100, max: 1000, location: query }
+      cursor: { type: string, location: query }
     error_check: { success_path: "ok", error_path: "error" }
     response:
       data_path: "members"
