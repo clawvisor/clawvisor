@@ -106,7 +106,7 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, newPasswordHash 
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id != '__system__'`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id != '__system__' AND email != 'admin@local'`).Scan(&n)
 	return n, err
 }
 
