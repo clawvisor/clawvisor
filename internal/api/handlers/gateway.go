@@ -290,6 +290,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					Allow:           true,
 					ParamScope:      "ok",
 					ReasonCoherence: "ok",
+					ExtractContext:  true,
 					Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
 				}
 			} else {
