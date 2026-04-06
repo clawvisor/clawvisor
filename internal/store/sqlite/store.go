@@ -710,6 +710,10 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if err != nil {
 		return err
 	}
+	plannedCallsJSON, err := json.Marshal(task.PlannedCalls)
+	if err != nil {
+		return err
+	}
 	var pendingActionJSON *string
 	if task.PendingAction != nil {
 		b, err := json.Marshal(task.PendingAction)
@@ -730,12 +734,12 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	}
 	riskDetails := string(task.RiskDetails)
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
 			risk_level, risk_details)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
-		string(actionsJSON), task.CallbackURL, task.ExpiresInSeconds,
+		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
 		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
 		task.RiskLevel, riskDetails)
 	return err
@@ -743,16 +747,16 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 
 func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
-	var actionsStr, createdAt string
+	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
 	var riskDetailsStr string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
-		&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
+		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -772,6 +776,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	}
 	if err := json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions); err != nil {
 		return nil, fmt.Errorf("unmarshal authorized_actions: %w", err)
+	}
+	if plannedCallsStr != "" {
+		_ = json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls)
 	}
 	if pendingActionStr != nil {
 		var pa store.TaskAction
@@ -809,7 +816,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		return nil, 0, err
 	}
 
-	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
@@ -828,11 +835,11 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	var tasks []*store.Task
 	for rows.Next() {
 		t := &store.Task{}
-		var actionsStr, createdAt string
+		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
 		var riskDetailsStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
-			&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
+			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr); err != nil {
 			return nil, 0, err
@@ -847,6 +854,9 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 			t.ExpiresAt = &ts
 		}
 		_ = json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions)
+		if plannedCallsStr != "" {
+			_ = json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls)
+		}
 		if pendingActionStr != nil {
 			var pa store.TaskAction
 			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {

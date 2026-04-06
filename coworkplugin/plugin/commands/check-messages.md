@@ -9,6 +9,9 @@ description: Review recent iMessage threads and identify ones needing replies
    - **authorized_actions**:
      - `apple.imessage` / `list_threads` — `auto_execute: true` — "List recent iMessage threads to find ones needing attention"
      - `apple.imessage` / `get_thread` — `auto_execute: true` — "Read individual thread messages to check reply status"
+   - **planned_calls**:
+     - `apple.imessage` / `list_threads` — params: `{"limit": 30}` — "List recent threads"
+     - `apple.imessage` / `get_thread` — params: `{"thread_id": "$chain"}` — "Read each thread from the listing"
    - **expires_in_seconds**: 1800
 
 3. Tell the user: "I've requested access to read your iMessage threads. Please approve the task in Clawvisor."

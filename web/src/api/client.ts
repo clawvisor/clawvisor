@@ -321,6 +321,13 @@ export interface TaskAction {
   expected_use?: string
 }
 
+export interface PlannedCall {
+  service: string
+  action: string
+  params?: Record<string, unknown>
+  reason: string
+}
+
 export interface Task {
   id: string
   user_id: string
@@ -329,6 +336,7 @@ export interface Task {
   lifetime: 'session' | 'standing'
   status: 'pending_approval' | 'pending_scope_expansion' | 'active' | 'completed' | 'expired' | 'denied' | 'revoked'
   authorized_actions: TaskAction[]
+  planned_calls?: PlannedCall[]
   callback_url?: string
   created_at: string
   approved_at?: string

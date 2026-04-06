@@ -9,6 +9,9 @@ description: Triage recent emails — classify by urgency and action needed
    - **authorized_actions**:
      - `google.gmail` / `list_messages` — `auto_execute: true` — "List recent inbox emails to identify ones needing triage"
      - `google.gmail` / `get_message` — `auto_execute: true` — "Read individual emails to classify urgency and extract action items"
+   - **planned_calls**:
+     - `google.gmail` / `list_messages` — params: `{"query": "newer_than:2d", "max_results": 20}` — "List recent inbox emails for triage"
+     - `google.gmail` / `get_message` — params: `{"message_id": "$chain"}` — "Read each email from the listing to classify urgency"
    - **expires_in_seconds**: 1800
 
 3. Tell the user: "I've requested access to read your recent emails. Please approve the task in Clawvisor."

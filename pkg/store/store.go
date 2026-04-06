@@ -234,6 +234,27 @@ type TaskAction struct {
 	ExpansionRationale string          `json:"expansion_rationale,omitempty"` // set from PendingReason when scope expansion is approved
 }
 
+// PlannedCall is a concrete or templated API call that an agent declares at task
+// creation time. Planned calls are evaluated during task risk assessment and shown
+// to the user at approval time. At request time, calls that match a planned call
+// skip intent verification.
+//
+// Matching rules:
+//   - Service and Action must match exactly.
+//   - Params must be non-empty (calls without params cannot skip verification
+//     because we don't know what entity they target).
+//   - Each param value is matched against the actual request:
+//   - Literal value: must match exactly (JSON-normalized).
+//   - "$chain": the actual value must appear in the task's chain context facts.
+//     This lets agents template calls like {"thread_id": "$chain"} to mean
+//     "any thread_id that was returned by a prior call in this task".
+type PlannedCall struct {
+	Service string         `json:"service"`
+	Action  string         `json:"action"`
+	Params  map[string]any `json:"params,omitempty"` // required for matching; "$chain" values match chain context
+	Reason  string         `json:"reason"`           // why this call will be made
+}
+
 // Task represents a task-scoped authorization.
 type Task struct {
 	ID                string       `json:"id"`
@@ -242,8 +263,9 @@ type Task struct {
 	Purpose           string       `json:"purpose"`
 	Status            string       `json:"status"` // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion | revoked
 	Lifetime          string       `json:"lifetime"` // session | standing
-	AuthorizedActions []TaskAction `json:"authorized_actions"`
-	CallbackURL       *string      `json:"callback_url,omitempty"`
+	AuthorizedActions []TaskAction  `json:"authorized_actions"`
+	PlannedCalls      []PlannedCall `json:"planned_calls,omitempty"`
+	CallbackURL       *string       `json:"callback_url,omitempty"`
 	CreatedAt         time.Time    `json:"created_at"`
 	ApprovedAt        *time.Time   `json:"approved_at,omitempty"`
 	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`

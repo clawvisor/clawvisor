@@ -27,6 +27,7 @@ type Assessor interface {
 type AssessRequest struct {
 	Purpose           string
 	AuthorizedActions []store.TaskAction
+	PlannedCalls      []store.PlannedCall
 	AgentName         string
 }
 
