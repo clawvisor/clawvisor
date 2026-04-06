@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN planned_calls TEXT NOT NULL DEFAULT '[]';

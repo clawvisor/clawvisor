@@ -72,11 +72,12 @@ func NewTasksHandler(
 // ── Create ────────────────────────────────────────────────────────────────────
 
 type createTaskRequest struct {
-	Purpose           string             `json:"purpose"`
-	AuthorizedActions []store.TaskAction `json:"authorized_actions"`
-	ExpiresInSeconds  int                `json:"expires_in_seconds"`
-	CallbackURL       string             `json:"callback_url"`
-	Lifetime          string             `json:"lifetime"` // "session" (default) or "standing"
+	Purpose           string              `json:"purpose"`
+	AuthorizedActions []store.TaskAction  `json:"authorized_actions"`
+	PlannedCalls      []store.PlannedCall `json:"planned_calls,omitempty"`
+	ExpiresInSeconds  int                 `json:"expires_in_seconds"`
+	CallbackURL       string              `json:"callback_url"`
+	Lifetime          string              `json:"lifetime"` // "session" (default) or "standing"
 }
 
 // Create declares a new task scope.
@@ -136,6 +137,33 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate planned calls: each must reference a service:action covered by authorized_actions.
+	for _, pc := range req.PlannedCalls {
+		if pc.Service == "" || pc.Action == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "planned_calls entries must have service and action")
+			return
+		}
+		if pc.Reason == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				fmt.Sprintf("planned_calls entry %s:%s must have a reason", pc.Service, pc.Action))
+			return
+		}
+		covered := false
+		pcServiceType, _ := parseServiceAlias(pc.Service)
+		for _, a := range req.AuthorizedActions {
+			aServiceType, _ := parseServiceAlias(a.Service)
+			if aServiceType == pcServiceType && (a.Action == pc.Action || a.Action == "*") {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				fmt.Sprintf("planned_calls entry %s:%s is not covered by authorized_actions", pc.Service, pc.Action))
+			return
+		}
+	}
+
 	lifetime := req.Lifetime
 	if lifetime == "" {
 		lifetime = "session"
@@ -173,6 +201,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:            "pending_approval",
 		Lifetime:          lifetime,
 		AuthorizedActions: req.AuthorizedActions,
+		PlannedCalls:      req.PlannedCalls,
 		ExpiresInSeconds:  expiresIn,
 	}
 	if req.CallbackURL != "" {
@@ -184,6 +213,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		assessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
 			Purpose:           req.Purpose,
 			AuthorizedActions: req.AuthorizedActions,
+			PlannedCalls:      req.PlannedCalls,
 			AgentName:         agent.Name,
 		})
 		if err != nil {
@@ -211,15 +241,16 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if msgID, err := h.notifier.SendTaskApprovalRequest(ctx, notify.TaskApprovalRequest{
-			TaskID:     task.ID,
-			UserID:     agent.UserID,
-			AgentName:  agent.Name,
-			Purpose:    req.Purpose,
-			Actions:    req.AuthorizedActions,
-			RiskLevel:  task.RiskLevel,
-			ApproveURL: approveURL,
-			DenyURL:    denyURL,
-			ExpiresIn:  expiresInStr,
+			TaskID:       task.ID,
+			UserID:       agent.UserID,
+			AgentName:    agent.Name,
+			Purpose:      req.Purpose,
+			Actions:      req.AuthorizedActions,
+			PlannedCalls: req.PlannedCalls,
+			RiskLevel:    task.RiskLevel,
+			ApproveURL:   approveURL,
+			DenyURL:      denyURL,
+			ExpiresIn:    expiresInStr,
 		}); err != nil {
 			h.logger.Warn("failed to send task approval notification", "task_id", task.ID, "err", err)
 		} else if msgID != "" {

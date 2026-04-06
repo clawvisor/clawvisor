@@ -270,7 +270,31 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			taskIDPtr := &req.TaskID
 
 			// ── Intent verification ──────────────────────────────────────
-			verdict := h.runVerification(ctx, task, match.MatchedAction, req, serviceType)
+			// Load chain facts (needed for both planned call matching and verification).
+			chainFacts := h.loadChainFacts(ctx, task, req)
+
+			// Check if the request matches a pre-registered planned call.
+			// If so, skip LLM-based intent verification entirely — the call
+			// was evaluated during task risk assessment and approved by the user.
+			matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
+
+			var verdict *intent.VerificationVerdict
+			if matchedPlannedCall != nil {
+				h.logger.Info("request matches planned call — skipping intent verification",
+					"task_id", req.TaskID,
+					"service", req.Service,
+					"action", req.Action,
+					"planned_reason", matchedPlannedCall.Reason,
+				)
+				verdict = &intent.VerificationVerdict{
+					Allow:           true,
+					ParamScope:      "ok",
+					ReasonCoherence: "ok",
+					Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
+				}
+			} else {
+				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, chainFacts)
+			}
 			if verdict != nil && !verdict.Allow {
 				dur := int(time.Since(start).Milliseconds())
 				e := baseEntry("verify", "restricted", taskIDPtr)
@@ -442,7 +466,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// In scope + (!auto_execute || hardcoded) → falls through to per-request approval below.
 		// Run advisory verification so the human sees warnings in the approval UI.
-		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType)
+		advisoryFacts := h.loadChainFacts(ctx, task, req)
+		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, advisoryFacts)
 	}
 
 	// ── Step 5: Per-request approval ─────────────────────────────────────────
@@ -812,6 +837,22 @@ func (h *GatewayHandler) publishAuditAndQueue(userID, taskID string) {
 }
 
 // runVerification runs intent verification for a request and returns the verdict.
+// loadChainFacts fetches chain context facts for the given task and request.
+func (h *GatewayHandler) loadChainFacts(ctx context.Context, task *store.Task, req gateway.Request) []store.ChainFact {
+	chainSessionID := req.SessionID
+	if chainSessionID == "" && task.Lifetime != "standing" {
+		chainSessionID = req.TaskID
+	}
+	var chainFacts []store.ChainFact
+	if chainSessionID != "" {
+		facts, _ := h.store.ListChainFacts(ctx, req.TaskID, chainSessionID, 50)
+		for _, f := range facts {
+			chainFacts = append(chainFacts, *f)
+		}
+	}
+	return chainFacts
+}
+
 // Returns nil if the verifier is a no-op or if verification fails.
 func (h *GatewayHandler) runVerification(
 	ctx context.Context,
@@ -819,6 +860,7 @@ func (h *GatewayHandler) runVerification(
 	matchedAction *store.TaskAction,
 	req gateway.Request,
 	serviceType string,
+	chainFacts []store.ChainFact,
 ) *intent.VerificationVerdict {
 	var expectedUse, expansionRationale string
 	if matchedAction != nil {
@@ -829,19 +871,6 @@ func (h *GatewayHandler) runVerification(
 	if ada, ok := h.adapterReg.Get(serviceType); ok {
 		if hinter, ok := ada.(adapters.VerificationHinter); ok {
 			serviceHints = hinter.VerificationHints()
-		}
-	}
-	// Chain context: ephemeral tasks use task_id as implicit session;
-	// standing tasks require an explicit session_id to scope facts.
-	chainSessionID := req.SessionID
-	if chainSessionID == "" && task.Lifetime != "standing" {
-		chainSessionID = req.TaskID
-	}
-	var chainFacts []store.ChainFact
-	if chainSessionID != "" {
-		facts, _ := h.store.ListChainFacts(ctx, req.TaskID, chainSessionID, 50)
-		for _, f := range facts {
-			chainFacts = append(chainFacts, *f)
 		}
 	}
 	chainContextOptOut := task.Lifetime == "standing" && req.SessionID == ""
@@ -860,6 +889,84 @@ func (h *GatewayHandler) runVerification(
 		ChainContextEnabled: h.cfg.LLM.ChainContext.Enabled,
 	})
 	return verdict
+}
+
+// ── Planned call matching ─────────────────────────────────────────────────────
+
+// matchPlannedCall checks whether a gateway request matches one of the task's
+// pre-registered planned calls. Returns the matched PlannedCall, or nil.
+//
+// Matching rules:
+//   - Service (base type, ignoring alias) and action must match exactly.
+//   - Planned call must have non-empty params (calls without params never match
+//     because we can't verify what entity they target).
+//   - Each planned param is checked against actual params:
+//   - "$chain" values match any actual value found in chainFacts.
+//   - All other values must match exactly (JSON-normalized).
+func matchPlannedCall(planned []store.PlannedCall, service, action string, params map[string]any, chainFacts []store.ChainFact) *store.PlannedCall {
+	reqServiceType, _ := parseServiceAlias(service)
+	for i := range planned {
+		pc := &planned[i]
+		if len(pc.Params) == 0 {
+			continue // params required for matching
+		}
+		pcServiceType, _ := parseServiceAlias(pc.Service)
+		if pcServiceType != reqServiceType || pc.Action != action {
+			continue
+		}
+		if plannedParamsMatch(pc.Params, params, chainFacts) {
+			return pc
+		}
+	}
+	return nil
+}
+
+// plannedParamsMatch returns true if every key/value in planned appears in actual.
+// A planned value of "$chain" matches if the actual value appears in any chain fact.
+// All other values are compared via JSON round-trip for type-safe deep equality.
+func plannedParamsMatch(planned, actual map[string]any, chainFacts []store.ChainFact) bool {
+	for k, pv := range planned {
+		av, ok := actual[k]
+		if !ok {
+			return false
+		}
+		// Check for $chain template marker.
+		if s, ok := pv.(string); ok && s == "$chain" {
+			if !valueInChainFacts(av, chainFacts) {
+				return false
+			}
+			continue
+		}
+		// Exact match via JSON normalization.
+		pj, _ := json.Marshal(pv)
+		aj, _ := json.Marshal(av)
+		if string(pj) != string(aj) {
+			return false
+		}
+	}
+	return true
+}
+
+// valueInChainFacts returns true if the given value (as a string) appears
+// in any chain fact's FactValue.
+func valueInChainFacts(v any, facts []store.ChainFact) bool {
+	var s string
+	switch val := v.(type) {
+	case string:
+		s = val
+	default:
+		b, _ := json.Marshal(val)
+		s = strings.Trim(string(b), `"`)
+	}
+	if s == "" {
+		return false
+	}
+	for _, f := range facts {
+		if f.FactValue == s {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Shared execution logic ────────────────────────────────────────────────────

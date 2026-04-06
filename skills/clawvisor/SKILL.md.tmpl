@@ -128,6 +128,10 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
       {"service": "apple.imessage", "action": "list_threads", "auto_execute": true, "expected_use": "List recent iMessage threads to find ones needing replies"},
       {"service": "apple.imessage", "action": "get_thread", "auto_execute": true, "expected_use": "Read individual thread messages to classify reply status"}
     ],
+    "planned_calls": [
+      {"service": "apple.imessage", "action": "list_threads", "params": {"limit": 30}, "reason": "List the 30 most recent threads"},
+      {"service": "apple.imessage", "action": "get_thread", "params": {"thread_id": "$chain"}, "reason": "Read each thread from the listing"}
+    ],
     "expires_in_seconds": 1800
   }'
 ```
@@ -138,6 +142,7 @@ actions you need using `create_task`:
 - **`expected_use`** — per-action description of how you'll use it. Shown during approval and checked by intent verification against your actual request params. Be specific: "Fetch today's calendar events" is better than "Use the calendar API."
 - **`auto_execute`** — `true` runs in-scope requests immediately; `false` still requires per-request approval (use for destructive actions like `send_message`).
 - **`expires_in_seconds`** — task TTL. Omit and set `"lifetime": "standing"` for a task that persists until the user revokes it (see below).
+- **`planned_calls`** *(optional)* — pre-register specific API calls you know you'll make. Planned calls are shown to the user during approval, evaluated as part of risk assessment, and **skip intent verification at runtime** when they match. This reduces latency for predictable workflows. Each entry must be covered by `authorized_actions` and must include `params`. Use exact values for known params, or `"$chain"` for values that will come from a prior call's results (e.g. `{"thread_id": "$chain"}`). Calls without params cannot skip verification.
 
 All tasks start as `pending_approval`
 {{- if .UseCurl }} — the user is notified to approve the
@@ -389,6 +394,7 @@ without re-executing.
 | Condition | Gateway `status` |
 |---|---|
 | Restriction matches | `blocked` |
+| Task in scope + `auto_execute` + matches planned call | `executed` (skips verification) |
 | Task in scope + `auto_execute` + verification passes | `executed` |
 | Task in scope + `auto_execute` + verification fails | `restricted` |
 | Task in scope + `auto_execute: false` | `pending` (per-request approval) |

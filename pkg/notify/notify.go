@@ -60,15 +60,16 @@ type CallbackPayload struct {
 
 // TaskApprovalRequest carries the data needed to ask the user to approve a task scope.
 type TaskApprovalRequest struct {
-	TaskID     string
-	UserID     string
-	AgentName  string
-	Purpose    string
-	Actions    []store.TaskAction
-	RiskLevel  string // "low", "medium", "high", "critical"
-	ApproveURL string
-	DenyURL    string
-	ExpiresIn  string
+	TaskID       string
+	UserID       string
+	AgentName    string
+	Purpose      string
+	Actions      []store.TaskAction
+	PlannedCalls []store.PlannedCall
+	RiskLevel    string // "low", "medium", "high", "critical"
+	ApproveURL   string
+	DenyURL      string
+	ExpiresIn    string
 }
 
 // ScopeExpansionRequest is sent when an agent needs to expand a task's scope.

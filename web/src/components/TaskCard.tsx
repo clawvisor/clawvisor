@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type AuditEntry, type RiskAssessment } from '../api/client'
+import { api, type Task, type PlannedCall, type AuditEntry, type RiskAssessment } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
@@ -214,9 +214,12 @@ export default function TaskCard({
           )}
         </>
       ) : isActionable && !result ? (
-        /* New task: show grouped scope tables */
+        /* New task: show grouped scope tables + planned calls */
         <div className="px-4 space-y-2 pb-3">
           <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
+          {task.planned_calls && task.planned_calls.length > 0 && (
+            <PlannedCallsTable calls={task.planned_calls} />
+          )}
         </div>
       ) : (
         /* Active / completed / other: collapsible scopes */
@@ -371,6 +374,38 @@ function ScopeGroupTables({ autoActions, manualActions }: {
         </div>
       )}
     </>
+  )
+}
+
+// ── Planned calls table ──────────────────────────────────────────────────────
+
+function PlannedCallsTable({ calls }: { calls: PlannedCall[] }) {
+  return (
+    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden mt-2">
+      <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5" style={{ background: 'var(--color-brand-tint, rgba(59,130,246,0.05))' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+        <span className="text-[10px] font-medium text-brand uppercase tracking-wider">Planned calls</span>
+      </div>
+      <table className="w-full text-sm">
+        <tbody>
+          {calls.map((pc, i) => (
+            <tr key={`${pc.service}|${pc.action}|${i}`} className={i < calls.length - 1 ? 'border-b border-border-subtle' : ''}>
+              <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(pc.service)} · {actionName(pc.action)}</td>
+              <td className="px-3 py-2 text-sm text-text-secondary">
+                {pc.reason}
+                {pc.params && Object.keys(pc.params).length > 0 && (
+                  <span className="ml-2 text-xs font-mono text-text-tertiary">
+                    ({Object.entries(pc.params).map(([k, v]) =>
+                      v === '$chain' ? `${k}=\u27e8from prior call\u27e9` : `${k}=${JSON.stringify(v)}`
+                    ).join(', ')})
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

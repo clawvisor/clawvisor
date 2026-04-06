@@ -50,6 +50,20 @@ func toolDefs() []Tool {
 						},
 						"description": "Actions this task is authorized to perform"
 					},
+					"planned_calls": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"service": {"type": "string", "description": "Service ID"},
+								"action": {"type": "string", "description": "Action name"},
+								"params": {"type": "object", "description": "Expected params. Use exact values for known params. Use \"$chain\" as a value to match any value that appeared in a prior call's results (e.g. {\"thread_id\": \"$chain\"})."},
+								"reason": {"type": "string", "description": "Why this call will be made"}
+							},
+							"required": ["service", "action", "reason"]
+						},
+						"description": "Optional pre-registered calls. Calls matching a planned call skip per-request intent verification. Each must be covered by authorized_actions and must include params."
+					},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
 					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},

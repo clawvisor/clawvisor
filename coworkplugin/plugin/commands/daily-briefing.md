@@ -12,6 +12,12 @@ description: Morning briefing across email, calendar, and messages
      - `google.gmail` / `get_message` — `auto_execute: true` — "Read emails to summarize key items"
      - `apple.imessage` / `list_threads` — `auto_execute: true` — "List recent iMessage threads"
      - `apple.imessage` / `get_thread` — `auto_execute: true` — "Read threads to check reply status"
+   - **planned_calls** (include only for connected services):
+     - `google.calendar` / `list_events` — params: `{"time_min": "<today 00:00 ISO>", "time_max": "<today 23:59 ISO>"}` — "Fetch today's calendar events"
+     - `google.gmail` / `list_messages` — params: `{"query": "newer_than:1d"}` — "List emails since yesterday"
+     - `google.gmail` / `get_message` — params: `{"message_id": "$chain"}` — "Read emails from the listing"
+     - `apple.imessage` / `list_threads` — params: `{"limit": 20}` — "List recent threads"
+     - `apple.imessage` / `get_thread` — params: `{"thread_id": "$chain"}` — "Read threads from the listing"
    - **expires_in_seconds**: 1800
 
 3. Tell the user: "I've requested access for your daily briefing. Please approve the task in Clawvisor."

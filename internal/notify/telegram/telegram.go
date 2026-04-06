@@ -324,6 +324,15 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 			mode))
 	}
 
+	if len(req.PlannedCalls) > 0 {
+		sb.WriteString("\n<b>Planned calls:</b>\n")
+		for _, pc := range req.PlannedCalls {
+			sb.WriteString(fmt.Sprintf("  • %s — %s\n",
+				html.EscapeString(display.FormatServiceAction(pc.Service, pc.Action)),
+				html.EscapeString(pc.Reason)))
+		}
+	}
+
 	sb.WriteString(fmt.Sprintf("\n<i>Expires in %s</i>", html.EscapeString(req.ExpiresIn)))
 	return sb.String()
 }
