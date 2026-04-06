@@ -293,7 +293,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
 				}
 			} else {
-				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType)
+				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, chainFacts)
 			}
 			if verdict != nil && !verdict.Allow {
 				dur := int(time.Since(start).Milliseconds())
@@ -466,7 +466,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// In scope + (!auto_execute || hardcoded) → falls through to per-request approval below.
 		// Run advisory verification so the human sees warnings in the approval UI.
-		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType)
+		advisoryFacts := h.loadChainFacts(ctx, task, req)
+		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, advisoryFacts)
 	}
 
 	// ── Step 5: Per-request approval ─────────────────────────────────────────
@@ -859,6 +860,7 @@ func (h *GatewayHandler) runVerification(
 	matchedAction *store.TaskAction,
 	req gateway.Request,
 	serviceType string,
+	chainFacts []store.ChainFact,
 ) *intent.VerificationVerdict {
 	var expectedUse, expansionRationale string
 	if matchedAction != nil {
@@ -871,7 +873,6 @@ func (h *GatewayHandler) runVerification(
 			serviceHints = hinter.VerificationHints()
 		}
 	}
-	chainFacts := h.loadChainFacts(ctx, task, req)
 	chainContextOptOut := task.Lifetime == "standing" && req.SessionID == ""
 	verdict, _ := h.verifier.Verify(ctx, intent.VerifyRequest{
 		TaskPurpose:         task.Purpose,
