@@ -359,7 +359,7 @@ func (h *ApprovalsHandler) applyEditsIfPresent(r *http.Request, pa *store.Pendin
 		EditedFields map[string]string `json:"edited_fields"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil // not JSON or empty — no edits
+		return fmt.Errorf("invalid request body: %w", err)
 	}
 	if len(body.EditedFields) == 0 {
 		return nil
