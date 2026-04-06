@@ -98,4 +98,4 @@ jobs:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
           VERSION=$(jq -r '."."' .release-please-manifest.json)
-          npx clawhub publish dist/skill --slug clawvisor --version "$VERSION"
+          npx clawhub publish "$GITHUB_WORKSPACE/dist/skill" --slug clawvisor --version "$VERSION"
