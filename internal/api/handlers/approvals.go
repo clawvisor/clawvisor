@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -86,6 +87,12 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	if time.Now().After(pa.ExpiresAt) {
 		writeError(w, http.StatusGone, "APPROVAL_EXPIRED", "this approval request has expired")
+		return
+	}
+
+	// Apply user edits if provided.
+	if err := h.applyEditsIfPresent(r, pa); err != nil {
+		writeError(w, http.StatusBadRequest, "EDIT_FAILED", err.Error())
 		return
 	}
 
@@ -238,6 +245,155 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		"request_id": requestID,
 		"audit_id":   pa.AuditID,
 	})
+}
+
+// BatchApprove approves all pending requests in a batch.
+//
+// POST /api/approvals/batch/{batch_id}/approve
+// Auth: user JWT
+func (h *ApprovalsHandler) BatchApprove(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	batchID := r.PathValue("batch_id")
+	pas, err := h.st.ListPendingApprovalsByBatch(r.Context(), user.ID, batchID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list batch approvals")
+		return
+	}
+	if len(pas) == 0 {
+		writeError(w, http.StatusNotFound, "BATCH_EMPTY", "no pending approvals found for this batch")
+		return
+	}
+
+	var approved []string
+	for _, pa := range pas {
+		if time.Now().After(pa.ExpiresAt) {
+			continue
+		}
+		h.markApproved(r.Context(), pa)
+		h.publishQueueAndAudit(user.ID, pa.AuditID)
+		approved = append(approved, pa.RequestID)
+	}
+
+	h.updateNotificationMsg(r.Context(), "batch", batchID, user.ID, "✅ <b>Batch approved</b> — all requests approved.")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "approved",
+		"batch_id":    batchID,
+		"approved":    approved,
+		"total":       len(approved),
+	})
+}
+
+// BatchDeny denies all pending requests in a batch.
+//
+// POST /api/approvals/batch/{batch_id}/deny
+// Auth: user JWT
+func (h *ApprovalsHandler) BatchDeny(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	batchID := r.PathValue("batch_id")
+	pas, err := h.st.ListPendingApprovalsByBatch(r.Context(), user.ID, batchID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list batch approvals")
+		return
+	}
+	if len(pas) == 0 {
+		writeError(w, http.StatusNotFound, "BATCH_EMPTY", "no pending approvals found for this batch")
+		return
+	}
+
+	var denied []string
+	for _, pa := range pas {
+		var denyBlob pendingRequestBlob
+		_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
+
+		_ = h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0)
+		_ = h.st.DeletePendingApproval(r.Context(), pa.RequestID)
+		h.decrementNotifierPolling(pa.UserID)
+		h.publishQueueAndAudit(user.ID, pa.AuditID)
+
+		if pa.CallbackURL != nil && *pa.CallbackURL != "" {
+			cbKey, _ := h.st.GetAgentCallbackSecret(r.Context(), denyBlob.AgentID)
+			requestID := pa.RequestID
+			auditID := pa.AuditID
+			callbackURL := *pa.CallbackURL
+			go func() {
+				_ = callback.DeliverResult(context.Background(), callbackURL, &callback.Payload{
+					Type:      "request",
+					RequestID: requestID,
+					Status:    "denied",
+					AuditID:   auditID,
+				}, cbKey)
+			}()
+		}
+		denied = append(denied, pa.RequestID)
+	}
+
+	h.updateNotificationMsg(r.Context(), "batch", batchID, user.ID, "❌ <b>Batch denied</b> — all requests rejected.")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "denied",
+		"batch_id": batchID,
+		"denied":   denied,
+		"total":    len(denied),
+	})
+}
+
+// applyEditsIfPresent parses optional edited_fields from the request body,
+// applies them to the pending approval's params via the adapter's ApplyEdits,
+// and updates the stored RequestBlob.
+func (h *ApprovalsHandler) applyEditsIfPresent(r *http.Request, pa *store.PendingApproval) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	var body struct {
+		EditedFields map[string]string `json:"edited_fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return nil // not JSON or empty — no edits
+	}
+	if len(body.EditedFields) == 0 {
+		return nil
+	}
+
+	var blob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &blob); err != nil {
+		return fmt.Errorf("invalid request blob: %w", err)
+	}
+
+	serviceType, _ := parseServiceAlias(blob.Service)
+	adapter, ok := h.adapterReg.Get(serviceType)
+	if !ok {
+		return fmt.Errorf("service %q not found", serviceType)
+	}
+	editor, ok := adapter.(adapters.ApprovalEditor)
+	if !ok {
+		return fmt.Errorf("service %q does not support editing", serviceType)
+	}
+
+	edited, err := editor.ApplyEdits(blob.Action, blob.Params, body.EditedFields)
+	if err != nil {
+		return err
+	}
+	blob.Params = edited
+
+	blobBytes, err := json.Marshal(&blob)
+	if err != nil {
+		return fmt.Errorf("re-marshal request blob: %w", err)
+	}
+	pa.RequestBlob = json.RawMessage(blobBytes)
+
+	// Persist the updated blob so that executeApproval uses edited params.
+	return h.st.UpdatePendingApprovalBlob(r.Context(), pa.RequestID, pa.RequestBlob)
 }
 
 // executeApproval runs the adapter request for an approved pending approval

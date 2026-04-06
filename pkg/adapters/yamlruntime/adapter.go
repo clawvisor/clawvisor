@@ -23,10 +23,12 @@ type ActionFunc func(ctx context.Context, req adapters.Request) (*adapters.Resul
 
 // YAMLAdapter implements adapters.Adapter from a YAML service definition.
 type YAMLAdapter struct {
-	def           yamldef.ServiceDef
-	overrides     map[string]ActionFunc              // action_name → Go override
-	oauthProvider adapters.OAuthCredentialProvider    // lazy OAuth credential source
-	compiled      map[string]*compiledAction          // action_name → compiled exprs (nil if none)
+	def              yamldef.ServiceDef
+	overrides        map[string]ActionFunc              // action_name → Go override
+	oauthProvider    adapters.OAuthCredentialProvider    // lazy OAuth credential source
+	compiled         map[string]*compiledAction          // action_name → compiled exprs (nil if none)
+	approvalRenderer adapters.ApprovalRenderer           // optional, set via SetApprovalRenderer
+	approvalEditor   adapters.ApprovalEditor             // optional, set via SetApprovalEditor
 }
 
 // New creates a YAMLAdapter from a parsed service definition.
@@ -313,6 +315,34 @@ func (a *YAMLAdapter) VerificationHints() string {
 // SetOAuthProvider sets the provider that supplies OAuth app credentials lazily.
 func (a *YAMLAdapter) SetOAuthProvider(p adapters.OAuthCredentialProvider) {
 	a.oauthProvider = p
+}
+
+// SetApprovalRenderer sets an optional ApprovalRenderer that will be used
+// to render human-readable fields for the approval UI.
+func (a *YAMLAdapter) SetApprovalRenderer(r adapters.ApprovalRenderer) {
+	a.approvalRenderer = r
+}
+
+// SetApprovalEditor sets an optional ApprovalEditor that will be used
+// to apply user edits back to request params before execution.
+func (a *YAMLAdapter) SetApprovalEditor(e adapters.ApprovalEditor) {
+	a.approvalEditor = e
+}
+
+// RenderForApproval delegates to the registered ApprovalRenderer, if any.
+func (a *YAMLAdapter) RenderForApproval(action string, params map[string]any) ([]adapters.RenderedField, error) {
+	if a.approvalRenderer == nil {
+		return nil, nil
+	}
+	return a.approvalRenderer.RenderForApproval(action, params)
+}
+
+// ApplyEdits delegates to the registered ApprovalEditor, if any.
+func (a *YAMLAdapter) ApplyEdits(action string, params map[string]any, edits map[string]string) (map[string]any, error) {
+	if a.approvalEditor == nil {
+		return nil, fmt.Errorf("adapter does not support editing")
+	}
+	return a.approvalEditor.ApplyEdits(action, params, edits)
 }
 
 // DeviceFlowConfig returns the device flow configuration if available and

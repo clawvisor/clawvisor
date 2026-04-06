@@ -31,17 +31,36 @@ export default function Overview() {
     },
     onError: (err: Error) => setDeepLinkResult(`Deny failed: ${err.message}`),
   })
+  const deepApproveBatch = useMutation({
+    mutationFn: (batchId: string) => api.approvals.batchApprove(batchId),
+    onSuccess: (data) => {
+      setDeepLinkResult(`Batch approved (${data.total} requests).`)
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (err: Error) => setDeepLinkResult(`Batch approve failed: ${err.message}`),
+  })
+  const deepDenyBatch = useMutation({
+    mutationFn: (batchId: string) => api.approvals.batchDeny(batchId),
+    onSuccess: (data) => {
+      setDeepLinkResult(`Batch denied (${data.total} requests).`)
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (err: Error) => setDeepLinkResult(`Batch deny failed: ${err.message}`),
+  })
 
   // Handle deep link actions for approvals
   useEffect(() => {
     const action = searchParams.get('action')
     const requestId = searchParams.get('request_id')
-    if (!action || !requestId) return
+    const batchId = searchParams.get('batch_id')
+    if (!action) return
 
     setSearchParams({}, { replace: true })
 
-    if (action === 'approve') deepApproveRequest.mutate(requestId)
-    else if (action === 'deny') deepDenyRequest.mutate(requestId)
+    if (action === 'approve' && requestId) deepApproveRequest.mutate(requestId)
+    else if (action === 'deny' && requestId) deepDenyRequest.mutate(requestId)
+    else if (action === 'approve_batch' && batchId) deepApproveBatch.mutate(batchId)
+    else if (action === 'deny_batch' && batchId) deepDenyBatch.mutate(batchId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -102,7 +121,38 @@ export default function Overview() {
     }
   }, [services, agentsData, notificationsData])
 
-  const queueItems = overview?.queue ?? []
+  const rawQueueItems = overview?.queue ?? []
+
+  // Group approval items by batch_id; non-batched items pass through individually.
+  const queueItems = useMemo(() => {
+    const batches = new Map<string, QueueItem[]>()
+    const standalone: QueueItem[] = []
+    for (const item of rawQueueItems) {
+      const batchId = item.type === 'approval' ? item.approval?.batch_id : undefined
+      if (batchId) {
+        const group = batches.get(batchId) ?? []
+        group.push(item)
+        batches.set(batchId, group)
+      } else {
+        standalone.push(item)
+      }
+    }
+    // Insert batch groups as synthetic items at the position of the first member.
+    const result: (QueueItem | { type: 'batch'; batch_id: string; items: QueueItem[] })[] = []
+    const insertedBatches = new Set<string>()
+    for (const item of rawQueueItems) {
+      const batchId = item.type === 'approval' ? item.approval?.batch_id : undefined
+      if (batchId) {
+        if (!insertedBatches.has(batchId)) {
+          insertedBatches.add(batchId)
+          result.push({ type: 'batch', batch_id: batchId, items: batches.get(batchId)! })
+        }
+      } else {
+        result.push(item)
+      }
+    }
+    return result
+  }, [rawQueueItems])
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
 
@@ -184,15 +234,17 @@ export default function Overview() {
         ) : (
           <div className="space-y-3">
             {queueItems.map(item =>
-              item.type === 'approval' ? (
-                <ApprovalCard key={item.id} item={item} />
-              ) : item.type === 'connection' && item.connection ? (
-                <ConnectionQueueCard key={item.id} connection={item.connection} />
-              ) : item.task ? (
+              'batch_id' in item && item.type === 'batch' ? (
+                <BatchCard key={item.batch_id} batchId={item.batch_id} items={item.items} />
+              ) : 'id' in item && item.type === 'approval' ? (
+                <ApprovalCard key={item.id} item={item as QueueItem} />
+              ) : 'id' in item && item.type === 'connection' && (item as QueueItem).connection ? (
+                <ConnectionQueueCard key={(item as QueueItem).id} connection={(item as QueueItem).connection!} />
+              ) : 'id' in item && (item as QueueItem).task ? (
                 <TaskCard
-                  key={item.id}
-                  task={item.task}
-                  agentName={agentMap.get(item.task.agent_id) ?? item.task.agent_id.slice(0, 8)}
+                  key={(item as QueueItem).id}
+                  task={(item as QueueItem).task!}
+                  agentName={agentMap.get((item as QueueItem).task!.agent_id) ?? (item as QueueItem).task!.agent_id.slice(0, 8)}
                 />
               ) : null
             )}
@@ -341,6 +393,286 @@ function ActivityChart({ data }: { data: ActivityBucket[] }) {
   )
 }
 
+// ── Batch card (grouped request approvals) ───────────────────────────────────
+
+// ── Editable fields display (shared between ApprovalCard and BatchCard) ──────
+
+function ClickToEditFields({
+  rendered,
+  edits,
+  onEdit,
+}: {
+  rendered: import('../api/client').RenderedField[]
+  edits: Record<string, string>
+  onEdit: (key: string, value: string) => void
+}) {
+  const [editing, setEditing] = useState<Record<string, boolean>>({})
+
+  return (
+    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
+      <table className="w-full text-xs">
+        <tbody>
+          {rendered.map((field, i) => (
+            <tr key={field.key} className={i < rendered.length - 1 ? 'border-b border-border-subtle' : ''}>
+              <td className="px-3 py-1.5 font-mono text-text-tertiary w-28 align-top">{field.label}</td>
+              <td className="px-3 py-1.5 font-mono text-text-primary break-all">
+                {field.editable && editing[field.key] ? (
+                  field.multiline ? (
+                    <textarea
+                      autoFocus
+                      value={edits[field.key] ?? field.value}
+                      onChange={e => onEdit(field.key, e.target.value)}
+                      onBlur={() => setEditing(prev => ({ ...prev, [field.key]: false }))}
+                      rows={4}
+                      className="w-full rounded border border-brand bg-surface-0 px-2 py-1 text-xs font-mono text-text-primary focus:outline-none resize-y -my-0.5"
+                    />
+                  ) : (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={edits[field.key] ?? field.value}
+                      onChange={e => onEdit(field.key, e.target.value)}
+                      onBlur={() => setEditing(prev => ({ ...prev, [field.key]: false }))}
+                      className="w-full rounded border border-brand bg-surface-0 px-2 py-0.5 text-xs font-mono text-text-primary focus:outline-none -my-0.5"
+                    />
+                  )
+                ) : (
+                  <span
+                    onClick={field.editable ? () => setEditing(prev => ({ ...prev, [field.key]: true })) : undefined}
+                    className={field.editable ? 'cursor-pointer hover:text-brand' : ''}
+                    title={field.editable ? 'Click to edit' : undefined}
+                  >
+                    {(edits[field.key] ?? field.value) || '\u00A0'}
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function EditableFields({
+  rendered,
+  params,
+  edits,
+  onEdit,
+}: {
+  rendered?: import('../api/client').RenderedField[]
+  params: Record<string, unknown>
+  edits: Record<string, string>
+  onEdit: (key: string, value: string) => void
+}) {
+  if (rendered && rendered.length > 0) {
+    return <ClickToEditFields rendered={rendered} edits={edits} onEdit={onEdit} />
+  }
+
+  const paramEntries = Object.entries(params)
+  if (paramEntries.length === 0) return null
+
+  return (
+    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
+      <table className="w-full text-xs">
+        <tbody>
+          {paramEntries.map(([key, value], i) => (
+            <tr key={key} className={i < paramEntries.length - 1 ? 'border-b border-border-subtle' : ''}>
+              <td className="px-3 py-1.5 font-mono text-text-tertiary w-28 align-top">{key}</td>
+              <td className="px-3 py-1.5 font-mono text-text-primary break-all">
+                {typeof value === 'string' ? value : JSON.stringify(value)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function useFieldEdits(rendered?: import('../api/client').RenderedField[]) {
+  const [edits, setEdits] = useState<Record<string, string>>(() => {
+    if (!rendered) return {}
+    const initial: Record<string, string> = {}
+    for (const f of rendered) {
+      if (f.editable) initial[f.key] = f.value
+    }
+    return initial
+  })
+
+  const onEdit = useCallback((key: string, value: string) => {
+    setEdits(prev => ({ ...prev, [key]: value }))
+  }, [])
+
+  const getEditedFields = useCallback((): Record<string, string> | undefined => {
+    if (!rendered) return undefined
+    const changed: Record<string, string> = {}
+    for (const f of rendered) {
+      if (f.editable && edits[f.key] !== f.value) {
+        changed[f.key] = edits[f.key]
+      }
+    }
+    return Object.keys(changed).length > 0 ? changed : undefined
+  }, [rendered, edits])
+
+  return { edits, onEdit, getEditedFields }
+}
+
+// ── Batch card (grouped request approvals) ───────────────────────────────────
+
+function BatchCard({ batchId, items }: { batchId: string; items: QueueItem[] }) {
+  const qc = useQueryClient()
+  const [result, setResult] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(true)
+
+  const approveMut = useMutation({
+    mutationFn: () => api.approvals.batchApprove(batchId),
+    onSuccess: (res) => {
+      setResult(`Batch approved (${res.total} requests)`)
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+
+  const denyMut = useMutation({
+    mutationFn: () => api.approvals.batchDeny(batchId),
+    onSuccess: (res) => {
+      setResult(`Batch denied (${res.total} requests)`)
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+
+  const isPending = approveMut.isPending || denyMut.isPending
+
+  if (result) {
+    return (
+      <div className="border border-border-default rounded-md bg-surface-1 p-5">
+        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
+      </div>
+    )
+  }
+
+  const firstApproval = items[0]?.approval
+  const service = firstApproval ? serviceName(firstApproval.service) : 'Unknown'
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-warning overflow-hidden">
+      {/* Header */}
+      <div className="px-5 pt-5 pb-4">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-lg font-semibold text-text-primary">{service} · batch</span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-warning/15 text-warning">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning" />
+              {items.length} requests
+            </span>
+          </div>
+        </div>
+        {firstApproval?.reason && (
+          <p className="text-sm text-text-secondary mt-1.5">{firstApproval.reason}</p>
+        )}
+      </div>
+
+      {/* Expandable list of individual items */}
+      <div className="px-5 pb-3">
+        <button
+          onClick={() => setExpanded(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
+        >
+          <svg className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+          <span className="font-medium">{expanded ? 'Hide' : 'Show'} individual requests</span>
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="px-5 pb-3 space-y-2">
+          {items.map(item => (
+            <BatchItemCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+
+      {/* Batch actions */}
+      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+        <button
+          onClick={() => denyMut.mutate()}
+          disabled={isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+        >
+          Deny All
+        </button>
+        <button
+          onClick={() => approveMut.mutate()}
+          disabled={isPending}
+          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+        >
+          {approveMut.isPending ? 'Approving...' : 'Approve All'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function BatchItemCard({ item }: { item: QueueItem }) {
+  const qc = useQueryClient()
+  const a = item.approval!
+  const { edits, onEdit, getEditedFields } = useFieldEdits(a.rendered_fields)
+  const [done, setDone] = useState<string | null>(null)
+
+  const approveMut = useMutation({
+    mutationFn: () => api.approvals.approve(a.request_id, getEditedFields()),
+    onSuccess: () => { setDone('Approved'); qc.invalidateQueries({ queryKey: ['overview'] }) },
+  })
+  const denyMut = useMutation({
+    mutationFn: () => api.approvals.deny(a.request_id),
+    onSuccess: () => { setDone('Denied'); qc.invalidateQueries({ queryKey: ['overview'] }) },
+  })
+
+  if (done) {
+    return (
+      <div className="bg-surface-0 border border-border-subtle rounded p-3">
+        <span className="text-xs text-text-tertiary">{done}</span>
+      </div>
+    )
+  }
+
+  const isPending = approveMut.isPending || denyMut.isPending
+
+  return (
+    <div className="bg-surface-0 border border-border-subtle rounded p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-mono text-sm text-text-primary">
+          {actionName(a.action)}
+        </span>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => denyMut.mutate()}
+            disabled={isPending}
+            className="text-xs px-2 py-0.5 rounded bg-danger/10 text-danger hover:bg-danger/20 disabled:opacity-50"
+          >
+            {denyMut.isPending ? '...' : 'Deny'}
+          </button>
+          <button
+            onClick={() => approveMut.mutate()}
+            disabled={isPending}
+            className="text-xs px-2 py-0.5 rounded bg-brand/10 text-brand hover:bg-brand/20 disabled:opacity-50"
+          >
+            {approveMut.isPending ? '...' : 'Approve'}
+          </button>
+        </div>
+      </div>
+      {a.reason && (
+        <p className="text-xs text-text-tertiary mb-2">{a.reason}</p>
+      )}
+      <EditableFields
+        rendered={a.rendered_fields}
+        params={a.params ?? {}}
+        edits={edits}
+        onEdit={onEdit}
+      />
+    </div>
+  )
+}
+
 // ── Approval card (standalone request approvals) ─────────────────────────────
 
 function ApprovalCard({ item }: { item: QueueItem }) {
@@ -348,9 +680,31 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   const [result, setResult] = useState<string | null>(null)
   const [verifyOpen, setVerifyOpen] = useState(false)
   const a = item.approval!
+  const rendered = a.rendered_fields
+
+  // Track edits for editable rendered fields
+  const [edits, setEdits] = useState<Record<string, string>>(() => {
+    if (!rendered) return {}
+    const initial: Record<string, string> = {}
+    for (const f of rendered) {
+      if (f.editable) initial[f.key] = f.value
+    }
+    return initial
+  })
+
+  const getEditedFields = (): Record<string, string> | undefined => {
+    if (!rendered) return undefined
+    const changed: Record<string, string> = {}
+    for (const f of rendered) {
+      if (f.editable && edits[f.key] !== f.value) {
+        changed[f.key] = edits[f.key]
+      }
+    }
+    return Object.keys(changed).length > 0 ? changed : undefined
+  }
 
   const approveMut = useMutation({
-    mutationFn: () => api.approvals.approve(a.request_id),
+    mutationFn: () => api.approvals.approve(a.request_id, getEditedFields()),
     onSuccess: (res) => {
       setResult(res.status === 'executed' ? 'Approved & executed' : `Outcome: ${res.status}`)
       qc.invalidateQueries({ queryKey: ['overview'] })
@@ -369,7 +723,6 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   const params = a.params ?? {}
   const paramEntries = Object.entries(params)
   const hasIssue = a.verification ? hasVerificationIssue(a.verification) : false
-  // Auto-expand when there's a problem
   const showPanel = a.verification && (hasIssue || verifyOpen)
 
   if (result) {
@@ -415,8 +768,12 @@ function ApprovalCard({ item }: { item: QueueItem }) {
         <VerificationPanel verification={a.verification!} />
       )}
 
-      {/* Parameters */}
-      {paramEntries.length > 0 && (
+      {/* Rendered fields (click-to-edit) or raw params fallback */}
+      {rendered && rendered.length > 0 ? (
+        <div className="px-5 pb-3">
+          <ClickToEditFields rendered={rendered} edits={edits} onEdit={(k, v) => setEdits(prev => ({ ...prev, [k]: v }))} />
+        </div>
+      ) : paramEntries.length > 0 ? (
         <div className="px-5 pb-3">
           <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
             <table className="w-full text-xs">
@@ -433,7 +790,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
             </table>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Actions */}
       <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">

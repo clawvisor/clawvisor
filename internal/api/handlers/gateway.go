@@ -38,6 +38,7 @@ type pendingRequestBlob struct {
 	AgentName   string         `json:"agent_name"`
 	RequestID   string         `json:"request_id"`
 	TaskID      string         `json:"task_id"`
+	BatchID     string         `json:"batch_id,omitempty"`
 	Reason      string         `json:"reason"`
 	CallbackURL  string                    `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
@@ -929,8 +930,29 @@ func (h *GatewayHandler) routeToApproval(
 	if callbackURL != "" {
 		pa.CallbackURL = &callbackURL
 	}
+	if blob.BatchID != "" {
+		pa.BatchID = &blob.BatchID
+	}
+
+	// Render human-readable fields if the adapter supports it.
+	serviceType, _ := parseServiceAlias(blob.Service)
+	if adapter, ok := h.adapterReg.Get(serviceType); ok {
+		if renderer, ok := adapter.(adapters.ApprovalRenderer); ok {
+			if fields, err := renderer.RenderForApproval(blob.Action, blob.Params); err == nil && fields != nil {
+				if rendered, err := json.Marshal(fields); err == nil {
+					pa.RenderedFields = json.RawMessage(rendered)
+				}
+			}
+		}
+	}
 	if err := h.store.SavePendingApproval(ctx, pa); err != nil {
 		return fmt.Errorf("save pending approval: %w", err)
+	}
+
+	// When part of a batch, skip individual notification — the agent will
+	// close the batch later which triggers a single grouped notification.
+	if blob.BatchID != "" {
+		return nil
 	}
 
 	if h.notifier == nil {
@@ -968,6 +990,78 @@ func (h *GatewayHandler) routeToApproval(
 
 	_ = h.store.SaveNotificationMessage(ctx, "approval", blob.RequestID, "telegram", msgID)
 	return nil
+}
+
+// HandleBatchClose marks a batch as ready for review and sends a single
+// grouped notification instead of per-request notifications.
+//
+// POST /api/gateway/batch/{batch_id}/close
+// Auth: agent bearer token
+func (h *GatewayHandler) HandleBatchClose(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	batchID := r.PathValue("batch_id")
+	if batchID == "" {
+		writeError(w, http.StatusBadRequest, "MISSING_BATCH_ID", "batch_id is required")
+		return
+	}
+
+	pas, err := h.store.ListPendingApprovalsByBatch(r.Context(), agent.UserID, batchID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list batch approvals")
+		return
+	}
+	if len(pas) == 0 {
+		writeError(w, http.StatusNotFound, "BATCH_EMPTY", "no pending approvals found for this batch")
+		return
+	}
+
+	// Send a single grouped notification for the batch.
+	if h.notifier != nil {
+		// Use the first approval's expiry for the notification.
+		expiresIn := fmt.Sprintf("%d minutes", int(time.Until(pas[0].ExpiresAt).Minutes()))
+		approveURL := fmt.Sprintf("%s/dashboard?action=approve_batch&batch_id=%s", h.baseURL, batchID)
+		denyURL := fmt.Sprintf("%s/dashboard?action=deny_batch&batch_id=%s", h.baseURL, batchID)
+
+		// Summarise what's in the batch.
+		var firstBlob pendingRequestBlob
+		_ = json.Unmarshal(pas[0].RequestBlob, &firstBlob)
+
+		approvalReq := notify.ApprovalRequest{
+			PendingID:    pas[0].ID,
+			RequestID:    batchID,
+			UserID:       agent.UserID,
+			AgentName:    firstBlob.AgentName,
+			Service:      firstBlob.Service,
+			Action:       fmt.Sprintf("batch (%d requests)", len(pas)),
+			Reason:       firstBlob.Reason,
+			PolicyReason: fmt.Sprintf("Batch of %d requests awaiting approval", len(pas)),
+			ExpiresIn:    expiresIn,
+			ApproveURL:   approveURL,
+			DenyURL:      denyURL,
+		}
+		msgID, err := h.notifier.SendApprovalRequest(r.Context(), approvalReq)
+		if err != nil {
+			h.logger.Warn("batch notification failed", "err", err)
+		} else {
+			_ = h.store.SaveNotificationMessage(r.Context(), "batch", batchID, "telegram", msgID)
+		}
+	}
+
+	// Publish queue event so the frontend refreshes.
+	if h.eventHub != nil {
+		h.eventHub.Publish(agent.UserID, events.Event{Type: "queue"})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "closed",
+		"batch_id": batchID,
+		"count":    len(pas),
+	})
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1038,6 +1132,7 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		AgentName:   agent.Name,
 		RequestID:   req.RequestID,
 		TaskID:      req.TaskID,
+		BatchID:     req.BatchID,
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}

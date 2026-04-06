@@ -162,6 +162,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		if meta.OAuthEndpoint == "google" {
 			ya.SetOAuthProvider(oauthProvider)
 		}
+		// Wire Go-implemented approval rendering/editing for adapters that have it.
+		switch ya.ServiceID() {
+		case "google.gmail":
+			ya.SetApprovalRenderer(gmail)
+			ya.SetApprovalEditor(gmail)
+		}
 		adapterReg.Register(ya)
 	}
 

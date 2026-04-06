@@ -125,6 +125,29 @@ type VerificationHinter interface {
 	VerificationHints() string
 }
 
+// RenderedField is a human-readable representation of a request parameter,
+// produced by adapters that implement ApprovalRenderer.
+type RenderedField struct {
+	Key       string `json:"key"`       // param path, e.g. "to", "subject", "body"
+	Label     string `json:"label"`     // display label
+	Value     string `json:"value"`     // human-readable rendered value
+	Editable  bool   `json:"editable"`  // can the user modify this?
+	Multiline bool   `json:"multiline"` // render as textarea vs input
+	Format    string `json:"format"`    // "text", "markdown", "html"
+}
+
+// ApprovalRenderer is an optional interface adapters can implement to provide
+// human-readable rendering of request params for the approval UI.
+type ApprovalRenderer interface {
+	RenderForApproval(action string, params map[string]any) ([]RenderedField, error)
+}
+
+// ApprovalEditor is an optional interface adapters can implement to apply
+// user edits back to the raw request params before execution.
+type ApprovalEditor interface {
+	ApplyEdits(action string, params map[string]any, edits map[string]string) (map[string]any, error)
+}
+
 // Adapter is the interface every service adapter implements.
 type Adapter interface {
 	// ServiceID returns the adapter's canonical service identifier (e.g. "google.gmail").

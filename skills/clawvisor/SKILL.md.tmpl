@@ -263,6 +263,27 @@ Use `gateway_request` for each action. Required fields:
 | `request_id` | A unique ID you generate (e.g. UUID). Must be unique across all your requests. |
 | `task_id` | The approved task ID this request belongs to. |
 | `session_id` | *(Standing tasks only)* A consistent UUID across related requests in a single invocation.{{ if .UseCurl }} Required for chain context on standing tasks. Not needed for ephemeral tasks (chain context is automatic).{{ end }} |
+| `batch_id` | *(Optional)* When you have multiple non-auto-execute requests to submit together (e.g. sending 5 email replies), generate a single batch ID (e.g. UUID) and include it on all of them. After submitting all requests, close the batch (see below). The user reviews and approves/denies them as a group. |
+
+### Batch requests
+
+When you need to submit multiple requests that should be reviewed together:
+
+1. Generate a unique `batch_id` (e.g. UUID)
+2. Include `batch_id` on every gateway request in the batch
+3. Submit all requests (in parallel or sequentially)
+4. Close the batch:
+{{ if .UseCurl -}}
+```bash
+curl -s -X POST "$CLAWVISOR_URL/api/gateway/batch/<batch_id>/close" \
+  -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN"
+```
+{{ else -}}
+
+Use `POST /api/gateway/batch/<batch_id>/close` with your agent token.
+{{ end -}}
+
+The user receives a single notification for the entire batch and can approve or deny all requests at once, or individually. Individual requests within a batch also support the normal `?wait=true` long-poll pattern.
 
 ### Context fields
 

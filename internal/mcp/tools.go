@@ -113,10 +113,22 @@ func toolDefs() []Tool {
 					"task_id": {"type": "string", "description": "Task ID authorizing this request"},
 					"context": {"type": "object", "description": "Optional context (source, data_origin, callback_url)"},
 					"session_id": {"type": "string", "description": "Consistent UUID for chain context on standing tasks"},
+					"batch_id": {"type": "string", "description": "Optional batch ID to group multiple requests for batch approval. Generate a UUID and include it on all requests in the batch, then close the batch."},
 					"wait": {"type": "boolean", "description": "Block until approved and return executed result (default true)"},
 					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
 				"required": ["service", "action", "params", "reason", "request_id", "task_id"]
+			}`),
+		},
+		{
+			Name:        "close_batch",
+			Description: "Close a batch of gateway requests, triggering a single grouped notification to the user. Call this after submitting all requests in a batch (those sharing the same batch_id).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"batch_id": {"type": "string", "description": "The batch ID shared by all requests in this batch"}
+				},
+				"required": ["batch_id"]
 			}`),
 		},
 		{

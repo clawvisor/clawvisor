@@ -172,6 +172,15 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		body := stripKeys(args, "wait", "timeout")
 		return internalRoute{"POST", path, "POST /api/gateway/request", nil}, body, nil
 
+	case "close_batch":
+		id := getString("batch_id")
+		if err := validatePathParam(id, "batch_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		return internalRoute{"POST", "/api/gateway/batch/" + id + "/close",
+			"POST /api/gateway/batch/{batch_id}/close",
+			map[string]string{"batch_id": id}}, nil, nil
+
 	case "execute_request":
 		id := getString("request_id")
 		if err := validatePathParam(id, "request_id"); err != nil {

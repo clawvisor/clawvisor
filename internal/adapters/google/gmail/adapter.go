@@ -614,3 +614,51 @@ func truncate(s string, max int) string {
 	}
 	return s
 }
+
+// ── Approval rendering & editing ─────────────────────────────────────────────
+
+func paramStr(params map[string]any, key string) string {
+	v, ok := params[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// RenderForApproval implements adapters.ApprovalRenderer.
+func (a *GmailAdapter) RenderForApproval(action string, params map[string]any) ([]adapters.RenderedField, error) {
+	switch action {
+	case "send_message", "create_draft":
+		fields := []adapters.RenderedField{
+			{Key: "to", Label: "To", Value: paramStr(params, "to"), Editable: true, Format: "text"},
+			{Key: "subject", Label: "Subject", Value: paramStr(params, "subject"), Editable: true, Format: "text"},
+			{Key: "body", Label: "Body", Value: paramStr(params, "body"), Editable: true, Multiline: true, Format: "text"},
+		}
+		if inReplyTo := paramStr(params, "in_reply_to"); inReplyTo != "" {
+			fields = append(fields, adapters.RenderedField{
+				Key: "in_reply_to", Label: "In Reply To", Value: inReplyTo, Editable: false, Format: "text",
+			})
+		}
+		return fields, nil
+	default:
+		return nil, nil
+	}
+}
+
+// ApplyEdits implements adapters.ApprovalEditor.
+func (a *GmailAdapter) ApplyEdits(action string, params map[string]any, edits map[string]string) (map[string]any, error) {
+	switch action {
+	case "send_message", "create_draft":
+		allowed := map[string]bool{"to": true, "subject": true, "body": true}
+		for k, v := range edits {
+			if !allowed[k] {
+				return nil, fmt.Errorf("field %q is not editable", k)
+			}
+			params[k] = v
+		}
+		return params, nil
+	default:
+		return nil, fmt.Errorf("action %q does not support editing", action)
+	}
+}

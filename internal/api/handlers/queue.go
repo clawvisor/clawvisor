@@ -20,13 +20,15 @@ func NewQueueHandler(st store.Store) *QueueHandler {
 }
 
 type queueApproval struct {
-	RequestID    string         `json:"request_id"`
-	AuditID      string         `json:"audit_id"`
-	Service      string         `json:"service"`
-	Action       string         `json:"action"`
-	Params       map[string]any `json:"params"`
-	Reason       string         `json:"reason,omitempty"`
-	Verification map[string]any `json:"verification,omitempty"`
+	RequestID      string          `json:"request_id"`
+	AuditID        string          `json:"audit_id"`
+	Service        string          `json:"service"`
+	Action         string          `json:"action"`
+	Params         map[string]any  `json:"params"`
+	Reason         string          `json:"reason,omitempty"`
+	BatchID        string          `json:"batch_id,omitempty"`
+	RenderedFields json.RawMessage `json:"rendered_fields,omitempty"`
+	Verification   map[string]any  `json:"verification,omitempty"`
 }
 
 type queueItem struct {
@@ -70,12 +72,14 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 
 		exp := pa.ExpiresAt
 		qa := &queueApproval{
-			RequestID: pa.RequestID,
-			AuditID:   pa.AuditID,
-			Service:   blob.Service,
-			Action:    blob.Action,
-			Params:    blob.Params,
-			Reason:    blob.Reason,
+			RequestID:      pa.RequestID,
+			AuditID:        pa.AuditID,
+			Service:        blob.Service,
+			Action:         blob.Action,
+			Params:         blob.Params,
+			Reason:         blob.Reason,
+			BatchID:        blob.BatchID,
+			RenderedFields: pa.RenderedFields,
 		}
 		if blob.Verification != nil {
 			b, _ := json.Marshal(blob.Verification)

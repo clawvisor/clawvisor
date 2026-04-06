@@ -854,23 +854,29 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 	if pa.Status == "" {
 		pa.Status = "pending"
 	}
+	var renderedFields *string
+	if pa.RenderedFields != nil {
+		s := string(pa.RenderedFields)
+		renderedFields = &s
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, batch_id, rendered_fields, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, []byte(pa.RequestBlob),
-		pa.CallbackURL, pa.Status, pa.ExpiresAt)
+		pa.CallbackURL, pa.BatchID, renderedFields, pa.Status, pa.ExpiresAt)
 	return err
 }
 
 func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*store.PendingApproval, error) {
 	pa := &store.PendingApproval{}
 	var requestBlob []byte
+	var renderedFields *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, batch_id, rendered_fields, status, expires_at, created_at
 		FROM pending_approvals WHERE request_id = $1
 	`, requestID).Scan(
 		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
-		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt)
+		&pa.CallbackURL, &pa.BatchID, &renderedFields, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -878,6 +884,9 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 		return nil, err
 	}
 	pa.RequestBlob = json.RawMessage(requestBlob)
+	if renderedFields != nil {
+		pa.RenderedFields = json.RawMessage(*renderedFields)
+	}
 	return pa, nil
 }
 
@@ -889,7 +898,7 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) err
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, batch_id, rendered_fields, status, expires_at, created_at
 		FROM pending_approvals WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW() ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -900,8 +909,19 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, batch_id, rendered_fields, status, expires_at, created_at
 		FROM pending_approvals WHERE status = 'pending' AND expires_at < NOW()`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPendingApprovals(rows)
+}
+
+func (s *Store) ListPendingApprovalsByBatch(ctx context.Context, userID, batchID string) ([]*store.PendingApproval, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, batch_id, rendered_fields, status, expires_at, created_at
+		FROM pending_approvals WHERE user_id = $1 AND batch_id = $2 AND status = 'pending' AND expires_at > NOW() ORDER BY created_at ASC`, userID, batchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1034,16 +1054,26 @@ func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 	for rows.Next() {
 		pa := &store.PendingApproval{}
 		var requestBlob []byte
+		var renderedFields *string
 		if err := rows.Scan(
 			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
-			&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
+			&pa.CallbackURL, &pa.BatchID, &renderedFields, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 		pa.RequestBlob = json.RawMessage(requestBlob)
+		if renderedFields != nil {
+			pa.RenderedFields = json.RawMessage(*renderedFields)
+		}
 		pas = append(pas, pa)
 	}
 	return pas, rows.Err()
+}
+
+func (s *Store) UpdatePendingApprovalBlob(ctx context.Context, requestID string, blob json.RawMessage) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET request_blob = $1 WHERE request_id = $2`, []byte(blob), requestID)
+	return err
 }
 
 func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error {
