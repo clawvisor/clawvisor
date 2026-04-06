@@ -237,8 +237,11 @@ export default function TaskCard({
 
       {/* Expanded scopes for non-actionable states */}
       {scopesOpen && !isActionable && (
-        <div className="px-4 pb-3">
+        <div className="px-4 pb-3 space-y-2">
           <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
+          {task.planned_calls && task.planned_calls.length > 0 && (
+            <PlannedCallsTable calls={task.planned_calls} />
+          )}
         </div>
       )}
 
