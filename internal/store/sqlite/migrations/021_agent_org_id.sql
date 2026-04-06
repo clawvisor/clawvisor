@@ -1,1 +1,0 @@
-ALTER TABLE agents ADD COLUMN org_id TEXT;

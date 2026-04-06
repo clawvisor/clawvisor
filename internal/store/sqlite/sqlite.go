@@ -97,7 +97,12 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		}
 
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
-			return fmt.Errorf("applying migration %s: %w", entry.Name(), err)
+			// SQLite doesn't support ADD COLUMN IF NOT EXISTS. Tolerate
+			// "duplicate column name" errors so migrations survive renumbering
+			// (e.g., 020_agent_org_id.sql → 021_agent_org_id.sql).
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("applying migration %s: %w", entry.Name(), err)
+			}
 		}
 		if _, err := db.ExecContext(ctx,
 			`INSERT INTO schema_migrations (name) VALUES (?)`,
