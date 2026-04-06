@@ -48,18 +48,10 @@ func New() *IMessageAdapter {
 	}
 }
 
-// Available returns true if the adapter can operate on this host.
-// Requires macOS with chat.db readable (Full Disk Access must be granted).
+// Available returns true if the adapter should be shown on this platform.
+// iMessage only makes sense on macOS.
 func (a *IMessageAdapter) Available() bool {
-	if runtime.GOOS != "darwin" {
-		return false
-	}
-	f, err := os.Open(a.dbPath)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
+	return runtime.GOOS == "darwin"
 }
 
 func (a *IMessageAdapter) ServiceID() string { return serviceID }
@@ -125,8 +117,11 @@ func (a *IMessageAdapter) ServiceMetadata() adapters.ServiceMetadata {
 }
 
 func (a *IMessageAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	if !a.Available() {
-		return nil, fmt.Errorf("imessage: not available — grant Full Disk Access to Clawvisor in System Settings → Privacy & Security → Full Disk Access, then restart")
+	if runtime.GOOS != "darwin" {
+		return nil, fmt.Errorf("imessage: only available on macOS")
+	}
+	if err := a.CheckPermissions(); err != nil {
+		return nil, err
 	}
 	switch req.Action {
 	case "search_messages":

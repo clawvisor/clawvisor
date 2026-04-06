@@ -213,6 +213,9 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	services := make([]serviceEntry, 0)
 	for _, a := range h.adapterReg.All() {
+		if ac, ok := a.(adapters.AvailabilityChecker); ok && !ac.Available() {
+			continue
+		}
 		credentialFree := a.ValidateCredential(nil) == nil
 
 		if credentialFree {
@@ -611,6 +614,15 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 
 	// Credential-free service (e.g. iMessage): create service_meta record, no vault op.
 	if adapter.ValidateCredential(nil) == nil {
+		// If the adapter supports activation checks (e.g. iMessage checking Full
+		// Disk Access), run them first. The attempt itself may trigger OS-level
+		// permission registration (macOS adds the app to Full Disk Access).
+		if ac, ok := adapter.(adapters.ActivationChecker); ok {
+			if err := ac.CheckPermissions(); err != nil {
+				writeError(w, http.StatusPreconditionFailed, "ACTIVATION_CHECK_FAILED", err.Error())
+				return
+			}
+		}
 		_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, "default", time.Now())
 		h.logger.Info("credential-free service activated", "user", user.ID, "service", serviceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID})

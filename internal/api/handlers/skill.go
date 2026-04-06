@@ -77,6 +77,9 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	// Collect activated services, grouped by base service ID.
 	entries := map[string]*catalogEntry{} // baseID → entry
 	for _, a := range allAdapters {
+		if ac, ok := a.(adapters.AvailabilityChecker); ok && !ac.Available() {
+			continue
+		}
 		baseID := a.ServiceID()
 		credentialFree := a.ValidateCredential(nil) == nil
 		if credentialFree {

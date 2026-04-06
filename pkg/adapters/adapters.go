@@ -115,6 +115,23 @@ type ContactsChecker interface {
 	IsInContacts(ctx context.Context, cred []byte, email string) (bool, error)
 }
 
+// AvailabilityChecker is an optional interface adapters can implement to
+// indicate whether they should be shown on the current platform. If Available
+// returns false the adapter is hidden from the service catalog, skill catalog,
+// and dashboard. The iMessage adapter uses this to hide itself on non-macOS hosts.
+type AvailabilityChecker interface {
+	Available() bool
+}
+
+// ActivationChecker is an optional interface adapters can implement to
+// validate that the adapter can actually function before activation.
+// For example, the iMessage adapter uses this to attempt opening chat.db,
+// which triggers macOS to register the app in Full Disk Access settings.
+// If CheckPermissions returns an error, the activation is rejected with that message.
+type ActivationChecker interface {
+	CheckPermissions() error
+}
+
 // VerificationHinter is an optional interface adapters can implement to provide
 // service-specific guidance to the LLM intent verifier. The hints are included
 // in the verification prompt only when that adapter is being verified.
