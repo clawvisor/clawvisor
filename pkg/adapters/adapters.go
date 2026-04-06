@@ -194,6 +194,7 @@ type ServiceInfo struct {
 type Registry struct {
 	mu       sync.RWMutex
 	adapters map[string]Adapter
+	fallback func(ctx context.Context, serviceID string) (Adapter, bool) // cloud-injected resolver for custom adapters
 }
 
 func NewRegistry() *Registry {
@@ -211,6 +212,30 @@ func (r *Registry) Get(serviceID string) (Adapter, bool) {
 	defer r.mu.RUnlock()
 	a, ok := r.adapters[serviceID]
 	return a, ok
+}
+
+// SetFallback registers a resolver for service IDs not in the built-in map.
+// Used by cloud to resolve custom adapters and MCP servers per-org.
+func (r *Registry) SetFallback(fn func(ctx context.Context, serviceID string) (Adapter, bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fallback = fn
+}
+
+// GetWithContext checks the built-in map, then the fallback resolver.
+// Use this instead of Get when context-dependent resolution (e.g. org-scoped
+// custom adapters) is needed.
+func (r *Registry) GetWithContext(ctx context.Context, serviceID string) (Adapter, bool) {
+	if a, ok := r.Get(serviceID); ok {
+		return a, true
+	}
+	r.mu.RLock()
+	fb := r.fallback
+	r.mu.RUnlock()
+	if fb != nil {
+		return fb(ctx, serviceID)
+	}
+	return nil, false
 }
 
 func (r *Registry) All() []Adapter {
