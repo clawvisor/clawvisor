@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/clawvisor/cl
 
 # Stage 3: Runtime (alpine — supports Render SSH)
 FROM alpine:3.21
-RUN adduser -D -u 65534 nonroot
+RUN adduser -D nonroot
 COPY --from=go-builder /app/clawvisor /clawvisor
 COPY --from=web-builder /web/dist /web/dist
 EXPOSE 25297
