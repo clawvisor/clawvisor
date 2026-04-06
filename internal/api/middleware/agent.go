@@ -8,15 +8,11 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-const (
-	// AgentContextKey is the context key for the authenticated agent.
-	AgentContextKey contextKey = "agent"
-)
-
 // AgentFromContext retrieves the authenticated agent from a request context.
+// Delegates to the exported store.AgentFromContext so that cloud/enterprise
+// packages can also read the agent without importing internal packages.
 func AgentFromContext(ctx context.Context) *store.Agent {
-	a, _ := ctx.Value(AgentContextKey).(*store.Agent)
-	return a
+	return store.AgentFromContext(ctx)
 }
 
 // RequireAgent validates an agent bearer token and injects the agent into the
@@ -37,7 +33,7 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), AgentContextKey, agent)
+			ctx := store.WithAgent(r.Context(), agent)
 			AddLogField(ctx, "agent_id", agent.ID)
 			AddLogField(ctx, "user_id", agent.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
