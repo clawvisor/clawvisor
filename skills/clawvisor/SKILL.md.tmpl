@@ -123,14 +123,14 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
   -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "purpose": "Review last 30 iMessage threads and classify reply status",
+    "purpose": "Full iMessage management: review recent threads, classify reply status, identify conversations needing attention, search message history by contact or topic, and read full thread context for any follow-up questions. Covers all iMessage read operations the user may request during this session.",
     "authorized_actions": [
-      {"service": "apple.imessage", "action": "list_threads", "auto_execute": true, "expected_use": "List recent iMessage threads to find ones needing replies"},
-      {"service": "apple.imessage", "action": "get_thread", "auto_execute": true, "expected_use": "Read individual thread messages to classify reply status"}
+      {"service": "apple.imessage", "action": "list_threads", "auto_execute": true, "expected_use": "List iMessage threads by recency, unread status, or contact. Used for inbox review, finding conversations needing replies, checking message status with specific people, and any ad-hoc thread lookup the user requests."},
+      {"service": "apple.imessage", "action": "get_thread", "auto_execute": true, "expected_use": "Read full thread content including all messages, timestamps, and attachments. Used to understand conversation context, classify reply urgency, extract action items, answer user questions about specific conversations, and provide summaries."}
     ],
     "planned_calls": [
-      {"service": "apple.imessage", "action": "list_threads", "params": {"limit": 30}, "reason": "List the 30 most recent threads"},
-      {"service": "apple.imessage", "action": "get_thread", "params": {"thread_id": "$chain"}, "reason": "Read each thread from the listing"}
+      {"service": "apple.imessage", "action": "list_threads", "params": {"limit": 30}, "reason": "List the 30 most recent threads to review inbox state and identify conversations needing attention"},
+      {"service": "apple.imessage", "action": "get_thread", "params": {"thread_id": "$chain"}, "reason": "Read full thread content for each conversation that needs review or that the user asks about"}
     ],
     "expires_in_seconds": 1800
   }'
@@ -138,11 +138,13 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
 {{ else }} create a task declaring your purpose and the
 actions you need using `create_task`:
 {{ end }}
-- **`purpose`** — shown to the user during approval and used by intent verification to ensure requests stay consistent with declared intent. Be specific: "Review last 30 iMessage threads and classify reply status" is better than "Use iMessage."
-- **`expected_use`** — per-action description of how you'll use it. Shown during approval and checked by intent verification against your actual request params. Be specific: "Fetch today's calendar events" is better than "Use the calendar API."
+- **`purpose`** — shown to the user during approval and checked by intent verification. **Scope broadly:** describe the full workflow as a capability statement, not a single action. Enumerate every category of operation the task covers. Narrow purposes like "Check emails" cause intent verification to reject legitimate follow-up requests. See the examples above.
+- **`expected_use`** — per-action description checked by intent verification against your actual request params. **Enumerate all use cases** — every scenario, parameter type, and reason you'd invoke this action. A narrow expected_use like "List recent emails" will reject searches by sender or keyword.
 - **`auto_execute`** — `true` runs in-scope requests immediately; `false` still requires per-request approval (use for destructive actions like `send_message`).
 - **`expires_in_seconds`** — task TTL. Omit and set `"lifetime": "standing"` for a task that persists until the user revokes it (see below).
 - **`planned_calls`** *(optional)* — pre-register specific API calls you know you'll make. Planned calls are shown to the user during approval, evaluated as part of risk assessment, and **skip intent verification at runtime** when they match. This reduces latency for predictable workflows. Each entry must be covered by `authorized_actions` and must include `params`. Use exact values for known params, or `"$chain"` for values that will come from a prior call's results (e.g. `{"thread_id": "$chain"}`). Calls without params cannot skip verification.
+
+**Always request the broadest reasonable scope upfront.** The user reviews scope once at task creation; mid-task `pending_scope_expansion` interrupts their flow. Scope for the full range of operations the request could entail — not just the first step.
 
 All tasks start as `pending_approval`
 {{- if .UseCurl }} — the user is notified to approve the
@@ -164,11 +166,11 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks" \
   -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "purpose": "Ongoing email triage",
+    "purpose": "Full executive assistant email management. Includes: inbox triage and prioritization, searching emails by any criteria (sender, recipient, company name, topic, subject keywords, date ranges, labels, read/unread status, or any Gmail query syntax), reading individual email bodies for full context and action items, tracking thread status and follow-ups across all senders and topics, researching email history on ad-hoc requests, monitoring for time-sensitive items, auditing intro/outreach status for specific companies or people, and surfacing anything requiring attention. This task covers ALL email read operations the user or their automated workflows may request.",
     "lifetime": "standing",
     "authorized_actions": [
-      {"service": "google.gmail", "action": "list_messages", "auto_execute": true, "expected_use": "List recent emails to identify ones needing attention"},
-      {"service": "google.gmail", "action": "get_message", "auto_execute": true, "expected_use": "Read individual emails to triage and summarize"}
+      {"service": "google.gmail", "action": "list_messages", "auto_execute": true, "expected_use": "Search and list emails using any Gmail query syntax: by sender, recipient, company name, subject keywords, date ranges (newer_than, older_than, before, after), labels, read/unread status, thread ID, or any combination. Used for inbox triage, follow-ups on hiring, intro status monitoring, deal research, investor correspondence tracking, scheduling and thread discovery, and any ad-hoc email search for any company, person, or topic at any time."},
+      {"service": "google.gmail", "action": "get_message", "auto_execute": true, "expected_use": "Read full email content for any message found via list_messages or referenced by message ID. Used to understand full context, extract action items, check reply status, draft summaries, track intro chains, audit follow-ups, and provide detailed email content to the user on request. Will read emails from any sender, about any topic, at any time as needed for triage, research, and executive assistant workflows."}
     ]
   }'
 ```
@@ -264,7 +266,7 @@ Use `gateway_request` for each action. Required fields:
 | `service` | Service identifier (from your catalog) |
 | `action` | Action to perform on that service |
 | `params` | Action-specific parameters (from your catalog) |
-| `reason` | One sentence explaining why. Shown in approvals and audit log. Be specific. |
+| `reason` | Why you need this data and what you'll do with it. Shown in approvals and audit log. Be specific: name the user request, the information you're looking for, and how it fits the workflow. |
 | `request_id` | A unique ID you generate (e.g. UUID). Must be unique across all your requests. |
 | `task_id` | The approved task ID this request belongs to. |
 | `session_id` | *(Standing tasks only)* A consistent UUID across related requests in a single invocation.{{ if .UseCurl }} Required for chain context on standing tasks. Not needed for ephemeral tasks (chain context is automatic).{{ end }} |
