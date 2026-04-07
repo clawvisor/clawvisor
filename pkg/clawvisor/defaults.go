@@ -20,6 +20,7 @@ import (
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
+	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
@@ -145,6 +146,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	for _, action := range []string{"get_file", "create_file", "update_file"} {
 		goOverrides["google.drive:"+action] = drive.Execute
 	}
+	contacts := contactsadapter.New(oauthProvider)
+	goOverrides["google.contacts:list_contacts"] = contacts.Execute
 
 	// Load YAML adapter definitions from embedded FS + user-local directory.
 	home, _ := os.UserHomeDir()
