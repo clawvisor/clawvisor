@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	MaxBodyLen    = 8000
+	MaxBodyLen    = 200_000
 	MaxSnippetLen = 300
 	MaxFieldLen   = 500
 	MaxArrayItems = 200

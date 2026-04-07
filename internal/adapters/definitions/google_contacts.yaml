@@ -20,11 +20,13 @@ api:
 actions:
   list_contacts:
     display_name: "List contacts"
+    override: go
     risk: { category: read, sensitivity: low, description: "List contacts" }
     method: GET
     path: "/people/me/connections"
     params:
-      max_results: { type: int, default: 20, max: 100, map_to: pageSize, location: query }
+      page_size: { type: int, default: 50, max: 50, map_to: pageSize, location: query }
+      page_token: { type: string, optional: true, map_to: pageToken, location: query }
       person_fields:
         type: string
         default: "names,emailAddresses,phoneNumbers"
@@ -90,7 +92,7 @@ actions:
     path: "/people:searchContacts"
     params:
       query: { type: string, required: true, location: query }
-      max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      max_results: { type: int, default: 10, max: 30, map_to: pageSize, location: query }
       read_mask:
         type: string
         default: "names,emailAddresses,phoneNumbers"

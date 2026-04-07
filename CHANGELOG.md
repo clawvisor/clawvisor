@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.4](https://github.com/clawvisor/clawvisor/compare/v0.8.3...v0.8.4) (2026-04-07)
+
+
+### Features
+
+* add CSV export button to gateway log page ([#123](https://github.com/clawvisor/clawvisor/issues/123)) ([fbf083b](https://github.com/clawvisor/clawvisor/commit/fbf083b452d77891a7c5bc65bc51cfc1148ecda0))
+* Gmail adapter attachment support ([#122](https://github.com/clawvisor/clawvisor/issues/122)) ([bc9f3d1](https://github.com/clawvisor/clawvisor/commit/bc9f3d182cfe5e77a86605190fad939623bd7d29))
+* pre-registered planned calls to skip intent verification ([#116](https://github.com/clawvisor/clawvisor/issues/116)) ([c4503cb](https://github.com/clawvisor/clawvisor/commit/c4503cbfc0d7aac4cd0da8013fba43749a7df9b9))
+* publish skill to ClawHub on release ([#113](https://github.com/clawvisor/clawvisor/issues/113)) ([130381c](https://github.com/clawvisor/clawvisor/commit/130381c65b5f8ec91b9cc5ed25da9b7be9329e85))
+
+
+### Bug Fixes
+
+* enable chain context extraction for planned call matches ([#117](https://github.com/clawvisor/clawvisor/issues/117)) ([1b45df1](https://github.com/clawvisor/clawvisor/commit/1b45df1868ce8ad88bc041490c7dcfb6b8007d83))
+* hide iMessage on non-macOS and check Full Disk Access on activation ([#119](https://github.com/clawvisor/clawvisor/issues/119)) ([85e998d](https://github.com/clawvisor/clawvisor/commit/85e998de23df84fd3aa6cd071cd3dfb0988edfbd))
+* planned call UI visibility and Telegram risk level ([#118](https://github.com/clawvisor/clawvisor/issues/118)) ([c00d0f3](https://github.com/clawvisor/clawvisor/commit/c00d0f385a4f0484c355e1881fbd7ef9456975a8))
+* reduce false positives for broad list actions and imperative reasons ([#121](https://github.com/clawvisor/clawvisor/issues/121)) ([f57c3dd](https://github.com/clawvisor/clawvisor/commit/f57c3ddc8aa95a4cf6743f48e104207addbce3b8))
+
 ## [0.8.3](https://github.com/clawvisor/clawvisor/compare/v0.8.2...v0.8.3) (2026-04-05)
 
 

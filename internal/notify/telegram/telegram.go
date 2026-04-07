@@ -311,6 +311,10 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 	sb.WriteString("📋 <b>Clawvisor — Task Approval Request</b>\n\n")
 	sb.WriteString(fmt.Sprintf("<b>Agent:</b> %s\n", html.EscapeString(req.AgentName)))
 	sb.WriteString(fmt.Sprintf("<b>Purpose:</b> %s\n", html.EscapeString(req.Purpose)))
+	if req.RiskLevel != "" && req.RiskLevel != "unknown" {
+		emoji := riskEmoji(req.RiskLevel)
+		sb.WriteString(fmt.Sprintf("<b>Risk:</b> %s %s\n", emoji, html.EscapeString(req.RiskLevel)))
+	}
 	sb.WriteString(fmt.Sprintf("<b>Time:</b> %s\n", time.Now().UTC().Format("Mon Jan 2 2006, 3:04 PM MST")))
 
 	sb.WriteString("\n<b>Requested actions:</b>\n")
@@ -364,6 +368,22 @@ func hasVerificationWarning(req notify.ApprovalRequest) bool {
 		return false // verification not run
 	}
 	return req.VerifyParamScope != "ok" || req.VerifyReasonCoherence != "ok"
+}
+
+// riskEmoji returns an emoji for the given risk level.
+func riskEmoji(level string) string {
+	switch level {
+	case "low":
+		return "🟢"
+	case "medium":
+		return "🟡"
+	case "high":
+		return "🟠"
+	case "critical":
+		return "🔴"
+	default:
+		return ""
+	}
 }
 
 // paramValue converts a param value to a display string, truncated at 100 chars.

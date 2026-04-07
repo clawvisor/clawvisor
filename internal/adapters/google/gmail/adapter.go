@@ -56,7 +56,7 @@ func New(provider adapters.OAuthCredentialProvider) *GmailAdapter {
 func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
-	actions := []string{"list_messages", "get_message", "send_message"}
+	actions := []string{"list_messages", "get_message", "get_attachment", "send_message"}
 	if draftsEnabled() {
 		actions = append(actions, "create_draft")
 	}
@@ -98,6 +98,8 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.listMessages(ctx, client, req.Params)
 	case "get_message":
 		return a.getMessage(ctx, client, req.Params)
+	case "get_attachment":
+		return a.getAttachment(ctx, client, req.Params)
 	case "send_message":
 		return a.sendMessage(ctx, client, req.Params)
 	case "create_draft":
@@ -186,15 +188,23 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 
 // ── get_message ───────────────────────────────────────────────────────────────
 
+type attachmentMeta struct {
+	AttachmentID string `json:"attachment_id"`
+	Filename     string `json:"filename"`
+	MimeType     string `json:"mime_type"`
+	Size         int    `json:"size"`
+}
+
 type msgDetail struct {
-	ID       string `json:"id"`
-	From     string `json:"from"`
-	To       string `json:"to"`
-	Subject  string `json:"subject"`
-	Date     string `json:"timestamp"`
-	Body     string `json:"body"`
-	IsUnread bool   `json:"is_unread"`
-	ThreadID string `json:"thread_id"`
+	ID          string           `json:"id"`
+	From        string           `json:"from"`
+	To          string           `json:"to"`
+	Subject     string           `json:"subject"`
+	Date        string           `json:"timestamp"`
+	Body        string           `json:"body"`
+	IsUnread    bool             `json:"is_unread"`
+	ThreadID    string           `json:"thread_id"`
+	Attachments []attachmentMeta `json:"attachments,omitempty"`
 }
 
 func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -204,35 +214,7 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 	}
 
 	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full", msgID)
-	var raw struct {
-		ID       string `json:"id"`
-		ThreadId string `json:"threadId"`
-		LabelIds []string `json:"labelIds"`
-		Snippet  string `json:"snippet"`
-		Payload  struct {
-			Headers []struct {
-				Name  string `json:"name"`
-				Value string `json:"value"`
-			} `json:"headers"`
-			Parts []struct {
-				MimeType string `json:"mimeType"`
-				Body     struct {
-					Data string `json:"data"`
-				} `json:"body"`
-				Parts []struct {
-					MimeType string `json:"mimeType"`
-					Body     struct {
-						Data string `json:"data"`
-					} `json:"body"`
-				} `json:"parts"`
-			} `json:"parts"`
-			Body struct {
-				Data string `json:"data"`
-			} `json:"body"`
-			MimeType string `json:"mimeType"`
-		} `json:"payload"`
-	}
-
+	var raw gmailMessage
 	if err := gmailGET(ctx, client, url, &raw); err != nil {
 		return nil, fmt.Errorf("gmail get_message: %w", err)
 	}
@@ -259,24 +241,61 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 		}
 	}
 
-	body := extractBody(raw.Payload)
+	body := extractBodyFromParts(raw.Payload)
 	if body == "" {
 		body = raw.Snippet
 	}
 
+	attachments := extractAttachments(raw.Payload)
+
 	detail := msgDetail{
-		ID:       raw.ID,
-		From:     format.SanitizeText(from, format.MaxFieldLen),
-		To:       format.SanitizeText(to, format.MaxFieldLen),
-		Subject:  format.SanitizeText(subject, format.MaxFieldLen),
-		Date:     date,
-		Body:     format.SanitizeText(body, format.MaxBodyLen),
-		IsUnread: isUnread,
-		ThreadID: raw.ThreadId,
+		ID:          raw.ID,
+		From:        format.SanitizeText(from, format.MaxFieldLen),
+		To:          format.SanitizeText(to, format.MaxFieldLen),
+		Subject:     format.SanitizeText(subject, format.MaxFieldLen),
+		Date:        date,
+		Body:        format.SanitizeText(body, format.MaxBodyLen),
+		IsUnread:    isUnread,
+		ThreadID:    raw.ThreadId,
+		Attachments: attachments,
 	}
 
 	summary := format.Summary("Email from %s: %q", detail.From, detail.Subject)
+	if len(attachments) > 0 {
+		summary = format.Summary("Email from %s: %q (%d attachments)", detail.From, detail.Subject, len(attachments))
+	}
 	return &adapters.Result{Summary: summary, Data: detail}, nil
+}
+
+// ── get_attachment ────────────────────────────────────────────────────────────
+
+func (a *GmailAdapter) getAttachment(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	msgID, _ := params["message_id"].(string)
+	attachmentID, _ := params["attachment_id"].(string)
+	if msgID == "" {
+		return nil, fmt.Errorf("gmail get_attachment: message_id is required")
+	}
+	if attachmentID == "" {
+		return nil, fmt.Errorf("gmail get_attachment: attachment_id is required")
+	}
+
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/attachments/%s", msgID, attachmentID)
+	var raw struct {
+		Size int    `json:"size"`
+		Data string `json:"data"`
+	}
+	if err := gmailGET(ctx, client, url, &raw); err != nil {
+		return nil, fmt.Errorf("gmail get_attachment: %w", err)
+	}
+
+	result := map[string]any{
+		"message_id":    msgID,
+		"attachment_id": attachmentID,
+		"size":          raw.Size,
+		"data":          raw.Data,
+	}
+	summary := format.Summary("Attachment fetched (%d bytes)", raw.Size)
+	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 
 // ── send_message ──────────────────────────────────────────────────────────────
@@ -412,6 +431,42 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 	return json.Unmarshal(body, out)
 }
 
+// ── Gmail API message types ───────────────────────────────────────────────────
+
+type gmailMessage struct {
+	ID       string       `json:"id"`
+	ThreadId string       `json:"threadId"`
+	LabelIds []string     `json:"labelIds"`
+	Snippet  string       `json:"snippet"`
+	Payload  gmailPayload `json:"payload"`
+}
+
+type gmailPayload struct {
+	MimeType string        `json:"mimeType"`
+	Headers  []gmailHeader `json:"headers"`
+	Body     gmailBody     `json:"body"`
+	Parts    []gmailPart   `json:"parts"`
+}
+
+type gmailPart struct {
+	MimeType string        `json:"mimeType"`
+	Filename string        `json:"filename"`
+	Headers  []gmailHeader `json:"headers"`
+	Body     gmailBody     `json:"body"`
+	Parts    []gmailPart   `json:"parts"`
+}
+
+type gmailHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type gmailBody struct {
+	AttachmentID string `json:"attachmentId"`
+	Size         int    `json:"size"`
+	Data         string `json:"data"`
+}
+
 // ── Message parsing helpers ───────────────────────────────────────────────────
 
 type msgMeta struct {
@@ -425,10 +480,7 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 		Snippet  string   `json:"snippet"`
 		LabelIds []string `json:"labelIds"`
 		Payload  struct {
-			Headers []struct {
-				Name  string `json:"name"`
-				Value string `json:"value"`
-			} `json:"headers"`
+			Headers []gmailHeader `json:"headers"`
 		} `json:"payload"`
 	}
 	if err := gmailGET(ctx, client, url, &raw); err != nil {
@@ -454,59 +506,76 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 	return meta, nil
 }
 
-// extractBody walks a message payload to find the text/plain part.
-func extractBody(payload struct {
-	Headers []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	} `json:"headers"`
-	Parts []struct {
-		MimeType string `json:"mimeType"`
-		Body     struct {
-			Data string `json:"data"`
-		} `json:"body"`
-		Parts []struct {
-			MimeType string `json:"mimeType"`
-			Body     struct {
-				Data string `json:"data"`
-			} `json:"body"`
-		} `json:"parts"`
-	} `json:"parts"`
-	Body struct {
-		Data string `json:"data"`
-	} `json:"body"`
-	MimeType string `json:"mimeType"`
-}) string {
-	// Direct body
-	if payload.MimeType == "text/plain" && payload.Body.Data != "" {
-		return decodeBase64(payload.Body.Data)
+// extractBodyFromParts walks a message payload to find the best text content.
+// Many newsletters (Substack, etc.) include only a short teaser in the
+// text/plain part while the full article lives in text/html, so we extract
+// both and return whichever is longer.
+func extractBodyFromParts(payload gmailPayload) string {
+	var plain, htmlBody string
+
+	// Direct body (non-multipart message)
+	if payload.Body.Data != "" {
+		decoded := decodeBase64(payload.Body.Data)
+		if payload.MimeType == "text/plain" {
+			plain = decoded
+		} else if payload.MimeType == "text/html" {
+			htmlBody = stripHTML(decoded)
+		}
 	}
 
-	// Search parts
-	for _, part := range payload.Parts {
-		if part.MimeType == "text/plain" && part.Body.Data != "" {
+	// Search MIME parts
+	if plain == "" {
+		plain = findTextInParts(payload.Parts, "text/plain")
+	}
+	if htmlBody == "" {
+		if raw := findTextInParts(payload.Parts, "text/html"); raw != "" {
+			htmlBody = stripHTML(raw)
+		}
+	}
+
+	// Return whichever is longer — newsletters often have full content
+	// only in the HTML part while text/plain is just a preview.
+	if len(htmlBody) > len(plain) {
+		return htmlBody
+	}
+	if plain != "" {
+		return plain
+	}
+	return htmlBody
+}
+
+// findTextInParts recursively searches MIME parts for content of the given type.
+func findTextInParts(parts []gmailPart, mimeType string) string {
+	for _, part := range parts {
+		if part.MimeType == mimeType && part.Body.Data != "" {
 			return decodeBase64(part.Body.Data)
 		}
-		// Nested multipart
-		for _, sub := range part.Parts {
-			if sub.MimeType == "text/plain" && sub.Body.Data != "" {
-				return decodeBase64(sub.Body.Data)
-			}
+		if result := findTextInParts(part.Parts, mimeType); result != "" {
+			return result
 		}
 	}
-
-	// Fall back to any HTML part — strip tags before returning.
-	for _, part := range payload.Parts {
-		if part.MimeType == "text/html" && part.Body.Data != "" {
-			return stripHTML(decodeBase64(part.Body.Data))
-		}
-	}
-	// Also handle direct HTML body (non-multipart).
-	if payload.MimeType == "text/html" && payload.Body.Data != "" {
-		return stripHTML(decodeBase64(payload.Body.Data))
-	}
-
 	return ""
+}
+
+// extractAttachments collects attachment metadata from MIME parts.
+func extractAttachments(payload gmailPayload) []attachmentMeta {
+	var attachments []attachmentMeta
+	collectAttachments(payload.Parts, &attachments)
+	return attachments
+}
+
+func collectAttachments(parts []gmailPart, out *[]attachmentMeta) {
+	for _, part := range parts {
+		if part.Filename != "" && part.Body.AttachmentID != "" {
+			*out = append(*out, attachmentMeta{
+				AttachmentID: part.Body.AttachmentID,
+				Filename:     part.Filename,
+				MimeType:     part.MimeType,
+				Size:         part.Body.Size,
+			})
+		}
+		collectAttachments(part.Parts, out)
+	}
 }
 
 // stripHTML removes HTML tags, style/script blocks, and decodes common entities,

@@ -20,6 +20,7 @@ import (
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
+	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
@@ -133,18 +134,20 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	// Build Go action overrides for Google services that need complex logic
 	// (MIME encoding, multipart uploads, dual API calls) beyond what YAML
-	// expressions can handle. Calendar, Contacts, Drive search_files, and
-	// Gmail get_message are now fully YAML-driven with expr-lang transforms.
+	// expressions can handle. Calendar, Contacts, and Drive search_files
+	// are fully YAML-driven with expr-lang transforms.
 	goOverrides := map[string]yamlruntime.ActionFunc{}
 
 	gmail := gmailadapter.New(oauthProvider)
-	for _, action := range []string{"list_messages", "send_message", "create_draft"} {
+	for _, action := range []string{"list_messages", "get_message", "get_attachment", "send_message", "create_draft"} {
 		goOverrides["google.gmail:"+action] = gmail.Execute
 	}
 	drive := driveadapter.New(oauthProvider)
 	for _, action := range []string{"get_file", "create_file", "update_file"} {
 		goOverrides["google.drive:"+action] = drive.Execute
 	}
+	contacts := contactsadapter.New(oauthProvider)
+	goOverrides["google.contacts:list_contacts"] = contacts.Execute
 
 	// Load YAML adapter definitions from embedded FS + user-local directory.
 	home, _ := os.UserHomeDir()

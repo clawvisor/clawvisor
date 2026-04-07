@@ -140,16 +140,25 @@ type contactItem struct {
 	Phone string `json:"phone,omitempty"`
 }
 
+type listContactsResponse struct {
+	Contacts      []contactItem `json:"contacts"`
+	NextPageToken string        `json:"next_page_token,omitempty"`
+	TotalPeople   int           `json:"total_people,omitempty"`
+}
+
 func (a *ContactsAdapter) listContacts(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
-	maxResults := 20
-	if v, ok := paramInt(params, "max_results"); ok && v > 0 && v <= 100 {
-		maxResults = v
+	pageSize := 50
+	if v, ok := paramInt(params, "page_size"); ok && v > 0 && v <= 50 {
+		pageSize = v
 	}
 
 	q := url.Values{}
-	q.Set("pageSize", fmt.Sprintf("%d", maxResults))
+	q.Set("pageSize", fmt.Sprintf("%d", pageSize))
 	q.Set("personFields", "names,emailAddresses,phoneNumbers")
 	q.Set("sortOrder", "LAST_NAME_ASCENDING")
+	if pt, _ := params["page_token"].(string); pt != "" {
+		q.Set("pageToken", pt)
+	}
 
 	apiURL := "https://people.googleapis.com/v1/people/me/connections?" + q.Encode()
 	var resp struct {
@@ -165,7 +174,8 @@ func (a *ContactsAdapter) listContacts(ctx context.Context, client *http.Client,
 				Value string `json:"value"`
 			} `json:"phoneNumbers"`
 		} `json:"connections"`
-		TotalPeople int `json:"totalPeople"`
+		NextPageToken string `json:"nextPageToken"`
+		TotalPeople   int    `json:"totalPeople"`
 	}
 	if err := apiGET(ctx, client, apiURL, &resp); err != nil {
 		return nil, fmt.Errorf("contacts list_contacts: %w", err)
@@ -185,9 +195,14 @@ func (a *ContactsAdapter) listContacts(ctx context.Context, client *http.Client,
 		}
 		items = append(items, item)
 	}
+
 	return &adapters.Result{
 		Summary: format.Summary("%d contact(s)", len(items)),
-		Data:    items,
+		Data: listContactsResponse{
+			Contacts:      items,
+			NextPageToken: resp.NextPageToken,
+			TotalPeople:   resp.TotalPeople,
+		},
 	}, nil
 }
 
@@ -265,7 +280,7 @@ func (a *ContactsAdapter) searchContacts(ctx context.Context, client *http.Clien
 		return nil, fmt.Errorf("contacts search_contacts: query is required")
 	}
 	maxResults := 10
-	if v, ok := paramInt(params, "max_results"); ok && v > 0 && v <= 50 {
+	if v, ok := paramInt(params, "max_results"); ok && v > 0 && v <= 30 {
 		maxResults = v
 	}
 
