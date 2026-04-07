@@ -23,6 +23,7 @@ type ServiceMetadata struct {
 	DisplayName       string
 	Description       string
 	SetupURL          string
+	IconSVG           string                // inline SVG markup for the service icon
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
 	DeviceFlow        bool                  // whether device flow activation is available

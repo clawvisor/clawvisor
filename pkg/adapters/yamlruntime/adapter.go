@@ -294,6 +294,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		DisplayName:       a.def.Service.DisplayName,
 		Description:       a.def.Service.Description,
 		SetupURL:          a.def.Service.SetupURL,
+		IconSVG:           a.def.Service.IconSVG,
 		VaultKey:          vaultKey,
 		OAuthEndpoint:     oauthEndpoint,
 		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",

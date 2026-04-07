@@ -227,8 +227,11 @@ export interface ServiceInfo {
   id: string
   name: string
   description: string
+  icon_svg?: string
   alias?: string
   oauth: boolean
+  device_flow?: boolean
+  pkce_flow?: boolean
   requires_activation?: boolean
   credential_free?: boolean
   actions: ServiceActionInfo[]
@@ -541,6 +544,18 @@ export const api = {
       post<{ status: string; service: string }>(`/api/services/${serviceID}/deactivate`, {
         ...(alias ? { alias } : {}),
       }),
+    pkceFlowStart: (serviceID: string, alias?: string) =>
+      post<{ authorize_url: string; state: string }>(`/api/services/${serviceID}/pkce-flow/start`, {
+        ...(alias ? { alias } : {}),
+      }),
+    deviceFlowStart: (serviceID: string, alias?: string) =>
+      post<{ flow_id: string; user_code: string; verification_uri: string; interval: number; expires_in: number }>(
+        `/api/services/${serviceID}/device-flow/start`, {
+          ...(alias ? { alias } : {}),
+        }),
+    deviceFlowPoll: (serviceID: string, flowId: string) =>
+      post<{ status: string; interval?: number; error?: string }>(
+        `/api/services/${serviceID}/device-flow/poll`, { flow_id: flowId }),
   },
   restrictions: {
     list: () => get<Restriction[]>('/api/restrictions'),
@@ -590,6 +605,8 @@ export const api = {
       put<{ status: string; warning?: string }>('/api/llm', { provider, endpoint, api_key: apiKey, model }),
   },
   system: {
+    getGoogleOAuth: () =>
+      get<{ configured: boolean }>('/api/system/google-oauth'),
     setGoogleOAuth: (clientId: string, clientSecret: string) =>
       post<{ ok: boolean }>('/api/system/google-oauth', { client_id: clientId, client_secret: clientSecret }),
   },

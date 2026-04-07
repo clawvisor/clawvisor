@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
-import { serviceName, actionName, serviceDescription } from '../lib/services'
+import { serviceName, serviceDescription } from '../lib/services'
+import { useAuth } from '../hooks/useAuth'
+import { ServiceIconBadge } from '../components/ServiceIcon'
 
 // ── Active Service Row ───────────────────────────────────────────────────────
 
@@ -12,20 +14,56 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
   const [showKeyInput, setShowKeyInput] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deviceCode, setDeviceCode] = useState<{ userCode: string; verificationUri: string } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
   const alias = svc.alias || undefined
 
   async function handleReauth() {
     setError(null)
     try {
-      const resp = await api.services.oauthGetUrl(svc.id, undefined, alias)
-      if (resp.already_authorized) {
-        qc.invalidateQueries({ queryKey: ['services'] })
-        return
-      }
-      if (resp.url) {
-        const popup = window.open(resp.url, '_blank', 'width=600,height=700')
-        if (!popup) window.location.href = resp.url
+      if (svc.pkce_flow) {
+        const resp = await api.services.pkceFlowStart(svc.id, alias)
+        if (resp.authorize_url) {
+          const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=700')
+          if (!popup) window.location.href = resp.authorize_url
+        }
+      } else if (svc.device_flow) {
+        const resp = await api.services.deviceFlowStart(svc.id, alias)
+        setDeviceCode({ userCode: resp.user_code, verificationUri: resp.verification_uri })
+        window.open(resp.verification_uri, '_blank')
+        function poll(flowId: string, interval: number) {
+          pollRef.current = setTimeout(async () => {
+            try {
+              const r = await api.services.deviceFlowPoll(svc.id, flowId)
+              if (r.status === 'complete') {
+                setDeviceCode(null)
+                qc.invalidateQueries({ queryKey: ['services'] })
+              } else if (r.status === 'pending' || r.status === 'slow_down') {
+                poll(flowId, r.interval ?? interval)
+              } else {
+                setDeviceCode(null)
+                setError(r.status === 'denied' ? 'Authorization denied.' : 'Authorization expired.')
+              }
+            } catch {
+              setDeviceCode(null)
+              setError('Failed to check authorization status')
+            }
+          }, interval * 1000)
+        }
+        poll(resp.flow_id, resp.interval)
+      } else {
+        const resp = await api.services.oauthGetUrl(svc.id, undefined, alias)
+        if (resp.already_authorized) {
+          qc.invalidateQueries({ queryKey: ['services'] })
+          return
+        }
+        if (resp.url) {
+          const popup = window.open(resp.url, '_blank', 'width=600,height=700')
+          if (!popup) window.location.href = resp.url
+        }
       }
     } catch (e: any) {
       setError(e.message ?? 'Failed to start OAuth flow')
@@ -59,18 +97,24 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
     }
   }
 
+  const desc = serviceDescription(svc.id)
+
   return (
-    <div>
-      <div className="flex items-center gap-4 px-4 py-3">
-        {/* Name + meta */}
+    <div className="group">
+      <div className="flex items-center gap-4 px-5 py-4">
+        {/* Icon */}
+        <ServiceIconBadge iconSvg={svc.icon_svg} serviceId={svc.id} size={28} />
+
+        {/* Name + description */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-medium text-text-primary text-sm truncate">{serviceName(svc.id, svc.alias)}</span>
-            <span className="text-xs text-text-tertiary shrink-0">
-              {svc.id}{svc.alias && svc.alias !== 'default' ? `:${svc.alias}` : ''}
-            </span>
+            {svc.alias && svc.alias !== 'default' && (
+              <span className="text-xs text-text-tertiary shrink-0">{svc.alias}</span>
+            )}
+            <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" title="Connected" />
           </div>
-          <p className="text-xs text-text-tertiary mt-0.5">{svc.actions.map(a => a.display_name || actionName(a.id, svc.id)).join(' · ')}</p>
+          {desc && <p className="text-xs text-text-tertiary mt-0.5 truncate">{desc}</p>}
         </div>
 
         {/* Activated time */}
@@ -82,8 +126,8 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
 
         {/* Actions */}
         {svc.requires_activation !== false && (
-          <div className="flex gap-1.5 shrink-0">
-            {!svc.credential_free && (svc.oauth ? (
+          <div className="flex gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+            {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
               <button
                 onClick={handleReauth}
                 className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
@@ -100,18 +144,42 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
             ))}
             <button
               onClick={handleDeactivate}
-              className="text-xs px-2.5 py-1 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+              className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
             >
-              Deactivate
+              Disconnect
             </button>
           </div>
         )}
       </div>
 
-      {error && <p className="text-xs text-danger px-4 pb-2">{error}</p>}
+      {error && <p className="text-xs text-danger px-5 pb-3">{error}</p>}
+
+      {deviceCode && (
+        <div className="px-5 pb-4 space-y-1.5 ml-16">
+          <p className="text-xs text-text-secondary">Enter this code on the authorization page:</p>
+          <div className="flex items-center gap-2">
+            <code className="text-sm font-mono font-bold tracking-widest text-text-primary bg-surface-0 px-3 py-1.5 rounded border border-border-default select-all">
+              {deviceCode.userCode}
+            </code>
+            <button
+              onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Copy
+            </button>
+            <button
+              onClick={() => window.open(deviceCode.verificationUri, '_blank')}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Open page
+            </button>
+          </div>
+          <p className="text-xs text-text-tertiary">Waiting for authorization&hellip;</p>
+        </div>
+      )}
 
       {showKeyInput && (
-        <div className="flex gap-2 px-4 pb-3">
+        <div className="flex gap-2 px-5 pb-4 ml-16">
           <input
             type="password"
             value={apiKeyInput}
@@ -138,19 +206,26 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
 
 interface ServiceType {
   baseId: string
+  iconSvg?: string
   oauth: boolean
+  deviceFlow: boolean
+  pkceFlow: boolean
   requiresActivation: boolean
   credentialFree: boolean
   actions: ServiceActionInfo[]
   activatedCount: number
+  description: string
+  setupUrl?: string
 }
 
 function AddServiceModal({
   services,
   onClose,
+  googleOAuthMissing,
 }: {
   services: ServiceInfo[]
   onClose: () => void
+  googleOAuthMissing: boolean
 }) {
   const qc = useQueryClient()
   const [aliasInputFor, setAliasInputFor] = useState<string | null>(null)
@@ -160,6 +235,17 @@ function AddServiceModal({
   const [keyAlias, setKeyAlias] = useState<string | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Device flow state
+  const [deviceFlowFor, setDeviceFlowFor] = useState<string | null>(null)
+  const [deviceFlowData, setDeviceFlowData] = useState<{
+    flowId: string
+    userCode: string
+    verificationUri: string
+    interval: number
+  } | null>(null)
+  const [deviceFlowStatus, setDeviceFlowStatus] = useState<string>('pending')
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Close on Escape
   useEffect(() => {
@@ -193,11 +279,16 @@ function AddServiceModal({
     } else {
       typeMap.set(baseId, {
         baseId,
+        iconSvg: svc.icon_svg,
         oauth: svc.oauth,
+        deviceFlow: svc.device_flow ?? false,
+        pkceFlow: svc.pkce_flow ?? false,
         requiresActivation: svc.requires_activation ?? true,
         credentialFree: svc.credential_free ?? false,
         actions: svc.actions,
         activatedCount: svc.status === 'activated' ? 1 : 0,
+        description: svc.description || serviceDescription(svc.id),
+        setupUrl: svc.setup_url,
       })
     }
   }
@@ -250,25 +341,120 @@ function AddServiceModal({
     }
   }
 
-  function showAliasPrompt(st: ServiceType) {
+  async function handleActivatePKCE(serviceId: string, alias?: string) {
     setError(null)
-    setKeyInputFor(null)
-    setKeyValue('')
-    setAliasInputFor(st.baseId)
-    setAliasValue('')
+    try {
+      const resp = await api.services.pkceFlowStart(serviceId, alias)
+      if (resp.authorize_url) {
+        const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=700')
+        if (!popup) window.location.href = resp.authorize_url
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to start authorization')
+    }
+  }
+
+  const stopDeviceFlowPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }, [])
+
+  // Cleanup polling on unmount
+  useEffect(() => stopDeviceFlowPolling, [stopDeviceFlowPolling])
+
+  async function handleActivateDeviceFlow(serviceId: string, alias?: string) {
+    setError(null)
+    stopDeviceFlowPolling()
+    try {
+      const resp = await api.services.deviceFlowStart(serviceId, alias)
+      setDeviceFlowFor(serviceId)
+      setDeviceFlowData({
+        flowId: resp.flow_id,
+        userCode: resp.user_code,
+        verificationUri: resp.verification_uri,
+        interval: resp.interval,
+      })
+      setDeviceFlowStatus('pending')
+      window.open(resp.verification_uri, '_blank')
+      startDeviceFlowPolling(serviceId, resp.flow_id, resp.interval)
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to start device authorization')
+    }
+  }
+
+  function startDeviceFlowPolling(serviceId: string, flowId: string, interval: number) {
+    pollTimerRef.current = setTimeout(async () => {
+      try {
+        const resp = await api.services.deviceFlowPoll(serviceId, flowId)
+        if (resp.status === 'complete') {
+          setDeviceFlowStatus('complete')
+          stopDeviceFlowPolling()
+          qc.invalidateQueries({ queryKey: ['services'] })
+          onClose()
+          return
+        }
+        if (resp.status === 'pending' || resp.status === 'slow_down') {
+          setDeviceFlowStatus('pending')
+          const nextInterval = resp.interval ?? interval
+          startDeviceFlowPolling(serviceId, flowId, nextInterval)
+          return
+        }
+        setDeviceFlowStatus(resp.status)
+        stopDeviceFlowPolling()
+        setError(resp.status === 'denied' ? 'Authorization was denied.' : 'Authorization expired. Please try again.')
+      } catch (e: any) {
+        setDeviceFlowStatus('error')
+        stopDeviceFlowPolling()
+        setError(e.message ?? 'Failed to check authorization status')
+      }
+    }, interval * 1000)
+  }
+
+  // For the first activation, skip the alias prompt and go straight to auth.
+  // Only show alias prompt when adding a second+ account.
+  function handleActivate(st: ServiceType) {
+    setError(null)
+    if (st.credentialFree) {
+      handleActivateCredentialFree(st.baseId)
+      return
+    }
+    // If already has one account, prompt for alias to label the second.
+    if (st.activatedCount > 0) {
+      setKeyInputFor(null)
+      setKeyValue('')
+      setDeviceFlowFor(null)
+      setDeviceFlowData(null)
+      setAliasInputFor(st.baseId)
+      setAliasValue('')
+      return
+    }
+    // First activation — go directly to auth.
+    startAuth(st)
+  }
+
+  function startAuth(st: ServiceType, alias?: string) {
+    if (st.oauth) {
+      handleActivateOAuth(st.baseId, alias)
+    } else if (st.pkceFlow) {
+      handleActivatePKCE(st.baseId, alias)
+    } else if (st.deviceFlow) {
+      handleActivateDeviceFlow(st.baseId, alias)
+    } else {
+      setKeyInputFor(st.baseId)
+      setKeyAlias(alias)
+    }
   }
 
   function confirmAlias(st: ServiceType) {
     const alias = aliasValue.trim() || undefined
     setAliasInputFor(null)
     setError(null)
-    if (st.oauth) {
-      handleActivateOAuth(st.baseId, alias)
-    } else {
-      setKeyInputFor(st.baseId)
-      setKeyAlias(alias)
-    }
+    startAuth(st, alias)
   }
+
+  const isGoogleService = (id: string) => id.startsWith('google.')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -276,9 +462,9 @@ function AddServiceModal({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-surface-1 border border-border-default rounded-md w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+      <div className="relative bg-surface-1 border border-border-default rounded-lg w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-default">
-          <h2 className="text-lg font-semibold text-text-primary">Add Service</h2>
+          <h2 className="text-lg font-semibold text-text-primary">Connect a service</h2>
           <button
             onClick={onClose}
             className="text-text-tertiary hover:text-text-primary text-xl leading-none"
@@ -287,100 +473,161 @@ function AddServiceModal({
           </button>
         </div>
 
-        <div className="px-6 py-4 overflow-y-auto space-y-3">
-          <p className="text-sm text-text-tertiary">Select a service to activate:</p>
+        <div className="px-6 py-5 overflow-y-auto">
+          {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
-          {error && <p className="text-xs text-danger">{error}</p>}
-
-          {serviceTypes.map(st => {
-            const isActivated = st.activatedCount > 0
-            const desc = serviceDescription(st.baseId)
-            return (
-              <div key={st.baseId} className="border border-border-default rounded-md p-4 space-y-2">
-                <div>
-                  <h3 className="font-semibold text-text-primary">{serviceName(st.baseId)}</h3>
-                  {desc && <p className="text-xs text-text-tertiary mt-0.5">{desc}</p>}
-                  <p className="text-xs text-text-tertiary mt-0.5">
-                    {st.credentialFree ? 'No credentials needed' : st.oauth ? 'Activate with OAuth' : 'Activate with API key'}
-                  </p>
-                </div>
-
-                {/* Label input */}
-                {aliasInputFor === st.baseId && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-text-tertiary">Label this connection (leave blank for default):</p>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={aliasValue}
-                        onChange={e => setAliasValue(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && confirmAlias(st)}
-                        placeholder="e.g. personal, work"
-                        className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-                        autoFocus
+          <div className="grid grid-cols-2 gap-4">
+            {serviceTypes.map(st => {
+              const isActivated = st.activatedCount > 0
+              const isGoogleBlocked = googleOAuthMissing && isGoogleService(st.baseId)
+              const hasInlineUI = aliasInputFor === st.baseId || keyInputFor === st.baseId || (deviceFlowFor === st.baseId && deviceFlowData)
+              return (
+                <div
+                  key={st.baseId}
+                  className={`rounded-xl border border-border-default bg-surface-0/50 p-5 flex flex-col items-center text-center transition-all ${hasInlineUI ? '' : 'hover:border-brand/50 hover:shadow-md hover:shadow-brand/5'}`}
+                >
+                  {/* Icon with optional connected indicator */}
+                  <div className="relative mb-3">
+                    <ServiceIconBadge iconSvg={st.iconSvg} serviceId={st.baseId} size={32} />
+                    {isActivated && (
+                      <span
+                        className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-success border-2 border-surface-1"
+                        title="Connected"
                       />
-                      <button
-                        onClick={() => confirmAlias(st)}
-                        className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong"
-                      >
-                        Continue
-                      </button>
-                      <button
-                        onClick={() => setAliasInputFor(null)}
-                        className="text-xs px-3 py-1.5 rounded border border-border-strong text-text-primary hover:bg-surface-2"
-                      >
-                        Cancel
-                      </button>
-                    </div>
+                    )}
                   </div>
-                )}
 
-                {/* API key input */}
-                {keyInputFor === st.baseId && (
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={keyValue}
-                      onChange={e => setKeyValue(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-                      placeholder="Paste your token…"
-                      className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-                      autoFocus
-                    />
-                    <button
-                      onClick={handleSaveKey}
-                      disabled={saving || !keyValue.trim()}
-                      className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-                    >
-                      {saving ? 'Saving…' : 'Save'}
-                    </button>
-                    <button
-                      onClick={() => { setKeyInputFor(null); setKeyValue('') }}
-                      className="text-xs px-3 py-1.5 rounded border border-border-strong text-text-primary hover:bg-surface-2"
-                    >
-                      Cancel
-                    </button>
+                  {/* Name */}
+                  <span className="font-semibold text-text-primary text-sm">{serviceName(st.baseId)}</span>
+
+                  {/* Description */}
+                  <p className="text-xs text-text-tertiary mt-1.5 mb-4 line-clamp-3 leading-relaxed">{st.description}</p>
+
+                  {/* Spacer to push button to bottom */}
+                  <div className="mt-auto w-full">
+                    {/* Action button — consistent style for all services */}
+                    {!hasInlineUI && (
+                      isGoogleBlocked ? (
+                        <a
+                          href="/dashboard/settings"
+                          className="block w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-tertiary hover:text-text-primary hover:bg-surface-2 text-center transition-colors"
+                        >
+                          Set up OAuth
+                        </a>
+                      ) : (
+                        <button
+                          onClick={() => handleActivate(st)}
+                          className="w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40 transition-colors"
+                        >
+                          {isActivated ? 'Add account' : 'Connect'}
+                        </button>
+                      )
+                    )}
+
+                    {/* Label input (only for second+ account) */}
+                    {aliasInputFor === st.baseId && (
+                      <div className="space-y-2 text-left">
+                        <p className="text-xs text-text-tertiary">Label this connection:</p>
+                        <input
+                          type="text"
+                          value={aliasValue}
+                          onChange={e => setAliasValue(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && confirmAlias(st)}
+                          placeholder="e.g. personal, work"
+                          className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => confirmAlias(st)}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-brand text-surface-0 hover:bg-brand-strong flex-1"
+                          >
+                            Continue
+                          </button>
+                          <button
+                            onClick={() => setAliasInputFor(null)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* API key input */}
+                    {keyInputFor === st.baseId && (
+                      <div className="space-y-2 text-left">
+                        <input
+                          type="password"
+                          value={keyValue}
+                          onChange={e => setKeyValue(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+                          placeholder="Paste your token…"
+                          className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSaveKey}
+                            disabled={saving || !keyValue.trim()}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50 flex-1"
+                          >
+                            {saving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            onClick={() => { setKeyInputFor(null); setKeyValue('') }}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Device flow status */}
+                    {deviceFlowFor === st.baseId && deviceFlowData && (
+                      <div className="space-y-2 text-left">
+                        <p className="text-xs text-text-secondary">
+                          Enter this code on the authorization page:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-sm font-mono font-bold tracking-widest text-text-primary bg-surface-0 px-3 py-1.5 rounded-lg border border-border-default select-all">
+                            {deviceFlowData.userCode}
+                          </code>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(deviceFlowData.userCode)}
+                            className="text-xs px-2 py-1 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        {deviceFlowStatus === 'pending' && (
+                          <p className="text-xs text-text-tertiary">Waiting for authorization&hellip;</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => window.open(deviceFlowData.verificationUri, '_blank')}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Open page
+                          </button>
+                          <button
+                            onClick={() => { stopDeviceFlowPolling(); setDeviceFlowFor(null); setDeviceFlowData(null) }}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {/* Action button (hide when inline inputs are active for this service) */}
-                {aliasInputFor !== st.baseId && keyInputFor !== st.baseId && (
-                  <button
-                    onClick={() => st.credentialFree ? handleActivateCredentialFree(st.baseId) : showAliasPrompt(st)}
-                    className={`text-xs px-3 py-1.5 rounded ${isActivated
-                      ? 'border border-border-strong text-text-primary hover:bg-surface-2'
-                      : 'bg-brand text-surface-0 hover:bg-brand-strong'
-                    }`}
-                  >
-                    {isActivated ? '+ Add account' : 'Activate'}
-                  </button>
-                )}
-              </div>
-            )
-          })}
+                </div>
+              )
+            })}
+          </div>
 
           {serviceTypes.length === 0 && (
-            <p className="text-sm text-text-tertiary">No services available to activate.</p>
+            <p className="text-sm text-text-tertiary py-4">No services available.</p>
           )}
         </div>
       </div>
@@ -392,11 +639,19 @@ function AddServiceModal({
 
 export default function Services() {
   const qc = useQueryClient()
+  const { features } = useAuth()
   const [showModal, setShowModal] = useState(false)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.services.list(),
+  })
+
+  // In single-tenant mode, check if Google OAuth credentials are configured.
+  const { data: googleOAuth } = useQuery({
+    queryKey: ['google-oauth-status'],
+    queryFn: () => api.system.getGoogleOAuth(),
+    enabled: !features?.multi_tenant,
   })
 
   // Refresh when the OAuth popup signals completion (for cases where modal isn't open).
@@ -412,41 +667,75 @@ export default function Services() {
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')
+  const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
+  const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Services</h1>
-          <p className="text-sm text-text-tertiary mt-1">Your activated services.</p>
+          <p className="text-sm text-text-tertiary mt-1">
+            {activeServices.length > 0
+              ? `${activeServices.length} connected service${activeServices.length !== 1 ? 's' : ''}`
+              : 'Connect services so your agents can take actions.'}
+          </p>
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="px-4 py-2 rounded bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong"
+          className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
         >
-          + Add service
+          Connect service
         </button>
       </div>
+
+      {googleOAuthMissing && (
+        <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
+          <span className="text-yellow-600 text-lg leading-none mt-0.5">!</span>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Google OAuth not configured</p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Google services (Gmail, Calendar, Drive, Contacts) require OAuth credentials.{' '}
+              <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
+              to configure your Google Client ID and Client Secret.
+            </p>
+          </div>
+        </div>
+      )}
 
       {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
       {error && <div className="text-sm text-danger">Failed to load services.</div>}
 
       {!isLoading && !error && activeServices.length === 0 && (
-        <p className="text-sm text-text-tertiary">
-          No services activated yet. Click "Add service" above to get started.
-        </p>
+        <button
+          onClick={() => setShowModal(true)}
+          className="w-full border-2 border-dashed border-border-default rounded-lg py-12 flex flex-col items-center gap-3 hover:border-brand/40 hover:bg-brand/[0.02] transition-colors cursor-pointer"
+        >
+          <div className="w-10 h-10 rounded-full bg-brand/10 flex items-center justify-center">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-brand" />
+            </svg>
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-medium text-text-primary">Connect your first service</p>
+            <p className="text-xs text-text-tertiary mt-0.5">Slack, GitHub, Gmail, and more</p>
+          </div>
+        </button>
       )}
 
-      <div className="bg-surface-1 border border-border-default rounded-md divide-y divide-border-subtle">
-        {activeServices.map(svc => (
-          <ActiveServiceRow key={`${svc.id}:${svc.alias ?? 'default'}`} svc={svc} />
-        ))}
-      </div>
+      {activeServices.length > 0 && (
+        <div className="bg-surface-1 border border-border-default rounded-lg divide-y divide-border-subtle overflow-hidden">
+          {activeServices.map(svc => (
+            <ActiveServiceRow key={`${svc.id}:${svc.alias ?? 'default'}`} svc={svc} />
+          ))}
+        </div>
+      )}
 
       {showModal && (
         <AddServiceModal
           services={allServices}
           onClose={() => setShowModal(false)}
+          googleOAuthMissing={googleOAuthMissing}
         />
       )}
     </div>
