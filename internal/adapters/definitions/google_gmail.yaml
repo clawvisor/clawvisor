@@ -1,7 +1,7 @@
 service:
   id: google.gmail
   display_name: Gmail
-  description: "Read, search, send, and draft email"
+  description: "Read, search, send, and draft email with attachment support"
   setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md"
 
 auth:
@@ -34,31 +34,17 @@ actions:
   get_message:
     display_name: "Get message"
     risk: { category: read, sensitivity: low, description: "Read a specific email message" }
-    method: GET
-    path: "/users/me/messages/{{.message_id}}"
+    override: go
     params:
-      message_id: { type: string, required: true, location: path }
-      format: { type: string, default: "full", location: query }
-    response:
-      fields:
-        - { name: id }
-        - name: from
-          expr: "findHeader(payload.headers, 'From')"
-          sanitize: true
-        - name: to
-          expr: "findHeader(payload.headers, 'To')"
-          sanitize: true
-        - name: subject
-          expr: "findHeader(payload.headers, 'Subject')"
-          sanitize: true
-        - name: date
-          expr: "findHeader(payload.headers, 'Date')"
-        - name: body
-          expr: "sanitize(extractMimeBody(payload) != '' ? extractMimeBody(payload) : snippet, 2000)"
-        - name: is_unread
-          expr: "'UNREAD' in labelIds"
-        - { name: threadId, rename: thread_id }
-      summary: "Email from {{.from}}: {{.subject}}"
+      message_id: { type: string, required: true }
+
+  get_attachment:
+    display_name: "Get attachment"
+    risk: { category: read, sensitivity: low, description: "Download an email attachment" }
+    override: go
+    params:
+      message_id: { type: string, required: true }
+      attachment_id: { type: string, required: true }
 
   send_message:
     display_name: "Send message"

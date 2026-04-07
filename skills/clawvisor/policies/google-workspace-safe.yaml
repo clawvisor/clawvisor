@@ -8,7 +8,7 @@ description: >
 rules:
   # Gmail — read operations allowed, send requires approval, delete blocked
   - service: google.gmail
-    actions: [list_messages, get_message]
+    actions: [list_messages, get_message, get_attachment]
     allow: true
 
   - service: google.gmail

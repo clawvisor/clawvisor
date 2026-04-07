@@ -133,12 +133,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	// Build Go action overrides for Google services that need complex logic
 	// (MIME encoding, multipart uploads, dual API calls) beyond what YAML
-	// expressions can handle. Calendar, Contacts, Drive search_files, and
-	// Gmail get_message are now fully YAML-driven with expr-lang transforms.
+	// expressions can handle. Calendar, Contacts, and Drive search_files
+	// are fully YAML-driven with expr-lang transforms.
 	goOverrides := map[string]yamlruntime.ActionFunc{}
 
 	gmail := gmailadapter.New(oauthProvider)
-	for _, action := range []string{"list_messages", "send_message", "create_draft"} {
+	for _, action := range []string{"list_messages", "get_message", "get_attachment", "send_message", "create_draft"} {
 		goOverrides["google.gmail:"+action] = gmail.Execute
 	}
 	drive := driveadapter.New(oauthProvider)
