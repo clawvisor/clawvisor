@@ -471,6 +471,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
+	mux.Handle("POST /api/services/{serviceID}/rename-alias", user(servicesHandler.RenameAlias))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/start", user(servicesHandler.DeviceFlowStart))
 	mux.Handle("POST /api/services/{serviceID}/device-flow/poll", user(servicesHandler.DeviceFlowPoll))
 	mux.Handle("POST /api/services/{serviceID}/pkce-flow/start", user(servicesHandler.PKCEFlowStart))

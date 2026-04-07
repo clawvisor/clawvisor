@@ -4,8 +4,11 @@
 package credential
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"time"
 
@@ -80,6 +83,34 @@ func MergeScopes(existing, additional []string) []string {
 	}
 	sort.Strings(merged)
 	return merged
+}
+
+// FetchGoogleEmail calls the Google userinfo endpoint and returns the
+// authenticated user's email address. This is used to auto-detect the
+// account identity when connecting a Google service.
+func FetchGoogleEmail(ctx context.Context, client *http.Client) (string, error) {
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		return "", fmt.Errorf("google userinfo request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("google userinfo: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("google userinfo: read body: %w", err)
+	}
+
+	var info struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		return "", fmt.Errorf("google userinfo: parse: %w", err)
+	}
+	return info.Email, nil
 }
 
 // HasAllScopes returns true if existing contains all of the required scopes.

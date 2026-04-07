@@ -12,11 +12,22 @@ type ServiceDef struct {
 
 // ServiceInfo contains display and identification metadata.
 type ServiceInfo struct {
-	ID          string `yaml:"id"`
-	DisplayName string `yaml:"display_name"`
-	Description string `yaml:"description"`
-	SetupURL    string `yaml:"setup_url,omitempty"`
-	IconSVG     string `yaml:"icon_svg,omitempty"`
+	ID          string       `yaml:"id"`
+	DisplayName string       `yaml:"display_name"`
+	Description string       `yaml:"description"`
+	SetupURL    string       `yaml:"setup_url,omitempty"`
+	IconSVG     string       `yaml:"icon_svg,omitempty"`
+	Identity    *IdentityDef `yaml:"identity,omitempty"`
+}
+
+// IdentityDef configures automatic account identity detection after activation.
+// The service makes a request to the endpoint and extracts the identity
+// from the JSON response using the specified field path.
+type IdentityDef struct {
+	Endpoint string `yaml:"endpoint"`         // URL to fetch identity (e.g. "/user")
+	Field    string `yaml:"field"`            // dot-delimited JSON field path (e.g. "login", "email")
+	Method   string `yaml:"method,omitempty"` // HTTP method, default "GET"
+	Body     string `yaml:"body,omitempty"`   // request body (e.g. GraphQL query JSON)
 }
 
 // AuthDef describes how the adapter authenticates with the remote API.

@@ -232,6 +232,7 @@ export interface ServiceInfo {
   oauth: boolean
   device_flow?: boolean
   pkce_flow?: boolean
+  auto_identity?: boolean
   requires_activation?: boolean
   credential_free?: boolean
   actions: ServiceActionInfo[]
@@ -527,11 +528,12 @@ export const api = {
     },
     // Returns the OAuth consent URL via authenticated fetch (fixes missing-auth-header issue).
     // If the user already has all required scopes, returns {already_authorized: true} instead.
-    oauthGetUrl: (serviceID: string, pendingReqId?: string, alias?: string) =>
+    oauthGetUrl: (serviceID: string, pendingReqId?: string, alias?: string, newAccount?: boolean) =>
       get<{ url?: string; already_authorized?: boolean; service?: string }>('/api/oauth/url', {
         service: serviceID,
         ...(pendingReqId ? { pending_request_id: pendingReqId } : {}),
         ...(alias ? { alias } : {}),
+        ...(newAccount ? { new_account: 'true' } : {}),
       }),
     activate: (serviceID: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/activate`, {}),
@@ -543,6 +545,11 @@ export const api = {
     deactivate: (serviceID: string, alias?: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/deactivate`, {
         ...(alias ? { alias } : {}),
+      }),
+    renameAlias: (serviceID: string, oldAlias: string, newAlias: string) =>
+      post<{ status: string; service: string; alias: string }>(`/api/services/${serviceID}/rename-alias`, {
+        old_alias: oldAlias,
+        new_alias: newAlias,
       }),
     pkceFlowStart: (serviceID: string, alias?: string) =>
       post<{ authorize_url: string; state: string }>(`/api/services/${serviceID}/pkce-flow/start`, {

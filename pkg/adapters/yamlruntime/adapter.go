@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -102,6 +103,72 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	default:
 		return nil, fmt.Errorf("%s: unsupported API type %q", a.def.Service.ID, a.def.API.Type)
 	}
+}
+
+// FetchIdentity makes a request to the configured identity endpoint and
+// extracts the account identifier from the JSON response.
+func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+	idDef := a.def.Service.Identity
+	if idDef == nil {
+		return "", nil
+	}
+
+	client, err := a.buildAuthClient(ctx, credBytes)
+	if err != nil {
+		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
+	}
+
+	endpoint := idDef.Endpoint
+	if !strings.HasPrefix(endpoint, "http") {
+		endpoint = strings.TrimRight(a.def.API.BaseURL, "/") + "/" + strings.TrimLeft(endpoint, "/")
+	}
+
+	method := idDef.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	var bodyReader io.Reader
+	if idDef.Body != "" {
+		bodyReader = strings.NewReader(idDef.Body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bodyReader)
+	if err != nil {
+		return "", fmt.Errorf("%s: identity request: %w", a.def.Service.ID, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("%s: identity request: %w", a.def.Service.ID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("%s: identity endpoint returned %d", a.def.Service.ID, resp.StatusCode)
+	}
+
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return "", fmt.Errorf("%s: identity parse: %w", a.def.Service.ID, err)
+	}
+
+	// Walk the dot-delimited field path.
+	parts := strings.Split(idDef.Field, ".")
+	var current any = raw
+	for _, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("%s: identity field %q not found", a.def.Service.ID, idDef.Field)
+		}
+		current, ok = m[part]
+		if !ok {
+			return "", fmt.Errorf("%s: identity field %q not found", a.def.Service.ID, idDef.Field)
+		}
+	}
+
+	identity, ok := current.(string)
+	if !ok {
+		return "", fmt.Errorf("%s: identity field %q is not a string", a.def.Service.ID, idDef.Field)
+	}
+	return identity, nil
 }
 
 func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
@@ -299,6 +366,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		OAuthEndpoint:     oauthEndpoint,
 		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",
 		PKCEFlow:          a.def.Auth.PKCEFlow != nil && a.resolvePKCEFlowClientID() != "",
+		AutoIdentity:      a.def.Service.Identity != nil,
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
 	}

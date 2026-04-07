@@ -23,6 +23,7 @@ const serviceID = "google.contacts"
 // contactsScopes are the OAuth scopes required by the Contacts adapter.
 var contactsScopes = []string{
 	"https://www.googleapis.com/auth/contacts.readonly",
+	"https://www.googleapis.com/auth/userinfo.email",
 }
 
 // ContactsAdapter implements adapters.Adapter for Google Contacts.
@@ -62,6 +63,15 @@ func (a *ContactsAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, erro
 
 func (a *ContactsAdapter) ValidateCredential(credBytes []byte) error {
 	return credential.Validate(credBytes)
+}
+
+// FetchIdentity returns the Google account email for auto-alias detection.
+func (a *ContactsAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+	client, err := a.httpClient(ctx, credBytes)
+	if err != nil {
+		return "", err
+	}
+	return credential.FetchGoogleEmail(ctx, client)
 }
 
 func (a *ContactsAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {

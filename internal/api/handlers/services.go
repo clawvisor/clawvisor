@@ -62,8 +62,9 @@ type oauthStateEntry struct {
 	ExpiresAt    time.Time
 }
 
-// validAliasRe matches safe alias values: alphanumeric, underscores, hyphens.
-var validAliasRe = regexp.MustCompile(`^[a-zA-Z0-9_-]*$`)
+// validAliasRe matches safe alias values: alphanumeric, underscores, hyphens,
+// dots, spaces, and @ (to support auto-detected identities like emails and workspace names).
+var validAliasRe = regexp.MustCompile(`^[a-zA-Z0-9_.@+ -]*$`)
 
 // validAlias returns true if s is a safe service alias (empty is OK, maps to "default").
 func validAlias(s string) bool {
@@ -150,6 +151,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
 		DeviceFlow         bool          `json:"device_flow,omitempty"`
 		PKCEFlow           bool          `json:"pkce_flow,omitempty"`
+		AutoIdentity       bool          `json:"auto_identity,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
 		Actions            []actionEntry `json:"actions"`
@@ -198,6 +200,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			deviceFlow = meta.DeviceFlow
 			pkceFlow = meta.PKCEFlow
 		}
+		_, autoIdentity := a.(adapters.IdentityFetcher)
 
 		return serviceEntry{
 			ID:                 a.ServiceID(),
@@ -208,6 +211,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			OAuthEndpoint:      oauthEndpoint,
 			DeviceFlow:         deviceFlow,
 			PKCEFlow:           pkceFlow,
+			AutoIdentity:       autoIdentity,
 			RequiresActivation: true,
 			Actions:            actions,
 			SetupURL:           setupURL,
@@ -222,17 +226,29 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		credentialFree := a.ValidateCredential(nil) == nil
 
 		if credentialFree {
-			status := "not_activated"
-			var activatedAt *time.Time
-			if m, ok := metaByKey[a.ServiceID()+":default"]; ok {
-				status = "activated"
-				activatedAt = &m.ActivatedAt
+			// Check all metas for this service (may have a non-default alias via rename).
+			found := false
+			for _, m := range metas {
+				if m.ServiceID != a.ServiceID() {
+					continue
+				}
+				found = true
+				activatedAt := m.ActivatedAt
+				entry := buildEntry(a)
+				entry.CredentialFree = true
+				entry.Status = "activated"
+				entry.ActivatedAt = &activatedAt
+				if m.Alias != "default" {
+					entry.Alias = m.Alias
+				}
+				services = append(services, entry)
 			}
-			entry := buildEntry(a)
-			entry.CredentialFree = true
-			entry.Status = status
-			entry.ActivatedAt = activatedAt
-			services = append(services, entry)
+			if !found {
+				entry := buildEntry(a)
+				entry.CredentialFree = true
+				entry.Status = "not_activated"
+				services = append(services, entry)
+			}
 			continue
 		}
 
@@ -331,12 +347,14 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		alias = "default"
 	}
 	if !validAlias(alias) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
 
+	newAccount := r.URL.Query().Get("new_account") == "true"
+
 	mergedScopes, alreadyAuthorized := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
-	if alreadyAuthorized {
+	if alreadyAuthorized && !newAccount {
 		// Scopes already granted — just ensure service_meta exists and return.
 		_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -344,6 +362,12 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 			"service":            serviceID,
 		})
 		return
+	}
+
+	// When adding a new account, use a placeholder alias — the real identity
+	// will be resolved from the credential after the OAuth callback completes.
+	if newAccount {
+		alias = "default"
 	}
 
 	stateToken := uuid.New().String()
@@ -358,7 +382,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 	})
 
 	oauthCfg.Scopes = mergedScopes
-	authURL := oauthAuthURL(oauthCfg, stateToken, alias)
+	authURL := oauthAuthURL(oauthCfg, stateToken, newAccount || (alias != "" && alias != "default"))
 	writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
 }
 
@@ -399,7 +423,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		alias = "default"
 	}
 	if !validAlias(alias) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
 
@@ -416,7 +440,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	})
 
 	oauthCfg.Scopes = mergedScopes
-	authURL := oauthAuthURL(oauthCfg, stateToken, alias)
+	authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default")
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -488,6 +512,9 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Auto-detect identity (e.g. email) before storing so the vault key is correct.
+	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes)
+
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("vault set failed", "service", entry.ServiceID, "err", err)
@@ -496,7 +523,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
-	h.logger.Info("service activated", "user", entry.UserID, "service", entry.ServiceID)
+	h.logger.Info("service activated", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 
 	// Re-execute any pending request that was waiting for this activation.
 	if entry.PendingReqID != "" {
@@ -584,7 +611,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			alias = "default"
 		}
 		if !validAlias(alias) {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 			return
 		}
 
@@ -610,7 +637,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		oauthCfg := adapter.OAuthConfig()
 		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
-		authURL := oauthAuthURL(oauthCfg, stateToken, alias)
+		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default")
 		writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
 		return
 	}
@@ -680,7 +707,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		alias = "default"
 	}
 	if !validAlias(alias) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
 
@@ -695,6 +722,9 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Auto-detect identity (e.g. GitHub username) before storing.
+	alias = h.resolveIdentityAlias(r.Context(), serviceID, alias, credBytes)
+
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	if err := h.vault.Set(r.Context(), user.ID, vKey, credBytes); err != nil {
 		h.logger.Warn("vault set failed (api key)", "service", serviceID, "err", err)
@@ -704,7 +734,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 	_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
 	h.logger.Info("service activated via api key", "user", user.ID, "service", serviceID, "alias", alias)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID, "alias": alias})
 }
 
 // Deactivate removes the credential and service_meta for a service + alias.
@@ -734,7 +764,7 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 		alias = "default"
 	}
 	if !validAlias(alias) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
 		return
 	}
 
@@ -776,6 +806,138 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("service deactivated", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
+}
+
+// RenameAlias renames an existing service connection alias.
+//
+// POST /api/services/{serviceID}/rename-alias
+// Auth: user JWT
+// Body: {"old_alias": "...", "new_alias": "..."}
+func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	serviceID := r.PathValue("serviceID")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "serviceID is required")
+		return
+	}
+
+	var body struct {
+		OldAlias string `json:"old_alias"`
+		NewAlias string `json:"new_alias"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	if body.OldAlias == "" {
+		body.OldAlias = "default"
+	}
+	if body.NewAlias == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "new_alias is required")
+		return
+	}
+	if !validAlias(body.NewAlias) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "new_alias contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, ., @, +)")
+		return
+	}
+	if body.OldAlias == body.NewAlias {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "renamed", "service": serviceID, "alias": body.NewAlias})
+		return
+	}
+
+	// Verify the old alias exists.
+	oldMeta, err := h.st.GetServiceMeta(r.Context(), user.ID, serviceID, body.OldAlias)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "connection not found")
+		return
+	}
+
+	// Check the new alias doesn't already exist for this service.
+	if _, err := h.st.GetServiceMeta(r.Context(), user.ID, serviceID, body.NewAlias); err == nil {
+		writeError(w, http.StatusConflict, "CONFLICT", "a connection with that alias already exists")
+		return
+	}
+
+	// Move the vault credential (if the service has one).
+	oldVKey := h.adapterReg.VaultKeyWithAlias(serviceID, body.OldAlias)
+	newVKey := h.adapterReg.VaultKeyWithAlias(serviceID, body.NewAlias)
+	if oldVKey != newVKey {
+		credBytes, err := h.vault.Get(r.Context(), user.ID, oldVKey)
+		if err == nil && len(credBytes) > 0 {
+			if err := h.vault.Set(r.Context(), user.ID, newVKey, credBytes); err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to move credential")
+				return
+			}
+			_ = h.vault.Delete(r.Context(), user.ID, oldVKey)
+		}
+	}
+
+	// Rename this service's meta.
+	_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, body.NewAlias, oldMeta.ActivatedAt)
+	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, body.OldAlias)
+
+	// If other services share the same vault key (e.g. all Google services share "google"),
+	// rename their metas too so they continue to find the credential.
+	metas, _ := h.st.ListServiceMetas(r.Context(), user.ID)
+	for _, m := range metas {
+		if m.ServiceID == serviceID {
+			continue // already handled
+		}
+		if h.adapterReg.VaultKeyWithAlias(m.ServiceID, m.Alias) == oldVKey {
+			_ = h.st.UpsertServiceMeta(r.Context(), user.ID, m.ServiceID, body.NewAlias, m.ActivatedAt)
+			_ = h.st.DeleteServiceMeta(r.Context(), user.ID, m.ServiceID, m.Alias)
+			h.logger.Info("alias renamed (shared key)", "user", user.ID, "service", m.ServiceID, "old", m.Alias, "new", body.NewAlias)
+		}
+	}
+
+	h.logger.Info("alias renamed", "user", user.ID, "service", serviceID, "old", body.OldAlias, "new", body.NewAlias)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "renamed", "service": serviceID, "alias": body.NewAlias})
+}
+
+// resolveIdentityAlias attempts to auto-detect the account identity for a service.
+// If the adapter implements IdentityFetcher and the current alias is "default",
+// it fetches the identity and returns it as the new alias. On failure or if the
+// adapter doesn't support identity fetching, it returns the original alias unchanged.
+func (h *ServicesHandler) resolveIdentityAlias(
+	ctx context.Context, serviceID, currentAlias string, credBytes []byte,
+) string {
+	if currentAlias != "default" {
+		return currentAlias // user explicitly chose an alias
+	}
+
+	adapter, ok := h.adapterReg.Get(serviceID)
+	if !ok {
+		return currentAlias
+	}
+
+	fetcher, ok := adapter.(adapters.IdentityFetcher)
+	if !ok {
+		return currentAlias
+	}
+
+	identity, err := fetcher.FetchIdentity(ctx, credBytes)
+	if err != nil || identity == "" {
+		if err != nil {
+			h.logger.Warn("identity fetch failed, using default alias",
+				"service", serviceID, "err", err)
+		}
+		return currentAlias
+	}
+
+	if !validAlias(identity) {
+		h.logger.Warn("fetched identity contains invalid characters, using default alias",
+			"service", serviceID, "identity", identity)
+		return currentAlias
+	}
+
+	h.logger.Info("auto-detected service identity",
+		"service", serviceID, "identity", identity)
+	return identity
 }
 
 // reactivatePendingRequest re-executes a pending request after service activation.
@@ -876,17 +1038,18 @@ func (h *ServicesHandler) sweepExpiredOAuthStates() {
 	})
 }
 
-// oauthAuthURL builds the OAuth2 authorization URL. For non-default aliases
-// (multi-account), it adds prompt=select_account so the user can choose a
-// different Google account.
-func oauthAuthURL(cfg *oauth2.Config, stateToken, alias string) string {
+// oauthAuthURL builds the OAuth2 authorization URL. When selectAccount is true
+// (multi-account or new_account flow), it adds prompt=consent select_account
+// so the user can choose a different Google account.
+func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool) string {
+	prompt := "consent"
+	if selectAccount {
+		prompt = "consent select_account"
+	}
 	opts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
-		oauth2.SetAuthURLParam("prompt", "consent"),
-	}
-	if alias != "" && alias != "default" {
-		opts = append(opts, oauth2.SetAuthURLParam("prompt", "consent select_account"))
+		oauth2.SetAuthURLParam("prompt", prompt),
 	}
 	return cfg.AuthCodeURL(stateToken, opts...)
 }
@@ -1201,17 +1364,20 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, entry.Alias)
+	// Auto-detect identity before storing.
+	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes)
+
+	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("device flow: vault set failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "VAULT_ERROR", "failed to store credential")
 		return
 	}
-	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, entry.Alias, time.Now())
+	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
 	h.deviceFlows.Delete(body.FlowID)
 
-	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID)
-	writeJSON(w, http.StatusOK, map[string]any{"status": "complete"})
+	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "complete", "alias": alias})
 }
 
 // ── PKCE Flow (RFC 7636) ─────────────────────────────────────────────────────
@@ -1427,15 +1593,18 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, entry.Alias)
+	// Auto-detect identity before storing.
+	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes)
+
+	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("pkce flow: vault set failed", "err", err)
 		oauthPopupClose(w, "Failed to store credential.", "")
 		return
 	}
-	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, entry.Alias, time.Now())
+	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
 
-	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID)
+	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 	oauthPopupClose(w, "", entry.CLICallback)
 }
 

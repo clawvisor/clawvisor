@@ -28,6 +28,7 @@ type ServiceMetadata struct {
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
 	DeviceFlow        bool                  // whether device flow activation is available
 	PKCEFlow          bool                  // whether PKCE authorization code flow is available
+	AutoIdentity      bool                  // whether the adapter can auto-detect account identity
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 }
@@ -141,6 +142,17 @@ type VerificationHinter interface {
 	// about how to interpret this service's parameters (e.g. "thread_ts is
 	// within channel scope, not a scope escalation").
 	VerificationHints() string
+}
+
+// IdentityFetcher is an optional interface adapters can implement to
+// auto-discover the account identity after activation (e.g. the email
+// address for a Google account, the username for GitHub). When implemented,
+// the returned identity is used as the service alias instead of "default".
+type IdentityFetcher interface {
+	// FetchIdentity uses the stored credential to query the service for a
+	// human-readable account identifier (e.g. "levine.eric.j@gmail.com",
+	// "octocat"). Returns an empty string if identity cannot be determined.
+	FetchIdentity(ctx context.Context, credential []byte) (string, error)
 }
 
 // Adapter is the interface every service adapter implements.

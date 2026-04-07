@@ -26,6 +26,7 @@ const serviceID = "google.gmail"
 var gmailBaseScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
+	"https://www.googleapis.com/auth/userinfo.email",
 }
 
 // draftsEnabled reports whether the create_draft action is available.
@@ -84,6 +85,15 @@ func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) 
 
 func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
 	return credential.Validate(credBytes)
+}
+
+// FetchIdentity returns the Google account email for auto-alias detection.
+func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+	client, err := a.httpClient(ctx, credBytes)
+	if err != nil {
+		return "", err
+	}
+	return credential.FetchGoogleEmail(ctx, client)
 }
 
 // Execute runs a Gmail action. Credential is injected by the gateway.

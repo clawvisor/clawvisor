@@ -15,6 +15,8 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deviceCode, setDeviceCode] = useState<{ userCode: string; verificationUri: string } | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
@@ -33,7 +35,8 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
       } else if (svc.device_flow) {
         const resp = await api.services.deviceFlowStart(svc.id, alias)
         setDeviceCode({ userCode: resp.user_code, verificationUri: resp.verification_uri })
-        window.open(resp.verification_uri, '_blank')
+        const popup = window.open(resp.verification_uri, '_blank', 'width=600,height=700')
+        if (!popup) window.open(resp.verification_uri, '_blank')
         function poll(flowId: string, interval: number) {
           pollRef.current = setTimeout(async () => {
             try {
@@ -97,6 +100,24 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
     }
   }
 
+  async function handleRename(overrideAlias?: string) {
+    const newAlias = (overrideAlias ?? renameValue).trim() || 'default'
+    const oldAlias = alias || 'default'
+    if (newAlias === oldAlias) { setRenaming(false); return }
+    setError(null)
+    setSaving(true)
+    try {
+      await api.services.renameAlias(svc.id, oldAlias, newAlias)
+      setRenaming(false)
+      setRenameValue('')
+      qc.invalidateQueries({ queryKey: ['services'] })
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to rename')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const desc = serviceDescription(svc.id)
 
   return (
@@ -109,50 +130,89 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-medium text-text-primary text-sm truncate">{serviceName(svc.id, svc.alias)}</span>
-            {svc.alias && svc.alias !== 'default' && (
-              <span className="text-xs text-text-tertiary shrink-0">{svc.alias}</span>
-            )}
             <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" title="Connected" />
+            <button
+              onClick={() => { setRenaming(true); setRenameValue(svc.alias && svc.alias !== 'default' ? svc.alias : '') }}
+              className="text-xs text-text-tertiary hover:text-text-secondary opacity-0 group-hover:opacity-100"
+            >
+              rename
+            </button>
           </div>
           {desc && <p className="text-xs text-text-tertiary mt-0.5 truncate">{desc}</p>}
         </div>
 
-        {/* Activated time */}
-        {svc.activated_at && (
-          <span className="text-xs text-text-tertiary shrink-0 hidden sm:block">
-            {formatDistanceToNow(new Date(svc.activated_at), { addSuffix: true })}
-          </span>
-        )}
-
-        {/* Actions */}
-        {svc.requires_activation !== false && (
-          <div className="flex gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
+        {/* Actions + connected time */}
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          {svc.requires_activation !== false && (
+            <div className="flex gap-1.5">
+              {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
+                <button
+                  onClick={handleReauth}
+                  className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+                >
+                  Re-authorize
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setShowKeyInput(v => !v); setError(null) }}
+                  className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+                >
+                  Update token
+                </button>
+              ))}
               <button
-                onClick={handleReauth}
-                className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+                onClick={handleDeactivate}
+                className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
               >
-                Re-authorize
+                Disconnect
               </button>
-            ) : (
-              <button
-                onClick={() => { setShowKeyInput(v => !v); setError(null) }}
-                className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
-              >
-                Update token
-              </button>
-            ))}
-            <button
-              onClick={handleDeactivate}
-              className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
-            >
-              Disconnect
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+          {svc.activated_at && (
+            <span className="text-xs text-text-tertiary hidden sm:block whitespace-nowrap">
+              Connected {formatDistanceToNow(new Date(svc.activated_at), { addSuffix: true })}
+            </span>
+          )}
+        </div>
       </div>
 
       {error && <p className="text-xs text-danger px-5 pb-3">{error}</p>}
+
+      {renaming && (
+        <div className="px-5 pb-3 ml-16 flex items-center gap-2">
+          <input
+            type="text"
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') { setRenaming(false); setError(null) } }}
+            className="text-xs px-2 py-1 rounded border border-border-default bg-surface-0 text-text-primary w-48"
+            placeholder="New label"
+            autoFocus
+          />
+          <button
+            onClick={() => handleRename()}
+            disabled={saving}
+            className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2 disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          {svc.alias && svc.alias !== 'default' && (
+            <button
+              onClick={() => handleRename('default')}
+              disabled={saving}
+              className="text-xs px-2 py-1 text-danger hover:text-danger/80 disabled:opacity-50"
+            >
+              Clear label
+            </button>
+          )}
+          <button
+            onClick={() => { setRenaming(false); setError(null) }}
+            className="text-xs px-2 py-1 text-text-tertiary hover:text-text-secondary"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {deviceCode && (
         <div className="px-5 pb-4 space-y-1.5 ml-16">
@@ -210,6 +270,7 @@ interface ServiceType {
   oauth: boolean
   deviceFlow: boolean
   pkceFlow: boolean
+  autoIdentity: boolean
   requiresActivation: boolean
   credentialFree: boolean
   actions: ServiceActionInfo[]
@@ -283,6 +344,7 @@ function AddServiceModal({
         oauth: svc.oauth,
         deviceFlow: svc.device_flow ?? false,
         pkceFlow: svc.pkce_flow ?? false,
+        autoIdentity: svc.auto_identity ?? false,
         requiresActivation: svc.requires_activation ?? true,
         credentialFree: svc.credential_free ?? false,
         actions: svc.actions,
@@ -294,10 +356,10 @@ function AddServiceModal({
   }
   const serviceTypes = Array.from(typeMap.values())
 
-  async function handleActivateOAuth(serviceId: string, alias?: string) {
+  async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
     try {
-      const resp = await api.services.oauthGetUrl(serviceId, undefined, alias)
+      const resp = await api.services.oauthGetUrl(serviceId, undefined, alias, newAccount)
       if (resp.already_authorized) {
         qc.invalidateQueries({ queryKey: ['services'] })
         onClose()
@@ -377,7 +439,8 @@ function AddServiceModal({
         interval: resp.interval,
       })
       setDeviceFlowStatus('pending')
-      window.open(resp.verification_uri, '_blank')
+      const popup = window.open(resp.verification_uri, '_blank', 'width=600,height=700')
+      if (!popup) window.open(resp.verification_uri, '_blank')
       startDeviceFlowPolling(serviceId, resp.flow_id, resp.interval)
     } catch (e: any) {
       setError(e.message ?? 'Failed to start device authorization')
@@ -413,15 +476,20 @@ function AddServiceModal({
   }
 
   // For the first activation, skip the alias prompt and go straight to auth.
-  // Only show alias prompt when adding a second+ account.
+  // For auto-identity services, always skip — the backend resolves the alias.
+  // Only show alias prompt when adding a second+ account without auto-identity.
   function handleActivate(st: ServiceType) {
     setError(null)
     if (st.credentialFree) {
       handleActivateCredentialFree(st.baseId)
       return
     }
-    // If already has one account, prompt for alias to label the second.
-    if (st.activatedCount > 0) {
+    // If already has one account and the service can't auto-detect identity,
+    // prompt for a label to distinguish accounts. OAuth/PKCE/device-flow
+    // services always support auto-identity because the backend resolves
+    // the account identity from the credential at activation time.
+    const canAutoIdentify = st.autoIdentity || st.oauth || st.pkceFlow || st.deviceFlow
+    if (st.activatedCount > 0 && !canAutoIdentify) {
       setKeyInputFor(null)
       setKeyValue('')
       setDeviceFlowFor(null)
@@ -430,13 +498,14 @@ function AddServiceModal({
       setAliasValue('')
       return
     }
-    // First activation — go directly to auth.
+    // First activation or auto-identity — go directly to auth.
     startAuth(st)
   }
 
   function startAuth(st: ServiceType, alias?: string) {
+    const addingAccount = st.activatedCount > 0
     if (st.oauth) {
-      handleActivateOAuth(st.baseId, alias)
+      handleActivateOAuth(st.baseId, alias, addingAccount)
     } else if (st.pkceFlow) {
       handleActivatePKCE(st.baseId, alias)
     } else if (st.deviceFlow) {
@@ -514,6 +583,10 @@ function AddServiceModal({
                         >
                           Set up OAuth
                         </a>
+                      ) : isActivated && st.credentialFree ? (
+                        <span className="block w-full text-xs px-3 py-2 rounded-lg border border-border-subtle text-text-tertiary text-center">
+                          Connected
+                        </span>
                       ) : (
                         <button
                           onClick={() => handleActivate(st)}

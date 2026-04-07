@@ -25,6 +25,7 @@ const serviceID = "google.drive"
 var driveScopes = []string{
 	"https://www.googleapis.com/auth/drive.readonly",
 	"https://www.googleapis.com/auth/drive.file",
+	"https://www.googleapis.com/auth/userinfo.email",
 }
 
 // DriveAdapter implements adapters.Adapter for Google Drive.
@@ -63,6 +64,15 @@ func (a *DriveAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) 
 
 func (a *DriveAdapter) ValidateCredential(credBytes []byte) error {
 	return credential.Validate(credBytes)
+}
+
+// FetchIdentity returns the Google account email for auto-alias detection.
+func (a *DriveAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+	client, err := a.httpClient(ctx, credBytes)
+	if err != nil {
+		return "", err
+	}
+	return credential.FetchGoogleEmail(ctx, client)
 }
 
 func (a *DriveAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
