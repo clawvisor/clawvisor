@@ -51,9 +51,10 @@ type evalChainFact struct {
 }
 
 type evalExpect struct {
-	Allow           bool   `json:"allow"`
-	ParamScope      string `json:"param_scope"`
-	ReasonCoherence string `json:"reason_coherence"`
+	Allow              bool     `json:"allow"`
+	ParamScope         string   `json:"param_scope"`
+	ReasonCoherence    string   `json:"reason_coherence"`
+	MissingChainValues []string `json:"missing_chain_values,omitempty"` // if set, verify these are emitted
 }
 
 // TestEvalIntentVerification runs labeled eval cases against a real LLM verifier.
@@ -200,6 +201,21 @@ func TestEvalIntentVerification(t *testing.T) {
 			}
 			if verdict.ReasonCoherence != tc.Expected.ReasonCoherence {
 				mismatches = append(mismatches, fmt.Sprintf("reason_coherence: got %q, want %q", verdict.ReasonCoherence, tc.Expected.ReasonCoherence))
+			}
+			// When expected missing_chain_values are specified, verify each one
+			// appears in the verdict. We don't require exact order or exclusivity —
+			// the LLM may emit additional values — but every expected value must
+			// be present for the programmatic fallback to work.
+			if len(tc.Expected.MissingChainValues) > 0 {
+				gotSet := make(map[string]bool, len(verdict.MissingChainValues))
+				for _, v := range verdict.MissingChainValues {
+					gotSet[v] = true
+				}
+				for _, want := range tc.Expected.MissingChainValues {
+					if !gotSet[want] {
+						mismatches = append(mismatches, fmt.Sprintf("missing_chain_values: %q not found in %v", want, verdict.MissingChainValues))
+					}
+				}
 			}
 
 			passed := len(mismatches) == 0

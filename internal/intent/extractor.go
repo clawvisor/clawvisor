@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -31,7 +33,7 @@ type ExtractRequest struct {
 	AuthorizedActions []store.TaskAction
 	Service           string
 	Action            string
-	Result            string // raw adapter result, truncated to maxExtractResultLen
+	Result            string // raw adapter result (full; truncated internally for LLM, regexes run against full)
 	TaskID            string
 	SessionID         string
 	AuditID           string
@@ -55,37 +57,35 @@ func NewLLMExtractor(health *llm.Health, logger *slog.Logger) *LLMExtractor {
 	return &LLMExtractor{health: health, logger: logger}
 }
 
-const extractionSystemPrompt = `You are a data extraction assistant for a security system. You will be given the result of an API action (e.g., listing emails, fetching contacts). Your job is to extract structural references from the result.
+const extractionSystemPrompt = `You extract structural references from API results for a security system.
 
-Extract ONLY:
-- IDs (message IDs, file IDs, thread IDs, event IDs, etc.)
-- Email addresses
-- Phone numbers
-- Names (person names, file names, channel names)
-- Amounts (monetary values, counts)
-- Dates and timestamps
-- URLs
-- Domains
+Extract ONLY: IDs, email addresses, phone numbers, person names, amounts, dates, URLs, domains.
+NEVER extract: message bodies, file contents, passwords, tokens, API keys, HTML.
 
-NEVER extract:
-- Message bodies or file contents
-- Passwords, tokens, or API keys
-- Full paragraphs of text
-- HTML or markup content
+The result may be TRUNCATED. Provide regex patterns so we can extract ALL entities from the full result.
 
-Return a JSON array of objects, each with "fact_type" and "fact_value" fields.
-fact_type should be a lowercase identifier like: "email_address", "message_id", "file_id", "phone_number", "person_name", "amount", "date", "url", "domain", "thread_id", "event_id", "channel_name", etc.
+Return a JSON object:
+- "facts": up to 20 objects with "fact_type" and "fact_value" for entities you see directly.
+- "patterns": objects with "fact_type" and "regex" (Go/RE2, one capture group) matching that type's values in the result structure.
 
-Cap at 50 facts maximum. If there are more, keep the most important ones (IDs and addresses over names and dates).
+fact_type values: email_address, message_id, file_id, phone_number, person_name, thread_id, event_id, etc.
 
-Example output:
-[{"fact_type": "email_address", "fact_value": "alice@company.com"}, {"fact_type": "message_id", "fact_value": "msg_abc123"}]
+Example:
+{"facts":[{"fact_type":"email_address","fact_value":"alice@co.com"}],"patterns":[{"fact_type":"email_address","regex":"\"email\":\\s*\"([^\"]+@[^\"]+)\""},{"fact_type":"message_id","regex":"\"id\":\\s*\"([a-f0-9]{16})\""}]}
 
-If there are no extractable facts, return an empty array: []`
+Empty result: {"facts":[],"patterns":[]}`
+
+// maxRegexRuntime caps how long we spend running LLM-provided regexes.
+const maxRegexRuntime = 2 * time.Second
+
+// maxRegexMatches caps the number of matches per regex pattern to prevent
+// runaway extraction from overly broad patterns.
+const maxRegexMatches = 200
 
 func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*store.ChainFact, error) {
 	result := req.Result
-	if len(result) > maxExtractResultLen {
+	truncated := len(result) > maxExtractResultLen
+	if truncated {
 		result = result[:maxExtractResultLen]
 	}
 
@@ -99,49 +99,55 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 	}
 
 	raw, err := client.Complete(ctx, messages)
-	if err != nil {
+	llmFailed := err != nil
+	if llmFailed {
 		if errors.Is(err, llm.ErrSpendCapExhausted) {
 			e.health.SetSpendCapExhausted()
 		}
-		e.logger.Warn("chain context extraction LLM call failed", "err", err, "task_id", req.TaskID)
-		return nil, nil // fail-safe
+		e.logger.Warn("chain context extraction LLM call failed, using builtin patterns", "err", err, "task_id", req.TaskID)
 	}
 
-	// Parse response
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimPrefix(raw, "```")
-	raw = strings.TrimSuffix(raw, "```")
-	raw = strings.TrimSpace(raw)
+	var directFacts []extractedFact
+	var patterns []extractionPattern
 
-	var extracted []struct {
-		FactType  string `json:"fact_type"`
-		FactValue string `json:"fact_value"`
-	}
-	if err := json.Unmarshal([]byte(raw), &extracted); err != nil {
-		e.logger.Warn("chain context extraction parse failed", "err", err, "task_id", req.TaskID)
-		return nil, nil // fail-safe
+	if !llmFailed {
+		// Parse response — supports both old format (array) and new format (object with facts+patterns).
+		raw = strings.TrimSpace(raw)
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimPrefix(raw, "```")
+		raw = strings.TrimSuffix(raw, "```")
+		raw = strings.TrimSpace(raw)
+
+		directFacts, patterns = parseExtractionResponse(raw, e.logger, req.TaskID)
 	}
 
-	if len(extracted) > maxExtractedFacts {
-		extracted = extracted[:maxExtractedFacts]
+	// When the LLM failed or returned no patterns, fall back to builtin
+	// patterns for the service so extraction still works without an LLM.
+	if len(directFacts) == 0 && len(patterns) == 0 {
+		patterns = builtinPatterns(req.Service, req.Action)
+		if len(patterns) > 0 {
+			e.logger.Debug("using builtin extraction patterns", "task_id", req.TaskID, "service", req.Service, "patterns", len(patterns))
+		}
 	}
 
-	// Validate and convert
+	// Validate direct facts via substring match against the full result.
+	seen := make(map[string]bool)
 	var facts []*store.ChainFact
 	var dropped int
-	for _, ef := range extracted {
+	for _, ef := range directFacts {
 		if ef.FactType == "" || ef.FactValue == "" {
 			dropped++
 			continue
 		}
-
-		// Substring validation: check that fact_value appears in the raw result.
 		if !substringMatch(req.Result, ef.FactValue, ef.FactType) {
 			dropped++
 			continue
 		}
-
+		key := ef.FactType + "|" + ef.FactValue
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		facts = append(facts, &store.ChainFact{
 			ID:        uuid.New().String(),
 			TaskID:    req.TaskID,
@@ -154,13 +160,192 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 		})
 	}
 
+	// Run regex patterns against the FULL result to capture entities beyond
+	// the 4KB window the LLM saw, or to provide extraction when the LLM is unavailable.
+	if len(patterns) > 0 && (truncated || llmFailed || len(directFacts) == 0) {
+		regexFacts := runExtractionPatterns(patterns, req.Result, e.logger, req.TaskID)
+		for _, rf := range regexFacts {
+			key := rf.factType + "|" + rf.factValue
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			facts = append(facts, &store.ChainFact{
+				ID:        uuid.New().String(),
+				TaskID:    req.TaskID,
+				SessionID: req.SessionID,
+				AuditID:   req.AuditID,
+				Service:   req.Service,
+				Action:    req.Action,
+				FactType:  rf.factType,
+				FactValue: rf.factValue,
+			})
+		}
+	}
+
+	if len(facts) > maxExtractedFacts {
+		facts = facts[:maxExtractedFacts]
+	}
+
 	e.logger.Debug("chain context extraction complete",
 		"task_id", req.TaskID,
-		"extracted", len(facts),
+		"direct_facts", len(directFacts)-dropped,
 		"dropped", dropped,
+		"patterns", len(patterns),
+		"total_facts", len(facts),
+		"truncated", truncated,
+		"llm_failed", llmFailed,
 	)
 
 	return facts, nil
+}
+
+type extractedFact struct {
+	FactType  string `json:"fact_type"`
+	FactValue string `json:"fact_value"`
+}
+
+type extractionPattern struct {
+	FactType string `json:"fact_type"`
+	Regex    string `json:"regex"`
+}
+
+// parseExtractionResponse handles both the new object format
+// {"facts": [...], "patterns": [...]} and the legacy array format [...].
+func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]extractedFact, []extractionPattern) {
+	// Try new format first.
+	var obj struct {
+		Facts    []extractedFact     `json:"facts"`
+		Patterns []extractionPattern `json:"patterns"`
+	}
+	if err := json.Unmarshal([]byte(raw), &obj); err == nil && (len(obj.Facts) > 0 || len(obj.Patterns) > 0) {
+		return obj.Facts, obj.Patterns
+	}
+
+	// Fall back to legacy array format.
+	var arr []extractedFact
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		logger.Warn("chain context extraction parse failed", "err", err, "task_id", taskID)
+		return nil, nil
+	}
+	return arr, nil
+}
+
+type regexMatch struct {
+	factType  string
+	factValue string
+}
+
+// runExtractionPatterns compiles and runs LLM-emitted regex patterns against
+// the full result. Each pattern must have exactly one capture group.
+// Patterns that fail to compile, take too long, or match too broadly are skipped.
+func runExtractionPatterns(patterns []extractionPattern, fullResult string, logger *slog.Logger, taskID string) []regexMatch {
+	deadline := time.Now().Add(maxRegexRuntime)
+	var matches []regexMatch
+
+	for _, p := range patterns {
+		if time.Now().After(deadline) {
+			logger.Warn("regex extraction deadline exceeded, skipping remaining patterns",
+				"task_id", taskID,
+			)
+			break
+		}
+		if p.FactType == "" || p.Regex == "" {
+			continue
+		}
+
+		re, err := regexp.Compile(p.Regex)
+		if err != nil {
+			logger.Debug("skipping invalid extraction regex",
+				"task_id", taskID,
+				"fact_type", p.FactType,
+				"regex", p.Regex,
+				"err", err,
+			)
+			continue
+		}
+
+		found := re.FindAllStringSubmatch(fullResult, maxRegexMatches)
+		for _, m := range found {
+			// Expect exactly one capture group.
+			if len(m) < 2 {
+				continue
+			}
+			val := strings.TrimSpace(m[1])
+			if val == "" {
+				continue
+			}
+			matches = append(matches, regexMatch{factType: p.FactType, factValue: val})
+		}
+	}
+
+	return matches
+}
+
+// builtinPatterns returns hardcoded extraction patterns for known service
+// result structures. These serve as a fallback when the LLM is unavailable
+// (e.g. requests routed through a proxy that rejects extraction prompts).
+func builtinPatterns(service, action string) []extractionPattern {
+	// Generic patterns that apply to most JSON API responses.
+	generic := []extractionPattern{
+		{FactType: "email_address", Regex: `"(?:email|emailAddress|from|to|sender|recipient)":\s*"([^"]+@[^"]+)"`},
+	}
+
+	svc := strings.SplitN(service, ":", 2)[0] // strip instance suffix
+
+	switch svc {
+	case "google.gmail":
+		return append(generic,
+			extractionPattern{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
+			extractionPattern{FactType: "thread_id", Regex: `"threadId":\s*"([a-f0-9]{16})"`},
+			extractionPattern{FactType: "email_address", Regex: `"email":\s*"([^"]+@[^"]+)"`},
+		)
+	case "google.drive":
+		return append(generic,
+			extractionPattern{FactType: "file_id", Regex: `"id":\s*"([^"]+)"`},
+			extractionPattern{FactType: "email_address", Regex: `"emailAddress":\s*"([^"]+@[^"]+)"`},
+		)
+	case "google.calendar":
+		return append(generic,
+			extractionPattern{FactType: "event_id", Regex: `"id":\s*"([^"]+)"`},
+			extractionPattern{FactType: "email_address", Regex: `"email":\s*"([^"]+@[^"]+)"`},
+		)
+	case "google.contacts":
+		return append(generic,
+			extractionPattern{FactType: "phone_number", Regex: `"value":\s*"(\+?[\d\s\-()]{7,})"`},
+			extractionPattern{FactType: "email_address", Regex: `"value":\s*"([^"]+@[^"]+)"`},
+		)
+	case "github":
+		return append(generic,
+			extractionPattern{FactType: "issue_id", Regex: `"number":\s*(\d+)`},
+			extractionPattern{FactType: "pr_id", Regex: `"number":\s*(\d+)`},
+		)
+	case "linear":
+		return append(generic,
+			extractionPattern{FactType: "issue_id", Regex: `"id":\s*"([a-f0-9-]{36})"`},
+			extractionPattern{FactType: "issue_id", Regex: `"identifier":\s*"([A-Z]+-\d+)"`},
+		)
+	case "slack":
+		return append(generic,
+			extractionPattern{FactType: "channel_id", Regex: `"id":\s*"(C[A-Z0-9]+)"`},
+			extractionPattern{FactType: "message_id", Regex: `"ts":\s*"([\d.]+)"`},
+		)
+	case "stripe":
+		return append(generic,
+			extractionPattern{FactType: "charge_id", Regex: `"id":\s*"(ch_[a-zA-Z0-9]+)"`},
+			extractionPattern{FactType: "customer_id", Regex: `"(?:id|customer)":\s*"(cus_[a-zA-Z0-9]+)"`},
+		)
+	case "imessage":
+		return append(generic,
+			extractionPattern{FactType: "message_id", Regex: `"(?:id|guid)":\s*"([^"]+)"`},
+			extractionPattern{FactType: "phone_number", Regex: `"(?:handle|sender|recipient)":\s*"(\+?[\d]{10,})"`},
+		)
+	default:
+		// For unknown services, try generic ID and email patterns.
+		return append(generic,
+			extractionPattern{FactType: "entity_id", Regex: `"id":\s*"([^"]+)"`},
+		)
+	}
 }
 
 // substringMatch checks that factValue appears in result.

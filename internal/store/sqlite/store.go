@@ -1265,6 +1265,20 @@ func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, li
 	return facts, rows.Err()
 }
 
+func (s *Store) ChainFactValueExists(ctx context.Context, taskID, sessionID, value string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT 1 FROM chain_facts WHERE task_id = ? AND session_id = ? AND fact_value = ? LIMIT 1
+	`, taskID, sessionID, value).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) DeleteChainFactsByTask(ctx context.Context, taskID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM chain_facts WHERE task_id = ?`, taskID)
 	return err

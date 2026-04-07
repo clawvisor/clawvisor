@@ -227,6 +227,7 @@ func printExtractEvalSummary(t *testing.T, results []extractEvalResult) {
 		"sensitive_filtering",
 		"hallucination_resistance",
 		"edge_cases",
+		"regex_extraction",
 	}
 	for _, cat := range categories {
 		s, ok := categoryStats[cat]

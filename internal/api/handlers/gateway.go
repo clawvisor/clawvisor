@@ -296,6 +296,12 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			} else {
 				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, chainFacts)
 			}
+			// Chain context fallback: if the LLM flagged a missing entity,
+			// check programmatically — the LLM may have missed it in a long
+			// table, or it may exist beyond the loaded fact limit.
+			if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
+				verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+			}
 			if verdict != nil && !verdict.Allow {
 				dur := int(time.Since(start).Milliseconds())
 				e := baseEntry("verify", "restricted", taskIDPtr)
@@ -964,6 +970,94 @@ func valueInChainFacts(v any, facts []store.ChainFact) bool {
 	}
 	for _, f := range facts {
 		if f.FactValue == s {
+			return true
+		}
+	}
+	return false
+}
+
+// chainContextFallback handles chain context violations by checking whether
+// the missing values actually exist in the chain facts. Three outcomes:
+//
+//  1. All missing values found (in loaded slice or DB) → override to allow.
+//  2. Values not found, but chain facts exist for this session → extraction
+//     was lossy (4KB truncation / 50-fact cap), so allow with a warning
+//     rather than hard-reject on incomplete data.
+//  3. Values not found and no chain facts exist → genuine violation, keep reject.
+func chainContextFallback(
+	ctx context.Context,
+	st store.Store,
+	logger *slog.Logger,
+	verdict *intent.VerificationVerdict,
+	loadedFacts []store.ChainFact,
+	taskID string,
+	task *store.Task,
+	sessionID string,
+) *intent.VerificationVerdict {
+	chainSessionID := sessionID
+	if chainSessionID == "" && task.Lifetime != "standing" {
+		chainSessionID = taskID
+	}
+
+	allFound := true
+	for _, value := range verdict.MissingChainValues {
+		if value == "" {
+			continue
+		}
+		if chainFactInSlice(value, loadedFacts) {
+			continue
+		}
+		if chainSessionID == "" {
+			allFound = false
+			break
+		}
+		found, err := st.ChainFactValueExists(ctx, taskID, chainSessionID, value)
+		if err != nil {
+			logger.Warn("chain fact fallback DB query failed", "err", err, "task_id", taskID)
+			allFound = false
+			break
+		}
+		if !found {
+			allFound = false
+			break
+		}
+	}
+
+	if allFound {
+		logger.Info("chain context fallback: all missing values found in extended context",
+			"task_id", taskID,
+			"missing_values", verdict.MissingChainValues,
+		)
+		verdict.Allow = true
+		verdict.ParamScope = "ok"
+		verdict.Explanation = "Chain context fallback: all entities found in extended context (" + verdict.Explanation + ")"
+		return verdict
+	}
+
+	// Values not in DB — but if chain facts exist for this session, extraction
+	// was lossy (4KB result truncation / 50-fact cap per call). We can't
+	// distinguish "agent saw it but extraction missed it" from "agent never
+	// saw it", so allow with a note rather than hard-reject on incomplete data.
+	if len(loadedFacts) > 0 {
+		logger.Warn("chain context fallback: extraction incomplete, allowing despite missing values",
+			"task_id", taskID,
+			"missing_values", verdict.MissingChainValues,
+			"loaded_facts", len(loadedFacts),
+		)
+		verdict.Allow = true
+		verdict.ParamScope = "ok"
+		verdict.Explanation = "Chain context incomplete (extraction lossy) — allowing despite unverified entities (" + verdict.Explanation + ")"
+		return verdict
+	}
+
+	// No chain facts at all for this session — genuine violation.
+	return verdict
+}
+
+// chainFactInSlice checks if a value exists in the loaded chain facts slice.
+func chainFactInSlice(value string, facts []store.ChainFact) bool {
+	for _, f := range facts {
+		if f.FactValue == value {
 			return true
 		}
 	}

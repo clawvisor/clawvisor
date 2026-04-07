@@ -10,8 +10,14 @@
     },
     "expected": {
       "min_facts": 5,
-      "must_include_types": ["email_address", "message_id"],
-      "must_include_values": ["j.watson@meridian.io", "18de3f7a2b4c6d90"],
+      "must_include_types": [
+        "email_address",
+        "message_id"
+      ],
+      "must_include_values": [
+        "j.watson@meridian.io",
+        "18de3f7a2b4c6d90"
+      ],
       "must_exclude_values": []
     }
   },
@@ -26,8 +32,14 @@
     },
     "expected": {
       "min_facts": 4,
-      "must_include_types": ["event_id", "email_address"],
-      "must_include_values": ["7kn2p4m8q1r6s3t9", "m.torres@fieldstone.com"],
+      "must_include_types": [
+        "event_id",
+        "email_address"
+      ],
+      "must_include_values": [
+        "7kn2p4m8q1r6s3t9",
+        "m.torres@fieldstone.com"
+      ],
       "must_exclude_values": []
     }
   },
@@ -42,8 +54,12 @@
     },
     "expected": {
       "min_facts": 3,
-      "must_include_types": ["file_id"],
-      "must_include_values": ["1BxR7a3mNpQ9vK2wL5sYcTfDgHjKlMnO"],
+      "must_include_types": [
+        "file_id"
+      ],
+      "must_include_values": [
+        "1BxR7a3mNpQ9vK2wL5sYcTfDgHjKlMnO"
+      ],
       "must_exclude_values": []
     }
   },
@@ -58,8 +74,12 @@
     },
     "expected": {
       "min_facts": 3,
-      "must_include_types": ["url"],
-      "must_include_values": ["https://github.com/meridian-labs/platform/pull/2847"],
+      "must_include_types": [
+        "url"
+      ],
+      "must_include_values": [
+        "https://github.com/meridian-labs/platform/pull/2847"
+      ],
       "must_exclude_values": []
     }
   },
@@ -74,8 +94,14 @@
     },
     "expected": {
       "min_facts": 5,
-      "must_include_types": ["email_address", "phone_number"],
-      "must_include_values": ["m.delgado@vantagepoint.co", "+14158827394"],
+      "must_include_types": [
+        "email_address",
+        "phone_number"
+      ],
+      "must_include_values": [
+        "m.delgado@vantagepoint.co",
+        "+14158827394"
+      ],
       "must_exclude_values": []
     }
   },
@@ -90,8 +116,12 @@
     },
     "expected": {
       "min_facts": 3,
-      "must_include_types": ["amount"],
-      "must_include_values": ["ch_3RfV7nK2mP9xQ4wL"],
+      "must_include_types": [
+        "amount"
+      ],
+      "must_include_values": [
+        "ch_3RfV7nK2mP9xQ4wL"
+      ],
       "must_exclude_values": []
     }
   },
@@ -106,8 +136,16 @@
     },
     "expected": {
       "min_facts": 5,
-      "must_include_types": ["email_address", "message_id", "thread_id"],
-      "must_include_values": ["carlos.reyes@fieldstone.com", "18de3f7a2b4c6d90", "18de3f7a2b4c6d8e"],
+      "must_include_types": [
+        "email_address",
+        "message_id",
+        "thread_id"
+      ],
+      "must_include_values": [
+        "carlos.reyes@fieldstone.com",
+        "18de3f7a2b4c6d90",
+        "18de3f7a2b4c6d8e"
+      ],
       "must_exclude_values": []
     }
   },
@@ -122,8 +160,14 @@
     },
     "expected": {
       "min_facts": 6,
-      "must_include_types": ["email_address", "amount"],
-      "must_include_values": ["ch_3RfV7nK2mP9xQ4wL", "billing@northwind-traders.com"],
+      "must_include_types": [
+        "email_address",
+        "amount"
+      ],
+      "must_include_values": [
+        "ch_3RfV7nK2mP9xQ4wL",
+        "billing@northwind-traders.com"
+      ],
       "must_exclude_values": []
     }
   },
@@ -138,8 +182,13 @@
     },
     "expected": {
       "min_facts": 4,
-      "must_include_types": ["channel_name"],
-      "must_include_values": ["C06P3QR8VNW", "team-engineering"],
+      "must_include_types": [
+        "channel_name"
+      ],
+      "must_include_values": [
+        "C06P3QR8VNW",
+        "team-engineering"
+      ],
       "must_exclude_values": []
     }
   },
@@ -154,8 +203,14 @@
     },
     "expected": {
       "min_facts": 6,
-      "must_include_types": ["url", "email_address"],
-      "must_include_values": ["LIN-4827", "j.watson@meridian.io"],
+      "must_include_types": [
+        "url",
+        "email_address"
+      ],
+      "must_include_values": [
+        "LIN-4827",
+        "j.watson@meridian.io"
+      ],
       "must_exclude_values": []
     }
   },
@@ -170,8 +225,15 @@
     },
     "expected": {
       "min_facts": 6,
-      "must_include_types": ["event_id", "email_address"],
-      "must_include_values": ["7kn2p4m8q1r6s3t9", "s.patel@fieldstone.com", "m.torres@fieldstone.com"],
+      "must_include_types": [
+        "event_id",
+        "email_address"
+      ],
+      "must_include_values": [
+        "7kn2p4m8q1r6s3t9",
+        "s.patel@fieldstone.com",
+        "m.torres@fieldstone.com"
+      ],
       "must_exclude_values": []
     }
   },
@@ -256,7 +318,10 @@
       "min_facts": 0,
       "must_include_types": [],
       "must_include_values": [],
-      "must_exclude_values": ["ya29.a0AcM612xKp7R9nVqL3mW8tF5jH2dE4gBiCkNlOqPrSsUuVwXyZ1234567890", "1//0eT7vK2rN8mPqW3xY5zB6cD9fGhJkLaS"]
+      "must_exclude_values": [
+        "ya29.a0AcM612xKp7R9nVqL3mW8tF5jH2dE4gBiCkNlOqPrSsUuVwXyZ1234567890",
+        "1//0eT7vK2rN8mPqW3xY5zB6cD9fGhJkLaS"
+      ]
     }
   },
   {
@@ -270,9 +335,16 @@
     },
     "expected": {
       "min_facts": 2,
-      "must_include_types": ["email_address"],
-      "must_include_values": ["billing@meridian.io"],
-      "must_exclude_values": ["pk_live_51N2mK4pR7vW9xQ3LaBcDeFgHiJkLmNoPqRsTuVwXyZ", "sk_live_51N2mK4pR7vW9xQ3AbCdEfGhIjKlMnOpQrStUvWxYz"]
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_include_values": [
+        "billing@meridian.io"
+      ],
+      "must_exclude_values": [
+        "pk_live_51N2mK4pR7vW9xQ3LaBcDeFgHiJkLmNoPqRsTuVwXyZ",
+        "sk_live_51N2mK4pR7vW9xQ3AbCdEfGhIjKlMnOpQrStUvWxYz"
+      ]
     }
   },
   {
@@ -286,9 +358,16 @@
     },
     "expected": {
       "min_facts": 1,
-      "must_include_types": ["url"],
-      "must_include_values": ["https://github.com/meridian-labs/platform"],
-      "must_exclude_values": ["whsec_Kp7R9nVqL3mW8tF5jH2dE4gBiCk", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"]
+      "must_include_types": [
+        "url"
+      ],
+      "must_include_values": [
+        "https://github.com/meridian-labs/platform"
+      ],
+      "must_exclude_values": [
+        "whsec_Kp7R9nVqL3mW8tF5jH2dE4gBiCk",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+      ]
     }
   },
   {
@@ -302,9 +381,15 @@
     },
     "expected": {
       "min_facts": 2,
-      "must_include_types": ["email_address"],
-      "must_include_values": ["j.watson@meridian.io"],
-      "must_exclude_values": ["Kp7$R9nVq!L3mW8t#F5j"]
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_include_values": [
+        "j.watson@meridian.io"
+      ],
+      "must_exclude_values": [
+        "Kp7$R9nVq!L3mW8t#F5j"
+      ]
     }
   },
   {
@@ -318,9 +403,16 @@
     },
     "expected": {
       "min_facts": 2,
-      "must_include_types": ["channel_name"],
-      "must_include_values": ["C06P3QR8VNW", "alerts-prod"],
-      "must_exclude_values": ["v0=Kp7R9nVqL3mW8tF5jH2dE4gBiCkNlOqPrSsUu"]
+      "must_include_types": [
+        "channel_name"
+      ],
+      "must_include_values": [
+        "C06P3QR8VNW",
+        "alerts-prod"
+      ],
+      "must_exclude_values": [
+        "v0=Kp7R9nVqL3mW8tF5jH2dE4gBiCkNlOqPrSsUu"
+      ]
     }
   },
   {
@@ -336,7 +428,10 @@
       "min_facts": 0,
       "must_include_types": [],
       "must_include_values": [],
-      "must_exclude_values": ["alice@marketing.com", "alice@meridian.io"]
+      "must_exclude_values": [
+        "alice@marketing.com",
+        "alice@meridian.io"
+      ]
     }
   },
   {
@@ -352,7 +447,9 @@
       "min_facts": 1,
       "max_facts": 4,
       "must_include_types": [],
-      "must_include_values": ["LIN-4827"],
+      "must_include_values": [
+        "LIN-4827"
+      ],
       "must_exclude_values": []
     }
   },
@@ -368,7 +465,9 @@
     "expected": {
       "min_facts": 1,
       "must_include_types": [],
-      "must_include_values": ["C06P3QR8VNW"],
+      "must_include_values": [
+        "C06P3QR8VNW"
+      ],
       "must_exclude_values": []
     }
   },
@@ -384,8 +483,12 @@
     "expected": {
       "min_facts": 1,
       "must_include_types": [],
-      "must_include_values": ["b2d8c95f-3e9a-4c42-b1a7-23fg45hi67jk"],
-      "must_exclude_values": ["northwind-traders@example.com"]
+      "must_include_values": [
+        "b2d8c95f-3e9a-4c42-b1a7-23fg45hi67jk"
+      ],
+      "must_exclude_values": [
+        "northwind-traders@example.com"
+      ]
     }
   },
   {
@@ -400,8 +503,15 @@
     "expected": {
       "min_facts": 2,
       "must_include_types": [],
-      "must_include_values": ["LIN-5102", "LIN-5098"],
-      "must_exclude_values": ["cerulean-systems.com", "driftwood.com", "cerulean-systems.io"]
+      "must_include_values": [
+        "LIN-5102",
+        "LIN-5098"
+      ],
+      "must_exclude_values": [
+        "cerulean-systems.com",
+        "driftwood.com",
+        "cerulean-systems.io"
+      ]
     }
   },
   {
@@ -416,8 +526,12 @@
     "expected": {
       "min_facts": 1,
       "max_facts": 3,
-      "must_include_types": ["file_id"],
-      "must_include_values": ["1VnW8kR3pL5mQ2xJ9bY4cT7fDgHjKlMn"],
+      "must_include_types": [
+        "file_id"
+      ],
+      "must_include_values": [
+        "1VnW8kR3pL5mQ2xJ9bY4cT7fDgHjKlMn"
+      ],
       "must_exclude_values": []
     }
   },
@@ -432,8 +546,14 @@
     },
     "expected": {
       "min_facts": 4,
-      "must_include_types": ["email_address", "phone_number"],
-      "must_include_values": ["y.tanaka@meridian.io", "+81312345678"],
+      "must_include_types": [
+        "email_address",
+        "phone_number"
+      ],
+      "must_include_values": [
+        "y.tanaka@meridian.io",
+        "+81312345678"
+      ],
       "must_exclude_values": []
     }
   },
@@ -448,8 +568,12 @@
     },
     "expected": {
       "min_facts": 2,
-      "must_include_types": ["url"],
-      "must_include_values": ["https://github.com/meridian-labs/platform/pull/2847"],
+      "must_include_types": [
+        "url"
+      ],
+      "must_include_values": [
+        "https://github.com/meridian-labs/platform/pull/2847"
+      ],
       "must_exclude_values": []
     }
   },
@@ -465,7 +589,9 @@
     "expected": {
       "min_facts": 3,
       "must_include_types": [],
-      "must_include_values": ["pi_3RfV7nK2mP9xQ4wL"],
+      "must_include_values": [
+        "pi_3RfV7nK2mP9xQ4wL"
+      ],
       "must_exclude_values": []
     }
   },
@@ -480,8 +606,56 @@
     },
     "expected": {
       "min_facts": 8,
-      "must_include_types": ["email_address"],
-      "must_include_values": ["a.okonkwo@meridian.io", "h.lindqvist@meridian.io"],
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_include_values": [
+        "a.okonkwo@meridian.io",
+        "h.lindqvist@meridian.io"
+      ],
+      "must_exclude_values": []
+    }
+  },
+  {
+    "name": "regex_large_gmail_inbox",
+    "category": "regex_extraction",
+    "request": {
+      "task_purpose": "Triage inbox and reply to urgent emails",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"messages\": [{\"id\": \"19d5fe858c900000\", \"from\": {\"name\": \"User 0\", \"email\": \"user00@company00.com\"}, \"subject\": \"Subject line for message number 0 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 0. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-01T10:00:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900001\", \"from\": {\"name\": \"User 1\", \"email\": \"user01@company01.com\"}, \"subject\": \"Subject line for message number 1 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 1. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-02T10:01:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900002\", \"from\": {\"name\": \"User 2\", \"email\": \"user02@company02.com\"}, \"subject\": \"Subject line for message number 2 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 2. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-03T10:02:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900003\", \"from\": {\"name\": \"User 3\", \"email\": \"user03@company03.com\"}, \"subject\": \"Subject line for message number 3 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 3. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-04T10:03:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900004\", \"from\": {\"name\": \"User 4\", \"email\": \"user04@company04.com\"}, \"subject\": \"Subject line for message number 4 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 4. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-05T10:04:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900005\", \"from\": {\"name\": \"User 5\", \"email\": \"user05@company05.com\"}, \"subject\": \"Subject line for message number 5 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 5. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-06T10:05:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900006\", \"from\": {\"name\": \"User 6\", \"email\": \"user06@company06.com\"}, \"subject\": \"Subject line for message number 6 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 6. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-07T10:06:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900007\", \"from\": {\"name\": \"User 7\", \"email\": \"user07@company07.com\"}, \"subject\": \"Subject line for message number 7 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 7. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-08T10:07:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900008\", \"from\": {\"name\": \"User 8\", \"email\": \"user08@company08.com\"}, \"subject\": \"Subject line for message number 8 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 8. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-09T10:08:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900009\", \"from\": {\"name\": \"User 9\", \"email\": \"user09@company09.com\"}, \"subject\": \"Subject line for message number 9 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 9. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-01T10:09:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900010\", \"from\": {\"name\": \"User 10\", \"email\": \"user10@company10.com\"}, \"subject\": \"Subject line for message number 10 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 10. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-02T10:10:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900011\", \"from\": {\"name\": \"User 11\", \"email\": \"user11@company11.com\"}, \"subject\": \"Subject line for message number 11 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 11. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-03T10:11:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900012\", \"from\": {\"name\": \"User 12\", \"email\": \"user12@company12.com\"}, \"subject\": \"Subject line for message number 12 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 12. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-04T10:12:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900013\", \"from\": {\"name\": \"User 13\", \"email\": \"user13@company13.com\"}, \"subject\": \"Subject line for message number 13 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 13. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-05T10:13:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900014\", \"from\": {\"name\": \"User 14\", \"email\": \"user14@company14.com\"}, \"subject\": \"Subject line for message number 14 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 14. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-06T10:14:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900015\", \"from\": {\"name\": \"User 15\", \"email\": \"user15@company15.com\"}, \"subject\": \"Subject line for message number 15 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 15. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-07T10:15:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900016\", \"from\": {\"name\": \"User 16\", \"email\": \"user16@company16.com\"}, \"subject\": \"Subject line for message number 16 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 16. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-08T10:16:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900017\", \"from\": {\"name\": \"User 17\", \"email\": \"user17@company17.com\"}, \"subject\": \"Subject line for message number 17 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 17. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-09T10:17:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900018\", \"from\": {\"name\": \"User 18\", \"email\": \"user18@company18.com\"}, \"subject\": \"Subject line for message number 18 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 18. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-01T10:18:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900019\", \"from\": {\"name\": \"User 19\", \"email\": \"user19@company19.com\"}, \"subject\": \"Subject line for message number 19 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 19. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-02T10:19:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900020\", \"from\": {\"name\": \"User 20\", \"email\": \"user20@company20.com\"}, \"subject\": \"Subject line for message number 20 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 20. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-03T10:20:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900021\", \"from\": {\"name\": \"User 21\", \"email\": \"user21@company21.com\"}, \"subject\": \"Subject line for message number 21 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 21. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-04T10:21:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900022\", \"from\": {\"name\": \"User 22\", \"email\": \"user22@company22.com\"}, \"subject\": \"Subject line for message number 22 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 22. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-05T10:22:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900023\", \"from\": {\"name\": \"User 23\", \"email\": \"user23@company23.com\"}, \"subject\": \"Subject line for message number 23 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 23. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-06T10:23:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900024\", \"from\": {\"name\": \"User 24\", \"email\": \"user24@company24.com\"}, \"subject\": \"Subject line for message number 24 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 24. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-07T10:24:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900025\", \"from\": {\"name\": \"User 25\", \"email\": \"user25@company25.com\"}, \"subject\": \"Subject line for message number 25 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 25. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-08T10:25:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900026\", \"from\": {\"name\": \"User 26\", \"email\": \"user26@company26.com\"}, \"subject\": \"Subject line for message number 26 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 26. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-09T10:26:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900027\", \"from\": {\"name\": \"User 27\", \"email\": \"user27@company27.com\"}, \"subject\": \"Subject line for message number 27 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 27. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-01T10:27:00Z\", \"unread\": true}, {\"id\": \"19d5fe858c900028\", \"from\": {\"name\": \"User 28\", \"email\": \"user28@company28.com\"}, \"subject\": \"Subject line for message number 28 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 28. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-02T10:28:00Z\", \"unread\": false}, {\"id\": \"19d5fe858c900029\", \"from\": {\"name\": \"User 29\", \"email\": \"user29@company29.com\"}, \"subject\": \"Subject line for message number 29 with some extra text to pad the length\", \"snippet\": \"This is a preview snippet for message 29. It contains enough text to be realistic and push the total result size beyond the 4KB truncation limit that the LLM extractor uses.\", \"date\": \"2026-04-03T10:29:00Z\", \"unread\": false}], \"total\": 30, \"next_page_token\": \"token_xyz\"}"
+    },
+    "expected": {
+      "min_facts": 20,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_include_values": [
+        "19d5fe858c900025",
+        "19d5fe858c900029"
+      ],
+      "must_exclude_values": []
+    }
+  },
+  {
+    "name": "regex_large_drive_listing",
+    "category": "regex_extraction",
+    "request": {
+      "task_purpose": "Organize project files in Google Drive",
+      "service": "google.drive",
+      "action": "list_files",
+      "result": "{\"files\": [{\"id\": \"file_0000_ag\", \"name\": \"Document 0 - Q1 Report,Budge\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-01T14:00:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"1024\"}, {\"id\": \"file_0001_bh\", \"name\": \"Document 1 - t Analysis,Meet\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-02T14:01:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"2048\"}, {\"id\": \"file_0002_ci\", \"name\": \"Document 2 - ing Notes,Proje\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-03T14:02:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"3072\"}, {\"id\": \"file_0003_dj\", \"name\": \"Document 3 - ct Plan,Design\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-04T14:03:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"4096\"}, {\"id\": \"file_0004_ek\", \"name\": \"Document 4 - Spec\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-05T14:04:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"5120\"}, {\"id\": \"file_0005_fg\", \"name\": \"Document 5 - Q1 Report,Budge\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-06T14:05:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"6144\"}, {\"id\": \"file_0006_ah\", \"name\": \"Document 6 - t Analysis,Meet\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-07T14:06:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"7168\"}, {\"id\": \"file_0007_bi\", \"name\": \"Document 7 - ing Notes,Proje\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-08T14:07:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"8192\"}, {\"id\": \"file_0008_cj\", \"name\": \"Document 8 - ct Plan,Design\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-09T14:08:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"9216\"}, {\"id\": \"file_0009_dk\", \"name\": \"Document 9 - Spec\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-10T14:09:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"10240\"}, {\"id\": \"file_0010_eg\", \"name\": \"Document 10 - Q1 Report,Budge\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-11T14:10:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"11264\"}, {\"id\": \"file_0011_fh\", \"name\": \"Document 11 - t Analysis,Meet\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-12T14:11:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"12288\"}, {\"id\": \"file_0012_ai\", \"name\": \"Document 12 - ing Notes,Proje\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-13T14:12:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"13312\"}, {\"id\": \"file_0013_bj\", \"name\": \"Document 13 - ct Plan,Design\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-14T14:13:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"14336\"}, {\"id\": \"file_0014_ck\", \"name\": \"Document 14 - Spec\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-15T14:14:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"15360\"}, {\"id\": \"file_0015_dg\", \"name\": \"Document 15 - Q1 Report,Budge\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-16T14:15:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"16384\"}, {\"id\": \"file_0016_eh\", \"name\": \"Document 16 - t Analysis,Meet\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-17T14:16:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"17408\"}, {\"id\": \"file_0017_fi\", \"name\": \"Document 17 - ing Notes,Proje\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-18T14:17:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"18432\"}, {\"id\": \"file_0018_aj\", \"name\": \"Document 18 - ct Plan,Design\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-19T14:18:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"19456\"}, {\"id\": \"file_0019_bk\", \"name\": \"Document 19 - Spec\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-20T14:19:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"20480\"}, {\"id\": \"file_0020_cg\", \"name\": \"Document 20 - Q1 Report,Budge\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-21T14:20:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"21504\"}, {\"id\": \"file_0021_dh\", \"name\": \"Document 21 - t Analysis,Meet\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-22T14:21:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"22528\"}, {\"id\": \"file_0022_ei\", \"name\": \"Document 22 - ing Notes,Proje\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-23T14:22:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"23552\"}, {\"id\": \"file_0023_fj\", \"name\": \"Document 23 - ct Plan,Design\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-24T14:23:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"24576\"}, {\"id\": \"file_0024_ak\", \"name\": \"Document 24 - Spec\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-25T14:24:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"25600\"}, {\"id\": \"file_0025_bg\", \"name\": \"Document 25 - Q1 Report,Budge\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-26T14:25:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"26624\"}, {\"id\": \"file_0026_ch\", \"name\": \"Document 26 - t Analysis,Meet\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-27T14:26:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"27648\"}, {\"id\": \"file_0027_di\", \"name\": \"Document 27 - ing Notes,Proje\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-28T14:27:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"28672\"}, {\"id\": \"file_0028_ej\", \"name\": \"Document 28 - ct Plan,Design\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-01T14:28:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"29696\"}, {\"id\": \"file_0029_fk\", \"name\": \"Document 29 - Spec\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-02T14:29:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"30720\"}, {\"id\": \"file_0030_ag\", \"name\": \"Document 30 - Q1 Report,Budge\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-03T14:30:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"31744\"}, {\"id\": \"file_0031_bh\", \"name\": \"Document 31 - t Analysis,Meet\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-04T14:31:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"32768\"}, {\"id\": \"file_0032_ci\", \"name\": \"Document 32 - ing Notes,Proje\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-05T14:32:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"33792\"}, {\"id\": \"file_0033_dj\", \"name\": \"Document 33 - ct Plan,Design\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-06T14:33:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"34816\"}, {\"id\": \"file_0034_ek\", \"name\": \"Document 34 - Spec\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-07T14:34:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"35840\"}, {\"id\": \"file_0035_fg\", \"name\": \"Document 35 - Q1 Report,Budge\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-08T14:35:00Z\", \"owners\": [{\"emailAddress\": \"owner0@company.com\"}], \"size\": \"36864\"}, {\"id\": \"file_0036_ah\", \"name\": \"Document 36 - t Analysis,Meet\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-09T14:36:00Z\", \"owners\": [{\"emailAddress\": \"owner1@company.com\"}], \"size\": \"37888\"}, {\"id\": \"file_0037_bi\", \"name\": \"Document 37 - ing Notes,Proje\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-10T14:37:00Z\", \"owners\": [{\"emailAddress\": \"owner2@company.com\"}], \"size\": \"38912\"}, {\"id\": \"file_0038_cj\", \"name\": \"Document 38 - ct Plan,Design\", \"mimeType\": \"application/pdf\", \"modifiedTime\": \"2026-03-11T14:38:00Z\", \"owners\": [{\"emailAddress\": \"owner3@company.com\"}], \"size\": \"39936\"}, {\"id\": \"file_0039_dk\", \"name\": \"Document 39 - Spec\", \"mimeType\": \"application/vnd.google-apps.document\", \"modifiedTime\": \"2026-03-12T14:39:00Z\", \"owners\": [{\"emailAddress\": \"owner4@company.com\"}], \"size\": \"40960\"}], \"nextPageToken\": \"page2\"}"
+    },
+    "expected": {
+      "min_facts": 15,
+      "must_include_types": [
+        "file_id"
+      ],
+      "must_include_values": [
+        "file_0035_fg",
+        "file_0039_dk"
+      ],
       "must_exclude_values": []
     }
   }

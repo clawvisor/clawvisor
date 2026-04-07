@@ -241,6 +241,42 @@ func TestMarshalVerdict(t *testing.T) {
 	}
 }
 
+func TestParseVerificationResponse_MissingChainValues(t *testing.T) {
+	raw := `{"allow": false, "param_scope": "violation", "reason_coherence": "ok", "extract_context": false, "missing_chain_values": ["msg_abc123", "msg_def456"], "explanation": "Entities not in chain context."}`
+	v, err := parseVerificationResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Allow {
+		t.Error("expected Allow=false")
+	}
+	if len(v.MissingChainValues) != 2 || v.MissingChainValues[0] != "msg_abc123" || v.MissingChainValues[1] != "msg_def456" {
+		t.Errorf("expected [msg_abc123, msg_def456], got %v", v.MissingChainValues)
+	}
+}
+
+func TestParseVerificationResponse_SingleMissingChainValue(t *testing.T) {
+	raw := `{"allow": false, "param_scope": "violation", "reason_coherence": "ok", "extract_context": false, "missing_chain_values": ["msg_abc123"], "explanation": "Entity not in chain context."}`
+	v, err := parseVerificationResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(v.MissingChainValues) != 1 || v.MissingChainValues[0] != "msg_abc123" {
+		t.Errorf("expected [msg_abc123], got %v", v.MissingChainValues)
+	}
+}
+
+func TestParseVerificationResponse_NoMissingChainValues(t *testing.T) {
+	raw := `{"allow": true, "param_scope": "ok", "reason_coherence": "ok", "extract_context": false, "explanation": "All good."}`
+	v, err := parseVerificationResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(v.MissingChainValues) != 0 {
+		t.Errorf("expected empty missing_chain_values, got %v", v.MissingChainValues)
+	}
+}
+
 func TestMarshalVerdict_Nil(t *testing.T) {
 	b := MarshalVerdict(nil)
 	if b != nil {

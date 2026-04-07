@@ -992,6 +992,20 @@ func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, li
 	return facts, rows.Err()
 }
 
+func (s *Store) ChainFactValueExists(ctx context.Context, taskID, sessionID, value string) (bool, error) {
+	var exists int
+	err := s.pool.QueryRow(ctx, `
+		SELECT 1 FROM chain_facts WHERE task_id = $1 AND session_id = $2 AND fact_value = $3 LIMIT 1
+	`, taskID, sessionID, value).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) DeleteChainFactsByTask(ctx context.Context, taskID string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM chain_facts WHERE task_id = $1`, taskID)
 	return err
