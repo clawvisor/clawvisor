@@ -27,9 +27,17 @@ var ErrSpendCapExhausted = errors.New("haiku proxy spend cap exhausted")
 
 const anthropicVersion = "2023-06-01"
 
-// maxTokens is the upper bound sent on every request.
+// defaultMaxTokens is the upper bound sent on every request when no per-client override is set.
 // All use-cases (safety: ~50 tokens, conflicts: ~256, policy YAML: ~600) fit within 1024.
-const maxTokens = 1024
+const defaultMaxTokens = 1024
+
+// effectiveMaxTokens returns the max_tokens to use for this client.
+func (c *Client) effectiveMaxTokens() int {
+	if c.maxTokens > 0 {
+		return c.maxTokens
+	}
+	return defaultMaxTokens
+}
 
 // ChatMessage is one turn in a chat completion request.
 type ChatMessage struct {
@@ -46,6 +54,14 @@ type Client struct {
 	timeout     time.Duration
 	http        *http.Client
 	tokenSource oauth2.TokenSource // for Vertex AI (ADC)
+	maxTokens   int                // 0 → use default (maxTokens const)
+}
+
+// WithMaxTokens returns a shallow copy of the client with a custom max_tokens limit.
+func (c *Client) WithMaxTokens(n int) *Client {
+	c2 := *c
+	c2.maxTokens = n
+	return &c2
 }
 
 // NewClient builds a Client from a provider config.
@@ -119,7 +135,7 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 	body, err := json.Marshal(map[string]any{
 		"model":       c.model,
 		"messages":    messages,
-		"max_tokens":  maxTokens,
+		"max_tokens":  c.effectiveMaxTokens(),
 		"temperature": 0,
 	})
 	if err != nil {
@@ -186,7 +202,7 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 
 	reqBody := map[string]any{
 		"model":       c.model,
-		"max_tokens":  maxTokens,
+		"max_tokens":  c.effectiveMaxTokens(),
 		"messages":    convo,
 		"temperature": 0,
 	}
@@ -262,7 +278,7 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 
 	reqBody := map[string]any{
 		"model":             c.model,
-		"max_tokens":        maxTokens,
+		"max_tokens":        c.effectiveMaxTokens(),
 		"messages":          convo,
 		"temperature":       0,
 		"anthropic_version": anthropicVersion,

@@ -16,14 +16,15 @@ import (
 
 // VerificationVerdict is the result of intent verification.
 type VerificationVerdict struct {
-	Allow           bool   `json:"allow"`
-	ParamScope      string `json:"param_scope"`      // "ok" | "violation" | "n/a"
-	ReasonCoherence string `json:"reason_coherence"` // "ok" | "incoherent" | "insufficient"
-	ExtractContext  bool   `json:"extract_context"`
-	Explanation     string `json:"explanation"`
-	Model           string `json:"model"`
-	LatencyMS       int    `json:"latency_ms"`
-	Cached          bool   `json:"cached"`
+	Allow             bool   `json:"allow"`
+	ParamScope        string `json:"param_scope"`        // "ok" | "violation" | "n/a"
+	ReasonCoherence   string `json:"reason_coherence"`   // "ok" | "incoherent" | "insufficient"
+	ExtractContext    bool   `json:"extract_context"`
+	MissingChainValues []string `json:"missing_chain_values"` // entities the LLM flagged as absent from chain context
+	Explanation       string `json:"explanation"`
+	Model             string `json:"model"`
+	LatencyMS         int    `json:"latency_ms"`
+	Cached            bool   `json:"cached"`
 }
 
 // VerifyRequest contains the data needed for intent verification.

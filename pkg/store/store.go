@@ -95,6 +95,7 @@ type Store interface {
 	// Chain facts (intent verification context chaining)
 	SaveChainFacts(ctx context.Context, facts []*ChainFact) error
 	ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*ChainFact, error)
+	ChainFactValueExists(ctx context.Context, taskID, sessionID, value string) (bool, error)
 	DeleteChainFactsByTask(ctx context.Context, taskID string) error
 
 	// Paired devices (mobile push notifications)
