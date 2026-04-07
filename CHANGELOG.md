@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.5](https://github.com/clawvisor/clawvisor/compare/v0.8.4...v0.8.5) (2026-04-07)
+
+
+### Features
+
+* add pagination support to Google Contacts list_contacts ([#128](https://github.com/clawvisor/clawvisor/issues/128)) ([a1716ba](https://github.com/clawvisor/clawvisor/commit/a1716ba8191de48f2493434996b1da872d75e19a))
+* add permalink and channel fields to Slack adapter responses ([#124](https://github.com/clawvisor/clawvisor/issues/124)) ([8e0374b](https://github.com/clawvisor/clawvisor/commit/8e0374b98d4c9b7505089f1c4ae22d0210eafbb2))
+* chain context fallback with regex-based extraction ([#129](https://github.com/clawvisor/clawvisor/issues/129)) ([d331179](https://github.com/clawvisor/clawvisor/commit/d331179e285b9215fcf45a52c1ea19dae5bd3359))
+
+
+### Bug Fixes
+
+* return full email body instead of preview-only text/plain ([#127](https://github.com/clawvisor/clawvisor/issues/127)) ([65f56ef](https://github.com/clawvisor/clawvisor/commit/65f56efb2f5e2d91db9207a25edc13f3c921d63e))
+* teach clawvisor skill to scope tasks broadly and verbosely ([#126](https://github.com/clawvisor/clawvisor/issues/126)) ([be50e4e](https://github.com/clawvisor/clawvisor/commit/be50e4e0b446facaafef405e92cb687f30da6a24))
+
 ## [0.8.4](https://github.com/clawvisor/clawvisor/compare/v0.8.3...v0.8.4) (2026-04-07)
 
 
