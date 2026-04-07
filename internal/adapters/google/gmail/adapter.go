@@ -506,27 +506,42 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 	return meta, nil
 }
 
-// extractBodyFromParts walks a message payload to find the text/plain part.
+// extractBodyFromParts walks a message payload to find the best text content.
+// Many newsletters (Substack, etc.) include only a short teaser in the
+// text/plain part while the full article lives in text/html, so we extract
+// both and return whichever is longer.
 func extractBodyFromParts(payload gmailPayload) string {
+	var plain, htmlBody string
+
 	// Direct body (non-multipart message)
-	if payload.MimeType == "text/plain" && payload.Body.Data != "" {
-		return decodeBase64(payload.Body.Data)
+	if payload.Body.Data != "" {
+		decoded := decodeBase64(payload.Body.Data)
+		if payload.MimeType == "text/plain" {
+			plain = decoded
+		} else if payload.MimeType == "text/html" {
+			htmlBody = stripHTML(decoded)
+		}
 	}
 
-	// Search top-level parts
-	if body := findTextInParts(payload.Parts, "text/plain"); body != "" {
-		return body
+	// Search MIME parts
+	if plain == "" {
+		plain = findTextInParts(payload.Parts, "text/plain")
+	}
+	if htmlBody == "" {
+		if raw := findTextInParts(payload.Parts, "text/html"); raw != "" {
+			htmlBody = stripHTML(raw)
+		}
 	}
 
-	// Fall back to HTML
-	if body := findTextInParts(payload.Parts, "text/html"); body != "" {
-		return stripHTML(body)
+	// Return whichever is longer — newsletters often have full content
+	// only in the HTML part while text/plain is just a preview.
+	if len(htmlBody) > len(plain) {
+		return htmlBody
 	}
-	if payload.MimeType == "text/html" && payload.Body.Data != "" {
-		return stripHTML(decodeBase64(payload.Body.Data))
+	if plain != "" {
+		return plain
 	}
-
-	return ""
+	return htmlBody
 }
 
 // findTextInParts recursively searches MIME parts for content of the given type.
