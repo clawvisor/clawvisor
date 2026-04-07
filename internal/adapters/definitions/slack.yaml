@@ -83,6 +83,7 @@ actions:
         - { name: user }
         - { name: text, sanitize: true }
         - { name: ts }
+        - { name: thread_ts, optional: true }
       summary: "{{len .Data}} message(s)"
 
   send_message:
@@ -116,6 +117,9 @@ actions:
         - { name: text, sanitize: true }
         - { name: ts }
         - { name: username }
+        - { name: permalink }
+        - { name: channel_id, path: "channel.id" }
+        - { name: channel_name, path: "channel.name" }
       summary: "{{len .Data}} result(s)"
 
   list_users:
