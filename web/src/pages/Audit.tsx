@@ -1,8 +1,45 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AuditEntry } from '../api/client'
 import { formatDistanceToNow, format } from 'date-fns'
 import { serviceName, actionName, formatServiceAction } from '../lib/services'
+
+function escapeCsvField(value: string): string {
+  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+function entriesToCsv(entries: AuditEntry[]): string {
+  const headers = ['Timestamp', 'Service', 'Action', 'Decision', 'Outcome', 'Duration (ms)', 'Reason', 'Data Origin', 'Error', 'Policy', 'Safety Flagged', 'Safety Reason', 'Request ID']
+  const rows = entries.map(e => [
+    e.timestamp,
+    serviceName(e.service),
+    actionName(e.action),
+    e.decision,
+    e.outcome,
+    String(e.duration_ms),
+    e.reason ?? '',
+    e.data_origin ?? '',
+    e.error_msg ?? '',
+    e.policy_id ?? '',
+    e.safety_flagged ? 'yes' : 'no',
+    e.safety_reason ?? '',
+    e.request_id,
+  ].map(escapeCsvField))
+  return [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+}
+
+function downloadCsv(csv: string, filename: string) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 const OUTCOMES = ['', 'executed', 'blocked', 'restricted', 'pending', 'denied', 'error', 'timeout']
 
@@ -138,17 +175,52 @@ export default function Audit() {
 
   const entries = data?.entries ?? []
   const total = data?.total ?? 0
+  const [exporting, setExporting] = useState(false)
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    try {
+      const allEntries: AuditEntry[] = []
+      const batchSize = 200
+      let batchOffset = 0
+      while (true) {
+        const batch = await api.audit.list({
+          outcome: outcomeFilter || undefined,
+          service: serviceFilter || undefined,
+          limit: batchSize,
+          offset: batchOffset,
+        })
+        allEntries.push(...batch.entries)
+        if (allEntries.length >= batch.total || batch.entries.length < batchSize) break
+        batchOffset += batchSize
+      }
+      const csv = entriesToCsv(allEntries)
+      const dateStr = format(new Date(), 'yyyy-MM-dd')
+      downloadCsv(csv, `gateway-log-${dateStr}.csv`)
+    } finally {
+      setExporting(false)
+    }
+  }, [outcomeFilter, serviceFilter])
 
   return (
     <div className="p-8 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-text-primary">Gateway Log</h1>
-        <button
-          onClick={() => refetch()}
-          className="text-sm text-brand hover:underline"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleExport}
+            disabled={exporting || entries.length === 0}
+            className="text-sm text-brand hover:underline disabled:opacity-40 disabled:no-underline"
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <button
+            onClick={() => refetch()}
+            className="text-sm text-brand hover:underline"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
