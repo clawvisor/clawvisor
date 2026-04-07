@@ -460,6 +460,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 
+	// Batch close (agent token)
+	mux.Handle("POST /api/gateway/batch/{batch_id}/close", requireAgent(e2e(http.HandlerFunc(gatewayHandler.HandleBatchClose))))
+
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
@@ -487,6 +490,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/approvals", user(approvalsHandler.List))
 	mux.Handle("POST /api/approvals/{request_id}/approve", user(approvalsHandler.Approve))
 	mux.Handle("POST /api/approvals/{request_id}/deny", user(approvalsHandler.Deny))
+	mux.Handle("POST /api/approvals/batch/{batch_id}/approve", user(approvalsHandler.BatchApprove))
+	mux.Handle("POST /api/approvals/batch/{batch_id}/deny", user(approvalsHandler.BatchDeny))
 
 	// Unified queue (user JWT)
 	queueHandler := handlers.NewQueueHandler(s.store)
@@ -593,6 +598,7 @@ func (s *Server) routes() http.Handler {
 			"POST /api/tasks/{id}/expand":                      http.HandlerFunc(tasksHandler.Expand),
 			"POST /api/gateway/request":                        http.HandlerFunc(gatewayHandler.HandleRequest),
 			"POST /api/gateway/request/{request_id}/execute":   http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
+			"POST /api/gateway/batch/{batch_id}/close":         http.HandlerFunc(gatewayHandler.HandleBatchClose),
 		}
 
 		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)

@@ -87,6 +87,8 @@ type Store interface {
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").
 	ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error)
+	ListPendingApprovalsByBatch(ctx context.Context, userID, batchID string) ([]*PendingApproval, error)
+	UpdatePendingApprovalBlob(ctx context.Context, requestID string, blob json.RawMessage) error
 
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
@@ -283,15 +285,17 @@ type Task struct {
 
 // PendingApproval is a gateway request awaiting human approval.
 type PendingApproval struct {
-	ID            string          `json:"id"`
-	UserID        string          `json:"user_id"`
-	RequestID     string          `json:"request_id"`
-	AuditID       string          `json:"audit_id"`
-	RequestBlob   json.RawMessage `json:"request_blob"`
-	CallbackURL   *string         `json:"callback_url,omitempty"`
-	Status        string          `json:"status"` // "pending" or "approved"
-	ExpiresAt     time.Time       `json:"expires_at"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	RequestID      string          `json:"request_id"`
+	AuditID        string          `json:"audit_id"`
+	RequestBlob    json.RawMessage `json:"request_blob"`
+	CallbackURL    *string         `json:"callback_url,omitempty"`
+	BatchID        *string         `json:"batch_id,omitempty"`
+	RenderedFields json.RawMessage `json:"rendered_fields,omitempty"`
+	Status         string          `json:"status"` // "pending" or "approved"
+	ExpiresAt      time.Time       `json:"expires_at"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 // TaskFilter controls which tasks are returned by ListTasks.

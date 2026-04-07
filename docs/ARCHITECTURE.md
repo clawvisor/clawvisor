@@ -38,6 +38,8 @@ The agent sends a POST to `/api/gateway/request` with a bearer token. The reques
 
 The `reason` field is always required — it's shown to the human in approval requests and logged in the audit trail. The `request_id` is used for idempotency (enforced by a UNIQUE constraint in the database). The `context.data_origin` tracks what external content influenced this request, which is critical for detecting prompt injection.
 
+Optional `batch_id` groups multiple requests for batch review — the user sees them as a group and can approve/deny all at once. The agent closes the batch with `POST /api/gateway/batch/{batch_id}/close` after submitting all requests.
+
 ### 2.2 Authentication
 
 The `RequireAgent` middleware extracts the bearer token, computes its SHA-256 hash, and looks up the agent record by that hash. The raw token is never stored — only the hash exists in the database. If the lookup fails, the request gets a 401 immediately.
@@ -393,7 +395,7 @@ Migrations are embedded in the binary and run automatically on startup. Each mig
 - `vault_entries` — encrypted credentials. Unique on `(user_id, service_id)`.
 
 **Approval queue:**
-- `pending_approvals` — serialized request blobs awaiting human decision. Includes callback URL, status (`pending` or `approved`), expiry, and audit ID. Unique on `request_id`.
+- `pending_approvals` — serialized request blobs awaiting human decision. Includes callback URL, batch ID (for grouped approvals), rendered fields (adapter-produced human-readable display), status (`pending` or `approved`), expiry, and audit ID. Unique on `request_id`.
 
 **Audit:**
 - `audit_log` — every gateway request. Includes service, action, sanitized params, decision, outcome, verification verdict, duration, and error messages. Legacy columns (`safety_flagged`, `safety_reason`, `filters_applied`) are retained for backward compatibility but no longer populated. `request_id` has a UNIQUE constraint. Indexed on `(user_id, timestamp)`, `(user_id, outcome)`, `(user_id, service)`.

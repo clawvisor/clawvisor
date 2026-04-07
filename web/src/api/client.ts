@@ -411,6 +411,15 @@ export interface OverviewData {
   activity: ActivityBucket[]
 }
 
+export interface RenderedField {
+  key: string
+  label: string
+  value: string
+  editable: boolean
+  multiline: boolean
+  format: string // "text", "markdown", "html"
+}
+
 export interface QueueApproval {
   request_id: string
   audit_id: string
@@ -418,6 +427,8 @@ export interface QueueApproval {
   action: string
   params: Record<string, unknown>
   reason?: string
+  batch_id?: string
+  rendered_fields?: RenderedField[]
   verification?: VerificationVerdict
 }
 
@@ -555,12 +566,18 @@ export const api = {
   },
   approvals: {
     list: () => get<{ entries: PendingApproval[]; total: number }>('/api/approvals'),
-    approve: (requestId: string) =>
+    approve: (requestId: string, editedFields?: Record<string, string>) =>
       post<{ status: string; request_id: string; audit_id: string; result?: unknown }>
-        (`/api/approvals/${requestId}/approve`, {}),
+        (`/api/approvals/${requestId}/approve`, editedFields ? { edited_fields: editedFields } : {}),
     deny: (requestId: string) =>
       post<{ status: string; request_id: string; audit_id: string }>
         (`/api/approvals/${requestId}/deny`, {}),
+    batchApprove: (batchId: string) =>
+      post<{ status: string; batch_id: string; approved: string[]; total: number }>
+        (`/api/approvals/batch/${batchId}/approve`, {}),
+    batchDeny: (batchId: string) =>
+      post<{ status: string; batch_id: string; denied: string[]; total: number }>
+        (`/api/approvals/batch/${batchId}/deny`, {}),
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),

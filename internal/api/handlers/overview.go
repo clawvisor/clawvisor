@@ -52,12 +52,14 @@ func (h *OverviewHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 		exp := pa.ExpiresAt
 		qa := &queueApproval{
-			RequestID: pa.RequestID,
-			AuditID:   pa.AuditID,
-			Service:   blob.Service,
-			Action:    blob.Action,
-			Params:    blob.Params,
-			Reason:    blob.Reason,
+			RequestID:      pa.RequestID,
+			AuditID:        pa.AuditID,
+			Service:        blob.Service,
+			Action:         blob.Action,
+			Params:         blob.Params,
+			Reason:         blob.Reason,
+			BatchID:        blob.BatchID,
+			RenderedFields: pa.RenderedFields,
 		}
 		if blob.Verification != nil {
 			b, _ := json.Marshal(blob.Verification)
