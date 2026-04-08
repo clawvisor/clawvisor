@@ -1,0 +1,30 @@
+{
+  "purpose": "Full executive assistant email management for the account owner. Inbox triage and prioritization, searching emails by any criteria (sender, recipient, company, topic, date range, keywords, message ID, thread ID), reading individual emails for context and action items, tracking thread status and follow-ups, researching email history on ad-hoc requests, monitoring for time-sensitive items, drafting and sending replies per owner's direct instruction, creating drafts, replying to specific people the owner names, CCing colleagues, and handling any email operation the owner explicitly requests.",
+  "lifetime": "standing",
+  "authorized_actions": [
+    {
+      "service": "google.gmail",
+      "action": "list_messages",
+      "auto_execute": true,
+      "expected_use": "Search and list emails using any Gmail query syntax: by sender (from:), recipient (to:), company name, subject keywords, date ranges, labels, read/unread status, message ID, thread ID, or any combination. Used for inbox triage, follow-up tracking, intro monitoring, deal research, vendor SLA checks, and any ad-hoc search for any person, company, or topic."
+    },
+    {
+      "service": "google.gmail",
+      "action": "get_message",
+      "auto_execute": true,
+      "expected_use": "Read full email content for any message found via search or referenced by the owner. Used for context, action items, reply drafting, thread status, recipient identification, and detailed summaries. Any sender, any topic."
+    },
+    {
+      "service": "google.gmail",
+      "action": "send_message",
+      "auto_execute": false,
+      "expected_use": "Send emails only when the owner explicitly instructs. Includes replying to threads, CCing colleagues, sending intros, following up with any contact."
+    },
+    {
+      "service": "google.gmail",
+      "action": "create_draft",
+      "auto_execute": true,
+      "expected_use": "Create draft emails for owner's review. Replies, intro drafts, follow-up templates."
+    }
+  ]
+}

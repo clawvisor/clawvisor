@@ -1,0 +1,24 @@
+{
+  "purpose": "Full iMessage management: review recent threads, classify reply status, identify conversations needing attention, search message history by any contact or topic, read full thread context, and send replies when the owner explicitly instructs.",
+  "lifetime": "standing",
+  "authorized_actions": [
+    {
+      "service": "apple.imessage",
+      "action": "list_threads",
+      "auto_execute": true,
+      "expected_use": "List iMessage threads by recency, unread status, or contact. Used for inbox review, finding conversations needing replies, checking message status with specific people, and any ad-hoc thread lookup."
+    },
+    {
+      "service": "apple.imessage",
+      "action": "get_thread",
+      "auto_execute": true,
+      "expected_use": "Read full thread content including all messages, timestamps, and attachments. Used for conversation context, reply urgency classification, action item extraction, and answering owner questions about specific conversations."
+    },
+    {
+      "service": "apple.imessage",
+      "action": "send_message",
+      "auto_execute": false,
+      "expected_use": "Send iMessage replies only when the owner explicitly instructs. Always requires per-request approval."
+    }
+  ]
+}

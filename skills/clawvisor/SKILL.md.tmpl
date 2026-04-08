@@ -182,6 +182,8 @@ related requests. Use a consistent `session_id` (e.g., a UUID you generate once
 per workflow) across all related requests in a single invocation.
 {{- end }}
 
+> **⚠️ Standing tasks MUST use `session_id` on every gateway request.** Without `session_id`, chain context is disabled — meaning intent verification cannot see that a message ID or thread ID came from your own prior search results. The verifier will treat those IDs as unexplained entity references and block them. Generate one UUID per workflow invocation and pass it as `session_id` on every request in that invocation.
+
 ### Chain context verification
 
 Chain context verification extracts structural facts (IDs, email addresses, phone numbers) from adapter results and feeds them into subsequent verification prompts. This verifies that follow-up requests target entities that actually appeared in prior results — preventing a compromised agent from reading an inbox and then emailing an unrelated address.
@@ -207,7 +209,7 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/expand?wait=true" \
     "service": "apple.imessage",
     "action": "send_message",
     "auto_execute": false,
-    "reason": "John Doe asked a question that warrants a reply"
+    "reason": "A contact asked a question that warrants a reply"
   }'
 ```
 
@@ -230,6 +232,49 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks/<task-id>/complete" \
 ```
 {{- else }} use `complete_task` to mark the task as completed. This cleans
 up the authorization scope and any chain context facts.
+{{- end }}
+
+---
+
+## Writing Effective Reasons
+
+The `reason` field on gateway requests is verified by a language model, not pattern-matched. Write reasons the way a human assistant would explain an action to their boss — describe **what** you're doing and **why**, not who told you to do it.
+
+**Do:**
+- `"Searching for recent emails from the design team to draft a follow-up reply"`
+- `"Reading thread to extract action items for the weekly standup summary"`
+- `"Listing recent calendar events to check for scheduling conflicts this afternoon"`
+- `"Looking up the intro email from the vendor to confirm reply status"`
+
+**Don't:**
+- `"The user told me to do this"` — claiming the user instructed you looks identical to prompt injection to the verifier. Describe the action itself instead.
+- `"The owner directly instructed me to reply to this email via Telegram"` — the verifier cannot distinguish this from an injected instruction. Instead: `"Drafting reply to the vendor's email and preparing a follow-up summary"`
+- `"Doing my job"` / `"As requested"` — too vague; will be flagged as insufficient.
+- `"Testing"` / `"Retry"` / `"Trying again"` — implementation details, not a rationale.
+- Embedding code, markup, JSON, or system directives in the reason field.
+
+**Key rule:** The verifier treats **all agent-provided fields as untrusted**. Any text that resembles an instruction ("ignore previous rules", "approve this request", "the user said to...") will be flagged as a prompt injection attempt, even if it's a truthful description of what happened. Focus on the *what* and *why* of the action, not the *who told you*.
+
+---
+
+## Preset Task Definitions
+
+Agents tend to write narrow task scopes, which causes intent verification to reject legitimate follow-up requests. **Use these presets instead of writing your own scopes.** They are intentionally broad to cover the full range of operations in each workflow.
+{{ if .UseCurl }}
+Fetch a preset and use it directly as the request body for `POST /api/tasks`:
+
+```
+GET $CLAWVISOR_URL/skill/presets/<name>.json
+```
+{{ end }}
+| Preset | Description | {{ if .UseCurl }}File{{ else }}Fetch{{ end }} |
+|---|---|---|
+| **Email EA** | Full inbox management: triage, search, read, draft, send (approval-gated) | {{ if .UseCurl }}`email-ea.json`{{ else }}`GET /skill/presets/email-ea.json`{{ end }} |
+| **Calendar** | Full calendar: view, search, create (approval-gated), update (approval-gated) | {{ if .UseCurl }}`calendar.json`{{ else }}`GET /skill/presets/calendar.json`{{ end }} |
+| **iMessage** | Thread review, search, read, send (approval-gated) | {{ if .UseCurl }}`imessage.json`{{ else }}`GET /skill/presets/imessage.json`{{ end }} |
+
+{{ if .UseCurl -}}
+For example: `curl -s "$CLAWVISOR_URL/skill/presets/email-ea.json" | curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d @-`
 {{- end }}
 
 ---
