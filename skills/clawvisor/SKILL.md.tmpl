@@ -360,6 +360,8 @@ Every {{ if .UseCurl -}} response has a `status` field. Handle each case as foll
 | `error` (`SERVICE_NOT_CONFIGURED`) | Service not {{ if .UseCurl }}yet {{ end }}connected | Tell the user{{ if .UseCurl }}: "[Service] isn't activated yet. Connect it in the Clawvisor dashboard."{{ else }} to connect it in the Clawvisor dashboard{{ end }}. |
 | `error` (`EXECUTION_ERROR`) | Adapter failed | Report the error{{ if .UseCurl }} to the user{{ end }}. Do not silently retry. |
 | `error` (other) | Something went wrong | Report the error{{ if .UseCurl }} message to the user{{ end }}. Do not silently retry. |
+
+**Warnings:** Responses may include a `"warnings"` array with actionable messages about misconfiguration. For example, if you make a standing task request without `session_id`, the response will warn that chain context is disabled. Always check for and act on warnings.
 {{ if not .Condensed }}
 ---
 

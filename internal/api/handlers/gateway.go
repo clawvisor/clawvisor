@@ -211,6 +211,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// ── Step 4: Task scope enforcement ───────────────────────────────────────
 	var advisoryVerdict *intent.VerificationVerdict
+	var warnings []string
 	{
 		task, taskErr := h.store.GetTask(ctx, req.TaskID)
 		if taskErr != nil {
@@ -233,6 +234,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "INVALID_STATE",
 				fmt.Sprintf("task is %s, not active", task.Status))
 			return
+		}
+
+		if task.Lifetime == "standing" && req.SessionID == "" {
+			warnings = append(warnings, "Chain context is disabled because session_id was not provided on this standing task request. Intent verification cannot verify that entity references (message IDs, thread IDs, etc.) came from prior results. Provide a consistent session_id across related requests to enable chain context.")
 		}
 
 		match := CheckTaskScope(task, serviceType, serviceAlias, req.Action)
@@ -323,13 +328,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						h.logger.Warn("intent alert failed", "err", alertErr)
 					}
 				}
-				writeJSON(w, http.StatusOK, map[string]any{
+				resp := map[string]any{
 					"status":       "restricted",
 					"request_id":   req.RequestID,
 					"audit_id":     auditID,
 					"reason":       verdict.Explanation,
 					"verification": verdict,
-				})
+				}
+				if len(warnings) > 0 {
+					resp["warnings"] = warnings
+				}
+				writeJSON(w, http.StatusOK, resp)
 				return
 			}
 			// ── End intent verification ──────────────────────────────────
@@ -462,12 +471,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}, cbKey)
 				}()
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"status":     "executed",
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
 				"result":     result,
-			})
+			}
+			if len(warnings) > 0 {
+				resp["warnings"] = warnings
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 
@@ -575,12 +588,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		// Still pending (timeout elapsed) — fall through to pending response.
 	}
 
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	resp := map[string]any{
 		"status":     "pending",
 		"request_id": req.RequestID,
 		"audit_id":   auditID,
 		"message":    fmt.Sprintf("Approval requested. Waiting up to %ds.", h.cfg.Approval.Timeout),
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 // HandleGet returns the current status of a gateway request by request_id.
