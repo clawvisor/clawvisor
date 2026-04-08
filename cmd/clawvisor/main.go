@@ -31,7 +31,7 @@ func init() {
 	rootCmd.AddCommand(healthcheckCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(servicesCmd)
-	rootCmd.AddCommand(integrateCmd)
+	rootCmd.AddCommand(connectAgentCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(tuiCmd)
 }

@@ -6,12 +6,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var integrateCmd = &cobra.Command{
-	Use:   "integrate",
-	Short: "Set up agent integrations (Claude Code, Claude Desktop, etc.)",
-	Long:  "Auto-detect installed coding agents and walk through setting up\neach one to work with Clawvisor.",
+var connectAgentCmd = &cobra.Command{
+	Use:     "connect-agent",
+	Aliases: []string{"integrate"},
+	Short:   "Connect an agent to Clawvisor (Claude Code, Claude Desktop, etc.)",
+	Long:    "Auto-detect installed coding agents and walk through setting up\neach one to work with Clawvisor.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := daemon.Integrate()
+		err := daemon.ConnectAgent()
 		if err == huh.ErrUserAborted {
 			return nil
 		}
@@ -20,12 +21,12 @@ var integrateCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-var integrateClaudeCodeCmd = &cobra.Command{
+var connectAgentClaudeCodeCmd = &cobra.Command{
 	Use:   "claude-code",
-	Short: "Set up Claude Code integration",
+	Short: "Connect Claude Code to Clawvisor",
 	Long:  "Install the /clawvisor-setup slash command and optionally add\nauto-approve rules for Clawvisor curl requests.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := daemon.IntegrateClaudeCode()
+		err := daemon.ConnectAgentClaudeCode()
 		if err == huh.ErrUserAborted {
 			return nil
 		}
@@ -34,18 +35,18 @@ var integrateClaudeCodeCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-var integrateClaudeDesktopCmd = &cobra.Command{
+var connectAgentClaudeDesktopCmd = &cobra.Command{
 	Use:   "claude-desktop",
-	Short: "Set up Claude Desktop integration",
+	Short: "Connect Claude Desktop to Clawvisor",
 	Long:  "Configure the MCP connection for Claude Desktop and optionally\nrestart it to pick up the new config.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		daemon.IntegrateClaudeDesktop()
+		daemon.ConnectAgentClaudeDesktop()
 		return nil
 	},
 	SilenceUsage: true,
 }
 
 func init() {
-	integrateCmd.AddCommand(integrateClaudeCodeCmd)
-	integrateCmd.AddCommand(integrateClaudeDesktopCmd)
+	connectAgentCmd.AddCommand(connectAgentClaudeCodeCmd)
+	connectAgentCmd.AddCommand(connectAgentClaudeDesktopCmd)
 }

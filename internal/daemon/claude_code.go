@@ -439,20 +439,20 @@ func offerClaudeDesktopSetup() {
 }
 
 // printClaudeCodeManualInstructions prints a short pointer to the
-// dedicated integrate subcommand.
+// dedicated connect-agent subcommand.
 func printClaudeCodeManualInstructions() {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Code later, run:"))
-	fmt.Println(green.Padding(0, 2).Render("    clawvisor integrate claude-code"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor connect-agent claude-code"))
 	fmt.Println()
 }
 
 // printClaudeDesktopManualInstructions prints a short pointer to the
-// dedicated integrate subcommand.
+// dedicated connect-agent subcommand.
 func printClaudeDesktopManualInstructions() {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Desktop later, run:"))
-	fmt.Println(green.Padding(0, 2).Render("    clawvisor integrate claude-desktop"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor connect-agent claude-desktop"))
 	fmt.Println()
 }
 

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#get-started">Get Started</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#daemon-mode">Daemon</a> · <a href="#supported-services">Services</a> · <a href="#security-model">Security</a>
+  <a href="#get-started">Get Started</a> · <a href="#cli-reference">CLI</a> · <a href="#agent-integration">Agent Integration</a> · <a href="#dashboard">Dashboard</a> · <a href="#supported-services">Services</a> · <a href="#security-model">Security</a>
 </p>
 
 ---
@@ -30,31 +30,31 @@ Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
 ## Get Started
 
-The setup guides in [`docs/`](docs/SETUP.md) are written as agent-executable
-instructions — give the right one to your AI agent and it will walk you
-through setup and integration interactively.
+### Install (recommended)
 
-**Point your agent at [docs/SETUP.md](docs/SETUP.md)** to get started. It
-covers two steps:
+```bash
+curl -fsSL https://clawvisor.com/install.sh | sh
+```
 
-1. **Run Clawvisor** — locally with Go, with Docker, or on a remote server
-2. **Connect your agent** — Claude Code, Claude Desktop (MCP), OpenClaw, or any HTTP agent
+This downloads the latest binary, adds it to your PATH, and starts an interactive setup wizard that walks you through configuration — database, LLM provider for intent verification, Google OAuth, and more. No Go, Node, or Docker required.
 
-Or jump directly to the guide you need:
+Once setup completes, the daemon opens the web dashboard in your browser automatically.
 
-| Run Clawvisor | Connect your agent |
-|---|---|
-| [Local](docs/SETUP_LOCAL.md) — Go + SQLite, no Docker | [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) |
-| [Docker](docs/SETUP_DOCKER.md) — Docker Compose locally | [Claude Desktop](docs/INTEGRATE_CLAUDE_COWORK.md) (MCP) |
-| [Cloud](docs/SETUP_CLOUD.md) — remote server or container platform | [OpenClaw](docs/INTEGRATE_OPENCLAW.md) |
-| | [Generic agent](docs/INTEGRATE_GENERIC.md) |
+### Connect your agent
 
-For the complete agent API protocol, see
-[`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
+With Clawvisor running, connect your agent:
 
-### Manual quickstart
+- **Claude Code** — run `/clawvisor-setup` inside Claude Code, or follow [docs/INTEGRATE_CLAUDE_CODE.md](docs/INTEGRATE_CLAUDE_CODE.md)
+- **Claude Desktop (MCP)** — [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md)
+- **OpenClaw** — [docs/INTEGRATE_OPENCLAW.md](docs/INTEGRATE_OPENCLAW.md)
+- **Any HTTP agent** — [docs/INTEGRATE_GENERIC.md](docs/INTEGRATE_GENERIC.md)
 
-If you prefer to set up without an agent:
+Or point your agent at [docs/SETUP.md](docs/SETUP.md) — the setup guides are written as agent-executable instructions that walk you through everything interactively.
+
+### Alternative installs
+
+<details>
+<summary>From source (Go + Node)</summary>
 
 ```bash
 git clone https://github.com/clawvisor/clawvisor.git
@@ -65,6 +65,94 @@ make tui      # terminal dashboard (separate terminal)
 ```
 
 `make setup` generates `config.yaml` and a `vault.key` (database, Google OAuth, intent verification). `make run` starts the server, creates an `admin@local` user, and opens the dashboard via a magic link. `make tui` auto-authenticates using the local session file.
+
+Requires Go 1.25+ and Node.js 18+. See [docs/SETUP_LOCAL.md](docs/SETUP_LOCAL.md) for details.
+
+</details>
+
+<details>
+<summary>Docker</summary>
+
+```bash
+git clone https://github.com/clawvisor/clawvisor.git
+cd clawvisor
+make up       # docker compose (app + postgres)
+```
+
+See [docs/SETUP_DOCKER.md](docs/SETUP_DOCKER.md) for details.
+
+</details>
+
+<details>
+<summary>Cloud / remote server</summary>
+
+See [docs/SETUP_CLOUD.md](docs/SETUP_CLOUD.md) for deploying to a VPS, container platform, or Cloud Run.
+
+</details>
+
+For the complete agent API protocol, see [`skills/clawvisor/SKILL.md`](skills/clawvisor/SKILL.md).
+
+## CLI Reference
+
+The `clawvisor` CLI is the primary interface for managing Clawvisor. Run `clawvisor install` on a fresh machine for a guided walkthrough that runs `setup`, `services`, `connect-agent`, and `dashboard` in sequence.
+
+### Setup & installation
+
+| Command | Description |
+|---|---|
+| `clawvisor install` | Guided first-run: configure, install as system service, start, connect services and agents, and open the dashboard. Use `--pair` to also pair a mobile device. |
+| `clawvisor setup` | Interactive configuration wizard — LLM provider, relay, telemetry. Run this to reconfigure an existing install. |
+| `clawvisor update` | Update to the latest release (or `--version <tag>` for a specific version). |
+| `clawvisor uninstall` | Remove the system service. |
+
+### Daemon lifecycle
+
+| Command | Description |
+|---|---|
+| `clawvisor start` | Start the daemon as a background service. Use `--foreground` to run in the foreground. |
+| `clawvisor stop` | Stop the running daemon. |
+| `clawvisor restart` | Restart the daemon. |
+| `clawvisor status` | Show whether the daemon is running. |
+
+### Services
+
+| Command | Description |
+|---|---|
+| `clawvisor services` | Interactive picker to connect downstream services (Gmail, GitHub, Slack, etc.). |
+| `clawvisor services list` | List available and connected services. Use `--json` for machine-readable output. |
+| `clawvisor services add [service]` | Connect a service by ID or name. Omit the argument for an interactive picker. |
+| `clawvisor services remove <service>` | Disconnect a service. |
+
+### Agent connection
+
+| Command | Description |
+|---|---|
+| `clawvisor connect-agent` | Auto-detect installed agents and walk through connecting them. |
+| `clawvisor connect-agent claude-code` | Install the `/clawvisor-setup` slash command and optionally add auto-approve rules. |
+| `clawvisor connect-agent claude-desktop` | Configure the MCP connection for Claude Desktop. |
+
+### Agent management
+
+| Command | Description |
+|---|---|
+| `clawvisor agent create <name>` | Create an agent and print its bearer token. Use `--with-callback-secret` to generate a callback signing secret, `--replace` to overwrite an existing agent. |
+| `clawvisor agent list` | List all agents. |
+| `clawvisor agent delete <name-or-id>` | Delete an agent. |
+
+### Dashboard & UI
+
+| Command | Description |
+|---|---|
+| `clawvisor dashboard` | Open the web dashboard in your browser. Use `--no-open` to print the URL only. |
+| `clawvisor tui` | Launch the terminal dashboard. Supports `--url` and `--token` overrides. |
+| `clawvisor pair` | Pair a mobile device via QR code. |
+
+### Other
+
+| Command | Description |
+|---|---|
+| `clawvisor server` | Start the API server directly (used internally by `start`). Use `--open` to open the magic link on startup. |
+| `clawvisor healthcheck` | Check if the server is ready — queries `/ready` on localhost. Used by Docker HEALTHCHECK. |
 
 ### Configuration
 
@@ -345,20 +433,7 @@ clawvisor tui
 
 ## Daemon Mode
 
-For persistent background operation, Clawvisor can run as a system service:
-
-```bash
-clawvisor start               # start as background service (--foreground to run in fg)
-clawvisor stop                # stop the daemon
-clawvisor restart             # restart the daemon
-clawvisor status              # check if running
-clawvisor install             # install as system service (launchd/systemd)
-clawvisor uninstall           # remove the system service
-clawvisor dashboard           # open the web dashboard (--no-open to print URL only)
-clawvisor pair                # pair a mobile device via QR code
-```
-
-On first run, the daemon runs an interactive setup wizard that generates `config.yaml`, creates the admin user, and optionally configures services and device pairing. Configuration and data are stored in `~/.clawvisor/`.
+The daemon runs Clawvisor as a persistent background service. See [CLI Reference](#cli-reference) for the full list of commands (`start`, `stop`, `status`, `install`, etc.). Configuration and data are stored in `~/.clawvisor/`.
 
 ### Remote access via relay
 

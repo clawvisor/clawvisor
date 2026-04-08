@@ -43,7 +43,7 @@ func Run(opts RunOptions) error {
 		fmt.Println()
 		fmt.Println(dim.Padding(0, 2).Render("Tip: connect services and agents after the daemon starts:"))
 		fmt.Println(dim.Padding(0, 2).Render("  clawvisor services    — connect GitHub, Gmail, Slack, etc."))
-		fmt.Println(dim.Padding(0, 2).Render("  clawvisor integrate   — set up Claude Code, Claude Desktop, etc."))
+		fmt.Println(dim.Padding(0, 2).Render("  clawvisor connect-agent — connect Claude Code, Claude Desktop, etc."))
 		fmt.Println()
 	}
 
@@ -166,7 +166,7 @@ func ensureSetup(dataDir string) (firstRun bool, err error) {
 
 // Setup explicitly re-runs the core daemon config wizard (LLM, relay,
 // telemetry). If a config already exists, the user is asked whether to
-// overwrite it. Use `clawvisor services` and `clawvisor integrate` to
+// overwrite it. Use `clawvisor services` and `clawvisor connect-agent` to
 // connect services and agents separately.
 func Setup() error {
 	dataDir, err := ensureDataDir()
@@ -203,7 +203,7 @@ func Setup() error {
 	fmt.Println(dim.Padding(0, 2).Render("Next steps:"))
 	fmt.Println(dim.Padding(0, 2).Render("  clawvisor install     — install and start the daemon"))
 	fmt.Println(dim.Padding(0, 2).Render("  clawvisor services    — connect services"))
-	fmt.Println(dim.Padding(0, 2).Render("  clawvisor integrate   — set up agent integrations"))
+	fmt.Println(dim.Padding(0, 2).Render("  clawvisor connect-agent — connect agents"))
 	fmt.Println()
 	return nil
 }

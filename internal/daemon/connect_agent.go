@@ -6,10 +6,10 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// Integrate auto-detects installed coding agents and walks the user through
+// ConnectAgent auto-detects installed coding agents and walks the user through
 // setting up each one. Agents that require a running daemon (e.g. Claude
 // Desktop MCP/OAuth) will fail gracefully if the daemon is not reachable.
-func Integrate() error {
+func ConnectAgent() error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
@@ -35,7 +35,7 @@ func Integrate() error {
 	fmt.Println()
 
 	if hasClaudeCode(agents) {
-		if err := IntegrateClaudeCode(); err != nil {
+		if err := ConnectAgentClaudeCode(); err != nil {
 			if err == huh.ErrUserAborted {
 				return nil
 			}
@@ -44,7 +44,7 @@ func Integrate() error {
 	}
 
 	if hasClaudeDesktop(agents) {
-		IntegrateClaudeDesktop()
+		ConnectAgentClaudeDesktop()
 		fmt.Println(dim.Padding(0, 4).Render("After authorizing Claude Desktop to connect with Clawvisor,"))
 		fmt.Println(dim.Padding(0, 4).Render("you can ask your agent to perform tasks using any configured service."))
 		fmt.Println()
@@ -56,10 +56,10 @@ func Integrate() error {
 	return nil
 }
 
-// IntegrateClaudeCode installs the /clawvisor-setup slash command for Claude
+// ConnectAgentClaudeCode installs the /clawvisor-setup slash command for Claude
 // Code and optionally adds auto-approve rules for curl requests. Does not
 // require a running daemon.
-func IntegrateClaudeCode() error {
+func ConnectAgentClaudeCode() error {
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
@@ -68,8 +68,8 @@ func IntegrateClaudeCode() error {
 	return offerClaudeCodeSetup(dataDir)
 }
 
-// IntegrateClaudeDesktop configures the MCP connection for Claude Desktop.
+// ConnectAgentClaudeDesktop configures the MCP connection for Claude Desktop.
 // Requires a running daemon for OAuth registration on restart.
-func IntegrateClaudeDesktop() {
+func ConnectAgentClaudeDesktop() {
 	offerClaudeDesktopSetup()
 }

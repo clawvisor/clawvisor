@@ -85,7 +85,7 @@ type InstallOptions struct {
 }
 
 // Install runs the guided end-to-end setup and installation flow:
-// setup → write system service → start daemon → connect services → integrate agents.
+// setup → write system service → start daemon → connect services → connect agents.
 // This is the primary entry point for `curl | sh` first-time installs.
 func Install(opts InstallOptions) error {
 	dataDir, err := ensureDataDir()
@@ -187,7 +187,7 @@ func Install(opts InstallOptions) error {
 		fmt.Println(green.Padding(0, 2).Render("✓ Install complete"))
 		fmt.Println(dim.Padding(0, 2).Render("  Once the daemon is running, use:"))
 		fmt.Println(dim.Padding(0, 2).Render("    clawvisor services    — connect services"))
-		fmt.Println(dim.Padding(0, 2).Render("    clawvisor integrate   — set up agent integrations"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor connect-agent — connect agents"))
 		fmt.Println()
 		return nil
 	}
@@ -197,9 +197,9 @@ func Install(opts InstallOptions) error {
 		fmt.Println(dim.Padding(0, 2).Render("  Service setup skipped. Run `clawvisor services` later."))
 	}
 
-	// Step 5: Integrate agents (auto-detect + walk through).
-	if err := Integrate(); err != nil && err != huh.ErrUserAborted {
-		fmt.Println(dim.Padding(0, 2).Render("  Agent integration skipped. Run `clawvisor integrate` later."))
+	// Step 5: Connect agents (auto-detect + walk through).
+	if err := ConnectAgent(); err != nil && err != huh.ErrUserAborted {
+		fmt.Println(dim.Padding(0, 2).Render("  Agent setup skipped. Run `clawvisor connect-agent` later."))
 	}
 
 	// Step 6: Optional pairing.

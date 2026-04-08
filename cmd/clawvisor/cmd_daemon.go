@@ -55,7 +55,7 @@ var statusCmd = &cobra.Command{
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Guided setup: configure, install, start, connect services, and integrate agents",
+	Short: "Guided setup: configure, install, start, connect services and agents",
 	Long:  "Run the full guided setup flow: configure the daemon, install it as\na system service, start it, connect services, and set up agent\nintegrations. This is the recommended way to get started.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pair, _ := cmd.Flags().GetBool("pair")

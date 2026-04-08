@@ -9,7 +9,7 @@ import (
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Configure the daemon (LLM, relay, telemetry)",
-	Long:  "Run the core configuration wizard to set up LLM provider, relay,\nand telemetry preferences. Use `clawvisor services` and\n`clawvisor integrate` to connect services and agents.",
+	Long:  "Run the core configuration wizard to set up LLM provider, relay,\nand telemetry preferences. Use `clawvisor services` and\n`clawvisor connect-agent` to connect agents.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := daemon.Setup()
 		if err == huh.ErrUserAborted {

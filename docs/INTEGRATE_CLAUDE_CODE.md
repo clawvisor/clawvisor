@@ -68,13 +68,13 @@ Save the `token` value from the JSON output — it is shown only once.
 ## Step 3: Install the skill globally
 
 The skill is installed globally to `~/.claude/skills/clawvisor/SKILL.md` during
-`clawvisor setup` (or `clawvisor integrate`). Verify it's present:
+`clawvisor setup` (or `clawvisor connect-agent`). Verify it's present:
 
 ```bash
 ls ~/.claude/skills/clawvisor/SKILL.md
 ```
 
-If missing, re-run `clawvisor integrate` or copy it manually from the
+If missing, re-run `clawvisor connect-agent` or copy it manually from the
 Clawvisor repository:
 
 ```bash
