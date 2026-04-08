@@ -192,6 +192,7 @@ func New(
 		logHandler = slog.NewTextHandler(os.Stdout, logOpts)
 	}
 	logger := slog.New(logHandler)
+	slog.SetDefault(logger)
 
 	s := &Server{
 		cfg:        cfg,

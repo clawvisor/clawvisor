@@ -21,8 +21,8 @@ service:
 
 auth:
   type: <"api_key" | "oauth2" | "basic" | "none">
-  header: <string>         # e.g. "Authorization"
-  header_prefix: <string>  # e.g. "Bearer "
+  header: <string>         # e.g. "Authorization" (api_key only)
+  header_prefix: <string>  # e.g. "Bearer " (api_key only)
   extra_headers:           # optional: additional headers on every request
     <key>: <value>
   # Include ONE of the following for OAuth flows:
@@ -33,6 +33,10 @@ auth:
 api:
   base_url: <string>  # e.g. "https://api.github.com"
   type: <"rest" | "graphql">
+
+# Optional: natural-language guidance for the intent verification system.
+# Helps the verifier understand nuances of this service's actions.
+verification_hints: <string>
 
 actions:
   <action_name>:  # snake_case action identifier
@@ -59,6 +63,17 @@ auth:
   header: "Authorization"
   header_prefix: "Bearer "
 ```
+
+### Basic Auth
+
+The credential is stored as a `user:pass` string. The runtime splits on `:` and uses Go's `SetBasicAuth()` to produce a standard `Authorization: Basic <base64>` header.
+
+```yaml
+auth:
+  type: basic
+```
+
+No additional fields are needed — `header` and `header_prefix` are ignored for basic auth.
 
 ### PKCE Flow (Recommended for OAuth)
 
@@ -100,15 +115,64 @@ auth:
     scopes: ["repo", "read:org"]
     device_code_url: "https://github.com/login/device/code"
     token_url: "https://github.com/login/oauth/access_token"
+    grant_type: "urn:ietf:params:oauth:grant-type:device_code"  # optional: override grant_type in token exchange
 ```
 
-### Basic Auth
+**Fields:**
+- `client_id` — hardcoded public client ID
+- `client_id_env` — environment variable name for client ID override
+- `scopes` — requested OAuth scopes
+- `device_code_url` — device authorization endpoint
+- `token_url` — token exchange endpoint
+- `grant_type` — optional override for the `grant_type` parameter in the token request (default: `urn:ietf:params:oauth:grant-type:device_code`)
+
+### Traditional OAuth2
+
+For server-side OAuth2 flows that require a client secret. Use PKCE or device flow instead when possible.
 
 ```yaml
 auth:
-  type: basic
-  basic_split: true  # split "user:pass" credential string into BasicAuth
+  type: oauth2
+  oauth:
+    endpoint: "google"                    # well-known provider ("google"), or omit for custom URLs
+    vault_key: "google"                   # shared vault key across services using the same OAuth app
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+    scope_merge: true                     # merge scopes with existing credential (for multi-service OAuth apps)
+    conditional_scopes:                   # optional: scopes gated on environment variables
+      - scope: "https://www.googleapis.com/auth/gmail.send"
+        env_gate: "ENABLE_GMAIL_SEND"
+        default: false                    # include if env var is unset?
+    # Custom endpoint fields (used when `endpoint` is not a well-known provider):
+    client_id_env: "ACME_CLIENT_ID"
+    client_secret_env: "ACME_CLIENT_SECRET"
+    authorize_url: "https://acme.com/oauth/authorize"
+    token_url: "https://acme.com/oauth/token"
 ```
+
+**Fields:**
+- `endpoint` — well-known provider name (currently `"google"`), or omit for custom endpoints
+- `vault_key` — vault key for credential storage; defaults to the service ID. Use a shared key (e.g. `"google"`) when multiple services share the same OAuth app
+- `scopes` — requested OAuth scopes
+- `scope_merge` — if true, new scopes are merged with the existing credential rather than replacing it
+- `conditional_scopes` — scopes conditionally included based on environment variables
+  - `scope` — the OAuth scope string
+  - `env_gate` — environment variable name to check
+  - `default` — whether to include the scope when the env var is unset
+- `client_id` / `client_id_env` — client ID (inline or via env var)
+- `client_secret` / `client_secret_env` — client secret (inline or via env var)
+- `authorize_url` — OAuth2 authorization endpoint
+- `token_url` — OAuth2 token endpoint
+
+### No Auth
+
+For public APIs that don't require authentication.
+
+```yaml
+auth:
+  type: none
+```
+
+`extra_headers` still works with `type: none` for APIs that need non-auth headers.
 
 ## Actions
 
@@ -181,11 +245,21 @@ actions:
 | `transform` | string | Expr-lang expression to transform value before sending |
 | `default_expr` | string | Expr-lang expression for dynamic default (e.g. `"rfc3339(now())"`) |
 
+### GraphQL-Specific Parameter Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `graphql_var` | bool | Pass as a top-level GraphQL variable |
+| `filter_path` | string | Dot-delimited path to build a nested filter object (e.g. `"team.id.eq"`) |
+| `input_field` | string | Maps param to a field in the `$input` mutation variable (e.g. `"teamId"`) |
+
 ### Parameter Location
 
 - `path` — interpolated into the URL path (e.g. `/repos/{{.owner}}`)
 - `query` — appended as URL query parameters
 - `body` — included in the JSON request body (default for POST/PUT/PATCH)
+
+Path parameters also support credential field interpolation via `{{.credential.field}}` (e.g. `{{.credential.user}}`). For basic auth, `user` and `pass` are available; for API key, `token`.
 
 ### Body Mode
 
