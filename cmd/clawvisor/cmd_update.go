@@ -115,9 +115,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("  Updated successfully: v%s → v%s\n", current, targetVersion)
 
-	// Check if daemon is running and remind user to restart.
+	// Restart daemon automatically if it was running.
 	if s, err := daemon.CheckStatus(); err == nil && s.Running {
-		fmt.Println("  Daemon is running — restart it with: clawvisor restart")
+		fmt.Println("  Restarting daemon...")
+		if err := daemon.Stop(); err != nil {
+			return fmt.Errorf("stopping daemon: %w", err)
+		}
+		if err := daemon.Start(); err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+		fmt.Println("  Daemon restarted.")
 	}
 
 	return nil
