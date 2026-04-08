@@ -232,6 +232,7 @@ export interface ServiceInfo {
   oauth: boolean
   device_flow?: boolean
   pkce_flow?: boolean
+  pkce_client_id_required?: boolean
   auto_identity?: boolean
   requires_activation?: boolean
   credential_free?: boolean
@@ -470,6 +471,34 @@ export interface PairSession {
   expires_at: string
 }
 
+export interface AdapterGenParamPreview {
+  name: string
+  type: string
+  required: boolean
+}
+
+export interface AdapterGenActionPreview {
+  name: string
+  display_name: string
+  method?: string
+  path?: string
+  category: string
+  sensitivity: string
+  params?: AdapterGenParamPreview[]
+}
+
+export interface AdapterGenResult {
+  service_id: string
+  display_name: string
+  description?: string
+  base_url: string
+  auth_type: string
+  yaml: string
+  actions: AdapterGenActionPreview[]
+  warnings?: string[]
+  installed: boolean
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -567,9 +596,10 @@ export const api = {
         old_alias: oldAlias,
         new_alias: newAlias,
       }),
-    pkceFlowStart: (serviceID: string, alias?: string) =>
+    pkceFlowStart: (serviceID: string, alias?: string, clientId?: string) =>
       post<{ authorize_url: string; state: string }>(`/api/services/${serviceID}/pkce-flow/start`, {
         ...(alias ? { alias } : {}),
+        ...(clientId ? { client_id: clientId } : {}),
       }),
     deviceFlowStart: (serviceID: string, alias?: string) =>
       post<{ flow_id: string; user_code: string; verification_uri: string; interval: number; expires_in: number }>(
@@ -648,6 +678,12 @@ export const api = {
       get<{ configured: boolean }>('/api/system/google-oauth'),
     setGoogleOAuth: (clientId: string, clientSecret: string) =>
       post<{ ok: boolean }>('/api/system/google-oauth', { client_id: clientId, client_secret: clientSecret }),
+    listPKCECredentials: () =>
+      get<{ service_id: string; client_id: string }[]>('/api/system/pkce-credentials'),
+    setPKCECredential: (serviceId: string, clientId: string) =>
+      post<{ ok: boolean }>('/api/system/pkce-credentials', { service_id: serviceId, client_id: clientId }),
+    deletePKCECredential: (serviceId: string) =>
+      del<{ ok: boolean }>(`/api/system/pkce-credentials/${serviceId}`),
   },
   features: {
     get: () => get<FeatureSet>('/api/features'),
@@ -677,6 +713,38 @@ export const api = {
     redirect_uri: string
     state: string
   }) => post<{ redirect_uri: string }>('/oauth/deny', params),
+  adapterGen: {
+    create: (opts: {
+      sourceType: string
+      source?: string
+      sourceUrl?: string
+      sourceHeaders?: Record<string, string>
+      serviceId?: string
+      authType?: string
+    }) =>
+      post<AdapterGenResult>('/api/adapters/generate', {
+        source_type: opts.sourceType,
+        ...(opts.sourceUrl ? { source_url: opts.sourceUrl } : { source: opts.source }),
+        ...(opts.sourceHeaders && Object.keys(opts.sourceHeaders).length ? { source_headers: opts.sourceHeaders } : {}),
+        ...(opts.serviceId ? { service_id: opts.serviceId } : {}),
+        ...(opts.authType ? { auth_type: opts.authType } : {}),
+      }),
+    update: (serviceId: string, opts: {
+      sourceType: string
+      source?: string
+      sourceUrl?: string
+      sourceHeaders?: Record<string, string>
+    }) =>
+      put<AdapterGenResult>(`/api/adapters/${serviceId}/generate`, {
+        source_type: opts.sourceType,
+        ...(opts.sourceUrl ? { source_url: opts.sourceUrl } : { source: opts.source }),
+        ...(opts.sourceHeaders && Object.keys(opts.sourceHeaders).length ? { source_headers: opts.sourceHeaders } : {}),
+      }),
+    install: (yaml: string) =>
+      post<AdapterGenResult>('/api/adapters/install', { yaml }),
+    remove: (serviceId: string) =>
+      del<{ status: string; service_id: string }>(`/api/adapters/${serviceId}`),
+  },
   tasks: {
     list: (params?: { status?: string; limit?: number; offset?: number }) => {
       const q = new URLSearchParams()

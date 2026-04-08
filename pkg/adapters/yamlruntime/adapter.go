@@ -366,6 +366,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		OAuthEndpoint:     oauthEndpoint,
 		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",
 		PKCEFlow:          a.def.Auth.PKCEFlow != nil && a.resolvePKCEFlowClientID() != "",
+		PKCEFlowDefined:   a.def.Auth.PKCEFlow != nil,
 		AutoIdentity:      a.def.Service.Identity != nil,
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,

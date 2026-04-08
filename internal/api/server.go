@@ -14,8 +14,10 @@ import (
 	"net/http"
 	"strings"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -494,6 +496,22 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 
+	// Adapter generation (user JWT for dashboard, agent token for MCP)
+	if s.llmCfg.AdapterGen.Enabled {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			s.logger.Error("adapter gen disabled: cannot determine home directory", "err", err)
+		} else {
+			adapterGenDir := filepath.Join(home, ".clawvisor", "adapters")
+			gen := adaptergen.New(s.llmCfg.AdapterGen, s.adapterReg, adapterGenDir, s.logger)
+			adapterGenHandler := handlers.NewAdapterGenHandler(gen, s.logger)
+			mux.Handle("POST /api/adapters/generate", user(adapterGenHandler.Create))
+			mux.Handle("POST /api/adapters/install", user(adapterGenHandler.Install))
+			mux.Handle("PUT /api/adapters/{service_id}/generate", user(adapterGenHandler.Update))
+			mux.Handle("DELETE /api/adapters/{service_id}", user(adapterGenHandler.Remove))
+		}
+	}
+
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
@@ -514,6 +532,9 @@ func (s *Server) routes() http.Handler {
 	// System-level OAuth config (user JWT)
 	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
 	mux.Handle("POST /api/system/google-oauth", user(servicesHandler.SetGoogleOAuthConfig))
+	mux.Handle("GET /api/system/pkce-credentials", user(servicesHandler.ListPKCECredentials))
+	mux.Handle("POST /api/system/pkce-credentials", user(servicesHandler.SetPKCECredential))
+	mux.Handle("DELETE /api/system/pkce-credentials/{service_id}", user(servicesHandler.DeletePKCECredential))
 
 	// Skill catalog (agent token)
 	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))
@@ -628,6 +649,21 @@ func (s *Server) routes() http.Handler {
 			"POST /api/tasks/{id}/expand":                      http.HandlerFunc(tasksHandler.Expand),
 			"POST /api/gateway/request":                        http.HandlerFunc(gatewayHandler.HandleRequest),
 			"POST /api/gateway/request/{request_id}/execute":   http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
+		}
+
+		// Register adapter generation routes in MCP handler map if enabled.
+		if s.llmCfg.AdapterGen.Enabled {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				s.logger.Error("adapter gen disabled in MCP: cannot determine home directory", "err", err)
+			} else {
+				adapterGenDir := filepath.Join(home, ".clawvisor", "adapters")
+				gen := adaptergen.New(s.llmCfg.AdapterGen, s.adapterReg, adapterGenDir, s.logger)
+				mcpAdapterGenHandler := handlers.NewAdapterGenHandler(gen, s.logger)
+				mcpHandlers["POST /api/adapters/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Create)
+				mcpHandlers["PUT /api/adapters/{service_id}/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Update)
+				mcpHandlers["DELETE /api/adapters/{service_id}"] = http.HandlerFunc(mcpAdapterGenHandler.Remove)
+			}
 		}
 
 		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)

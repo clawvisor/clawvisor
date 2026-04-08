@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -70,4 +71,56 @@ func GetGoogleOAuthCredentials(ctx context.Context, v vault.Vault) (clientID, cl
 		return "", ""
 	}
 	return cred.ClientID, cred.ClientSecret
+}
+
+// pkceClientIDCred is the JSON structure stored in the vault for per-service PKCE client IDs.
+type pkceClientIDCred struct {
+	ClientID string `json:"client_id"`
+}
+
+// SetPKCEClientID stores a PKCE client ID for a specific service in the system vault.
+func SetPKCEClientID(ctx context.Context, v vault.Vault, serviceID, clientID string) error {
+	data, err := json.Marshal(pkceClientIDCred{ClientID: clientID})
+	if err != nil {
+		return err
+	}
+	return v.Set(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID, data)
+}
+
+// GetPKCEClientID reads a PKCE client ID for a specific service from the system vault.
+// Returns empty string if not configured.
+func GetPKCEClientID(ctx context.Context, v vault.Vault, serviceID string) string {
+	data, err := v.Get(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	var cred pkceClientIDCred
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return ""
+	}
+	return cred.ClientID
+}
+
+// DeletePKCEClientID removes a PKCE client ID for a specific service from the system vault.
+func DeletePKCEClientID(ctx context.Context, v vault.Vault, serviceID string) error {
+	return v.Delete(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
+}
+
+// ListPKCEClientIDs returns a map of serviceID → clientID for all configured PKCE credentials.
+func ListPKCEClientIDs(ctx context.Context, v vault.Vault) (map[string]string, error) {
+	keys, err := v.List(ctx, SystemUserID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string)
+	for _, key := range keys {
+		if !strings.HasPrefix(key, SystemVaultKeyPKCEPrefix) {
+			continue
+		}
+		serviceID := strings.TrimPrefix(key, SystemVaultKeyPKCEPrefix)
+		if cid := GetPKCEClientID(ctx, v, serviceID); cid != "" {
+			result[serviceID] = cid
+		}
+	}
+	return result, nil
 }

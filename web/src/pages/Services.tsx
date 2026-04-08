@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { NavLink } from 'react-router-dom'
 import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
@@ -270,6 +271,7 @@ interface ServiceType {
   oauth: boolean
   deviceFlow: boolean
   pkceFlow: boolean
+  pkceClientIdRequired: boolean
   autoIdentity: boolean
   requiresActivation: boolean
   credentialFree: boolean
@@ -296,6 +298,14 @@ function AddServiceModal({
   const [keyAlias, setKeyAlias] = useState<string | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Search filter
+  const [search, setSearch] = useState('')
+
+  // PKCE client ID state (for services that need a client ID configured)
+  const [pkceClientIdFor, setPkceClientIdFor] = useState<string | null>(null)
+  const [pkceClientIdValue, setPkceClientIdValue] = useState('')
+  const [pkceClientIdAlias, setPkceClientIdAlias] = useState<string | undefined>(undefined)
 
   // Device flow state
   const [deviceFlowFor, setDeviceFlowFor] = useState<string | null>(null)
@@ -344,6 +354,7 @@ function AddServiceModal({
         oauth: svc.oauth,
         deviceFlow: svc.device_flow ?? false,
         pkceFlow: svc.pkce_flow ?? false,
+        pkceClientIdRequired: svc.pkce_client_id_required ?? false,
         autoIdentity: svc.auto_identity ?? false,
         requiresActivation: svc.requires_activation ?? true,
         credentialFree: svc.credential_free ?? false,
@@ -354,7 +365,15 @@ function AddServiceModal({
       })
     }
   }
-  const serviceTypes = Array.from(typeMap.values())
+  const allServiceTypes = Array.from(typeMap.values())
+  const searchLower = search.toLowerCase().trim()
+  const serviceTypes = searchLower
+    ? allServiceTypes.filter(st =>
+        serviceName(st.baseId).toLowerCase().includes(searchLower) ||
+        st.baseId.toLowerCase().includes(searchLower) ||
+        st.description.toLowerCase().includes(searchLower)
+      )
+    : allServiceTypes
 
   async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
@@ -403,10 +422,10 @@ function AddServiceModal({
     }
   }
 
-  async function handleActivatePKCE(serviceId: string, alias?: string) {
+  async function handleActivatePKCE(serviceId: string, alias?: string, clientId?: string) {
     setError(null)
     try {
-      const resp = await api.services.pkceFlowStart(serviceId, alias)
+      const resp = await api.services.pkceFlowStart(serviceId, alias, clientId)
       if (resp.authorize_url) {
         const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=700')
         if (!popup) window.location.href = resp.authorize_url
@@ -507,6 +526,13 @@ function AddServiceModal({
     if (st.oauth) {
       handleActivateOAuth(st.baseId, alias, addingAccount)
     } else if (st.pkceFlow) {
+      if (st.pkceClientIdRequired) {
+        // Need client ID first — show inline input.
+        setPkceClientIdFor(st.baseId)
+        setPkceClientIdValue('')
+        setPkceClientIdAlias(alias)
+        return
+      }
       handleActivatePKCE(st.baseId, alias)
     } else if (st.deviceFlow) {
       handleActivateDeviceFlow(st.baseId, alias)
@@ -514,6 +540,13 @@ function AddServiceModal({
       setKeyInputFor(st.baseId)
       setKeyAlias(alias)
     }
+  }
+
+  function handleSubmitPKCEClientId(st: ServiceType) {
+    const clientId = pkceClientIdValue.trim()
+    if (!clientId) return
+    setPkceClientIdFor(null)
+    handleActivatePKCE(st.baseId, pkceClientIdAlias, clientId)
   }
 
   function confirmAlias(st: ServiceType) {
@@ -542,14 +575,25 @@ function AddServiceModal({
           </button>
         </div>
 
-        <div className="px-6 py-5 overflow-y-auto">
+        <div className="px-6 pt-4 pb-2">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search services..."
+            className="w-full text-sm px-3 py-2 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            autoFocus
+          />
+        </div>
+
+        <div className="px-6 py-3 overflow-y-auto">
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
           <div className="grid grid-cols-2 gap-4">
             {serviceTypes.map(st => {
               const isActivated = st.activatedCount > 0
               const isGoogleBlocked = googleOAuthMissing && isGoogleService(st.baseId)
-              const hasInlineUI = aliasInputFor === st.baseId || keyInputFor === st.baseId || (deviceFlowFor === st.baseId && deviceFlowData)
+              const hasInlineUI = aliasInputFor === st.baseId || keyInputFor === st.baseId || pkceClientIdFor === st.baseId || (deviceFlowFor === st.baseId && deviceFlowData)
               return (
                 <div
                   key={st.baseId}
@@ -657,6 +701,45 @@ function AddServiceModal({
                       </div>
                     )}
 
+                    {/* PKCE client ID input */}
+                    {pkceClientIdFor === st.baseId && (
+                      <div className="space-y-2 text-left">
+                        <p className="text-xs text-text-secondary">
+                          Enter your OAuth app's Client ID to connect:
+                        </p>
+                        <input
+                          type="text"
+                          value={pkceClientIdValue}
+                          onChange={e => setPkceClientIdValue(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleSubmitPKCEClientId(st)}
+                          placeholder="Client ID"
+                          className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary font-mono"
+                          autoFocus
+                        />
+                        {st.setupUrl && (
+                          <p className="text-[10px] text-text-tertiary">
+                            Create an OAuth app at{' '}
+                            <a href={st.setupUrl} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">{st.setupUrl}</a>
+                          </p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSubmitPKCEClientId(st)}
+                            disabled={!pkceClientIdValue.trim()}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50 flex-1"
+                          >
+                            Connect
+                          </button>
+                          <button
+                            onClick={() => { setPkceClientIdFor(null); setPkceClientIdValue('') }}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Device flow status */}
                     {deviceFlowFor === st.baseId && deviceFlowData && (
                       <div className="space-y-2 text-left">
@@ -754,12 +837,20 @@ export default function Services() {
               : 'Connect services so your agents can take actions.'}
           </p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
-        >
-          Connect service
-        </button>
+        <div className="flex items-center gap-3">
+          <NavLink
+            to="/dashboard/adapter-gen"
+            className="px-4 py-2 rounded-md border border-border-strong text-text-primary text-sm font-medium hover:bg-surface-2 transition-colors"
+          >
+            Generate integration
+          </NavLink>
+          <button
+            onClick={() => setShowModal(true)}
+            className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
+          >
+            Connect service
+          </button>
+        </div>
       </div>
 
       {googleOAuthMissing && (

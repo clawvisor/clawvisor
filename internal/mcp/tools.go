@@ -146,5 +146,47 @@ func toolDefs() []Tool {
 				"required": ["request_id"]
 			}`),
 		},
+		{
+			Name:        "create_adapter",
+			Description: "Request creation of a new adapter from API source material (MCP tool definitions, OpenAPI spec, or API docs). Clawvisor generates the adapter independently — you do not control the risk classification or adapter definition.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"source_type": {"type": "string", "enum": ["mcp", "openapi", "docs"], "description": "Type of source material"},
+					"source": {"type": "string", "description": "The source material: MCP tool definitions JSON, OpenAPI spec (JSON/YAML), or raw API documentation text. Provide this OR source_url."},
+					"source_url": {"type": "string", "description": "URL to fetch source material from (e.g. an OpenAPI spec endpoint). Provide this OR source."},
+					"source_headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "HTTP headers to send when fetching source_url (e.g. {\"Authorization\": \"Bearer ...\"})"},
+					"service_id": {"type": "string", "description": "Optional service ID hint (e.g. 'jira', 'pagerduty'). If omitted, derived from the source."},
+					"auth_type": {"type": "string", "enum": ["api_key", "oauth2", "basic", "none"], "description": "Optional authentication type override"}
+				},
+				"required": ["source_type"]
+			}`),
+		},
+		{
+			Name:        "update_adapter",
+			Description: "Request regeneration of an existing adapter from updated API source material. The adapter is replaced in-place with independently classified risk.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"service_id": {"type": "string", "description": "The service ID of the adapter to update"},
+					"source_type": {"type": "string", "enum": ["mcp", "openapi", "docs"], "description": "Type of source material"},
+					"source": {"type": "string", "description": "The updated source material. Provide this OR source_url."},
+					"source_url": {"type": "string", "description": "URL to fetch updated source material from. Provide this OR source."},
+					"source_headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "HTTP headers for fetching source_url"}
+				},
+				"required": ["service_id", "source_type"]
+			}`),
+		},
+		{
+			Name:        "remove_adapter",
+			Description: "Remove a previously generated adapter.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"service_id": {"type": "string", "description": "The service ID of the adapter to remove"}
+				},
+				"required": ["service_id"]
+			}`),
+		},
 	}
 }
