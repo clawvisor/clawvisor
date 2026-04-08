@@ -26,9 +26,10 @@ type ServiceMetadata struct {
 	IconSVG           string                // inline SVG markup for the service icon
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
 	OAuthEndpoint     string                // well-known OAuth endpoint name (e.g. "google"); empty = not OAuth or no known endpoint
-	DeviceFlow        bool                  // whether device flow activation is available
-	PKCEFlow          bool                  // whether PKCE authorization code flow is available
-	AutoIdentity      bool                  // whether the adapter can auto-detect account identity
+	DeviceFlow          bool                  // whether device flow activation is available
+	PKCEFlow            bool                  // whether PKCE authorization code flow is available (client ID resolved)
+	PKCEFlowDefined     bool                  // whether PKCE flow is defined in the adapter (even without client ID)
+	AutoIdentity        bool                  // whether the adapter can auto-detect account identity
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 }
@@ -93,6 +94,10 @@ const SystemUserID = "__system__"
 
 // SystemVaultKeyGoogleOAuth is the vault key for Google OAuth app credentials.
 const SystemVaultKeyGoogleOAuth = "google.oauth"
+
+// SystemVaultKeyPKCEPrefix is the vault key prefix for per-service PKCE client IDs.
+// Stored as "__system__" / "pkce.{serviceID}" → {"client_id": "..."}.
+const SystemVaultKeyPKCEPrefix = "pkce."
 
 // Request is passed to an adapter's Execute method.
 // Credential is injected by the gateway; never logged or returned to the caller.
@@ -223,6 +228,13 @@ func (r *Registry) Replace(a Adapter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.adapters[a.ServiceID()] = a
+}
+
+// Remove deletes an adapter from the registry by service ID.
+func (r *Registry) Remove(serviceID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.adapters, serviceID)
 }
 
 // VaultKey returns the vault key for a service ID. If the adapter implements

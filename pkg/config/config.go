@@ -148,6 +148,11 @@ type ChainContextConfig struct {
 	LLMProviderConfig `yaml:",inline"`
 }
 
+// AdapterGenConfig holds settings for LLM-powered adapter generation.
+type AdapterGenConfig struct {
+	LLMProviderConfig `yaml:",inline"`
+}
+
 // LLMConfig groups all LLM provider configurations.
 // Shared fields (provider, endpoint, api_key, model, timeout_seconds) are inherited
 // by subsections unless explicitly overridden at the subsection level.
@@ -161,6 +166,7 @@ type LLMConfig struct {
 	Verification VerificationConfig `yaml:"verification"`  // Intent verification (runtime)
 	TaskRisk     TaskRiskConfig     `yaml:"task_risk"`      // Task risk assessment (creation time)
 	ChainContext ChainContextConfig `yaml:"chain_context"`  // Chain context extraction (multi-step tasks)
+	AdapterGen   AdapterGenConfig   `yaml:"adapter_gen"`    // LLM-powered adapter generation
 }
 
 // MCPConfig holds settings for the MCP server.
@@ -228,6 +234,13 @@ func Default() *Config {
 			TaskRisk: TaskRiskConfig{
 				LLMProviderConfig: LLMProviderConfig{
 					Enabled: true,
+				},
+			},
+			AdapterGen: AdapterGenConfig{
+				LLMProviderConfig: LLMProviderConfig{
+					Enabled:        false, // opt-in: requires explicit enablement
+					Model:          "claude-opus-4-6",
+					TimeoutSeconds: 120, // two LLM passes (generate + risk classify) need headroom
 				},
 			},
 		},
@@ -412,6 +425,22 @@ func Load(path string) (*Config, error) {
 		cfg.LLM.ChainContext.Model = v
 	}
 
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_ENABLED"); v != "" {
+		cfg.LLM.AdapterGen.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_PROVIDER"); v != "" {
+		cfg.LLM.AdapterGen.Provider = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_ENDPOINT"); v != "" {
+		cfg.LLM.AdapterGen.Endpoint = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_API_KEY"); v != "" {
+		cfg.LLM.AdapterGen.APIKey = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_MODEL"); v != "" {
+		cfg.LLM.AdapterGen.Model = v
+	}
+
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
 	}
@@ -449,6 +478,7 @@ func Load(path string) (*Config, error) {
 	inheritLLMDefaults(&cfg.LLM.Verification.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.TaskRisk.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.ChainContext.LLMProviderConfig, &cfg.LLM)
+	inheritLLMDefaults(&cfg.LLM.AdapterGen.LLMProviderConfig, &cfg.LLM)
 
 	// Resolve empty database driver: explicit env/config wins; otherwise auto-detect.
 	if cfg.Database.Driver == "" {

@@ -71,3 +71,31 @@ func GetGoogleOAuthCredentials(ctx context.Context, v vault.Vault) (clientID, cl
 	}
 	return cred.ClientID, cred.ClientSecret
 }
+
+// pkceClientIDCred is the JSON structure stored in the vault for per-service PKCE client IDs.
+type pkceClientIDCred struct {
+	ClientID string `json:"client_id"`
+}
+
+// SetPKCEClientID stores a PKCE client ID for a specific service in the system vault.
+func SetPKCEClientID(ctx context.Context, v vault.Vault, serviceID, clientID string) error {
+	data, err := json.Marshal(pkceClientIDCred{ClientID: clientID})
+	if err != nil {
+		return err
+	}
+	return v.Set(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID, data)
+}
+
+// GetPKCEClientID reads a PKCE client ID for a specific service from the system vault.
+// Returns empty string if not configured.
+func GetPKCEClientID(ctx context.Context, v vault.Vault, serviceID string) string {
+	data, err := v.Get(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	var cred pkceClientIDCred
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return ""
+	}
+	return cred.ClientID
+}

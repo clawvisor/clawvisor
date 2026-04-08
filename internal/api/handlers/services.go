@@ -26,6 +26,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -150,8 +151,9 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		OAuth              bool          `json:"oauth"`
 		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
 		DeviceFlow         bool          `json:"device_flow,omitempty"`
-		PKCEFlow           bool          `json:"pkce_flow,omitempty"`
-		AutoIdentity       bool          `json:"auto_identity,omitempty"`
+		PKCEFlow              bool          `json:"pkce_flow,omitempty"`
+		PKCEClientIDRequired  bool          `json:"pkce_client_id_required,omitempty"`
+		AutoIdentity          bool          `json:"auto_identity,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
 		Actions            []actionEntry `json:"actions"`
@@ -194,27 +196,36 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			actions = append(actions, ae)
 		}
 
-		var deviceFlow, pkceFlow bool
+		var deviceFlow, pkceFlow, pkceFlowDefined bool
 		if mp, ok2 := a.(adapters.MetadataProvider); ok2 {
 			meta := mp.ServiceMetadata()
 			deviceFlow = meta.DeviceFlow
 			pkceFlow = meta.PKCEFlow
+			pkceFlowDefined = meta.PKCEFlowDefined
 		}
 		_, autoIdentity := a.(adapters.IdentityFetcher)
 
+		// If PKCE is defined but no client ID is configured yet, check the vault.
+		if pkceFlowDefined && !pkceFlow {
+			if cid := adapters.GetPKCEClientID(r.Context(), h.vault, a.ServiceID()); cid != "" {
+				pkceFlow = true
+			}
+		}
+
 		return serviceEntry{
-			ID:                 a.ServiceID(),
-			Name:               name,
-			Description:        desc,
-			IconSVG:            iconSVG,
-			OAuth:              len(a.RequiredScopes()) > 0,
-			OAuthEndpoint:      oauthEndpoint,
-			DeviceFlow:         deviceFlow,
-			PKCEFlow:           pkceFlow,
-			AutoIdentity:       autoIdentity,
-			RequiresActivation: true,
-			Actions:            actions,
-			SetupURL:           setupURL,
+			ID:                    a.ServiceID(),
+			Name:                  name,
+			Description:           desc,
+			IconSVG:               iconSVG,
+			OAuth:                 len(a.RequiredScopes()) > 0,
+			OAuthEndpoint:         oauthEndpoint,
+			DeviceFlow:            deviceFlow,
+			PKCEFlow:              pkceFlowDefined, // show PKCE option if defined, even without client ID
+			PKCEClientIDRequired:  pkceFlowDefined && !pkceFlow, // client ID still needed
+			AutoIdentity:          autoIdentity,
+			RequiresActivation:    true,
+			Actions:               actions,
+			SetupURL:              setupURL,
 		}
 	}
 
@@ -1425,15 +1436,11 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not support PKCE flow")
 		return
 	}
-	pfCfg := pfp.PKCEFlowConfig()
-	if pfCfg == nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow not configured (missing client_id)")
-		return
-	}
 
 	var body struct {
 		Alias       string `json:"alias"`
 		CLICallback string `json:"cli_callback"`
+		ClientID    string `json:"client_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	alias := body.Alias
@@ -1445,12 +1452,55 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Resolve client_id.
-	clientID := pfCfg.ClientID
-	if pfCfg.ClientIDEnv != "" {
-		if v := os.Getenv(pfCfg.ClientIDEnv); v != "" {
-			clientID = v
+	// If a client_id was provided in the request, save it to the vault for future use.
+	if body.ClientID != "" {
+		if err := adapters.SetPKCEClientID(r.Context(), h.vault, serviceID, body.ClientID); err != nil {
+			h.logger.Error("failed to store PKCE client ID", "service_id", serviceID, "err", err)
 		}
+	}
+
+	// Get the PKCE flow config. PKCEFlowConfig() returns nil if no client_id is
+	// resolvable from env/yaml, but we may have one from the vault or from the request body.
+	pfCfg := pfp.PKCEFlowConfig()
+
+	// If PKCEFlowConfig returned nil (no hardcoded/env client ID), we still have a
+	// PKCE flow if the YAML defines one — get it directly from the adapter def.
+	if pfCfg == nil {
+		if mp, ok2 := adapter.(adapters.MetadataProvider); ok2 {
+			meta := mp.ServiceMetadata()
+			if !meta.PKCEFlowDefined {
+				writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow not configured for this service")
+				return
+			}
+		}
+		// Get the raw def to access PKCE config without client ID check.
+		type defHolder interface{ Def() yamldef.ServiceDef }
+		if dh, ok2 := adapter.(defHolder); ok2 && dh.Def().Auth.PKCEFlow != nil {
+			pfCfg = dh.Def().Auth.PKCEFlow
+		} else {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow not configured")
+			return
+		}
+	}
+
+	// Resolve client_id: request body → env var → vault → hardcoded.
+	clientID := body.ClientID
+	if clientID == "" {
+		if pfCfg.ClientIDEnv != "" {
+			if v := os.Getenv(pfCfg.ClientIDEnv); v != "" {
+				clientID = v
+			}
+		}
+	}
+	if clientID == "" {
+		clientID = adapters.GetPKCEClientID(r.Context(), h.vault, serviceID)
+	}
+	if clientID == "" {
+		clientID = pfCfg.ClientID
+	}
+	if clientID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "PKCE flow requires a client_id — provide one in the request or set the "+pfCfg.ClientIDEnv+" environment variable")
+		return
 	}
 
 	// Generate PKCE code verifier and challenge.

@@ -182,6 +182,27 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"POST", path, "POST /api/gateway/request/{request_id}/execute",
 			map[string]string{"request_id": id}}, nil, nil
 
+	case "create_adapter":
+		body, _ := json.Marshal(args)
+		return internalRoute{"POST", "/api/adapters/generate", "POST /api/adapters/generate", nil}, body, nil
+
+	case "update_adapter":
+		id := getString("service_id")
+		if err := validatePathParam(id, "service_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		body := stripKeys(args, "service_id")
+		return internalRoute{"PUT", "/api/adapters/" + id + "/generate", "PUT /api/adapters/{service_id}/generate",
+			map[string]string{"service_id": id}}, body, nil
+
+	case "remove_adapter":
+		id := getString("service_id")
+		if err := validatePathParam(id, "service_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		return internalRoute{"DELETE", "/api/adapters/" + id, "DELETE /api/adapters/{service_id}",
+			map[string]string{"service_id": id}}, nil, nil
+
 	default:
 		return internalRoute{}, nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
