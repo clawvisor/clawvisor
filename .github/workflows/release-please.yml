@@ -105,5 +105,6 @@ jobs:
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
+          npx clawhub auth login --token "$CLAWHUB_TOKEN" --no-browser
           VERSION=$(jq -r '."."' .release-please-manifest.json)
           npx clawhub publish "$GITHUB_WORKSPACE/dist/skill" --slug clawvisor --version "$VERSION"
