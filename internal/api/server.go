@@ -532,6 +532,9 @@ func (s *Server) routes() http.Handler {
 	// System-level OAuth config (user JWT)
 	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
 	mux.Handle("POST /api/system/google-oauth", user(servicesHandler.SetGoogleOAuthConfig))
+	mux.Handle("GET /api/system/pkce-credentials", user(servicesHandler.ListPKCECredentials))
+	mux.Handle("POST /api/system/pkce-credentials", user(servicesHandler.SetPKCECredential))
+	mux.Handle("DELETE /api/system/pkce-credentials/{service_id}", user(servicesHandler.DeletePKCECredential))
 
 	// Skill catalog (agent token)
 	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))

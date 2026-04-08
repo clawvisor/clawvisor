@@ -299,6 +299,9 @@ function AddServiceModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Search filter
+  const [search, setSearch] = useState('')
+
   // PKCE client ID state (for services that need a client ID configured)
   const [pkceClientIdFor, setPkceClientIdFor] = useState<string | null>(null)
   const [pkceClientIdValue, setPkceClientIdValue] = useState('')
@@ -362,7 +365,15 @@ function AddServiceModal({
       })
     }
   }
-  const serviceTypes = Array.from(typeMap.values())
+  const allServiceTypes = Array.from(typeMap.values())
+  const searchLower = search.toLowerCase().trim()
+  const serviceTypes = searchLower
+    ? allServiceTypes.filter(st =>
+        serviceName(st.baseId).toLowerCase().includes(searchLower) ||
+        st.baseId.toLowerCase().includes(searchLower) ||
+        st.description.toLowerCase().includes(searchLower)
+      )
+    : allServiceTypes
 
   async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
@@ -564,7 +575,18 @@ function AddServiceModal({
           </button>
         </div>
 
-        <div className="px-6 py-5 overflow-y-auto">
+        <div className="px-6 pt-4 pb-2">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search services..."
+            className="w-full text-sm px-3 py-2 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+            autoFocus
+          />
+        </div>
+
+        <div className="px-6 py-3 overflow-y-auto">
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
           <div className="grid grid-cols-2 gap-4">
@@ -820,7 +842,7 @@ export default function Services() {
             to="/dashboard/adapter-gen"
             className="px-4 py-2 rounded-md border border-border-strong text-text-primary text-sm font-medium hover:bg-surface-2 transition-colors"
           >
-            Generate adapter
+            Generate integration
           </NavLink>
           <button
             onClick={() => setShowModal(true)}

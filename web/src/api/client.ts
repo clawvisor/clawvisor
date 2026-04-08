@@ -678,6 +678,12 @@ export const api = {
       get<{ configured: boolean }>('/api/system/google-oauth'),
     setGoogleOAuth: (clientId: string, clientSecret: string) =>
       post<{ ok: boolean }>('/api/system/google-oauth', { client_id: clientId, client_secret: clientSecret }),
+    listPKCECredentials: () =>
+      get<{ service_id: string; client_id: string }[]>('/api/system/pkce-credentials'),
+    setPKCECredential: (serviceId: string, clientId: string) =>
+      post<{ ok: boolean }>('/api/system/pkce-credentials', { service_id: serviceId, client_id: clientId }),
+    deletePKCECredential: (serviceId: string) =>
+      del<{ ok: boolean }>(`/api/system/pkce-credentials/${serviceId}`),
   },
   features: {
     get: () => get<FeatureSet>('/api/features'),

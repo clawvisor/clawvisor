@@ -17,7 +17,7 @@ export default function Settings() {
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}
-      {!features?.multi_tenant && <GoogleOAuthSection />}
+      {!features?.multi_tenant && <OAuthCredentialsSection />}
       <DevicePairing />
       <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}
@@ -230,92 +230,273 @@ function LLMSection() {
   )
 }
 
-// ── Google OAuth credentials ─────────────────────────────────────────────────
+// ── OAuth Credentials ────────────────────────────────────────────────────────
 
-function GoogleOAuthSection() {
-  const [editing, setEditing] = useState(false)
-  const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
+function OAuthCredentialsSection() {
+  const qc = useQueryClient()
+  const [editingService, setEditingService] = useState<string | null>(null)
+  const [clientIdValue, setClientIdValue] = useState('')
+  const [clientSecretValue, setClientSecretValue] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
 
-  const saveMut = useMutation({
-    mutationFn: () => api.system.setGoogleOAuth(clientId, clientSecret),
+  const { data: googleOAuth } = useQuery({
+    queryKey: ['google-oauth'],
+    queryFn: () => api.system.getGoogleOAuth(),
+  })
+
+  const { data: pkceCredentials } = useQuery({
+    queryKey: ['pkce-credentials'],
+    queryFn: () => api.system.listPKCECredentials(),
+  })
+
+  const { data: services } = useQuery({
+    queryKey: ['services'],
+    queryFn: () => api.services.list(),
+  })
+
+  const googleSaveMut = useMutation({
+    mutationFn: () => api.system.setGoogleOAuth(clientIdValue, clientSecretValue),
     onSuccess: () => {
-      setEditing(false)
-      setClientId('')
-      setClientSecret('')
+      setEditingService(null)
+      setClientIdValue('')
+      setClientSecretValue('')
       setError(null)
-      setSuccess(true)
-      setTimeout(() => setSuccess(false), 5000)
+      qc.invalidateQueries({ queryKey: ['google-oauth'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
     },
     onError: (err: Error) => setError(err.message),
   })
 
-  function handleSubmit() {
-    if (!clientId || !clientSecret) { setError('Both fields are required'); return }
-    setError(null)
-    saveMut.mutate()
+  const pkceSaveMut = useMutation({
+    mutationFn: ({ serviceId, clientId }: { serviceId: string; clientId: string }) =>
+      api.system.setPKCECredential(serviceId, clientId),
+    onSuccess: () => {
+      setEditingService(null)
+      setClientIdValue('')
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['pkce-credentials'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const pkceDeleteMut = useMutation({
+    mutationFn: (serviceId: string) => api.system.deletePKCECredential(serviceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pkce-credentials'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const serviceList = services?.services
+
+  // Check if any Google services exist
+  const hasGoogle = serviceList?.some(s => s.id.startsWith('google.'))
+
+  // Find services that have PKCE flow (deduplicate by base ID)
+  const pkceServices = new Map<string, string>()
+  if (serviceList) {
+    for (const svc of serviceList) {
+      if (svc.pkce_flow && !pkceServices.has(svc.id)) {
+        pkceServices.set(svc.id, svc.name)
+      }
+    }
   }
+
+  // Build PKCE credential lookup
+  const pkceCredMap = new Map<string, string>()
+  if (pkceCredentials) {
+    for (const c of pkceCredentials) {
+      pkceCredMap.set(c.service_id, c.client_id)
+    }
+  }
+
+  // Nothing to show if no OAuth services exist
+  if (!hasGoogle && pkceServices.size === 0) return null
+
+  function startEditing(serviceId: string, currentClientId?: string) {
+    setEditingService(serviceId)
+    setClientIdValue(currentClientId ?? '')
+    setClientSecretValue('')
+    setError(null)
+  }
+
+  const inputClass = "w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
 
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-text-primary">Google OAuth</h2>
+        <h2 className="text-lg font-semibold text-text-primary">OAuth Credentials</h2>
         <p className="text-sm text-text-tertiary mt-0.5">
-          Configure Google OAuth credentials to enable Gmail, Calendar, Drive, and Contacts adapters.
+          Configure OAuth app credentials for services that require browser-based authorization.
         </p>
       </div>
 
       {error && <div className="text-sm text-danger max-w-lg">{error}</div>}
-      {success && <div className="text-sm text-success max-w-lg">Google OAuth credentials saved.</div>}
 
-      {!editing ? (
-        <button
-          onClick={() => { setEditing(true); setError(null); setSuccess(false) }}
-          className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10"
-        >
-          Configure
-        </button>
-      ) : (
-        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
-          <div>
-            <label className="text-xs font-medium text-text-tertiary">Client ID</label>
-            <input
-              type="text"
-              value={clientId}
-              onChange={e => { setClientId(e.target.value); setError(null) }}
-              placeholder="123456789.apps.googleusercontent.com"
-              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-            />
+      <div className="space-y-2 max-w-lg">
+        {/* Google OAuth (client ID + secret, shared across all google.* services) */}
+        {hasGoogle && (
+          <div className="bg-surface-1 border border-border-default rounded-md p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium text-text-primary">Google</span>
+                <span className="text-xs text-text-tertiary ml-2">Gmail, Calendar, Drive, Contacts</span>
+              </div>
+              {editingService !== '__google__' && (
+                <div className="flex items-center gap-2">
+                  {googleOAuth?.configured ? (
+                    <>
+                      <span className="text-xs text-success">Configured</span>
+                      <button
+                        onClick={() => startEditing('__google__')}
+                        className="text-xs text-text-tertiary hover:text-text-primary"
+                      >
+                        Edit
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => startEditing('__google__')}
+                      className="text-xs px-2.5 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+                    >
+                      Configure
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {editingService === '__google__' && (
+              <div className="mt-3 space-y-2">
+                <div>
+                  <label className="text-xs font-medium text-text-tertiary">Client ID</label>
+                  <input
+                    type="text"
+                    value={clientIdValue}
+                    onChange={e => { setClientIdValue(e.target.value); setError(null) }}
+                    placeholder="123456789.apps.googleusercontent.com"
+                    className={`mt-1 ${inputClass}`}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-text-tertiary">Client Secret</label>
+                  <input
+                    type="password"
+                    value={clientSecretValue}
+                    onChange={e => { setClientSecretValue(e.target.value); setError(null) }}
+                    placeholder="GOCSPX-..."
+                    className={`mt-1 ${inputClass}`}
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      if (!clientIdValue || !clientSecretValue) { setError('Both fields are required'); return }
+                      setError(null)
+                      googleSaveMut.mutate()
+                    }}
+                    disabled={googleSaveMut.isPending || !clientIdValue || !clientSecretValue}
+                    className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                  >
+                    {googleSaveMut.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => { setEditingService(null); setError(null) }}
+                    className="text-xs text-text-tertiary hover:text-text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-          <div>
-            <label className="text-xs font-medium text-text-tertiary">Client Secret</label>
-            <input
-              type="password"
-              value={clientSecret}
-              onChange={e => { setClientSecret(e.target.value); setError(null) }}
-              placeholder="GOCSPX-..."
-              className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-            />
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              onClick={handleSubmit}
-              disabled={saveMut.isPending || !clientId || !clientSecret}
-              className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        )}
+
+        {/* PKCE services (client ID only) */}
+        {Array.from(pkceServices.entries()).map(([serviceId, serviceName]) => {
+          const configured = pkceCredMap.get(serviceId)
+          const isEditing = editingService === serviceId
+
+          return (
+            <div
+              key={serviceId}
+              className="bg-surface-1 border border-border-default rounded-md p-4"
             >
-              {saveMut.isPending ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              onClick={() => { setEditing(false); setError(null) }}
-              className="text-sm text-text-tertiary hover:text-text-primary"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-text-primary">{serviceName}</span>
+                  <span className="text-xs text-text-tertiary ml-2">{serviceId}</span>
+                </div>
+                {!isEditing && (
+                  <div className="flex items-center gap-2">
+                    {configured ? (
+                      <>
+                        <span className="text-xs text-success">Configured</span>
+                        <button
+                          onClick={() => startEditing(serviceId, configured)}
+                          className="text-xs text-text-tertiary hover:text-text-primary"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => pkceDeleteMut.mutate(serviceId)}
+                          disabled={pkceDeleteMut.isPending}
+                          className="text-xs text-danger/70 hover:text-danger"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => startEditing(serviceId)}
+                        className="text-xs px-2.5 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+                      >
+                        Configure
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {isEditing && (
+                <div className="mt-3 space-y-2">
+                  <input
+                    type="text"
+                    value={clientIdValue}
+                    onChange={e => { setClientIdValue(e.target.value); setError(null) }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && clientIdValue.trim()) {
+                        pkceSaveMut.mutate({ serviceId, clientId: clientIdValue.trim() })
+                      }
+                    }}
+                    placeholder="OAuth Client ID"
+                    className={`${inputClass} font-mono`}
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => pkceSaveMut.mutate({ serviceId, clientId: clientIdValue.trim() })}
+                      disabled={pkceSaveMut.isPending || !clientIdValue.trim()}
+                      className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                    >
+                      {pkceSaveMut.isPending ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingService(null); setError(null) }}
+                      className="text-xs text-text-tertiary hover:text-text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </section>
   )
 }

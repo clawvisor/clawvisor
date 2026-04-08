@@ -1726,3 +1726,77 @@ func (h *ServicesHandler) SetGoogleOAuthConfig(w http.ResponseWriter, r *http.Re
 	h.logger.Info("Google OAuth credentials stored in system vault")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// ListPKCECredentials returns all configured PKCE client IDs.
+//
+// GET /api/system/pkce-credentials
+// Auth: user JWT
+// Response: [{"service_id": "...", "client_id": "..."}]
+func (h *ServicesHandler) ListPKCECredentials(w http.ResponseWriter, r *http.Request) {
+	creds, err := adapters.ListPKCEClientIDs(r.Context(), h.vault)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list PKCE credentials")
+		return
+	}
+	type entry struct {
+		ServiceID string `json:"service_id"`
+		ClientID  string `json:"client_id"`
+	}
+	result := make([]entry, 0, len(creds))
+	for sid, cid := range creds {
+		result = append(result, entry{ServiceID: sid, ClientID: cid})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// SetPKCECredential stores a PKCE client ID for a specific service.
+//
+// POST /api/system/pkce-credentials
+// Auth: user JWT
+// Body: {"service_id": "...", "client_id": "..."}
+// Response: {"ok": true}
+func (h *ServicesHandler) SetPKCECredential(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ServiceID string `json:"service_id"`
+		ClientID  string `json:"client_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.ServiceID == "" || body.ClientID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service_id and client_id are required")
+		return
+	}
+
+	if err := adapters.SetPKCEClientID(r.Context(), h.vault, body.ServiceID, body.ClientID); err != nil {
+		h.logger.Error("failed to store PKCE client ID", "service_id", body.ServiceID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credential")
+		return
+	}
+
+	h.logger.Info("PKCE client ID stored", "service_id", body.ServiceID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// DeletePKCECredential removes a PKCE client ID for a specific service.
+//
+// DELETE /api/system/pkce-credentials/{service_id}
+// Auth: user JWT
+// Response: {"ok": true}
+func (h *ServicesHandler) DeletePKCECredential(w http.ResponseWriter, r *http.Request) {
+	serviceID := r.PathValue("service_id")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service_id is required")
+		return
+	}
+
+	if err := adapters.DeletePKCEClientID(r.Context(), h.vault, serviceID); err != nil {
+		h.logger.Error("failed to delete PKCE client ID", "service_id", serviceID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete credential")
+		return
+	}
+
+	h.logger.Info("PKCE client ID removed", "service_id", serviceID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

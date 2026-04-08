@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -98,4 +99,28 @@ func GetPKCEClientID(ctx context.Context, v vault.Vault, serviceID string) strin
 		return ""
 	}
 	return cred.ClientID
+}
+
+// DeletePKCEClientID removes a PKCE client ID for a specific service from the system vault.
+func DeletePKCEClientID(ctx context.Context, v vault.Vault, serviceID string) error {
+	return v.Delete(ctx, SystemUserID, SystemVaultKeyPKCEPrefix+serviceID)
+}
+
+// ListPKCEClientIDs returns a map of serviceID → clientID for all configured PKCE credentials.
+func ListPKCEClientIDs(ctx context.Context, v vault.Vault) (map[string]string, error) {
+	keys, err := v.List(ctx, SystemUserID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string)
+	for _, key := range keys {
+		if !strings.HasPrefix(key, SystemVaultKeyPKCEPrefix) {
+			continue
+		}
+		serviceID := strings.TrimPrefix(key, SystemVaultKeyPKCEPrefix)
+		if cid := GetPKCEClientID(ctx, v, serviceID); cid != "" {
+			result[serviceID] = cid
+		}
+	}
+	return result, nil
 }
