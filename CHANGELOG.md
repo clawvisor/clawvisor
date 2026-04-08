@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.6](https://github.com/clawvisor/clawvisor/compare/v0.8.5...v0.8.6) (2026-04-08)
+
+
+### Features
+
+* add scope guidance, reason docs, and fetchable task presets ([#134](https://github.com/clawvisor/clawvisor/issues/134)) ([e9d3636](https://github.com/clawvisor/clawvisor/commit/e9d3636139aa73ee473f92f217412c1098bfd4ce))
+* services dashboard overhaul with OAuth, auto-identity, and alias rename ([#133](https://github.com/clawvisor/clawvisor/issues/133)) ([2c50178](https://github.com/clawvisor/clawvisor/commit/2c501787aa6a8818d47be96bad16f1a4971e381d))
+
+
+### Bug Fixes
+
+* allow subset requests in intent verification for paginated pulls ([#136](https://github.com/clawvisor/clawvisor/issues/136)) ([7a71dd3](https://github.com/clawvisor/clawvisor/commit/7a71dd344d2a9e37a3ded42ea0ef65b9f21dfd5f))
+* diff against previous tag to detect skill changes across releases ([#130](https://github.com/clawvisor/clawvisor/issues/130)) ([5b4827e](https://github.com/clawvisor/clawvisor/commit/5b4827ec5e1f2ca7c10ba3de23883b444acbdfd1))
+* reduce intent verification false positives for triage workflows ([#131](https://github.com/clawvisor/clawvisor/issues/131)) ([5c2e1f6](https://github.com/clawvisor/clawvisor/commit/5c2e1f60df8c203df3c9e9b86c7de96870e8176f))
+
 ## [0.8.5](https://github.com/clawvisor/clawvisor/compare/v0.8.4...v0.8.5) (2026-04-07)
 
 
