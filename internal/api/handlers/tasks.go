@@ -249,11 +249,15 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		groupChatID, _ = h.agentPairer.AgentGroupChatID(ctx, agent.ID)
 	}
 	autoApprovalEnabled := false
+	autoApprovalNotify := true // on by default
 	if groupChatID != "" {
 		if nc, err := h.st.GetNotificationConfig(ctx, agent.UserID, "telegram"); err == nil {
 			var cfgMap map[string]any
 			if json.Unmarshal(nc.Config, &cfgMap) == nil {
 				autoApprovalEnabled, _ = cfgMap["auto_approval_enabled"].(bool)
+				if v, ok := cfgMap["auto_approval_notify"].(bool); ok {
+					autoApprovalNotify = v
+				}
 			}
 		}
 	}
@@ -317,8 +321,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if preApproved {
-		// Send confirmation DM.
-		if h.notifier != nil {
+		// Send confirmation DM (if notifications enabled).
+		if h.notifier != nil && autoApprovalNotify {
 			text := fmt.Sprintf("✅ <b>Task auto-approved</b> (group chat observation)\n\n"+
 				"<b>Agent:</b> %s\n<b>Purpose:</b> %s",
 				agent.Name, req.Purpose)

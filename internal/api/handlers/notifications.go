@@ -487,11 +487,12 @@ func (h *NotificationsHandler) DismissTelegramGroup(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SetAutoApproval toggles the auto_approval_enabled flag on the Telegram config.
+// SetAutoApproval toggles the auto_approval_enabled and auto_approval_notify
+// flags on the Telegram config.
 //
 // PUT /api/notifications/telegram/auto-approval
 // Auth: user JWT
-// Body: {"enabled": true}
+// Body: {"enabled": true, "notify": false}
 func (h *NotificationsHandler) SetAutoApproval(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -500,7 +501,8 @@ func (h *NotificationsHandler) SetAutoApproval(w http.ResponseWriter, r *http.Re
 	}
 
 	var body struct {
-		Enabled bool `json:"enabled"`
+		Enabled bool  `json:"enabled"`
+		Notify  *bool `json:"notify,omitempty"` // nil = don't change
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -521,6 +523,13 @@ func (h *NotificationsHandler) SetAutoApproval(w http.ResponseWriter, r *http.Re
 		cfgMap["auto_approval_enabled"] = true
 	} else {
 		delete(cfgMap, "auto_approval_enabled")
+	}
+	if body.Notify != nil {
+		if *body.Notify {
+			delete(cfgMap, "auto_approval_notify") // absent = true (default)
+		} else {
+			cfgMap["auto_approval_notify"] = false
+		}
 	}
 
 	cfgBytes, err := json.Marshal(cfgMap)

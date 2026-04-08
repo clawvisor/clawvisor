@@ -629,8 +629,8 @@ export const api = {
       post<{ session_id: string; pairing_url: string; instruction: string }>('/api/notifications/telegram/group/pair', {}),
     listPairedAgents: () =>
       get<{ id: string; name: string }[]>('/api/notifications/telegram/group/pair'),
-    setAutoApproval: (enabled: boolean) =>
-      put<NotificationConfig>('/api/notifications/telegram/auto-approval', { enabled }),
+    setAutoApproval: (enabled: boolean, notify?: boolean) =>
+      put<NotificationConfig>('/api/notifications/telegram/auto-approval', { enabled, ...(notify !== undefined && { notify }) }),
   },
   config: {
     public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey' }>('/api/config/public'),

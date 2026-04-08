@@ -383,6 +383,8 @@ function TelegramSetupSection() {
   const hasBotToken = Boolean(tg?.config?.bot_token)
   const activeGroupId = tg?.config?.group_chat_id
   const autoApprovalEnabled = Boolean(tg?.config?.auto_approval_enabled)
+  // auto_approval_notify defaults to true when absent from config
+  const autoApprovalNotify = tg?.config?.auto_approval_notify !== false
 
   const { data: pendingGroups } = useQuery({
     queryKey: ['telegram-groups'],
@@ -499,7 +501,8 @@ function TelegramSetupSection() {
   })
 
   const autoApprovalMut = useMutation({
-    mutationFn: (enabled: boolean) => api.notifications.setAutoApproval(enabled),
+    mutationFn: (vars: { enabled: boolean; notify?: boolean }) =>
+      api.notifications.setAutoApproval(vars.enabled, vars.notify),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }) },
   })
 
@@ -766,7 +769,7 @@ function TelegramSetupSection() {
               </p>
               <label className="flex items-center gap-3 cursor-pointer">
                 <button
-                  onClick={() => autoApprovalMut.mutate(!autoApprovalEnabled)}
+                  onClick={() => autoApprovalMut.mutate({ enabled: !autoApprovalEnabled })}
                   disabled={autoApprovalMut.isPending}
                   className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors ${
                     autoApprovalEnabled ? 'bg-green-500' : 'bg-surface-2'
@@ -782,6 +785,26 @@ function TelegramSetupSection() {
                   {autoApprovalEnabled ? 'Auto-approval is on' : 'Auto-approval is off'}
                 </span>
               </label>
+              {autoApprovalEnabled && (
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <button
+                    onClick={() => autoApprovalMut.mutate({ enabled: true, notify: !autoApprovalNotify })}
+                    disabled={autoApprovalMut.isPending}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors ${
+                      autoApprovalNotify ? 'bg-green-500' : 'bg-surface-2'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                        autoApprovalNotify ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                  <span className="text-sm text-text-secondary">
+                    Notify me when a task is auto-approved
+                  </span>
+                </label>
+              )}
             </div>
           )}
         </div>
