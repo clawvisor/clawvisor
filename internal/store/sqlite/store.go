@@ -1004,9 +1004,11 @@ func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
 
 func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
+		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -1018,12 +1020,13 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	for rows.Next() {
 		t := &store.Task{}
 		var actionsStr, createdAt string
+		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr string
+		var riskDetailsStr, approvalRationaleStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
-			&t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
+			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -1036,6 +1039,9 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 			t.ExpiresAt = &ts
 		}
 		_ = json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions)
+		if plannedCallsStr != nil {
+			_ = json.Unmarshal([]byte(*plannedCallsStr), &t.PlannedCalls)
+		}
 		if pendingActionStr != nil {
 			var pa store.TaskAction
 			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
@@ -1044,6 +1050,9 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
+		}
+		if approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 		}
 		tasks = append(tasks, t)
 	}

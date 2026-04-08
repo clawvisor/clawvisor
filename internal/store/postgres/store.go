@@ -847,7 +847,8 @@ func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
 
 func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
+		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
+		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale
