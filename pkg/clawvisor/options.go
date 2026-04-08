@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -44,6 +45,10 @@ type ServerOptions struct {
 	// action handling. Set when push notifications are enabled.
 	// The Notifier field should be a MultiNotifier wrapping both Telegram and Push.
 	PushNotifier *push.Notifier
+
+	// MessageBuffer stores recent group chat messages for on-demand LLM
+	// approval checking. Set when group observation is enabled.
+	MessageBuffer *groupchat.MessageBuffer
 
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.

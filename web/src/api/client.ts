@@ -313,9 +313,16 @@ export interface NotificationConfig {
   id: string
   user_id: string
   channel: string
-  config: Record<string, string>
+  config: Record<string, any>
   created_at: string
   updated_at: string
+}
+
+export interface PendingGroup {
+  chat_id: string
+  title: string
+  type: string
+  detected_at: string
 }
 
 export interface TaskAction {
@@ -351,6 +358,15 @@ export interface Task {
   pending_reason?: string
   risk_level?: string
   risk_details?: RiskAssessment
+  approval_source?: string
+  approval_rationale?: ApprovalRationale
+}
+
+export interface ApprovalRationale {
+  explanation: string
+  confidence: string
+  model: string
+  latency_ms: number
 }
 
 export interface RiskAssessment {
@@ -599,6 +615,22 @@ export const api = {
     confirmPairing: (pairingId: string, code: string) =>
       post<NotificationConfig>(
         `/api/notifications/telegram/pair/${pairingId}/confirm`, { code }),
+    // Group observation
+    upsertTelegramGroup: (groupChatId: string) =>
+      post<NotificationConfig>('/api/notifications/telegram/group', { group_chat_id: groupChatId }),
+    deleteTelegramGroup: () => del<void>('/api/notifications/telegram/group'),
+    detectTelegramGroups: () =>
+      post<PendingGroup[]>('/api/notifications/telegram/groups/detect', {}),
+    listTelegramGroups: () =>
+      get<PendingGroup[]>('/api/notifications/telegram/groups'),
+    dismissTelegramGroup: (chatId: string) =>
+      del<void>(`/api/notifications/telegram/groups/${chatId}`),
+    createGroupPairing: () =>
+      post<{ session_id: string; pairing_url: string; instruction: string }>('/api/notifications/telegram/group/pair', {}),
+    listPairedAgents: () =>
+      get<{ id: string; name: string }[]>('/api/notifications/telegram/group/pair'),
+    setAutoApproval: (enabled: boolean) =>
+      put<NotificationConfig>('/api/notifications/telegram/auto-approval', { enabled }),
   },
   config: {
     public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey' }>('/api/config/public'),

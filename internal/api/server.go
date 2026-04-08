@@ -22,6 +22,7 @@ import (
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
@@ -73,7 +74,8 @@ type Server struct {
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
 
-	pushNotifier *push.Notifier // concrete push notifier; may be nil
+	pushNotifier *push.Notifier                // concrete push notifier; may be nil
+	msgBuffer    *groupchat.MessageBuffer // group chat message buffer; may be nil
 
 	eventHub    *events.Hub
 	mcpServer   *mcp.Server
@@ -153,6 +155,13 @@ func WithDaemonKeys(daemonID string, x25519Key *ecdh.PrivateKey) ServerOption {
 // can register/deregister device tokens and emit action decisions.
 func WithPushNotifier(pn *push.Notifier) ServerOption {
 	return func(s *Server) { s.pushNotifier = pn }
+}
+
+// WithGroupChatBuffer sets the message buffer for Telegram group chat
+// observation. When set, task creation checks recent messages for user
+// approval via LLM analysis.
+func WithGroupChatBuffer(buf *groupchat.MessageBuffer) ServerOption {
+	return func(s *Server) { s.msgBuffer = buf }
 }
 
 // New creates a Server and registers all routes.
@@ -245,12 +254,25 @@ func (s *Server) routes() http.Handler {
 	restrictionsHandler := handlers.NewRestrictionsHandler(s.store)
 	agentsHandler := handlers.NewAgentsHandler(s.store)
 	auditHandler := handlers.NewAuditHandler(s.store)
-	// The Telegram notifier also implements TelegramPairer for the pairing flow.
+	// The Telegram notifier also implements TelegramPairer and GroupObserver for
+	// pairing and group chat observation flows.
 	var pairer notify.TelegramPairer
 	if p, ok := s.notifier.(notify.TelegramPairer); ok {
 		pairer = p
 	}
-	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer)
+	var groupObs notify.GroupObserver
+	if g, ok := s.notifier.(notify.GroupObserver); ok {
+		groupObs = g
+	}
+	var groupDetector notify.GroupDetector
+	if gd, ok := s.notifier.(notify.GroupDetector); ok {
+		groupDetector = gd
+	}
+	var agentPairer notify.AgentGroupPairer
+	if ap, ok := s.notifier.(notify.AgentGroupPairer); ok {
+		agentPairer = ap
+	}
+	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer, groupObs, groupDetector, agentPairer, baseURL)
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
@@ -285,6 +307,9 @@ func (s *Server) routes() http.Handler {
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
+	if s.msgBuffer != nil {
+		tasksHandler.SetGroupApproval(s.msgBuffer, s.llmHealth, agentPairer)
+	}
 	s.tasksHandler = tasksHandler
 	s.ticketStore = intauth.NewTicketStore()
 	eventsHandler := handlers.NewEventsHandler(s.eventHub, s.ticketStore)
@@ -396,6 +421,15 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/notifications/telegram/pair", user(notificationsHandler.StartPairing))
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
+	mux.Handle("POST /api/notifications/telegram/group", user(notificationsHandler.UpsertTelegramGroup))
+	mux.Handle("DELETE /api/notifications/telegram/group", user(notificationsHandler.DeleteTelegramGroup))
+	mux.Handle("POST /api/notifications/telegram/groups/detect", user(notificationsHandler.DetectTelegramGroups))
+	mux.Handle("GET /api/notifications/telegram/groups", user(notificationsHandler.ListTelegramGroups))
+	mux.Handle("DELETE /api/notifications/telegram/groups/{chat_id}", user(notificationsHandler.DismissTelegramGroup))
+	mux.Handle("PUT /api/notifications/telegram/auto-approval", user(notificationsHandler.SetAutoApproval))
+	mux.Handle("GET /api/notifications/telegram/group/pair", user(notificationsHandler.ListPairedAgents))
+	mux.Handle("POST /api/notifications/telegram/group/pair", user(notificationsHandler.CreateGroupPairing))
+	mux.Handle("POST /api/notifications/telegram/groups/pair/{session_id}", requireAgent(http.HandlerFunc(notificationsHandler.PairAgentToGroup)))
 
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.
 	// Local requests pass through unencrypted; relay requests without E2E get 403.
@@ -797,6 +831,16 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start device pairing session cleanup.
 	if s.devicesHandler != nil {
 		go s.devicesHandler.RunCleanup(ctx)
+	}
+
+	// Start message buffer cleanup and bootstrap group observation.
+	if s.msgBuffer != nil {
+		go s.msgBuffer.RunCleanup(ctx)
+	}
+	if bo, ok := s.notifier.(interface {
+		BootstrapGroupObservation(context.Context)
+	}); ok {
+		go bo.BootstrapGroupObservation(ctx)
 	}
 
 	errCh := make(chan error, 1)

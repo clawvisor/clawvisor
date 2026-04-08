@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { NotificationConfig } from '../api/client'
+import type { NotificationConfig, PendingGroup } from '../api/client'
 import { useNavigate } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
@@ -19,7 +19,7 @@ export default function Settings() {
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <GoogleOAuthSection />}
       <DevicePairing />
-      <TelegramSection />
+      <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
     </div>
@@ -320,31 +320,95 @@ function GoogleOAuthSection() {
   )
 }
 
-// ── Telegram notification config ─────────────────────────────────────────────
+// ── Telegram Setup (progressive stepper) ────────────────────────────────────
 
-function TelegramSection() {
+function StepHeader({ step, title, done, active, onToggle }: {
+  step: number
+  title: string
+  done: boolean
+  active: boolean
+  onToggle?: () => void
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={!onToggle}
+      className="flex items-center gap-3 w-full text-left group"
+    >
+      <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
+        done
+          ? 'bg-green-500/15 border-green-500/40 text-green-500'
+          : active
+            ? 'bg-brand/15 border-brand/40 text-brand'
+            : 'bg-surface-2 border-border-default text-text-tertiary'
+      }`}>
+        {done ? (
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        ) : step}
+      </span>
+      <span className={`text-sm font-medium transition-colors ${
+        active ? 'text-text-primary' : done ? 'text-text-secondary group-hover:text-text-primary' : 'text-text-tertiary'
+      }`}>
+        {title}
+      </span>
+    </button>
+  )
+}
+
+function TelegramSetupSection() {
   const qc = useQueryClient()
-  const [error, setError] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null)
 
-  // Pairing flow state
+  // ── Shared state ─────────────────────────────────────────
+  const [error, setError] = useState<string | null>(null)
+  const [expandedStep, setExpandedStep] = useState<number | null>(null)
+
+  // Bot pairing state
   const [botToken, setBotToken] = useState('')
   const [pairingId, setPairingId] = useState<string | null>(null)
   const [botUsername, setBotUsername] = useState<string | null>(null)
   const [pairingStatus, setPairingStatus] = useState<string | null>(null)
   const [code, setCode] = useState('')
-  const [pairingSuccess, setPairingSuccess] = useState(false)
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // ── Queries ──────────────────────────────────────────────
   const { data: configs } = useQuery({
     queryKey: ['notifications'],
     queryFn: (): Promise<NotificationConfig[]> => api.notifications.list(),
   })
 
   const tg = configs?.find((c: NotificationConfig) => c.channel === 'telegram')
-  const isConfigured = Boolean(tg?.config?.bot_token)
+  const hasBotToken = Boolean(tg?.config?.bot_token)
+  const activeGroupId = tg?.config?.group_chat_id
+  const autoApprovalEnabled = Boolean(tg?.config?.auto_approval_enabled)
 
-  // Stop polling on unmount or when done
+  const { data: pendingGroups } = useQuery({
+    queryKey: ['telegram-groups'],
+    queryFn: () => api.notifications.listTelegramGroups(),
+    enabled: hasBotToken,
+  })
+
+  const { data: pairedAgents } = useQuery({
+    queryKey: ['paired-agents'],
+    queryFn: () => api.notifications.listPairedAgents(),
+    enabled: Boolean(activeGroupId),
+    refetchInterval: 10000,
+  })
+
+  // Derive current step
+  const currentStep = !hasBotToken ? 1
+    : !activeGroupId ? 2
+    : !autoApprovalEnabled ? 3
+    : 4
+
+  // Auto-expand to current step
+  useEffect(() => {
+    setExpandedStep(currentStep)
+  }, [currentStep])
+
+  // ── Polling helpers ──────────────────────────────────────
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current)
@@ -354,74 +418,6 @@ function TelegramSection() {
 
   useEffect(() => () => stopPolling(), [stopPolling])
 
-  // Start pairing
-  const startMut = useMutation({
-    mutationFn: () => api.notifications.startPairing(botToken),
-    onSuccess: (data) => {
-      setPairingId(data.pairing_id)
-      setBotUsername(data.bot_username)
-      setPairingStatus('polling')
-      setError(null)
-      setPairingSuccess(false)
-      // Start polling for status
-      stopPolling()
-      pollRef.current = setInterval(async () => {
-        try {
-          const s = await api.notifications.pairingStatus(data.pairing_id)
-          setPairingStatus(s.status)
-          if (s.status === 'ready' || s.status === 'expired' || s.status === 'confirmed') {
-            stopPolling()
-          }
-        } catch {
-          // ignore polling errors
-        }
-      }, 2000)
-    },
-    onError: (err: Error) => setError(err.message),
-  })
-
-  // Confirm pairing
-  const confirmMut = useMutation({
-    mutationFn: () => api.notifications.confirmPairing(pairingId!, code),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notifications'] })
-      setPairingSuccess(true)
-      setPairingId(null)
-      setPairingStatus(null)
-      setBotToken('')
-      setCode('')
-      setError(null)
-      setTimeout(() => setPairingSuccess(false), 5000)
-    },
-    onError: (err: Error) => setError(err.message),
-  })
-
-  const deleteMut = useMutation({
-    mutationFn: () => api.notifications.deleteTelegram(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notifications'] })
-      setBotToken('')
-      setTestResult(null)
-      setPairingId(null)
-      setPairingStatus(null)
-      setPairingSuccess(false)
-    },
-  })
-
-  const testMut = useMutation({
-    mutationFn: () => api.notifications.testTelegram(),
-    onSuccess: () => {
-      setTestResult('success')
-      setTimeout(() => setTestResult(null), 5000)
-    },
-    onError: (err: Error) => {
-      setError(err.message)
-      setTestResult('error')
-      setTimeout(() => setTestResult(null), 5000)
-    },
-  })
-
-  // Reset pairing flow
   const resetPairing = () => {
     stopPolling()
     setPairingId(null)
@@ -431,149 +427,424 @@ function TelegramSection() {
     setError(null)
   }
 
+  // ── Mutations ────────────────────────────────────────────
+  const startMut = useMutation({
+    mutationFn: () => api.notifications.startPairing(botToken),
+    onSuccess: (data) => {
+      setPairingId(data.pairing_id)
+      setBotUsername(data.bot_username)
+      setPairingStatus('polling')
+      setError(null)
+      stopPolling()
+      pollRef.current = setInterval(async () => {
+        try {
+          const s = await api.notifications.pairingStatus(data.pairing_id)
+          setPairingStatus(s.status)
+          if (s.status === 'ready' || s.status === 'expired' || s.status === 'confirmed') {
+            stopPolling()
+          }
+        } catch { /* ignore */ }
+      }, 2000)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const confirmMut = useMutation({
+    mutationFn: () => api.notifications.confirmPairing(pairingId!, code),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+      resetPairing()
+      setBotToken('')
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const deleteBotMut = useMutation({
+    mutationFn: () => api.notifications.deleteTelegram(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+      resetPairing()
+      setBotToken('')
+      setTestResult(null)
+    },
+  })
+
+  const testMut = useMutation({
+    mutationFn: () => api.notifications.testTelegram(),
+    onSuccess: () => { setTestResult('success'); setTimeout(() => setTestResult(null), 5000) },
+    onError: () => { setTestResult('error'); setTimeout(() => setTestResult(null), 5000) },
+  })
+
+  const detectMut = useMutation({
+    mutationFn: () => api.notifications.detectTelegramGroups(),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['telegram-groups'] }) },
+  })
+
+  const enableGroupMut = useMutation({
+    mutationFn: (chatId: string) => api.notifications.upsertTelegramGroup(chatId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+      qc.invalidateQueries({ queryKey: ['telegram-groups'] })
+    },
+  })
+
+  const disableGroupMut = useMutation({
+    mutationFn: () => api.notifications.deleteTelegramGroup(),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }) },
+  })
+
+  const dismissMut = useMutation({
+    mutationFn: (chatId: string) => api.notifications.dismissTelegramGroup(chatId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['telegram-groups'] }) },
+  })
+
+  const autoApprovalMut = useMutation({
+    mutationFn: (enabled: boolean) => api.notifications.setAutoApproval(enabled),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }) },
+  })
+
+  const agentPairingMut = useMutation({
+    mutationFn: () => api.notifications.createGroupPairing(),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['paired-agents'] }) },
+  })
+
+  // ── Toggle helper for completed steps ────────────────────
+  const toggleStep = (step: number) => {
+    setExpandedStep(prev => prev === step ? null : step)
+  }
+
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-text-primary">Telegram Notifications</h2>
+        <h2 className="text-lg font-semibold text-text-primary">Telegram</h2>
         <p className="text-sm text-text-tertiary mt-0.5">
-          Receive approval requests and status updates via Telegram.
+          Receive notifications, approve tasks inline, and enable auto-approval via group chat context.
         </p>
       </div>
 
-      {error && <div className="text-sm text-danger max-w-lg">{error}</div>}
-      {pairingSuccess && <div className="text-sm text-success max-w-lg">Paired successfully!</div>}
+      {error && <div className="text-sm text-danger max-w-xl">{error}</div>}
 
-      {isConfigured ? (
-        /* ── Configured state ──────────────────────────────────── */
-        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
-          <div className="text-sm text-text-secondary space-y-1">
-            <p><span className="font-medium text-text-tertiary">Bot token:</span> {tg!.config.bot_token.slice(0, 8)}...{tg!.config.bot_token.slice(-4)}</p>
-            <p><span className="font-medium text-text-tertiary">Chat ID:</span> {tg!.config.chat_id}</p>
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              onClick={() => testMut.mutate()}
-              disabled={testMut.isPending}
-              className="px-4 py-1.5 text-sm rounded border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
-            >
-              {testMut.isPending ? 'Sending...' : 'Send test message'}
-            </button>
-            <button
-              onClick={() => { deleteMut.mutate(); resetPairing() }}
-              disabled={deleteMut.isPending}
-              className="text-sm text-danger hover:text-red-400"
-            >
-              Remove
-            </button>
-            <button
-              onClick={resetPairing}
-              className="text-sm text-text-tertiary hover:text-text-primary"
-            >
-              Re-pair
-            </button>
-          </div>
-          {testResult === 'success' && (
-            <div className="text-sm text-success">Test message sent! Check your Telegram.</div>
-          )}
-          {testResult === 'error' && (
-            <div className="text-sm text-danger">Test failed. Check your Telegram bot settings.</div>
-          )}
-        </div>
-      ) : !pairingId ? (
-        /* ── Step 1: Enter bot token ──────────────────────────── */
-        <div className="space-y-3 max-w-lg">
-          <div className="bg-surface-2 border border-border-default rounded-md p-4 text-sm text-text-secondary space-y-2">
-            <p className="font-medium text-text-primary">Setup steps:</p>
-            <ol className="list-decimal list-inside space-y-1.5 text-text-secondary">
-              <li>Open Telegram and message <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand hover:underline">@BotFather</a></li>
-              <li>Send <code className="bg-surface-2 px-1 rounded text-xs">/newbot</code> and follow the prompts to create your bot</li>
-              <li>Copy the <strong>bot token</strong> BotFather gives you</li>
-            </ol>
-          </div>
-          <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3">
-            <div>
-              <label className="text-xs font-medium text-text-tertiary">Bot Token</label>
-              <input
-                type="password"
-                value={botToken}
-                onChange={e => { setBotToken(e.target.value); setError(null) }}
-                placeholder="1234567890:ABCDEF..."
-                className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-              />
-            </div>
-            <button
-              onClick={() => startMut.mutate()}
-              disabled={startMut.isPending || !botToken}
-              className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-            >
-              {startMut.isPending ? 'Validating...' : 'Start Pairing'}
-            </button>
-          </div>
-        </div>
-      ) : pairingStatus === 'polling' ? (
-        /* ── Step 2: Waiting for /start ───────────────────────── */
-        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
-          <p className="text-sm text-text-secondary">
-            Open{' '}
-            <a
-              href={`https://t.me/${botUsername}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-brand hover:underline font-medium"
-            >
-              @{botUsername}
-            </a>{' '}
-            in Telegram and send <code className="bg-surface-2 px-1 rounded text-xs">/start</code>
-          </p>
-          <div className="flex items-center gap-2 text-sm text-text-tertiary">
-            <svg className="animate-spin h-4 w-4 text-brand" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Waiting for your message...
-          </div>
-          <button onClick={resetPairing} className="text-sm text-text-tertiary hover:text-text-primary">
-            Cancel
-          </button>
-        </div>
-      ) : pairingStatus === 'ready' ? (
-        /* ── Step 3: Enter pairing code ───────────────────────── */
-        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
-          <p className="text-sm text-text-secondary">
-            Enter the pairing code from your Telegram chat:
-          </p>
-          <input
-            value={code}
-            onChange={e => { setCode(e.target.value.toUpperCase()); setError(null) }}
-            placeholder="ABCD1234"
-            maxLength={8}
-            className="block w-48 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 font-mono tracking-widest uppercase focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+      <div className="max-w-xl space-y-1">
+        {/* ── Step 1: Connect Bot ────────────────────────────── */}
+        <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
+          <StepHeader
+            step={1}
+            title="Connect your Telegram bot"
+            done={hasBotToken}
+            active={currentStep === 1}
+            onToggle={hasBotToken ? () => toggleStep(1) : undefined}
           />
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => confirmMut.mutate()}
-              disabled={confirmMut.isPending || code.length !== 8}
-              className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-            >
-              {confirmMut.isPending ? 'Confirming...' : 'Confirm'}
-            </button>
-            <button onClick={resetPairing} className="text-sm text-text-tertiary hover:text-text-primary">
-              Cancel
-            </button>
-          </div>
+
+          {expandedStep === 1 && (
+            <div className="ml-10 space-y-3">
+              {!hasBotToken ? (
+                <>
+                  {!pairingId ? (
+                    <>
+                      <div className="bg-surface-2 border border-border-default rounded-md p-3 text-xs text-text-secondary space-y-1.5">
+                        <ol className="list-decimal list-inside space-y-1">
+                          <li>Message <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand hover:underline">@BotFather</a> on Telegram</li>
+                          <li>Send <code className="bg-surface-1 px-1 rounded">/newbot</code> and follow the prompts</li>
+                          <li>Copy the bot token you receive</li>
+                        </ol>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-text-tertiary">Bot Token</label>
+                        <input
+                          type="password"
+                          value={botToken}
+                          onChange={e => { setBotToken(e.target.value); setError(null) }}
+                          placeholder="1234567890:ABCDEF..."
+                          className="mt-1 block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                        />
+                      </div>
+                      <button
+                        onClick={() => startMut.mutate()}
+                        disabled={startMut.isPending || !botToken}
+                        className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                      >
+                        {startMut.isPending ? 'Validating...' : 'Start Pairing'}
+                      </button>
+                    </>
+                  ) : pairingStatus === 'polling' ? (
+                    <>
+                      <p className="text-sm text-text-secondary">
+                        Open{' '}
+                        <a href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer" className="text-brand hover:underline font-medium">@{botUsername}</a>
+                        {' '}and send <code className="bg-surface-2 px-1 rounded text-xs">/start</code>
+                      </p>
+                      <div className="flex items-center gap-2 text-sm text-text-tertiary">
+                        <svg className="animate-spin h-4 w-4 text-brand" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Waiting for your message...
+                      </div>
+                      <button onClick={resetPairing} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                    </>
+                  ) : pairingStatus === 'ready' ? (
+                    <>
+                      <p className="text-sm text-text-secondary">Enter the pairing code from your Telegram chat:</p>
+                      <input
+                        value={code}
+                        onChange={e => { setCode(e.target.value.toUpperCase()); setError(null) }}
+                        placeholder="ABCD1234"
+                        maxLength={8}
+                        className="block w-48 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 font-mono tracking-widest uppercase focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => confirmMut.mutate()}
+                          disabled={confirmMut.isPending || code.length !== 8}
+                          className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                        >
+                          {confirmMut.isPending ? 'Confirming...' : 'Confirm'}
+                        </button>
+                        <button onClick={resetPairing} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                      </div>
+                    </>
+                  ) : pairingStatus === 'expired' ? (
+                    <>
+                      <p className="text-sm text-danger">Pairing session expired.</p>
+                      <button onClick={resetPairing} className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong">Start Over</button>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                /* Configured — collapsed view */
+                <div className="space-y-2">
+                  <div className="text-sm text-text-secondary space-y-0.5">
+                    <p><span className="text-text-tertiary">Bot token:</span> {tg!.config.bot_token.slice(0, 8)}...{tg!.config.bot_token.slice(-4)}</p>
+                    <p><span className="text-text-tertiary">Chat ID:</span> {tg!.config.chat_id}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => testMut.mutate()}
+                      disabled={testMut.isPending}
+                      className="px-3 py-1 text-xs rounded border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
+                    >
+                      {testMut.isPending ? 'Sending...' : 'Test'}
+                    </button>
+                    <button
+                      onClick={() => { deleteBotMut.mutate() }}
+                      disabled={deleteBotMut.isPending}
+                      className="text-xs text-danger hover:text-red-400"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  {testResult === 'success' && <p className="text-xs text-success">Test message sent!</p>}
+                  {testResult === 'error' && <p className="text-xs text-danger">Test failed. Check bot settings.</p>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      ) : pairingStatus === 'expired' ? (
-        /* ── Expired ──────────────────────────────────────────── */
-        <div className="bg-surface-1 border border-border-default rounded-md p-5 space-y-3 max-w-lg">
-          <p className="text-sm text-danger">Pairing session expired. Please try again.</p>
-          <button
-            onClick={resetPairing}
-            className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong"
-          >
-            Start Over
-          </button>
+
+        {/* ── Step 2: Create Group ───────────────────────────── */}
+        <div className={`bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3 ${!hasBotToken ? 'opacity-50' : ''}`}>
+          <StepHeader
+            step={2}
+            title="Create a group chat"
+            done={Boolean(activeGroupId)}
+            active={currentStep === 2}
+            onToggle={hasBotToken && activeGroupId ? () => toggleStep(2) : undefined}
+          />
+
+          {expandedStep === 2 && hasBotToken && (
+            <div className="ml-10 space-y-3">
+              {!activeGroupId ? (
+                <>
+                  <div className="bg-surface-2 border border-border-default rounded-md p-3 text-xs text-text-secondary space-y-2">
+                    <p className="font-medium text-text-primary">Create a Telegram group with your bot and agent:</p>
+                    <ol className="list-decimal list-inside space-y-1.5">
+                      <li>Create a new Telegram group and add your bot</li>
+                      <li>
+                        <strong>Disable bot privacy mode:</strong> message{' '}
+                        <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand hover:underline">@BotFather</a>,
+                        send <code className="bg-surface-1 px-1 rounded">/mybots</code>, select your bot, go to{' '}
+                        <em>Bot Settings &rarr; Group Privacy &rarr; Turn off</em>
+                      </li>
+                      <li>
+                        <strong>Configure your agent for group channels:</strong> if using OpenClaw, enable{' '}
+                        <code className="bg-surface-1 px-1 rounded">group_channels</code> in your bot&apos;s config so it can send and receive messages in groups
+                      </li>
+                      <li>Add your agent bot to the same group</li>
+                    </ol>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-text-tertiary">Once set up, scan for groups your bot has been added to.</p>
+                    <button
+                      onClick={() => detectMut.mutate()}
+                      disabled={detectMut.isPending}
+                      className="flex items-center gap-1.5 px-3 py-1 text-xs rounded border border-border-default text-text-tertiary hover:text-text-primary hover:border-border-hover disabled:opacity-50"
+                    >
+                      {detectMut.isPending ? (
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 4v6h6M23 20v-6h-6" />
+                          <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
+                        </svg>
+                      )}
+                      Scan for Groups
+                    </button>
+                  </div>
+
+                  {pendingGroups && pendingGroups.length > 0 ? (
+                    <div className="bg-surface-0 border border-border-default rounded-md divide-y divide-border-default">
+                      {pendingGroups.map((g: PendingGroup) => (
+                        <div key={g.chat_id} className="flex items-center justify-between px-4 py-3">
+                          <div className="text-sm">
+                            <span className="text-text-primary font-medium">{g.title || g.chat_id}</span>
+                            <span className="text-text-tertiary ml-2 text-xs">({g.type})</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => enableGroupMut.mutate(g.chat_id)}
+                              disabled={enableGroupMut.isPending}
+                              className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                            >
+                              Connect
+                            </button>
+                            <button
+                              onClick={() => dismissMut.mutate(g.chat_id)}
+                              disabled={dismissMut.isPending}
+                              className="text-xs text-text-tertiary hover:text-text-primary"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-tertiary">
+                      No groups detected yet. Add your bot to a group, then click Scan.
+                    </p>
+                  )}
+                </>
+              ) : (
+                /* Group connected — collapsed view */
+                <div className="space-y-2">
+                  <p className="text-sm text-text-secondary">
+                    <span className="text-text-tertiary">Group:</span>{' '}
+                    <span className="font-mono">{activeGroupId}</span>
+                  </p>
+                  <button
+                    onClick={() => disableGroupMut.mutate()}
+                    disabled={disableGroupMut.isPending}
+                    className="text-xs text-danger hover:text-red-400"
+                  >
+                    Disconnect Group
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      ) : null}
+
+        {/* ── Step 3: Enable Auto-Approval ───────────────────── */}
+        <div className={`bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3 ${!activeGroupId ? 'opacity-50' : ''}`}>
+          <StepHeader
+            step={3}
+            title="Enable auto-approval"
+            done={autoApprovalEnabled}
+            active={currentStep === 3}
+            onToggle={activeGroupId ? () => toggleStep(3) : undefined}
+          />
+
+          {expandedStep === 3 && activeGroupId && (
+            <div className="ml-10 space-y-3">
+              <p className="text-xs text-text-secondary leading-relaxed">
+                When enabled, Clawvisor reads your group chat to detect when you&apos;ve approved a task in conversation.
+                If the LLM finds clear approval, the task is auto-approved without requiring a dashboard click.
+              </p>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  onClick={() => autoApprovalMut.mutate(!autoApprovalEnabled)}
+                  disabled={autoApprovalMut.isPending}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors ${
+                    autoApprovalEnabled ? 'bg-green-500' : 'bg-surface-2'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                      autoApprovalEnabled ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+                <span className="text-sm text-text-secondary">
+                  {autoApprovalEnabled ? 'Auto-approval is on' : 'Auto-approval is off'}
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+
+        {/* ── Step 4: Agent Pairing ──────────────────────────── */}
+        <div className={`bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3 ${!activeGroupId ? 'opacity-50' : ''}`}>
+          <StepHeader
+            step={4}
+            title="Pair agents"
+            done={Boolean(pairedAgents && pairedAgents.length > 0)}
+            active={currentStep === 4}
+            onToggle={activeGroupId ? () => toggleStep(4) : undefined}
+          />
+
+          {expandedStep === 4 && activeGroupId && (
+            <div className="ml-10 space-y-3">
+              <p className="text-xs text-text-secondary leading-relaxed">
+                Pair each agent to this group so auto-approval is scoped correctly.
+                Each agent only checks the group it&apos;s paired to.
+              </p>
+
+              {pairedAgents && pairedAgents.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {pairedAgents.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-green-500/10 text-green-500 border border-green-500/20"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      {a.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={() => agentPairingMut.mutate()}
+                disabled={agentPairingMut.isPending}
+                className="px-3 py-1.5 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover disabled:opacity-50"
+              >
+                {agentPairingMut.isPending ? 'Generating...' : 'New Pairing Request'}
+              </button>
+
+              {agentPairingMut.data && (
+                <div className="bg-surface-0 border border-border-default rounded-md p-4 space-y-3">
+                  <p className="text-xs text-text-tertiary">
+                    Copy this instruction and paste it into your Telegram group for the agent. Expires in 5 minutes.
+                  </p>
+                  <pre className="text-xs text-text-secondary bg-surface-1 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                    {agentPairingMut.data.instruction}
+                  </pre>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(agentPairingMut.data!.instruction)}
+                    className="px-3 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover"
+                  >
+                    Copy to Clipboard
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   )
 }

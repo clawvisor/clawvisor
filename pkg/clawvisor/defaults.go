@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
@@ -196,8 +198,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 	}
 
+	// ── Group chat message buffer ────────────────────────────────────────────
+	msgBuffer := groupchat.NewMessageBuffer(20, 15*time.Minute)
+
 	// ── Notifier ─────────────────────────────────────────────────────────────
 	telegramN := telegramnotify.New(st, ctx)
+	telegramN.SetMessageBuffer(msgBuffer)
 
 	var pushN *pushnotify.Notifier
 	if cfg.Push.Enabled && ed25519Key != nil {
@@ -235,16 +241,17 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 
 	opts := &ServerOptions{
-		Logger:       logger,
-		Config:       cfg,
-		Store:        st,
-		Vault:        v,
-		JWTService:   jwtSvc,
-		AdapterReg:   adapterReg,
-		Notifier:     notifier,
-		PushNotifier: pushN,
-		MagicStore:   magicStore,
-		Features:     features,
+		Logger:           logger,
+		Config:           cfg,
+		Store:            st,
+		Vault:            v,
+		JWTService:       jwtSvc,
+		AdapterReg:       adapterReg,
+		Notifier:         notifier,
+		PushNotifier:     pushN,
+		MessageBuffer:    msgBuffer,
+		MagicStore:       magicStore,
+		Features:         features,
 	}
 
 	// Wire relay client when configured.

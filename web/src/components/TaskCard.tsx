@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type PlannedCall, type AuditEntry, type RiskAssessment } from '../api/client'
+import { api, type Task, type PlannedCall, type AuditEntry, type RiskAssessment, type ApprovalRationale } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
@@ -166,6 +166,11 @@ export default function TaskCard({
             {riskOpen && <RiskPanel risk={riskDetails} level={riskLevel} />}
           </>
         )
+      )}
+
+      {/* Auto-approval rationale */}
+      {task.approval_source === 'telegram_group' && task.approval_rationale && (
+        <AutoApprovalPanel rationale={task.approval_rationale} />
       )}
 
       {/* Scope expansion: collapsed approved scopes + new scope */}
@@ -408,6 +413,27 @@ function PlannedCallsTable({ calls }: { calls: PlannedCall[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ── Auto-approval rationale panel ─────────────────────────────────────────────
+
+function AutoApprovalPanel({ rationale }: { rationale: ApprovalRationale }) {
+  return (
+    <div className="px-4 pb-3">
+      <div className="rounded overflow-hidden" style={{ background: 'rgba(96, 165, 250, 0.04)', border: '1px solid rgba(96, 165, 250, 0.15)' }}>
+        <div className="px-3 py-1.5 flex items-center gap-1.5" style={{ borderBottom: '1px solid rgba(96, 165, 250, 0.10)' }}>
+          <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+          <span className="text-[10px] font-medium uppercase tracking-wider text-blue-400">Auto-Approved via Group Chat</span>
+        </div>
+        <div className="px-3 py-2.5 space-y-1.5">
+          <p className="text-sm text-text-secondary">{rationale.explanation}</p>
+          <div className="text-[10px] font-mono text-text-tertiary pt-0.5">
+            {rationale.confidence} confidence &middot; {rationale.model} &middot; {rationale.latency_ms}ms
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

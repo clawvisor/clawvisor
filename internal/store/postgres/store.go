@@ -419,6 +419,28 @@ func (s *Store) GetNotificationConfig(ctx context.Context, userID, channel strin
 	return nc, nil
 }
 
+func (s *Store) ListNotificationConfigsByChannel(ctx context.Context, channel string) ([]store.NotificationConfig, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, channel, config, created_at, updated_at FROM notification_configs WHERE channel = $1`,
+		channel,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var configs []store.NotificationConfig
+	for rows.Next() {
+		var nc store.NotificationConfig
+		var configJSON []byte
+		if err := rows.Scan(&nc.ID, &nc.UserID, &nc.Channel, &configJSON, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		nc.Config = json.RawMessage(configJSON)
+		configs = append(configs, nc)
+	}
+	return configs, rows.Err()
+}
+
 func (s *Store) DeleteNotificationConfig(ctx context.Context, userID, channel string) error {
 	res, err := s.pool.Exec(ctx,
 		`DELETE FROM notification_configs WHERE user_id = $1 AND channel = $2`,
@@ -635,32 +657,34 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if task.RiskDetails != nil {
 		riskDetails = []byte(task.RiskDetails)
 	}
+	approvalRationale := string(task.ApprovalRationale)
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
-			risk_level, risk_details)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			risk_level, risk_details, approval_source, approval_rationale)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		actionsJSON, plannedCallsJSON, task.CallbackURL, task.ExpiresInSeconds,
 		task.ApprovedAt, task.ExpiresAt,
 		nilIfEmpty(pendingActionJSON), task.PendingReason, task.Lifetime,
-		task.RiskLevel, string(riskDetails))
+		task.RiskLevel, string(riskDetails), task.ApprovalSource, approvalRationale)
 	return err
 }
 
 func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsJSON, plannedCallsJSON, pendingActionJSON []byte
-	var riskDetailsStr string
+	var riskDetailsStr, approvalRationaleStr string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale
 		FROM tasks WHERE id = $1
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 		&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
-		&t.RiskLevel, &riskDetailsStr)
+		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -681,6 +705,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	}
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
+	}
+	if approvalRationaleStr != "" {
+		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 	}
 	return t, nil
 }
@@ -715,7 +742,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -821,7 +849,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
-		       pending_action, pending_reason, lifetime, risk_level, risk_details
+		       pending_action, pending_reason, lifetime, risk_level, risk_details,
+		       approval_source, approval_rationale
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < NOW()
 	`)
 	if err != nil {
@@ -836,11 +865,11 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 	for rows.Next() {
 		t := &store.Task{}
 		var actionsJSON, plannedCallsJSON, pendingActionJSON []byte
-		var riskDetailsStr string
+		var riskDetailsStr, approvalRationaleStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 			&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(actionsJSON, &t.AuthorizedActions)
@@ -855,6 +884,9 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
+		}
+		if approvalRationaleStr != "" {
+			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -1426,4 +1458,52 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+// ── Agent-group pairings ──────────────────────────────────────────────────────
+
+func (s *Store) CreateAgentGroupPairing(ctx context.Context, userID, agentID, groupChatID string) error {
+	id := uuid.New().String()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO agent_group_pairings (id, user_id, agent_id, group_chat_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (agent_id) DO UPDATE SET group_chat_id = EXCLUDED.group_chat_id, user_id = EXCLUDED.user_id
+	`, id, userID, agentID, groupChatID)
+	return err
+}
+
+func (s *Store) GetAgentGroupChatID(ctx context.Context, agentID string) (string, error) {
+	var groupChatID string
+	err := s.pool.QueryRow(ctx, `SELECT group_chat_id FROM agent_group_pairings WHERE agent_id = $1`, agentID).Scan(&groupChatID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	return groupChatID, err
+}
+
+func (s *Store) ListAgentIDsByGroup(ctx context.Context, groupChatID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT agent_id FROM agent_group_pairings WHERE group_chat_id = $1`, groupChatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) DeleteAgentGroupPairing(ctx context.Context, agentID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM agent_group_pairings WHERE agent_id = $1`, agentID)
+	return err
+}
+
+func (s *Store) DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM agent_group_pairings WHERE group_chat_id = $1`, groupChatID)
+	return err
 }

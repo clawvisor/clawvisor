@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
+	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -45,6 +49,9 @@ type TasksHandler struct {
 	eventHub     *events.Hub
 	assessor     taskrisk.Assessor
 	contentDedup *dedupCache
+	msgBuffer    *groupchat.MessageBuffer // may be nil; set via SetGroupApproval
+	llmHealth    *llm.Health              // may be nil; needed for approval check LLM calls
+	agentPairer  notify.AgentGroupPairer  // may be nil; set via SetGroupApproval
 }
 
 func NewTasksHandler(
@@ -67,6 +74,14 @@ func NewTasksHandler(
 		eventHub: eventHub, assessor: assessor,
 		contentDedup: newDedupCache(dedupTTL),
 	}
+}
+
+// SetGroupApproval configures the message buffer, LLM health, and agent-group
+// pairer used for on-demand group chat approval checks during task creation.
+func (h *TasksHandler) SetGroupApproval(buf *groupchat.MessageBuffer, health *llm.Health, pairer notify.AgentGroupPairer) {
+	h.msgBuffer = buf
+	h.llmHealth = health
+	h.agentPairer = pairer
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -225,9 +240,119 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check for group chat approval via LLM analysis of recent messages.
+	// Only auto-approve low/medium risk tasks without hardcoded approval actions.
+	// The agent must be paired to a group chat and the user must have opted in.
+	preApproved := false
+	groupChatID := ""
+	if h.agentPairer != nil {
+		groupChatID, _ = h.agentPairer.AgentGroupChatID(ctx, agent.ID)
+	}
+	autoApprovalEnabled := false
+	if groupChatID != "" {
+		if nc, err := h.st.GetNotificationConfig(ctx, agent.UserID, "telegram"); err == nil {
+			var cfgMap map[string]any
+			if json.Unmarshal(nc.Config, &cfgMap) == nil {
+				autoApprovalEnabled, _ = cfgMap["auto_approval_enabled"].(bool)
+			}
+		}
+	}
+	if autoApprovalEnabled && groupChatID != "" && h.msgBuffer != nil && h.llmHealth != nil &&
+		task.RiskLevel != "high" && task.RiskLevel != "critical" {
+		hasHardcoded := false
+		for _, a := range req.AuthorizedActions {
+			if RequiresHardcodedApproval(a.Service, a.Action) {
+				hasHardcoded = true
+				break
+			}
+		}
+		if !hasHardcoded {
+			messages := h.msgBuffer.Messages(groupChatID)
+			if len(messages) > 0 {
+				var actionStrs []string
+				for _, a := range req.AuthorizedActions {
+					actionStrs = append(actionStrs, a.Service+":"+a.Action)
+				}
+				result, err := intent.CheckApproval(ctx, h.llmHealth, intent.ApprovalCheckRequest{
+					Messages:    messages,
+					TaskPurpose: req.Purpose,
+					TaskActions: actionStrs,
+					AgentName:   agent.Name,
+				})
+				if err != nil {
+					h.logger.Warn("group chat approval check failed", "err", err, "user_id", agent.UserID)
+				} else if result != nil && result.Approved {
+					preApproved = true
+					task.Status = "active"
+					now := time.Now().UTC()
+					task.ApprovedAt = &now
+					if task.Lifetime == "standing" {
+						sentinel := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+						task.ExpiresAt = &sentinel
+					} else {
+						expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+						task.ExpiresAt = &expiresAt
+					}
+					task.ApprovalSource = "telegram_group"
+					rationale, _ := json.Marshal(map[string]any{
+						"explanation": result.Explanation,
+						"confidence":  result.Confidence,
+						"model":       result.Model,
+						"latency_ms":  result.LatencyMS,
+					})
+					task.ApprovalRationale = rationale
+					h.logger.Info("task auto-approved via group chat LLM check",
+						"task_id", task.ID, "confidence", result.Confidence,
+						"explanation", result.Explanation, "model", result.Model,
+						"latency_ms", result.LatencyMS)
+				}
+			}
+		}
+	}
+
 	if err := h.st.CreateTask(ctx, task); err != nil {
 		h.logger.Warn("create task failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create task")
+		return
+	}
+
+	if preApproved {
+		// Send confirmation DM.
+		if h.notifier != nil {
+			text := fmt.Sprintf("✅ <b>Task auto-approved</b> (group chat observation)\n\n"+
+				"<b>Agent:</b> %s\n<b>Purpose:</b> %s",
+				agent.Name, req.Purpose)
+			if task.RiskLevel != "" {
+				text += fmt.Sprintf("\n<b>Risk:</b> %s", task.RiskLevel)
+			}
+			_ = h.notifier.SendAlert(ctx, agent.UserID, text)
+		}
+
+		// Deliver callback to agent if configured.
+		if task.CallbackURL != nil && *task.CallbackURL != "" {
+			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
+			go func() {
+				_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
+					Type:   "task",
+					TaskID: task.ID,
+					Status: "approved",
+				}, cbKey)
+			}()
+		}
+
+		h.publishTasksAndQueue(agent.UserID)
+
+		resp := map[string]any{
+			"task_id":         task.ID,
+			"status":          "active",
+			"message":         "Task auto-approved via Telegram group pre-approval.",
+			"approval_source": "telegram_group_observation",
+		}
+		if task.ExpiresAt != nil {
+			resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
+		}
+		h.contentDedup.Put(taskDedupKey, resp)
+		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
 

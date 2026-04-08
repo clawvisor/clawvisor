@@ -38,18 +38,36 @@ type getMeResponse struct {
 }
 
 type telegramUpdate struct {
-	UpdateID      int            `json:"update_id"`
-	Message       *telegramMsg   `json:"message"`
-	CallbackQuery *callbackQuery `json:"callback_query"`
+	UpdateID      int               `json:"update_id"`
+	Message       *telegramMsg      `json:"message"`
+	CallbackQuery *callbackQuery    `json:"callback_query"`
+	MyChatMember  *chatMemberUpdate `json:"my_chat_member"`
 }
 
 type telegramMsg struct {
 	Text string       `json:"text"`
 	Chat telegramChat `json:"chat"`
+	From telegramUser `json:"from"`
+	Date int64        `json:"date"` // Unix timestamp
 }
 
 type telegramChat struct {
-	ID int64 `json:"id"`
+	ID    int64  `json:"id"`
+	Title string `json:"title,omitempty"`
+	Type  string `json:"type,omitempty"` // "group", "supergroup", "channel", "private"
+}
+
+// chatMemberUpdate represents a Telegram my_chat_member update, sent when
+// the bot's membership status changes in a chat (e.g., added to a group).
+type chatMemberUpdate struct {
+	Chat      telegramChat     `json:"chat"`
+	From      telegramUser     `json:"from"`
+	NewMember chatMemberStatus `json:"new_chat_member"`
+}
+
+type chatMemberStatus struct {
+	Status string       `json:"status"` // "member", "administrator", "left", "kicked"
+	User   telegramUser `json:"user"`
 }
 
 // callbackQuery represents a Telegram callback_query from an inline button tap.
@@ -61,7 +79,9 @@ type callbackQuery struct {
 }
 
 type telegramUser struct {
-	ID int64 `json:"id"`
+	ID        int64  `json:"id"`
+	FirstName string `json:"first_name,omitempty"`
+	Username  string `json:"username,omitempty"`
 }
 
 type callbackMessage struct {

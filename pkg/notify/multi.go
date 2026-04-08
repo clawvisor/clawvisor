@@ -15,8 +15,11 @@ type MultiNotifier struct {
 	decisionCh chan CallbackDecision
 
 	// Delegated interfaces discovered on construction.
-	pairer    TelegramPairer
-	decrement PollingDecrementer
+	pairer        TelegramPairer
+	decrement     PollingDecrementer
+	groupObs      GroupObserver
+	groupDetector GroupDetector
+	agentPairer   AgentGroupPairer
 }
 
 // NewMultiNotifier creates a MultiNotifier that delegates to the given notifiers.
@@ -35,6 +38,15 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 		}
 		if d, ok := n.(PollingDecrementer); ok && m.decrement == nil {
 			m.decrement = d
+		}
+		if g, ok := n.(GroupObserver); ok && m.groupObs == nil {
+			m.groupObs = g
+		}
+		if gd, ok := n.(GroupDetector); ok && m.groupDetector == nil {
+			m.groupDetector = gd
+		}
+		if ap, ok := n.(AgentGroupPairer); ok && m.agentPairer == nil {
+			m.agentPairer = ap
 		}
 	}
 
@@ -78,6 +90,9 @@ var (
 	_ Notifier           = (*MultiNotifier)(nil)
 	_ TelegramPairer     = (*MultiNotifier)(nil)
 	_ PollingDecrementer = (*MultiNotifier)(nil)
+	_ GroupObserver      = (*MultiNotifier)(nil)
+	_ GroupDetector      = (*MultiNotifier)(nil)
+	_ AgentGroupPairer   = (*MultiNotifier)(nil)
 )
 
 // ── Notifier interface ────────────────────────────────────────────────────────
@@ -246,5 +261,90 @@ func (m *MultiNotifier) CancelPairing(pairingID string) {
 func (m *MultiNotifier) DecrementPolling(userID string) {
 	if m.decrement != nil {
 		m.decrement.DecrementPolling(userID)
+	}
+}
+
+// ── GroupObserver delegation ──────────────────────────────────────────────────
+
+func (m *MultiNotifier) EnsureGroupObservation(userID, botToken, chatID, groupChatID string) {
+	if m.groupObs != nil {
+		m.groupObs.EnsureGroupObservation(userID, botToken, chatID, groupChatID)
+	}
+}
+
+func (m *MultiNotifier) StopGroupObservation(userID string) {
+	if m.groupObs != nil {
+		m.groupObs.StopGroupObservation(userID)
+	}
+}
+
+// ── GroupDetector delegation ──────────────────────────────────────────────────
+
+func (m *MultiNotifier) DetectGroups(ctx context.Context, userID string) ([]PendingGroup, error) {
+	if m.groupDetector == nil {
+		return nil, errors.New("group detection not available")
+	}
+	return m.groupDetector.DetectGroups(ctx, userID)
+}
+
+func (m *MultiNotifier) PendingGroups(userID string) []PendingGroup {
+	if m.groupDetector == nil {
+		return nil
+	}
+	return m.groupDetector.PendingGroups(userID)
+}
+
+func (m *MultiNotifier) RemovePendingGroup(userID, chatID string) {
+	if m.groupDetector != nil {
+		m.groupDetector.RemovePendingGroup(userID, chatID)
+	}
+}
+
+// ── AgentGroupPairer delegation ───────────────────────────────────────────────
+
+func (m *MultiNotifier) StartGroupPairing(ctx context.Context, userID, groupChatID, baseURL string) (string, error) {
+	if m.agentPairer == nil {
+		return "", errors.New("agent-group pairing not available")
+	}
+	return m.agentPairer.StartGroupPairing(ctx, userID, groupChatID, baseURL)
+}
+
+func (m *MultiNotifier) CompleteGroupPairing(ctx context.Context, sessionID, agentID, agentUserID string) error {
+	if m.agentPairer == nil {
+		return errors.New("agent-group pairing not available")
+	}
+	return m.agentPairer.CompleteGroupPairing(ctx, sessionID, agentID, agentUserID)
+}
+
+func (m *MultiNotifier) AgentGroupChatID(ctx context.Context, agentID string) (string, error) {
+	if m.agentPairer == nil {
+		return "", nil
+	}
+	return m.agentPairer.AgentGroupChatID(ctx, agentID)
+}
+
+func (m *MultiNotifier) PairedAgentIDs(ctx context.Context, groupChatID string) ([]string, error) {
+	if m.agentPairer == nil {
+		return nil, nil
+	}
+	return m.agentPairer.PairedAgentIDs(ctx, groupChatID)
+}
+
+func (m *MultiNotifier) UnpairAgentsForGroup(ctx context.Context, groupChatID string) error {
+	if m.agentPairer == nil {
+		return nil
+	}
+	return m.agentPairer.UnpairAgentsForGroup(ctx, groupChatID)
+}
+
+// BootstrapGroupObservation delegates to the underlying notifier that supports it.
+func (m *MultiNotifier) BootstrapGroupObservation(ctx context.Context) {
+	type bootstrapper interface {
+		BootstrapGroupObservation(context.Context)
+	}
+	for _, n := range m.notifiers {
+		if b, ok := n.(bootstrapper); ok {
+			b.BootstrapGroupObservation(ctx)
+		}
 	}
 }

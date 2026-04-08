@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/display"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -29,10 +30,13 @@ type Notifier struct {
 	pairingClient *http.Client // longer timeout for long-poll getUpdates
 	pairings      sync.Map     // pairing ID → *pairingSession
 
-	cbTokens   *callbackTokenStore
-	pollers    sync.Map // userID → *pollingSession
-	decisionCh chan notify.CallbackDecision
-	serverCtx  context.Context
+	cbTokens      *callbackTokenStore
+	pollers       sync.Map // userID → *pollingSession
+	decisionCh    chan notify.CallbackDecision
+	serverCtx     context.Context
+	msgBuffer     *groupchat.MessageBuffer // may be nil; set via SetMessageBuffer
+	pendingGroups sync.Map                // userID → []notify.PendingGroup
+	groupPairings sync.Map                // sessionID → *groupPairingSession
 }
 
 // New creates a Telegram Notifier that reads per-user bot tokens from the store.
@@ -46,6 +50,165 @@ func New(st store.Store, serverCtx context.Context) *Notifier {
 		decisionCh:    make(chan notify.CallbackDecision, 32),
 		serverCtx:     serverCtx,
 	}
+}
+
+// SetMessageBuffer sets the message buffer used for group chat observation.
+func (n *Notifier) SetMessageBuffer(buf *groupchat.MessageBuffer) {
+	n.msgBuffer = buf
+}
+
+// ── Agent-to-group pairing ────────────────────────────────────────────────────
+
+type groupPairingSession struct {
+	ID          string
+	UserID      string
+	GroupChatID string
+	CreatedAt   time.Time
+}
+
+// StartGroupPairing creates a pairing session and returns the session ID.
+// The caller is responsible for surfacing the pairing URL to the user (e.g.
+// in the dashboard) so they can share it with their agent.
+func (n *Notifier) StartGroupPairing(_ context.Context, userID, groupChatID, _ string) (string, error) {
+	sessionID := generatePairingID()
+	session := &groupPairingSession{
+		ID:          sessionID,
+		UserID:      userID,
+		GroupChatID: groupChatID,
+		CreatedAt:   time.Now(),
+	}
+	n.groupPairings.Store(sessionID, session)
+
+	// Auto-expire after 5 minutes.
+	go func() {
+		time.Sleep(5 * time.Minute)
+		n.groupPairings.Delete(sessionID)
+	}()
+
+	return sessionID, nil
+}
+
+// CompleteGroupPairing validates a pairing session and persists the agent-group mapping.
+func (n *Notifier) CompleteGroupPairing(ctx context.Context, sessionID, agentID, agentUserID string) error {
+	val, ok := n.groupPairings.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("pairing session not found or expired")
+	}
+	session := val.(*groupPairingSession)
+
+	if time.Since(session.CreatedAt) > 5*time.Minute {
+		n.groupPairings.Delete(sessionID)
+		return fmt.Errorf("pairing session expired")
+	}
+	if agentUserID != session.UserID {
+		return fmt.Errorf("agent does not belong to the user who created this pairing")
+	}
+
+	if err := n.store.CreateAgentGroupPairing(ctx, session.UserID, agentID, session.GroupChatID); err != nil {
+		return fmt.Errorf("persisting agent-group pairing: %w", err)
+	}
+	n.groupPairings.Delete(sessionID)
+	return nil
+}
+
+// AgentGroupChatID returns the group chat ID paired with the given agent.
+func (n *Notifier) AgentGroupChatID(ctx context.Context, agentID string) (string, error) {
+	return n.store.GetAgentGroupChatID(ctx, agentID)
+}
+
+// PairedAgentIDs returns the IDs of all agents paired to the given group chat.
+func (n *Notifier) PairedAgentIDs(ctx context.Context, groupChatID string) ([]string, error) {
+	return n.store.ListAgentIDsByGroup(ctx, groupChatID)
+}
+
+// UnpairAgentsForGroup removes all agent pairings for the given group chat ID.
+func (n *Notifier) UnpairAgentsForGroup(ctx context.Context, groupChatID string) error {
+	return n.store.DeleteAgentGroupPairingsByGroup(ctx, groupChatID)
+}
+
+// AddPendingGroup stores a detected group for the user, deduplicating by ChatID.
+func (n *Notifier) AddPendingGroup(userID string, pg notify.PendingGroup) {
+	val, _ := n.pendingGroups.LoadOrStore(userID, &[]notify.PendingGroup{})
+	groups := val.(*[]notify.PendingGroup)
+	for _, g := range *groups {
+		if g.ChatID == pg.ChatID {
+			return // already known
+		}
+	}
+	*groups = append(*groups, pg)
+}
+
+// PendingGroups returns the list of groups the bot has been added to but
+// observation has not been enabled for.
+func (n *Notifier) PendingGroups(userID string) []notify.PendingGroup {
+	val, ok := n.pendingGroups.Load(userID)
+	if !ok {
+		return nil
+	}
+	groups := val.(*[]notify.PendingGroup)
+	result := make([]notify.PendingGroup, len(*groups))
+	copy(result, *groups)
+	return result
+}
+
+// RemovePendingGroup removes a group from the pending list (after approval or dismissal).
+func (n *Notifier) RemovePendingGroup(userID, chatID string) {
+	val, ok := n.pendingGroups.Load(userID)
+	if !ok {
+		return
+	}
+	groups := val.(*[]notify.PendingGroup)
+	filtered := (*groups)[:0]
+	for _, g := range *groups {
+		if g.ChatID != chatID {
+			filtered = append(filtered, g)
+		}
+	}
+	*groups = filtered
+}
+
+// DetectGroups does a one-shot scan for my_chat_member updates to find groups
+// the bot has been added to. If a polling session is already active for the
+// user, it returns the already-captured pending groups instead (to avoid
+// conflicting getUpdates consumers).
+func (n *Notifier) DetectGroups(ctx context.Context, userID string) ([]notify.PendingGroup, error) {
+	// If polling is active, we can't call getUpdates — just return what we have.
+	if _, ok := n.pollers.Load(userID); ok {
+		return n.PendingGroups(userID), nil
+	}
+
+	botToken, _, err := n.userConfig(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// One-shot drain of all pending updates.
+	updates, err := n.getUpdates(ctx, botToken, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: detect groups: %w", err)
+	}
+
+	now := time.Now()
+	for _, u := range updates {
+		if u.MyChatMember == nil {
+			continue
+		}
+		cm := u.MyChatMember
+		if cm.NewMember.Status != "member" && cm.NewMember.Status != "administrator" {
+			continue
+		}
+		if cm.Chat.Type != "group" && cm.Chat.Type != "supergroup" {
+			continue
+		}
+		n.AddPendingGroup(userID, notify.PendingGroup{
+			ChatID:     fmt.Sprintf("%d", cm.Chat.ID),
+			Title:      cm.Chat.Title,
+			Type:       cm.Chat.Type,
+			DetectedAt: now,
+		})
+	}
+
+	return n.PendingGroups(userID), nil
 }
 
 // DecisionChannel returns a read-only channel that emits callback decisions
@@ -526,8 +689,9 @@ func (n *Notifier) editMessage(ctx context.Context, botToken, chatID, messageID,
 
 // telegramCfg is the JSON structure stored in notification_configs for channel="telegram".
 type telegramCfg struct {
-	BotToken string `json:"bot_token"`
-	ChatID   string `json:"chat_id"`
+	BotToken    string `json:"bot_token"`
+	ChatID      string `json:"chat_id"`
+	GroupChatID string `json:"group_chat_id,omitempty"`
 }
 
 // userConfig fetches the per-user bot_token and chat_id from the store.

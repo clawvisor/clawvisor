@@ -38,6 +38,13 @@ type Store interface {
 	SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error
 	GetAgentCallbackSecret(ctx context.Context, agentID string) (string, error)
 
+	// Agent-group pairings (Telegram auto-approval)
+	CreateAgentGroupPairing(ctx context.Context, userID, agentID, groupChatID string) error
+	GetAgentGroupChatID(ctx context.Context, agentID string) (string, error)
+	ListAgentIDsByGroup(ctx context.Context, groupChatID string) ([]string, error)
+	DeleteAgentGroupPairing(ctx context.Context, agentID string) error
+	DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID string) error
+
 	// Sessions (refresh tokens)
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (*Session, error)
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
@@ -55,6 +62,7 @@ type Store interface {
 	UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error
 	GetNotificationConfig(ctx context.Context, userID, channel string) (*NotificationConfig, error)
 	DeleteNotificationConfig(ctx context.Context, userID, channel string) error
+	ListNotificationConfigsByChannel(ctx context.Context, channel string) ([]NotificationConfig, error)
 
 	// Audit log
 	LogAudit(ctx context.Context, entry *AuditEntry) error
@@ -279,6 +287,9 @@ type Task struct {
 	// RiskLevel is the LLM-assessed risk level ("low", "medium", "high", "critical", "unknown", or "").
 	RiskLevel   string          `json:"risk_level,omitempty"`
 	RiskDetails json.RawMessage `json:"risk_details,omitempty"`
+	// ApprovalSource indicates how the task was approved ("", "manual", "telegram_group", "telegram_button").
+	ApprovalSource    string          `json:"approval_source,omitempty"`
+	ApprovalRationale json.RawMessage `json:"approval_rationale,omitempty"`
 }
 
 // PendingApproval is a gateway request awaiting human approval.

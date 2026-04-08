@@ -124,3 +124,36 @@ type CallbackDecision struct {
 type PollingDecrementer interface {
 	DecrementPolling(userID string)
 }
+
+// GroupObserver is implemented by notifiers that support observing messages
+// in a Telegram group chat for pre-approval signals.
+type GroupObserver interface {
+	EnsureGroupObservation(userID, botToken, chatID, groupChatID string)
+	StopGroupObservation(userID string)
+}
+
+// PendingGroup represents a Telegram group that the bot has been added to
+// but group observation has not yet been enabled for.
+type PendingGroup struct {
+	ChatID     string    `json:"chat_id"`
+	Title      string    `json:"title"`
+	Type       string    `json:"type"` // "group" or "supergroup"
+	DetectedAt time.Time `json:"detected_at"`
+}
+
+// GroupDetector is implemented by notifiers that can detect when the bot
+// has been added to Telegram groups, for the group observation setup flow.
+type GroupDetector interface {
+	DetectGroups(ctx context.Context, userID string) ([]PendingGroup, error)
+	PendingGroups(userID string) []PendingGroup
+	RemovePendingGroup(userID, chatID string)
+}
+
+// AgentGroupPairer manages agent-to-group-chat pairing for scoped approval checks.
+type AgentGroupPairer interface {
+	StartGroupPairing(ctx context.Context, userID, groupChatID, baseURL string) (string, error)
+	CompleteGroupPairing(ctx context.Context, sessionID, agentID, agentUserID string) error
+	AgentGroupChatID(ctx context.Context, agentID string) (string, error)
+	PairedAgentIDs(ctx context.Context, groupChatID string) ([]string, error)
+	UnpairAgentsForGroup(ctx context.Context, groupChatID string) error
+}
