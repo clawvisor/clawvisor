@@ -6,7 +6,7 @@ You are generating a Clawvisor integration definition. Follow these steps:
 
 ### Step 1: Read the YAML specification
 
-Read `docs/INTEGRATION_YAML_SPEC.md` in this repository. This is your authoritative reference for the YAML format, field types, and conventions.
+Fetch and read `https://raw.githubusercontent.com/clawvisor/clawvisor/main/docs/INTEGRATION_YAML_SPEC.md`. This is your authoritative reference for the YAML format, field types, and conventions.
 
 ### Step 2: Find and read the official API reference
 
