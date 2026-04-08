@@ -44,12 +44,18 @@ Once setup completes, the daemon opens the web dashboard in your browser automat
 
 With Clawvisor running, connect your agent:
 
-- **Claude Code** — run `/clawvisor-setup` inside Claude Code, or follow [docs/INTEGRATE_CLAUDE_CODE.md](docs/INTEGRATE_CLAUDE_CODE.md)
-- **Claude Desktop (MCP)** — [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md)
-- **OpenClaw** — [docs/INTEGRATE_OPENCLAW.md](docs/INTEGRATE_OPENCLAW.md)
-- **Any HTTP agent** — [docs/INTEGRATE_GENERIC.md](docs/INTEGRATE_GENERIC.md)
+```bash
+clawvisor connect-agent
+```
 
-Or point your agent at [docs/SETUP.md](docs/SETUP.md) — the setup guides are written as agent-executable instructions that walk you through everything interactively.
+This auto-detects installed agents (Claude Code, Claude Desktop) and walks you through connecting them. You can also target a specific agent directly:
+
+```bash
+clawvisor connect-agent claude-code      # install skill + env vars for Claude Code
+clawvisor connect-agent claude-desktop   # configure MCP for Claude Desktop
+```
+
+For manual setup or other agents, see the integration guides: [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) · [Claude Desktop (MCP)](docs/INTEGRATE_CLAUDE_COWORK.md) · [OpenClaw](docs/INTEGRATE_OPENCLAW.md) · [Any HTTP agent](docs/INTEGRATE_GENERIC.md)
 
 ### Alternative installs
 
@@ -461,7 +467,7 @@ Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.
 ### Directory layout
 
 ```
-cmd/clawvisor/main.go       — unified CLI (start, stop, status, setup, pair, dashboard, server, tui, agent, update, install, healthcheck)
+cmd/clawvisor/main.go       — unified CLI (start, stop, status, setup, connect-agent, services, pair, dashboard, server, tui, agent, update, install, healthcheck)
 cmd/cvis-e2e/               — E2E encryption test utility
 cmd/server/                 — standalone server entry point
 internal/

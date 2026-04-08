@@ -35,21 +35,17 @@ user has a remote instance, get the URL and verify with
 
 ## Step 2: Create an agent token
 
-Choose the method that matches how Clawvisor is running:
-
-**CLI (local native):**
-
 ```bash
-./bin/clawvisor agent create my-agent --replace --json
+clawvisor agent create my-agent --replace --json
 ```
 
-**Docker:**
+If running in Docker instead:
 
 ```bash
 docker exec <APP_CONTAINER> /clawvisor agent create my-agent --replace --json
 ```
 
-**Dashboard:** Create an agent in the web UI under the **Agents** tab.
+Alternatively, create an agent in the web UI under the **Agents** tab.
 
 Save the `token` value from the output — it is shown only once.
 

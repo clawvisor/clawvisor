@@ -23,34 +23,7 @@ When setup is complete, the user should have:
 
 ---
 
-## Step 1: Locate the Clawvisor repository
-
-The webhook extension files are in the Clawvisor repository.
-
-Check if the current working directory is the Clawvisor repository:
-
-```bash
-ls extensions/clawvisor-webhook/ 2>/dev/null
-```
-
-If found, use the current directory as `$CLAWVISOR_REPO`.
-
-If not, search common locations:
-
-```bash
-ls -d ~/code/clawvisor 2>/dev/null \
-  || ls -d ~/clawvisor 2>/dev/null \
-  || ls -d ~/projects/clawvisor 2>/dev/null
-```
-
-Also check for alternate naming (`clawvisor-public`, `clawvisor-oss`). The key
-indicator is a directory containing `extensions/clawvisor-webhook/`.
-
-If not found, ask the user where the repository is checked out.
-
----
-
-## Step 2: Verify Clawvisor is running
+## Step 1: Verify Clawvisor is running
 
 ```bash
 curl -sf http://localhost:25297/ready 2>/dev/null && echo "RUNNING" || echo "NOT RUNNING"
@@ -63,30 +36,16 @@ Store the URL as `$CLAWVISOR_URL` (default `http://localhost:25297`).
 
 ---
 
-## Step 3: Create an agent
-
-Determine how Clawvisor is running:
-
-**If running in Docker:**
-
-Find the app container:
+## Step 2: Create an agent
 
 ```bash
-docker ps --format '{{.Names}}\t{{.Image}}' | grep -i clawvisor
+clawvisor agent create openclaw --with-callback-secret --replace --json
 ```
 
-Create the agent inside the container. Use `--replace` so this is safe to
-re-run:
+If running in Docker instead:
 
 ```bash
 docker exec <APP_CONTAINER> /clawvisor agent create openclaw \
-  --with-callback-secret --replace --json
-```
-
-**If running locally (native):**
-
-```bash
-cd "$CLAWVISOR_REPO" && ./bin/clawvisor agent create openclaw \
   --with-callback-secret --replace --json
 ```
 
@@ -95,7 +54,7 @@ This returns JSON with `token` and `callback_secret` fields. Save both values
 
 ---
 
-## Step 4: Find the OpenClaw instance
+## Step 3: Find the OpenClaw instance
 
 Look for a running OpenClaw container:
 
@@ -119,9 +78,9 @@ directory is.
 
 ---
 
-## Step 5: Install the clawvisor skill
+## Step 4: Install the clawvisor skill
 
-If you found an OpenClaw container in Step 4:
+If you found an OpenClaw container in Step 3:
 
 ```bash
 docker exec <OPENCLAW_CONTAINER> npx clawhub install clawvisor --force \
@@ -142,13 +101,20 @@ ls "$OPENCLAW_DIR/workspace/skills/clawvisor/SKILL.md" 2>/dev/null
 
 ---
 
-## Step 6: Install the webhook extension
+## Step 5: Install the webhook extension
 
-Copy the extension files from the Clawvisor repo into OpenClaw's extensions
-directory:
+Install the webhook extension from npm:
 
 ```bash
-EXT_SRC="$CLAWVISOR_REPO/extensions/clawvisor-webhook"
+EXT_DST="$OPENCLAW_DIR/extensions/clawvisor-webhook"
+mkdir -p "$EXT_DST"
+cd "$EXT_DST" && npm init -y && npm install clawvisor-webhook --production
+```
+
+If installing from the Clawvisor repository instead:
+
+```bash
+EXT_SRC="<clawvisor-repo>/extensions/clawvisor-webhook"
 EXT_DST="$OPENCLAW_DIR/extensions/clawvisor-webhook"
 mkdir -p "$EXT_DST"
 cp "$EXT_SRC/openclaw.plugin.json" "$EXT_SRC/index.ts" "$EXT_SRC/package.json" "$EXT_DST/"
@@ -158,11 +124,11 @@ cd "$EXT_DST" && npm install --production
 
 ---
 
-## Step 7: Enable the webhook plugin in openclaw.json
+## Step 6: Enable the webhook plugin in openclaw.json
 
 Read `$OPENCLAW_DIR/openclaw.json` and add (or update) the webhook plugin
 entry. The plugin reads its signing secret from the `CLAWVISOR_CALLBACK_SECRET`
-environment variable (set in Step 8 via `~/.openclaw/workspace/.env`), and uses
+environment variable (set in Step 7 via `~/.openclaw/workspace/.env`), and uses
 sensible defaults for `path` (`/clawvisor/callback`) and `gatewayWsUrl`
 (`ws://127.0.0.1:18789`), so typically only `enabled` is needed.
 
@@ -222,7 +188,7 @@ merge the plugin config, and write it back.
 
 ---
 
-## Step 8: Write environment variables
+## Step 7: Write environment variables
 
 Determine the correct Clawvisor URL for the OpenClaw process to reach:
 
@@ -246,13 +212,13 @@ grep -v '^CLAWVISOR_\|^OPENCLAW_HOOKS_URL=' "$OPENCLAW_DIR/workspace/.env" > /tm
 mv /tmp/openclaw-env.tmp "$OPENCLAW_DIR/workspace/.env" 2>/dev/null || true
 ```
 
-Then append the new values (from Step 3):
+Then append the new values (from Step 2):
 
 ```bash
 cat >> "$OPENCLAW_DIR/workspace/.env" <<EOF
 CLAWVISOR_URL=<determined URL>
-CLAWVISOR_AGENT_TOKEN=<token from Step 3>
-CLAWVISOR_CALLBACK_SECRET=<callback_secret from Step 3>
+CLAWVISOR_AGENT_TOKEN=<token from Step 2>
+CLAWVISOR_CALLBACK_SECRET=<callback_secret from Step 2>
 OPENCLAW_HOOKS_URL=<determined URL>
 EOF
 chmod 600 "$OPENCLAW_DIR/workspace/.env"
@@ -260,7 +226,7 @@ chmod 600 "$OPENCLAW_DIR/workspace/.env"
 
 ---
 
-## Step 9: Summary
+## Step 8: Summary
 
 Present the user with:
 

@@ -11,6 +11,19 @@ see [SETUP.md](SETUP.md).
 
 ---
 
+## Quick Setup
+
+The fastest way to connect Claude Desktop is:
+
+```bash
+clawvisor connect-agent claude-desktop
+```
+
+This configures the MCP connection automatically. If you prefer manual setup
+or the command isn't available, follow the steps below.
+
+---
+
 ## Goal State
 
 When setup is complete, the user should have:
