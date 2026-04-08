@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,13 +19,15 @@ import (
 
 // pollingSession tracks one per-user callback polling goroutine.
 type pollingSession struct {
-	userID      string
-	botToken    string
-	chatID      string
-	groupChatID string // group chat ID for observation; empty if not configured
-	cancel      context.CancelFunc
-	pending     int32 // number of pending callback tokens
-	persistent  bool  // true when group observation is active (don't stop on pending=0)
+	userID   string
+	botToken string
+	chatID   string
+	cancel   context.CancelFunc
+	pending  int32 // number of pending callback tokens
+
+	mu          sync.Mutex // protects groupChatID and persistent
+	groupChatID string     // group chat ID for observation; empty if not configured
+	persistent  bool       // true when group observation is active (don't stop on pending=0)
 }
 
 // ensurePolling starts a polling goroutine for the user if one isn't running,
@@ -66,8 +69,10 @@ func (n *Notifier) EnsureGroupObservation(userID, botToken, chatID, groupChatID 
 	}); loaded {
 		// Already running — upgrade to persistent and set group chat ID.
 		ps := val.(*pollingSession)
+		ps.mu.Lock()
 		ps.groupChatID = groupChatID
 		ps.persistent = true
+		ps.mu.Unlock()
 		return
 	}
 
@@ -87,8 +92,10 @@ func (n *Notifier) StopGroupObservation(userID string) {
 		return
 	}
 	ps := val.(*pollingSession)
+	ps.mu.Lock()
 	ps.persistent = false
 	ps.groupChatID = ""
+	ps.mu.Unlock()
 	if atomic.LoadInt32(&ps.pending) <= 0 {
 		ps.cancel()
 		n.pollers.Delete(userID)
@@ -103,7 +110,10 @@ func (n *Notifier) DecrementPolling(userID string) {
 		return
 	}
 	ps := val.(*pollingSession)
-	if atomic.AddInt32(&ps.pending, -1) <= 0 && !ps.persistent {
+	ps.mu.Lock()
+	persistent := ps.persistent
+	ps.mu.Unlock()
+	if atomic.AddInt32(&ps.pending, -1) <= 0 && !persistent {
 		ps.cancel()
 		n.pollers.Delete(userID)
 	}
@@ -166,6 +176,10 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 			continue
 		}
 
+		ps.mu.Lock()
+		gcid := ps.groupChatID
+		ps.mu.Unlock()
+
 		for _, u := range updates {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
@@ -173,8 +187,8 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 			if u.CallbackQuery != nil {
 				n.handleCallbackQuery(ctx, ps, u.CallbackQuery)
 			}
-			if u.Message != nil && ps.groupChatID != "" {
-				n.handleGroupMessage(ctx, ps, u.Message)
+			if u.Message != nil && gcid != "" {
+				n.handleGroupMessage(ctx, ps, u.Message, gcid)
 			}
 			if u.MyChatMember != nil {
 				n.handleChatMemberUpdate(ctx, ps, u.MyChatMember)
@@ -215,23 +229,23 @@ func (n *Notifier) handleChatMemberUpdate(ctx context.Context, ps *pollingSessio
 // handleGroupMessage buffers a message from a monitored group chat.
 // All messages are stored (including from agents/bots) so the LLM has
 // full conversational context for approval detection.
-func (n *Notifier) handleGroupMessage(_ context.Context, ps *pollingSession, msg *telegramMsg) {
+func (n *Notifier) handleGroupMessage(_ context.Context, ps *pollingSession, msg *telegramMsg, groupChatID string) {
 	// Only process messages from the configured group chat.
-	if fmt.Sprintf("%d", msg.Chat.ID) != ps.groupChatID {
+	if fmt.Sprintf("%d", msg.Chat.ID) != groupChatID {
 		return
 	}
 	if msg.Text == "" {
 		return
 	}
 	if n.msgBuffer != nil {
-		n.msgBuffer.Append(ps.groupChatID, groupchat.BufferedMessage{
+		n.msgBuffer.Append(groupChatID, groupchat.BufferedMessage{
 			Text:       msg.Text,
 			SenderID:   fmt.Sprintf("%d", msg.From.ID),
 			SenderName: senderDisplayName(msg.From),
 			Timestamp:  time.Unix(msg.Date, 0),
 		})
 		slog.Default().Debug("telegram group message buffered",
-			"user_id", ps.userID, "group_chat_id", ps.groupChatID)
+			"user_id", ps.userID, "group_chat_id", groupChatID)
 	}
 }
 

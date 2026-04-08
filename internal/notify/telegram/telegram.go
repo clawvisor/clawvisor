@@ -35,7 +35,7 @@ type Notifier struct {
 	decisionCh    chan notify.CallbackDecision
 	serverCtx     context.Context
 	msgBuffer     *groupchat.MessageBuffer // may be nil; set via SetMessageBuffer
-	pendingGroups sync.Map                // userID → []notify.PendingGroup
+	pendingGroups sync.Map                // userID → *pendingGroupList
 	groupPairings sync.Map                // sessionID → *groupPairingSession
 }
 
@@ -126,16 +126,24 @@ func (n *Notifier) UnpairAgentsForGroup(ctx context.Context, groupChatID string)
 	return n.store.DeleteAgentGroupPairingsByGroup(ctx, groupChatID)
 }
 
+// pendingGroupList is a mutex-protected list of pending groups for a user.
+type pendingGroupList struct {
+	mu     sync.Mutex
+	groups []notify.PendingGroup
+}
+
 // AddPendingGroup stores a detected group for the user, deduplicating by ChatID.
 func (n *Notifier) AddPendingGroup(userID string, pg notify.PendingGroup) {
-	val, _ := n.pendingGroups.LoadOrStore(userID, &[]notify.PendingGroup{})
-	groups := val.(*[]notify.PendingGroup)
-	for _, g := range *groups {
+	val, _ := n.pendingGroups.LoadOrStore(userID, &pendingGroupList{})
+	pgl := val.(*pendingGroupList)
+	pgl.mu.Lock()
+	defer pgl.mu.Unlock()
+	for _, g := range pgl.groups {
 		if g.ChatID == pg.ChatID {
 			return // already known
 		}
 	}
-	*groups = append(*groups, pg)
+	pgl.groups = append(pgl.groups, pg)
 }
 
 // PendingGroups returns the list of groups the bot has been added to but
@@ -145,9 +153,11 @@ func (n *Notifier) PendingGroups(userID string) []notify.PendingGroup {
 	if !ok {
 		return nil
 	}
-	groups := val.(*[]notify.PendingGroup)
-	result := make([]notify.PendingGroup, len(*groups))
-	copy(result, *groups)
+	pgl := val.(*pendingGroupList)
+	pgl.mu.Lock()
+	defer pgl.mu.Unlock()
+	result := make([]notify.PendingGroup, len(pgl.groups))
+	copy(result, pgl.groups)
 	return result
 }
 
@@ -157,14 +167,16 @@ func (n *Notifier) RemovePendingGroup(userID, chatID string) {
 	if !ok {
 		return
 	}
-	groups := val.(*[]notify.PendingGroup)
-	filtered := (*groups)[:0]
-	for _, g := range *groups {
+	pgl := val.(*pendingGroupList)
+	pgl.mu.Lock()
+	defer pgl.mu.Unlock()
+	filtered := pgl.groups[:0]
+	for _, g := range pgl.groups {
 		if g.ChatID != chatID {
 			filtered = append(filtered, g)
 		}
 	}
-	*groups = filtered
+	pgl.groups = filtered
 }
 
 // DetectGroups does a one-shot scan for my_chat_member updates to find groups
