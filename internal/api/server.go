@@ -108,6 +108,7 @@ type FeatureSet struct {
 	Teams             bool `json:"teams"`
 	UsageMetering     bool `json:"usage_metering"`
 	PasswordAuth      bool `json:"password_auth"`
+	AdapterGen        bool `json:"adapter_gen"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -539,6 +540,7 @@ func (s *Server) routes() http.Handler {
 
 	// Adapter generation (user JWT for dashboard, agent token for MCP)
 	if s.llmCfg.AdapterGen.Enabled && s.adapterGenFactory != nil {
+		s.features.AdapterGen = true
 		adapterGenHandler := handlers.NewAdapterGenHandler(s.adapterGenFactory, s.logger)
 		mux.Handle("POST /api/adapters/generate", user(adapterGenHandler.Create))
 		mux.Handle("POST /api/adapters/install", user(adapterGenHandler.Install))

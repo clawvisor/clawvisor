@@ -921,12 +921,14 @@ export default function Services() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <NavLink
-            to="/dashboard/adapter-gen"
-            className="px-4 py-2 rounded-md border border-border-strong text-text-primary text-sm font-medium hover:bg-surface-2 transition-colors"
-          >
-            Generate integration
-          </NavLink>
+          {features?.adapter_gen && (
+            <NavLink
+              to="/dashboard/adapter-gen"
+              className="px-4 py-2 rounded-md border border-border-strong text-text-primary text-sm font-medium hover:bg-surface-2 transition-colors"
+            >
+              Generate integration
+            </NavLink>
+          )}
           <button
             onClick={() => setShowModal(true)}
             className="px-4 py-2 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong shadow-sm"
