@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AuditEntry } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow, format } from 'date-fns'
 import { serviceName, actionName, formatServiceAction } from '../lib/services'
 
@@ -158,18 +159,24 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
 const PAGE_SIZE = 50
 
 export default function Audit() {
+  const { currentOrg } = useAuth()
+  const orgId = currentOrg?.id
   const [outcomeFilter, setOutcomeFilter] = useState('')
   const [serviceFilter, setServiceFilter] = useState('')
   const [offset, setOffset] = useState(0)
 
+  const filter = {
+    outcome: outcomeFilter || undefined,
+    service: serviceFilter || undefined,
+    limit: PAGE_SIZE,
+    offset,
+  }
+
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['audit', { outcome: outcomeFilter, service: serviceFilter, offset }],
-    queryFn: () => api.audit.list({
-      outcome: outcomeFilter || undefined,
-      service: serviceFilter || undefined,
-      limit: PAGE_SIZE,
-      offset,
-    }),
+    queryKey: ['audit', orgId ?? 'personal', { outcome: outcomeFilter, service: serviceFilter, offset }],
+    queryFn: () => orgId
+      ? api.orgs.audit(orgId, filter)
+      : api.audit.list(filter),
     refetchInterval: 30_000,
   })
 
@@ -184,12 +191,15 @@ export default function Audit() {
       const batchSize = 200
       let batchOffset = 0
       while (true) {
-        const batch = await api.audit.list({
+        const batchFilter = {
           outcome: outcomeFilter || undefined,
           service: serviceFilter || undefined,
           limit: batchSize,
           offset: batchOffset,
-        })
+        }
+        const batch = orgId
+          ? await api.orgs.audit(orgId, batchFilter)
+          : await api.audit.list(batchFilter)
         allEntries.push(...batch.entries)
         if (allEntries.length >= batch.total || batch.entries.length < batchSize) break
         batchOffset += batchSize
@@ -200,12 +210,12 @@ export default function Audit() {
     } finally {
       setExporting(false)
     }
-  }, [outcomeFilter, serviceFilter])
+  }, [outcomeFilter, serviceFilter, orgId])
 
   return (
     <div className="p-8 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text-primary">Gateway Log</h1>
+        <h1 className="text-2xl font-bold text-text-primary">{orgId ? `${currentOrg!.name} Gateway Log` : 'Gateway Log'}</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={handleExport}

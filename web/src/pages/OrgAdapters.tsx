@@ -1,13 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
-
-interface CustomAdapter {
-  id: string
-  service_id: string
-  name: string
-  auth_type: string
-  created_at: string
-}
+import { api } from '../api/client'
 
 export default function OrgAdapters() {
   const { currentOrg } = useAuth()
@@ -15,11 +8,7 @@ export default function OrgAdapters() {
 
   const { data: adapters } = useQuery({
     queryKey: ['org-adapters', orgId],
-    queryFn: async () => {
-      const res = await fetch(`/api/orgs/${orgId}/adapters`)
-      if (!res.ok) throw new Error('Failed to fetch custom adapters')
-      return res.json() as Promise<{ adapters: CustomAdapter[] }>
-    },
+    queryFn: () => api.orgs.adapters(orgId),
     enabled: !!orgId,
   })
 
@@ -38,7 +27,7 @@ export default function OrgAdapters() {
       </p>
 
       <div className="space-y-2">
-        {adapters?.adapters?.map((a: CustomAdapter) => (
+        {adapters?.map((a) => (
           <div key={a.id} className="bg-surface-1 rounded-lg border border-border-default p-3 flex items-center justify-between">
             <div>
               <span className="text-sm font-medium text-text-primary">{a.name}</span>
@@ -47,7 +36,7 @@ export default function OrgAdapters() {
             <span className="text-xs text-text-secondary">auth: {a.auth_type}</span>
           </div>
         ))}
-        {(!adapters?.adapters || adapters.adapters.length === 0) && (
+        {(!adapters || adapters.length === 0) && (
           <p className="text-sm text-text-secondary">No custom adapters registered.</p>
         )}
       </div>

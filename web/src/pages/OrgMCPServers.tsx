@@ -1,14 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
-
-interface MCPServer {
-  id: string
-  name: string
-  url: string
-  auth_type: string
-  description?: string
-  created_at: string
-}
+import { api } from '../api/client'
 
 export default function OrgMCPServers() {
   const { currentOrg } = useAuth()
@@ -16,11 +8,7 @@ export default function OrgMCPServers() {
 
   const { data: servers } = useQuery({
     queryKey: ['org-mcp-servers', orgId],
-    queryFn: async () => {
-      const res = await fetch(`/api/orgs/${orgId}/mcp-servers`)
-      if (!res.ok) throw new Error('Failed to fetch MCP servers')
-      return res.json() as Promise<{ servers: MCPServer[] }>
-    },
+    queryFn: () => api.orgs.mcpServers(orgId),
     enabled: !!orgId,
   })
 
@@ -39,7 +27,7 @@ export default function OrgMCPServers() {
       </p>
 
       <div className="space-y-2">
-        {servers?.servers?.map((s: MCPServer) => (
+        {servers?.map((s) => (
           <div key={s.id} className="bg-surface-1 rounded-lg border border-border-default p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-text-primary">{s.name}</span>
@@ -51,7 +39,7 @@ export default function OrgMCPServers() {
             )}
           </div>
         ))}
-        {(!servers?.servers || servers.servers.length === 0) && (
+        {(!servers || servers.length === 0) && (
           <p className="text-sm text-text-secondary">No MCP servers registered.</p>
         )}
       </div>

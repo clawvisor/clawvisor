@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, type Restriction, type ServiceInfo } from '../api/client'
+import { api, type Restriction, type OrgRestriction, type ServiceInfo } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import { serviceName, actionName } from '../lib/services'
 
 function Toggle({
@@ -39,18 +40,23 @@ function ActionRow({
   action,
   restrictionId,
   disabled,
+  orgId,
 }: {
   serviceId: string
   action: string
   restrictionId: string | null
   disabled: boolean
+  orgId?: string
 }) {
   const qc = useQueryClient()
   const [reason, setReason] = useState('')
   const [showReason, setShowReason] = useState(false)
 
   const createMut = useMutation({
-    mutationFn: (r: string) => api.restrictions.create(serviceId, action, r),
+    mutationFn: async (r: string) => {
+      if (orgId) await api.orgs.restrictions.create(orgId, serviceId, action, r)
+      else await api.restrictions.create(serviceId, action, r)
+    },
     onSuccess: () => {
       setReason('')
       setShowReason(false)
@@ -59,7 +65,10 @@ function ActionRow({
   })
 
   const deleteMut = useMutation({
-    mutationFn: () => api.restrictions.delete(restrictionId!),
+    mutationFn: async () => {
+      if (orgId) await api.orgs.restrictions.delete(orgId, restrictionId!)
+      else await api.restrictions.delete(restrictionId!)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['restrictions'] })
     },
@@ -127,16 +136,21 @@ function ActionRow({
 function WildcardToggle({
   serviceId,
   restrictionId,
+  orgId,
 }: {
   serviceId: string
   restrictionId: string | null
+  orgId?: string
 }) {
   const qc = useQueryClient()
   const [reason, setReason] = useState('')
   const [showReason, setShowReason] = useState(false)
 
   const createMut = useMutation({
-    mutationFn: (r: string) => api.restrictions.create(serviceId, '*', r),
+    mutationFn: async (r: string) => {
+      if (orgId) await api.orgs.restrictions.create(orgId, serviceId, '*', r)
+      else await api.restrictions.create(serviceId, '*', r)
+    },
     onSuccess: () => {
       setReason('')
       setShowReason(false)
@@ -145,7 +159,10 @@ function WildcardToggle({
   })
 
   const deleteMut = useMutation({
-    mutationFn: () => api.restrictions.delete(restrictionId!),
+    mutationFn: async () => {
+      if (orgId) await api.orgs.restrictions.delete(orgId, restrictionId!)
+      else await api.restrictions.delete(restrictionId!)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['restrictions'] })
     },
@@ -205,9 +222,11 @@ function WildcardToggle({
 function ServiceGroup({
   svc,
   restrictions,
+  orgId,
 }: {
   svc: ServiceInfo
-  restrictions: Restriction[]
+  restrictions: (Restriction | OrgRestriction)[]
+  orgId?: string
 }) {
   // The restriction service key includes the alias when present (e.g. "google.gmail:personal").
   const svcKey = svc.alias ? `${svc.id}:${svc.alias}` : svc.id
@@ -230,7 +249,7 @@ function ServiceGroup({
           <h3 className="text-sm font-semibold text-text-primary">{serviceName(svc.id, svc.alias)}</h3>
           <p className="text-xs text-text-tertiary">{svcKey}</p>
         </div>
-        <WildcardToggle serviceId={svcKey} restrictionId={wildcardId} />
+        <WildcardToggle serviceId={svcKey} restrictionId={wildcardId} orgId={orgId} />
       </div>
       <div className="border-t border-border-default divide-y divide-border-subtle">
         {svc.actions.map(action => (
@@ -240,6 +259,7 @@ function ServiceGroup({
             action={action.id}
             restrictionId={lookup.get(`${svcKey}:${action.id}`) ?? null}
             disabled={hasWildcard}
+            orgId={orgId}
           />
         ))}
       </div>
@@ -248,6 +268,8 @@ function ServiceGroup({
 }
 
 export default function Restrictions() {
+  const { currentOrg } = useAuth()
+  const orgId = currentOrg?.id
   const [showAll, setShowAll] = useState(false)
 
   const { data: servicesData, isLoading: servicesLoading } = useQuery({
@@ -256,8 +278,10 @@ export default function Restrictions() {
   })
 
   const { data: restrictions, isLoading: restrictionsLoading } = useQuery({
-    queryKey: ['restrictions'],
-    queryFn: () => api.restrictions.list(),
+    queryKey: ['restrictions', orgId ?? 'personal'],
+    queryFn: async (): Promise<(Restriction | OrgRestriction)[]> => orgId
+      ? api.orgs.restrictions.list(orgId)
+      : api.restrictions.list(),
   })
 
   const isLoading = servicesLoading || restrictionsLoading
@@ -295,6 +319,7 @@ export default function Restrictions() {
             key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
             svc={svc}
             restrictions={allRestrictions}
+            orgId={orgId}
           />
         ))}
       </div>
@@ -314,6 +339,7 @@ export default function Restrictions() {
                   key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
                   svc={svc}
                   restrictions={allRestrictions}
+                  orgId={orgId}
                 />
               ))}
             </div>

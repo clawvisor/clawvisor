@@ -2,10 +2,13 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { ConnectionRequest } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
 
 export default function Agents() {
+  const { currentOrg } = useAuth()
+  const orgId = currentOrg?.id
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -13,20 +16,23 @@ export default function Agents() {
   const [showCreateForm, setShowCreateForm] = useState(false)
 
   const { data: agents, isLoading } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => api.agents.list(),
+    queryKey: ['agents', orgId ?? 'personal'],
+    queryFn: () => orgId ? api.orgs.agents(orgId) : api.agents.list(),
   })
 
   const { data: connections } = useQuery({
     queryKey: ['connections'],
     queryFn: () => api.connections.list(),
+    enabled: !orgId,
   })
 
   const createMut = useMutation({
-    mutationFn: () => api.agents.create(name),
-    onSuccess: (agent) => {
+    mutationFn: () => orgId
+      ? api.orgs.createAgent(orgId, name)
+      : api.agents.create(name).then(agent => ({ agent, token: agent.token ?? '' })),
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
-      setNewToken(agent.token ?? null)
+      setNewToken(result.token ?? null)
       setName('')
       setFormError(null)
       setShowCreateForm(false)
@@ -35,11 +41,11 @@ export default function Agents() {
   })
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => api.agents.delete(id),
+    mutationFn: (id: string) => orgId ? api.orgs.deleteAgent(orgId, id) : api.agents.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
   })
 
-  const pending = connections ?? []
+  const pending = (!orgId ? connections : undefined) ?? []
 
   return (
     <div className="p-8 space-y-8">
@@ -49,11 +55,11 @@ export default function Agents() {
         Each agent gets a unique token — paste it into your agent's configuration to connect it to Clawvisor.
       </p>
 
-      {/* Connect an Agent guide */}
-      <ConnectAgentGuide />
+      {/* Connect an Agent guide (personal context only) */}
+      {!orgId && <ConnectAgentGuide />}
 
-      {/* Pending connection requests */}
-      {pending.length > 0 && (
+      {/* Pending connection requests (personal context only) */}
+      {!orgId && pending.length > 0 && (
         <section>
           <div className="flex items-center gap-3 mb-3">
             <h2 className="text-lg font-semibold text-text-primary">Pending Connections</h2>

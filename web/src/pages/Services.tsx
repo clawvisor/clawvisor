@@ -821,16 +821,65 @@ function AddServiceModal({
   )
 }
 
+// ── Org Services View ─────────────────────────────────────────────────────────
+
+function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const { data } = useQuery({
+    queryKey: ['org-services', orgId],
+    queryFn: () => api.orgs.services(orgId),
+    enabled: !!orgId,
+  })
+
+  const services = data?.services ?? []
+
+  return (
+    <div className="p-8 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-text-primary">{orgName} Services</h1>
+        <p className="text-sm text-text-tertiary mt-1">
+          Org-wide shared credentials and per-user service activation.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {services.map((s) => (
+          <div key={s.service_id} className="bg-surface-1 rounded-lg border border-border-default p-4 flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-text-primary">{s.name}</span>
+              <span className="ml-2 text-xs text-text-secondary font-mono">{s.service_id}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                s.status === 'active' ? 'bg-success/15 text-success' : 'bg-surface-2 text-text-tertiary'
+              }`}>
+                {s.status}
+              </span>
+              <span className="text-xs text-text-tertiary">{s.credential_type}</span>
+            </div>
+          </div>
+        ))}
+        {services.length === 0 && (
+          <div className="text-sm text-text-tertiary py-8 text-center">
+            No services configured for this organization.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Services() {
   const qc = useQueryClient()
-  const { features } = useAuth()
+  const { features, currentOrg } = useAuth()
+  const orgId = currentOrg?.id
   const [showModal, setShowModal] = useState(false)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.services.list(),
+    enabled: !orgId,
   })
 
   // In single-tenant mode, check if Google OAuth credentials are configured.
@@ -850,6 +899,10 @@ export default function Services() {
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [qc])
+
+  if (orgId) {
+    return <OrgServicesView orgId={orgId} orgName={currentOrg!.name} />
+  }
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')

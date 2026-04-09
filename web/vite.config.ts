@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: true,
     proxy: {
       '/api': 'http://localhost:25297',
       '/health': 'http://localhost:25297',

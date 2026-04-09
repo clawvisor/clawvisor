@@ -50,9 +50,11 @@ const OUTCOME_DOT: Record<string, string> = {
 export default function TaskCard({
   task,
   agentName,
+  onRevoke,
 }: {
   task: Task
   agentName: string
+  onRevoke?: (taskId: string) => Promise<unknown>
 }) {
   const qc = useQueryClient()
   const [result, setResult] = useState<string | null>(null)
@@ -84,7 +86,7 @@ export default function TaskCard({
     onSuccess: () => { setResult('Expansion denied'); invalidate() },
   })
   const revokeMut = useMutation({
-    mutationFn: () => api.tasks.revoke(task.id),
+    mutationFn: () => onRevoke ? onRevoke(task.id) : api.tasks.revoke(task.id),
     onSuccess: () => { setResult('Revoked'); invalidate() },
   })
 

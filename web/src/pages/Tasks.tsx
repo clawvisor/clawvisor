@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
 import { api, type Agent } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import TaskCard from '../components/TaskCard'
 
 const STATUS_FILTER_OPTIONS = [
@@ -17,6 +18,8 @@ const STATUS_FILTER_OPTIONS = [
 const PAGE_SIZE = 25
 
 export default function Tasks() {
+  const { currentOrg } = useAuth()
+  const orgId = currentOrg?.id
   const [filter, setFilter] = useState('')
   const [offset, setOffset] = useState(0)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -44,8 +47,9 @@ export default function Tasks() {
     onError: (err: Error) => setDeepLinkResult(`Expansion deny failed: ${err.message}`),
   })
 
-  // Handle deep link actions from Telegram buttons
+  // Handle deep link actions from Telegram buttons (personal context only)
   useEffect(() => {
+    if (orgId) return
     const action = searchParams.get('action')
     const taskId = searchParams.get('task_id')
     if (!action || !taskId) return
@@ -73,28 +77,31 @@ export default function Tasks() {
     return params
   })()
 
+  const listFn = orgId
+    ? (params: typeof queryParams) => api.orgs.tasks(orgId, params)
+    : (params: typeof queryParams) => api.tasks.list(params)
+
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['tasks', { filter, offset }],
+    queryKey: ['tasks', orgId ?? 'personal', { filter, offset }],
     queryFn: async () => {
       if (filter === 'actionable') {
-        // Fetch both pending statuses and merge (no pagination — actionable set is small)
         const [approvals, expansions] = await Promise.all([
-          api.tasks.list({ status: 'pending_approval', limit: PAGE_SIZE, offset }),
-          api.tasks.list({ status: 'pending_scope_expansion', limit: PAGE_SIZE, offset }),
+          listFn({ status: 'pending_approval', limit: PAGE_SIZE, offset }),
+          listFn({ status: 'pending_scope_expansion', limit: PAGE_SIZE, offset }),
         ])
         return {
           tasks: [...(approvals.tasks ?? []), ...(expansions.tasks ?? [])],
           total: (approvals.total ?? 0) + (expansions.total ?? 0),
         }
       }
-      return api.tasks.list(queryParams)
+      return listFn(queryParams)
     },
     refetchInterval: 30_000,
   })
 
   const { data: agentsData } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => api.agents.list(),
+    queryKey: ['agents', orgId ?? 'personal'],
+    queryFn: () => orgId ? api.orgs.agents(orgId) : api.agents.list(),
   })
 
   const agentMap = new Map<string, string>()
@@ -175,6 +182,7 @@ export default function Tasks() {
             key={task.id}
             task={task}
             agentName={agentMap.get(task.agent_id) ?? task.agent_id.slice(0, 8)}
+            onRevoke={orgId ? (tid) => api.orgs.revokeTask(orgId, tid) : undefined}
           />
         ))}
       </div>

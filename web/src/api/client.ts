@@ -565,6 +565,30 @@ export interface OrgRestriction {
   created_at: string
 }
 
+export interface OrgService {
+  service_id: string
+  name: string
+  status: 'active' | 'inactive'
+  credential_type: 'shared' | 'per_user' | 'none'
+}
+
+export interface CustomAdapter {
+  id: string
+  service_id: string
+  name: string
+  auth_type: string
+  created_at: string
+}
+
+export interface CustomMCPServer {
+  id: string
+  name: string
+  url: string
+  auth_type: string
+  description?: string
+  created_at: string
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -803,6 +827,12 @@ export const api = {
     audit: (orgId: string, filter?: AuditFilter) =>
       get<{ entries: AuditEntry[]; total: number }>(`/api/orgs/${orgId}/audit`, filter as Record<string, string | number | undefined>),
     agents: (orgId: string) => get<Agent[]>(`/api/orgs/${orgId}/agents`),
+    createAgent: (orgId: string, name: string) =>
+      post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name }),
+    deleteAgent: (orgId: string, agentId: string) =>
+      del<void>(`/api/orgs/${orgId}/agents/${agentId}`),
+    revokeTask: (orgId: string, taskId: string) =>
+      post<{ status: string }>(`/api/orgs/${orgId}/tasks/${taskId}/revoke`, {}),
     tasks: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) => {
       const q = new URLSearchParams()
       if (params?.status) q.set('status', params.status)
@@ -811,6 +841,9 @@ export const api = {
       const qs = q.toString()
       return get<{ tasks: Task[]; total: number }>(`/api/orgs/${orgId}/tasks${qs ? `?${qs}` : ''}`)
     },
+    services: (orgId: string) => get<{ services: OrgService[] }>(`/api/orgs/${orgId}/services`),
+    adapters: (orgId: string) => get<CustomAdapter[]>(`/api/orgs/${orgId}/adapters`),
+    mcpServers: (orgId: string) => get<CustomMCPServer[]>(`/api/orgs/${orgId}/mcp-servers`),
   },
   oauthApprove: (params: {
     client_id: string
