@@ -363,6 +363,9 @@ func Load(path string) (*Config, error) {
 	// Shared LLM overrides (inherited by all subsections)
 	if v := os.Getenv("CLAWVISOR_LLM_PROVIDER"); v != "" {
 		cfg.LLM.Provider = v
+		if v == "vertex" && cfg.LLM.Endpoint == "https://api.anthropic.com/v1" {
+			cfg.LLM.Endpoint = ""
+		}
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_ENDPOINT"); v != "" {
 		cfg.LLM.Endpoint = v
