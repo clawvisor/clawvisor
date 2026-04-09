@@ -46,7 +46,7 @@ type TasksHandler struct {
 	cfg          config.Config
 	logger       *slog.Logger
 	baseURL      string
-	eventHub     *events.Hub
+	eventHub     events.EventHub
 	assessor     taskrisk.Assessor
 	contentDedup *dedupCache
 	msgBuffer    *groupchat.MessageBuffer // may be nil; set via SetGroupApproval
@@ -62,7 +62,7 @@ func NewTasksHandler(
 	cfg config.Config,
 	logger *slog.Logger,
 	baseURL string,
-	eventHub *events.Hub,
+	eventHub events.EventHub,
 	assessor taskrisk.Assessor,
 ) *TasksHandler {
 	dedupTTL := time.Duration(cfg.Gateway.ContentDedupTTLSeconds) * time.Second

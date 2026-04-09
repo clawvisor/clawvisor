@@ -8,6 +8,14 @@ type Event struct {
 	ID   string `json:"id"`   // optional: task_id or audit_id
 }
 
+// EventHub is the interface for event fan-out to SSE connections and long-poll waiters.
+// The in-memory Hub satisfies this interface; cloud deployments may use a Redis-backed implementation.
+type EventHub interface {
+	Subscribe(userID string) (<-chan Event, func())
+	Publish(userID string, e Event)
+	Close()
+}
+
 // Hub fans out events to per-user SSE connections.
 type Hub struct {
 	mu      sync.RWMutex

@@ -71,6 +71,14 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		apiOpts = append(apiOpts, api.WithGroupChatBuffer(opts.MessageBuffer))
 	}
 
+	if opts.EventHub != nil {
+		apiOpts = append(apiOpts, api.WithEventHub(opts.EventHub))
+	}
+
+	if opts.DecisionBus != nil {
+		apiOpts = append(apiOpts, api.WithDecisionBus(opts.DecisionBus))
+	}
+
 	if opts.AdapterGenFactory != nil {
 		apiOpts = append(apiOpts, api.WithAdapterGenFactory(opts.AdapterGenFactory))
 	}

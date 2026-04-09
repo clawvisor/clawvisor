@@ -24,10 +24,10 @@ type ApprovalsHandler struct {
 	adapterReg *adapters.Registry
 	notifier   notify.Notifier // may be nil
 	logger     *slog.Logger
-	eventHub   *events.Hub
+	eventHub   events.EventHub
 }
 
-func NewApprovalsHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, notifier notify.Notifier, logger *slog.Logger, eventHub *events.Hub) *ApprovalsHandler {
+func NewApprovalsHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, notifier notify.Notifier, logger *slog.Logger, eventHub events.EventHub) *ApprovalsHandler {
 	return &ApprovalsHandler{st: st, vault: v, adapterReg: adapterReg, notifier: notifier, logger: logger, eventHub: eventHub}
 }
 

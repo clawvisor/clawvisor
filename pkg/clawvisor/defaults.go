@@ -26,6 +26,9 @@ import (
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/events"
+	intnotify "github.com/clawvisor/clawvisor/internal/notify"
+	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -41,6 +44,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
+	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -289,7 +293,21 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// ── Auth mode ──────────────────────────────────────────────────────────
 	// Default is magic-link. Set auth_mode: "password" in config.yaml
 	// (or AUTH_MODE=password env var) to enable email/password auth.
-	magicStore := auth.NewMagicTokenStore()
+	var magicStore pkgauth.MagicTokenStore = auth.NewMagicTokenStore()
+
+	// ── Redis (cloud/multi-instance) ────────────────────────────────────────
+	var eventHub events.EventHub
+	var decisionBus notify.DecisionBus
+	if cfg.Redis.URL != "" {
+		rdb, err := intredis.Connect(ctx, cfg.Redis.URL)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to redis: %w", err)
+		}
+		eventHub = events.NewRedisHub(ctx, rdb, logger)
+		magicStore = auth.NewRedisMagicTokenStore(rdb)
+		decisionBus = intnotify.NewRedisDecisionBus(rdb, logger)
+		logger.Info("redis connected", "addr", rdb.Options().Addr)
+	}
 
 	features := FeatureSet{
 		PasswordAuth: cfg.Server.AuthMode == "password",
@@ -307,6 +325,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		MessageBuffer:    msgBuffer,
 		AdapterGenFactory: adapterGenFactory,
 		MagicStore:       magicStore,
+		EventHub:         eventHub,
+		DecisionBus:      decisionBus,
 		Features:         features,
 	}
 

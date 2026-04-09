@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -69,6 +70,14 @@ type ServerOptions struct {
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.
 	MagicStore auth.MagicTokenStore
+
+	// EventHub is the event fan-out hub for SSE and long-poll.
+	// When nil, the server creates a local in-memory hub.
+	EventHub events.EventHub
+
+	// DecisionBus distributes notifier callback decisions across instances.
+	// When nil, a local in-memory bus is used.
+	DecisionBus notify.DecisionBus
 
 	// Features declares which capabilities the frontend exposes.
 	Features FeatureSet

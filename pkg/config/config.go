@@ -35,6 +35,7 @@ type Config struct {
 	Telemetry TelemetryConfig `yaml:"telemetry"`
 	Daemon    DaemonConfig    `yaml:"daemon"`
 	Push      PushConfig      `yaml:"push"`
+	Redis     RedisConfig     `yaml:"redis"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
 }
@@ -65,6 +66,11 @@ type DaemonConfig struct {
 type PushConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	URL     string `yaml:"url"`
+}
+
+// RedisConfig holds settings for Redis (used in cloud/multi-instance deployments).
+type RedisConfig struct {
+	URL string `yaml:"url"` // e.g. "redis://localhost:6379"
 }
 
 // TelemetryConfig holds settings for anonymous usage telemetry.
@@ -461,6 +467,10 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PUSH_URL"); v != "" {
 		cfg.Push.URL = v
+	}
+
+	if v := os.Getenv("REDIS_URL"); v != "" {
+		cfg.Redis.URL = v
 	}
 
 	if v := os.Getenv("CLAWVISOR_DAEMON_DATA_DIR"); v != "" {
