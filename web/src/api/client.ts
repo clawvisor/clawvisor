@@ -5,6 +5,7 @@
 import { populateFromServices } from '../lib/services'
 
 let accessToken: string | null = null
+let currentOrgId: string | null = null
 
 export function setAccessToken(token: string | null) {
   accessToken = token
@@ -12,6 +13,14 @@ export function setAccessToken(token: string | null) {
 
 export function getAccessToken(): string | null {
   return accessToken
+}
+
+export function setCurrentOrgId(orgId: string | null) {
+  currentOrgId = orgId
+}
+
+export function getCurrentOrgId(): string | null {
+  return currentOrgId
 }
 
 // ── 401 refresh callback ───────────────────────────────────────────────────────
@@ -47,6 +56,9 @@ async function request<T>(
   }
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`
+  }
+  if (currentOrgId) {
+    headers['X-Org-Id'] = currentOrgId
   }
 
   let url = path
@@ -499,6 +511,51 @@ export interface AdapterGenResult {
   installed: boolean
 }
 
+// ── Org types ─────────────────────────────────────────────────────────────────
+
+export interface Org {
+  id: string
+  name: string
+  slug: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OrgMember {
+  id: string
+  org_id: string
+  user_id: string
+  email?: string
+  role: 'owner' | 'admin' | 'member'
+  joined_at: string
+}
+
+export interface OrgInvite {
+  id: string
+  org_id: string
+  email: string
+  role: 'admin' | 'member'
+  invited_by: string
+  expires_at: string
+  created_at: string
+}
+
+export interface OrgMembership {
+  org: Org
+  role: 'owner' | 'admin' | 'member'
+}
+
+export interface OrgRestriction {
+  id: string
+  org_id: string
+  service: string
+  action: string
+  reason?: string
+  created_by: string
+  created_at: string
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -699,6 +756,51 @@ export const api = {
     delete: (id: string) => del<void>(`/api/devices/${id}`),
     pairInfo: () => get<PairInfo>('/api/devices/pair/info'),
     startPairing: () => post<PairSession>('/api/devices/pair', {}),
+  },
+  orgs: {
+    list: () => get<OrgMembership[]>('/api/orgs'),
+    create: (name: string, slug: string) =>
+      post<Org>('/api/orgs', { name, slug }),
+    get: (id: string) => get<Org>(`/api/orgs/${id}`),
+    update: (id: string, name: string) =>
+      put<Org>(`/api/orgs/${id}`, { name }),
+    delete: (id: string) => del<void>(`/api/orgs/${id}`),
+    members: {
+      list: (orgId: string) => get<OrgMember[]>(`/api/orgs/${orgId}/members`),
+      add: (orgId: string, userId: string, role: string) =>
+        post<OrgMember>(`/api/orgs/${orgId}/members`, { user_id: userId, role }),
+      remove: (orgId: string, userId: string) =>
+        del<void>(`/api/orgs/${orgId}/members/${userId}`),
+      updateRole: (orgId: string, userId: string, role: string) =>
+        patch<OrgMember>(`/api/orgs/${orgId}/members/${userId}`, { role }),
+    },
+    invites: {
+      list: (orgId: string) => get<OrgInvite[]>(`/api/orgs/${orgId}/invites`),
+      create: (orgId: string, email: string, role: string) =>
+        post<OrgInvite>(`/api/orgs/${orgId}/invites`, { email, role }),
+      delete: (orgId: string, inviteId: string) =>
+        del<void>(`/api/orgs/${orgId}/invites/${inviteId}`),
+      accept: (token: string) =>
+        post<{ org_id: string; role: string }>('/api/orgs/invites/accept', { token }),
+    },
+    restrictions: {
+      list: (orgId: string) => get<OrgRestriction[]>(`/api/orgs/${orgId}/restrictions`),
+      create: (orgId: string, service: string, action: string, reason?: string) =>
+        post<OrgRestriction>(`/api/orgs/${orgId}/restrictions`, { service, action, reason }),
+      delete: (orgId: string, restrictionId: string) =>
+        del<void>(`/api/orgs/${orgId}/restrictions/${restrictionId}`),
+    },
+    audit: (orgId: string, filter?: AuditFilter) =>
+      get<{ entries: AuditEntry[]; total: number }>(`/api/orgs/${orgId}/audit`, filter as Record<string, string | number | undefined>),
+    agents: (orgId: string) => get<Agent[]>(`/api/orgs/${orgId}/agents`),
+    tasks: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) => {
+      const q = new URLSearchParams()
+      if (params?.status) q.set('status', params.status)
+      if (params?.limit) q.set('limit', String(params.limit))
+      if (params?.offset) q.set('offset', String(params.offset))
+      const qs = q.toString()
+      return get<{ tasks: Task[]; total: number }>(`/api/orgs/${orgId}/tasks${qs ? `?${qs}` : ''}`)
+    },
   },
   oauthApprove: (params: {
     client_id: string

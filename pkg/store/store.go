@@ -32,6 +32,7 @@ type Store interface {
 
 	// Agents
 	CreateAgent(ctx context.Context, userID, name, tokenHash string) (*Agent, error)
+	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	DeleteAgent(ctx context.Context, id, userID string) error
@@ -179,6 +180,7 @@ type Agent struct {
 	UserID    string    `json:"user_id"`
 	Name      string    `json:"name"`
 	TokenHash string    `json:"-"`
+	OrgID     string    `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
 	CreatedAt time.Time `json:"created_at"`
 }
 

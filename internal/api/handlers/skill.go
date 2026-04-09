@@ -166,6 +166,7 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 	}
 
 	buf.WriteString("_For detailed parameter docs, fetch `?service=<service_id>`._\n\n")
+	buf.WriteString("**Important:** When invoking any service, use the full `service:account` identifier (e.g. `google.gmail:personal`) as the `service` value in requests. Using just the service name (e.g. `google.gmail`) will fail if every entry has an account suffix.\n\n")
 
 	for _, entry := range entries {
 		buf.WriteString(fmt.Sprintf("## %s\n", entry.baseID))

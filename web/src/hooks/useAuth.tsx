@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, createContext, useContext, useRef, type ReactNode } from 'react'
-import { api, setAccessToken, setRefreshCallback, type User, type FeatureSet, type LoginResult, type RegisterResult } from '../api/client'
+import { api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, type FeatureSet, type LoginResult, type RegisterResult, type Org } from '../api/client'
 
 const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
+const CURRENT_ORG_KEY = 'clawvisor_current_org'
 
 interface AuthContextValue {
   user: User | null
@@ -9,6 +10,8 @@ interface AuthContextValue {
   isAuthenticated: boolean
   authMode: 'magic_link' | 'password' | 'passkey' | null
   features: FeatureSet | null
+  currentOrg: Org | null
+  setCurrentOrg: (org: Org | null) => void
   login: (email: string, password: string) => Promise<LoginResult>
   register: (email: string, password?: string) => Promise<RegisterResult>
   logout: () => Promise<void>
@@ -23,9 +26,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
   const [features, setFeatures] = useState<FeatureSet | null>(null)
+  const [currentOrg, setCurrentOrgState] = useState<Org | null>(() => {
+    try {
+      const stored = localStorage.getItem(CURRENT_ORG_KEY)
+      if (stored) {
+        const org = JSON.parse(stored) as Org
+        setCurrentOrgId(org.id)
+        return org
+      }
+    } catch { /* ignore */ }
+    return null
+  })
   // Prevents React StrictMode's intentional double-invoke from burning the
   // single-use refresh token twice on the initial session restore.
   const didInit = useRef(false)
+
+  const setCurrentOrg = useCallback((org: Org | null) => {
+    setCurrentOrgState(org)
+    if (org) {
+      localStorage.setItem(CURRENT_ORG_KEY, JSON.stringify(org))
+      setCurrentOrgId(org.id)
+    } else {
+      localStorage.removeItem(CURRENT_ORG_KEY)
+      setCurrentOrgId(null)
+    }
+  }, [])
 
   // Restore session once on mount.
   useEffect(() => {
@@ -115,11 +140,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await api.auth.logout(refreshToken).catch(() => {})
     setAccessToken(null)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
+    localStorage.removeItem(CURRENT_ORG_KEY)
+    setCurrentOrgId(null)
+    setCurrentOrgState(null)
     setUser(null)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, login, register, logout, setSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, login, register, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   )

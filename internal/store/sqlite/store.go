@@ -216,13 +216,26 @@ func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string)
 	return s.getAgentByID(ctx, id)
 }
 
+func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*store.Agent, error) {
+	id := uuid.New().String()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO agents (id, user_id, name, token_hash, org_id) VALUES (?, ?, ?, ?, ?)`,
+		id, userID, name, tokenHash, orgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var createdAt string
+	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE token_hash = ?`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = ?`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -230,12 +243,15 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 		return nil, err
 	}
 	a.CreatedAt = parseTime(createdAt)
+	if orgID != nil {
+		a.OrgID = *orgID
+	}
 	return a, nil
 }
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE user_id = ? ORDER BY created_at DESC`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE user_id = ? ORDER BY created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -247,10 +263,14 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 	for rows.Next() {
 		a := &store.Agent{}
 		var createdAt string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt); err != nil {
+		var orgID *string
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = parseTime(createdAt)
+		if orgID != nil {
+			a.OrgID = *orgID
+		}
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
@@ -305,10 +325,11 @@ func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (str
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var createdAt string
+	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE id = ?`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -316,6 +337,9 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 		return nil, err
 	}
 	a.CreatedAt = parseTime(createdAt)
+	if orgID != nil {
+		a.OrgID = *orgID
+	}
 	return a, nil
 }
 

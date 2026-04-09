@@ -39,10 +39,6 @@ type AuthDef struct {
 	OAuth      *OAuthDef      `yaml:"oauth,omitempty"`
 	DeviceFlow *DeviceFlowDef `yaml:"device_flow,omitempty"`
 	PKCEFlow   *PKCEFlowDef  `yaml:"pkce_flow,omitempty"`
-
-	// For basic auth where the credential is a composite "user:pass" string.
-	// The token field is split on ":" to produce user/pass for BasicAuth.
-	BasicSplit bool `yaml:"basic_split,omitempty"`
 }
 
 // DeviceFlowDef holds configuration for OAuth2 device authorization grant (RFC 8628).

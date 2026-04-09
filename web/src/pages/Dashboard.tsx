@@ -12,6 +12,16 @@ import Settings from './Settings'
 import Overview from './Overview'
 import Tasks from './Tasks'
 import AdapterGen from './AdapterGen'
+import OrgSettings from './OrgSettings'
+import OrgMembers from './OrgMembers'
+import OrgRestrictions from './OrgRestrictions'
+import OrgAudit from './OrgAudit'
+import OrgAgents from './OrgAgents'
+import OrgTasks from './OrgTasks'
+import OrgServices from './OrgServices'
+import OrgAdapters from './OrgAdapters'
+import OrgMCPServers from './OrgMCPServers'
+import OrgSelector from '../components/OrgSelector'
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
@@ -23,8 +33,20 @@ const navItems = [
   { to: '/dashboard/settings', label: 'Settings', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg> },
 ]
 
+const orgNavItems = [
+  { to: '/dashboard/org', label: 'Organization', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
+  { to: '/dashboard/org/members', label: 'Members', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg> },
+  { to: '/dashboard/org/restrictions', label: 'Org Restrictions', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
+  { to: '/dashboard/org/audit', label: 'Org Audit', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
+  { to: '/dashboard/org/agents', label: 'Org Agents', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/></svg> },
+  { to: '/dashboard/org/tasks', label: 'Org Tasks', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> },
+  { to: '/dashboard/org/services', label: 'Org Services', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
+  { to: '/dashboard/org/adapters', label: 'Custom Adapters', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg> },
+  { to: '/dashboard/org/mcp-servers', label: 'MCP Servers', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><path d="M6 6h.01M6 18h.01"/></svg> },
+]
+
 export default function Dashboard() {
-  const { user, logout } = useAuth()
+  const { user, logout, features, currentOrg } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
 
   // SSE event stream for instant dashboard updates
@@ -87,7 +109,42 @@ export default function Dashboard() {
               </NavLink>
             </li>
           ))}
+          {features?.teams && (
+            <>
+              <li className="px-4 pt-4 pb-1">
+                <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wider">Organization</span>
+              </li>
+              {currentOrg && orgNavItems.map(({ to, label, end, icon }) => (
+                <li key={to}>
+                  <NavLink
+                    to={to}
+                    end={end}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors border-l-2 ${
+                        isActive
+                          ? 'bg-brand-muted text-brand border-l-brand'
+                          : 'text-text-secondary hover:bg-surface-2 hover:text-text-primary border-l-transparent'
+                      }`
+                    }
+                  >
+                    {icon}
+                    {label}
+                  </NavLink>
+                </li>
+              ))}
+              {!currentOrg && (
+                <li className="px-4 py-2 text-xs text-text-tertiary">
+                  Select an org below to see org pages
+                </li>
+              )}
+            </>
+          )}
         </ul>
+        {features?.teams && (
+          <div className="px-3 py-2 border-t border-border-default">
+            <OrgSelector />
+          </div>
+        )}
         <div className="px-4 py-3 border-t border-border-default text-sm space-y-1">
           {versionData?.current && (
             <div className="text-xs text-text-tertiary flex items-center gap-1.5">
@@ -167,7 +224,20 @@ export default function Dashboard() {
           <Route path="adapter-gen" element={<AdapterGen />} />
           <Route path="audit" element={<Audit />} />
           <Route path="agents" element={<Agents />} />
-<Route path="settings" element={<Settings />} />
+          <Route path="settings" element={<Settings />} />
+          {features?.teams && (
+            <>
+              <Route path="org" element={<OrgSettings />} />
+              <Route path="org/members" element={<OrgMembers />} />
+              <Route path="org/restrictions" element={<OrgRestrictions />} />
+              <Route path="org/audit" element={<OrgAudit />} />
+              <Route path="org/agents" element={<OrgAgents />} />
+              <Route path="org/tasks" element={<OrgTasks />} />
+              <Route path="org/services" element={<OrgServices />} />
+              <Route path="org/adapters" element={<OrgAdapters />} />
+              <Route path="org/mcp-servers" element={<OrgMCPServers />} />
+            </>
+          )}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>

@@ -200,6 +200,7 @@ type Registry struct {
 	adapters     map[string]Adapter                // built-in (shared) adapters
 	userAdapters map[string]map[string]Adapter     // userID → serviceID → adapter (per-user generated)
 	resolver     AdapterResolver                   // optional; called on cache miss by GetForUser
+	fallback     func(ctx context.Context, serviceID string) (Adapter, bool) // cloud-injected resolver for custom adapters
 }
 
 func NewRegistry() *Registry {
@@ -271,6 +272,30 @@ func (r *Registry) GetForUser(ctx context.Context, serviceID, userID string) (Ad
 	r.userAdapters[userID][serviceID] = a
 	r.mu.Unlock()
 	return a, true
+}
+
+// SetFallback registers a resolver for service IDs not in the built-in map.
+// Used by cloud to resolve custom adapters and MCP servers per-org.
+func (r *Registry) SetFallback(fn func(ctx context.Context, serviceID string) (Adapter, bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fallback = fn
+}
+
+// GetWithContext checks the built-in map, then the fallback resolver.
+// Use this instead of Get when context-dependent resolution (e.g. org-scoped
+// custom adapters) is needed.
+func (r *Registry) GetWithContext(ctx context.Context, serviceID string) (Adapter, bool) {
+	if a, ok := r.Get(serviceID); ok {
+		return a, true
+	}
+	r.mu.RLock()
+	fb := r.fallback
+	r.mu.RUnlock()
+	if fb != nil {
+		return fb(ctx, serviceID)
+	}
+	return nil, false
 }
 
 func (r *Registry) All() []Adapter {
