@@ -140,8 +140,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
-				writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-					fmt.Sprintf("service %q is not activated — connect it in the Clawvisor dashboard first", a.Service))
+				code, userErr, _ := serviceNotActivatedResponse(ctx, h.vault, h.st, h.adapterReg, agent.UserID, serviceType, serviceAlias, a.Service, adapter)
+				writeError(w, http.StatusBadRequest, code, userErr)
 				return
 			}
 		}
@@ -776,8 +776,8 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("service %q is not activated — connect it in the Clawvisor dashboard first", req.Service))
+			code, userErr, _ := serviceNotActivatedResponse(ctx, h.vault, h.st, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
+			writeError(w, http.StatusBadRequest, code, userErr)
 			return
 		}
 	}
@@ -1233,30 +1233,16 @@ func (h *TasksHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 
 // serviceActivated checks whether a service (with alias) has been activated.
 // Credential-free services check service_meta; credential-backed services check the vault.
+// It requires an exact alias match — callers should use serviceNotActivatedResponse
+// to produce a helpful error listing available connections when this returns false.
 func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType, alias string, adapter adapters.Adapter) bool {
 	if adapter.ValidateCredential(nil) == nil {
-		// Credential-free: check service_meta.
-		if _, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias); err == nil {
-			return true
-		}
-		// No exact match — if no alias was specified, check any alias.
-		if alias == "" || alias == "default" {
-			if count, err := h.st.CountServiceMetasByType(ctx, userID, serviceType); err == nil && count > 0 {
-				return true
-			}
-		}
-		return false
+		_, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias)
+		return err == nil
 	}
-	// Credential-backed: check vault.
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
-	if _, err := h.vault.Get(ctx, userID, vKey); err == nil {
-		return true
-	}
-	// No exact match — if no alias was specified, check any alias.
-	if alias == "" || alias == "default" {
-		return hasAnyAlias(ctx, h.vault, h.adapterReg, userID, serviceType)
-	}
-	return false
+	_, err := h.vault.Get(ctx, userID, vKey)
+	return err == nil
 }
 
 // ── Task scope check helper ───────────────────────────────────────────────────

@@ -254,8 +254,8 @@ func TestTaskCreate_InactiveService_Rejected(t *testing.T) {
 		}},
 	})
 	body := mustStatus(t, resp, http.StatusBadRequest)
-	if body["code"] != "INVALID_REQUEST" {
-		t.Errorf("expected code=INVALID_REQUEST, got %v", body["code"])
+	if body["code"] != "SERVICE_NOT_CONFIGURED" {
+		t.Errorf("expected code=SERVICE_NOT_CONFIGURED, got %v", body["code"])
 	}
 	msg, _ := body["error"].(string)
 	strContains(t, msg, "not activated", "error message")
@@ -321,8 +321,8 @@ func TestGateway_AliasNotFound(t *testing.T) {
 		if !strings.Contains(errMsg, "nonexistent") {
 			t.Errorf("error should mention the alias name, got: %s", errMsg)
 		}
-		if !strings.Contains(errMsg, "GET /api/skill/catalog") {
-			t.Errorf("error should direct agent to the catalog endpoint, got: %s", errMsg)
+		if !strings.Contains(errMsg, "Available connections") {
+			t.Errorf("error should list available connections, got: %s", errMsg)
 		}
 	})
 
@@ -346,8 +346,11 @@ func TestGateway_AliasNotFound(t *testing.T) {
 			t.Errorf("expected code=ALIAS_NOT_FOUND, got %v (full: %v)", result["code"], result)
 		}
 		errMsg, _ := result["error"].(string)
-		if !strings.Contains(errMsg, "default") {
-			t.Errorf("error should mention the alias name, got: %s", errMsg)
+		if !strings.Contains(errMsg, "No default account") {
+			t.Errorf("error should mention the default alias, got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "mock.echo:work") {
+			t.Errorf("error should list available connections including :work, got: %s", errMsg)
 		}
 	})
 }

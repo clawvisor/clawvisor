@@ -382,32 +382,23 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			// Check activation for credential-free services before executing.
 			if taskAdapter, taskAdapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
 				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-					// If no alias was specified, check if any alias is activated.
-					anyActivated := false
-					if serviceAlias == "" || serviceAlias == "default" {
-						if count, cErr := h.store.CountServiceMetasByType(ctx, agent.UserID, serviceType); cErr == nil && count > 0 {
-							anyActivated = true
-						}
+					dur := int(time.Since(start).Milliseconds())
+					e := baseEntry("block", "error", taskIDPtr)
+					e.DurationMS = dur
+					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
+					e.ErrorMsg = &auditMsg
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
 					}
-					if !anyActivated {
-						dur := int(time.Since(start).Milliseconds())
-						e := baseEntry("block", "error", taskIDPtr)
-						e.DurationMS = dur
-						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
-						e.ErrorMsg = &auditMsg
-						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-							h.logger.Warn("audit log failed", "err", logErr)
-						}
-						h.publishAuditAndQueue(agent.UserID, req.TaskID)
-						writeJSON(w, http.StatusBadRequest, map[string]any{
-							"status":     "error",
-							"request_id": req.RequestID,
-							"audit_id":   auditID,
-							"error":      userErr,
-							"code":       code,
-						})
-						return
-					}
+					h.publishAuditAndQueue(agent.UserID, req.TaskID)
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"status":     "error",
+						"request_id": req.RequestID,
+						"audit_id":   auditID,
+						"error":      userErr,
+						"code":       code,
+					})
+					return
 				}
 			}
 
@@ -564,26 +555,12 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		notActivated := false
 		if approveAdapter.ValidateCredential(nil) == nil {
 			if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-				// No exact match — if no alias was specified, check any alias.
-				if serviceAlias == "" || serviceAlias == "default" {
-					if count, cErr := h.store.CountServiceMetasByType(ctx, agent.UserID, serviceType); cErr != nil || count == 0 {
-						notActivated = true
-					}
-				} else {
-					notActivated = true
-				}
+				notActivated = true
 			}
 		} else {
 			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
 			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
-				// No exact match — if no alias was specified, check any alias.
-				if serviceAlias == "" || serviceAlias == "default" {
-					if !hasAnyAlias(ctx, h.vault, h.adapterReg, agent.UserID, serviceType) {
-						notActivated = true
-					}
-				} else {
-					notActivated = true
-				}
+				notActivated = true
 			}
 		}
 		if notActivated {
@@ -1292,9 +1269,50 @@ func hasAnyAlias(ctx context.Context, v vault.Vault, reg *adapters.Registry, use
 	return false
 }
 
+// listServiceAliases returns the known aliases for a service type.
+// Credential-free services check service_meta; credential-backed services check the vault.
+func listServiceAliases(
+	ctx context.Context,
+	v vault.Vault,
+	st store.Store,
+	reg *adapters.Registry,
+	userID, serviceType string,
+	adapter adapters.Adapter,
+) []string {
+	if adapter.ValidateCredential(nil) == nil {
+		metas, err := st.ListServiceMetas(ctx, userID)
+		if err != nil {
+			return nil
+		}
+		var aliases []string
+		for _, m := range metas {
+			if m.ServiceID == serviceType {
+				aliases = append(aliases, m.Alias)
+			}
+		}
+		return aliases
+	}
+	base := reg.VaultKey(serviceType)
+	keys, err := v.List(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	var aliases []string
+	for _, k := range keys {
+		if k == base {
+			aliases = append(aliases, "default")
+		} else if strings.HasPrefix(k, base+":") {
+			aliases = append(aliases, strings.TrimPrefix(k, base+":"))
+		}
+	}
+	return aliases
+}
+
 // serviceNotActivatedResponse returns the error code and message for a missing
 // service or alias. It distinguishes ALIAS_NOT_FOUND (service exists under
 // other aliases) from SERVICE_NOT_CONFIGURED (service not activated at all).
+// When other aliases exist, the error message lists available connections so the
+// agent can fix the request by specifying a valid :account identifier.
 func serviceNotActivatedResponse(
 	ctx context.Context,
 	v vault.Vault,
@@ -1303,19 +1321,26 @@ func serviceNotActivatedResponse(
 	userID, serviceType, serviceAlias, serviceDisplay string,
 	adapter adapters.Adapter,
 ) (code, userErr, auditMsg string) {
-	isAlias := false
-	if adapter.ValidateCredential(nil) == nil {
-		if count, cErr := st.CountServiceMetasByType(ctx, userID, serviceType); cErr == nil && count > 0 {
-			isAlias = true
+	aliases := listServiceAliases(ctx, v, st, reg, userID, serviceType, adapter)
+	if len(aliases) > 0 {
+		qualified := make([]string, len(aliases))
+		for i, a := range aliases {
+			qualified[i] = fmt.Sprintf("%s:%s", serviceType, a)
 		}
-	} else {
-		if hasAnyAlias(ctx, v, reg, userID, serviceType) {
-			isAlias = true
+		connList := strings.Join(qualified, ", ")
+		var msg string
+		if serviceAlias == "" || serviceAlias == "default" {
+			msg = fmt.Sprintf(
+				"No default account exists for service %q. Available connections: [%s]. Retry your request using one of these identifiers as the service field (e.g. %q).",
+				serviceType, connList, qualified[0],
+			)
+		} else {
+			msg = fmt.Sprintf(
+				"Account %q does not exist for service %q. Available connections: [%s]. Retry your request using one of these identifiers as the service field (e.g. %q).",
+				serviceAlias, serviceType, connList, qualified[0],
+			)
 		}
-	}
-	if isAlias {
-		return "ALIAS_NOT_FOUND",
-			fmt.Sprintf("Alias %q does not exist for service %q. Review the available services and aliases via GET /api/skill/catalog.", serviceAlias, serviceType),
+		return "ALIAS_NOT_FOUND", msg,
 			fmt.Sprintf("alias %q not found for service %q", serviceAlias, serviceType)
 	}
 	return "SERVICE_NOT_CONFIGURED",
