@@ -4,6 +4,7 @@
 package clawvisor
 
 import (
+	"context"
 	"crypto/ecdh"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,15 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
+
+// GatewayHooks allows cloud/enterprise layers to inject additional
+// authorization logic into the gateway request flow.
+type GatewayHooks struct {
+	// BeforeAuthorize is called after request parsing, before restriction checks.
+	// The agent (including OrgID) is available via middleware.AgentFromContext(ctx).
+	// Return a non-nil error to block the request (treated as an org policy block).
+	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
+}
 
 // ServerOptions holds everything needed to start a Clawvisor server.
 // Use DefaultOptions to get the standard open-source defaults, then
@@ -75,6 +85,10 @@ type ServerOptions struct {
 	// SkipBuiltinAuth prevents the core server from registering its built-in
 	// login/register/password routes, allowing ExtraRoutes to provide custom auth.
 	SkipBuiltinAuth bool
+
+	// GatewayHooks injects additional authorization logic into the gateway flow.
+	// Used by cloud for org-level restrictions, policies, etc.
+	GatewayHooks *GatewayHooks
 
 	// Quiet suppresses user-facing messages and sets server log level to WARN.
 	// Used during daemon setup when a temporary server runs in the background.

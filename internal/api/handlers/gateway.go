@@ -43,6 +43,14 @@ type pendingRequestBlob struct {
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
 }
 
+// GatewayHooks allows cloud/enterprise layers to inject additional
+// authorization logic into the gateway request flow.
+type GatewayHooks struct {
+	// BeforeAuthorize is called after request parsing, before restriction checks.
+	// Return a non-nil error to block the request.
+	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
+}
+
 // GatewayHandler handles POST /api/gateway/request.
 type GatewayHandler struct {
 	store        store.Store
@@ -53,8 +61,9 @@ type GatewayHandler struct {
 	extractor    intent.Extractor
 	cfg          config.Config
 	logger       *slog.Logger
-	baseURL  string
-	eventHub events.EventHub
+	baseURL      string
+	eventHub     events.EventHub
+	gatewayHooks *GatewayHooks // cloud-injected authorization hooks; may be nil
 }
 
 func NewGatewayHandler(
@@ -75,6 +84,12 @@ func NewGatewayHandler(
 		cfg: cfg, logger: logger, baseURL: baseURL,
 		eventHub: eventHub,
 	}
+}
+
+// SetGatewayHooks configures cloud-injected authorization hooks.
+// Must be called before any requests are handled.
+func (h *GatewayHandler) SetGatewayHooks(hooks *GatewayHooks) {
+	h.gatewayHooks = hooks
 }
 
 // HandleRequest is the main gateway entry point.
@@ -168,6 +183,27 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			Reason:     nullableStr(req.Reason),
 			DataOrigin: req.Context.DataOrigin,
 			ContextSrc: nullableStr(req.Context.Source),
+		}
+	}
+
+	// ── Step 0: Cloud gateway hooks (org-level restrictions) ────────────────
+	if h.gatewayHooks != nil && h.gatewayHooks.BeforeAuthorize != nil {
+		if err := h.gatewayHooks.BeforeAuthorize(ctx, agent.ID, agent.UserID, req.Service, req.Action); err != nil {
+			middleware.AddLogField(ctx, "decision", "block")
+			middleware.AddLogField(ctx, "outcome", "blocked")
+			e := baseEntry("block", "blocked", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":     "blocked",
+				"request_id": req.RequestID,
+				"audit_id":   auditID,
+				"reason":     err.Error(),
+			})
+			return
 		}
 	}
 
@@ -1095,7 +1131,7 @@ func executeAdapterRequest(
 	vaultKey string,
 ) (*adapters.Result, error) {
 	serviceType, _ := parseServiceAlias(service)
-	adapter, ok := reg.Get(serviceType)
+	adapter, ok := reg.GetWithContext(ctx, serviceType)
 	if !ok {
 		return nil, fmt.Errorf("service %q is not supported", serviceType)
 	}

@@ -202,21 +202,43 @@ func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string)
 	return s.getAgentByID(ctx, a.ID)
 }
 
+func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*store.Agent, error) {
+	a := &store.Agent{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		Name:      name,
+		TokenHash: tokenHash,
+		OrgID:     orgID,
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO agents (id, user_id, name, token_hash, org_id) VALUES ($1, $2, $3, $4, $5)`,
+		a.ID, a.UserID, a.Name, a.TokenHash, a.OrgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getAgentByID(ctx, a.ID)
+}
+
 func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{}
+	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE token_hash = $1`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = $1`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
+	}
+	if orgID != nil {
+		a.OrgID = *orgID
 	}
 	return a, err
 }
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE user_id = $1 ORDER BY created_at DESC`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE user_id = $1 ORDER BY created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -272,12 +294,16 @@ func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (str
 
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
+	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at FROM agents WHERE id = $1`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = $1`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
+	}
+	if orgID != nil {
+		a.OrgID = *orgID
 	}
 	return a, err
 }
@@ -1453,8 +1479,12 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	var agents []*store.Agent
 	for rows.Next() {
 		a := &store.Agent{}
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt); err != nil {
+		var orgID *string
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID); err != nil {
 			return nil, err
+		}
+		if orgID != nil {
+			a.OrgID = *orgID
 		}
 		agents = append(agents, a)
 	}

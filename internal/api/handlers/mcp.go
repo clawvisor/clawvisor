@@ -1,13 +1,11 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -43,7 +41,7 @@ func (h *MCPHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inject agent into context (same as requireAgent middleware).
-	ctx := context.WithValue(r.Context(), middleware.AgentContextKey, agent)
+	ctx := store.WithAgent(r.Context(), agent)
 	r = r.WithContext(ctx)
 
 	var req mcp.Request

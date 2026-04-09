@@ -79,6 +79,7 @@ type Server struct {
 	pushNotifier *push.Notifier                // concrete push notifier; may be nil
 	msgBuffer    *groupchat.MessageBuffer // group chat message buffer; may be nil
 	decisionBus  notify.DecisionBus      // cross-instance decision delivery; may be nil
+	gatewayHooks *GatewayHooks  // cloud-injected gateway authorization hooks; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
@@ -106,6 +107,15 @@ type FeatureSet struct {
 	Teams             bool `json:"teams"`
 	UsageMetering     bool `json:"usage_metering"`
 	PasswordAuth      bool `json:"password_auth"`
+}
+
+// GatewayHooks allows cloud/enterprise layers to inject additional
+// authorization logic into the gateway request flow.
+type GatewayHooks struct {
+	// BeforeAuthorize is called after request parsing, before restriction checks.
+	// The agent (including OrgID) is available via middleware.AgentFromContext(ctx).
+	// Return a non-nil error to block the request (treated as an org policy block).
+	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
 }
 
 // ServerOption configures optional behavior on the Server.
@@ -176,6 +186,11 @@ func WithEventHub(hub events.EventHub) ServerOption {
 // WithDecisionBus sets the cross-instance decision bus for callback decisions.
 func WithDecisionBus(bus notify.DecisionBus) ServerOption {
 	return func(s *Server) { s.decisionBus = bus }
+}
+
+// WithGatewayHooks injects additional authorization logic into the gateway.
+func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
+	return func(s *Server) { s.gatewayHooks = hooks }
 }
 
 // New creates a Server and registers all routes.
@@ -304,6 +319,11 @@ func (s *Server) routes() http.Handler {
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	if s.gatewayHooks != nil {
+		gatewayHandler.SetGatewayHooks(&handlers.GatewayHooks{
+			BeforeAuthorize: s.gatewayHooks.BeforeAuthorize,
+		})
+	}
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL)
 	// Set relay daemon URL for PKCE flows that require HTTPS redirect URIs.
 	if s.cfg.Relay.Enabled && s.cfg.Relay.URL != "" && s.cfg.Relay.DaemonID != "" {
