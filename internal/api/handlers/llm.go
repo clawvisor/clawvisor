@@ -100,18 +100,30 @@ func (h *LLMHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Provider == "" {
 		req.Provider = "anthropic"
 	}
-	if req.Endpoint == "" {
-		if req.Provider == "anthropic" {
+	switch req.Provider {
+	case "anthropic":
+		if req.Endpoint == "" {
 			req.Endpoint = "https://api.anthropic.com/v1"
-		} else {
+		}
+		if req.Model == "" {
+			req.Model = "claude-haiku-4-5-20251001"
+		}
+	case "vertex":
+		// Clear any non-vertex endpoint (e.g. leftover anthropic URL).
+		// NewClient auto-constructs the Vertex endpoint from VERTEX_REGION
+		// and VERTEX_PROJECT_ID env vars.
+		if !strings.Contains(req.Endpoint, "aiplatform.googleapis.com") {
+			req.Endpoint = ""
+		}
+		if req.Model == "" {
+			req.Model = "claude-haiku-4-5-20251001"
+		}
+	default:
+		if req.Endpoint == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "endpoint is required for non-anthropic providers")
 			return
 		}
-	}
-	if req.Model == "" {
-		if req.Provider == "anthropic" {
-			req.Model = "claude-haiku-4-5-20251001"
-		} else {
+		if req.Model == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "model is required for non-anthropic providers")
 			return
 		}
