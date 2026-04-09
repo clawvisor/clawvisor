@@ -189,16 +189,33 @@ type ServiceInfo struct {
 	Actions     []string `json:"actions"`
 }
 
+// AdapterResolver loads an adapter on demand for a specific user.
+// Used in cloud mode to lazily resolve user-generated adapters from the database.
+type AdapterResolver func(ctx context.Context, serviceID, userID string) (Adapter, bool)
+
 // Registry holds all registered adapters, keyed by service ID.
 // It is safe for concurrent use.
 type Registry struct {
-	mu       sync.RWMutex
-	adapters map[string]Adapter
-	fallback func(ctx context.Context, serviceID string) (Adapter, bool) // cloud-injected resolver for custom adapters
+	mu           sync.RWMutex
+	adapters     map[string]Adapter                // built-in (shared) adapters
+	userAdapters map[string]map[string]Adapter     // userID → serviceID → adapter (per-user generated)
+	resolver     AdapterResolver                   // optional; called on cache miss by GetForUser
+	fallback     func(ctx context.Context, serviceID string) (Adapter, bool) // cloud-injected resolver for custom adapters
 }
 
 func NewRegistry() *Registry {
-	return &Registry{adapters: make(map[string]Adapter)}
+	return &Registry{
+		adapters:     make(map[string]Adapter),
+		userAdapters: make(map[string]map[string]Adapter),
+	}
+}
+
+// SetResolver sets an optional fallback resolver for user-scoped adapters.
+// Called by GetForUser when the service ID is not found in the built-in registry.
+func (r *Registry) SetResolver(fn AdapterResolver) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resolver = fn
 }
 
 func (r *Registry) Register(a Adapter) {
@@ -207,11 +224,54 @@ func (r *Registry) Register(a Adapter) {
 	r.adapters[a.ServiceID()] = a
 }
 
+// Get returns an adapter by service ID from the built-in registry only.
 func (r *Registry) Get(serviceID string) (Adapter, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	a, ok := r.adapters[serviceID]
 	return a, ok
+}
+
+// GetForUser returns an adapter by service ID, checking the shared registry
+// first, then the per-user cache, then falling back to the resolver.
+// Resolved adapters are cached per-user to avoid cross-tenant leaks.
+func (r *Registry) GetForUser(ctx context.Context, serviceID, userID string) (Adapter, bool) {
+	r.mu.RLock()
+	// Check shared (built-in) adapters first.
+	a, ok := r.adapters[serviceID]
+	if ok {
+		r.mu.RUnlock()
+		return a, true
+	}
+	// Check per-user cache.
+	if userID != "" {
+		if userMap, exists := r.userAdapters[userID]; exists {
+			if a, ok = userMap[serviceID]; ok {
+				r.mu.RUnlock()
+				return a, true
+			}
+		}
+	}
+	resolver := r.resolver
+	r.mu.RUnlock()
+
+	if resolver == nil || userID == "" {
+		return nil, false
+	}
+
+	a, ok = resolver(ctx, serviceID, userID)
+	if !ok {
+		return nil, false
+	}
+
+	// Cache per-user so subsequent requests don't hit the DB.
+	r.mu.Lock()
+	if r.userAdapters[userID] == nil {
+		r.userAdapters[userID] = make(map[string]Adapter)
+	}
+	r.userAdapters[userID][serviceID] = a
+	r.mu.Unlock()
+	return a, true
 }
 
 // SetFallback registers a resolver for service IDs not in the built-in map.
@@ -255,11 +315,23 @@ func (r *Registry) Replace(a Adapter) {
 	r.adapters[a.ServiceID()] = a
 }
 
-// Remove deletes an adapter from the registry by service ID.
+// Remove deletes an adapter from the shared registry by service ID.
 func (r *Registry) Remove(serviceID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.adapters, serviceID)
+}
+
+// RemoveForUser deletes a user-generated adapter from the per-user cache.
+func (r *Registry) RemoveForUser(serviceID, userID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if userMap, ok := r.userAdapters[userID]; ok {
+		delete(userMap, serviceID)
+		if len(userMap) == 0 {
+			delete(r.userAdapters, userID)
+		}
+	}
 }
 
 // VaultKey returns the vault key for a service ID. If the adapter implements
@@ -279,10 +351,41 @@ func (r *Registry) VaultKey(serviceID string) string {
 	return serviceID
 }
 
+// VaultKeyForUser returns the vault key for a service ID, checking both the
+// shared registry and the per-user cache.
+func (r *Registry) VaultKeyForUser(serviceID, userID string) string {
+	r.mu.RLock()
+	a, ok := r.adapters[serviceID]
+	if !ok && userID != "" {
+		if userMap, exists := r.userAdapters[userID]; exists {
+			a, ok = userMap[serviceID]
+		}
+	}
+	r.mu.RUnlock()
+	if ok {
+		if mp, ok := a.(MetadataProvider); ok {
+			if vk := mp.ServiceMetadata().VaultKey; vk != "" {
+				return vk
+			}
+		}
+	}
+	return serviceID
+}
+
 // VaultKeyWithAlias returns the vault key for a service ID + alias pair.
 // "default" or empty alias maps to the plain vault key for backward compatibility.
 func (r *Registry) VaultKeyWithAlias(serviceID, alias string) string {
 	base := r.VaultKey(serviceID)
+	if alias == "" || alias == "default" {
+		return base
+	}
+	return base + ":" + alias
+}
+
+// VaultKeyWithAliasForUser returns the vault key for a service ID + alias pair,
+// checking both the shared registry and the per-user cache.
+func (r *Registry) VaultKeyWithAliasForUser(serviceID, alias, userID string) string {
+	base := r.VaultKeyForUser(serviceID, userID)
 	if alias == "" || alias == "default" {
 		return base
 	}

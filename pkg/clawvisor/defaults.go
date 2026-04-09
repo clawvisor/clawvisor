@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
+	"gopkg.in/yaml.v3"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
@@ -37,7 +38,10 @@ import (
 	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
 
+	"github.com/clawvisor/clawvisor/internal/adaptergen"
+	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
@@ -155,10 +159,32 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	contacts := contactsadapter.New(oauthProvider)
 	goOverrides["google.contacts:list_contacts"] = contacts.Execute
 
-	// Load YAML adapter definitions from embedded FS + user-local directory.
+	// Build adapter loading source (for startup) and generator factory (for per-request use).
+	var adapterSource yamlloader.UserAdapterSource
+	var adapterGenFactory handlers.GeneratorFactory
 	home, _ := os.UserHomeDir()
-	userAdaptersDir := filepath.Join(home, ".clawvisor", "adapters")
-	yamlLoader := yamlloader.New(definitions.FS, userAdaptersDir, goOverrides, logger)
+
+	if cfg.Database.Driver == "postgres" {
+		// Cloud: no startup loading of generated adapters. They are resolved
+		// per-request from the DB via the registry's AdapterResolver (set below).
+		adapterSource = nil
+		adapterGenFactory = func(userID string) *adaptergen.Generator {
+			return adaptergen.New(cfg.LLM.AdapterGen, adapterReg, adaptergen.NewDBStore(st, userID), userID, logger)
+		}
+	} else {
+		// Local: single-user filesystem store.
+		userAdaptersDir := filepath.Join(home, ".clawvisor", "adapters")
+		fsStore := adaptergen.NewFilesystemStore(userAdaptersDir)
+		adapterSource = fsStore
+		// Local mode: one shared generator (single-user, ignores userID).
+		localGen := adaptergen.New(cfg.LLM.AdapterGen, adapterReg, fsStore, "", logger)
+		adapterGenFactory = func(_ string) *adaptergen.Generator {
+			return localGen
+		}
+	}
+
+	// Load YAML adapter definitions from embedded FS + generated adapters from the store.
+	yamlLoader := yamlloader.New(definitions.FS, adapterSource, goOverrides, logger)
 	if err := yamlLoader.LoadAll(); err != nil {
 		return nil, fmt.Errorf("loading adapter definitions: %w", err)
 	}
@@ -177,6 +203,35 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// Go-only adapters (not YAML-driven).
 	adapterReg.Register(imessageadapter.New())
 	adapterReg.Register(sqladapter.New())
+
+	// Cloud mode: set a resolver so the gateway can lazily load user-generated
+	// adapters from the DB on cache miss, scoped to the requesting user.
+	if cfg.Database.Driver == "postgres" {
+		adapterReg.SetResolver(func(ctx context.Context, serviceID, userID string) (adapters.Adapter, bool) {
+			rows, err := st.ListGeneratedAdapters(ctx, userID)
+			if err != nil {
+				logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
+				return nil, false
+			}
+			for _, row := range rows {
+				if row.ServiceID != serviceID {
+					continue
+				}
+				var def yamldef.ServiceDef
+				if err := yaml.Unmarshal([]byte(row.YAMLContent), &def); err != nil {
+					logger.Warn("resolver: bad YAML for generated adapter", "service_id", serviceID, "err", err)
+					return nil, false
+				}
+				a, err := yamlruntime.New(def, nil)
+				if err != nil {
+					logger.Warn("resolver: failed to build adapter", "service_id", serviceID, "err", err)
+					return nil, false
+				}
+				return a, true
+			}
+			return nil, false
+		})
+	}
 
 	// Initialize the display package with the adapter registry.
 	display.Init(adapterReg)
@@ -268,6 +323,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		Notifier:         notifier,
 		PushNotifier:     pushN,
 		MessageBuffer:    msgBuffer,
+		AdapterGenFactory: adapterGenFactory,
 		MagicStore:       magicStore,
 		EventHub:         eventHub,
 		DecisionBus:      decisionBus,

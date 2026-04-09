@@ -12,17 +12,35 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
 )
+
+// GeneratorFactory creates a Generator scoped to a specific user.
+// For local/single-user mode the userID is ignored; for cloud/multi-user
+// mode a per-user DBStore is created.
+type GeneratorFactory func(userID string) *adaptergen.Generator
 
 // AdapterGenHandler exposes adapter generation, update, and removal endpoints.
 type AdapterGenHandler struct {
-	gen    *adaptergen.Generator
-	logger *slog.Logger
+	factory GeneratorFactory
+	logger  *slog.Logger
 }
 
 // NewAdapterGenHandler creates a new handler.
-func NewAdapterGenHandler(gen *adaptergen.Generator, logger *slog.Logger) *AdapterGenHandler {
-	return &AdapterGenHandler{gen: gen, logger: logger}
+func NewAdapterGenHandler(factory GeneratorFactory, logger *slog.Logger) *AdapterGenHandler {
+	return &AdapterGenHandler{factory: factory, logger: logger}
+}
+
+// generatorForRequest returns a Generator scoped to the authenticated user.
+// Works for both dashboard (user JWT) and MCP (agent token) auth flows.
+func (h *AdapterGenHandler) generatorForRequest(r *http.Request) *adaptergen.Generator {
+	var userID string
+	if u := middleware.UserFromContext(r.Context()); u != nil {
+		userID = u.ID
+	} else if a := middleware.AgentFromContext(r.Context()); a != nil {
+		userID = a.UserID
+	}
+	return h.factory(userID)
 }
 
 // createAdapterRequest is the request body for POST /api/adapters/generate.
@@ -172,7 +190,7 @@ func (h *AdapterGenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AuthType:  req.AuthType,
 	}
 
-	result, err := h.gen.Generate(r.Context(), src)
+	result, err := h.generatorForRequest(r).Generate(r.Context(), src)
 	if err != nil {
 		h.logger.Warn("adapter generation failed", "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
@@ -218,7 +236,7 @@ func (h *AdapterGenHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Content: source,
 	}
 
-	result, err := h.gen.Update(r.Context(), serviceID, src)
+	result, err := h.generatorForRequest(r).Update(r.Context(), serviceID, src)
 	if err != nil {
 		h.logger.Warn("adapter update failed", "service_id", serviceID, "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
@@ -236,7 +254,7 @@ func (h *AdapterGenHandler) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.gen.Remove(serviceID); err != nil {
+	if err := h.generatorForRequest(r).Remove(r.Context(), serviceID); err != nil {
 		h.logger.Warn("adapter removal failed", "service_id", serviceID, "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
@@ -259,7 +277,7 @@ func (h *AdapterGenHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.gen.Install(req.YAML)
+	result, err := h.generatorForRequest(r).Install(r.Context(), req.YAML)
 	if err != nil {
 		h.logger.Warn("adapter install failed", "err", err)
 		writeJSONResponse(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})

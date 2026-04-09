@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
@@ -60,6 +61,11 @@ type ServerOptions struct {
 	// MessageBuffer stores recent group chat messages for on-demand LLM
 	// approval checking. Set when group observation is enabled.
 	MessageBuffer *groupchat.MessageBuffer
+
+	// AdapterGenFactory creates a per-request Generator scoped to the authenticated user.
+	// For local mode, returns the same generator for all users.
+	// For cloud mode, creates a per-user DB-backed store.
+	AdapterGenFactory handlers.GeneratorFactory
 
 	// MagicStore enables magic-link auth (local mode).
 	// Leave nil to disable.

@@ -93,7 +93,7 @@ func TestEvalIntentVerification(t *testing.T) {
 
 	// Build adapter hint lookup — mirrors the gateway's VerificationHinter check.
 	// Load YAML-defined adapters + Go-only adapters.
-	loader := yamlloader.New(definitions.FS, "", nil, nil)
+	loader := yamlloader.New(definitions.FS, nil, nil, nil)
 	if err := loader.LoadAll(); err != nil {
 		t.Fatalf("loading YAML adapter definitions: %v", err)
 	}

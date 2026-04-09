@@ -14,10 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -84,6 +82,8 @@ type Server struct {
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
 	ticketStore *intauth.TicketStore
+
+	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -186,6 +186,13 @@ func WithEventHub(hub events.EventHub) ServerOption {
 // WithDecisionBus sets the cross-instance decision bus for callback decisions.
 func WithDecisionBus(bus notify.DecisionBus) ServerOption {
 	return func(s *Server) { s.decisionBus = bus }
+}
+
+// WithAdapterGenFactory sets the per-request Generator factory for adapter generation.
+// The factory receives the authenticated user's ID so it can scope storage per-user
+// in multi-tenant cloud deployments.
+func WithAdapterGenFactory(f handlers.GeneratorFactory) ServerOption {
+	return func(s *Server) { s.adapterGenFactory = f }
 }
 
 // WithGatewayHooks injects additional authorization logic into the gateway.
@@ -530,19 +537,12 @@ func (s *Server) routes() http.Handler {
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
 
 	// Adapter generation (user JWT for dashboard, agent token for MCP)
-	if s.llmCfg.AdapterGen.Enabled {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			s.logger.Error("adapter gen disabled: cannot determine home directory", "err", err)
-		} else {
-			adapterGenDir := filepath.Join(home, ".clawvisor", "adapters")
-			gen := adaptergen.New(s.llmCfg.AdapterGen, s.adapterReg, adapterGenDir, s.logger)
-			adapterGenHandler := handlers.NewAdapterGenHandler(gen, s.logger)
-			mux.Handle("POST /api/adapters/generate", user(adapterGenHandler.Create))
-			mux.Handle("POST /api/adapters/install", user(adapterGenHandler.Install))
-			mux.Handle("PUT /api/adapters/{service_id}/generate", user(adapterGenHandler.Update))
-			mux.Handle("DELETE /api/adapters/{service_id}", user(adapterGenHandler.Remove))
-		}
+	if s.llmCfg.AdapterGen.Enabled && s.adapterGenFactory != nil {
+		adapterGenHandler := handlers.NewAdapterGenHandler(s.adapterGenFactory, s.logger)
+		mux.Handle("POST /api/adapters/generate", user(adapterGenHandler.Create))
+		mux.Handle("POST /api/adapters/install", user(adapterGenHandler.Install))
+		mux.Handle("PUT /api/adapters/{service_id}/generate", user(adapterGenHandler.Update))
+		mux.Handle("DELETE /api/adapters/{service_id}", user(adapterGenHandler.Remove))
 	}
 
 	// Callback secret registration (agent token)
@@ -685,18 +685,11 @@ func (s *Server) routes() http.Handler {
 		}
 
 		// Register adapter generation routes in MCP handler map if enabled.
-		if s.llmCfg.AdapterGen.Enabled {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				s.logger.Error("adapter gen disabled in MCP: cannot determine home directory", "err", err)
-			} else {
-				adapterGenDir := filepath.Join(home, ".clawvisor", "adapters")
-				gen := adaptergen.New(s.llmCfg.AdapterGen, s.adapterReg, adapterGenDir, s.logger)
-				mcpAdapterGenHandler := handlers.NewAdapterGenHandler(gen, s.logger)
-				mcpHandlers["POST /api/adapters/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Create)
-				mcpHandlers["PUT /api/adapters/{service_id}/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Update)
-				mcpHandlers["DELETE /api/adapters/{service_id}"] = http.HandlerFunc(mcpAdapterGenHandler.Remove)
-			}
+		if s.llmCfg.AdapterGen.Enabled && s.adapterGenFactory != nil {
+			mcpAdapterGenHandler := handlers.NewAdapterGenHandler(s.adapterGenFactory, s.logger)
+			mcpHandlers["POST /api/adapters/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Create)
+			mcpHandlers["PUT /api/adapters/{service_id}/generate"] = http.HandlerFunc(mcpAdapterGenHandler.Update)
+			mcpHandlers["DELETE /api/adapters/{service_id}"] = http.HandlerFunc(mcpAdapterGenHandler.Remove)
 		}
 
 		mcpServer := mcp.NewServer(s.store, sessionTTL, mcpHandlers, s.logger)

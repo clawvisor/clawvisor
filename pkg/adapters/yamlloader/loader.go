@@ -1,12 +1,12 @@
-// Package yamlloader loads YAML adapter definitions from embedded and user-local directories.
+// Package yamlloader loads YAML adapter definitions from embedded and user-local sources.
 package yamlloader
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -15,10 +15,16 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
 )
 
+// UserAdapterSource loads user-generated adapter YAML definitions.
+// Satisfied by adaptergen.FilesystemStore and adaptergen.DBStore.
+type UserAdapterSource interface {
+	Load(ctx context.Context) (map[string]string, error) // serviceID → YAML content
+}
+
 // Loader reads YAML adapter definitions and produces YAMLAdapter instances.
 type Loader struct {
 	embeddedFS fs.FS
-	userDir    string // ~/.clawvisor/adapters/
+	userSource UserAdapterSource
 	overrides  map[string]yamlruntime.ActionFunc
 	adapters   []*yamlruntime.YAMLAdapter
 	logger     *slog.Logger
@@ -26,9 +32,9 @@ type Loader struct {
 
 // New creates a Loader.
 // embeddedFS is the compiled-in definitions directory.
-// userDir is the user-local adapter directory (may not exist).
+// userSource loads user-generated adapter definitions (may be nil).
 // overrides maps "service_id:action_name" to Go functions for complex actions.
-func New(embeddedFS fs.FS, userDir string, overrides map[string]yamlruntime.ActionFunc, logger *slog.Logger) *Loader {
+func New(embeddedFS fs.FS, userSource UserAdapterSource, overrides map[string]yamlruntime.ActionFunc, logger *slog.Logger) *Loader {
 	if overrides == nil {
 		overrides = map[string]yamlruntime.ActionFunc{}
 	}
@@ -37,14 +43,14 @@ func New(embeddedFS fs.FS, userDir string, overrides map[string]yamlruntime.Acti
 	}
 	return &Loader{
 		embeddedFS: embeddedFS,
-		userDir:    userDir,
+		userSource: userSource,
 		overrides:  overrides,
 		logger:     logger,
 	}
 }
 
-// LoadAll loads all YAML definitions from embedded and user directories.
-// User-local files override embedded files with the same service ID.
+// LoadAll loads all YAML definitions from embedded and user sources.
+// User definitions override embedded definitions with the same service ID.
 func (l *Loader) LoadAll() error {
 	defs := map[string]yamldef.ServiceDef{} // service_id → def
 
@@ -73,30 +79,20 @@ func (l *Loader) LoadAll() error {
 		}
 	}
 
-	// Load user-local definitions (override embedded).
-	if l.userDir != "" {
-		if info, err := os.Stat(l.userDir); err == nil && info.IsDir() {
-			entries, err := os.ReadDir(l.userDir)
-			if err != nil {
-				l.logger.Warn("could not read user adapter directory", "dir", l.userDir, "err", err)
-			} else {
-				for _, entry := range entries {
-					if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-						continue
-					}
-					data, err := os.ReadFile(filepath.Join(l.userDir, entry.Name()))
-					if err != nil {
-						l.logger.Warn("skipping user adapter definition", "file", entry.Name(), "err", err)
-						continue
-					}
-					def, err := parseDefinition(data)
-					if err != nil {
-						l.logger.Warn("skipping user adapter definition", "file", entry.Name(), "err", err)
-						continue
-					}
-					defs[def.Service.ID] = def
-					l.logger.Info("loaded user adapter definition (override)", "service", def.Service.ID)
+	// Load user-generated definitions (override embedded).
+	if l.userSource != nil {
+		userDefs, err := l.userSource.Load(context.Background())
+		if err != nil {
+			l.logger.Warn("could not load user adapter definitions", "err", err)
+		} else {
+			for serviceID, yamlContent := range userDefs {
+				def, err := parseDefinition([]byte(yamlContent))
+				if err != nil {
+					l.logger.Warn("skipping user adapter definition", "service", serviceID, "err", err)
+					continue
 				}
+				defs[def.Service.ID] = def
+				l.logger.Info("loaded user adapter definition (override)", "service", def.Service.ID)
 			}
 		}
 	}
