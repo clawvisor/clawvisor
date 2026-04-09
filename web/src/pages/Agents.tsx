@@ -199,7 +199,7 @@ function ConnectAgentGuide() {
 
   const setupURL = hasRelay
     ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup${userIdParam}`
-    : null
+    : `${window.location.origin}/skill/setup${userIdParam}`
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -243,7 +243,7 @@ function ConnectAgentGuide() {
       <div className="p-5">
         {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} isLocal={isLocal} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
-        {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} />}
+        {tab === 'claude-desktop' && <ClaudeDesktopGuide isLocal={isLocal} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
       </div>
     </section>
@@ -281,7 +281,7 @@ function ClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
   userIdParam: string
   onCopy: (text: string) => void
 }) {
-  const installCmd = `mkdir -p ~/.claude/commands && curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" -o ~/.claude/commands/clawvisor-setup.md`
+  const installCmd = `curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" \\\n  --create-dirs -o ~/.claude/commands/clawvisor-setup.md`
 
   return (
     <div className="space-y-5">
@@ -330,57 +330,63 @@ function ClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
   )
 }
 
-function ClaudeDesktopGuide({ clawvisorURL }: { clawvisorURL: string }) {
-  const mcpURL = `${clawvisorURL}/mcp`
-  const configSnippet = `{
-  "mcpServers": {
-    "clawvisor": {
-      "command": "npx",
-      "args": ["mcp-remote", "${mcpURL}"]
-    }
-  }
-}`
+function ClaudeDesktopGuide({ isLocal }: { isLocal: boolean }) {
+  const pluginName = isLocal ? 'clawvisor-local@cowork-plugins' : 'clawvisor@cowork-plugins'
 
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
-        Claude Desktop connects to Clawvisor via MCP (Model Context Protocol). No token or skill install needed —
-        authorization happens through an OAuth flow in your browser.
+        {isLocal
+          ? 'Connect Claude Desktop to your local Clawvisor instance via the Cowork plugin.'
+          : 'Connect Claude Desktop to your Clawvisor cloud account via the Cowork plugin.'}
       </p>
 
       <div className="flex items-start gap-3">
         <StepNumber n={1} />
         <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Add the MCP server config</p>
+          <p className="text-sm font-medium text-text-primary">Add the marketplace</p>
           <p className="text-xs text-text-tertiary">
-            Open Claude Desktop settings (<strong>Settings &rarr; Developer &rarr; Edit Config</strong>) and add:
+            Run this in your terminal:
           </p>
-          <CodeBlock>{configSnippet}</CodeBlock>
-          <p className="text-xs text-text-tertiary">
-            On macOS the config file is at{' '}
-            <code className="font-mono text-text-secondary">~/Library/Application Support/Claude/claude_desktop_config.json</code>.
-            Merge with any existing servers.
-          </p>
+          <CodeBlock>{`claude plugin marketplace add clawvisor/cowork-plugins`}</CodeBlock>
         </div>
       </div>
 
       <div className="flex items-start gap-3">
         <StepNumber n={2} />
         <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Restart Claude Desktop</p>
+          <p className="text-sm font-medium text-text-primary">Install the plugin</p>
           <p className="text-xs text-text-tertiary">
-            Quit and reopen Claude Desktop so it picks up the new MCP server.
+            From within Claude Desktop:
           </p>
+          <CodeBlock>{`/plugin install ${pluginName}`}</CodeBlock>
         </div>
       </div>
 
+      {!isLocal && (
+        <div className="flex items-start gap-3">
+          <StepNumber n={3} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Authenticate</p>
+            <p className="text-xs text-text-tertiary">
+              The first time Claude uses a Clawvisor tool, you'll be prompted to authenticate via OAuth.
+              Follow the link in your terminal to sign in and connect Claude Desktop to your Clawvisor cloud account.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start gap-3">
-        <StepNumber n={3} />
+        <StepNumber n={isLocal ? 3 : 4} />
         <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Authorize</p>
+          <p className="text-sm font-medium text-text-primary">Start using it</p>
           <p className="text-xs text-text-tertiary">
-            When Claude Desktop first connects, a browser window opens where you log in and approve access.
-            The agent appears in the list above automatically.
+            Ask Claude to do something that requires an external service — e.g. "check my Gmail" or
+            "list my GitHub issues." Claude will create a task, ask you to approve, and execute through
+            Clawvisor.{' '}
+            {isLocal &&
+              <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
+            }
           </p>
         </div>
       </div>
@@ -389,14 +395,12 @@ function ClaudeDesktopGuide({ clawvisorURL }: { clawvisorURL: string }) {
 }
 
 function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
-  setupURL: string | null
+  setupURL: string
   isLocal: boolean
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = setupURL
-    ? `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
-    : null
+  const prompt = `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
 
   return (
     <div className="space-y-5">
@@ -405,51 +409,41 @@ function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
         to Clawvisor. Paste the setup prompt below into your agent — it will self-register and wait for your approval.
       </p>
 
-      {/* Paste-the-prompt approach */}
-      {prompt ? (
-        <div className="space-y-4">
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-              <div className="relative group">
-                <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
-                  {prompt}
-                </pre>
-                <button
-                  onClick={() => onCopy(prompt)}
-                  className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-              <p className="text-xs text-text-tertiary">
-                Your OpenClaw agent will follow the setup instructions — registering itself
-                {isLocal && ', setting up E2E encryption,'} and installing the Clawvisor skill.
-              </p>
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+            <div className="relative group">
+              <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+                {prompt}
+              </pre>
+              <button
+                onClick={() => onCopy(prompt)}
+                className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
             </div>
+            <p className="text-xs text-text-tertiary">
+              Your OpenClaw agent will follow the setup instructions — registering itself
+              {isLocal && ', setting up E2E encryption,'} and installing the Clawvisor skill.
+            </p>
           </div>
+        </div>
 
-          <div className="flex items-start gap-3">
-            <StepNumber n={2} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-              <p className="text-xs text-text-tertiary">
-                A connection request will appear in the <strong>Pending Connections</strong> section above.
-                Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
-                and is ready to go.
-              </p>
-            </div>
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+            <p className="text-xs text-text-tertiary">
+              A connection request will appear in the <strong>Pending Connections</strong> section above.
+              Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+              and is ready to go.
+            </p>
           </div>
         </div>
-      ) : (
-        <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
-          <p className="text-sm text-text-tertiary">
-            The setup prompt requires a relay connection. Complete the initial Clawvisor setup,
-            then reload this page.
-          </p>
-        </div>
-      )}
+      </div>
 
       {/* Telegram tip */}
       <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
@@ -464,14 +458,12 @@ function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
 }
 
 function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
-  setupURL: string | null
+  setupURL: string
   clawvisorURL: string
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = setupURL
-    ? `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
-    : null
+  const prompt = `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
 
   return (
     <div className="space-y-5">
@@ -480,51 +472,41 @@ function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
         prompt below directly into your agent's chat — it will self-register and wait for your approval.
       </p>
 
-      {/* Paste-the-prompt approach */}
-      {prompt ? (
-        <div className="space-y-4">
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-              <div className="relative group">
-                <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
-                  {prompt}
-                </pre>
-                <button
-                  onClick={() => onCopy(prompt)}
-                  className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-              <p className="text-xs text-text-tertiary">
-                The agent will follow the setup instructions at that URL — it registers itself,
-                sets up E2E encryption, and installs the Clawvisor skill.
-              </p>
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+            <div className="relative group">
+              <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+                {prompt}
+              </pre>
+              <button
+                onClick={() => onCopy(prompt)}
+                className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
             </div>
+            <p className="text-xs text-text-tertiary">
+              The agent will follow the setup instructions at that URL — it registers itself,
+              sets up E2E encryption, and installs the Clawvisor skill.
+            </p>
           </div>
+        </div>
 
-          <div className="flex items-start gap-3">
-            <StepNumber n={2} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-              <p className="text-xs text-text-tertiary">
-                A connection request will appear in the <strong>Pending Connections</strong> section above.
-                Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
-                and is ready to go.
-              </p>
-            </div>
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+            <p className="text-xs text-text-tertiary">
+              A connection request will appear in the <strong>Pending Connections</strong> section above.
+              Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+              and is ready to go.
+            </p>
           </div>
         </div>
-      ) : (
-        <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
-          <p className="text-sm text-text-tertiary">
-            The one-click setup prompt requires a relay connection. Complete the initial Clawvisor setup,
-            then reload this page. You can still use the manual setup below.
-          </p>
-        </div>
-      )}
+      </div>
 
       {/* Manual path */}
       <details className="group">
