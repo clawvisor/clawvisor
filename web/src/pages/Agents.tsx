@@ -5,7 +5,6 @@ import type { ConnectionRequest } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
-import { useAuth } from '../hooks/useAuth'
 
 export default function Agents() {
   const { currentOrg } = useAuth()
