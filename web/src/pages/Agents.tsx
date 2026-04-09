@@ -241,7 +241,7 @@ function ConnectAgentGuide() {
       </div>
 
       <div className="p-5">
-        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} isLocal={isLocal} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
         {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -388,9 +388,9 @@ function ClaudeDesktopGuide({ clawvisorURL }: { clawvisorURL: string }) {
   )
 }
 
-function OpenClawGuide({ setupURL, clawvisorURL, copied, onCopy }: {
+function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
   setupURL: string | null
-  clawvisorURL: string
+  isLocal: boolean
   copied: boolean
   onCopy: (text: string) => void
 }) {
@@ -402,32 +402,16 @@ function OpenClawGuide({ setupURL, clawvisorURL, copied, onCopy }: {
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
         Connect your <a href="https://openclaw.org" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">OpenClaw</a> agent
-        to Clawvisor. The best way is to create a Telegram group chat with both your OpenClaw agent and
-        Clawvisor — this lets them coordinate directly while keeping you in the loop.
+        to Clawvisor. Paste the setup prompt below into your agent — it will self-register and wait for your approval.
       </p>
 
-      <div className="flex items-start gap-3">
-        <StepNumber n={1} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Set up a Telegram group chat</p>
-          <p className="text-xs text-text-tertiary">
-            Head to <a href="/dashboard/settings" className="text-brand hover:underline">Settings &rarr; Telegram</a> to
-            connect your Clawvisor bot and create a group chat with your OpenClaw agent.
-            The setup wizard walks you through each step.
-          </p>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <StepNumber n={2} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Connect your OpenClaw agent to Clawvisor</p>
-          {prompt ? (
-            <>
-              <p className="text-xs text-text-tertiary">
-                Paste this into your Telegram group chat — your OpenClaw agent will self-register
-                and set up the connection automatically.
-              </p>
+      {/* Paste-the-prompt approach */}
+      {prompt ? (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
               <div className="relative group">
                 <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
                   {prompt}
@@ -439,40 +423,9 @@ function OpenClawGuide({ setupURL, clawvisorURL, copied, onCopy }: {
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
-            </>
-          ) : (
-            <p className="text-xs text-text-tertiary">
-              The setup prompt requires a relay connection. Complete the initial Clawvisor setup,
-              then reload this page. You can still use the manual setup below.
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <StepNumber n={3} />
-        <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Approve the connection</p>
-          <p className="text-xs text-text-tertiary">
-            A connection request will appear in the <strong>Pending Connections</strong> section above.
-            Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
-            and is ready to go.
-          </p>
-        </div>
-      </div>
-
-      {/* Manual path */}
-      <details className="group mt-2">
-        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
-          Manual setup (token + environment variables)
-        </summary>
-        <div className="mt-4 space-y-4 pl-0">
-          <div className="flex items-start gap-3">
-            <StepNumber n={1} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Create an agent token</p>
               <p className="text-xs text-text-tertiary">
-                Use the <strong>Create Agent</strong> form above. Copy the token — it's shown only once.
+                Your OpenClaw agent will follow the setup instructions — registering itself
+                {isLocal && ', setting up E2E encryption,'} and installing the Clawvisor skill.
               </p>
             </div>
           </div>
@@ -480,26 +433,32 @@ function OpenClawGuide({ setupURL, clawvisorURL, copied, onCopy }: {
           <div className="flex items-start gap-3">
             <StepNumber n={2} />
             <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Configure environment variables</p>
+              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
               <p className="text-xs text-text-tertiary">
-                Set these in your OpenClaw agent's environment:
-              </p>
-              <CodeBlock>{`CLAWVISOR_URL=${clawvisorURL}\nCLAWVISOR_AGENT_TOKEN=<your token>`}</CodeBlock>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-3">
-            <StepNumber n={3} />
-            <div className="space-y-1.5 min-w-0 flex-1">
-              <p className="text-sm font-medium text-text-primary">Verify</p>
-              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
-              <p className="text-xs text-text-tertiary">
-                Should return a JSON catalog of available services.
+                A connection request will appear in the <strong>Pending Connections</strong> section above.
+                Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+                and is ready to go.
               </p>
             </div>
           </div>
         </div>
-      </details>
+      ) : (
+        <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
+          <p className="text-sm text-text-tertiary">
+            The setup prompt requires a relay connection. Complete the initial Clawvisor setup,
+            then reload this page.
+          </p>
+        </div>
+      )}
+
+      {/* Telegram tip */}
+      <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
+        <p className="text-sm text-text-secondary">
+          <strong>Using Telegram?</strong> If you talk to your OpenClaw agent via Telegram, you can set up a
+          group chat with Clawvisor to get inline approval notifications and auto-approvals.{' '}
+          <a href="/dashboard/settings" className="text-brand hover:underline">Set it up in Settings &rarr; Telegram</a>.
+        </p>
+      </div>
     </div>
   )
 }
