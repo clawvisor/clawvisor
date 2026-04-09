@@ -56,10 +56,11 @@ type ServicesHandler struct {
 type oauthStateEntry struct {
 	UserID       string
 	ServiceID    string
-	Alias        string   // "default" when not specified
-	PendingReqID string   // pending_request_id query param (may be empty)
-	CLICallback  string   // TUI local server callback URL (may be empty)
-	Scopes       []string // merged scopes for this OAuth flow
+	Alias        string            // "default" when not specified
+	PendingReqID string            // pending_request_id query param (may be empty)
+	CLICallback  string            // TUI local server callback URL (may be empty)
+	Scopes       []string          // merged scopes for this OAuth flow
+	Config       map[string]string // per-service variable values (may be nil)
 	ExpiresAt    time.Time
 }
 
@@ -156,10 +157,11 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		AutoIdentity          bool          `json:"auto_identity,omitempty"`
 		RequiresActivation bool          `json:"requires_activation"`
 		CredentialFree     bool          `json:"credential_free"`
-		Actions            []actionEntry `json:"actions"`
-		Status             string        `json:"status"`
-		ActivatedAt        *time.Time    `json:"activated_at,omitempty"`
-		SetupURL           string        `json:"setup_url,omitempty"`
+		Actions            []actionEntry          `json:"actions"`
+		Variables          []adapters.VariableMeta `json:"variables,omitempty"`
+		Status             string                 `json:"status"`
+		ActivatedAt        *time.Time             `json:"activated_at,omitempty"`
+		SetupURL           string                 `json:"setup_url,omitempty"`
 	}
 
 	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
@@ -167,6 +169,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		name := display.ServiceName(a.ServiceID())
 		desc := display.ServiceDescription(a.ServiceID())
 		var setupURL, oauthEndpoint, iconSVG string
+		var variables []adapters.VariableMeta
 		actionNames := map[string]adapters.ActionMeta{}
 
 		if mp, ok := a.(adapters.MetadataProvider); ok {
@@ -181,6 +184,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			iconSVG = meta.IconSVG
 			oauthEndpoint = meta.OAuthEndpoint
 			actionNames = meta.ActionMeta
+			variables = meta.Variables
 		}
 
 		actions := make([]actionEntry, 0, len(a.SupportedActions()))
@@ -225,6 +229,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			AutoIdentity:          autoIdentity,
 			RequiresActivation:    true,
 			Actions:               actions,
+			Variables:             variables,
 			SetupURL:              setupURL,
 		}
 	}
@@ -381,6 +386,12 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		alias = "default"
 	}
 
+	// Parse optional config variables from query param.
+	var flowConfig map[string]string
+	if raw := r.URL.Query().Get("config"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &flowConfig)
+	}
+
 	stateToken := uuid.New().String()
 	h.oauthStates.Store(stateToken, oauthStateEntry{
 		UserID:       user.ID,
@@ -388,6 +399,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		Alias:        alias,
 		PendingReqID: r.URL.Query().Get("pending_request_id"),
 		CLICallback:  validateCLICallback(r.URL.Query().Get("cli_callback")),
+		Config:       flowConfig,
 		Scopes:       mergedScopes,
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
@@ -440,12 +452,18 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 
 	mergedScopes, _ := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
 
+	var flowConfig map[string]string
+	if raw := r.URL.Query().Get("config"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &flowConfig)
+	}
+
 	stateToken := uuid.New().String()
 	h.oauthStates.Store(stateToken, oauthStateEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
 		PendingReqID: r.URL.Query().Get("pending_request_id"),
+		Config:       flowConfig,
 		Scopes:       mergedScopes,
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
@@ -524,7 +542,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Auto-detect identity (e.g. email) before storing so the vault key is correct.
-	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes)
+	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes, entry.Config)
 
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
@@ -534,6 +552,13 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
+
+	// Store per-service config (variable values) if provided during OAuth flow start.
+	if len(entry.Config) > 0 {
+		configJSON, _ := json.Marshal(entry.Config)
+		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
+	}
+
 	h.logger.Info("service activated", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 
 	// Re-execute any pending request that was waiting for this activation.
@@ -613,8 +638,9 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	if adapter.OAuthConfig() != nil {
 		// OAuth service: generate state token and return the consent URL as JSON.
 		var body struct {
-			PendingRequestID string `json:"pending_request_id"`
-			Alias            string `json:"alias"`
+			PendingRequestID string            `json:"pending_request_id"`
+			Alias            string            `json:"alias"`
+			Config           map[string]string `json:"config,omitempty"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body) // body is optional
 		alias := body.Alias
@@ -642,6 +668,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			ServiceID:    serviceID,
 			Alias:        alias,
 			PendingReqID: body.PendingRequestID,
+			Config:       body.Config,
 			Scopes:       mergedScopes,
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
@@ -703,8 +730,9 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 	}
 
 	var body struct {
-		Token string `json:"token"`
-		Alias string `json:"alias"`
+		Token  string            `json:"token"`
+		Alias  string            `json:"alias"`
+		Config map[string]string `json:"config,omitempty"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -734,7 +762,7 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 	}
 
 	// Auto-detect identity (e.g. GitHub username) before storing.
-	alias = h.resolveIdentityAlias(r.Context(), serviceID, alias, credBytes)
+	alias = h.resolveIdentityAlias(r.Context(), serviceID, alias, credBytes, body.Config)
 
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
 	if err := h.vault.Set(r.Context(), user.ID, vKey, credBytes); err != nil {
@@ -743,6 +771,13 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
+
+	// Store per-service config (variable values) if provided.
+	if len(body.Config) > 0 {
+		configJSON, _ := json.Marshal(body.Config)
+		_ = h.st.UpsertServiceConfig(r.Context(), user.ID, serviceID, alias, configJSON)
+	}
+
 	h.logger.Info("service activated via api key", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID, "alias": alias})
@@ -779,8 +814,9 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove the service_meta record first.
+	// Remove the service_meta and service_config records first.
 	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
+	_ = h.st.DeleteServiceConfig(r.Context(), user.ID, serviceID, alias)
 
 	// Credential-free services have no vault credential to clean up.
 	adapter, ok := h.adapterReg.Get(serviceID)
@@ -915,7 +951,7 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 // it fetches the identity and returns it as the new alias. On failure or if the
 // adapter doesn't support identity fetching, it returns the original alias unchanged.
 func (h *ServicesHandler) resolveIdentityAlias(
-	ctx context.Context, serviceID, currentAlias string, credBytes []byte,
+	ctx context.Context, serviceID, currentAlias string, credBytes []byte, config map[string]string,
 ) string {
 	if currentAlias != "default" {
 		return currentAlias // user explicitly chose an alias
@@ -931,7 +967,7 @@ func (h *ServicesHandler) resolveIdentityAlias(
 		return currentAlias
 	}
 
-	identity, err := fetcher.FetchIdentity(ctx, credBytes)
+	identity, err := fetcher.FetchIdentity(ctx, credBytes, config)
 	if err != nil || identity == "" {
 		if err != nil {
 			h.logger.Warn("identity fetch failed, using default alias",
@@ -967,7 +1003,7 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 
 	serviceType, alias := parseServiceAlias(blob.Service)
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
-	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.st,
 		userID, blob.Service, blob.Action, blob.Params, vKey)
 
 	outcome := "executed"
@@ -1123,6 +1159,7 @@ type deviceFlowEntry struct {
 	UserID     string
 	ServiceID  string
 	Alias      string
+	Config     map[string]string // per-service variable values (may be nil)
 	DeviceCode string
 	ClientID   string
 	TokenURL   string
@@ -1168,7 +1205,8 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 	}
 
 	var body struct {
-		Alias string `json:"alias"`
+		Alias  string            `json:"alias"`
+		Config map[string]string `json:"config,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	alias := body.Alias
@@ -1242,6 +1280,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 		UserID:     user.ID,
 		ServiceID:  serviceID,
 		Alias:      alias,
+		Config:     body.Config,
 		DeviceCode: dfResp.DeviceCode,
 		ClientID:   clientID,
 		TokenURL:   dfCfg.TokenURL,
@@ -1376,7 +1415,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Auto-detect identity before storing.
-	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes)
+	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes, entry.Config)
 
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
@@ -1385,6 +1424,10 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
+	if len(entry.Config) > 0 {
+		configJSON, _ := json.Marshal(entry.Config)
+		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
+	}
 	h.deviceFlows.Delete(body.FlowID)
 
 	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
@@ -1397,6 +1440,7 @@ type pkceFlowEntry struct {
 	UserID       string
 	ServiceID    string
 	Alias        string
+	Config       map[string]string // per-service variable values (may be nil)
 	CodeVerifier string
 	CLICallback  string
 	TokenURL     string
@@ -1438,9 +1482,10 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		Alias       string `json:"alias"`
-		CLICallback string `json:"cli_callback"`
-		ClientID    string `json:"client_id"`
+		Alias       string            `json:"alias"`
+		CLICallback string            `json:"cli_callback"`
+		ClientID    string            `json:"client_id"`
+		Config      map[string]string `json:"config,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	alias := body.Alias
@@ -1527,6 +1572,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
+		Config:       body.Config,
 		CodeVerifier: codeVerifier,
 		CLICallback:  validateCLICallback(body.CLICallback),
 		TokenURL:     pfCfg.TokenURL,
@@ -1644,7 +1690,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Auto-detect identity before storing.
-	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes)
+	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes, entry.Config)
 
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
@@ -1653,6 +1699,10 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
+	if len(entry.Config) > 0 {
+		configJSON, _ := json.Marshal(entry.Config)
+		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
+	}
 
 	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 	oauthPopupClose(w, "", entry.CLICallback)

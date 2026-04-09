@@ -294,10 +294,13 @@ func (c *Client) GetOAuthURL(serviceID, alias, cliCallback string) (*OAuthURLRes
 }
 
 // ActivateWithKey activates a non-OAuth service using an API key / token.
-func (c *Client) ActivateWithKey(serviceID, token, alias string) error {
-	body := map[string]string{"token": token}
+func (c *Client) ActivateWithKey(serviceID, token, alias string, config map[string]string) error {
+	body := map[string]any{"token": token}
 	if alias != "" {
 		body["alias"] = alias
+	}
+	if len(config) > 0 {
+		body["config"] = config
 	}
 	var resp map[string]string
 	return c.post("/api/services/"+serviceID+"/activate-key", body, &resp)

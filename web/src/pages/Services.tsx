@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
+import { api, type ServiceInfo, type ServiceActionInfo, type VariableMeta } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -276,6 +276,7 @@ interface ServiceType {
   requiresActivation: boolean
   credentialFree: boolean
   actions: ServiceActionInfo[]
+  variables?: VariableMeta[]
   activatedCount: number
   description: string
   setupUrl?: string
@@ -296,6 +297,7 @@ function AddServiceModal({
   const [keyInputFor, setKeyInputFor] = useState<string | null>(null)
   const [keyValue, setKeyValue] = useState('')
   const [keyAlias, setKeyAlias] = useState<string | undefined>(undefined)
+  const [keyConfig, setKeyConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -359,6 +361,7 @@ function AddServiceModal({
         requiresActivation: svc.requires_activation ?? true,
         credentialFree: svc.credential_free ?? false,
         actions: svc.actions,
+        variables: svc.variables,
         activatedCount: svc.status === 'activated' ? 1 : 0,
         description: svc.description || serviceDescription(svc.id),
         setupUrl: svc.setup_url,
@@ -398,10 +401,11 @@ function AddServiceModal({
     setSaving(true)
     setError(null)
     try {
-      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias)
+      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
       setKeyValue('')
       setKeyInputFor(null)
       setKeyAlias(undefined)
+      setKeyConfig({})
       qc.invalidateQueries({ queryKey: ['services'] })
       onClose()
     } catch (e: any) {
@@ -539,6 +543,14 @@ function AddServiceModal({
     } else {
       setKeyInputFor(st.baseId)
       setKeyAlias(alias)
+      // Initialize config with variable defaults
+      const defaults: Record<string, string> = {}
+      if (st.variables) {
+        for (const v of st.variables) {
+          defaults[v.name] = v.default ?? ''
+        }
+      }
+      setKeyConfig(defaults)
     }
   }
 
@@ -671,9 +683,27 @@ function AddServiceModal({
                       </div>
                     )}
 
-                    {/* API key input */}
+                    {/* API key input (with optional variable fields) */}
                     {keyInputFor === st.baseId && (
                       <div className="space-y-2 text-left">
+                        {st.variables && st.variables.length > 0 && st.variables.map(v => (
+                          <div key={v.name}>
+                            <label className="block text-xs text-text-secondary mb-0.5">
+                              {v.display_name || v.name}
+                              {v.required && <span className="text-danger ml-0.5">*</span>}
+                            </label>
+                            {v.description && (
+                              <p className="text-[10px] text-text-tertiary mb-1">{v.description}</p>
+                            )}
+                            <input
+                              type="text"
+                              value={keyConfig[v.name] ?? ''}
+                              onChange={e => setKeyConfig(prev => ({ ...prev, [v.name]: e.target.value }))}
+                              placeholder={v.default || v.display_name || v.name}
+                              className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                            />
+                          </div>
+                        ))}
                         <input
                           type="password"
                           value={keyValue}
@@ -681,7 +711,7 @@ function AddServiceModal({
                           onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
                           placeholder="Paste your token…"
                           className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-                          autoFocus
+                          autoFocus={!st.variables || st.variables.length === 0}
                         />
                         <div className="flex gap-2">
                           <button
@@ -692,7 +722,7 @@ function AddServiceModal({
                             {saving ? 'Saving…' : 'Save'}
                           </button>
                           <button
-                            onClick={() => { setKeyInputFor(null); setKeyValue('') }}
+                            onClick={() => { setKeyInputFor(null); setKeyValue(''); setKeyConfig({}) }}
                             className="text-xs px-3 py-1.5 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2"
                           >
                             Cancel

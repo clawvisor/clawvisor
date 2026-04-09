@@ -193,9 +193,19 @@ type ServiceInfo struct {
 	RequiresActivation bool              `json:"requires_activation"`
 	CredentialFree     bool              `json:"credential_free"`
 	Actions            json.RawMessage   `json:"actions"`
+	Variables          []VariableMeta    `json:"variables,omitempty"`
 	Status             string            `json:"status"` // "activated" or "not_activated"
 	ActivatedAt        string            `json:"activated_at,omitempty"`
 	SetupURL           string            `json:"setup_url,omitempty"`
+}
+
+// VariableMeta holds metadata for a user-configurable adapter variable.
+type VariableMeta struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
+	Default     string `json:"default,omitempty"`
 }
 
 // DeviceFlowStartResponse is returned by DeviceFlowStart.

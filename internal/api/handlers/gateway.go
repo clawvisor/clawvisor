@@ -403,7 +403,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 
 			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
-			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
 				agent.UserID, serviceType, req.Action, req.Params, vKey)
 			dur := int(time.Since(start).Milliseconds())
 
@@ -747,7 +747,7 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, pa.UserID)
 
 	start := time.Now()
-	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
 		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
 	dur := int(time.Since(start).Milliseconds())
 
@@ -1129,11 +1129,12 @@ func executeAdapterRequest(
 	ctx context.Context,
 	v vault.Vault,
 	reg *adapters.Registry,
+	st store.Store,
 	userID, service, action string,
 	params map[string]any,
 	vaultKey string,
 ) (*adapters.Result, error) {
-	serviceType, _ := parseServiceAlias(service)
+	serviceType, serviceAlias := parseServiceAlias(service)
 	adapter, ok := reg.GetForUser(ctx, serviceType, userID)
 	if !ok {
 		return nil, fmt.Errorf("service %q is not supported", serviceType)
@@ -1152,10 +1153,23 @@ func executeAdapterRequest(
 		}
 	}
 
+	// Fetch per-user service config (variable values) if stored.
+	var config map[string]string
+	if st != nil {
+		alias := serviceAlias
+		if alias == "" {
+			alias = "default"
+		}
+		if sc, err := st.GetServiceConfig(ctx, userID, serviceType, alias); err == nil {
+			_ = json.Unmarshal(sc.Config, &config)
+		}
+	}
+
 	result, err := adapter.Execute(ctx, adapters.Request{
 		Action:     action,
 		Params:     params,
 		Credential: cred,
+		Config:     config,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s: %w", service, err)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
-import { api, type ServiceInfo, type ServiceActionInfo } from '../api/client'
+import { api, type ServiceInfo, type ServiceActionInfo, type VariableMeta } from '../api/client'
 import { serviceName, serviceDescription } from '../lib/services'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -9,6 +9,7 @@ interface ServiceType {
   baseId: string
   oauth: boolean
   actions: ServiceActionInfo[]
+  variables?: VariableMeta[]
   activatedCount: number
 }
 
@@ -86,6 +87,7 @@ function OnboardingServices({
   const [keyInputFor, setKeyInputFor] = useState<string | null>(null)
   const [keyValue, setKeyValue] = useState('')
   const [keyAlias, setKeyAlias] = useState<string | undefined>(undefined)
+  const [keyConfig, setKeyConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -122,6 +124,7 @@ function OnboardingServices({
         baseId: svc.id,
         oauth: svc.oauth,
         actions: svc.actions,
+        variables: svc.variables,
         activatedCount: svc.status === 'activated' ? 1 : 0,
       })
     }
@@ -150,10 +153,11 @@ function OnboardingServices({
     setSaving(true)
     setError(null)
     try {
-      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias)
+      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
       setKeyValue('')
       setKeyInputFor(null)
       setKeyAlias(undefined)
+      setKeyConfig({})
       qc.invalidateQueries({ queryKey: ['services'] })
     } catch (e: any) {
       setError(e.message ?? 'Failed to save API key')
@@ -179,6 +183,13 @@ function OnboardingServices({
     } else {
       setKeyInputFor(st.baseId)
       setKeyAlias(alias)
+      const defaults: Record<string, string> = {}
+      if (st.variables) {
+        for (const v of st.variables) {
+          defaults[v.name] = v.default ?? ''
+        }
+      }
+      setKeyConfig(defaults)
     }
   }
 
@@ -265,31 +276,51 @@ function OnboardingServices({
                 </div>
               )}
 
-              {/* API key input */}
+              {/* API key input (with optional variable fields) */}
               {keyInputFor === st.baseId && (
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={keyValue}
-                    onChange={e => setKeyValue(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-                    placeholder="Paste your token…"
-                    className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleSaveKey}
-                    disabled={saving || !keyValue.trim()}
-                    className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-                  >
-                    {saving ? 'Saving…' : 'Save'}
-                  </button>
-                  <button
-                    onClick={() => { setKeyInputFor(null); setKeyValue('') }}
-                    className="text-xs px-3 py-1.5 rounded border border-border-strong text-text-primary hover:bg-surface-2"
-                  >
-                    Cancel
-                  </button>
+                <div className="space-y-2">
+                  {st.variables && st.variables.length > 0 && st.variables.map(v => (
+                    <div key={v.name}>
+                      <label className="block text-xs text-text-secondary mb-0.5">
+                        {v.display_name || v.name}
+                        {v.required && <span className="text-danger ml-0.5">*</span>}
+                      </label>
+                      {v.description && (
+                        <p className="text-[10px] text-text-tertiary mb-1">{v.description}</p>
+                      )}
+                      <input
+                        type="text"
+                        value={keyConfig[v.name] ?? ''}
+                        onChange={e => setKeyConfig(prev => ({ ...prev, [v.name]: e.target.value }))}
+                        placeholder={v.default || v.display_name || v.name}
+                        className="w-full text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                      />
+                    </div>
+                  ))}
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={keyValue}
+                      onChange={e => setKeyValue(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+                      placeholder="Paste your token…"
+                      className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                      autoFocus={!st.variables || st.variables.length === 0}
+                    />
+                    <button
+                      onClick={handleSaveKey}
+                      disabled={saving || !keyValue.trim()}
+                      className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setKeyInputFor(null); setKeyValue(''); setKeyConfig({}) }}
+                      className="text-xs px-3 py-1.5 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
 

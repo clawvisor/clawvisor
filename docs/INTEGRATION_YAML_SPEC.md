@@ -31,8 +31,15 @@ auth:
   oauth: ...        # Traditional OAuth2 (requires client secret)
 
 api:
-  base_url: <string>  # e.g. "https://api.github.com"
+  base_url: <string>  # e.g. "https://api.github.com" (supports {{.var.X}} interpolation)
   type: <"rest" | "graphql">
+
+variables:           # optional: user-configurable variables collected at activation time
+  <variable_name>:
+    display_name: <string>
+    description: <string>     # optional
+    required: <bool>          # optional, default false
+    default: <string>         # optional
 
 # Optional: natural-language guidance for the intent verification system.
 # Helps the verifier understand nuances of this service's actions.
@@ -173,6 +180,38 @@ auth:
 ```
 
 `extra_headers` still works with `type: none` for APIs that need non-auth headers.
+
+## Variables
+
+Variables let each user provide instance-specific values (like a base URL) at activation time. They are stored in the database and interpolated into fields like `base_url` at runtime using `{{.var.<name>}}` placeholders.
+
+```yaml
+variables:
+  instance_url:
+    display_name: "Instance URL"
+    description: "Your Atlassian Cloud URL (e.g. https://yourteam.atlassian.net)"
+    required: true
+  workspace_id:
+    display_name: "Workspace ID"
+    default: "default"
+```
+
+Reference variables in `base_url` (or any other field that supports interpolation):
+
+```yaml
+api:
+  base_url: "{{.var.instance_url}}"
+  type: rest
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `display_name` | string | Label shown to the user during activation |
+| `description` | string | Optional help text explaining what to enter |
+| `required` | bool | If true, activation fails without a value (unless `default` is set) |
+| `default` | string | Pre-filled default value; satisfies `required` if the user leaves it blank |
+
+Variables are collected in the TUI, daemon setup CLI, and web dashboard when the user connects the service. They are persisted per-user in a `service_configs` table, separate from credentials.
 
 ## Actions
 
@@ -366,8 +405,14 @@ auth:
   header_prefix: "Bearer "
 
 api:
-  base_url: "https://api.acme.com/v1"
+  base_url: "{{.var.instance_url}}/v1"
   type: rest
+
+variables:
+  instance_url:
+    display_name: "Instance URL"
+    description: "Your Acme instance (e.g. https://mycompany.acme.com)"
+    required: true
 
 actions:
   list_widgets:
