@@ -223,7 +223,7 @@ export default function Dashboard() {
           <Route path="tasks" element={<Tasks />} />
           <Route path="services" element={<Services />} />
           <Route path="restrictions" element={<Restrictions />} />
-          <Route path="adapter-gen" element={<AdapterGen />} />
+          {features?.adapter_gen && <Route path="adapter-gen" element={<AdapterGen />} />}
           <Route path="audit" element={<Audit />} />
           <Route path="agents" element={<Agents />} />
           <Route path="settings" element={<Settings />} />

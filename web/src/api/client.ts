@@ -414,6 +414,7 @@ export interface FeatureSet {
   teams: boolean
   usage_metering: boolean
   password_auth: boolean
+  adapter_gen: boolean
 }
 
 export interface VersionInfo {
