@@ -67,6 +67,10 @@ type configOverride struct {
 func newE2EEnv(t *testing.T) *e2eEnv {
 	t.Helper()
 
+	if os.Getenv("CLAWVISOR_LOCAL_CONFIG") == "" {
+		t.Skip("skipping: set CLAWVISOR_LOCAL_CONFIG=1 to run tests that use ~/.clawvisor/config.yaml")
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("home dir: %v", err)
