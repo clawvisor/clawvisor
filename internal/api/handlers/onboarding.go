@@ -144,6 +144,9 @@ func (h *OnboardingHandler) resolveURL(r *http.Request) string {
 		if r.TLS != nil {
 			scheme = "https"
 		}
+		if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
+			scheme = fp
+		}
 		return scheme + "://" + r.Host
 	}
 	if h.daemonID != "" && h.relayHost != "" {

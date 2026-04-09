@@ -618,10 +618,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /skill", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/skill/SKILL.md", http.StatusFound)
 	})
-	if s.daemonID != "" {
+	{
 		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
-		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+		if s.daemonID != "" {
+			mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+		}
 		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
 	}
 	// skillRenderOpts builds RenderOptions based on whether the request
