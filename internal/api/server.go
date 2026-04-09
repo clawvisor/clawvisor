@@ -33,6 +33,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	skillfiles "github.com/clawvisor/clawvisor/skills"
@@ -609,9 +610,28 @@ func (s *Server) routes() http.Handler {
 		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
 	}
+	// skillRenderOpts builds RenderOptions based on whether the request
+	// arrived directly (local) or via the relay (cloud).
+	skillRenderOpts := func(r *http.Request) skillfiles.RenderOptions {
+		viaRelay := relay.ViaRelay(r.Context())
+		var url string
+		if viaRelay && s.daemonID != "" {
+			rh := relayHostFromCfg(s.cfg.Relay.URL)
+			url = fmt.Sprintf("https://%s/d/%s", rh, s.daemonID)
+		} else {
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			url = scheme + "://" + r.Host
+		}
+		return skillfiles.RenderOptions{ClawvisorURL: url, ViaRelay: viaRelay}
+	}
+
 	mux.HandleFunc("GET /skill/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
-		rendered, err := skillfiles.Render(skillfiles.TargetClaudeCode)
+		rendered, err := skillfiles.RenderWithOptions(skillfiles.TargetClaudeCode, skillRenderOpts(r))
 		if err != nil {
 			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -622,7 +642,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /skill/skill.zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", `attachment; filename="skill.zip"`)
-		rendered, err := skillfiles.Render(skillfiles.TargetClaudeCode)
+		rendered, err := skillfiles.RenderWithOptions(skillfiles.TargetClaudeCode, skillRenderOpts(r))
 		if err != nil {
 			http.Error(w, "rendering SKILL.md: "+err.Error(), http.StatusInternalServerError)
 			return

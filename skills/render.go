@@ -24,11 +24,25 @@ const (
 	TargetMCP Target = "mcp"
 )
 
+// RenderOptions holds optional overrides for template rendering.
+type RenderOptions struct {
+	// ClawvisorURL is the base URL for the Clawvisor instance. When set, the
+	// template uses it as the concrete URL in setup instructions instead of a
+	// generic placeholder. Empty means "not known at render time".
+	ClawvisorURL string
+
+	// ViaRelay is true when the skill is being served through the cloud relay.
+	// The template uses this to include E2E encryption guidance.
+	ViaRelay bool
+}
+
 // templateData holds the flags that control conditional rendering.
 type templateData struct {
-	Target    Target
-	UseCurl   bool
-	Condensed bool
+	Target       Target
+	UseCurl      bool
+	Condensed    bool
+	ClawvisorURL string // concrete instance URL, empty if unknown
+	ViaRelay     bool   // true when served through the relay
 }
 
 // dataForTarget returns the template data for the given target.
@@ -60,6 +74,12 @@ func dataForTarget(t Target) templateData {
 // Render produces the SKILL.md content for the given target by executing the
 // embedded template with the appropriate flags.
 func Render(target Target) (string, error) {
+	return RenderWithOptions(target, RenderOptions{})
+}
+
+// RenderWithOptions is like Render but accepts additional options that
+// customise the output (e.g. baking in a concrete CLAWVISOR_URL).
+func RenderWithOptions(target Target, opts RenderOptions) (string, error) {
 	raw, err := FS.ReadFile("clawvisor/SKILL.md.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("reading SKILL.md.tmpl: %w", err)
@@ -70,8 +90,12 @@ func Render(target Target) (string, error) {
 		return "", fmt.Errorf("parsing SKILL.md.tmpl: %w", err)
 	}
 
+	data := dataForTarget(target)
+	data.ClawvisorURL = opts.ClawvisorURL
+	data.ViaRelay = opts.ViaRelay
+
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, dataForTarget(target)); err != nil {
+	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("executing SKILL.md.tmpl: %w", err)
 	}
 
