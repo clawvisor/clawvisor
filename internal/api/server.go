@@ -333,7 +333,7 @@ func (s *Server) routes() http.Handler {
 			BeforeAuthorize: s.gatewayHooks.BeforeAuthorize,
 		})
 	}
-	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL)
+	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL, s.eventHub)
 	// Set relay daemon URL for PKCE flows that require HTTPS redirect URIs.
 	if s.cfg.Relay.Enabled && s.cfg.Relay.URL != "" && s.cfg.Relay.DaemonID != "" {
 		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
