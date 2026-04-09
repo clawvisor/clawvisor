@@ -67,6 +67,7 @@ const (
 	stepDeviceFlowWaiting  = 6
 	stepPKCEFlowChoice     = 7
 	stepPKCEFlowWaiting    = 8
+	stepVariables          = 9
 )
 
 // ── Model ───────────────────────────────────────────────────────────────────
@@ -86,7 +87,10 @@ type ServicesScreen struct {
 	inputStep         int
 	aliasInput        *textinput.Model
 	keyInput          *textinput.Model
+	varInputs         []textinput.Model // one per variable
+	varNames          []string          // variable names in order
 	pendingAlias      string
+	pendingConfig     map[string]string // collected variable values
 	pendingOAuthURL   string
 	activatingService *client.ServiceInfo
 
@@ -189,6 +193,45 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 		var cmd tea.Cmd
 		*s.aliasInput, cmd = s.aliasInput.Update(msg)
 		return s, cmd
+	}
+
+	// Variable collection overlay.
+	if s.inputStep == stepVariables && len(s.varInputs) > 0 {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				s.resetActivation()
+				return s, nil
+			case "tab", "enter":
+				// Find the focused input and advance to the next one.
+				for i := range s.varInputs {
+					if s.varInputs[i].Focused() {
+						s.varInputs[i].Blur()
+						if i+1 < len(s.varInputs) {
+							s.varInputs[i+1].Focus()
+							return s, nil
+						}
+						// Last variable — collect values and proceed.
+						s.pendingConfig = make(map[string]string, len(s.varInputs))
+						for j, name := range s.varNames {
+							if v := s.varInputs[j].Value(); v != "" {
+								s.pendingConfig[name] = v
+							}
+						}
+						return s, s.proceedAfterAlias()
+					}
+				}
+			}
+		}
+		for i := range s.varInputs {
+			if s.varInputs[i].Focused() {
+				var cmd tea.Cmd
+				s.varInputs[i], cmd = s.varInputs[i].Update(msg)
+				return s, cmd
+			}
+		}
+		return s, nil
 	}
 
 	// Key entry overlay.
@@ -516,6 +559,9 @@ func (s *ServicesScreen) View() string {
 	if s.inputStep == stepAlias && s.aliasInput != nil {
 		return s.viewAliasInput()
 	}
+	if s.inputStep == stepVariables && len(s.varInputs) > 0 {
+		return s.viewVariableInputs()
+	}
 	if s.inputStep == stepKeyEntry && s.keyInput != nil {
 		return s.viewKeyInput()
 	}
@@ -663,6 +709,34 @@ func (s *ServicesScreen) viewAliasInput() string {
 		tui.StyleDim.Render("Alias (leave blank for default):"),
 		"  "+s.aliasInput.View(),
 		tui.StyleDim.Render("[enter] Continue  [esc] Cancel"),
+	)
+	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
+}
+
+func (s *ServicesScreen) viewVariableInputs() string {
+	svcName := ""
+	if s.activatingService != nil {
+		svcName = s.activatingService.Name
+	}
+	title := lipgloss.NewStyle().
+		Foreground(tui.ColorBrand).
+		Bold(true).
+		Render("Configure " + svcName)
+
+	var lines []string
+	for i, v := range s.activatingService.Variables {
+		label := v.DisplayName
+		if label == "" {
+			label = v.Name
+		}
+		lines = append(lines, tui.StyleDim.Render(label+":"))
+		lines = append(lines, "  "+s.varInputs[i].View())
+	}
+
+	content := fmt.Sprintf("%s\n\n%s\n\n%s",
+		title,
+		strings.Join(lines, "\n"),
+		tui.StyleDim.Render("[tab] Next  [enter] Continue  [esc] Cancel"),
 	)
 	return tui.StyleOverlayBorder.Width(s.overlayWidth()).Render(content)
 }
@@ -869,6 +943,11 @@ func (s *ServicesScreen) proceedAfterAlias() tea.Cmd {
 		return nil
 	}
 
+	// If the service declares variables and we haven't collected them yet, do so now.
+	if len(svc.Variables) > 0 && s.pendingConfig == nil {
+		return s.startVariableCollection()
+	}
+
 	if svc.OAuth {
 		// Start local listener, then fetch OAuth URL.
 		port, done, cleanup := startOAuthListener()
@@ -908,16 +987,41 @@ func (s *ServicesScreen) proceedAfterAlias() tea.Cmd {
 	return nil
 }
 
+func (s *ServicesScreen) startVariableCollection() tea.Cmd {
+	svc := s.activatingService
+	s.inputStep = stepVariables
+	s.varNames = make([]string, 0, len(svc.Variables))
+	s.varInputs = make([]textinput.Model, 0, len(svc.Variables))
+	for _, v := range svc.Variables {
+		s.varNames = append(s.varNames, v.Name)
+		ti := textinput.New()
+		label := v.DisplayName
+		if label == "" {
+			label = v.Name
+		}
+		ti.Placeholder = label
+		if v.Default != "" {
+			ti.SetValue(v.Default)
+		}
+		s.varInputs = append(s.varInputs, ti)
+	}
+	if len(s.varInputs) > 0 {
+		s.varInputs[0].Focus()
+	}
+	return nil
+}
+
 func (s *ServicesScreen) activateWithKey(keyVal string) tea.Cmd {
 	svc := s.activatingService
 	if svc == nil {
 		return nil
 	}
 	alias := s.pendingAlias
+	cfg := s.pendingConfig
 	serviceID := svc.ID
 	cl := s.client
 	return func() tea.Msg {
-		err := cl.ActivateWithKey(serviceID, keyVal, alias)
+		err := cl.ActivateWithKey(serviceID, keyVal, alias, cfg)
 		return svcActivatedMsg{err: err}
 	}
 }
@@ -997,6 +1101,9 @@ func (s *ServicesScreen) resetActivation() {
 	s.aliasInput = nil
 	s.keyInput = nil
 	s.pendingAlias = ""
+	s.pendingConfig = nil
+	s.varInputs = nil
+	s.varNames = nil
 	s.pendingOAuthURL = ""
 	s.activatingService = nil
 	s.deviceFlowUserCode = ""

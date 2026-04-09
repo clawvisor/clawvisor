@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlvalidate"
 	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
@@ -394,9 +395,9 @@ func TestValidate_ServiceIDFormat(t *testing.T) {
 		{".leading.dot", false},
 	}
 	for _, tc := range cases {
-		got := safeServiceIDPattern.MatchString(tc.id)
+		got := yamlvalidate.SafeServiceIDPattern.MatchString(tc.id)
 		if got != tc.valid {
-			t.Errorf("safeServiceIDPattern(%q): got %v, want %v", tc.id, got, tc.valid)
+			t.Errorf("yamlvalidate.SafeServiceIDPattern(%q): got %v, want %v", tc.id, got, tc.valid)
 		}
 	}
 }
@@ -437,18 +438,18 @@ actions:
 	foundCategory := false
 	foundSensitivity := false
 	for _, w := range warnings {
-		if strings.Contains(w, "risk category 'delete'") {
+		if strings.Contains(w, "risk category") && strings.Contains(w, "delete") {
 			foundCategory = true
 		}
-		if strings.Contains(w, "cannot have 'low' sensitivity") {
+		if strings.Contains(w, "sensitivity") && strings.Contains(w, "DELETE") {
 			foundSensitivity = true
 		}
 	}
 	if !foundCategory {
-		t.Error("expected warning about DELETE needing 'delete' category")
+		t.Errorf("expected warning about DELETE needing 'delete' category, got warnings: %v", warnings)
 	}
 	if !foundSensitivity {
-		t.Error("expected warning about DELETE not allowing 'low' sensitivity")
+		t.Errorf("expected warning about DELETE not allowing 'low' sensitivity, got warnings: %v", warnings)
 	}
 }
 

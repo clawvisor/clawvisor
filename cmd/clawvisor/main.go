@@ -34,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(connectAgentCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(tuiCmd)
+	rootCmd.AddCommand(validateCmd)
 }
 
 func main() {

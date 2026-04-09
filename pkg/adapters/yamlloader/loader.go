@@ -13,6 +13,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlvalidate"
 )
 
 // UserAdapterSource loads user-generated adapter YAML definitions.
@@ -74,6 +75,14 @@ func (l *Loader) LoadAll() error {
 				l.logger.Warn("skipping embedded adapter definition", "file", entry.Name(), "err", err)
 				continue
 			}
+			if vr := yamlvalidate.Validate(&def); !vr.OK() {
+				l.logger.Warn("skipping embedded adapter definition: validation failed", "file", entry.Name(), "errors", vr.Errors)
+				continue
+			} else {
+				for _, w := range vr.Warnings {
+					l.logger.Warn("embedded adapter definition warning", "file", entry.Name(), "warning", w)
+				}
+			}
 			defs[def.Service.ID] = def
 			l.logger.Debug("loaded embedded adapter definition", "service", def.Service.ID)
 		}
@@ -90,6 +99,14 @@ func (l *Loader) LoadAll() error {
 				if err != nil {
 					l.logger.Warn("skipping user adapter definition", "service", serviceID, "err", err)
 					continue
+				}
+				if vr := yamlvalidate.Validate(&def); !vr.OK() {
+					l.logger.Warn("skipping user adapter definition: validation failed", "service", serviceID, "errors", vr.Errors)
+					continue
+				} else {
+					for _, w := range vr.Warnings {
+						l.logger.Warn("user adapter definition warning", "service", serviceID, "warning", w)
+					}
 				}
 				defs[def.Service.ID] = def
 				l.logger.Info("loaded user adapter definition (override)", "service", def.Service.ID)

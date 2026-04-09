@@ -3,11 +3,21 @@ package yamldef
 
 // ServiceDef is the top-level structure of a YAML adapter definition file.
 type ServiceDef struct {
-	Service           ServiceInfo       `yaml:"service"`
-	Auth              AuthDef           `yaml:"auth"`
-	API               APIDef            `yaml:"api"`
-	VerificationHints string            `yaml:"verification_hints,omitempty"`
-	Actions           map[string]Action `yaml:"actions"`
+	Service           ServiceInfo                `yaml:"service"`
+	Auth              AuthDef                    `yaml:"auth"`
+	API               APIDef                     `yaml:"api"`
+	Variables         map[string]VariableDef     `yaml:"variables,omitempty"`
+	VerificationHints string                     `yaml:"verification_hints,omitempty"`
+	Actions           map[string]Action          `yaml:"actions"`
+}
+
+// VariableDef defines a user-configurable variable that is collected during
+// service activation and interpolated into fields like base_url at runtime.
+type VariableDef struct {
+	DisplayName string `yaml:"display_name"`
+	Description string `yaml:"description,omitempty"`
+	Required    bool   `yaml:"required,omitempty"`
+	Default     string `yaml:"default,omitempty"`
 }
 
 // ServiceInfo contains display and identification metadata.

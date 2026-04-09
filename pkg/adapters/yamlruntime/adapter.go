@@ -95,11 +95,17 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	// Get credential fields for path interpolation.
 	credFields, _ := credentialFields(a.def.Auth, req.Credential)
 
+	// Resolve variables in base_url.
+	baseURL, err := a.resolvedBaseURL(req.Config)
+	if err != nil {
+		return nil, err
+	}
+
 	switch a.def.API.Type {
 	case "rest":
-		return executeREST(ctx, client, a.def.API.BaseURL, action, req.Params, credFields, a.compiled[req.Action])
+		return executeREST(ctx, client, baseURL, action, req.Params, credFields, a.compiled[req.Action])
 	case "graphql":
-		return executeGraphQL(ctx, client, a.def.API.BaseURL, action, req.Params, a.def.Service.ID)
+		return executeGraphQL(ctx, client, baseURL, action, req.Params, a.def.Service.ID)
 	default:
 		return nil, fmt.Errorf("%s: unsupported API type %q", a.def.Service.ID, a.def.API.Type)
 	}
@@ -107,7 +113,7 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 
 // FetchIdentity makes a request to the configured identity endpoint and
 // extracts the account identifier from the JSON response.
-func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, config map[string]string) (string, error) {
 	idDef := a.def.Service.Identity
 	if idDef == nil {
 		return "", nil
@@ -118,9 +124,14 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (stri
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
 
+	baseURL, err := a.resolvedBaseURL(config)
+	if err != nil {
+		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
+	}
+
 	endpoint := idDef.Endpoint
 	if !strings.HasPrefix(endpoint, "http") {
-		endpoint = strings.TrimRight(a.def.API.BaseURL, "/") + "/" + strings.TrimLeft(endpoint, "/")
+		endpoint = strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(endpoint, "/")
 	}
 
 	method := idDef.Method
@@ -357,6 +368,27 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		oauthEndpoint = a.def.Auth.OAuth.Endpoint
 	}
 
+	// Build ordered variable metadata from YAML variables.
+	var variables []adapters.VariableMeta
+	if len(a.def.Variables) > 0 {
+		varNames := make([]string, 0, len(a.def.Variables))
+		for vn := range a.def.Variables {
+			varNames = append(varNames, vn)
+		}
+		sort.Strings(varNames)
+		variables = make([]adapters.VariableMeta, 0, len(varNames))
+		for _, vn := range varNames {
+			v := a.def.Variables[vn]
+			variables = append(variables, adapters.VariableMeta{
+				Name:        vn,
+				DisplayName: v.DisplayName,
+				Description: v.Description,
+				Required:    v.Required,
+				Default:     v.Default,
+			})
+		}
+	}
+
 	return adapters.ServiceMetadata{
 		DisplayName:       a.def.Service.DisplayName,
 		Description:       a.def.Service.Description,
@@ -370,6 +402,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		AutoIdentity:      a.def.Service.Identity != nil,
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
+		Variables:         variables,
 	}
 }
 
@@ -437,6 +470,57 @@ func (a *YAMLAdapter) resolvePKCEFlowClientID() string {
 		}
 	}
 	return pf.ClientID
+}
+
+// resolvedBaseURL returns the API base URL with any {{.var.X}} placeholders
+// replaced by values from config. It validates that all required variables
+// have values.
+func (a *YAMLAdapter) resolvedBaseURL(config map[string]string) (string, error) {
+	if err := a.validateVariables(config); err != nil {
+		return "", err
+	}
+	merged := a.mergedConfig(config)
+	return resolveVariables(a.def.API.BaseURL, merged), nil
+}
+
+// mergedConfig returns config with any missing keys filled in from variable defaults.
+func (a *YAMLAdapter) mergedConfig(config map[string]string) map[string]string {
+	merged := make(map[string]string, len(config)+len(a.def.Variables))
+	for name, def := range a.def.Variables {
+		if def.Default != "" {
+			merged[name] = def.Default
+		}
+	}
+	for k, v := range config {
+		merged[k] = v
+	}
+	return merged
+}
+
+// resolveVariables replaces {{.var.KEY}} placeholders in s with values from config.
+func resolveVariables(s string, config map[string]string) string {
+	for k, v := range config {
+		s = strings.ReplaceAll(s, "{{.var."+k+"}}", v)
+	}
+	return s
+}
+
+// validateVariables checks that all required variables defined in the adapter
+// spec have values in config.
+func (a *YAMLAdapter) validateVariables(config map[string]string) error {
+	for name, def := range a.def.Variables {
+		if !def.Required {
+			continue
+		}
+		if v, ok := config[name]; ok && v != "" {
+			continue
+		}
+		if def.Default != "" {
+			continue
+		}
+		return fmt.Errorf("%s: missing required configuration variable %q — please reconfigure the service", a.def.Service.ID, name)
+	}
+	return nil
 }
 
 // Def returns the underlying YAML definition (for the loader/tests).

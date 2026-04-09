@@ -415,6 +415,50 @@ func (s *Store) CountServiceMetasByType(ctx context.Context, userID, serviceID s
 	return count, err
 }
 
+// ── Service Configs ──────────────────────────────────────────────────────────
+
+func (s *Store) UpsertServiceConfig(ctx context.Context, userID, serviceID, alias string, config json.RawMessage) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO service_configs (id, user_id, service_id, alias, config)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, service_id, alias) DO UPDATE SET
+			config     = EXCLUDED.config,
+			updated_at = NOW()
+	`, uuid.New().String(), userID, serviceID, alias, config)
+	return err
+}
+
+func (s *Store) GetServiceConfig(ctx context.Context, userID, serviceID, alias string) (*store.ServiceConfig, error) {
+	sc := &store.ServiceConfig{}
+	var configJSON []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, user_id, service_id, alias, config, created_at, updated_at FROM service_configs WHERE user_id = $1 AND service_id = $2 AND alias = $3`,
+		userID, serviceID, alias,
+	).Scan(&sc.ID, &sc.UserID, &sc.ServiceID, &sc.Alias, &configJSON, &sc.CreatedAt, &sc.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sc.Config = json.RawMessage(configJSON)
+	return sc, nil
+}
+
+func (s *Store) DeleteServiceConfig(ctx context.Context, userID, serviceID, alias string) error {
+	res, err := s.pool.Exec(ctx,
+		`DELETE FROM service_configs WHERE user_id = $1 AND service_id = $2 AND alias = $3`,
+		userID, serviceID, alias,
+	)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Notification Configs ──────────────────────────────────────────────────────
 
 func (s *Store) UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error {

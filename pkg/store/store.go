@@ -59,6 +59,11 @@ type Store interface {
 	DeleteServiceMeta(ctx context.Context, userID, serviceID, alias string) error
 	CountServiceMetasByType(ctx context.Context, userID, serviceID string) (int, error)
 
+	// Service configs (per-user variable values for configurable adapters)
+	UpsertServiceConfig(ctx context.Context, userID, serviceID, alias string, config json.RawMessage) error
+	GetServiceConfig(ctx context.Context, userID, serviceID, alias string) (*ServiceConfig, error)
+	DeleteServiceConfig(ctx context.Context, userID, serviceID, alias string) error
+
 	// Notification configs
 	UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error
 	GetNotificationConfig(ctx context.Context, userID, channel string) (*NotificationConfig, error)
@@ -203,6 +208,17 @@ type Restriction struct {
 	Action    string    `json:"action"`
 	Reason    string    `json:"reason"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// ServiceConfig stores per-user, per-service variable values for configurable adapters.
+type ServiceConfig struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"user_id"`
+	ServiceID string          `json:"service_id"`
+	Alias     string          `json:"alias"`
+	Config    json.RawMessage `json:"config"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // NotificationConfig stores per-user, per-channel notification settings.

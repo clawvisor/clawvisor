@@ -462,6 +462,53 @@ func (s *Store) CountServiceMetasByType(ctx context.Context, userID, serviceID s
 	return count, err
 }
 
+// ── Service Configs ──────────────────────────────────────────────────────────
+
+func (s *Store) UpsertServiceConfig(ctx context.Context, userID, serviceID, alias string, config json.RawMessage) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO service_configs (id, user_id, service_id, alias, config)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, service_id, alias) DO UPDATE SET
+			config     = excluded.config,
+			updated_at = CURRENT_TIMESTAMP
+	`, uuid.New().String(), userID, serviceID, alias, string(config))
+	return err
+}
+
+func (s *Store) GetServiceConfig(ctx context.Context, userID, serviceID, alias string) (*store.ServiceConfig, error) {
+	sc := &store.ServiceConfig{}
+	var configStr, createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_id, service_id, alias, config, created_at, updated_at FROM service_configs WHERE user_id = ? AND service_id = ? AND alias = ?`,
+		userID, serviceID, alias,
+	).Scan(&sc.ID, &sc.UserID, &sc.ServiceID, &sc.Alias, &configStr, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sc.Config = json.RawMessage(configStr)
+	sc.CreatedAt = parseTime(createdAt)
+	sc.UpdatedAt = parseTime(updatedAt)
+	return sc, nil
+}
+
+func (s *Store) DeleteServiceConfig(ctx context.Context, userID, serviceID, alias string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM service_configs WHERE user_id = ? AND service_id = ? AND alias = ?`,
+		userID, serviceID, alias,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Notification Configs ──────────────────────────────────────────────────────
 
 func (s *Store) UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error {

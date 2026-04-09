@@ -44,7 +44,7 @@ func TestFetchIdentity_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, err := adapter.FetchIdentity(context.Background(), testCred("ghp_test"))
+	identity, err := adapter.FetchIdentity(context.Background(), testCred("ghp_test"), nil)
 	if err != nil {
 		t.Fatalf("FetchIdentity failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestFetchIdentity_NestedField(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"))
+	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"), nil)
 	if err != nil {
 		t.Fatalf("FetchIdentity failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestFetchIdentity_NoIdentityDef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"))
+	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"), nil)
 	if err != nil {
 		t.Fatalf("FetchIdentity failed: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestFetchIdentity_AbsoluteURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"))
+	identity, err := adapter.FetchIdentity(context.Background(), testCred("tok"), nil)
 	if err != nil {
 		t.Fatalf("FetchIdentity failed: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestFetchIdentity_GraphQLBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, err := adapter.FetchIdentity(context.Background(), testCred("lin_api_test"))
+	identity, err := adapter.FetchIdentity(context.Background(), testCred("lin_api_test"), nil)
 	if err != nil {
 		t.Fatalf("FetchIdentity failed: %v", err)
 	}

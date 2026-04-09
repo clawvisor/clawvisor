@@ -185,6 +185,9 @@ func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) err
 		fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf("  Create an API key at: %s", svc.SetupURL)))
 	}
 
+	// Collect user-configurable variables (e.g. site URL) before the API key.
+	config := collectVariables(svc)
+
 	var token string
 	if err := huh.NewForm(
 		huh.NewGroup(
@@ -202,11 +205,42 @@ func activateAPIKeyService(apiClient *client.Client, svc client.ServiceInfo) err
 	}
 
 	fmt.Printf("\n  Connecting %s...\n", svc.Name)
-	if err := apiClient.ActivateWithKey(svc.ID, token, ""); err != nil {
+	if err := apiClient.ActivateWithKey(svc.ID, token, "", config); err != nil {
 		return err
 	}
 	fmt.Printf("  %s %s connected.\n\n", green.Render("✓"), svc.Name)
 	return nil
+}
+
+// collectVariables prompts the user for any required adapter variables.
+func collectVariables(svc client.ServiceInfo) map[string]string {
+	if len(svc.Variables) == 0 {
+		return nil
+	}
+	config := make(map[string]string, len(svc.Variables))
+	for _, v := range svc.Variables {
+		var val string
+		title := v.DisplayName
+		if title == "" {
+			title = v.Name
+		}
+		input := huh.NewInput().Title(title)
+		if v.Description != "" {
+			input = input.Description(v.Description)
+		}
+		if v.Default != "" {
+			val = v.Default
+		}
+		input = input.Value(&val)
+		if err := huh.NewForm(huh.NewGroup(input)).Run(); err != nil {
+			break
+		}
+		val = strings.TrimSpace(val)
+		if val != "" {
+			config[v.Name] = val
+		}
+	}
+	return config
 }
 
 // activateDeviceFlowOrAPIKey lets the user choose between device flow (browser)

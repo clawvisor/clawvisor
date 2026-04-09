@@ -32,6 +32,16 @@ type ServiceMetadata struct {
 	AutoIdentity        bool                  // whether the adapter can auto-detect account identity
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
+	Variables         []VariableMeta // user-configurable variables declared by the adapter
+}
+
+// VariableMeta holds metadata for a single user-configurable variable.
+type VariableMeta struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
+	Default     string `json:"default,omitempty"`
 }
 
 // ActionMeta holds display and risk metadata for a single action.
@@ -104,7 +114,8 @@ const SystemVaultKeyPKCEPrefix = "pkce."
 type Request struct {
 	Action     string
 	Params     map[string]any
-	Credential []byte // decrypted from vault
+	Credential []byte            // decrypted from vault
+	Config     map[string]string // resolved variable values from service_configs
 }
 
 // Result is the semantic output of an adapter action.
@@ -157,7 +168,7 @@ type IdentityFetcher interface {
 	// FetchIdentity uses the stored credential to query the service for a
 	// human-readable account identifier (e.g. "levine.eric.j@gmail.com",
 	// "octocat"). Returns an empty string if identity cannot be determined.
-	FetchIdentity(ctx context.Context, credential []byte) (string, error)
+	FetchIdentity(ctx context.Context, credential []byte, config map[string]string) (string, error)
 }
 
 // Adapter is the interface every service adapter implements.

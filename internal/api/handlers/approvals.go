@@ -252,7 +252,7 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 
 	start := time.Now()
-	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
+	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.st,
 		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
 	dur := int(time.Since(start).Milliseconds())
 

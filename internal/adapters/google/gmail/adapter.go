@@ -88,7 +88,7 @@ func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
 }
 
 // FetchIdentity returns the Google account email for auto-alias detection.
-func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte) (string, error) {
+func (a *GmailAdapter) FetchIdentity(ctx context.Context, credBytes []byte, _ map[string]string) (string, error) {
 	client, err := a.httpClient(ctx, credBytes)
 	if err != nil {
 		return "", err

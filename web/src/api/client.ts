@@ -249,9 +249,18 @@ export interface ServiceInfo {
   requires_activation?: boolean
   credential_free?: boolean
   actions: ServiceActionInfo[]
+  variables?: VariableMeta[]
   status: 'activated' | 'not_activated'
   activated_at?: string
   setup_url?: string
+}
+
+export interface VariableMeta {
+  name: string
+  display_name: string
+  description?: string
+  required: boolean
+  default?: string
 }
 
 export interface Restriction {
@@ -639,10 +648,11 @@ export const api = {
       }),
     activate: (serviceID: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/activate`, {}),
-    activateWithKey: (serviceID: string, token: string, alias?: string) =>
+    activateWithKey: (serviceID: string, token: string, alias?: string, config?: Record<string, string>) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/activate-key`, {
         token,
         ...(alias ? { alias } : {}),
+        ...(config && Object.keys(config).length > 0 ? { config } : {}),
       }),
     deactivate: (serviceID: string, alias?: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/deactivate`, {
