@@ -153,7 +153,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		goOverrides["google.gmail:"+action] = gmail.Execute
 	}
 	drive := driveadapter.New(oauthProvider)
-	for _, action := range []string{"get_file", "create_file", "update_file"} {
+	for _, action := range []string{"get_file", "export_file", "create_file", "update_file"} {
 		goOverrides["google.drive:"+action] = drive.Execute
 	}
 	contacts := contactsadapter.New(oauthProvider)

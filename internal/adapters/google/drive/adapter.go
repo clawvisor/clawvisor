@@ -40,7 +40,7 @@ func New(provider adapters.OAuthCredentialProvider) *DriveAdapter {
 func (a *DriveAdapter) ServiceID() string { return serviceID }
 
 func (a *DriveAdapter) SupportedActions() []string {
-	return []string{"list_files", "get_file", "create_file", "update_file", "search_files"}
+	return []string{"list_files", "get_file", "export_file", "create_file", "update_file", "search_files"}
 }
 
 func (a *DriveAdapter) RequiredScopes() []string { return driveScopes }
@@ -85,6 +85,8 @@ func (a *DriveAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.listFiles(ctx, client, req.Params)
 	case "get_file":
 		return a.getFile(ctx, client, req.Params)
+	case "export_file":
+		return a.exportFile(ctx, client, req.Params)
 	case "create_file":
 		return a.createFile(ctx, client, req.Params)
 	case "update_file":
@@ -223,6 +225,62 @@ func (a *DriveAdapter) getFile(ctx context.Context, client *http.Client, params 
 
 	return &adapters.Result{
 		Summary: format.Summary("File: %s (%s)", meta.Name, meta.MimeType),
+		Data:    result,
+	}, nil
+}
+
+// ── export_file ───────────────────────────────────────────────────────────────
+
+// exportFile exports a Google Workspace file (Docs, Sheets, Slides) to the
+// requested MIME type using the Drive files.export endpoint.
+func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	fileID, _ := params["file_id"].(string)
+	targetMime, _ := params["mime_type"].(string)
+	if fileID == "" {
+		return nil, fmt.Errorf("drive export_file: file_id is required")
+	}
+	if targetMime == "" {
+		return nil, fmt.Errorf("drive export_file: mime_type is required")
+	}
+
+	// Fetch metadata so we can include the file name in the result.
+	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?fields=id,name,mimeType",
+		url.PathEscape(fileID))
+	var meta struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		MimeType string `json:"mimeType"`
+	}
+	if err := apiGET(ctx, client, metaURL, &meta); err != nil {
+		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
+
+	exportURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s/export?mimeType=%s",
+		url.PathEscape(fileID), url.QueryEscape(targetMime))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, exportURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("drive export_file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	result := map[string]any{
+		"id":              meta.ID,
+		"name":            format.SanitizeText(meta.Name, format.MaxFieldLen),
+		"source_mime_type": meta.MimeType,
+		"export_mime_type": targetMime,
+		"content":         format.SanitizeText(string(body), format.MaxBodyLen),
+	}
+	return &adapters.Result{
+		Summary: format.Summary("Exported %s as %s", meta.Name, targetMime),
 		Data:    result,
 	}, nil
 }
