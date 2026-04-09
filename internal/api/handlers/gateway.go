@@ -382,23 +382,32 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			// Check activation for credential-free services before executing.
 			if taskAdapter, taskAdapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
 				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-					dur := int(time.Since(start).Milliseconds())
-					e := baseEntry("block", "error", taskIDPtr)
-					e.DurationMS = dur
-					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
-					e.ErrorMsg = &auditMsg
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
+					// If no alias was specified, check if any alias is activated.
+					anyActivated := false
+					if serviceAlias == "" || serviceAlias == "default" {
+						if count, cErr := h.store.CountServiceMetasByType(ctx, agent.UserID, serviceType); cErr == nil && count > 0 {
+							anyActivated = true
+						}
 					}
-					h.publishAuditAndQueue(agent.UserID, req.TaskID)
-					writeJSON(w, http.StatusBadRequest, map[string]any{
-						"status":     "error",
-						"request_id": req.RequestID,
-						"audit_id":   auditID,
-						"error":      userErr,
-						"code":       code,
-					})
-					return
+					if !anyActivated {
+						dur := int(time.Since(start).Milliseconds())
+						e := baseEntry("block", "error", taskIDPtr)
+						e.DurationMS = dur
+						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
+						e.ErrorMsg = &auditMsg
+						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+							h.logger.Warn("audit log failed", "err", logErr)
+						}
+						h.publishAuditAndQueue(agent.UserID, req.TaskID)
+						writeJSON(w, http.StatusBadRequest, map[string]any{
+							"status":     "error",
+							"request_id": req.RequestID,
+							"audit_id":   auditID,
+							"error":      userErr,
+							"code":       code,
+						})
+						return
+					}
 				}
 			}
 
@@ -555,12 +564,26 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		notActivated := false
 		if approveAdapter.ValidateCredential(nil) == nil {
 			if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-				notActivated = true
+				// No exact match — if no alias was specified, check any alias.
+				if serviceAlias == "" || serviceAlias == "default" {
+					if count, cErr := h.store.CountServiceMetasByType(ctx, agent.UserID, serviceType); cErr != nil || count == 0 {
+						notActivated = true
+					}
+				} else {
+					notActivated = true
+				}
 			}
 		} else {
 			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
 			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
-				notActivated = true
+				// No exact match — if no alias was specified, check any alias.
+				if serviceAlias == "" || serviceAlias == "default" {
+					if !hasAnyAlias(ctx, h.vault, h.adapterReg, agent.UserID, serviceType) {
+						notActivated = true
+					}
+				} else {
+					notActivated = true
+				}
 			}
 		}
 		if notActivated {

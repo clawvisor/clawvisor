@@ -523,22 +523,28 @@ func (e *e2eEnv) pickActivatedReadService(t *testing.T) (svcID, action string, p
 		t.Skipf("skipping: could not parse services list")
 	}
 
-	activated := map[string]bool{}
+	// activated maps base service ID → full service ID (with alias if present).
+	activated := map[string]string{}
 	for _, raw := range list {
 		svc, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		id := strOr(svc, "id", "")
+		alias := strOr(svc, "alias", "")
 		status := strOr(svc, "status", "")
 		if status == "activated" || status == "active" || status == "connected" {
-			activated[id] = true
+			fullID := id
+			if alias != "" {
+				fullID = id + ":" + alias
+			}
+			activated[id] = fullID
 		}
 	}
 
 	for _, c := range readServiceCandidates {
-		if activated[c.svcID] {
-			return c.svcID, c.action, c.params
+		if fullID, ok := activated[c.svcID]; ok {
+			return fullID, c.action, c.params
 		}
 	}
 
@@ -550,7 +556,12 @@ func (e *e2eEnv) pickActivatedReadService(t *testing.T) (svcID, action string, p
 // Returns "" if no second action is available for the service.
 func (e *e2eEnv) pickSecondAction(t *testing.T, svcID, firstAction string) string {
 	t.Helper()
-	second, ok := secondReadActions[svcID]
+	// Strip alias (e.g. "github:ericlevine" → "github") for lookup.
+	baseID := svcID
+	if idx := strings.IndexByte(svcID, ':'); idx >= 0 {
+		baseID = svcID[:idx]
+	}
+	second, ok := secondReadActions[baseID]
 	if !ok || second == firstAction {
 		return ""
 	}

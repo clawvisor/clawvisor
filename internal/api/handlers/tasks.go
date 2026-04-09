@@ -1236,13 +1236,27 @@ func (h *TasksHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType, alias string, adapter adapters.Adapter) bool {
 	if adapter.ValidateCredential(nil) == nil {
 		// Credential-free: check service_meta.
-		_, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias)
-		return err == nil
+		if _, err := h.st.GetServiceMeta(ctx, userID, serviceType, alias); err == nil {
+			return true
+		}
+		// No exact match — if no alias was specified, check any alias.
+		if alias == "" || alias == "default" {
+			if count, err := h.st.CountServiceMetasByType(ctx, userID, serviceType); err == nil && count > 0 {
+				return true
+			}
+		}
+		return false
 	}
 	// Credential-backed: check vault.
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
-	_, err := h.vault.Get(ctx, userID, vKey)
-	return err == nil
+	if _, err := h.vault.Get(ctx, userID, vKey); err == nil {
+		return true
+	}
+	// No exact match — if no alias was specified, check any alias.
+	if alias == "" || alias == "default" {
+		return hasAnyAlias(ctx, h.vault, h.adapterReg, userID, serviceType)
+	}
+	return false
 }
 
 // ── Task scope check helper ───────────────────────────────────────────────────
