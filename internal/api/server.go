@@ -620,7 +620,7 @@ func (s *Server) routes() http.Handler {
 	})
 	{
 		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
-		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID)
+		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
 		if s.daemonID != "" {
 			mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
 		}

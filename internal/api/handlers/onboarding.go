@@ -17,10 +17,11 @@ var validUserID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 type OnboardingHandler struct {
 	relayHost string // e.g. "relay.clawvisor.com"
 	daemonID  string // relay daemon ID
+	isLocal   bool   // true when bound to loopback (not a cloud deployment)
 }
 
-func NewOnboardingHandler(relayHost, daemonID string) *OnboardingHandler {
-	return &OnboardingHandler{relayHost: relayHost, daemonID: daemonID}
+func NewOnboardingHandler(relayHost, daemonID string, isLocal bool) *OnboardingHandler {
+	return &OnboardingHandler{relayHost: relayHost, daemonID: daemonID, isLocal: isLocal}
 }
 
 // Setup serves the onboarding markdown document.
@@ -210,7 +211,7 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("setup.\n\n")
 
 	stepNum := 3
-	if relay.ViaRelay(r.Context()) {
+	if !h.isLocal {
 		fmt.Fprintf(&b, "### %d. Add auto-approve permission rules\n\n", stepNum)
 		b.WriteString("Add a permission rule so Claude Code doesn't prompt for approval on every\n")
 		b.WriteString("curl request to Clawvisor. Read `~/.claude/settings.json` and append the\n")
