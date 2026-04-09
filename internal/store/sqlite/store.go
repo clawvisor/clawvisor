@@ -605,7 +605,7 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		safetyFlagged = 1
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO audit_log (
+		INSERT OR IGNORE INTO audit_log (
 			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 			params_safe, decision, outcome, policy_id, rule_id,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
