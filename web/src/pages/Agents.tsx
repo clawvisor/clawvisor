@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { ConnectionRequest } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
+import { useAuth } from '../hooks/useAuth'
 
 export default function Agents() {
   const qc = useQueryClient()
@@ -170,6 +171,7 @@ type AgentTab = 'claude-code' | 'claude-desktop' | 'other'
 function ConnectAgentGuide() {
   const [tab, setTab] = useState<AgentTab>('claude-code')
   const [copied, setCopied] = useState(false)
+  const { user } = useAuth()
 
   const { data: pairInfo } = useQuery({
     queryKey: ['pairInfo'],
@@ -188,8 +190,10 @@ function ConnectAgentGuide() {
       ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
       : window.location.origin
 
+  const userIdParam = user?.id ? `?user_id=${encodeURIComponent(user.id)}` : ''
+
   const setupURL = hasRelay
-    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup`
+    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup${userIdParam}`
     : null
 
   const copyText = (text: string) => {
@@ -231,7 +235,7 @@ function ConnectAgentGuide() {
       </div>
 
       <div className="p-5">
-        {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
+        {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
         {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
       </div>
@@ -265,11 +269,12 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
   )
 }
 
-function ClaudeCodeGuide({ clawvisorURL, onCopy }: {
+function ClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
   clawvisorURL: string
+  userIdParam: string
   onCopy: (text: string) => void
 }) {
-  const installCmd = `mkdir -p ~/.claude/commands && curl -sf "${clawvisorURL}/skill/clawvisor-setup.md" -o ~/.claude/commands/clawvisor-setup.md`
+  const installCmd = `mkdir -p ~/.claude/commands && curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" -o ~/.claude/commands/clawvisor-setup.md`
 
   return (
     <div className="space-y-5">

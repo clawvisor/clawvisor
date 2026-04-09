@@ -483,7 +483,7 @@ func (s *Server) routes() http.Handler {
 	}
 
 	// Connection requests (unauthenticated — agents requesting access)
-	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger)
+	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger, s.features.MultiTenant)
 	s.connectionsHandler = connectionsHandler
 	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",

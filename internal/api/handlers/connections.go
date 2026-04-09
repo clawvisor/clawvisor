@@ -34,10 +34,11 @@ const (
 
 // ConnectionsHandler manages agent connection request lifecycle.
 type ConnectionsHandler struct {
-	st       store.Store
-	notifier notify.Notifier
-	eventHub events.EventHub
-	logger   *slog.Logger
+	st          store.Store
+	notifier    notify.Notifier
+	eventHub    events.EventHub
+	logger      *slog.Logger
+	multiTenant bool
 
 	// In-memory token cache: connection request ID → {raw token, approved time}.
 	// Tokens are never persisted — raw tokens must not hit the DB for security.
@@ -61,14 +62,15 @@ type approvedToken struct {
 }
 
 func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
-	eventHub events.EventHub, logger *slog.Logger) *ConnectionsHandler {
+	eventHub events.EventHub, logger *slog.Logger, multiTenant bool) *ConnectionsHandler {
 	return &ConnectionsHandler{
-		st:       st,
-		notifier: notifier,
-		eventHub: eventHub,
-		logger:   logger,
-		tokens:   make(map[string]approvedToken),
-		ipPolls:  make(map[string]int),
+		st:          st,
+		notifier:    notifier,
+		eventHub:    eventHub,
+		logger:      logger,
+		multiTenant: multiTenant,
+		tokens:      make(map[string]approvedToken),
+		ipPolls:     make(map[string]int),
 	}
 }
 
@@ -79,6 +81,7 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		CallbackURL string `json:"callback_url"`
+		UserID      string `json:"user_id"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -99,11 +102,25 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Resolve daemon owner — single-user daemon uses admin@local.
-	owner, err := h.st.GetUserByEmail(r.Context(), "admin@local")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve daemon owner")
+	// Resolve the target user. In multi-tenant mode, user_id is required so
+	// the connection request is routed to the correct user. In single-tenant
+	// mode, fall back to admin@local for backward compatibility.
+	var owner *store.User
+	if body.UserID != "" {
+		owner, err = h.st.GetUserByID(r.Context(), body.UserID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+			return
+		}
+	} else if h.multiTenant {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "user_id is required")
 		return
+	} else {
+		owner, err = h.st.GetUserByEmail(r.Context(), "admin@local")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve daemon owner")
+			return
+		}
 	}
 
 	req := &store.ConnectionRequest{

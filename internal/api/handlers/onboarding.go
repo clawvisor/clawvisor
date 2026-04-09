@@ -3,10 +3,13 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
 )
+
+var validUserID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // OnboardingHandler serves the agent onboarding document at GET /setup.
 // The document is self-contained markdown that tells an agent how to register,
@@ -40,6 +43,11 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "```\n\n")
 	fmt.Fprintf(&b, "All API calls below use this URL.\n\n")
 
+	userID := r.URL.Query().Get("user_id")
+	if userID != "" && !validUserID.MatchString(userID) {
+		userID = ""
+	}
+
 	fmt.Fprintf(&b, "## 2. Register with the daemon and wait for approval\n\n")
 	fmt.Fprintf(&b, "Send a connection request with `?wait=true`. The daemon owner will be notified,\n")
 	fmt.Fprintf(&b, "and the request blocks until they approve (or the timeout elapses).\n\n")
@@ -48,6 +56,9 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "  -H \"Content-Type: application/json\" \\\n")
 	fmt.Fprintf(&b, "  -d '{\n")
 	fmt.Fprintf(&b, "    \"name\": \"<your agent name>\",\n")
+	if userID != "" {
+		fmt.Fprintf(&b, "    \"user_id\": \"%s\",\n", userID)
+	}
 	fmt.Fprintf(&b, "    \"description\": \"<brief description of what you do>\"\n")
 	fmt.Fprintf(&b, "  }'\n")
 	fmt.Fprintf(&b, "```\n\n")
@@ -147,6 +158,15 @@ func (h *OnboardingHandler) resolveURL(r *http.Request) string {
 func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Request) {
 	clawvisorURL := h.resolveURL(r)
 	skillURL := clawvisorURL + "/skill/SKILL.md"
+	userID := r.URL.Query().Get("user_id")
+	if userID != "" && !validUserID.MatchString(userID) {
+		userID = ""
+	}
+
+	connectBody := `{"name": "claude-code", "description": "Claude Code agent"}`
+	if userID != "" {
+		connectBody = fmt.Sprintf(`{"name": "claude-code", "description": "Claude Code agent", "user_id": "%s"}`, userID)
+	}
 
 	var b strings.Builder
 	b.WriteString("Set up Clawvisor in the current project so Claude Code can make gated API\n")
@@ -158,7 +178,7 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("### 1. Connect as an agent\n\n")
 	b.WriteString("Register with the daemon and wait for the user to approve:\n\n")
 	b.WriteString("```bash\n")
-	fmt.Fprintf(&b, "curl -s -X POST \"%s/api/agents/connect?wait=true&timeout=120\" -H \"Content-Type: application/json\" -d '{\"name\": \"claude-code\", \"description\": \"Claude Code agent\"}'\n", clawvisorURL)
+	fmt.Fprintf(&b, "curl -s -X POST \"%s/api/agents/connect?wait=true&timeout=120\" -H \"Content-Type: application/json\" -d '%s'\n", clawvisorURL, connectBody)
 	b.WriteString("```\n\n")
 	b.WriteString("This sends a connection request to the daemon. The user will be notified\n")
 	b.WriteString("to approve. The `?wait=true` parameter makes the request block until the\n")
