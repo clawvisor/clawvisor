@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Task, type QueueItem, type Agent, type NotificationConfig, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
+import { api, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
 import VerificationIcon from '../components/VerificationIcon'
-import Onboarding from './Onboarding'
 
 export default function Overview() {
   const qc = useQueryClient()
@@ -58,16 +57,6 @@ export default function Overview() {
     queryFn: () => api.agents.list(),
   })
 
-  // Services + notifications for onboarding
-  const { data: services } = useQuery({
-    queryKey: ['services'],
-    queryFn: () => api.services.list(),
-  })
-  const { data: notificationsData } = useQuery({
-    queryKey: ['notifications'],
-    queryFn: (): Promise<NotificationConfig[]> => api.notifications.list(),
-  })
-
   const agentMap = useMemo(() => {
     const m = new Map<string, string>()
     for (const a of (agentsData ?? []) as Agent[]) {
@@ -75,32 +64,6 @@ export default function Overview() {
     }
     return m
   }, [agentsData])
-
-  const allServices = services?.services ?? []
-
-  // Onboarding latch
-  const onboardingDecided = useRef(false)
-  const [showOnboarding, setShowOnboarding] = useState(false)
-  const [onboardingInitial, setOnboardingInitial] = useState<number[]>([])
-
-  useEffect(() => {
-    if (onboardingDecided.current) return
-    if (!services || agentsData === undefined || notificationsData === undefined) return
-    onboardingDecided.current = true
-    const hasService = (services.services ?? []).some(
-      (s: { status: string; requires_activation?: boolean }) => s.status === 'activated' && (s.requires_activation ?? true)
-    )
-    const hasAgents = (agentsData ?? []).length > 0
-    const hasTelegram = notificationsData.some((c: NotificationConfig) => c.channel === 'telegram' && c.config?.bot_token)
-    const done: number[] = []
-    if (hasService) done.push(1)
-    if (hasAgents) done.push(2)
-    if (hasTelegram) done.push(3)
-    if (!hasService || !hasAgents) {
-      setOnboardingInitial(done)
-      setShowOnboarding(true)
-    }
-  }, [services, agentsData, notificationsData])
 
   const queueItems = overview?.queue ?? []
   const activeTasks = overview?.active_tasks ?? []
@@ -151,15 +114,6 @@ export default function Overview() {
           <span className="text-brand text-sm">{deepLinkResult}</span>
           <button onClick={() => setDeepLinkResult(null)} className="text-brand text-xs hover:underline">Dismiss</button>
         </div>
-      )}
-
-      {/* Onboarding */}
-      {showOnboarding && (
-        <Onboarding
-          allServices={allServices}
-          initialCompleted={onboardingInitial}
-          onDismiss={() => setShowOnboarding(false)}
-        />
       )}
 
       {/* Queue section */}
