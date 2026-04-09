@@ -99,8 +99,8 @@ db-down:
 web-install:
 	cd web && npm install
 
-web-dev:
-	cd web && npm run dev
+web-dev: web-install
+	cd web && npm run dev -- --port 8080 --host 127.0.0.1
 
 web-build:
 	cd web && npm run build
