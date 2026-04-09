@@ -17,6 +17,7 @@ import OrgMembers from './OrgMembers'
 import OrgAdapters from './OrgAdapters'
 import OrgMCPServers from './OrgMCPServers'
 import OrgSelector from '../components/OrgSelector'
+import OnboardingBanner from '../components/OnboardingBanner'
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
@@ -204,6 +205,7 @@ export default function Dashboard() {
             </span>
           </div>
         )}
+        <OnboardingBanner />
         {llmStatus?.spend_cap_exhausted && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex items-center justify-between text-sm">
             <span className="text-text-primary">
