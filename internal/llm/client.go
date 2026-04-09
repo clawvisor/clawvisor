@@ -25,7 +25,8 @@ import (
 // user-facing prompt to provide their own API key.
 var ErrSpendCapExhausted = errors.New("haiku proxy spend cap exhausted")
 
-const anthropicVersion = "2023-06-01"
+const anthropicVersion       = "2023-06-01"
+const vertexAnthropicVersion = "vertex-2023-10-16"
 
 // defaultMaxTokens is the upper bound sent on every request when no per-client override is set.
 // All use-cases (safety: ~50 tokens, conflicts: ~256, policy YAML: ~600) fit within 1024.
@@ -281,7 +282,7 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 		"max_tokens":        c.effectiveMaxTokens(),
 		"messages":          convo,
 		"temperature":       0,
-		"anthropic_version": anthropicVersion,
+		"anthropic_version": vertexAnthropicVersion,
 	}
 	if system != "" {
 		reqBody["system"] = system
