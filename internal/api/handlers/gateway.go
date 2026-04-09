@@ -54,7 +54,7 @@ type GatewayHandler struct {
 	cfg          config.Config
 	logger       *slog.Logger
 	baseURL  string
-	eventHub *events.Hub
+	eventHub events.EventHub
 }
 
 func NewGatewayHandler(
@@ -67,7 +67,7 @@ func NewGatewayHandler(
 	cfg config.Config,
 	logger *slog.Logger,
 	baseURL string,
-	eventHub *events.Hub,
+	eventHub events.EventHub,
 ) *GatewayHandler {
 	return &GatewayHandler{
 		store: st, vault: v, adapterReg: adapterReg,

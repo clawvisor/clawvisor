@@ -78,8 +78,9 @@ type Server struct {
 
 	pushNotifier *push.Notifier                // concrete push notifier; may be nil
 	msgBuffer    *groupchat.MessageBuffer // group chat message buffer; may be nil
+	decisionBus  notify.DecisionBus      // cross-instance decision delivery; may be nil
 
-	eventHub    *events.Hub
+	eventHub    events.EventHub
 	mcpServer   *mcp.Server
 	ticketStore *intauth.TicketStore
 }
@@ -164,6 +165,17 @@ func WithPushNotifier(pn *push.Notifier) ServerOption {
 // approval via LLM analysis.
 func WithGroupChatBuffer(buf *groupchat.MessageBuffer) ServerOption {
 	return func(s *Server) { s.msgBuffer = buf }
+}
+
+// WithEventHub overrides the default in-memory event hub with an external
+// implementation (e.g. Redis-backed) for multi-instance deployments.
+func WithEventHub(hub events.EventHub) ServerOption {
+	return func(s *Server) { s.eventHub = hub }
+}
+
+// WithDecisionBus sets the cross-instance decision bus for callback decisions.
+func WithDecisionBus(bus notify.DecisionBus) ServerOption {
+	return func(s *Server) { s.decisionBus = bus }
 }
 
 // New creates a Server and registers all routes.
@@ -862,7 +874,31 @@ func (s *Server) Run(ctx context.Context) error {
 		RunCleanup(context.Context)
 	}); ok {
 		go dc.RunCleanup(ctx)
-		go s.consumeNotifierDecisions(ctx, dc.DecisionChannel())
+
+		if s.decisionBus != nil {
+			// Bridge local decisions to the cross-instance bus.
+			localCh := dc.DecisionChannel()
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case d, ok := <-localCh:
+						if !ok {
+							return
+						}
+						if err := s.decisionBus.Publish(ctx, d); err != nil {
+							s.logger.Warn("decision bus: publish failed", "err", err)
+						}
+					}
+				}
+			}()
+			// Consume decisions from the bus (receives from all instances).
+			go s.consumeNotifierDecisions(ctx, s.decisionBus.Subscribe(ctx))
+		} else {
+			// Single-instance: consume directly from the local channel.
+			go s.consumeNotifierDecisions(ctx, dc.DecisionChannel())
+		}
 	}
 
 	// Start device pairing session cleanup.

@@ -29,7 +29,7 @@ const (
 type DevicesHandler struct {
 	st       store.Store
 	pushN    *push.Notifier // may be nil if push is not configured
-	eventHub *events.Hub
+	eventHub events.EventHub
 	logger   *slog.Logger
 	baseURL  string
 	jwtSvc   pkgauth.TokenService
@@ -57,7 +57,7 @@ type pairingSession struct {
 	ExpiresAt time.Time
 }
 
-func NewDevicesHandler(st store.Store, pushN *push.Notifier, eventHub *events.Hub, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
+func NewDevicesHandler(st store.Store, pushN *push.Notifier, eventHub events.EventHub, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
 	return &DevicesHandler{
 		st:       st,
 		pushN:    pushN,

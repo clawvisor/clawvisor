@@ -36,7 +36,7 @@ const (
 type ConnectionsHandler struct {
 	st       store.Store
 	notifier notify.Notifier
-	eventHub *events.Hub
+	eventHub events.EventHub
 	logger   *slog.Logger
 
 	// In-memory token cache: connection request ID → {raw token, approved time}.
@@ -61,7 +61,7 @@ type approvedToken struct {
 }
 
 func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
-	eventHub *events.Hub, logger *slog.Logger) *ConnectionsHandler {
+	eventHub events.EventHub, logger *slog.Logger) *ConnectionsHandler {
 	return &ConnectionsHandler{
 		st:       st,
 		notifier: notifier,

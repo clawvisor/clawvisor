@@ -14,7 +14,7 @@ import (
 // means any event triggers a re-fetch.
 func WaitFor[T any](
 	ctx context.Context,
-	hub *Hub,
+	hub EventHub,
 	userID string,
 	timeout time.Duration,
 	eventTypes []string,
