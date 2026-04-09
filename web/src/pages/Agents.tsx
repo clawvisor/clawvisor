@@ -171,10 +171,10 @@ export default function Agents() {
 
 // ── Connect an Agent guide ───────────────────────────────────────────────────
 
-type AgentTab = 'claude-code' | 'claude-desktop' | 'other'
+type AgentTab = 'openclaw' | 'claude-code' | 'claude-desktop' | 'other'
 
 function ConnectAgentGuide() {
-  const [tab, setTab] = useState<AgentTab>('claude-code')
+  const [tab, setTab] = useState<AgentTab>('openclaw')
   const [copied, setCopied] = useState(false)
   const { user } = useAuth()
 
@@ -208,6 +208,7 @@ function ConnectAgentGuide() {
   }
 
   const tabs: { id: AgentTab; label: string }[] = [
+    { id: 'openclaw', label: 'OpenClaw' },
     { id: 'claude-code', label: 'Claude Code' },
     { id: 'claude-desktop', label: 'Claude Desktop' },
     { id: 'other', label: 'Other Agents' },
@@ -240,6 +241,7 @@ function ConnectAgentGuide() {
       </div>
 
       <div className="p-5">
+        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
         {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -382,6 +384,122 @@ function ClaudeDesktopGuide({ clawvisorURL }: { clawvisorURL: string }) {
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+function OpenClawGuide({ setupURL, clawvisorURL, copied, onCopy }: {
+  setupURL: string | null
+  clawvisorURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const prompt = setupURL
+    ? `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
+    : null
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Connect your <a href="https://openclaw.org" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">OpenClaw</a> agent
+        to Clawvisor. The best way is to create a Telegram group chat with both your OpenClaw agent and
+        Clawvisor — this lets them coordinate directly while keeping you in the loop.
+      </p>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={1} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Set up a Telegram group chat</p>
+          <p className="text-xs text-text-tertiary">
+            Head to <a href="/dashboard/settings" className="text-brand hover:underline">Settings &rarr; Telegram</a> to
+            connect your Clawvisor bot and create a group chat with your OpenClaw agent.
+            The setup wizard walks you through each step.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={2} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Connect your OpenClaw agent to Clawvisor</p>
+          {prompt ? (
+            <>
+              <p className="text-xs text-text-tertiary">
+                Paste this into your Telegram group chat — your OpenClaw agent will self-register
+                and set up the connection automatically.
+              </p>
+              <div className="relative group">
+                <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+                  {prompt}
+                </pre>
+                <button
+                  onClick={() => onCopy(prompt)}
+                  className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-text-tertiary">
+              The setup prompt requires a relay connection. Complete the initial Clawvisor setup,
+              then reload this page. You can still use the manual setup below.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+          <p className="text-xs text-text-tertiary">
+            A connection request will appear in the <strong>Pending Connections</strong> section above.
+            Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+            and is ready to go.
+          </p>
+        </div>
+      </div>
+
+      {/* Manual path */}
+      <details className="group mt-2">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          Manual setup (token + environment variables)
+        </summary>
+        <div className="mt-4 space-y-4 pl-0">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Create an agent token</p>
+              <p className="text-xs text-text-tertiary">
+                Use the <strong>Create Agent</strong> form above. Copy the token — it's shown only once.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={2} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Configure environment variables</p>
+              <p className="text-xs text-text-tertiary">
+                Set these in your OpenClaw agent's environment:
+              </p>
+              <CodeBlock>{`CLAWVISOR_URL=${clawvisorURL}\nCLAWVISOR_AGENT_TOKEN=<your token>`}</CodeBlock>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={3} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Verify</p>
+              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+              <p className="text-xs text-text-tertiary">
+                Should return a JSON catalog of available services.
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   )
 }
