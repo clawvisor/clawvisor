@@ -679,6 +679,10 @@ export const api = {
         ...(alias ? { alias } : {}),
         ...(config && Object.keys(config).length > 0 ? { config } : {}),
       }),
+    deactivatePreflight: (serviceID: string, alias?: string) =>
+      post<{ service: string; affected_task_count: number }>(`/api/services/${serviceID}/deactivate?dry_run=true`, {
+        ...(alias ? { alias } : {}),
+      }),
     deactivate: (serviceID: string, alias?: string) =>
       post<{ status: string; service: string }>(`/api/services/${serviceID}/deactivate`, {
         ...(alias ? { alias } : {}),

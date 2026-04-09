@@ -816,6 +816,17 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dry-run mode: return the number of active tasks that would be revoked
+	// without actually deactivating.
+	if r.URL.Query().Get("dry_run") == "true" {
+		count := h.countTasksForService(r.Context(), user.ID, serviceID, alias)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"service":             serviceID,
+			"affected_task_count": count,
+		})
+		return
+	}
+
 	// Remove the service_meta and service_config records first.
 	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
 	_ = h.st.DeleteServiceConfig(r.Context(), user.ID, serviceID, alias)
@@ -860,6 +871,34 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
 }
 
+// serviceMatchStrings returns the base service and optional service:alias
+// strings used to match tasks against a service+alias pair.
+func serviceMatchStrings(serviceID, alias string) (base, withAlias string) {
+	base = serviceID
+	if alias != "" && alias != "default" {
+		withAlias = serviceID + ":" + alias
+	}
+	return
+}
+
+// countTasksForService returns the number of active tasks that reference the
+// given service and alias.
+func (h *ServicesHandler) countTasksForService(ctx context.Context, userID, serviceID, alias string) int {
+	tasks, _, err := h.st.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
+	if err != nil {
+		h.logger.Warn("failed to list tasks for service count", "err", err, "user", userID)
+		return 0
+	}
+	base, withAlias := serviceMatchStrings(serviceID, alias)
+	count := 0
+	for _, t := range tasks {
+		if taskReferencesService(t, base, withAlias) {
+			count++
+		}
+	}
+	return count
+}
+
 // revokeTasksForService revokes all active tasks that have authorized actions
 // referencing the given service and alias.
 func (h *ServicesHandler) revokeTasksForService(ctx context.Context, userID, serviceID, alias string) {
@@ -869,16 +908,10 @@ func (h *ServicesHandler) revokeTasksForService(ctx context.Context, userID, ser
 		return
 	}
 
-	// Build the service strings that would appear in authorized_actions.
-	// Tasks store service as "google.gmail" (default alias) or "google.gmail:personal" (named alias).
-	matchService := serviceID
-	matchServiceAlias := ""
-	if alias != "" && alias != "default" {
-		matchServiceAlias = serviceID + ":" + alias
-	}
+	base, withAlias := serviceMatchStrings(serviceID, alias)
 
 	for _, t := range tasks {
-		if taskReferencesService(t, matchService, matchServiceAlias) {
+		if taskReferencesService(t, base, withAlias) {
 			if err := h.st.RevokeTask(ctx, t.ID, userID); err != nil {
 				h.logger.Warn("failed to revoke task for deactivated service", "err", err, "task_id", t.ID)
 				continue
