@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoadEmbeddedDefinitions(t *testing.T) {
-	loader := New(definitions.FS, "", nil, nil)
+	loader := New(definitions.FS, nil, nil, nil)
 	if err := loader.LoadAll(); err != nil {
 		t.Fatalf("LoadAll failed: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 }
 
 func TestLoadedDefinitionsHaveMetadata(t *testing.T) {
-	loader := New(definitions.FS, "", nil, nil)
+	loader := New(definitions.FS, nil, nil, nil)
 	if err := loader.LoadAll(); err != nil {
 		t.Fatalf("LoadAll failed: %v", err)
 	}

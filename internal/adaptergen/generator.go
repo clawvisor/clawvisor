@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -29,7 +27,8 @@ type Generator struct {
 	genClient  *llm.Client // high max_tokens for YAML generation
 	riskClient *llm.Client // lower max_tokens for risk classification JSON
 	registry   *adapters.Registry
-	adaptersDir string // ~/.clawvisor/adapters/
+	store       AdapterStore
+	userID      string // scopes cache operations; empty for local single-user mode
 	logger      *slog.Logger
 }
 
@@ -65,17 +64,18 @@ type ParamPreview struct {
 }
 
 // New creates a Generator.
-func New(cfg config.AdapterGenConfig, registry *adapters.Registry, adaptersDir string, logger *slog.Logger) *Generator {
+func New(cfg config.AdapterGenConfig, registry *adapters.Registry, adapterStore AdapterStore, userID string, logger *slog.Logger) *Generator {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	base := llm.NewClient(cfg.LLMProviderConfig)
 	return &Generator{
-		genClient:   base.WithMaxTokens(16384), // YAML definitions can be very large for big specs
-		riskClient:  base.WithMaxTokens(4096),  // risk JSON scales with action count
-		registry:    registry,
-		adaptersDir: adaptersDir,
-		logger:      logger,
+		genClient:  base.WithMaxTokens(16384), // YAML definitions can be very large for big specs
+		riskClient: base.WithMaxTokens(4096),  // risk JSON scales with action count
+		registry:   registry,
+		store:      adapterStore,
+		userID:     userID,
+		logger:     logger,
 	}
 }
 
@@ -131,9 +131,9 @@ func (g *Generator) Generate(ctx context.Context, src Source) (*GenerateResult, 
 	return result, nil
 }
 
-// Install takes previously generated YAML, validates it, writes it to disk,
-// and hot-loads it into the registry.
-func (g *Generator) Install(yamlContent string) (*GenerateResult, error) {
+// Install takes previously generated YAML, validates it, persists it via the
+// adapter store, and hot-loads it into the registry.
+func (g *Generator) Install(ctx context.Context, yamlContent string) (*GenerateResult, error) {
 	def, validationErrs, _, err := parseAndValidate([]byte(yamlContent))
 	if err != nil {
 		return nil, fmt.Errorf("YAML is malformed: %w", err)
@@ -142,7 +142,7 @@ func (g *Generator) Install(yamlContent string) (*GenerateResult, error) {
 		return nil, fmt.Errorf("adapter failed validation: %s", strings.Join(validationErrs, "; "))
 	}
 
-	if err := g.install(def, yamlContent); err != nil {
+	if err := g.install(ctx, def, yamlContent); err != nil {
 		return nil, fmt.Errorf("installation failed: %w", err)
 	}
 
@@ -167,22 +167,21 @@ func (g *Generator) Update(ctx context.Context, serviceID string, src Source) (*
 	return g.Generate(ctx, src)
 }
 
-// Remove deletes an adapter from the registry and disk.
-func (g *Generator) Remove(serviceID string) error {
-	if _, ok := g.registry.Get(serviceID); !ok {
+// Remove deletes an adapter from the registry and the adapter store.
+func (g *Generator) Remove(ctx context.Context, serviceID string) error {
+	if _, ok := g.registry.GetForUser(ctx, serviceID, g.userID); !ok {
 		return fmt.Errorf("adapter %q not found in registry", serviceID)
 	}
 
-	// Remove from disk (path-traversal safe).
-	path, err := safeFilename(g.adaptersDir, serviceID)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing adapter file: %w", err)
+	if err := g.store.Delete(ctx, serviceID); err != nil {
+		return fmt.Errorf("removing adapter from store: %w", err)
 	}
 
-	g.registry.Remove(serviceID)
+	if g.userID != "" {
+		g.registry.RemoveForUser(serviceID, g.userID)
+	} else {
+		g.registry.Remove(serviceID)
+	}
 	g.logger.Info("adapter removed", "service_id", serviceID)
 
 	return nil
@@ -242,20 +241,10 @@ func (g *Generator) classifyRisk(ctx context.Context, rawYAML string) (string, e
 	return string(out), nil
 }
 
-// install writes the YAML to disk and hot-loads the adapter into the registry.
-func (g *Generator) install(def yamldef.ServiceDef, yamlContent string) error {
-	// Ensure the adapters directory exists.
-	if err := os.MkdirAll(g.adaptersDir, 0o755); err != nil {
-		return fmt.Errorf("creating adapters directory: %w", err)
-	}
-
-	// Write the YAML file (path-traversal safe).
-	path, err := safeFilename(g.adaptersDir, def.Service.ID)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, []byte(yamlContent), 0o644); err != nil {
-		return fmt.Errorf("writing adapter file: %w", err)
+// install persists the YAML via the adapter store and hot-loads the adapter into the registry.
+func (g *Generator) install(ctx context.Context, def yamldef.ServiceDef, yamlContent string) error {
+	if err := g.store.Save(ctx, def.Service.ID, yamlContent); err != nil {
+		return fmt.Errorf("saving adapter: %w", err)
 	}
 
 	// Build and register the adapter at runtime (hot-load).
@@ -266,35 +255,6 @@ func (g *Generator) install(def yamldef.ServiceDef, yamlContent string) error {
 	g.registry.Replace(adapter)
 
 	return nil
-}
-
-// safeFilename converts a service ID to a filename and verifies it contains
-// no path traversal characters. This prevents writes outside ~/.clawvisor/adapters/
-// via LLM-generated service IDs.
-func safeFilename(adaptersDir, serviceID string) (string, error) {
-	// Reject any service ID containing path separators or traversal sequences.
-	if strings.ContainsAny(serviceID, "/\\") {
-		return "", fmt.Errorf("service_id %q contains path separators", serviceID)
-	}
-	if strings.Contains(serviceID, "..") {
-		return "", fmt.Errorf("service_id %q contains path traversal sequence", serviceID)
-	}
-
-	filename := strings.ReplaceAll(serviceID, ".", "_") + ".yaml"
-
-	// Belt-and-suspenders: verify the resolved path is under adaptersDir.
-	absDir, err := filepath.Abs(adaptersDir)
-	if err != nil {
-		return "", fmt.Errorf("resolving adapters directory: %w", err)
-	}
-	absPath, err := filepath.Abs(filepath.Join(adaptersDir, filename))
-	if err != nil {
-		return "", fmt.Errorf("resolving adapter file path: %w", err)
-	}
-	if !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) {
-		return "", fmt.Errorf("service_id %q resolves to a path outside the adapters directory", serviceID)
-	}
-	return absPath, nil
 }
 
 // buildResult constructs a GenerateResult with structured action previews from a parsed def.

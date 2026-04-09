@@ -128,7 +128,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// scope-only markers used by permission hooks — they never execute
 		// through adapters, so skip adapter/activation validation.
 		if !isGuardVirtualService(serviceType) {
-			adapter, ok := h.adapterReg.Get(serviceType)
+			adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 			if !ok {
 				writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
 					fmt.Sprintf("unknown service %q", a.Service))
@@ -764,7 +764,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	// Validate service and action exist (skip for guard virtual services).
 	serviceType, serviceAlias := parseServiceAlias(req.Service)
 	if !isGuardVirtualService(serviceType) {
-		adapter, ok := h.adapterReg.Get(serviceType)
+		adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
 				fmt.Sprintf("unknown service %q", req.Service))

@@ -299,7 +299,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
 				}
 			} else {
-				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, chainFacts)
+				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
 			}
 			// Chain context fallback: if the LLM flagged a missing entity,
 			// check programmatically — the LLM may have missed it in a long
@@ -344,7 +344,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			// ── End intent verification ──────────────────────────────────
 
 			// Check activation for credential-free services before executing.
-			if taskAdapter, taskAdapterOK := h.adapterReg.Get(serviceType); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
+			if taskAdapter, taskAdapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
 				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
 					dur := int(time.Since(start).Milliseconds())
 					e := baseEntry("block", "error", taskIDPtr)
@@ -366,7 +366,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			vKey := h.adapterReg.VaultKeyWithAlias(serviceType, serviceAlias)
+			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
 			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
 				agent.UserID, serviceType, req.Action, req.Params, vKey)
 			dur := int(time.Since(start).Milliseconds())
@@ -374,7 +374,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if execErr != nil {
 				if errors.Is(execErr, vault.ErrNotFound) {
 					// Vault credential missing — fail immediately.
-					adapter, adapterOK := h.adapterReg.Get(serviceType)
+					adapter, adapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
 						e := baseEntry("block", "error", taskIDPtr)
 						e.DurationMS = dur
@@ -487,14 +487,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		// In scope + (!auto_execute || hardcoded) → falls through to per-request approval below.
 		// Run advisory verification so the human sees warnings in the approval UI.
 		advisoryFacts := h.loadChainFacts(ctx, task, req)
-		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, advisoryFacts)
+		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, advisoryFacts)
 	}
 
 	// ── Step 5: Per-request approval ─────────────────────────────────────────
 	// Task in-scope but not auto-execute, or hardcoded approval.
 
 	// Reject unknown services immediately.
-	approveAdapter, ok := h.adapterReg.Get(serviceType)
+	approveAdapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 	if !ok {
 		e := baseEntry("approve", "error", nil)
 		e.DurationMS = int(time.Since(start).Milliseconds())
@@ -522,7 +522,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				notActivated = true
 			}
 		} else {
-			vKey := h.adapterReg.VaultKeyWithAlias(serviceType, serviceAlias)
+			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
 			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
 				notActivated = true
 			}
@@ -706,7 +706,9 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
+	// Resolve (and cache) the adapter before VaultKeyWithAliasForUser and executeAdapterRequest.
+	h.adapterReg.GetForUser(ctx, serviceType, pa.UserID)
+	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, pa.UserID)
 
 	start := time.Now()
 	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg,
@@ -884,6 +886,7 @@ func (h *GatewayHandler) runVerification(
 	matchedAction *store.TaskAction,
 	req gateway.Request,
 	serviceType string,
+	userID string,
 	chainFacts []store.ChainFact,
 ) *intent.VerificationVerdict {
 	var expectedUse, expansionRationale string
@@ -892,7 +895,7 @@ func (h *GatewayHandler) runVerification(
 		expansionRationale = matchedAction.ExpansionRationale
 	}
 	var serviceHints string
-	if ada, ok := h.adapterReg.Get(serviceType); ok {
+	if ada, ok := h.adapterReg.GetForUser(ctx, serviceType, userID); ok {
 		if hinter, ok := ada.(adapters.VerificationHinter); ok {
 			serviceHints = hinter.VerificationHints()
 		}
@@ -1095,14 +1098,14 @@ func executeAdapterRequest(
 	vaultKey string,
 ) (*adapters.Result, error) {
 	serviceType, _ := parseServiceAlias(service)
-	adapter, ok := reg.Get(serviceType)
+	adapter, ok := reg.GetForUser(ctx, serviceType, userID)
 	if !ok {
 		return nil, fmt.Errorf("service %q is not supported", serviceType)
 	}
 
 	vKey := vaultKey
 	if vKey == "" {
-		vKey = reg.VaultKey(serviceType)
+		vKey = reg.VaultKeyForUser(serviceType, userID)
 	}
 	cred, err := v.Get(ctx, userID, vKey)
 	if err != nil {

@@ -123,6 +123,11 @@ type Store interface {
 	DeleteExpiredConnectionRequests(ctx context.Context) error
 	CountPendingConnectionRequests(ctx context.Context) (int, error)
 
+	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
+	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error
+	ListGeneratedAdapters(ctx context.Context, userID string) ([]*GeneratedAdapter, error)
+	DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error
+
 	// MCP sessions (persist across restarts)
 	CreateMCPSession(ctx context.Context, id string, expiresAt time.Time) error
 	MCPSessionValid(ctx context.Context, id string) (bool, error)
@@ -379,6 +384,15 @@ type OAuthClient struct {
 	ClientName   string    `json:"client_name"`
 	RedirectURIs []string  `json:"redirect_uris"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// GeneratedAdapter is a user-generated adapter YAML definition stored in the database.
+type GeneratedAdapter struct {
+	UserID      string    `json:"user_id"`
+	ServiceID   string    `json:"service_id"`
+	YAMLContent string    `json:"yaml_content"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // OAuthAuthorizationCode is a one-time-use authorization code for the OAuth 2.1 flow.

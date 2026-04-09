@@ -114,7 +114,7 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 			expectedUse = match.MatchedAction.ExpectedUse
 		}
 		var serviceHints string
-		if ada, ok := h.adapterReg.Get(service); ok {
+		if ada, ok := h.adapterReg.GetForUser(ctx, service, agent.UserID); ok {
 			if hinter, ok := ada.(adapters.VerificationHinter); ok {
 				serviceHints = hinter.VerificationHints()
 			}

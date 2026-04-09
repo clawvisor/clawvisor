@@ -1679,6 +1679,49 @@ func (s *Store) DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID
 	return err
 }
 
+// ── Generated Adapters ─────────────────────────────────────────────────────────
+
+func (s *Store) SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO generated_adapters (user_id, service_id, yaml_content)
+		VALUES (?, ?, ?)
+		ON CONFLICT (user_id, service_id) DO UPDATE SET
+			yaml_content = excluded.yaml_content,
+			updated_at = CURRENT_TIMESTAMP
+	`, userID, serviceID, yamlContent)
+	return err
+}
+
+func (s *Store) ListGeneratedAdapters(ctx context.Context, userID string) ([]*store.GeneratedAdapter, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT user_id, service_id, yaml_content, created_at, updated_at
+		 FROM generated_adapters WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.GeneratedAdapter
+	for rows.Next() {
+		a := &store.GeneratedAdapter{}
+		var createdAt, updatedAt string
+		if err := rows.Scan(&a.UserID, &a.ServiceID, &a.YAMLContent, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		a.CreatedAt = parseTime(createdAt)
+		a.UpdatedAt = parseTime(updatedAt)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+
+func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM generated_adapters WHERE user_id = ? AND service_id = ?`,
+		userID, serviceID)
+	return err
+}
+
 // Ensure Store implements store.Store at compile time.
 var _ store.Store = (*Store)(nil)
 

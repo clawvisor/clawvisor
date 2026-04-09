@@ -120,6 +120,11 @@ actions:
 // riskJSON is the risk classification response the mock LLM returns.
 const riskJSON = `{"list_items":{"category":"read","sensitivity":"low"},"create_item":{"category":"write","sensitivity":"medium"}}`
 
+func newTestStore(t *testing.T) *FilesystemStore {
+	t.Helper()
+	return NewFilesystemStore(filepath.Join(t.TempDir(), "adapters"))
+}
+
 func TestGenerate_EndToEnd(t *testing.T) {
 	callCount := 0
 	_, cfg := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -134,11 +139,10 @@ func TestGenerate_EndToEnd(t *testing.T) {
 		}
 	})
 
-	tmpDir := t.TempDir()
-	adaptersDir := filepath.Join(tmpDir, "adapters")
+	store := newTestStore(t)
 	registry := adapters.NewRegistry()
 
-	gen := New(cfg, registry, adaptersDir, nil)
+	gen := New(cfg, registry, store, "", nil)
 
 	result, err := gen.Generate(context.Background(), Source{
 		Type:    SourceMCP,
@@ -164,7 +168,7 @@ func TestGenerate_EndToEnd(t *testing.T) {
 	}
 
 	// Now install explicitly.
-	installed, err := gen.Install(result.YAML)
+	installed, err := gen.Install(context.Background(), result.YAML)
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -182,7 +186,7 @@ func TestGenerate_EndToEnd(t *testing.T) {
 	}
 
 	// Verify YAML file was written to disk.
-	yamlPath := filepath.Join(adaptersDir, "testapi.yaml")
+	yamlPath := filepath.Join(store.dir, "testapi.yaml")
 	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
 		t.Error("adapter YAML file not written to disk")
 	}
@@ -200,7 +204,7 @@ func TestGenerate_TwoLLMCalls(t *testing.T) {
 		}
 	})
 
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 	_, err := gen.Generate(context.Background(), Source{
 		Type:    SourceMCP,
 		Content: sampleSlackMCPTools,
@@ -226,7 +230,7 @@ func TestGenerate_StripsMarkdownFences(t *testing.T) {
 		}
 	})
 
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 	result, err := gen.Generate(context.Background(), Source{
 		Type:    SourceMCP,
 		Content: sampleSlackMCPTools,
@@ -247,7 +251,7 @@ func TestGenerate_EmptySource(t *testing.T) {
 		t.Fatal("LLM should not be called with empty source")
 	})
 
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 	_, err := gen.Generate(context.Background(), Source{
 		Type:    SourceMCP,
 		Content: "",
@@ -262,7 +266,7 @@ func TestGenerate_InvalidSourceType(t *testing.T) {
 		t.Fatal("LLM should not be called with invalid source type")
 	})
 
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 	_, err := gen.Generate(context.Background(), Source{
 		Type:    "invalid",
 		Content: "some content",
@@ -285,10 +289,9 @@ func TestRemove(t *testing.T) {
 		}
 	})
 
-	tmpDir := t.TempDir()
-	adaptersDir := filepath.Join(tmpDir, "adapters")
+	store := newTestStore(t)
 	registry := adapters.NewRegistry()
-	gen := New(cfg, registry, adaptersDir, nil)
+	gen := New(cfg, registry, store, "", nil)
 
 	result, err := gen.Generate(context.Background(), Source{
 		Type:    SourceMCP,
@@ -299,19 +302,19 @@ func TestRemove(t *testing.T) {
 	}
 
 	// Install so the file is written to disk and adapter is in the registry.
-	_, err = gen.Install(result.YAML)
+	_, err = gen.Install(context.Background(), result.YAML)
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
 	// Verify file exists before removal.
-	yamlPath := filepath.Join(adaptersDir, "testapi.yaml")
+	yamlPath := filepath.Join(store.dir, "testapi.yaml")
 	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
 		t.Fatal("adapter file should exist before removal")
 	}
 
 	// Remove it.
-	if err := gen.Remove("testapi"); err != nil {
+	if err := gen.Remove(context.Background(), "testapi"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 
@@ -323,9 +326,9 @@ func TestRemove(t *testing.T) {
 
 func TestRemove_NotFound(t *testing.T) {
 	_, cfg := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {})
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 
-	err := gen.Remove("nonexistent")
+	err := gen.Remove(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent adapter")
 	}
@@ -333,7 +336,7 @@ func TestRemove_NotFound(t *testing.T) {
 
 func TestUpdate_NotFound(t *testing.T) {
 	_, cfg := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {})
-	gen := New(cfg, adapters.NewRegistry(), t.TempDir(), nil)
+	gen := New(cfg, adapters.NewRegistry(), newTestStore(t), "", nil)
 
 	_, err := gen.Update(context.Background(), "nonexistent", Source{
 		Type:    SourceMCP,

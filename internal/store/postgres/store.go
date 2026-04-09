@@ -1508,3 +1508,43 @@ func (s *Store) DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID
 	_, err := s.pool.Exec(ctx, `DELETE FROM agent_group_pairings WHERE group_chat_id = $1`, groupChatID)
 	return err
 }
+
+// ── Generated Adapters ─────────────────────────────────────────────────────────
+
+func (s *Store) SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO generated_adapters (user_id, service_id, yaml_content)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, service_id) DO UPDATE SET
+			yaml_content = EXCLUDED.yaml_content,
+			updated_at = NOW()
+	`, userID, serviceID, yamlContent)
+	return err
+}
+
+func (s *Store) ListGeneratedAdapters(ctx context.Context, userID string) ([]*store.GeneratedAdapter, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT user_id, service_id, yaml_content, created_at, updated_at
+		 FROM generated_adapters WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.GeneratedAdapter
+	for rows.Next() {
+		a := &store.GeneratedAdapter{}
+		if err := rows.Scan(&a.UserID, &a.ServiceID, &a.YAMLContent, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+
+func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM generated_adapters WHERE user_id = $1 AND service_id = $2`,
+		userID, serviceID)
+	return err
+}

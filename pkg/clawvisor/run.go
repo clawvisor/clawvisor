@@ -71,6 +71,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		apiOpts = append(apiOpts, api.WithGroupChatBuffer(opts.MessageBuffer))
 	}
 
+	if opts.AdapterGenFactory != nil {
+		apiOpts = append(apiOpts, api.WithAdapterGenFactory(opts.AdapterGenFactory))
+	}
+
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
 		opts.AdapterReg, opts.Notifier, opts.Config.LLM, opts.MagicStore,
