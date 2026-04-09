@@ -209,20 +209,38 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("will be available in every future Claude Code session without any per-project\n")
 	b.WriteString("setup.\n\n")
 
-	b.WriteString("### 3. Install the Clawvisor skill\n\n")
+	stepNum := 3
+	if relay.ViaRelay(r.Context()) {
+		fmt.Fprintf(&b, "### %d. Add auto-approve permission rules\n\n", stepNum)
+		b.WriteString("Add a permission rule so Claude Code doesn't prompt for approval on every\n")
+		b.WriteString("curl request to Clawvisor. Read `~/.claude/settings.json` and append the\n")
+		b.WriteString("following entry to the `permissions.allow` array (create the array if it\n")
+		b.WriteString("doesn't exist), preserving all other entries:\n\n")
+		b.WriteString("```json\n")
+		b.WriteString("{\n")
+		fmt.Fprintf(&b, "  \"Bash(curl *%s/*)\": true\n", clawvisorURL)
+		b.WriteString("}\n")
+		b.WriteString("```\n\n")
+		b.WriteString("Write the updated JSON back to `~/.claude/settings.json`.\n\n")
+		stepNum++
+	}
+
+	fmt.Fprintf(&b, "### %d. Install the Clawvisor skill\n\n", stepNum)
 	b.WriteString("Download and install the skill globally so it's available in all projects:\n\n")
 	b.WriteString("```bash\n")
 	fmt.Fprintf(&b, "mkdir -p ~/.claude/skills/clawvisor && curl -sf \"%s\" -o ~/.claude/skills/clawvisor/SKILL.md\n", skillURL)
 	b.WriteString("```\n\n")
 
-	b.WriteString("### 4. Verify\n\n")
+	stepNum++
+	fmt.Fprintf(&b, "### %d. Verify\n\n", stepNum)
 	b.WriteString("```bash\n")
 	fmt.Fprintf(&b, "curl -sf -H \"Authorization: Bearer $CLAWVISOR_AGENT_TOKEN\" \\\n  %s/api/skill/catalog | head -20\n", clawvisorURL)
 	b.WriteString("```\n\n")
 	b.WriteString("This should return a JSON service catalog. If it returns 401, the token is\n")
 	b.WriteString("wrong. If it fails to connect, the daemon is not running.\n\n")
 
-	b.WriteString("### 5. End-to-end smoke test\n\n")
+	stepNum++
+	fmt.Fprintf(&b, "### %d. End-to-end smoke test\n\n", stepNum)
 	b.WriteString("Now that everything is configured, run a quick smoke test to prove the full\n")
 	b.WriteString("flow works. Use the Clawvisor skill to:\n\n")
 	b.WriteString("1. **Create a test task** — pick any connected service visible in the catalog\n")
@@ -240,14 +258,16 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("out-of-scope call should have been denied. If either result is unexpected,\n")
 	b.WriteString("help the user debug.\n\n")
 
-	b.WriteString("### 6. Done\n\n")
+	stepNum++
+	fmt.Fprintf(&b, "### %d. Done\n\n", stepNum)
 	b.WriteString("Tell the user setup is complete. The Clawvisor skill will be loaded\n")
 	b.WriteString("automatically when relevant, or they can invoke it explicitly. Remind them to:\n\n")
 	b.WriteString("- Connect services in the Clawvisor dashboard (Services tab) before asking\n")
 	b.WriteString("  you to use them\n")
 	b.WriteString("- Approve tasks in the dashboard or via mobile when you request them\n\n")
 
-	b.WriteString("### 7. Offer to uninstall /clawvisor-setup (optional)\n\n")
+	stepNum++
+	fmt.Fprintf(&b, "### %d. Offer to uninstall /clawvisor-setup (optional)\n\n", stepNum)
 	b.WriteString("Now that setup is complete, ask the user if they'd like to remove the\n")
 	b.WriteString("`/clawvisor-setup` slash command since it's no longer needed. If they agree:\n\n")
 	b.WriteString("```bash\n")
