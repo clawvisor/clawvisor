@@ -26,6 +26,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -38,6 +39,7 @@ type ServicesHandler struct {
 	adapterReg *adapters.Registry
 	logger     *slog.Logger
 	baseURL    string
+	eventHub   events.EventHub
 
 	// oauthStates holds temporary OAuth2 state tokens (in-memory; Phase 3 only).
 	oauthStates sync.Map // stateToken (string) → oauthStateEntry
@@ -96,9 +98,9 @@ func validateCLICallback(raw string) string {
 	return raw
 }
 
-func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, logger *slog.Logger, baseURL string) *ServicesHandler {
+func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, logger *slog.Logger, baseURL string, eventHub events.EventHub) *ServicesHandler {
 	return &ServicesHandler{
-		st: st, vault: v, adapterReg: adapterReg, logger: logger, baseURL: baseURL,
+		st: st, vault: v, adapterReg: adapterReg, logger: logger, baseURL: baseURL, eventHub: eventHub,
 	}
 }
 
@@ -821,6 +823,7 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 	// Credential-free services have no vault credential to clean up.
 	adapter, ok := h.adapterReg.Get(serviceID)
 	if ok && adapter.ValidateCredential(nil) == nil {
+		h.revokeTasksForService(r.Context(), user.ID, serviceID, alias)
 		h.logger.Info("credential-free service deactivated", "user", user.ID, "service", serviceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
 		return
@@ -850,9 +853,66 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 		_ = h.vault.Delete(r.Context(), user.ID, vKey)
 	}
 
+	h.revokeTasksForService(r.Context(), user.ID, serviceID, alias)
+
 	h.logger.Info("service deactivated", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated", "service": serviceID})
+}
+
+// revokeTasksForService revokes all active tasks that have authorized actions
+// referencing the given service and alias.
+func (h *ServicesHandler) revokeTasksForService(ctx context.Context, userID, serviceID, alias string) {
+	tasks, _, err := h.st.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
+	if err != nil {
+		h.logger.Warn("failed to list tasks for service cleanup", "err", err, "user", userID)
+		return
+	}
+
+	// Build the service strings that would appear in authorized_actions.
+	// Tasks store service as "google.gmail" (default alias) or "google.gmail:personal" (named alias).
+	matchService := serviceID
+	matchServiceAlias := ""
+	if alias != "" && alias != "default" {
+		matchServiceAlias = serviceID + ":" + alias
+	}
+
+	for _, t := range tasks {
+		if taskReferencesService(t, matchService, matchServiceAlias) {
+			if err := h.st.RevokeTask(ctx, t.ID, userID); err != nil {
+				h.logger.Warn("failed to revoke task for deactivated service", "err", err, "task_id", t.ID)
+				continue
+			}
+			_ = h.st.DeleteChainFactsByTask(ctx, t.ID)
+			h.logger.Info("revoked task due to service deactivation", "task_id", t.ID, "service", serviceID, "alias", alias)
+		}
+	}
+
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "tasks"})
+		h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	}
+}
+
+// taskReferencesService checks whether any authorized action in the task
+// references the given service. For default alias, it matches actions with
+// the base service type. For named aliases, it matches the "service:alias" form.
+func taskReferencesService(t *store.Task, baseService, serviceWithAlias string) bool {
+	for _, a := range t.AuthorizedActions {
+		if serviceWithAlias != "" {
+			// Named alias: only match exact "service:alias".
+			if a.Service == serviceWithAlias {
+				return true
+			}
+		} else {
+			// Default alias: match base service name (no colon suffix)
+			// or explicit "service:default".
+			if a.Service == baseService || a.Service == baseService+":default" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RenameAlias renames an existing service connection alias.
