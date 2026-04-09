@@ -278,7 +278,6 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 	}
 
 	reqBody := map[string]any{
-		"model":             c.model,
 		"max_tokens":        c.effectiveMaxTokens(),
 		"messages":          convo,
 		"temperature":       0,
