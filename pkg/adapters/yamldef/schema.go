@@ -70,7 +70,8 @@ type PKCEFlowDef struct {
 	Scopes       []string `yaml:"scopes"`                   // requested OAuth scopes
 	AuthorizeURL string   `yaml:"authorize_url"`            // e.g. "https://slack.com/oauth/v2/authorize"
 	TokenURL     string   `yaml:"token_url"`                // e.g. "https://slack.com/api/oauth.v2.access"
-	TokenPath    string   `yaml:"token_path,omitempty"`     // JSON path to access token in response (e.g. "authed_user.access_token")
+	TokenPath         string   `yaml:"token_path,omitempty"`          // JSON path to access token in response (e.g. "authed_user.access_token")
+	LocalhostRedirect bool     `yaml:"localhost_redirect,omitempty"`  // prefer http://localhost redirect over relay
 }
 
 // OAuthDef holds OAuth2-specific configuration.

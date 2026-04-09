@@ -13,9 +13,16 @@ service:
 auth:
   type: api_key
   header: "Authorization"
-  header_prefix: ""
+  header_prefix: "Bearer "
   extra_headers:
     Content-Type: "application/json"
+  pkce_flow:
+    client_id: "3320c87d639e6a40979d884f3ac96c2a"
+    client_id_env: "LINEAR_CLIENT_ID"
+    scopes: ["read", "write"]
+    authorize_url: "https://linear.app/oauth/authorize"
+    token_url: "https://api.linear.app/oauth/token"
+    localhost_redirect: true
 
 api:
   base_url: "https://api.linear.app/graphql"

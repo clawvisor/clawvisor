@@ -1560,10 +1560,11 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 
 	stateToken := uuid.New().String()
 
-	// PKCE flows require HTTPS redirect URIs (e.g. Slack). Use the relay
-	// daemon URL when available, falling back to the local baseURL.
+	// Some providers (e.g. Slack) require HTTPS redirect URIs — use the relay
+	// daemon URL. Others (e.g. Linear) accept http://localhost — use the
+	// local base URL to avoid relay path issues.
 	redirectBase := h.relayDaemonURL
-	if redirectBase == "" {
+	if redirectBase == "" || pfCfg.LocalhostRedirect {
 		redirectBase = h.baseURL
 	}
 	redirectURI := redirectBase + "/api/pkce-flow/callback"
