@@ -10,6 +10,7 @@ export default function Agents() {
   const [name, setName] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [showCreateForm, setShowCreateForm] = useState(false)
 
   const { data: agents, isLoading } = useQuery({
     queryKey: ['agents'],
@@ -28,6 +29,7 @@ export default function Agents() {
       setNewToken(agent.token ?? null)
       setName('')
       setFormError(null)
+      setShowCreateForm(false)
     },
     onError: (err: Error) => setFormError(err.message),
   })
@@ -46,6 +48,9 @@ export default function Agents() {
         An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
         Each agent gets a unique token — paste it into your agent's configuration to connect it to Clawvisor.
       </p>
+
+      {/* Connect an Agent guide */}
+      <ConnectAgentGuide />
 
       {/* Pending connection requests */}
       {pending.length > 0 && (
@@ -85,58 +90,396 @@ export default function Agents() {
         </div>
       )}
 
-      {/* Create form */}
-      <section className="bg-surface-1 border border-border-default rounded-md p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-text-secondary">Create Agent</h2>
-        {formError && <div className="text-xs text-danger">{formError}</div>}
-        <div className="flex gap-3">
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Agent name"
-            className="flex-1 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-          />
+      {/* Agent list */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-text-primary">Your Agents</h2>
           <button
-            onClick={() => createMut.mutate()}
-            disabled={createMut.isPending || !name.trim()}
-            className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            onClick={() => { setShowCreateForm(!showCreateForm); setFormError(null) }}
+            className="text-sm px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong"
           >
-            {createMut.isPending ? 'Creating…' : 'Create'}
+            {showCreateForm ? 'Cancel' : 'Add Agent'}
           </button>
+        </div>
+
+        {/* Inline create form */}
+        {showCreateForm && (
+          <div className="bg-surface-1 border border-border-default rounded-md p-4 mb-3 space-y-3">
+            {formError && <div className="text-xs text-danger">{formError}</div>}
+            <div className="flex gap-3">
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && name.trim()) createMut.mutate() }}
+                placeholder="Agent name"
+                autoFocus
+                className="flex-1 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              />
+              <button
+                onClick={() => createMut.mutate()}
+                disabled={createMut.isPending || !name.trim()}
+                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+              >
+                {createMut.isPending ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
+
+        {!isLoading && (!agents || agents.length === 0) && !showCreateForm && (
+          <div className="text-sm text-text-tertiary text-center py-8 bg-surface-1 border border-border-default rounded-md">
+            No agents yet. Follow the setup guides above or click <strong>Add Agent</strong> to create one manually.
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {agents?.map(agent => (
+            <div key={agent.id} className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between">
+              <div>
+                <span className="font-medium text-text-primary">{agent.name}</span>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm(`Revoke agent "${agent.name}"? Any running agents using this token will stop working.`)) {
+                    deleteMut.mutate(agent.id)
+                  }
+                }}
+                disabled={deleteMut.isPending}
+                className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+              >
+                Revoke
+              </button>
+            </div>
+          ))}
         </div>
       </section>
 
-      {/* Agent list */}
-      {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
+    </div>
+  )
+}
 
-      {!isLoading && (!agents || agents.length === 0) && (
-        <div className="text-sm text-text-tertiary text-center py-8">No agents yet. Create one above.</div>
-      )}
+// ── Connect an Agent guide ───────────────────────────────────────────────────
 
-      <div className="space-y-2">
-        {agents?.map(agent => (
-          <div key={agent.id} className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between">
-            <div>
-              <span className="font-medium text-text-primary">{agent.name}</span>
-              <p className="text-xs text-text-tertiary mt-0.5">
-                Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                if (confirm(`Revoke agent "${agent.name}"? Any running agents using this token will stop working.`)) {
-                  deleteMut.mutate(agent.id)
-                }
-              }}
-              disabled={deleteMut.isPending}
-              className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
-            >
-              Revoke
-            </button>
-          </div>
+type AgentTab = 'claude-code' | 'claude-desktop' | 'other'
+
+function ConnectAgentGuide() {
+  const [tab, setTab] = useState<AgentTab>('claude-code')
+  const [copied, setCopied] = useState(false)
+
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pairInfo'],
+    queryFn: () => api.devices.pairInfo(),
+  })
+
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
+
+  // When accessed locally, agents should talk to the daemon directly rather
+  // than routing through the relay. Use the relay URL only when the dashboard
+  // itself is being accessed remotely (cloud-hosted).
+  const clawvisorURL = isLocal
+    ? window.location.origin
+    : hasRelay
+      ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
+      : window.location.origin
+
+  const setupURL = hasRelay
+    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup`
+    : null
+
+  const copyText = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const tabs: { id: AgentTab; label: string }[] = [
+    { id: 'claude-code', label: 'Claude Code' },
+    { id: 'claude-desktop', label: 'Claude Desktop' },
+    { id: 'other', label: 'Other Agents' },
+  ]
+
+  return (
+    <section className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
+      <div className="px-5 pt-5 pb-0">
+        <h2 className="text-lg font-semibold text-text-primary">Connect an Agent</h2>
+        <p className="text-sm text-text-tertiary mt-1">
+          Follow the steps below to connect a coding agent to Clawvisor.
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-0 px-5 mt-4 border-b border-border-subtle">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => { setTab(t.id); setCopied(false) }}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              tab === t.id
+                ? 'border-brand text-brand'
+                : 'border-transparent text-text-tertiary hover:text-text-secondary'
+            }`}
+          >
+            {t.label}
+          </button>
         ))}
       </div>
 
+      <div className="p-5">
+        {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} onCopy={copyText} />}
+        {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} />}
+        {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+      </div>
+    </section>
+  )
+}
+
+function StepNumber({ n }: { n: number }) {
+  return (
+    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-brand/10 text-brand text-xs font-bold flex items-center justify-center">
+      {n}
+    </span>
+  )
+}
+
+function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void }) {
+  return (
+    <div className="relative group">
+      <pre className="bg-surface-0 border border-border-subtle rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+        {children}
+      </pre>
+      {onCopy && (
+        <button
+          onClick={onCopy}
+          className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1 opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          Copy
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ClaudeCodeGuide({ clawvisorURL, onCopy }: {
+  clawvisorURL: string
+  onCopy: (text: string) => void
+}) {
+  const installCmd = `mkdir -p ~/.claude/commands && curl -sf "${clawvisorURL}/skill/clawvisor-setup.md" -o ~/.claude/commands/clawvisor-setup.md`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Install a slash command, then run it in Claude Code. It handles agent registration,
+        skill installation, environment setup, and a smoke test — all interactively.
+      </p>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={1} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Install the setup command</p>
+          <p className="text-xs text-text-tertiary">
+            Run this in your terminal to install the{' '}
+            <code className="font-mono text-text-secondary">/clawvisor-setup</code> slash command:
+          </p>
+          <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={2} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Run /clawvisor-setup in Claude Code</p>
+          <p className="text-xs text-text-tertiary">
+            Open Claude Code and type{' '}
+            <code className="font-mono text-text-secondary">/clawvisor-setup</code>.
+            Claude will walk you through the setup — registering as an agent, configuring
+            environment variables, and verifying the connection.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+          <p className="text-xs text-text-tertiary">
+            During setup, Claude Code sends a connection request. Approve it in the{' '}
+            <strong>Pending Connections</strong> section above. Once approved, Claude Code
+            finishes setup automatically and runs a smoke test.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ClaudeDesktopGuide({ clawvisorURL }: { clawvisorURL: string }) {
+  const mcpURL = `${clawvisorURL}/mcp`
+  const configSnippet = `{
+  "mcpServers": {
+    "clawvisor": {
+      "command": "npx",
+      "args": ["mcp-remote", "${mcpURL}"]
+    }
+  }
+}`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Claude Desktop connects to Clawvisor via MCP (Model Context Protocol). No token or skill install needed —
+        authorization happens through an OAuth flow in your browser.
+      </p>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={1} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Add the MCP server config</p>
+          <p className="text-xs text-text-tertiary">
+            Open Claude Desktop settings (<strong>Settings &rarr; Developer &rarr; Edit Config</strong>) and add:
+          </p>
+          <CodeBlock>{configSnippet}</CodeBlock>
+          <p className="text-xs text-text-tertiary">
+            On macOS the config file is at{' '}
+            <code className="font-mono text-text-secondary">~/Library/Application Support/Claude/claude_desktop_config.json</code>.
+            Merge with any existing servers.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={2} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Restart Claude Desktop</p>
+          <p className="text-xs text-text-tertiary">
+            Quit and reopen Claude Desktop so it picks up the new MCP server.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Authorize</p>
+          <p className="text-xs text-text-tertiary">
+            When Claude Desktop first connects, a browser window opens where you log in and approve access.
+            The agent appears in the list above automatically.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
+  setupURL: string | null
+  clawvisorURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const prompt = setupURL
+    ? `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
+    : null
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Any agent that can make HTTP requests can connect to Clawvisor. The fastest way is to paste the setup
+        prompt below directly into your agent's chat — it will self-register and wait for your approval.
+      </p>
+
+      {/* Paste-the-prompt approach */}
+      {prompt ? (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+              <div className="relative group">
+                <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+                  {prompt}
+                </pre>
+                <button
+                  onClick={() => onCopy(prompt)}
+                  className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <p className="text-xs text-text-tertiary">
+                The agent will follow the setup instructions at that URL — it registers itself,
+                sets up E2E encryption, and installs the Clawvisor skill.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={2} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+              <p className="text-xs text-text-tertiary">
+                A connection request will appear in the <strong>Pending Connections</strong> section above.
+                Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+                and is ready to go.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
+          <p className="text-sm text-text-tertiary">
+            The one-click setup prompt requires a relay connection. Complete the initial Clawvisor setup,
+            then reload this page. You can still use the manual setup below.
+          </p>
+        </div>
+      )}
+
+      {/* Manual path */}
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          Manual setup (token + environment variables)
+        </summary>
+        <div className="mt-4 space-y-4 pl-0">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Create an agent token</p>
+              <p className="text-xs text-text-tertiary">
+                Use the <strong>Create Agent</strong> form above. Copy the token — it's shown only once.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={2} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Configure environment variables</p>
+              <p className="text-xs text-text-tertiary">
+                Set these in your agent's environment (<code className="font-mono text-text-secondary">.env</code>, shell profile, container config, etc.):
+              </p>
+              <CodeBlock>{`CLAWVISOR_URL=${clawvisorURL}\nCLAWVISOR_AGENT_TOKEN=<your token>`}</CodeBlock>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={3} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Verify</p>
+              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+              <p className="text-xs text-text-tertiary">
+                Should return a JSON catalog of available services. See{' '}
+                <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
+                for the full protocol reference.
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   )
 }
