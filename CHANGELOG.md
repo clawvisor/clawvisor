@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.7](https://github.com/clawvisor/clawvisor/compare/v0.8.6...v0.8.7) (2026-04-09)
+
+
+### Features
+
+* add agent setup guide to dashboard with local/relay-aware URLs ([#148](https://github.com/clawvisor/clawvisor/issues/148)) ([d6ffbbe](https://github.com/clawvisor/clawvisor/commit/d6ffbbe544852c3d46af6e2061c4448316e8840e))
+* add export_file action to Google Drive adapter ([#149](https://github.com/clawvisor/clawvisor/issues/149)) ([23e90ce](https://github.com/clawvisor/clawvisor/commit/23e90ce39db47ae061038873be9562bdd551e194))
+* add Redis-backed event hub, magic tokens, and decision bus for multi-instance deployments ([#147](https://github.com/clawvisor/clawvisor/issues/147)) ([3ba9883](https://github.com/clawvisor/clawvisor/commit/3ba988382cebfad1a295a568287a2df71184d3b9))
+* LLM-powered adapter generation from OpenAPI specs ([#139](https://github.com/clawvisor/clawvisor/issues/139)) ([800e40a](https://github.com/clawvisor/clawvisor/commit/800e40a22866a206a9fc565246f2decad4e770a0))
+* org support extension points for multi-tenancy ([#120](https://github.com/clawvisor/clawvisor/issues/120)) ([4699c4c](https://github.com/clawvisor/clawvisor/commit/4699c4cc89d805b6d80de29e074cde917d270829))
+* pluggable AdapterStore with per-user DB persistence for cloud ([#145](https://github.com/clawvisor/clawvisor/issues/145)) ([05d10ab](https://github.com/clawvisor/clawvisor/commit/05d10ab9555f7b4a15a69e73ad1c5398d414ffde))
+* Telegram group chat auto-approval ([#135](https://github.com/clawvisor/clawvisor/issues/135)) ([8ccf891](https://github.com/clawvisor/clawvisor/commit/8ccf8918d408937da541b6f441bd0a25fd70de65))
+* user-configurable variables in adapter YAML specs ([#146](https://github.com/clawvisor/clawvisor/issues/146)) ([5b0f01b](https://github.com/clawvisor/clawvisor/commit/5b0f01b1d413725dfcfd006384fc9188194cda7e))
+
+
+### Bug Fixes
+
+* add service:account usage hint to catalog overview ([#144](https://github.com/clawvisor/clawvisor/issues/144)) ([4ab08d5](https://github.com/clawvisor/clawvisor/commit/4ab08d51ad3858372546adbae81cb470351a3164))
+* authenticate clawhub CLI before publishing skill ([#138](https://github.com/clawvisor/clawvisor/issues/138)) ([e0a4e0c](https://github.com/clawvisor/clawvisor/commit/e0a4e0c4701cb40f6f4e56ad296230cbe3325acf))
+* auto-restart daemon after clawvisor update ([#141](https://github.com/clawvisor/clawvisor/issues/141)) ([c8b372f](https://github.com/clawvisor/clawvisor/commit/c8b372f195aef6acc2e8237eb7440c01c6b814a8))
+* sync YAML integration spec with implementation and remove dead code ([#143](https://github.com/clawvisor/clawvisor/issues/143)) ([b5a4645](https://github.com/clawvisor/clawvisor/commit/b5a4645ec6f49cb387eb27f6b083803e43ffe7d4))
+* use absolute URL for YAML spec in generate-integration skill ([#142](https://github.com/clawvisor/clawvisor/issues/142)) ([5f8dc63](https://github.com/clawvisor/clawvisor/commit/5f8dc63fb40a5eac915438a90f42b037adb49db7))
+
 ## [0.8.6](https://github.com/clawvisor/clawvisor/compare/v0.8.5...v0.8.6) (2026-04-08)
 
 
