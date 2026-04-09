@@ -919,6 +919,11 @@ export default function Services() {
               ? `${activeServices.length} connected service${activeServices.length !== 1 ? 's' : ''}`
               : 'Connect services so your agents can take actions.'}
           </p>
+          <p className="text-xs text-text-tertiary mt-2 max-w-xl">
+            Your credentials are only used when your AI agent takes actions on your behalf.
+            Clawvisor itself never accesses your accounts beyond fetching basic info
+            (like your name or email) to label connections.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {features?.adapter_gen && (
