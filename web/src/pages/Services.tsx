@@ -91,9 +91,14 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
   }
 
   async function handleDeactivate() {
-    if (!confirm(`Deactivate ${serviceName(svc.id, svc.alias)}? Your agents will lose access.`)) return
     setError(null)
     try {
+      const { affected_task_count } = await api.services.deactivatePreflight(svc.id, alias)
+      const name = serviceName(svc.id, svc.alias)
+      const taskWarning = affected_task_count > 0
+        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this service.`
+        : ''
+      if (!confirm(`Deactivate ${name}? Your agents will lose access.${taskWarning}`)) return
       await api.services.deactivate(svc.id, alias)
       qc.invalidateQueries({ queryKey: ['services'] })
     } catch (e: any) {
