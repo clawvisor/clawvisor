@@ -11,8 +11,8 @@ import (
 )
 
 // SafeServiceIDPattern matches only valid service IDs: lowercase alphanumeric
-// segments separated by dots (e.g. "jira", "google.gmail", "pagerduty").
-var SafeServiceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$`)
+// (plus underscores/hyphens) segments separated by dots (e.g. "jira", "google.gmail", "test_oauth").
+var SafeServiceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 
 // varPlaceholderRe matches {{.var.NAME}} placeholders.
 var varPlaceholderRe = regexp.MustCompile(`\{\{\.var\.(\w+)\}\}`)
@@ -73,7 +73,7 @@ func Validate(def *yamldef.ServiceDef) Result {
 	if def.Service.ID == "" {
 		r.Errors = append(r.Errors, "service.id is required")
 	} else if !SafeServiceIDPattern.MatchString(def.Service.ID) {
-		r.Errors = append(r.Errors, fmt.Sprintf("service.id %q contains invalid characters (must be lowercase alphanumeric segments separated by dots)", def.Service.ID))
+		r.Errors = append(r.Errors, fmt.Sprintf("service.id %q contains invalid characters (must be lowercase alphanumeric, underscores, or hyphens, separated by dots)", def.Service.ID))
 	}
 	if def.Service.DisplayName == "" {
 		r.Errors = append(r.Errors, "service.display_name is required")
