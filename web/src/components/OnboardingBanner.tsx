@@ -7,6 +7,7 @@ const DISMISS_KEY = 'clawvisor_onboarding_dismissed'
 
 interface Step {
   label: string
+  description: string
   to: string
   done: boolean
 }
@@ -38,8 +39,8 @@ export default function OnboardingBanner() {
   if (hasService && hasAgent) return null
 
   const steps: Step[] = [
-    { label: 'Connect a service', to: '/dashboard/services', done: hasService },
-    { label: 'Connect an agent', to: '/dashboard/agents', done: hasAgent },
+    { label: 'Connect a service', description: 'Link an API like Slack, Gmail, or GitHub so your agents can take actions on your behalf.', to: '/dashboard/services', done: hasService },
+    { label: 'Connect an agent', description: 'Create an agent token and plug it into Claude Code, OpenClaw, or your own bot.', to: '/dashboard/agents', done: hasAgent },
   ]
 
   const currentIdx = steps.findIndex(s => !s.done)
@@ -52,47 +53,55 @@ export default function OnboardingBanner() {
   }
 
   return (
-    <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
-      <div className="flex items-center gap-3">
-        {/* Progress dots */}
-        <div className="flex items-center gap-1.5">
-          {steps.map((s, i) => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full ${
-                s.done
-                  ? 'bg-brand'
-                  : i === currentIdx
-                    ? 'bg-brand animate-pulse'
-                    : 'bg-border-default'
-              }`}
-            />
-          ))}
+    <div className="mx-4 mt-3 px-4 py-3.5 rounded-md bg-brand-muted border border-brand/30 text-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+          {/* Progress dots */}
+          <div className="flex items-center gap-1.5 mt-1.5">
+            {steps.map((s, i) => (
+              <div
+                key={i}
+                className={`w-2 h-2 rounded-full ${
+                  s.done
+                    ? 'bg-brand'
+                    : i === currentIdx
+                      ? 'bg-brand animate-pulse'
+                      : 'bg-border-default'
+                }`}
+              />
+            ))}
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-text-primary">Get started</span>
+              <span className="text-text-tertiary">
+                — step {completedCount + 1} of {steps.length}
+              </span>
+            </div>
+            <p className="text-text-secondary mt-0.5">{current.description}</p>
+            <NavLink
+              to={current.to}
+              className="inline-flex items-center gap-1 text-brand font-medium hover:text-brand-strong transition-colors mt-1.5"
+            >
+              {current.label}
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </NavLink>
+          </div>
         </div>
 
-        <span className="text-text-secondary">
-          Step {completedCount + 1} of {steps.length}:
-        </span>
-        <NavLink
-          to={current.to}
-          className="text-brand font-medium hover:text-brand-strong transition-colors"
+        <button
+          onClick={handleDismiss}
+          className="text-text-tertiary hover:text-text-primary transition-colors shrink-0 mt-0.5"
+          title="Dismiss"
         >
-          {current.label}
-          <svg className="inline w-3.5 h-3.5 ml-1 -mt-px" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path d="M9 5l7 7-7 7" />
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="M18 6L6 18M6 6l12 12" />
           </svg>
-        </NavLink>
+        </button>
       </div>
-
-      <button
-        onClick={handleDismiss}
-        className="text-text-tertiary hover:text-text-primary transition-colors ml-3"
-        title="Dismiss"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-      </button>
     </div>
   )
 }
