@@ -55,6 +55,13 @@ actions:
     params:
       file_id: { type: string, required: true }
 
+  download_file:
+    display_name: "Download file"
+    risk: { category: read, sensitivity: low, description: "Download a non-Google-Workspace file (PDFs, images, etc.) as base64-encoded content" }
+    override: go
+    params:
+      file_id: { type: string, required: true }
+
   create_file:
     display_name: "Create file"
     risk: { category: write, sensitivity: medium, description: "Create a file in Google Drive" }

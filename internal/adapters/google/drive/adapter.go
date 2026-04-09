@@ -4,6 +4,7 @@ package drive
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,7 +41,7 @@ func New(provider adapters.OAuthCredentialProvider) *DriveAdapter {
 func (a *DriveAdapter) ServiceID() string { return serviceID }
 
 func (a *DriveAdapter) SupportedActions() []string {
-	return []string{"list_files", "get_file", "export_file", "create_file", "update_file", "search_files"}
+	return []string{"list_files", "get_file", "download_file", "export_file", "create_file", "update_file", "search_files"}
 }
 
 func (a *DriveAdapter) RequiredScopes() []string { return driveScopes }
@@ -85,6 +86,8 @@ func (a *DriveAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.listFiles(ctx, client, req.Params)
 	case "get_file":
 		return a.getFile(ctx, client, req.Params)
+	case "download_file":
+		return a.downloadFile(ctx, client, req.Params)
 	case "export_file":
 		return a.exportFile(ctx, client, req.Params)
 	case "create_file":
@@ -225,6 +228,61 @@ func (a *DriveAdapter) getFile(ctx context.Context, client *http.Client, params 
 
 	return &adapters.Result{
 		Summary: format.Summary("File: %s (%s)", meta.Name, meta.MimeType),
+		Data:    result,
+	}, nil
+}
+
+// ── download_file ─────────────────────────────────────────────────────────────
+
+// downloadFile downloads a non-Google-Workspace file (PDFs, images, etc.) from
+// Drive and returns its content as base64-encoded data.
+func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	fileID, _ := params["file_id"].(string)
+	if fileID == "" {
+		return nil, fmt.Errorf("drive download_file: file_id is required")
+	}
+
+	// Fetch metadata.
+	metaURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?fields=id,name,mimeType,size",
+		url.PathEscape(fileID))
+	var meta struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		MimeType string `json:"mimeType"`
+		Size     string `json:"size"`
+	}
+	if err := apiGET(ctx, client, metaURL, &meta); err != nil {
+		return nil, fmt.Errorf("drive download_file: %w", err)
+	}
+
+	// Download raw content.
+	contentURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?alt=media",
+		url.PathEscape(fileID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, contentURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("drive download_file: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("drive download_file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("drive download_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	result := map[string]any{
+		"id":        meta.ID,
+		"name":      format.SanitizeText(meta.Name, format.MaxFieldLen),
+		"mime_type": meta.MimeType,
+		"size":      meta.Size,
+		"encoding":  "base64",
+		"content":   base64.StdEncoding.EncodeToString(body),
+	}
+	return &adapters.Result{
+		Summary: format.Summary("Downloaded %s (%s)", meta.Name, meta.MimeType),
 		Data:    result,
 	}, nil
 }
