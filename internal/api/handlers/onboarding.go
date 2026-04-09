@@ -243,7 +243,9 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	stepNum++
 	fmt.Fprintf(&b, "### %d. End-to-end smoke test\n\n", stepNum)
 	b.WriteString("Now that everything is configured, run a quick smoke test to prove the full\n")
-	b.WriteString("flow works. Use the Clawvisor skill to:\n\n")
+	b.WriteString("flow works.\n\n")
+	b.WriteString("First, load the Clawvisor skill by calling the Skill tool with skill: \"clawvisor\".\n")
+	b.WriteString("Once it is loaded, use it to:\n\n")
 	b.WriteString("1. **Create a test task** — pick any connected service visible in the catalog\n")
 	b.WriteString("   (e.g. Gmail, Calendar, GitHub) and create a task with a narrow scope such as\n")
 	b.WriteString("   \"read my most recent email subject\" or \"list my GitHub notifications\".\n")
