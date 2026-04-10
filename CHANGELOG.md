@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.8.8](https://github.com/clawvisor/clawvisor/compare/v0.8.7...v0.8.8) (2026-04-10)
+
+
+### Features
+
+* add auto-approve permission rule step for cloud users in setup ([#158](https://github.com/clawvisor/clawvisor/issues/158)) ([5c45abf](https://github.com/clawvisor/clawvisor/commit/5c45abf0106000a4aa2b858e8d08fe041a8a01bb))
+* add backup gateway_request_log table for audit durability ([#183](https://github.com/clawvisor/clawvisor/issues/183)) ([4e96bb1](https://github.com/clawvisor/clawvisor/commit/4e96bb17914bfdbb257a765a5d56e0e5aacac779))
+* add OpenClaw tab to agent setup guide ([#160](https://github.com/clawvisor/clawvisor/issues/160)) ([be75763](https://github.com/clawvisor/clawvisor/commit/be757636abc3713beb56807cc3dc66992907fc64))
+* add PKCE OAuth flow support for Linear integration ([#170](https://github.com/clawvisor/clawvisor/issues/170)) ([f0c8a4d](https://github.com/clawvisor/clawvisor/commit/f0c8a4d8c7b451cf26ce249ac651ac6cf8885d70))
+* add skill version endpoint and self-update check in SKILL.md ([#184](https://github.com/clawvisor/clawvisor/issues/184)) ([9d74336](https://github.com/clawvisor/clawvisor/commit/9d74336041606fbb13d2950df491d3771035d3ce))
+* add user_id to agent connection requests for multi-tenant support ([#150](https://github.com/clawvisor/clawvisor/issues/150)) ([2625bb0](https://github.com/clawvisor/clawvisor/commit/2625bb0d57a5090677a4823ca4b5266b418cb671))
+* consolidate org pages into shared components with org-awareness ([#151](https://github.com/clawvisor/clawvisor/issues/151)) ([3ce2285](https://github.com/clawvisor/clawvisor/commit/3ce22858da81ffa6f4c90371d931fae5ca03598a))
+* extract iMessage into separate FDA-holding helper binary ([#185](https://github.com/clawvisor/clawvisor/issues/185)) ([d0e360e](https://github.com/clawvisor/clawvisor/commit/d0e360ea73200b6f7d3522b2a264cbdaedfb32cb))
+* extract in-memory stores behind interfaces with Redis implementations ([#176](https://github.com/clawvisor/clawvisor/issues/176)) ([c996f39](https://github.com/clawvisor/clawvisor/commit/c996f39cf69d4740ea488399270a8b3970bbf295))
+* gate generate-integration behind adapter_gen feature flag ([#163](https://github.com/clawvisor/clawvisor/issues/163)) ([eb5da75](https://github.com/clawvisor/clawvisor/commit/eb5da75d69dad94105fea4b224e30f5af1a9efa1))
+* load clawvisor skill before smoke test in setup flow ([#165](https://github.com/clawvisor/clawvisor/issues/165)) ([ba6d6f8](https://github.com/clawvisor/clawvisor/commit/ba6d6f84f8a87a2f1d8f20f514b6b38b1040b26a))
+* opt-in auto-update for self-hosted deployments ([#182](https://github.com/clawvisor/clawvisor/issues/182)) ([7ebae63](https://github.com/clawvisor/clawvisor/commit/7ebae632fd22d4c798af4200fb6b3ecf5375af92))
+* package iMessage helper as .app bundle for proper macOS FDA attribution ([#188](https://github.com/clawvisor/clawvisor/issues/188)) ([a77cbd5](https://github.com/clawvisor/clawvisor/commit/a77cbd5ba88ea421dd599e367d433aba9cf25a01))
+* replace inline onboarding with persistent setup banner ([#161](https://github.com/clawvisor/clawvisor/issues/161)) ([2dd4ef0](https://github.com/clawvisor/clawvisor/commit/2dd4ef0d814a256a43835e4d55a1e6988a0236e9))
+* revoke active tasks when a service is disconnected ([#171](https://github.com/clawvisor/clawvisor/issues/171)) ([cdb7bbc](https://github.com/clawvisor/clawvisor/commit/cdb7bbc833d0748b1dcb292db8773672f10aefd6))
+* show success banner when service connection is established ([#180](https://github.com/clawvisor/clawvisor/issues/180)) ([a9013cf](https://github.com/clawvisor/clawvisor/commit/a9013cfc36a7d3aad002f73048b8ccdf6b78114c))
+* soft-delete agents and revoke their tasks on deletion ([#178](https://github.com/clawvisor/clawvisor/issues/178)) ([8bd3b5d](https://github.com/clawvisor/clawvisor/commit/8bd3b5dfd17e3a403fb6dc504fa2130d91a9ab9f))
+* unify onboarding and MFA login flow in frontend ([#181](https://github.com/clawvisor/clawvisor/issues/181)) ([6439204](https://github.com/clawvisor/clawvisor/commit/6439204fb14f6acba907d2e8239fcb5d466809c6))
+* update Claude Desktop setup to use plugin-based flow ([#164](https://github.com/clawvisor/clawvisor/issues/164)) ([6e8cc6c](https://github.com/clawvisor/clawvisor/commit/6e8cc6c62714793dd2fef6325f1a8f2173c57789))
+* warn users about affected tasks before disconnecting a service ([#173](https://github.com/clawvisor/clawvisor/issues/173)) ([2ef17c5](https://github.com/clawvisor/clawvisor/commit/2ef17c5d6377be3fdab7b391c66218e363277338))
+
+
+### Bug Fixes
+
+* data race on Version variable in Apply() ([#186](https://github.com/clawvisor/clawvisor/issues/186)) ([87b18b2](https://github.com/clawvisor/clawvisor/commit/87b18b2b18d3af43fae6819b3e4a055151cbdc07))
+* harden security, reliability, and error handling across backend and frontend ([#175](https://github.com/clawvisor/clawvisor/issues/175)) ([25371f4](https://github.com/clawvisor/clawvisor/commit/25371f46a6d81a582fede5b4765c7174660b2f8b))
+* log swallowed errors instead of silently discarding them ([#174](https://github.com/clawvisor/clawvisor/issues/174)) ([3b91159](https://github.com/clawvisor/clawvisor/commit/3b911592377e6591db5da7280791f9636b208804))
+* make audit log insert idempotent to prevent duplicate key errors ([#167](https://github.com/clawvisor/clawvisor/issues/167)) ([ee0f64f](https://github.com/clawvisor/clawvisor/commit/ee0f64fc8e36511d54b260ca1d87e968a00a5e63))
+* prevent Vertex provider from using Anthropic API endpoint ([#168](https://github.com/clawvisor/clawvisor/issues/168)) ([f5201bb](https://github.com/clawvisor/clawvisor/commit/f5201bb09dd85d21b711c700665ee03ffc32054d))
+* remove model field from Vertex completion request body ([#166](https://github.com/clawvisor/clawvisor/issues/166)) ([aabcbaa](https://github.com/clawvisor/clawvisor/commit/aabcbaacc2c4d4ebb00bb4cdf695b871a7d6a158))
+* resolve service alias fallback and web/dist embed for tests ([#153](https://github.com/clawvisor/clawvisor/issues/153)) ([9389d86](https://github.com/clawvisor/clawvisor/commit/9389d8662861a10983f8a214d235edc7a366985e))
+* restore approve/deny mutual exclusion in Redis token store and sweep all OAuth maps ([#177](https://github.com/clawvisor/clawvisor/issues/177)) ([0d8ae9a](https://github.com/clawvisor/clawvisor/commit/0d8ae9aa2c80ea510778bb54818263ae4b73b9c4))
+* return available connections when gateway request has no matching account ([#157](https://github.com/clawvisor/clawvisor/issues/157)) ([e117c0b](https://github.com/clawvisor/clawvisor/commit/e117c0b93633d9a361e5c4b14b4b41bae3b35bf0))
+* run check_permissions after helper install to register for FDA ([#187](https://github.com/clawvisor/clawvisor/issues/187)) ([8cc0dfe](https://github.com/clawvisor/clawvisor/commit/8cc0dfe3b7ec0fd52e62c655fd34784eb0ec5916))
+* serve /skill/clawvisor-setup.md without daemon ID for cloud deployments ([#155](https://github.com/clawvisor/clawvisor/issues/155)) ([6df398f](https://github.com/clawvisor/clawvisor/commit/6df398fcebce32db3f340873d459842243ca1eec))
+* skip smoke tests using local config unless CLAWVISOR_LOCAL_CONFIG is set ([#169](https://github.com/clawvisor/clawvisor/issues/169)) ([339cd3e](https://github.com/clawvisor/clawvisor/commit/339cd3efb5d84b78e1f61983da2011573ee89cf1))
+* update vite and picomatch to patch high-severity vulnerabilities ([#179](https://github.com/clawvisor/clawvisor/issues/179)) ([d6e5f4f](https://github.com/clawvisor/clawvisor/commit/d6e5f4fc6c74c365c7a3cbfe67398523b599874d))
+* use correct anthropic_version for Vertex AI rawPredict ([#156](https://github.com/clawvisor/clawvisor/issues/156)) ([217068d](https://github.com/clawvisor/clawvisor/commit/217068d12144e5a6df4f8dab370198813f37ab80))
+* use IsLocal() instead of ViaRelay for cloud detection ([#159](https://github.com/clawvisor/clawvisor/issues/159)) ([80eb6e4](https://github.com/clawvisor/clawvisor/commit/80eb6e4c4bc3f171938388e4b86bad4188fad2bf))
+* use port 8080 and host 127.0.0.1 for web-dev, add web-install prereq ([#162](https://github.com/clawvisor/clawvisor/issues/162)) ([db2d2af](https://github.com/clawvisor/clawvisor/commit/db2d2af8c4c8de93ad3414e6b876ab4edccfed2b))
+
 ## [0.8.7](https://github.com/clawvisor/clawvisor/compare/v0.8.6...v0.8.7) (2026-04-09)
 
 
