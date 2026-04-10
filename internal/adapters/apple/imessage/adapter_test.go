@@ -1,162 +1,71 @@
 package imessage
 
 import (
-	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestExtractTextFromAttributedBody(t *testing.T) {
-	tests := []struct {
-		name string
-		hex  string
-		want string
-	}{
-		{
-			name: "Stop (short NSString)",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592848484084E53537472696E67019484012B0453746F7086840269490104928484840C4E5344696374696F6E617279009484016901928496961D5F5F6B494D4D657373616765506172744174747269627574654E616D658692848484084E534E756D626572008484074E5356616C7565009484012A84999900868686",
-			want: "Stop",
-		},
-		{
-			name: "Coming! (short NSString)",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592848484084E53537472696E67019484012B07436F6D696E672186840269490107928484840C4E5344696374696F6E617279009484016901928496961D5F5F6B494D4D657373616765506172744174747269627574654E616D658692848484084E534E756D626572008484074E5356616C7565009484012A84999900868686",
-			want: "Coming!",
-		},
-		{
-			name: "Sooooo good (with trailing space)",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592848484084E53537472696E67019484012B0C536F6F6F6F6F20676F6F64208684026949010C928484840C4E5344696374696F6E617279009484016901928496961D5F5F6B494D4D657373616765506172744174747269627574654E616D658692848484084E534E756D626572008484074E5356616C7565009484012A84999900868686",
-			want: "Sooooo good",
-		},
-		{
-			name: "Loved with smart quotes (UTF-8)",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592848484084E53537472696E67019484012B134C6F76656420E2809C436F6D696E6721E2809D8684026949010F928484840C4E5344696374696F6E617279009484016901928496961D5F5F6B494D4D657373616765506172744174747269627574654E616D658692848484084E534E756D626572008484074E5356616C7565009484012A84999900868686",
-			want: "Loved \u201cComing!\u201d",
-		},
-		{
-			name: "Long message with multi-byte length (>128 bytes)",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592848484084E53537472696E67019484012B819F004E6F7420737572652069662049E280996C6C206D616B652069742C2062757420696620796F75206368617420776974682068696D20796F752063616E2074656C6C2068696D2074686174204920706572736F6E616C6C7920636F6E7472696275746564206174206C65617374203130302070616765766965777320746F20686973204F70656E436C617720646F636B65722054494C20706F737420F09F9885868402694901819B00928484840C4E5344696374696F6E617279009484016901928496961D5F5F6B494D4D657373616765506172744174747269627574654E616D658692848484084E534E756D626572008484074E5356616C7565009484012A84999900868686",
-			want: "Not sure if I\u2019ll make it, but if you chat with him you can tell him that I personally contributed at least 100 pageviews to his OpenClaw docker TIL post \U0001f605",
-		},
-		{
-			name: "Long message 333 bytes (all ASCII, multi-byte length with high byte 0x01)",
-			hex:  "040b73747265616d747970656481e803840140848484124e5341747472696275746564537472696e67008484084e534f626a656374008592848484084e53537472696e67019484012b814d0154686520717569636b2062726f776e20666f78206a756d706564206f76657220746865206c617a7920646f67206e6561722074686520726976657262616e6b206174206461776e2e2053686520686164206265656e2072756e6e696e6720666f7220686f757273207468726f756768207468652064656e736520666f726573742c206361726566756c6c7920736561726368696e6720666f72206120636c656172696e672077686572652073686520636f756c6420726573742e2054686520616e6369656e7420747265657320677265772074616c6c6572206173207368652076656e74757265642064656570657220696e746f20746865206461726b20776f6f64732c20746865697220676e61726c6564206272616e6368657320666f726d696e67206120746869636b2063616e6f70792061626f76652c20626c6f636b696e6720746865206c696768742e868402694901814d01928484840c4e5344696374696f6e617279009484016901928496961d5f5f6b494d4d657373616765506172744174747269627574654e616d658692848484084e534e756d626572008484074e5356616c7565009484012a84999900868686",
-			want: "The quick brown fox jumped over the lazy dog near the riverbank at dawn. She had been running for hours through the dense forest, carefully searching for a clearing where she could rest. The ancient trees grew taller as she ventured deeper into the dark woods, their gnarled branches forming a thick canopy above, blocking the light.",
-		},
-		{
-			name: "Long message 266 bytes with smart quotes (multi-byte length with high byte 0x01)",
-			hex:  "040b73747265616d747970656481e803840140848484124e5341747472696275746564537472696e67008484084e534f626a656374008592848484084e53537472696e67019484012b810a01492063616ee28099742062656c6965766520686f77206d7563682070726f6772657373207765e280997665206d616465206f6e206f75722074657374696e67206672616d65776f726b7320696e20746865207061737420666577207765656b732e20546865207375697465206e6f7720636f7665727320616c6c20746865206564676520636173657320696e636c7564696e6720556e69636f64652068616e646c696e672c2062696e61727920646174612070617273696e672c20616e6420746865206d65737361676520666f726d61742065787472616374696f6e206c6f6769632074686174207761732063617573696e6720696e7465726d697474656e74206661696c757265732e868402694901810a01928484840c4e5344696374696f6e617279009484016901928496961d5f5f6b494d4d657373616765506172744174747269627574654e616d658692848484084e534e756d626572008484074e5356616c7565009484012a84999900868686",
-			want: "I can\u2019t believe how much progress we\u2019ve made on our testing frameworks in the past few weeks. The suite now covers all the edge cases including Unicode handling, binary data parsing, and the message format extraction logic that was causing intermittent failures.",
-		},
-		{
-			name: "Long message 324 bytes with smart quotes and em dash (multi-byte length with high byte 0x01)",
-			hex:  "040b73747265616d747970656481e803840140848484124e5341747472696275746564537472696e67008484084e534f626a656374008592848484084e53537472696e67019484012b8144015765e280997665206265656e20776f726b696e67206f6e20746865206465706c6f796d656e7420706970656c696e6520616c6c207765656b20e2809420746865206e657720636f6e6669672073797374656d2068616e646c657320656e76207661726961626c657320616e642073656372657473206d75636820626574746572206e6f772e2049e2809964207265636f6d6d656e6420737769746368696e6720746f2074686520636f6e7461696e65722d626173656420617070726f6163682073696e63652069742073696d706c69666965732074657374696e6720616e64206d616b6573207468652077686f6c65206275696c642070726f6365737320726570726f64756369626c65206163726f737320646966666572656e7420646576656c6f706572206d616368696e657320616e6420434920656e7669726f6e6d656e74732e2e868402694901814401928484840c4e5344696374696f6e617279009484016901928496961d5f5f6b494d4d657373616765506172744174747269627574654e616d658692848484084e534e756d626572008484074e5356616c7565009484012a84999900868686",
-			want: "We\u2019ve been working on the deployment pipeline all week \u2014 the new config system handles env variables and secrets much better now. I\u2019d recommend switching to the container-based approach since it simplifies testing and makes the whole build process reproducible across different developer machines and CI environments..",
-		},
-		{
-			name: "empty data",
-			hex:  "",
-			want: "",
-		},
-		{
-			name: "too short",
-			hex:  "040B73747265616D",
-			want: "",
-		},
-		{
-			name: "no NSString marker",
-			hex:  "040B73747265616D747970656481E803840140848484124E5341747472696275746564537472696E67008484084E534F626A656374008592",
-			want: "",
-		},
-	}
+func TestFindHelper_NotFound(t *testing.T) {
+	a := &IMessageAdapter{}
+	// With no helper binary installed, findHelper should return empty string.
+	// Override HOME to prevent finding a real install.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("PATH", tmpDir)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := hex.DecodeString(tt.hex)
-			if err != nil {
-				t.Fatalf("invalid hex: %v", err)
-			}
-			got := extractTextFromAttributedBody(data)
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
+	got := a.findHelper()
+	if got != "" {
+		t.Fatalf("expected empty string when helper not found, got %q", got)
 	}
 }
 
-func TestReadTypedStreamLength(t *testing.T) {
-	tests := []struct {
-		name       string
-		data       []byte
-		wantLen    int
-		wantSkip   int
-	}{
-		{"single byte", []byte{0x27}, 39, 1},
-		{"single byte zero", []byte{0x00}, 0, 1},
-		{"single byte max", []byte{0x7F}, 127, 1},
-		{"2-byte LE, high=0x00 (159)", []byte{0x81, 0x9F, 0x00}, 159, 3},
-		{"2-byte LE, high=0x01 (333)", []byte{0x81, 0x4D, 0x01}, 333, 3},
-		{"2-byte LE, high=0x01 (266)", []byte{0x81, 0x0A, 0x01}, 266, 3},
-		{"2-byte LE, high=0x01 (324)", []byte{0x81, 0x44, 0x01}, 324, 3},
-		{"empty", []byte{}, 0, 0},
-		{"truncated 0x81", []byte{0x81, 0x9F}, 0, 0},
-		{"unsupported tag 0x83", []byte{0x83, 0x01, 0x02, 0x03}, 0, 0},
+func TestFindHelper_StandardLocation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Create fake helper in ~/.clawvisor/bin/
+	binDir := filepath.Join(tmpDir, ".clawvisor", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotLen, gotSkip := readTypedStreamLength(tt.data)
-			if gotLen != tt.wantLen || gotSkip != tt.wantSkip {
-				t.Errorf("readTypedStreamLength(%x) = (%d, %d), want (%d, %d)",
-					tt.data, gotLen, gotSkip, tt.wantLen, tt.wantSkip)
-			}
-		})
+	helperPath := filepath.Join(binDir, helperBinaryName)
+	if err := os.WriteFile(helperPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &IMessageAdapter{}
+	got := a.findHelper()
+	if got != helperPath {
+		t.Errorf("got %q, want %q", got, helperPath)
 	}
 }
 
-func TestScanForStringMarkerPicksLongest(t *testing.T) {
-	// Simulate a false-positive 0x2B marker in binary data before the real
-	// string marker. The first 0x2B points to "op" (a suffix of the real
-	// text), while the second points to the full "Stop". The function should
-	// return the longest candidate.
-	data := []byte{
-		0x2B, 0x02, 'o', 'p', // false positive: "op"
-		0x2B, 0x04, 'S', 't', 'o', 'p', // real marker: "Stop"
+func TestFindHelper_CachedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	helperPath := filepath.Join(tmpDir, helperBinaryName)
+	if err := os.WriteFile(helperPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
 	}
-	got := scanForStringMarker(data, 0, 0x2B)
-	if got != "Stop" {
-		t.Errorf("got %q, want %q", got, "Stop")
+
+	a := &IMessageAdapter{helperPath: helperPath}
+	got := a.findHelper()
+	if got != helperPath {
+		t.Errorf("got %q, want %q", got, helperPath)
 	}
 }
 
-func TestIsOnlyObjectReplacement(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"\uFFFC", true},
-		{"\uFFFC\uFFFC", true},
-		{"", false},
-		{"hello", false},
-		{"\uFFFChello", false},
-	}
-	for _, tt := range tests {
-		if got := isOnlyObjectReplacement(tt.input); got != tt.want {
-			t.Errorf("isOnlyObjectReplacement(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
+func TestFindHelper_CachedPathStale(t *testing.T) {
+	a := &IMessageAdapter{helperPath: "/nonexistent/clawvisor-imessage-helper"}
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("PATH", tmpDir)
 
-func TestStripObjectReplacement(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"\uFFFCHello world", "Hello world"},
-		{"Hello\uFFFC world", "Hello world"},
-		{"\uFFFC", ""},
-		{"No replacement", "No replacement"},
+	got := a.findHelper()
+	if got != "" {
+		t.Errorf("expected empty string for stale cached path, got %q", got)
 	}
-	for _, tt := range tests {
-		if got := stripObjectReplacement(tt.input); got != tt.want {
-			t.Errorf("stripObjectReplacement(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+	if a.helperPath != "" {
+		t.Errorf("expected helperPath to be cleared, got %q", a.helperPath)
 	}
 }

@@ -10,6 +10,12 @@ LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version
 build: web/dist
 	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
 
+IMESSAGE_HELPER_PLIST := cmd/imessage-helper/Info.plist
+IMESSAGE_HELPER_LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -linkmode external -extldflags '-sectcreate __TEXT __info_plist $(IMESSAGE_HELPER_PLIST)'"
+
+build-imessage-helper:
+	CGO_ENABLED=1 go build $(IMESSAGE_HELPER_LDFLAGS) -o bin/clawvisor-imessage-helper ./cmd/imessage-helper
+
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
 
@@ -27,6 +33,22 @@ install: build
 	$(HOME)/.clawvisor/bin/clawvisor install
 	@echo ""
 	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
+
+# Install the iMessage helper binary separately. It holds Full Disk Access
+# and is codesigned independently so that updating the main binary does not
+# invalidate the FDA grant.
+install-imessage-helper: build-imessage-helper
+	mkdir -p $(HOME)/.clawvisor/bin
+	@# Only replace the helper if the binary actually changed, to preserve the
+	@# existing FDA grant and codesign.
+	@if [ -f $(HOME)/.clawvisor/bin/clawvisor-imessage-helper ] && \
+	    cmp -s bin/clawvisor-imessage-helper $(HOME)/.clawvisor/bin/clawvisor-imessage-helper; then \
+		echo "imessage-helper: unchanged, skipping install (FDA preserved)"; \
+	else \
+		cp bin/clawvisor-imessage-helper $(HOME)/.clawvisor/bin/clawvisor-imessage-helper; \
+		[ "$$(uname)" = "Darwin" ] && codesign -s - $(HOME)/.clawvisor/bin/clawvisor-imessage-helper 2>/dev/null || true; \
+		echo "imessage-helper: installed and codesigned"; \
+	fi
 
 # ── Test ───────────────────────────────────────────────────────────────────────
 
