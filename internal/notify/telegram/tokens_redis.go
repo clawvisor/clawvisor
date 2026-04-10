@@ -15,11 +15,12 @@ const redisCBTokenPrefix = "clawvisor:tgcb:"
 
 // callbackEntryJSON is the JSON form for Redis storage.
 type callbackEntryJSON struct {
-	Type      string `json:"type"`
-	TargetID  string `json:"target_id"`
-	UserID    string `json:"user_id"`
-	ChatID    string `json:"chat_id"`
-	ExpiresAt int64  `json:"expires_at"`
+	Type       string `json:"type"`
+	TargetID   string `json:"target_id"`
+	UserID     string `json:"user_id"`
+	ChatID     string `json:"chat_id"`
+	ExpiresAt  int64  `json:"expires_at"`
+	SiblingID  string `json:"sibling_id"`
 }
 
 // redisCallbackTokenStore stores Telegram callback tokens in Redis for
@@ -43,12 +44,26 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, chatID s
 		return "", "", err
 	}
 
-	data, err := json.Marshal(callbackEntryJSON{
+	expiresAt := time.Now().Add(ttl).UnixMilli()
+
+	approveData, err := json.Marshal(callbackEntryJSON{
 		Type:      entryType,
 		TargetID:  targetID,
 		UserID:    userID,
 		ChatID:    chatID,
-		ExpiresAt: time.Now().Add(ttl).UnixMilli(),
+		ExpiresAt: expiresAt,
+		SiblingID: denyID,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	denyData, err := json.Marshal(callbackEntryJSON{
+		Type:      entryType,
+		TargetID:  targetID,
+		UserID:    userID,
+		ChatID:    chatID,
+		ExpiresAt: expiresAt,
+		SiblingID: approveID,
 	})
 	if err != nil {
 		return "", "", err
@@ -58,8 +73,8 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, chatID s
 	defer cancel()
 
 	pipe := s.rdb.Pipeline()
-	pipe.Set(ctx, redisCBTokenPrefix+approveID, data, ttl)
-	pipe.Set(ctx, redisCBTokenPrefix+denyID, data, ttl)
+	pipe.Set(ctx, redisCBTokenPrefix+approveID, approveData, ttl)
+	pipe.Set(ctx, redisCBTokenPrefix+denyID, denyData, ttl)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", "", err
 	}
@@ -71,7 +86,7 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Atomically get and delete.
+	// Atomically get and delete the consumed token.
 	data, err := s.rdb.GetDel(ctx, redisCBTokenPrefix+shortID).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, errTokenNotFound
@@ -87,6 +102,11 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 
 	if time.Now().UnixMilli() > j.ExpiresAt {
 		return nil, errTokenExpired
+	}
+
+	// Delete the sibling token so only one of approve/deny can succeed.
+	if j.SiblingID != "" {
+		s.rdb.Del(ctx, redisCBTokenPrefix+j.SiblingID)
 	}
 
 	return &callbackEntry{

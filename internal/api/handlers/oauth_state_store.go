@@ -87,6 +87,18 @@ func (s *memoryOAuthStateStore) Cleanup() {
 		}
 		return true
 	})
+	s.deviceFlows.Range(func(key, value any) bool {
+		if value.(deviceFlowEntry).ExpiresAt.Before(now) {
+			s.deviceFlows.Delete(key)
+		}
+		return true
+	})
+	s.pkceFlows.Range(func(key, value any) bool {
+		if value.(pkceFlowEntry).ExpiresAt.Before(now) {
+			s.pkceFlows.Delete(key)
+		}
+		return true
+	})
 }
 
 // oauthStateJSON / deviceFlowJSON / pkceFlowJSON are the JSON-serializable
