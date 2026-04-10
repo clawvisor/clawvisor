@@ -446,6 +446,7 @@ export interface VersionInfo {
   update_available: boolean
   release_url?: string
   upgrade_command?: string
+  auto_update: boolean
 }
 
 export interface LLMUsage {

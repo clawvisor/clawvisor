@@ -18,6 +18,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/telemetry"
 	"github.com/clawvisor/clawvisor/pkg/clawvisor"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 // RunOptions holds optional flags for the server entrypoint.
@@ -136,6 +137,18 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 
 	if ropts.OpenBrowser && authResult.MagicURL != "" {
 		browser.Open(authResult.MagicURL)
+	}
+
+	// ── Auto-update (self-hosted opt-in) ─────────────────────────────────
+	autoUpdateActive := opts.Config.AutoUpdate.Enabled && !opts.Features.MultiTenant
+	version.SetAutoUpdate(autoUpdateActive)
+	if autoUpdateActive {
+		interval, err := opts.Config.AutoUpdate.CheckIntervalDuration()
+		if err != nil {
+			logger.Warn("auto-update: invalid check_interval, using default 6h", "err", err)
+			interval = 6 * time.Hour
+		}
+		version.StartAutoUpdater(context.Background(), interval, logger)
 	}
 
 	// ── Telemetry ──────────────────────────────────────────────────────────

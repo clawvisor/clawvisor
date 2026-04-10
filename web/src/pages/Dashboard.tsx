@@ -189,9 +189,15 @@ export default function Dashboard() {
               {versionData.current && <span className="text-text-secondary"> (current: v{versionData.current})</span>}
             </span>
             <span className="flex items-center gap-3">
-              <span className="text-text-secondary">
-                Run <code className="text-xs bg-surface-2 px-2 py-1 rounded font-mono">clawvisor update</code> to get the latest version
-              </span>
+              {versionData.auto_update ? (
+                <span className="text-text-secondary">
+                  Auto-update is enabled — this update will be applied automatically
+                </span>
+              ) : (
+                <span className="text-text-secondary">
+                  Run <code className="text-xs bg-surface-2 px-2 py-1 rounded font-mono">clawvisor update</code> to get the latest version
+                </span>
+              )}
               {versionData.release_url && (
                 <a
                   href={versionData.release_url}

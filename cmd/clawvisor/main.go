@@ -28,6 +28,7 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(autoUpdateCmd)
 	rootCmd.AddCommand(healthcheckCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(servicesCmd)
