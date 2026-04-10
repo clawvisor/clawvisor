@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.9](https://github.com/clawvisor/clawvisor/compare/v0.8.8...v0.8.9) (2026-04-10)
+
+
+### Features
+
+* add billing UI pages with promo code support ([#192](https://github.com/clawvisor/clawvisor/issues/192)) ([90ed958](https://github.com/clawvisor/clawvisor/commit/90ed9589f2102ee51e171ac03e9f064093fd1362))
+* dev-only skip onboarding UI ([#193](https://github.com/clawvisor/clawvisor/issues/193)) ([c631d6f](https://github.com/clawvisor/clawvisor/commit/c631d6f379326608b668ad9c803070f30cbc5d42))
+
+
+### Bug Fixes
+
+* extract publish-skill into reusable workflow with manual trigger ([#189](https://github.com/clawvisor/clawvisor/issues/189)) ([babfa59](https://github.com/clawvisor/clawvisor/commit/babfa59b25fddeffd45e658ee87ddc73c3900ecb))
+* move inline dark-mode script to external file to fix CSP violation ([#191](https://github.com/clawvisor/clawvisor/issues/191)) ([c05d819](https://github.com/clawvisor/clawvisor/commit/c05d819c61d92665feadce1a0bc7f96454837b4d))
+
 ## [0.8.8](https://github.com/clawvisor/clawvisor/compare/v0.8.7...v0.8.8) (2026-04-10)
 
 
