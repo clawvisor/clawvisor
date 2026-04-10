@@ -141,16 +141,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Generate GitHub App token
+        if: steps.skill-changes.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: cowork-plugins
+
       - name: Render SKILL.md for cowork target
         if: steps.skill-changes.outputs.changed == 'true'
         run: go run ./cmd/render-skill cowork > /tmp/SKILL.md
 
       - name: Push to cowork-plugins repo
         if: steps.skill-changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.COWORK_PLUGINS_TOKEN }}
         run: |
-          git clone https://x-access-token:${GH_TOKEN}@github.com/clawvisor/cowork-plugins.git /tmp/cowork-plugins
+          git clone https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/clawvisor/cowork-plugins.git /tmp/cowork-plugins
           cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor/skills/clawvisor/SKILL.md
           cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor-local/skills/clawvisor/SKILL.md
           cd /tmp/cowork-plugins
