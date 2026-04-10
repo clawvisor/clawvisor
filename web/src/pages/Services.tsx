@@ -972,11 +972,18 @@ export default function Services() {
         </div>
       </div>
 
-      {successService && (
+      {successService && (() => {
+        // Resolve display name from the (refetched) service list so we pick up
+        // the backend-resolved alias (e.g. email) for auto-identity services.
+        const match = activeServices.find(s => s.id === successService.id)
+        const displayName = match
+          ? serviceName(match.id, match.alias)
+          : serviceName(successService.id, successService.alias)
+        return (
         <div className="flex items-center gap-3 p-4 rounded-md border border-success/30 bg-success/5">
           <span className="text-success text-lg leading-none">&#10003;</span>
           <p className="text-sm font-medium text-text-primary">
-            {serviceName(successService.id, successService.alias)} connected successfully
+            {displayName} connected successfully
           </p>
           <button
             onClick={() => setSuccessService(null)}
@@ -985,7 +992,8 @@ export default function Services() {
             &times;
           </button>
         </div>
-      )}
+        )
+      })()}
 
       {googleOAuthMissing && (
         <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
