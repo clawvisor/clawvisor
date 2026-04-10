@@ -527,6 +527,20 @@ func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	}
 }
 
+// Validate checks for configuration errors that should prevent startup.
+func (c *Config) Validate() error {
+	if c.Database.Driver == "postgres" && c.Database.PostgresURL == "" {
+		return fmt.Errorf("database driver is postgres but postgres_url is empty")
+	}
+	if c.Approval.Timeout <= 0 {
+		return fmt.Errorf("approval.timeout must be positive (got %d)", c.Approval.Timeout)
+	}
+	if c.Task.DefaultExpirySeconds <= 0 {
+		return fmt.Errorf("task.default_expiry_seconds must be positive (got %d)", c.Task.DefaultExpirySeconds)
+	}
+	return nil
+}
+
 // AccessTokenDuration parses the configured duration.
 func (a AuthConfig) AccessTokenDuration() (time.Duration, error) {
 	return time.ParseDuration(a.AccessTokenTTL)

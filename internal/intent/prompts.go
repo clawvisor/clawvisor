@@ -83,7 +83,12 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 
 	// Sanitize the agent's reason to prevent tag injection that could
 	// break out of the <reason> wrapper and confuse the verifier.
-	sanitizedReason := strings.ReplaceAll(req.Reason, "</reason>", "")
+	reason := req.Reason
+	const maxReasonLen = 2048
+	if len(reason) > maxReasonLen {
+		reason = reason[:maxReasonLen]
+	}
+	sanitizedReason := strings.ReplaceAll(reason, "</reason>", "")
 	sanitizedReason = strings.ReplaceAll(sanitizedReason, "<reason>", "")
 
 	return fmt.Sprintf(`Current date: %s

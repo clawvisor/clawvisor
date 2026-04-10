@@ -21,8 +21,8 @@ type JWTService struct {
 }
 
 func NewJWTService(secret string) (*JWTService, error) {
-	if secret == "" {
-		return nil, errors.New("JWT secret must not be empty")
+	if len(secret) < 32 {
+		return nil, errors.New("JWT secret must be at least 32 characters")
 	}
 	return &JWTService{secret: []byte(secret)}, nil
 }
