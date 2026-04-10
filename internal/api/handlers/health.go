@@ -66,6 +66,14 @@ func (h *HealthHandler) Version(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, version.Check())
 }
 
+// SkillVersion returns the current skill version and publish date (no auth required).
+func (h *HealthHandler) SkillVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"skill_version":      version.Version,
+		"skill_published_at": version.SkillPublishedAt,
+	})
+}
+
 // writeJSON is a shared JSON response helper used across all handlers.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

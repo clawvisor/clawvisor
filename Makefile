@@ -2,7 +2,8 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
-LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT)"
+BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
+LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT) -X github.com/clawvisor/clawvisor/pkg/version.SkillPublishedAt=$(BUILD_DATE)"
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 

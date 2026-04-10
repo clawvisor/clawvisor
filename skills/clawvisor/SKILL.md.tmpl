@@ -7,7 +7,8 @@ description: >
   Contacts, GitHub, and iMessage (macOS). Clawvisor enforces restrictions,
   manages task scopes, and injects credentials — the agent never handles
   secrets directly.
-version: 0.7.0
+version: {{ .SkillVersion }}
+published_at: {{ .SkillPublishedAt }}
 homepage: https://github.com/clawvisor/clawvisor
 metadata:
   {
@@ -456,6 +457,19 @@ without re-executing.
 
 ---
 {{ end }}
+## Troubleshooting
+
+If something isn't working as expected, check whether you have the latest version of this skill:
+
+1. Fetch `GET {{ if .ClawvisorURL }}{{ .ClawvisorURL }}{{ else }}$CLAWVISOR_URL{{ end }}/api/skill/version` — it returns:
+   ```json
+   { "skill_version": "...", "skill_published_at": "..." }
+   ```
+2. Compare the `skill_version` in the response with the version in this skill's frontmatter (`{{ .SkillVersion }}`, published {{ .SkillPublishedAt }}).
+3. If a newer version is available, re-fetch the skill from `{{ if .ClawvisorURL }}{{ .ClawvisorURL }}{{ else }}$CLAWVISOR_URL{{ end }}/skill/SKILL.md` to get the latest instructions.
+
+---
+
 ## Authorization Model Summary
 
 | Condition | Gateway `status` |
