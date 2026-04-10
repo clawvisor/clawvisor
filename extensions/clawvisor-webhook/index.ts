@@ -265,7 +265,13 @@ class GatewayClient {
       });
 
       this.ws.on("message", (data: Buffer) => {
-        const frame = JSON.parse(data.toString());
+        let frame: any;
+        try {
+          frame = JSON.parse(data.toString());
+        } catch (err) {
+          this.log?.error(`clawvisor-webhook: failed to parse WS message: ${err instanceof Error ? err.message : err}`);
+          return;
+        }
 
         if (frame.type === "event" && frame.event === "connect.challenge") {
           this.handleChallenge(frame.payload, resolve, reject);

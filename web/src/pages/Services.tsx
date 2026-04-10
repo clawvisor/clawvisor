@@ -51,7 +51,8 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
                 setDeviceCode(null)
                 setError(r.status === 'denied' ? 'Authorization denied.' : 'Authorization expired.')
               }
-            } catch {
+            } catch (e) {
+              console.error('Services: device flow poll failed', e)
               setDeviceCode(null)
               setError('Failed to check authorization status')
             }

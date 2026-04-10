@@ -34,7 +34,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentOrgId(org.id)
         return org
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('useAuth: failed to parse stored org from localStorage', e)
+    }
     return null
   })
   // Prevents React StrictMode's intentional double-invoke from burning the
@@ -60,11 +62,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Fetch auth mode, features, and refresh token in parallel.
     const configPromise = api.config.public()
       .then((cfg) => setAuthMode(cfg.auth_mode))
-      .catch(() => {}) // default stays null → treated like password mode
+      .catch((e) => console.warn('useAuth: failed to fetch config', e)) // default stays null → treated like password mode
 
     const featuresPromise = api.features.get()
       .then((f) => setFeatures(f))
-      .catch(() => {}) // default stays null
+      .catch((e) => console.warn('useAuth: failed to fetch features', e)) // default stays null
 
     const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
     const authPromise = storedRefresh
@@ -75,7 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
             setUser(resp.user)
           })
-          .catch(() => {
+          .catch((e) => {
+            console.warn('useAuth: token refresh failed', e)
             localStorage.removeItem(REFRESH_TOKEN_KEY)
             setAccessToken(null)
           })
@@ -137,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? undefined
-    await api.auth.logout(refreshToken).catch(() => {})
+    await api.auth.logout(refreshToken).catch((e) => console.warn('useAuth: logout request failed', e))
     setAccessToken(null)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(CURRENT_ORG_KEY)
