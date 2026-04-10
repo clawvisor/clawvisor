@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -10,6 +10,9 @@ import SetupAuth from './pages/SetupAuth'
 import TOTPVerify from './pages/TOTPVerify'
 import Dashboard from './pages/Dashboard'
 import OAuthAuthorize from './pages/OAuthAuthorize'
+import OAuthCallback from './pages/OAuthCallback'
+import MFAVerify from './pages/MFAVerify'
+import SecuritySetup from './pages/SecuritySetup'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -44,10 +47,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, authMode } = useAuth()
+  const { isAuthenticated, isLoading, authMode, onboardingComplete } = useAuth()
+  const location = useLocation()
   if (isLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   if (!isAuthenticated) {
     return <Navigate to={authMode === 'magic_link' ? '/magic-link' : '/login'} replace />
+  }
+  if (onboardingComplete === false && location.pathname !== '/onboarding') {
+    return <Navigate to="/onboarding" replace />
   }
   return <>{children}</>
 }
@@ -78,6 +85,16 @@ export default function App() {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/setup-auth" element={<SetupAuth />} />
       <Route path="/totp-verify" element={<TOTPVerify />} />
+      <Route path="/login/oauth/callback" element={<OAuthCallback />} />
+      <Route path="/mfa-verify" element={<MFAVerify />} />
+      <Route
+        path="/onboarding"
+        element={
+          <RequireAuth>
+            <SecuritySetup />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/oauth/authorize"
         element={

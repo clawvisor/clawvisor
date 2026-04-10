@@ -16,8 +16,10 @@ interface AuthContextValue {
   features: FeatureSet | null
   currentOrg: Org | null
   setCurrentOrg: (org: Org | null) => void
+  onboardingComplete: boolean | null
+  refreshOnboarding: () => Promise<void>
   login: (email: string, password: string) => Promise<LoginResult>
-  register: (email: string, password?: string) => Promise<RegisterResult>
+  register: (email: string, password: string) => Promise<RegisterResult>
   logout: () => Promise<void>
   /** Set session tokens directly (used by pages that handle multi-step auth flows) */
   setSession: (accessToken: string, refreshToken: string, user: User) => void
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
   const [features, setFeatures] = useState<FeatureSet | null>(null)
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null)
   const [currentOrg, setCurrentOrgState] = useState<Org | null>(() => {
     try {
       const stored = localStorage.getItem(CURRENT_ORG_KEY)
@@ -46,6 +49,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Prevents React StrictMode's intentional double-invoke from burning the
   // single-use refresh token twice on the initial session restore.
   const didInit = useRef(false)
+
+  const checkOnboarding = useCallback(() => {
+    api.auth.onboarding.status()
+      .then((s) => setOnboardingComplete(s.onboarding_completed))
+      .catch(() => setOnboardingComplete(null))
+  }, [])
+
+  const refreshOnboarding = useCallback(async () => {
+    try {
+      const s = await api.auth.onboarding.status()
+      setOnboardingComplete(s.onboarding_completed)
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const setCurrentOrg = useCallback((org: Org | null) => {
     setCurrentOrgState(org)
@@ -80,6 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setAccessToken(resp.access_token)
             safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
             setUser(resp.user)
+            // Check onboarding status now that we have a valid token.
+            checkOnboarding()
           })
           .catch((e) => {
             console.warn('useAuth: token refresh failed', e)
@@ -118,7 +138,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(at)
     safeSetItem(REFRESH_TOKEN_KEY, rt)
     setUser(u)
-  }, [])
+    checkOnboarding()
+  }, [checkOnboarding])
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const resp = await api.auth.login(email, password)
@@ -127,19 +148,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccessToken(resp.access_token)
       safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
       setUser(resp.user)
+      checkOnboarding()
     }
     return resp
-  }, [])
+  }, [checkOnboarding])
 
-  const register = useCallback(async (email: string, password?: string): Promise<RegisterResult> => {
-    const resp = await api.auth.register(email, password)
-    // Only set session if we got full tokens back (local mode)
-    if (resp.access_token && resp.refresh_token) {
-      setAccessToken(resp.access_token)
-      safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
-      setUser(resp.user ?? null)
-    }
-    return resp
+  const register = useCallback(async (email: string, password: string): Promise<RegisterResult> => {
+    return api.auth.register(email, password)
   }, [])
 
   const logout = useCallback(async () => {
@@ -151,10 +166,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentOrgId(null)
     setCurrentOrgState(null)
     setUser(null)
+    setOnboardingComplete(null)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, login, register, logout, setSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   )

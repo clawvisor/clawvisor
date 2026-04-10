@@ -164,33 +164,42 @@ export interface AuthResponse {
   refresh_token: string
 }
 
+export interface GoogleAuthResult {
+  // Full login (no MFA)
+  user?: User
+  access_token?: string
+  refresh_token?: string
+  // MFA required
+  status?: 'requires_mfa'
+  pending_token?: string
+  mfa_methods?: {
+    has_totp: boolean
+    passkey_count: number
+    has_backup_codes: boolean
+  }
+}
+
 // Login may return one of these instead of a full AuthResponse
 export interface LoginResult {
   // Normal login
   user?: User
   access_token?: string
   refresh_token?: string
-  // TOTP required
-  status?: 'requires_totp' | 'setup_required'
+  // MFA required
+  status?: 'requires_mfa'
   pending_token?: string
-  setup_token?: string
+  mfa_methods?: {
+    has_totp: boolean
+    passkey_count: number
+    has_backup_codes: boolean
+  }
 }
 
 export interface RegisterResult {
-  user?: User
-  // Local mode: full tokens
-  access_token?: string
-  refresh_token?: string
-  // Non-local mode without email verification: setup token
-  setup_token?: string
-  // Non-local mode with email verification: status
-  status?: 'verify_email'
+  status: 'verify_email'
 }
 
-export interface VerifyEmailResult {
-  setup_token: string
-  email: string
-}
+export type VerifyEmailResult = AuthResponse
 
 export interface WebAuthnCredential {
   id: string
@@ -204,7 +213,19 @@ export interface WebAuthnCredential {
 export interface UserAuthMethods {
   has_password: boolean
   has_totp: boolean
+  has_google: boolean
+  has_backup_codes: boolean
   passkey_count: number
+}
+
+export interface OnboardingStatus {
+  has_security_method: boolean
+  has_backup_codes: boolean
+  onboarding_completed: boolean
+}
+
+export interface BackupCodesResponse {
+  codes: string[]
 }
 
 export interface Agent {
@@ -596,7 +617,7 @@ export interface CustomMCPServer {
 
 export const api = {
   auth: {
-    register: (email: string, password?: string) =>
+    register: (email: string, password: string) =>
       post<RegisterResult>('/api/auth/register', { email, password }),
     login: (email: string, password: string) =>
       post<LoginResult>('/api/auth/login', { email, password }),
@@ -627,6 +648,10 @@ export const api = {
         post<{ challenge_id: string; options: any }>('/api/auth/passkey/login/begin', {}),
       loginFinish: (challengeId: string, credential: any) =>
         post<AuthResponse>('/api/auth/passkey/login/finish', { challenge_id: challengeId, credential }),
+      verifyBegin: (pendingToken: string) =>
+        requestWithToken<{ challenge_id: string; options: any }>('POST', '/api/auth/passkey/verify/begin', pendingToken, {}),
+      verifyFinish: (pendingToken: string, challengeId: string, credential: any) =>
+        requestWithToken<AuthResponse>('POST', '/api/auth/passkey/verify/finish', pendingToken, { challenge_id: challengeId, credential }),
       list: () => get<WebAuthnCredential[]>('/api/auth/passkeys'),
       addBegin: () =>
         post<{ challenge_id: string; options: any }>('/api/auth/passkeys/add/begin', {}),
@@ -642,6 +667,20 @@ export const api = {
         requestWithToken<AuthResponse>('POST', '/api/auth/totp/verify', pendingToken, { code }),
       status: () => get<{ enabled: boolean }>('/api/auth/totp'),
       disable: (password: string) => del<void>('/api/auth/totp', { password }),
+    },
+    google: {
+      exchange: (code: string, redirectUri: string) =>
+        post<GoogleAuthResult>('/api/auth/google', { code, redirect_uri: redirectUri }),
+      clientId: () => get<{ client_id: string }>('/api/auth/google/client-id'),
+    },
+    backupCode: {
+      verify: (pendingToken: string, code: string) =>
+        requestWithToken<AuthResponse>('POST', '/api/auth/backup-codes/mfa-verify', pendingToken, { code }),
+    },
+    onboarding: {
+      status: () => get<OnboardingStatus>('/api/auth/onboarding/status'),
+      generateBackupCodes: () => post<BackupCodesResponse>('/api/auth/onboarding/backup-codes', {}),
+      complete: () => post<{ completed: boolean }>('/api/auth/onboarding/complete', {}),
     },
   },
   agents: {
