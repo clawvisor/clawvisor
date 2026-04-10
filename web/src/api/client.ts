@@ -683,6 +683,8 @@ export const api = {
       post<VerifyEmailResult>('/api/auth/verify-email', { token }),
     resendVerification: (email: string) =>
       post<{ status: string }>('/api/auth/resend-verification', { email }),
+    devSkipOnboarding: (email: string) =>
+      post<AuthResponse>('/api/auth/dev/skip-onboarding', { email }),
     logout: (refreshToken?: string) =>
       post<void>('/api/auth/logout', { refresh_token: refreshToken }),
     me: () => get<User>('/api/me'),
