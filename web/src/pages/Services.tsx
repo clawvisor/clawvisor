@@ -291,10 +291,12 @@ interface ServiceType {
 function AddServiceModal({
   services,
   onClose,
+  onSuccess,
   googleOAuthMissing,
 }: {
   services: ServiceInfo[]
   onClose: () => void
+  onSuccess: (serviceId: string) => void
   googleOAuthMissing: boolean
 }) {
   const qc = useQueryClient()
@@ -306,6 +308,7 @@ function AddServiceModal({
   const [keyConfig, setKeyConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activatingServiceId, setActivatingServiceId] = useState<string | null>(null)
 
   // Search filter
   const [search, setSearch] = useState('')
@@ -340,12 +343,12 @@ function AddServiceModal({
     function handler(e: MessageEvent) {
       if (e.data?.type === 'clawvisor_oauth_done') {
         qc.invalidateQueries({ queryKey: ['services'] })
-        onClose()
+        onSuccess(activatingServiceId ?? '')
       }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [qc, onClose])
+  }, [qc, onSuccess, activatingServiceId])
 
   // Build deduplicated service types
   const typeMap = new Map<string, ServiceType>()
@@ -386,11 +389,12 @@ function AddServiceModal({
 
   async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
+    setActivatingServiceId(serviceId)
     try {
       const resp = await api.services.oauthGetUrl(serviceId, undefined, alias, newAccount)
       if (resp.already_authorized) {
         qc.invalidateQueries({ queryKey: ['services'] })
-        onClose()
+        onSuccess(serviceId)
         return
       }
       if (resp.url) {
@@ -406,14 +410,15 @@ function AddServiceModal({
     if (!keyValue.trim() || !keyInputFor) return
     setSaving(true)
     setError(null)
+    const serviceId = keyInputFor
     try {
-      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
+      await api.services.activateWithKey(serviceId, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
       setKeyValue('')
       setKeyInputFor(null)
       setKeyAlias(undefined)
       setKeyConfig({})
       qc.invalidateQueries({ queryKey: ['services'] })
-      onClose()
+      onSuccess(serviceId)
     } catch (e: any) {
       setError(e.message ?? 'Failed to save API key')
     } finally {
@@ -426,7 +431,7 @@ function AddServiceModal({
     try {
       await api.services.activate(serviceId)
       qc.invalidateQueries({ queryKey: ['services'] })
-      onClose()
+      onSuccess(serviceId)
     } catch (e: any) {
       setError(e.message ?? 'Failed to activate service')
     }
@@ -434,6 +439,8 @@ function AddServiceModal({
 
   async function handleActivatePKCE(serviceId: string, alias?: string, clientId?: string) {
     setError(null)
+    setActivatingServiceId(serviceId)
+
     try {
       const resp = await api.services.pkceFlowStart(serviceId, alias, clientId)
       if (resp.authorize_url) {
@@ -457,6 +464,8 @@ function AddServiceModal({
 
   async function handleActivateDeviceFlow(serviceId: string, alias?: string) {
     setError(null)
+    setActivatingServiceId(serviceId)
+
     stopDeviceFlowPolling()
     try {
       const resp = await api.services.deviceFlowStart(serviceId, alias)
@@ -484,7 +493,7 @@ function AddServiceModal({
           setDeviceFlowStatus('complete')
           stopDeviceFlowPolling()
           qc.invalidateQueries({ queryKey: ['services'] })
-          onClose()
+          onSuccess(serviceId)
           return
         }
         if (resp.status === 'pending' || resp.status === 'slow_down') {
@@ -881,6 +890,17 @@ export default function Services() {
   const { features, currentOrg } = useAuth()
   const orgId = currentOrg?.id
   const [showModal, setShowModal] = useState(false)
+  const [successService, setSuccessService] = useState<string | null>(null)
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleConnectionSuccess(serviceId: string) {
+    setShowModal(false)
+    setSuccessService(serviceId)
+    if (successTimerRef.current) clearTimeout(successTimerRef.current)
+    successTimerRef.current = setTimeout(() => setSuccessService(null), 5000)
+  }
+
+  useEffect(() => () => { if (successTimerRef.current) clearTimeout(successTimerRef.current) }, [])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['services'],
@@ -949,6 +969,21 @@ export default function Services() {
         </div>
       </div>
 
+      {successService && (
+        <div className="flex items-center gap-3 p-4 rounded-md border border-success/30 bg-success/5">
+          <span className="text-success text-lg leading-none">&#10003;</span>
+          <p className="text-sm font-medium text-text-primary">
+            {serviceName(successService)} connected successfully
+          </p>
+          <button
+            onClick={() => setSuccessService(null)}
+            className="ml-auto text-text-tertiary hover:text-text-primary text-lg leading-none"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       {googleOAuthMissing && (
         <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
           <span className="text-yellow-600 text-lg leading-none mt-0.5">!</span>
@@ -995,6 +1030,7 @@ export default function Services() {
         <AddServiceModal
           services={allServices}
           onClose={() => setShowModal(false)}
+          onSuccess={handleConnectionSuccess}
           googleOAuthMissing={googleOAuthMissing}
         />
       )}
