@@ -111,7 +111,7 @@ export default function Register() {
             </p>
             <button
               onClick={handleJoinWaitlist}
-              disabled={isSubmitting || !email}
+              disabled={isSubmitting}
               className="w-full py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong disabled:opacity-50"
             >
               {isSubmitting ? 'Joining...' : 'Join the waitlist'}

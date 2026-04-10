@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 
@@ -9,6 +9,8 @@ export default function OAuthCallback() {
   const [searchParams] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
   const [destination, setDestination] = useState<string | null>(null)
+  const [waitlistEmail, setWaitlistEmail] = useState<string | null>(null)
+  const [waitlistJoined, setWaitlistJoined] = useState(false)
   const didExchange = useRef(false)
 
   // Step 1: Exchange the code with the backend.
@@ -48,7 +50,14 @@ export default function OAuthCallback() {
       })
       .catch((err) => {
         if (err instanceof APIError && err.waitlistAvailable) {
-          navigate('/register?waitlist=1', { replace: true })
+          const email = err.extra?.email as string | undefined
+          if (email) {
+            api.auth.joinWaitlist(email)
+              .then(() => { setWaitlistEmail(email); setWaitlistJoined(true) })
+              .catch(() => { setWaitlistEmail(email); setWaitlistJoined(true) }) // anti-enumeration: show success either way
+          } else {
+            navigate('/register?waitlist=1', { replace: true })
+          }
           return
         }
         setError(err instanceof APIError ? err.message : 'Failed to sign in')
@@ -61,6 +70,23 @@ export default function OAuthCallback() {
       navigate(destination, { replace: true })
     }
   }, [destination, isAuthenticated, navigate])
+
+  if (waitlistJoined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface-0">
+        <div className="max-w-md w-full p-8 bg-surface-1 border border-border-default rounded-md text-center space-y-4">
+          <h1 className="text-3xl font-bold text-text-primary">Clawvisor</h1>
+          <h2 className="text-lg text-text-secondary">You're on the waitlist!</h2>
+          <p className="text-sm text-text-tertiary">
+            We'll let you know when your account is ready. Keep an eye on <strong>{waitlistEmail}</strong> for updates.
+          </p>
+          <Link to="/login" className="inline-block py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong">
+            Back to login
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   if (error) {
     return (
