@@ -36,6 +36,21 @@ for PLATFORM in $PLATFORMS; do
     go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor
 done
 
+# Build the iMessage helper for macOS only. This is a separate, stable binary
+# that holds Full Disk Access so users don't need to re-grant FDA on every
+# clawvisor update. The Info.plist (display name in FDA settings) can only be
+# embedded when building on macOS; CI cross-compilation omits it.
+HELPER_PLATFORMS="darwin/arm64 darwin/amd64"
+for PLATFORM in $HELPER_PLATFORMS; do
+  GOOS="${PLATFORM%/*}"
+  GOARCH="${PLATFORM#*/}"
+  OUTPUT="dist/clawvisor-imessage-helper-${GOOS}-${GOARCH}"
+
+  echo "Building ${OUTPUT}..."
+  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+    go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/imessage-helper
+done
+
 echo "Generating checksums..."
 cd dist
 if command -v sha256sum >/dev/null 2>&1; then
