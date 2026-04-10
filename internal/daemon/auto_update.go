@@ -66,8 +66,9 @@ func SetAutoUpdate(enable bool) error {
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			// Detect section headers (top-level keys with no indentation).
-			if len(line) > 0 && line[0] != ' ' && line[0] != '#' && strings.HasSuffix(trimmed, ":") {
-				inSection = trimmed == "auto_update:"
+			// Use HasPrefix to handle trailing comments like "auto_update:  # note".
+			if len(line) > 0 && line[0] != ' ' && line[0] != '#' && strings.Contains(trimmed, ":") {
+				inSection = strings.HasPrefix(trimmed, "auto_update:")
 			}
 			if inSection && strings.HasPrefix(trimmed, "enabled:") {
 				lines[i] = enabledLine
@@ -76,11 +77,15 @@ func SetAutoUpdate(enable bool) error {
 			}
 		}
 		if !replaced {
-			// Section exists but no enabled key — insert after the header.
-			content = strings.Replace(content, "auto_update:\n", "auto_update:\n"+enabledLine+"\n", 1)
-		} else {
-			content = strings.Join(lines, "\n")
+			// Section exists but no enabled key — insert after the header line.
+			for i, line := range lines {
+				if strings.HasPrefix(strings.TrimSpace(line), "auto_update:") {
+					lines = append(lines[:i+1], append([]string{enabledLine}, lines[i+1:]...)...)
+					break
+				}
+			}
 		}
+		content = strings.Join(lines, "\n")
 	} else {
 		// No auto_update section — append one.
 		if !strings.HasSuffix(content, "\n") {

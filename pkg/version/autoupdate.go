@@ -15,7 +15,7 @@ import (
 //
 // The goroutine exits when ctx is cancelled. It is a no-op for dev builds.
 func StartAutoUpdater(ctx context.Context, interval time.Duration, logger *slog.Logger) {
-	if Version == "dev" || Version == "" {
+	if v := GetCurrent(); v == "dev" || v == "" {
 		logger.Debug("auto-update: skipping for dev build")
 		return
 	}
@@ -73,10 +73,10 @@ func checkAndApply(logger *slog.Logger) bool {
 	logger.Info("auto-update: binary replaced, restarting",
 		"old_version", oldVer, "new_version", newVer)
 
-	// Update the in-memory version so any Check() calls between now and
-	// process exit don't consider this version "newer" again.
-	Version = newVer
+	// Update the in-memory version under the cache lock so any concurrent
+	// Check() / GetCurrent() calls see the new value without a data race.
 	cacheMu.Lock()
+	Version = newVer
 	cachedInfo = nil
 	cacheMu.Unlock()
 

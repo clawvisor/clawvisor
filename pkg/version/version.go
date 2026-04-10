@@ -116,7 +116,10 @@ func Check() *Info {
 
 // GetCurrent returns the current version without checking for updates.
 func GetCurrent() string {
-	return Version
+	cacheMu.Lock()
+	v := Version
+	cacheMu.Unlock()
+	return v
 }
 
 // fetchLatestRelease queries the GitHub API for the latest release tag.
