@@ -312,10 +312,12 @@ function AddServiceModal({
   const [error, setError] = useState<string | null>(null)
   const [activatingServiceId, setActivatingServiceId] = useState<string | null>(null)
 
-  // Billing: connection limit awareness
+  // Billing: connection limit awareness (only when billing is enabled)
+  const { features: modalFeatures } = useAuth()
   const { data: billingStatus } = useQuery({
     queryKey: ['billing-status'],
     queryFn: () => api.billing.status(),
+    enabled: !!modalFeatures?.billing,
     staleTime: 60_000,
   })
   const connectionLimit = billingStatus?.usage?.connections?.limit ?? -1

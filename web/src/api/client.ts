@@ -438,6 +438,7 @@ export interface FeatureSet {
   usage_metering: boolean
   password_auth: boolean
   adapter_gen: boolean
+  billing: boolean
 }
 
 export interface VersionInfo {
