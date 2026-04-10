@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,14 +40,9 @@ type ServicesHandler struct {
 	baseURL    string
 	eventHub   events.EventHub
 
-	// oauthStates holds temporary OAuth2 state tokens (in-memory; Phase 3 only).
-	oauthStates sync.Map // stateToken (string) → oauthStateEntry
-
-	// deviceFlows holds pending device flow entries keyed by flow ID.
-	deviceFlows sync.Map // flowID (string) → deviceFlowEntry
-
-	// pkceFlows holds pending PKCE authorization code flow entries keyed by state token.
-	pkceFlows sync.Map // stateToken (string) → pkceFlowEntry
+	// oauthStore holds temporary OAuth flow state (standard, device, PKCE).
+	// Backed by either in-memory or Redis, depending on server configuration.
+	oauthStore OAuthStateStore
 
 	// relayDaemonURL is the public HTTPS URL via the relay (e.g. "https://relay.clawvisor.com/d/DAEMON_ID").
 	// Used as redirect_uri for PKCE flows that require HTTPS. Empty when relay is not configured.
@@ -101,7 +95,13 @@ func validateCLICallback(raw string) string {
 func NewServicesHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, logger *slog.Logger, baseURL string, eventHub events.EventHub) *ServicesHandler {
 	return &ServicesHandler{
 		st: st, vault: v, adapterReg: adapterReg, logger: logger, baseURL: baseURL, eventHub: eventHub,
+		oauthStore: newMemoryOAuthStateStore(),
 	}
+}
+
+// SetOAuthStateStore overrides the default in-memory OAuth state store.
+func (h *ServicesHandler) SetOAuthStateStore(s OAuthStateStore) {
+	h.oauthStore = s
 }
 
 // SetRelayDaemonURL sets the public HTTPS relay URL used for PKCE flow redirects.
@@ -395,7 +395,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stateToken := uuid.New().String()
-	h.oauthStates.Store(stateToken, oauthStateEntry{
+	h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
@@ -460,7 +460,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stateToken := uuid.New().String()
-	h.oauthStates.Store(stateToken, oauthStateEntry{
+	h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
@@ -489,12 +489,11 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	val, ok := h.oauthStates.LoadAndDelete(state)
+	entry, ok := h.oauthStore.LoadAndDeleteOAuth(state)
 	if !ok {
 		oauthPopupClose(w, "Invalid or expired OAuth state. Please try again.", "")
 		return
 	}
-	entry := val.(oauthStateEntry)
 	if time.Now().After(entry.ExpiresAt) {
 		oauthPopupClose(w, "OAuth session expired. Please try again.", "")
 		return
@@ -665,7 +664,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stateToken := uuid.New().String()
-		h.oauthStates.Store(stateToken, oauthStateEntry{
+		h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 			UserID:       user.ID,
 			ServiceID:    serviceID,
 			Alias:        alias,
@@ -1168,14 +1167,7 @@ func (h *ServicesHandler) resolveOAuthScopes(
 // sweepExpiredOAuthStates removes OAuth state entries older than 10 minutes.
 // Called lazily on each new OAuth URL generation.
 func (h *ServicesHandler) sweepExpiredOAuthStates() {
-	now := time.Now()
-	h.oauthStates.Range(func(key, value any) bool {
-		entry := value.(oauthStateEntry)
-		if now.After(entry.ExpiresAt) {
-			h.oauthStates.Delete(key)
-		}
-		return true
-	})
+	h.oauthStore.Cleanup()
 }
 
 // oauthAuthURL builds the OAuth2 authorization URL. When selectAccount is true
@@ -1369,7 +1361,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 	}
 
 	flowID := uuid.New().String()
-	h.deviceFlows.Store(flowID, deviceFlowEntry{
+	h.oauthStore.StoreDeviceFlow(flowID, deviceFlowEntry{
 		UserID:     user.ID,
 		ServiceID:  serviceID,
 		Alias:      alias,
@@ -1415,19 +1407,18 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	val, ok := h.deviceFlows.Load(body.FlowID)
+	entry, ok := h.oauthStore.LoadDeviceFlow(body.FlowID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown or expired flow")
 		return
 	}
-	entry := val.(deviceFlowEntry)
 
 	if entry.UserID != user.ID {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "flow does not belong to this user")
 		return
 	}
 	if time.Now().After(entry.ExpiresAt) {
-		h.deviceFlows.Delete(body.FlowID)
+		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "expired"})
 		return
 	}
@@ -1472,21 +1463,21 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	case "slow_down":
 		// Increase interval by 5 seconds per spec.
 		entry.Interval += 5
-		h.deviceFlows.Store(body.FlowID, entry)
+		h.oauthStore.UpdateDeviceFlow(body.FlowID, entry)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "slow_down", "interval": entry.Interval})
 		return
 	case "expired_token":
-		h.deviceFlows.Delete(body.FlowID)
+		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "expired"})
 		return
 	case "access_denied":
-		h.deviceFlows.Delete(body.FlowID)
+		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
 		return
 	case "":
 		// Success — fall through.
 	default:
-		h.deviceFlows.Delete(body.FlowID)
+		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": tokenResp.Error})
 		return
 	}
@@ -1494,7 +1485,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	// Success: validate and store the token as an api_key credential.
 	if tokenResp.AccessToken == "" {
 		h.logger.Warn("device flow: provider returned empty access token", "service", entry.ServiceID)
-		h.deviceFlows.Delete(body.FlowID)
+		h.oauthStore.DeleteDeviceFlow(body.FlowID)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "provider returned empty access token")
 		return
 	}
@@ -1521,7 +1512,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		configJSON, _ := json.Marshal(entry.Config)
 		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
 	}
-	h.deviceFlows.Delete(body.FlowID)
+	h.oauthStore.DeleteDeviceFlow(body.FlowID)
 
 	h.logger.Info("service activated via device flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "complete", "alias": alias})
@@ -1662,7 +1653,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 	}
 	redirectURI := redirectBase + "/api/pkce-flow/callback"
 
-	h.pkceFlows.Store(stateToken, pkceFlowEntry{
+	h.oauthStore.StorePKCE(stateToken, pkceFlowEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
@@ -1713,12 +1704,11 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	val, ok := h.pkceFlows.LoadAndDelete(state)
+	entry, ok := h.oauthStore.LoadAndDeletePKCE(state)
 	if !ok {
 		oauthPopupClose(w, "Invalid or expired PKCE state. Please try again.", "")
 		return
 	}
-	entry := val.(pkceFlowEntry)
 	if time.Now().After(entry.ExpiresAt) {
 		oauthPopupClose(w, "PKCE session expired. Please try again.", "")
 		return

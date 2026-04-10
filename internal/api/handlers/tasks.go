@@ -48,8 +48,8 @@ type TasksHandler struct {
 	baseURL      string
 	eventHub     events.EventHub
 	assessor     taskrisk.Assessor
-	contentDedup *dedupCache
-	msgBuffer    *groupchat.MessageBuffer // may be nil; set via SetGroupApproval
+	contentDedup DedupCache
+	msgBuffer    groupchat.Buffer // may be nil; set via SetGroupApproval
 	llmHealth    *llm.Health              // may be nil; needed for approval check LLM calls
 	agentPairer  notify.AgentGroupPairer  // may be nil; set via SetGroupApproval
 }
@@ -78,7 +78,12 @@ func NewTasksHandler(
 
 // SetGroupApproval configures the message buffer, LLM health, and agent-group
 // pairer used for on-demand group chat approval checks during task creation.
-func (h *TasksHandler) SetGroupApproval(buf *groupchat.MessageBuffer, health *llm.Health, pairer notify.AgentGroupPairer) {
+// SetDedupCache overrides the default in-memory content dedup cache.
+func (h *TasksHandler) SetDedupCache(dc DedupCache) {
+	h.contentDedup = dc
+}
+
+func (h *TasksHandler) SetGroupApproval(buf groupchat.Buffer, health *llm.Health, pairer notify.AgentGroupPairer) {
 	h.msgBuffer = buf
 	h.llmHealth = health
 	h.agentPairer = pairer

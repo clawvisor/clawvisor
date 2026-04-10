@@ -287,16 +287,14 @@ func TestBruteForceProtection(t *testing.T) {
 func TestExpiredPairingSession(t *testing.T) {
 	h := newTestDevicesHandler()
 
-	// Manually insert an expired session.
+	// Insert an expired session via the pairing store.
 	token := "expired-token"
-	h.pairingsMu.Lock()
-	h.pairings[token] = &pairingSession{
+	h.pairingStore.Store(token, &pairingSession{
 		Token:     token,
 		UserID:    "u1",
 		Code:      "123456",
 		ExpiresAt: time.Now().Add(-1 * time.Minute), // already expired
-	}
-	h.pairingsMu.Unlock()
+	})
 
 	body, _ := json.Marshal(map[string]string{
 		"pairing_token": token,

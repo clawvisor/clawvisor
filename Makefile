@@ -2,12 +2,21 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
-LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT)"
+BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
+LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT) -X github.com/clawvisor/clawvisor/pkg/version.SkillPublishedAt=$(BUILD_DATE)"
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 
 build: web/dist
 	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
+
+IMESSAGE_HELPER_APP := Clawvisor iMessage Helper.app
+
+build-imessage-helper:
+	go build $(LDFLAGS) -o bin/clawvisor-imessage-helper ./cmd/imessage-helper
+	mkdir -p "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS"
+	cp bin/clawvisor-imessage-helper "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper"
+	cp cmd/imessage-helper/Info.plist "bin/$(IMESSAGE_HELPER_APP)/Contents/Info.plist"
 
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
@@ -26,6 +35,24 @@ install: build
 	$(HOME)/.clawvisor/bin/clawvisor install
 	@echo ""
 	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
+
+# Install the iMessage helper .app bundle separately. It holds Full Disk Access
+# and is codesigned independently so that updating the main binary does not
+# invalidate the FDA grant.
+install-imessage-helper: build-imessage-helper
+	mkdir -p $(HOME)/.clawvisor/bin
+	@# Only replace the helper if the binary actually changed, to preserve the
+	@# existing FDA grant and codesign.
+	@if [ -f "$(HOME)/.clawvisor/bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper" ] && \
+	    cmp -s "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper" \
+	           "$(HOME)/.clawvisor/bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper"; then \
+		echo "imessage-helper: unchanged, skipping install (FDA preserved)"; \
+	else \
+		rm -rf "$(HOME)/.clawvisor/bin/$(IMESSAGE_HELPER_APP)"; \
+		cp -R "bin/$(IMESSAGE_HELPER_APP)" "$(HOME)/.clawvisor/bin/$(IMESSAGE_HELPER_APP)"; \
+		[ "$$(uname)" = "Darwin" ] && codesign -s - "$(HOME)/.clawvisor/bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper" 2>/dev/null || true; \
+		echo "imessage-helper: installed and codesigned"; \
+	fi
 
 # ── Test ───────────────────────────────────────────────────────────────────────
 

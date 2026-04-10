@@ -110,8 +110,8 @@ func TestAgents_Delete(t *testing.T) {
 	id := str(t, body, "id")
 
 	resp = s.do("DELETE", fmt.Sprintf("/api/agents/%s", id), nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("delete agent: expected 204, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("delete agent: expected 200, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 

@@ -30,31 +30,55 @@ type Notifier struct {
 	pairingClient *http.Client // longer timeout for long-poll getUpdates
 	pairings      sync.Map     // pairing ID → *pairingSession
 
-	cbTokens      *callbackTokenStore
+	cbTokens      CallbackTokenStorer
 	pollers       sync.Map // userID → *pollingSession
 	decisionCh    chan notify.CallbackDecision
 	serverCtx     context.Context
-	msgBuffer     *groupchat.MessageBuffer // may be nil; set via SetMessageBuffer
-	pendingGroups sync.Map                // userID → *pendingGroupList
-	groupPairings sync.Map                // sessionID → *groupPairingSession
+	msgBuffer     groupchat.Buffer // may be nil; set via SetMessageBuffer
+	pendingGroups sync.Map                // userID → *pendingGroupList (in-memory fallback)
+	groupPairings sync.Map                // sessionID → *groupPairingSession (in-memory fallback)
+
+	// Redis-backed stores for multi-instance mode. When nil, in-memory fallbacks are used.
+	pendingGroupStore PendingGroupStore
+	groupPairingStore GroupPairingStore
+	pollingLock       PollingLock
 }
 
 // New creates a Telegram Notifier that reads per-user bot tokens from the store.
 // serverCtx is the server's top-level context; polling goroutines respect its cancellation.
 func New(st store.Store, serverCtx context.Context) *Notifier {
-	return &Notifier{
+	n := &Notifier{
 		store:         st,
 		client:        &http.Client{Timeout: 10 * time.Second},
 		pairingClient: &http.Client{Timeout: 30 * time.Second},
 		cbTokens:      newCallbackTokenStore(),
 		decisionCh:    make(chan notify.CallbackDecision, 32),
 		serverCtx:     serverCtx,
+		pollingLock:   noopPollingLock{},
 	}
+	return n
 }
 
 // SetMessageBuffer sets the message buffer used for group chat observation.
-func (n *Notifier) SetMessageBuffer(buf *groupchat.MessageBuffer) {
+func (n *Notifier) SetMessageBuffer(buf groupchat.Buffer) {
 	n.msgBuffer = buf
+}
+
+// SetRedisStores configures Redis-backed stores for multi-instance deployments.
+// Call before the server starts handling requests.
+func (n *Notifier) SetRedisStores(cbTokens CallbackTokenStorer, pgStore PendingGroupStore, gpStore GroupPairingStore, pollLock PollingLock) {
+	if cbTokens != nil {
+		n.cbTokens = cbTokens
+	}
+	if pgStore != nil {
+		n.pendingGroupStore = pgStore
+	}
+	if gpStore != nil {
+		n.groupPairingStore = gpStore
+	}
+	if pollLock != nil {
+		n.pollingLock = pollLock
+	}
 }
 
 // ── Agent-to-group pairing ────────────────────────────────────────────────────
@@ -77,27 +101,42 @@ func (n *Notifier) StartGroupPairing(_ context.Context, userID, groupChatID, _ s
 		GroupChatID: groupChatID,
 		CreatedAt:   time.Now(),
 	}
-	n.groupPairings.Store(sessionID, session)
-
-	// Auto-expire after 5 minutes.
-	go func() {
-		time.Sleep(5 * time.Minute)
-		n.groupPairings.Delete(sessionID)
-	}()
+	if n.groupPairingStore != nil {
+		n.groupPairingStore.Store(sessionID, session)
+	} else {
+		n.groupPairings.Store(sessionID, session)
+		go func() {
+			time.Sleep(5 * time.Minute)
+			n.groupPairings.Delete(sessionID)
+		}()
+	}
 
 	return sessionID, nil
 }
 
 // CompleteGroupPairing validates a pairing session and persists the agent-group mapping.
 func (n *Notifier) CompleteGroupPairing(ctx context.Context, sessionID, agentID, agentUserID string) error {
-	val, ok := n.groupPairings.Load(sessionID)
-	if !ok {
-		return fmt.Errorf("pairing session not found or expired")
+	var session *groupPairingSession
+	if n.groupPairingStore != nil {
+		s, ok := n.groupPairingStore.Load(sessionID)
+		if !ok {
+			return fmt.Errorf("pairing session not found or expired")
+		}
+		session = s
+	} else {
+		val, ok := n.groupPairings.Load(sessionID)
+		if !ok {
+			return fmt.Errorf("pairing session not found or expired")
+		}
+		session = val.(*groupPairingSession)
 	}
-	session := val.(*groupPairingSession)
 
 	if time.Since(session.CreatedAt) > 5*time.Minute {
-		n.groupPairings.Delete(sessionID)
+		if n.groupPairingStore != nil {
+			n.groupPairingStore.Delete(sessionID)
+		} else {
+			n.groupPairings.Delete(sessionID)
+		}
 		return fmt.Errorf("pairing session expired")
 	}
 	if agentUserID != session.UserID {
@@ -107,7 +146,11 @@ func (n *Notifier) CompleteGroupPairing(ctx context.Context, sessionID, agentID,
 	if err := n.store.CreateAgentGroupPairing(ctx, session.UserID, agentID, session.GroupChatID); err != nil {
 		return fmt.Errorf("persisting agent-group pairing: %w", err)
 	}
-	n.groupPairings.Delete(sessionID)
+	if n.groupPairingStore != nil {
+		n.groupPairingStore.Delete(sessionID)
+	} else {
+		n.groupPairings.Delete(sessionID)
+	}
 	return nil
 }
 
@@ -134,6 +177,14 @@ type pendingGroupList struct {
 
 // AddPendingGroup stores a detected group for the user, deduplicating by ChatID.
 func (n *Notifier) AddPendingGroup(userID string, pg notify.PendingGroup) {
+	if n.pendingGroupStore != nil {
+		n.pendingGroupStore.Add(userID, pg)
+		return
+	}
+	n.addPendingGroupMemory(userID, pg)
+}
+
+func (n *Notifier) addPendingGroupMemory(userID string, pg notify.PendingGroup) {
 	val, _ := n.pendingGroups.LoadOrStore(userID, &pendingGroupList{})
 	pgl := val.(*pendingGroupList)
 	pgl.mu.Lock()
@@ -149,6 +200,13 @@ func (n *Notifier) AddPendingGroup(userID string, pg notify.PendingGroup) {
 // PendingGroups returns the list of groups the bot has been added to but
 // observation has not been enabled for.
 func (n *Notifier) PendingGroups(userID string) []notify.PendingGroup {
+	if n.pendingGroupStore != nil {
+		return n.pendingGroupStore.List(userID)
+	}
+	return n.pendingGroupsMemory(userID)
+}
+
+func (n *Notifier) pendingGroupsMemory(userID string) []notify.PendingGroup {
 	val, ok := n.pendingGroups.Load(userID)
 	if !ok {
 		return nil
@@ -163,6 +221,14 @@ func (n *Notifier) PendingGroups(userID string) []notify.PendingGroup {
 
 // RemovePendingGroup removes a group from the pending list (after approval or dismissal).
 func (n *Notifier) RemovePendingGroup(userID, chatID string) {
+	if n.pendingGroupStore != nil {
+		n.pendingGroupStore.Remove(userID, chatID)
+		return
+	}
+	n.removePendingGroupMemory(userID, chatID)
+}
+
+func (n *Notifier) removePendingGroupMemory(userID, chatID string) {
 	val, ok := n.pendingGroups.Load(userID)
 	if !ok {
 		return

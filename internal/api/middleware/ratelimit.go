@@ -14,7 +14,7 @@ import (
 // provided KeyedLimiter. keyFunc extracts the rate-limit key from the request
 // (e.g. agent ID or user ID from context). If keyFunc returns "", the request
 // is not rate-limited (unauthenticated). A nil limiter disables rate limiting.
-func RateLimit(limiter *ratelimit.KeyedLimiter, keyFunc func(*http.Request) string, limit int) func(http.Handler) http.Handler {
+func RateLimit(limiter ratelimit.Limiter, keyFunc func(*http.Request) string, limit int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if limiter == nil {

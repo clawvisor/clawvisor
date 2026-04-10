@@ -14,6 +14,10 @@ import (
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Version=0.3.0"
 var Version = "dev"
 
+// SkillPublishedAt is set at build time via -ldflags. It records the date (YYYY-MM-DD)
+// the release was built so the skill can display when it was last updated.
+var SkillPublishedAt = "dev"
+
 // Environment is set at build time via -ldflags. Valid values: "production" (default), "staging".
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Environment=staging"
 var Environment = "production"
@@ -69,13 +73,23 @@ type Info struct {
 	UpdateAvail   bool   `json:"update_available"`
 	ReleaseURL    string `json:"release_url,omitempty"`
 	UpgradeCmd    string `json:"upgrade_command,omitempty"`
+	AutoUpdate    bool   `json:"auto_update"`
 }
 
 var (
-	cacheMu     sync.Mutex
-	cachedInfo  *Info
-	cachedAt    time.Time
+	cacheMu        sync.Mutex
+	cachedInfo     *Info
+	cachedAt       time.Time
+	autoUpdateFlag bool
 )
+
+// SetAutoUpdate records whether auto-update is enabled so Check() can
+// include this in the Info response.
+func SetAutoUpdate(enabled bool) {
+	cacheMu.Lock()
+	autoUpdateFlag = enabled
+	cacheMu.Unlock()
+}
 
 // Check returns version info, fetching latest from GitHub if cache is stale.
 func Check() *Info {
@@ -89,6 +103,7 @@ func Check() *Info {
 	info := &Info{
 		Current:    Version,
 		UpgradeCmd: "go install github.com/clawvisor/clawvisor/cmd/clawvisor@latest",
+		AutoUpdate: autoUpdateFlag,
 	}
 
 	latest, url, err := fetchLatestRelease()
@@ -105,7 +120,10 @@ func Check() *Info {
 
 // GetCurrent returns the current version without checking for updates.
 func GetCurrent() string {
-	return Version
+	cacheMu.Lock()
+	v := Version
+	cacheMu.Unlock()
+	return v
 }
 
 // fetchLatestRelease queries the GitHub API for the latest release tag.

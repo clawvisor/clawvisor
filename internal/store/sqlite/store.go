@@ -233,7 +233,7 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = ?`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
 		tokenHash,
 	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -250,8 +250,15 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 }
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE user_id = ? ORDER BY created_at DESC`,
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		       COALESCE((SELECT COUNT(*) FROM tasks t
+		                 WHERE t.agent_id = a.id
+		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		FROM agents a
+		WHERE a.user_id = ? AND a.deleted_at IS NULL
+		ORDER BY a.created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -264,12 +271,18 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		a := &store.Agent{}
 		var createdAt string
 		var orgID *string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID); err != nil {
+		var lastTaskAt *string
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID,
+			&a.ActiveTaskCount, &lastTaskAt); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = parseTime(createdAt)
 		if orgID != nil {
 			a.OrgID = *orgID
+		}
+		if lastTaskAt != nil {
+			ts := parseTime(*lastTaskAt)
+			a.LastTaskAt = &ts
 		}
 		agents = append(agents, a)
 	}
@@ -278,7 +291,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM agents WHERE id = ? AND user_id = ?`,
+		`UPDATE agents SET deleted_at = datetime('now') WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
 		id, userID,
 	)
 	if err != nil {
@@ -293,7 +306,7 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 
 func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET callback_secret = ? WHERE id = ?`,
+		`UPDATE agents SET callback_secret = ? WHERE id = ? AND deleted_at IS NULL`,
 		secret, agentID)
 	if err != nil {
 		return err
@@ -308,7 +321,7 @@ func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret stri
 func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (string, error) {
 	var secret *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT callback_secret FROM agents WHERE id = ?`, agentID,
+		`SELECT callback_secret FROM agents WHERE id = ? AND deleted_at IS NULL`, agentID,
 	).Scan(&secret)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", store.ErrNotFound
@@ -327,7 +340,7 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = ?`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
 		id,
 	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -580,6 +593,19 @@ func (s *Store) DeleteNotificationConfig(ctx context.Context, userID, channel st
 	return nil
 }
 
+// ── Gateway Request Log (append-only backup) ─────────────────────────────────
+
+func (s *Store) LogGatewayRequest(ctx context.Context, e *store.GatewayRequestLog) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO gateway_request_log (
+			audit_id, request_id, agent_id, user_id, service, action,
+			task_id, reason, decision, outcome, duration_ms
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, e.AuditID, e.RequestID, e.AgentID, e.UserID, e.Service, e.Action,
+		e.TaskID, e.Reason, e.Decision, e.Outcome, e.DurationMS)
+	return err
+}
+
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
 func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
@@ -605,12 +631,13 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		safetyFlagged = 1
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO audit_log (
+		INSERT INTO audit_log (
 			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 			params_safe, decision, outcome, policy_id, rule_id,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
 		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (request_id) DO NOTHING
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
 		e.PolicyID, e.RuleID, safetyFlagged, e.SafetyReason, e.Reason,
@@ -1071,6 +1098,18 @@ func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = 'revoked'
+		 WHERE agent_id = ? AND user_id = ? AND status IN ('active', 'pending_approval', 'pending_scope_expansion')`,
+		agentID, userID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
@@ -1682,7 +1721,7 @@ func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, er
 		RequestsByService: make(map[string]int),
 	}
 
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents").Scan(&c.Agents); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agents WHERE deleted_at IS NULL").Scan(&c.Agents); err != nil {
 		return nil, fmt.Errorf("counting agents: %w", err)
 	}
 

@@ -70,6 +70,9 @@ type Store interface {
 	DeleteNotificationConfig(ctx context.Context, userID, channel string) error
 	ListNotificationConfigsByChannel(ctx context.Context, channel string) ([]NotificationConfig, error)
 
+	// Gateway request log (append-only backup)
+	LogGatewayRequest(ctx context.Context, entry *GatewayRequestLog) error
+
 	// Audit log
 	LogAudit(ctx context.Context, entry *AuditEntry) error
 	UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error
@@ -89,6 +92,7 @@ type Store interface {
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
 	RevokeTask(ctx context.Context, id, userID string) error
+	RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error)
 
 	// Pending approvals
 	SavePendingApproval(ctx context.Context, pa *PendingApproval) error
@@ -181,12 +185,14 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	TokenHash string    `json:"-"`
-	OrgID     string    `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	Name            string     `json:"name"`
+	TokenHash       string     `json:"-"`
+	OrgID           string     `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt       time.Time  `json:"created_at"`
+	ActiveTaskCount int        `json:"active_task_count"`
+	LastTaskAt      *time.Time `json:"last_task_at,omitempty"`
 }
 
 // ServiceMeta records that a user has activated a given service.
@@ -229,6 +235,23 @@ type NotificationConfig struct {
 	Config    json.RawMessage `json:"config"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// GatewayRequestLog is an append-only backup record of every gateway request.
+// Written before the primary audit insert so we retain visibility even if that
+// insert is silently dropped.
+type GatewayRequestLog struct {
+	AuditID    string
+	RequestID  string
+	AgentID    string
+	UserID     string
+	Service    string
+	Action     string
+	TaskID     string
+	Reason     string
+	Decision   string
+	Outcome    string
+	DurationMS int
 }
 
 // AuditEntry is one row in the audit_log table.

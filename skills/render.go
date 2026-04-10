@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	"github.com/clawvisor/clawvisor/pkg/version"
 )
 
 // Target identifies which rendering variant to produce.
@@ -38,11 +40,13 @@ type RenderOptions struct {
 
 // templateData holds the flags that control conditional rendering.
 type templateData struct {
-	Target       Target
-	UseCurl      bool
-	Condensed    bool
-	ClawvisorURL string // concrete instance URL, empty if unknown
-	ViaRelay     bool   // true when served through the relay
+	Target           Target
+	UseCurl          bool
+	Condensed        bool
+	ClawvisorURL     string // concrete instance URL, empty if unknown
+	ViaRelay         bool   // true when served through the relay
+	SkillVersion     string // current skill version
+	SkillPublishedAt string // date the skill version was published
 }
 
 // dataForTarget returns the template data for the given target.
@@ -93,6 +97,8 @@ func RenderWithOptions(target Target, opts RenderOptions) (string, error) {
 	data := dataForTarget(target)
 	data.ClawvisorURL = opts.ClawvisorURL
 	data.ViaRelay = opts.ViaRelay
+	data.SkillVersion = version.Version
+	data.SkillPublishedAt = version.SkillPublishedAt
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

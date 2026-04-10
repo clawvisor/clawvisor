@@ -103,11 +103,11 @@ func TestPairingVerifySingleUse(t *testing.T) {
 
 func TestPairingVerifyExpired(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
+	// Use a very short expiry to test expiration.
+	h.SetPairingCodeStore(newMemoryPairingCodeStore(1*time.Millisecond, maxPairingCodeAttempts))
 	code := generateAndGetCode(t, h)
 
-	h.mu.Lock()
-	h.created = time.Now().Add(-6 * time.Minute)
-	h.mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
 
 	if h.Verify(code) {
 		t.Error("expired code should return false")
@@ -116,7 +116,7 @@ func TestPairingVerifyExpired(t *testing.T) {
 
 func TestPairingVerifyBruteForce(t *testing.T) {
 	h := NewPairingHandler("test-daemon-id")
-	generateAndGetCode(t, h)
+	code := generateAndGetCode(t, h)
 
 	for i := 0; i < maxPairingCodeAttempts; i++ {
 		if h.Verify("000000") {
@@ -124,11 +124,11 @@ func TestPairingVerifyBruteForce(t *testing.T) {
 		}
 	}
 
-	h.mu.Lock()
-	if h.code != "" {
-		t.Error("code should be cleared after max attempts")
+	// After max wrong attempts the code should be invalidated,
+	// so even the correct code should fail.
+	if h.Verify(code) {
+		t.Error("correct code should fail after max brute-force attempts")
 	}
-	h.mu.Unlock()
 }
 
 func TestPairingNewCodeInvalidatesPrevious(t *testing.T) {

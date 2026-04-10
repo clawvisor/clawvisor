@@ -145,9 +145,17 @@ func (n *Notifier) BootstrapGroupObservation(ctx context.Context) {
 func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 	defer func() {
 		n.pollers.Delete(ps.userID)
+		n.pollingLock.Release(ctx, ps.userID)
 	}()
 
 	logger := slog.Default()
+
+	// Acquire distributed lock before polling. Only one instance should
+	// call getUpdates per bot token.
+	if !n.pollingLock.Acquire(ctx, ps.userID) {
+		logger.Debug("callback polling: lock not acquired, another instance is polling", "user_id", ps.userID)
+		return
+	}
 
 	// Drain old updates to get current offset.
 	updates, err := n.getUpdates(ctx, ps.botToken, 0, 0)
@@ -166,6 +174,9 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 			return
 		default:
 		}
+
+		// Renew the distributed lock before each long-poll.
+		n.pollingLock.Renew(ctx, ps.userID)
 
 		updates, err := n.getUpdates(ctx, ps.botToken, offset, 10)
 		if err != nil {

@@ -4,6 +4,10 @@ import { api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, ty
 const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
 const CURRENT_ORG_KEY = 'clawvisor_current_org'
 
+function safeSetItem(key: string, value: string) {
+  try { localStorage.setItem(key, value) } catch { /* quota exceeded — ignore */ }
+}
+
 interface AuthContextValue {
   user: User | null
   isLoading: boolean
@@ -12,8 +16,10 @@ interface AuthContextValue {
   features: FeatureSet | null
   currentOrg: Org | null
   setCurrentOrg: (org: Org | null) => void
+  onboardingComplete: boolean | null
+  refreshOnboarding: () => Promise<void>
   login: (email: string, password: string) => Promise<LoginResult>
-  register: (email: string, password?: string) => Promise<RegisterResult>
+  register: (email: string, password: string) => Promise<RegisterResult>
   logout: () => Promise<void>
   /** Set session tokens directly (used by pages that handle multi-step auth flows) */
   setSession: (accessToken: string, refreshToken: string, user: User) => void
@@ -26,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'magic_link' | 'password' | 'passkey' | null>(null)
   const [features, setFeatures] = useState<FeatureSet | null>(null)
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null)
   const [currentOrg, setCurrentOrgState] = useState<Org | null>(() => {
     try {
       const stored = localStorage.getItem(CURRENT_ORG_KEY)
@@ -34,17 +41,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentOrgId(org.id)
         return org
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('useAuth: failed to parse stored org from localStorage', e)
+    }
     return null
   })
   // Prevents React StrictMode's intentional double-invoke from burning the
   // single-use refresh token twice on the initial session restore.
   const didInit = useRef(false)
 
+  const checkOnboarding = useCallback(() => {
+    api.auth.onboarding.status()
+      .then((s) => setOnboardingComplete(s.onboarding_completed))
+      .catch(() => setOnboardingComplete(null))
+  }, [])
+
+  const refreshOnboarding = useCallback(async () => {
+    try {
+      const s = await api.auth.onboarding.status()
+      setOnboardingComplete(s.onboarding_completed)
+    } catch {
+      // ignore
+    }
+  }, [])
+
   const setCurrentOrg = useCallback((org: Org | null) => {
     setCurrentOrgState(org)
     if (org) {
-      localStorage.setItem(CURRENT_ORG_KEY, JSON.stringify(org))
+      safeSetItem(CURRENT_ORG_KEY, JSON.stringify(org))
       setCurrentOrgId(org.id)
     } else {
       localStorage.removeItem(CURRENT_ORG_KEY)
@@ -60,11 +84,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Fetch auth mode, features, and refresh token in parallel.
     const configPromise = api.config.public()
       .then((cfg) => setAuthMode(cfg.auth_mode))
-      .catch(() => {}) // default stays null → treated like password mode
+      .catch((e) => console.warn('useAuth: failed to fetch config', e)) // default stays null → treated like password mode
 
     const featuresPromise = api.features.get()
       .then((f) => setFeatures(f))
-      .catch(() => {}) // default stays null
+      .catch((e) => console.warn('useAuth: failed to fetch features', e)) // default stays null
 
     const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
     const authPromise = storedRefresh
@@ -72,10 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .refresh(storedRefresh)
           .then((resp) => {
             setAccessToken(resp.access_token)
-            localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
+            safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
             setUser(resp.user)
+            // Check onboarding status now that we have a valid token.
+            checkOnboarding()
           })
-          .catch(() => {
+          .catch((e) => {
+            console.warn('useAuth: token refresh failed', e)
             localStorage.removeItem(REFRESH_TOKEN_KEY)
             setAccessToken(null)
           })
@@ -93,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const resp = await api.auth.refresh(storedRefresh)
         setAccessToken(resp.access_token)
-        localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
+        safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
         setUser(resp.user)
         return resp.access_token
       } catch (e) {
@@ -109,45 +136,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setSession = useCallback((at: string, rt: string, u: User) => {
     setAccessToken(at)
-    localStorage.setItem(REFRESH_TOKEN_KEY, rt)
+    safeSetItem(REFRESH_TOKEN_KEY, rt)
     setUser(u)
-  }, [])
+    checkOnboarding()
+  }, [checkOnboarding])
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const resp = await api.auth.login(email, password)
     // Only set session if we got full tokens back (not TOTP/setup redirect)
     if (resp.access_token && resp.refresh_token && resp.user) {
       setAccessToken(resp.access_token)
-      localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
+      safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
       setUser(resp.user)
+      checkOnboarding()
     }
     return resp
-  }, [])
+  }, [checkOnboarding])
 
-  const register = useCallback(async (email: string, password?: string): Promise<RegisterResult> => {
-    const resp = await api.auth.register(email, password)
-    // Only set session if we got full tokens back (local mode)
-    if (resp.access_token && resp.refresh_token) {
-      setAccessToken(resp.access_token)
-      localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
-      setUser(resp.user ?? null)
-    }
-    return resp
+  const register = useCallback(async (email: string, password: string): Promise<RegisterResult> => {
+    return api.auth.register(email, password)
   }, [])
 
   const logout = useCallback(async () => {
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? undefined
-    await api.auth.logout(refreshToken).catch(() => {})
+    await api.auth.logout(refreshToken).catch((e) => console.warn('useAuth: logout request failed', e))
     setAccessToken(null)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(CURRENT_ORG_KEY)
     setCurrentOrgId(null)
     setCurrentOrgState(null)
     setUser(null)
+    setOnboardingComplete(null)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, login, register, logout, setSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: user !== null, authMode, features, currentOrg, setCurrentOrg, onboardingComplete, refreshOnboarding, login, register, logout, setSession }}>
       {children}
     </AuthContext.Provider>
   )

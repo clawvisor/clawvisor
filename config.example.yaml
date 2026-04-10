@@ -102,6 +102,13 @@ llm:
     # model: claude-haiku-4-5-20251001
     # timeout_seconds: 10
 
+auto_update:
+  enabled: false           # opt-in automatic binary updates. Env: CLAWVISOR_AUTO_UPDATE_ENABLED
+                           # when enabled, Clawvisor periodically checks GitHub for new releases,
+                           # downloads and verifies the binary, and restarts the server automatically.
+                           # only takes effect for self-hosted (non-multi-tenant) deployments.
+  check_interval: "6h"    # how often to check for updates. Env: CLAWVISOR_AUTO_UPDATE_CHECK_INTERVAL
+
 telemetry:
   enabled: false           # opt-in anonymous usage telemetry. Env: CLAWVISOR_TELEMETRY_ENABLED
                            # sends: OS, arch, db driver, agent count (bucketed), requests per service (bucketed)

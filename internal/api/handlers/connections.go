@@ -40,13 +40,9 @@ type ConnectionsHandler struct {
 	logger      *slog.Logger
 	multiTenant bool
 
-	// In-memory token cache: connection request ID → {raw token, approved time}.
-	// Tokens are never persisted — raw tokens must not hit the DB for security.
-	// This is a hard single-instance assumption: Approve and PollStatus must
-	// run in the same process. This is fine for the local daemon; if the server
-	// ever runs multi-instance, this needs a shared secret store or signed JWT.
-	tokensMu sync.RWMutex
-	tokens   map[string]approvedToken
+	// Token cache for approved agent tokens. Backed by either in-memory
+	// or Redis, depending on server configuration.
+	tokenCache TokenCache
 
 	// Active long-poll count.
 	activePolls atomic.Int64
@@ -69,9 +65,14 @@ func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
 		eventHub:    eventHub,
 		logger:      logger,
 		multiTenant: multiTenant,
-		tokens:      make(map[string]approvedToken),
+		tokenCache:  newMemoryTokenCache(connectionTokenWindow),
 		ipPolls:     make(map[string]int),
 	}
+}
+
+// SetTokenCache overrides the default in-memory token cache.
+func (h *ConnectionsHandler) SetTokenCache(tc TokenCache) {
+	h.tokenCache = tc
 }
 
 // RequestConnect handles POST /api/agents/connect (unauthenticated).
@@ -162,11 +163,8 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			"expires_at":    resolved.ExpiresAt,
 		}
 		if resolved.Status == "approved" {
-			h.tokensMu.RLock()
-			tok, ok := h.tokens[req.ID]
-			h.tokensMu.RUnlock()
-			if ok && time.Since(tok.approvedAt) < connectionTokenWindow {
-				resp["token"] = tok.raw
+			if raw, ok := h.tokenCache.Load(req.ID); ok {
+				resp["token"] = raw
 			}
 		}
 		writeJSON(w, http.StatusCreated, resp)
@@ -210,11 +208,8 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 
 		resp := map[string]any{"status": cr.Status}
 		if cr.Status == "approved" {
-			h.tokensMu.RLock()
-			tok, ok := h.tokens[id]
-			h.tokensMu.RUnlock()
-			if ok && time.Since(tok.approvedAt) < connectionTokenWindow {
-				resp["token"] = tok.raw
+			if raw, ok := h.tokenCache.Load(id); ok {
+				resp["token"] = raw
 			}
 		}
 		writeJSON(w, http.StatusOK, resp)
@@ -380,11 +375,7 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 		return "", fmt.Errorf("update status: %w", err)
 	}
 
-	h.tokensMu.Lock()
-	h.tokens[id] = approvedToken{raw: rawToken, approvedAt: time.Now()}
-	h.tokensMu.Unlock()
-
-	go h.cleanExpiredTokens()
+	h.tokenCache.Store(id, rawToken)
 
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
@@ -459,14 +450,3 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, requests)
 }
 
-// cleanExpiredTokens removes tokens older than the token window.
-func (h *ConnectionsHandler) cleanExpiredTokens() {
-	h.tokensMu.Lock()
-	defer h.tokensMu.Unlock()
-	now := time.Now()
-	for id, tok := range h.tokens {
-		if now.Sub(tok.approvedAt) > connectionTokenWindow {
-			delete(h.tokens, id)
-		}
-	}
-}

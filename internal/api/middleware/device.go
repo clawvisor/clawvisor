@@ -52,11 +52,18 @@ func DeviceFromContext(ctx context.Context) *store.PairedDevice {
 }
 
 // RequireDevice is middleware that validates a DeviceHMAC authorization header
-// and injects the paired device into the request context.
+// and injects the paired device into the request context. Uses in-memory replay
+// cache by default. Use RequireDeviceWithReplayCache for multi-instance deployments.
 //
 // Header format: Authorization: DeviceHMAC <device_id>:<timestamp>:<hmac_hex>
 // HMAC message:  "<method>\n<path>\n<timestamp>\n<sha256_hex(body)>"
 func RequireDevice(st store.Store) func(http.Handler) http.Handler {
+	return RequireDeviceWithReplayCache(st, NewMemoryReplayCache())
+}
+
+// RequireDeviceWithReplayCache creates the RequireDevice middleware with
+// a custom replay cache implementation (e.g. Redis-backed).
+func RequireDeviceWithReplayCache(st store.Store, rc ReplayCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -87,7 +94,7 @@ func RequireDevice(st store.Store) func(http.Handler) http.Handler {
 
 			// Replay protection: reject duplicate (device, timestamp, hmac) tuples.
 			cacheKey := deviceID + ":" + tsStr + ":" + providedHMAC
-			if _, loaded := replayCache.LoadOrStore(cacheKey, time.Now()); loaded {
+			if rc.Check(cacheKey) {
 				http.Error(w, `{"error":"replayed request","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
 				return
 			}

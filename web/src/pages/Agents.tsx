@@ -42,7 +42,11 @@ export default function Agents() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => orgId ? api.orgs.deleteAgent(orgId, id) : api.agents.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
   })
 
   const pending = (!orgId ? connections : undefined) ?? []
@@ -141,27 +145,50 @@ export default function Agents() {
         )}
 
         <div className="space-y-2">
-          {agents?.map(agent => (
-            <div key={agent.id} className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex items-center justify-between">
-              <div>
-                <span className="font-medium text-text-primary">{agent.name}</span>
-                <p className="text-xs text-text-tertiary mt-0.5">
-                  Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  if (confirm(`Revoke agent "${agent.name}"? Any running agents using this token will stop working.`)) {
-                    deleteMut.mutate(agent.id)
-                  }
-                }}
-                disabled={deleteMut.isPending}
-                className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+          {agents?.map(agent => {
+            const hasActiveTasks = agent.active_task_count > 0
+            return (
+              <div
+                key={agent.id}
+                className={`bg-surface-1 border rounded-md px-5 py-4 flex items-center justify-between ${
+                  hasActiveTasks
+                    ? 'border-brand/40 border-l-[3px] border-l-brand'
+                    : 'border-border-default'
+                }`}
               >
-                Revoke
-              </button>
-            </div>
-          ))}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-text-primary">{agent.name}</span>
+                    {hasActiveTasks && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-brand/10 text-brand">
+                        {agent.active_task_count} active {agent.active_task_count === 1 ? 'task' : 'tasks'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
+                    {agent.last_task_at && (
+                      <> · Last task {formatDistanceToNow(new Date(agent.last_task_at), { addSuffix: true })}</>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const taskWarning = hasActiveTasks
+                      ? `\n\n${agent.active_task_count} active ${agent.active_task_count === 1 ? 'task' : 'tasks'} will be revoked.`
+                      : ''
+                    if (confirm(`Revoke agent "${agent.name}"? Running agents using this token will stop working.${taskWarning}`)) {
+                      deleteMut.mutate(agent.id)
+                    }
+                  }}
+                  disabled={deleteMut.isPending}
+                  className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+                >
+                  Revoke
+                </button>
+              </div>
+            )
+          })}
         </div>
       </section>
 

@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, APIError } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { setSession } = useAuth()
   const token = searchParams.get('token') ?? ''
   const [error, setError] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(true)
+  const [destination, setDestination] = useState<string | null>(null)
+  const { isAuthenticated } = useAuth()
 
   useEffect(() => {
     if (!token) {
@@ -21,7 +25,8 @@ export default function VerifyEmail() {
       try {
         const result = await api.auth.verifyEmail(token)
         if (!cancelled) {
-          navigate('/setup-auth', { state: { setup_token: result.setup_token }, replace: true })
+          setSession(result.access_token, result.refresh_token, result.user)
+          setDestination('/onboarding')
         }
       } catch (err) {
         if (!cancelled) {
@@ -36,7 +41,11 @@ export default function VerifyEmail() {
     }
     verify()
     return () => { cancelled = true }
-  }, [token, navigate])
+  }, [token, setSession])
+
+  useEffect(() => {
+    if (destination && isAuthenticated) navigate(destination, { replace: true })
+  }, [destination, isAuthenticated, navigate])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-surface-0">

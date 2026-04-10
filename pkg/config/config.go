@@ -34,8 +34,9 @@ type Config struct {
 	Relay     RelayConfig     `yaml:"relay"`
 	Telemetry TelemetryConfig `yaml:"telemetry"`
 	Daemon    DaemonConfig    `yaml:"daemon"`
-	Push      PushConfig      `yaml:"push"`
-	Redis     RedisConfig     `yaml:"redis"`
+	Push       PushConfig       `yaml:"push"`
+	AutoUpdate AutoUpdateConfig `yaml:"auto_update"`
+	Redis      RedisConfig      `yaml:"redis"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
 }
@@ -66,6 +67,21 @@ type DaemonConfig struct {
 type PushConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	URL     string `yaml:"url"`
+}
+
+// AutoUpdateConfig holds settings for automatic binary updates.
+// Disabled by default — self-hosted users must opt in.
+type AutoUpdateConfig struct {
+	Enabled       bool   `yaml:"enabled"`        // default: false (explicit opt-in)
+	CheckInterval string `yaml:"check_interval"` // default: "6h"
+}
+
+// CheckIntervalDuration parses the configured check interval.
+func (a AutoUpdateConfig) CheckIntervalDuration() (time.Duration, error) {
+	if a.CheckInterval == "" {
+		return 6 * time.Hour, nil
+	}
+	return time.ParseDuration(a.CheckInterval)
 }
 
 // RedisConfig holds settings for Redis (used in cloud/multi-instance deployments).
@@ -277,6 +293,10 @@ func Default() *Config {
 		Push: PushConfig{
 			URL: version.PushURL(),
 		},
+		AutoUpdate: AutoUpdateConfig{
+			Enabled:       false,
+			CheckInterval: "6h",
+		},
 	}
 }
 
@@ -476,6 +496,13 @@ func Load(path string) (*Config, error) {
 		cfg.Redis.URL = v
 	}
 
+	if v := os.Getenv("CLAWVISOR_AUTO_UPDATE_ENABLED"); v != "" {
+		cfg.AutoUpdate.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_AUTO_UPDATE_CHECK_INTERVAL"); v != "" {
+		cfg.AutoUpdate.CheckInterval = v
+	}
+
 	if v := os.Getenv("CLAWVISOR_DAEMON_DATA_DIR"); v != "" {
 		cfg.Daemon.DataDir = v
 	}
@@ -525,6 +552,20 @@ func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	if sub.TimeoutSeconds == 0 {
 		sub.TimeoutSeconds = shared.TimeoutSeconds
 	}
+}
+
+// Validate checks for configuration errors that should prevent startup.
+func (c *Config) Validate() error {
+	if c.Database.Driver == "postgres" && c.Database.PostgresURL == "" {
+		return fmt.Errorf("database driver is postgres but postgres_url is empty")
+	}
+	if c.Approval.Timeout <= 0 {
+		return fmt.Errorf("approval.timeout must be positive (got %d)", c.Approval.Timeout)
+	}
+	if c.Task.DefaultExpirySeconds <= 0 {
+		return fmt.Errorf("task.default_expiry_seconds must be positive (got %d)", c.Task.DefaultExpirySeconds)
+	}
+	return nil
 }
 
 // AccessTokenDuration parses the configured duration.

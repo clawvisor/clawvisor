@@ -60,7 +60,7 @@ func (NoopVerifier) Verify(_ context.Context, _ VerifyRequest) (*VerificationVer
 type LLMVerifier struct {
 	health *llm.Health
 	logger *slog.Logger
-	cache  *verdictCache
+	cache  VerdictCacher
 }
 
 // NewLLMVerifier creates an LLM-backed intent verifier.
@@ -77,6 +77,11 @@ func NewLLMVerifier(health *llm.Health, logger *slog.Logger) *LLMVerifier {
 		logger: logger,
 		cache:  newVerdictCache(ttl),
 	}
+}
+
+// SetVerdictCache overrides the default in-memory verdict cache.
+func (v *LLMVerifier) SetVerdictCache(c VerdictCacher) {
+	v.cache = c
 }
 
 func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*VerificationVerdict, error) {

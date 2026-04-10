@@ -51,7 +51,8 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
                 setDeviceCode(null)
                 setError(r.status === 'denied' ? 'Authorization denied.' : 'Authorization expired.')
               }
-            } catch {
+            } catch (e) {
+              console.error('Services: device flow poll failed', e)
               setDeviceCode(null)
               setError('Failed to check authorization status')
             }
@@ -290,11 +291,15 @@ interface ServiceType {
 function AddServiceModal({
   services,
   onClose,
+  onSuccess,
   googleOAuthMissing,
+  activeConnectionCount,
 }: {
   services: ServiceInfo[]
   onClose: () => void
+  onSuccess: (serviceId: string) => void
   googleOAuthMissing: boolean
+  activeConnectionCount: number
 }) {
   const qc = useQueryClient()
   const [aliasInputFor, setAliasInputFor] = useState<string | null>(null)
@@ -305,6 +310,21 @@ function AddServiceModal({
   const [keyConfig, setKeyConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activatingServiceId, setActivatingServiceId] = useState<string | null>(null)
+
+  // Billing: connection limit awareness (only when billing is enabled)
+  const { features: modalFeatures } = useAuth()
+  const { data: billingStatus } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => api.billing.status(),
+    enabled: !!modalFeatures?.billing,
+    staleTime: 60_000,
+  })
+  const connectionLimit = billingStatus?.usage?.connections?.limit ?? -1
+  const atConnectionLimit = connectionLimit >= 0 && activeConnectionCount >= connectionLimit
+  const STARTER_CONNECTION_LIMIT = 5
+  const isTrialing = billingStatus?.status === 'trialing'
+  const trialExceedsStarter = isTrialing && activeConnectionCount >= STARTER_CONNECTION_LIMIT
 
   // Search filter
   const [search, setSearch] = useState('')
@@ -339,12 +359,12 @@ function AddServiceModal({
     function handler(e: MessageEvent) {
       if (e.data?.type === 'clawvisor_oauth_done') {
         qc.invalidateQueries({ queryKey: ['services'] })
-        onClose()
+        onSuccess(activatingServiceId ?? '')
       }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [qc, onClose])
+  }, [qc, onSuccess, activatingServiceId])
 
   // Build deduplicated service types
   const typeMap = new Map<string, ServiceType>()
@@ -385,11 +405,12 @@ function AddServiceModal({
 
   async function handleActivateOAuth(serviceId: string, alias?: string, newAccount?: boolean) {
     setError(null)
+    setActivatingServiceId(serviceId)
     try {
       const resp = await api.services.oauthGetUrl(serviceId, undefined, alias, newAccount)
       if (resp.already_authorized) {
         qc.invalidateQueries({ queryKey: ['services'] })
-        onClose()
+        onSuccess(serviceId)
         return
       }
       if (resp.url) {
@@ -405,14 +426,15 @@ function AddServiceModal({
     if (!keyValue.trim() || !keyInputFor) return
     setSaving(true)
     setError(null)
+    const serviceId = keyInputFor
     try {
-      await api.services.activateWithKey(keyInputFor, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
+      await api.services.activateWithKey(serviceId, keyValue.trim(), keyAlias, Object.keys(keyConfig).length > 0 ? keyConfig : undefined)
       setKeyValue('')
       setKeyInputFor(null)
       setKeyAlias(undefined)
       setKeyConfig({})
       qc.invalidateQueries({ queryKey: ['services'] })
-      onClose()
+      onSuccess(serviceId)
     } catch (e: any) {
       setError(e.message ?? 'Failed to save API key')
     } finally {
@@ -425,7 +447,7 @@ function AddServiceModal({
     try {
       await api.services.activate(serviceId)
       qc.invalidateQueries({ queryKey: ['services'] })
-      onClose()
+      onSuccess(serviceId)
     } catch (e: any) {
       setError(e.message ?? 'Failed to activate service')
     }
@@ -433,6 +455,8 @@ function AddServiceModal({
 
   async function handleActivatePKCE(serviceId: string, alias?: string, clientId?: string) {
     setError(null)
+    setActivatingServiceId(serviceId)
+
     try {
       const resp = await api.services.pkceFlowStart(serviceId, alias, clientId)
       if (resp.authorize_url) {
@@ -456,6 +480,8 @@ function AddServiceModal({
 
   async function handleActivateDeviceFlow(serviceId: string, alias?: string) {
     setError(null)
+    setActivatingServiceId(serviceId)
+
     stopDeviceFlowPolling()
     try {
       const resp = await api.services.deviceFlowStart(serviceId, alias)
@@ -483,7 +509,7 @@ function AddServiceModal({
           setDeviceFlowStatus('complete')
           stopDeviceFlowPolling()
           qc.invalidateQueries({ queryKey: ['services'] })
-          onClose()
+          onSuccess(serviceId)
           return
         }
         if (resp.status === 'pending' || resp.status === 'slow_down') {
@@ -604,6 +630,20 @@ function AddServiceModal({
         </div>
 
         <div className="px-6 py-3 overflow-y-auto">
+          {atConnectionLimit && (
+            <div className="mb-3 px-3 py-2.5 rounded-md bg-warning/10 border border-warning/30 text-sm">
+              <span className="font-medium text-text-primary">Connection limit reached</span>
+              <span className="text-text-secondary"> ({activeConnectionCount}/{connectionLimit}). </span>
+              <a href="/pricing" className="text-brand hover:text-brand/80 font-medium">Upgrade your plan</a>
+              <span className="text-text-secondary"> for more connections.</span>
+            </div>
+          )}
+          {!atConnectionLimit && trialExceedsStarter && (
+            <div className="mb-3 px-3 py-2.5 rounded-md bg-brand-muted border border-brand/30 text-sm">
+              <span className="font-medium text-text-primary">Heads up:</span>
+              <span className="text-text-secondary"> You have {activeConnectionCount} connections. The Starter plan only allows {STARTER_CONNECTION_LIMIT}. If you choose Starter after your trial, you won't be able to create new tasks or make any requests until you're under the limit.</span>
+            </div>
+          )}
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
           <div className="grid grid-cols-2 gap-4">
@@ -651,7 +691,13 @@ function AddServiceModal({
                       ) : (
                         <button
                           onClick={() => handleActivate(st)}
-                          className="w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40 transition-colors"
+                          disabled={atConnectionLimit}
+                          className={`w-full text-xs px-3 py-2 rounded-lg border transition-colors ${
+                            atConnectionLimit
+                              ? 'border-border-subtle text-text-tertiary cursor-not-allowed'
+                              : 'border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40'
+                          }`}
+                          title={atConnectionLimit ? `Connection limit reached (${activeConnectionCount}/${connectionLimit})` : undefined}
                         >
                           {isActivated ? 'Add account' : 'Connect'}
                         </button>
@@ -880,6 +926,17 @@ export default function Services() {
   const { features, currentOrg } = useAuth()
   const orgId = currentOrg?.id
   const [showModal, setShowModal] = useState(false)
+  const [successService, setSuccessService] = useState<string | null>(null)
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleConnectionSuccess(serviceId: string) {
+    setShowModal(false)
+    setSuccessService(serviceId)
+    if (successTimerRef.current) clearTimeout(successTimerRef.current)
+    successTimerRef.current = setTimeout(() => setSuccessService(null), 5000)
+  }
+
+  useEffect(() => () => { if (successTimerRef.current) clearTimeout(successTimerRef.current) }, [])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['services'],
@@ -948,6 +1005,21 @@ export default function Services() {
         </div>
       </div>
 
+      {successService && (
+        <div className="flex items-center gap-3 p-4 rounded-md border border-success/30 bg-success/5">
+          <span className="text-success text-lg leading-none">&#10003;</span>
+          <p className="text-sm font-medium text-text-primary">
+            {serviceName(successService)} connected successfully
+          </p>
+          <button
+            onClick={() => setSuccessService(null)}
+            className="ml-auto text-text-tertiary hover:text-text-primary text-lg leading-none"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       {googleOAuthMissing && (
         <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
           <span className="text-yellow-600 text-lg leading-none mt-0.5">!</span>
@@ -994,7 +1066,9 @@ export default function Services() {
         <AddServiceModal
           services={allServices}
           onClose={() => setShowModal(false)}
+          onSuccess={handleConnectionSuccess}
           googleOAuthMissing={googleOAuthMissing}
+          activeConnectionCount={activeServices.length}
         />
       )}
     </div>

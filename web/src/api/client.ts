@@ -164,33 +164,42 @@ export interface AuthResponse {
   refresh_token: string
 }
 
+export interface GoogleAuthResult {
+  // Full login (no MFA)
+  user?: User
+  access_token?: string
+  refresh_token?: string
+  // MFA required
+  status?: 'requires_mfa'
+  pending_token?: string
+  mfa_methods?: {
+    has_totp: boolean
+    passkey_count: number
+    has_backup_codes: boolean
+  }
+}
+
 // Login may return one of these instead of a full AuthResponse
 export interface LoginResult {
   // Normal login
   user?: User
   access_token?: string
   refresh_token?: string
-  // TOTP required
-  status?: 'requires_totp' | 'setup_required'
+  // MFA required
+  status?: 'requires_mfa'
   pending_token?: string
-  setup_token?: string
+  mfa_methods?: {
+    has_totp: boolean
+    passkey_count: number
+    has_backup_codes: boolean
+  }
 }
 
 export interface RegisterResult {
-  user?: User
-  // Local mode: full tokens
-  access_token?: string
-  refresh_token?: string
-  // Non-local mode without email verification: setup token
-  setup_token?: string
-  // Non-local mode with email verification: status
-  status?: 'verify_email'
+  status: 'verify_email'
 }
 
-export interface VerifyEmailResult {
-  setup_token: string
-  email: string
-}
+export type VerifyEmailResult = AuthResponse
 
 export interface WebAuthnCredential {
   id: string
@@ -204,7 +213,19 @@ export interface WebAuthnCredential {
 export interface UserAuthMethods {
   has_password: boolean
   has_totp: boolean
+  has_google: boolean
+  has_backup_codes: boolean
   passkey_count: number
+}
+
+export interface OnboardingStatus {
+  has_security_method: boolean
+  has_backup_codes: boolean
+  onboarding_completed: boolean
+}
+
+export interface BackupCodesResponse {
+  codes: string[]
 }
 
 export interface Agent {
@@ -213,6 +234,8 @@ export interface Agent {
   name: string
   created_at: string
   token?: string // only present on creation
+  active_task_count: number
+  last_task_at?: string
 }
 
 export interface ConnectionRequest {
@@ -415,6 +438,7 @@ export interface FeatureSet {
   usage_metering: boolean
   password_auth: boolean
   adapter_gen: boolean
+  billing: boolean
 }
 
 export interface VersionInfo {
@@ -423,6 +447,7 @@ export interface VersionInfo {
   update_available: boolean
   release_url?: string
   upgrade_command?: string
+  auto_update: boolean
 }
 
 export interface LLMUsage {
@@ -521,6 +546,58 @@ export interface AdapterGenResult {
   installed: boolean
 }
 
+// ── Billing types ─────────────────────────────────────────────────────────────
+
+export interface BillingPlan {
+  name: string
+  display_name: string
+  monthly_price?: number
+  max_connections: number
+  included_requests: number
+  overage_per_request?: number
+  contact_us?: boolean
+}
+
+export interface BillingStatus {
+  plan: string
+  plan_display_name?: string
+  status: string
+  current_period_start?: string
+  current_period_end?: string
+  cancel_at_period_end?: boolean
+  trial_ends_at?: string
+  trial_days_remaining?: number
+  stripe_publishable_key?: string
+  usage?: {
+    requests: { used: number; limit: number }
+    connections: { limit: number }
+  }
+  discount?: {
+    name?: string
+    percent_off?: number
+    amount_off?: number
+    ends_at?: string
+  }
+}
+
+export interface PromoValidation {
+  valid: boolean
+  name: string
+  percent_off?: number
+  amount_off?: number
+  duration_months?: number
+  duration?: string
+}
+
+export interface BillingPlansResponse {
+  plans: BillingPlan[]
+  trial: {
+    duration_days: number
+    included_requests: number
+    max_connections: number
+  }
+}
+
 // ── Org types ─────────────────────────────────────────────────────────────────
 
 export interface Org {
@@ -594,7 +671,7 @@ export interface CustomMCPServer {
 
 export const api = {
   auth: {
-    register: (email: string, password?: string) =>
+    register: (email: string, password: string) =>
       post<RegisterResult>('/api/auth/register', { email, password }),
     login: (email: string, password: string) =>
       post<LoginResult>('/api/auth/login', { email, password }),
@@ -627,6 +704,10 @@ export const api = {
         post<{ challenge_id: string; options: any }>('/api/auth/passkey/login/begin', {}),
       loginFinish: (challengeId: string, credential: any) =>
         post<AuthResponse>('/api/auth/passkey/login/finish', { challenge_id: challengeId, credential }),
+      verifyBegin: (pendingToken: string) =>
+        requestWithToken<{ challenge_id: string; options: any }>('POST', '/api/auth/passkey/verify/begin', pendingToken, {}),
+      verifyFinish: (pendingToken: string, challengeId: string, credential: any) =>
+        requestWithToken<AuthResponse>('POST', '/api/auth/passkey/verify/finish', pendingToken, { challenge_id: challengeId, credential }),
       list: () => get<WebAuthnCredential[]>('/api/auth/passkeys'),
       addBegin: () =>
         post<{ challenge_id: string; options: any }>('/api/auth/passkeys/add/begin', {}),
@@ -643,12 +724,26 @@ export const api = {
       status: () => get<{ enabled: boolean }>('/api/auth/totp'),
       disable: (password: string) => del<void>('/api/auth/totp', { password }),
     },
+    google: {
+      exchange: (code: string, redirectUri: string) =>
+        post<GoogleAuthResult>('/api/auth/google', { code, redirect_uri: redirectUri }),
+      clientId: () => get<{ client_id: string }>('/api/auth/google/client-id'),
+    },
+    backupCode: {
+      verify: (pendingToken: string, code: string) =>
+        requestWithToken<AuthResponse>('POST', '/api/auth/backup-codes/mfa-verify', pendingToken, { code }),
+    },
+    onboarding: {
+      status: () => get<OnboardingStatus>('/api/auth/onboarding/status'),
+      generateBackupCodes: () => post<BackupCodesResponse>('/api/auth/onboarding/backup-codes', {}),
+      complete: () => post<{ completed: boolean }>('/api/auth/onboarding/complete', {}),
+    },
   },
   agents: {
     list: () => get<Agent[]>('/api/agents'),
     create: (name: string) =>
       post<Agent>('/api/agents', { name }),
-    delete: (id: string) => del<void>(`/api/agents/${id}`),
+    delete: (id: string) => del<{ revoked_tasks: number }>(`/api/agents/${id}`),
   },
   connections: {
     list: () => get<ConnectionRequest[]>('/api/agents/connections'),
@@ -837,7 +932,7 @@ export const api = {
     createAgent: (orgId: string, name: string) =>
       post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name }),
     deleteAgent: (orgId: string, agentId: string) =>
-      del<void>(`/api/orgs/${orgId}/agents/${agentId}`),
+      del<{ revoked_tasks: number }>(`/api/orgs/${orgId}/agents/${agentId}`),
     revokeTask: (orgId: string, taskId: string) =>
       post<{ status: string }>(`/api/orgs/${orgId}/tasks/${taskId}/revoke`, {}),
     tasks: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) => {
@@ -851,6 +946,20 @@ export const api = {
     services: (orgId: string) => get<{ services: OrgService[] }>(`/api/orgs/${orgId}/services`),
     adapters: (orgId: string) => get<CustomAdapter[]>(`/api/orgs/${orgId}/adapters`),
     mcpServers: (orgId: string) => get<CustomMCPServer[]>(`/api/orgs/${orgId}/mcp-servers`),
+  },
+  billing: {
+    status: () => get<BillingStatus>('/api/billing/status'),
+    plans: () => get<BillingPlansResponse>('/api/billing/plans'),
+    checkout: (plan: string, successUrl: string, cancelUrl: string) =>
+      post<{ url: string }>('/api/billing/checkout', { plan, success_url: successUrl, cancel_url: cancelUrl }),
+    portal: (returnUrl: string) =>
+      post<{ url: string }>('/api/billing/portal', { return_url: returnUrl }),
+    applyPromo: (code: string) =>
+      post<{ status: string }>('/api/billing/promo', { code }),
+    validatePromo: (code: string) =>
+      post<PromoValidation>('/api/billing/promo/validate', { code }),
+    startTrial: (promoCode?: string) =>
+      post<{ status: string }>('/api/billing/trial', { promo_code: promoCode || '' }),
   },
   oauthApprove: (params: {
     client_id: string
