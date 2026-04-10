@@ -90,7 +90,7 @@ async function request<T>(
     })
     if (!retryRes.ok) {
       const err = await retryRes.json().catch(() => ({ error: retryRes.statusText }))
-      throw new APIError(retryRes.status, err.error ?? retryRes.statusText, err.code)
+      throw new APIError(retryRes.status, err.error ?? retryRes.statusText, err.code, err)
     }
     if (retryRes.status === 204) return undefined as T
     return retryRes.json()
@@ -98,7 +98,7 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new APIError(res.status, err.error ?? res.statusText, err.code)
+    throw new APIError(res.status, err.error ?? res.statusText, err.code, err)
   }
 
   if (res.status === 204) return undefined as T
@@ -143,9 +143,14 @@ export class APIError extends Error {
     public readonly status: number,
     message: string,
     public readonly code?: string,
+    public readonly extra?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'APIError'
+  }
+
+  get waitlistAvailable(): boolean {
+    return this.extra?.waitlist_available === true
   }
 }
 
@@ -673,6 +678,8 @@ export const api = {
   auth: {
     register: (email: string, password: string) =>
       post<RegisterResult>('/api/auth/register', { email, password }),
+    joinWaitlist: (email: string) =>
+      post<{ status: 'waitlisted' }>('/api/auth/waitlist', { email }),
     login: (email: string, password: string) =>
       post<LoginResult>('/api/auth/login', { email, password }),
     refresh: (refreshToken: string) =>

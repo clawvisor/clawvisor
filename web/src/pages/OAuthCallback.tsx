@@ -47,6 +47,10 @@ export default function OAuthCallback() {
         setDestination('/onboarding')
       })
       .catch((err) => {
+        if (err instanceof APIError && err.waitlistAvailable) {
+          navigate('/register?waitlist=1', { replace: true })
+          return
+        }
         setError(err instanceof APIError ? err.message : 'Failed to sign in')
       })
   }, [searchParams, setSession, navigate])
