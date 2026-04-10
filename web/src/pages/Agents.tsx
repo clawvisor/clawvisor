@@ -270,7 +270,7 @@ function ConnectAgentGuide() {
       <div className="p-5">
         {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} isLocal={isLocal} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
-        {tab === 'claude-desktop' && <ClaudeDesktopGuide isLocal={isLocal} />}
+        {tab === 'claude-desktop' && <ClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
       </div>
     </section>
@@ -357,8 +357,10 @@ function ClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
   )
 }
 
-function ClaudeDesktopGuide({ isLocal }: { isLocal: boolean }) {
+function ClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (text: string) => void }) {
   const pluginName = isLocal ? 'clawvisor-local@cowork-plugins' : 'clawvisor@cowork-plugins'
+  const marketplaceCmd = 'claude plugin marketplace add clawvisor/cowork-plugins'
+  const installCmd = `/plugin install ${pluginName}`
 
   return (
     <div className="space-y-5">
@@ -375,7 +377,7 @@ function ClaudeDesktopGuide({ isLocal }: { isLocal: boolean }) {
           <p className="text-xs text-text-tertiary">
             Run this in your terminal:
           </p>
-          <CodeBlock>{`claude plugin marketplace add clawvisor/cowork-plugins`}</CodeBlock>
+          <CodeBlock onCopy={() => onCopy(marketplaceCmd)}>{marketplaceCmd}</CodeBlock>
         </div>
       </div>
 
@@ -386,7 +388,7 @@ function ClaudeDesktopGuide({ isLocal }: { isLocal: boolean }) {
           <p className="text-xs text-text-tertiary">
             From within Claude Desktop:
           </p>
-          <CodeBlock>{`/plugin install ${pluginName}`}</CodeBlock>
+          <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
         </div>
       </div>
 
