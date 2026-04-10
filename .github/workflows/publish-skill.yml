@@ -1,0 +1,140 @@
+name: Publish Skill
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      check-diff:
+        description: "Skip publishing if no skill files changed since the previous release"
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish skills for (e.g. v0.8.8)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish-clawhub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Check for skill changes
+        if: inputs.check-diff
+        id: skill-changes
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          git fetch --tags --quiet
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG_NAME}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, treating as changed"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$PREV_TAG" HEAD | grep -qE '^skills/clawvisor/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No skill changes between $PREV_TAG and $TAG_NAME, skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node.js
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare skill folder
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        run: |
+          mkdir -p dist/skill
+          go run ./cmd/render-skill claude-code > dist/skill/SKILL.md
+          cp skills/clawvisor/README.md dist/skill/README.md
+          cp -r skills/clawvisor/policies dist/skill/policies
+
+      - name: Publish to ClawHub
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          npx clawhub auth login --token "$CLAWHUB_TOKEN" --no-browser
+          VERSION=$(jq -r '."."' .release-please-manifest.json)
+          npx clawhub publish "$GITHUB_WORKSPACE/dist/skill" --slug clawvisor --version "$VERSION"
+
+  sync-cowork-plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Check for skill changes
+        if: inputs.check-diff
+        id: skill-changes
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          git fetch --tags --quiet
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG_NAME}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, treating as changed"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$PREV_TAG" HEAD | grep -qE '^skills/clawvisor/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No skill changes between $PREV_TAG and $TAG_NAME, skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate GitHub App token
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: cowork-plugins
+
+      - name: Render SKILL.md for cowork target
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        run: go run ./cmd/render-skill cowork > /tmp/SKILL.md
+
+      - name: Push to cowork-plugins repo
+        if: "!inputs.check-diff || steps.skill-changes.outputs.changed == 'true'"
+        run: |
+          git clone https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/clawvisor/cowork-plugins.git /tmp/cowork-plugins
+          cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor/skills/clawvisor/SKILL.md
+          cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor-local/skills/clawvisor/SKILL.md
+          cd /tmp/cowork-plugins
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes to SKILL.md, skipping"
+          else
+            git add plugins/clawvisor/skills/clawvisor/SKILL.md plugins/clawvisor-local/skills/clawvisor/SKILL.md
+            git commit -m "chore: sync SKILL.md from cayenne ${{ inputs.tag }}"
+            git push
+          fi
