@@ -593,6 +593,19 @@ func (s *Store) DeleteNotificationConfig(ctx context.Context, userID, channel st
 	return nil
 }
 
+// ── Gateway Request Log (append-only backup) ─────────────────────────────────
+
+func (s *Store) LogGatewayRequest(ctx context.Context, e *store.GatewayRequestLog) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO gateway_request_log (
+			audit_id, request_id, agent_id, user_id, service, action,
+			task_id, reason, decision, outcome, duration_ms
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, e.AuditID, e.RequestID, e.AgentID, e.UserID, e.Service, e.Action,
+		e.TaskID, e.Reason, e.Decision, e.Outcome, e.DurationMS)
+	return err
+}
+
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
 func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
@@ -618,12 +631,13 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		safetyFlagged = 1
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO audit_log (
+		INSERT INTO audit_log (
 			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
 			params_safe, decision, outcome, policy_id, rule_id,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
 		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (request_id) DO NOTHING
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
 		e.PolicyID, e.RuleID, safetyFlagged, e.SafetyReason, e.Reason,

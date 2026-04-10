@@ -532,6 +532,19 @@ func (s *Store) DeleteNotificationConfig(ctx context.Context, userID, channel st
 	return nil
 }
 
+// ── Gateway Request Log (append-only backup) ─────────────────────────────────
+
+func (s *Store) LogGatewayRequest(ctx context.Context, e *store.GatewayRequestLog) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO gateway_request_log (
+			audit_id, request_id, agent_id, user_id, service, action,
+			task_id, reason, decision, outcome, duration_ms
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	`, e.AuditID, e.RequestID, e.AgentID, e.UserID, e.Service, e.Action,
+		e.TaskID, e.Reason, e.Decision, e.Outcome, e.DurationMS)
+	return err
+}
+
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
 func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {

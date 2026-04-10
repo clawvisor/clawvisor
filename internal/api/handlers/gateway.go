@@ -166,8 +166,32 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	auditID := uuid.New().String()
 
+	// Backup log: append-only record of every gateway request. Written after
+	// the response so it captures the outcome. If the primary audit insert is
+	// ever silently dropped, this table retains full visibility.
+	var outDecision, outOutcome string
+	defer func() {
+		if logErr := h.store.LogGatewayRequest(context.Background(), &store.GatewayRequestLog{
+			AuditID:    auditID,
+			RequestID:  req.RequestID,
+			AgentID:    agent.ID,
+			UserID:     agent.UserID,
+			Service:    req.Service,
+			Action:     req.Action,
+			TaskID:     req.TaskID,
+			Reason:     req.Reason,
+			Decision:   outDecision,
+			Outcome:    outOutcome,
+			DurationMS: int(time.Since(start).Milliseconds()),
+		}); logErr != nil {
+			h.logger.Warn("backup request log failed", "err", logErr)
+		}
+	}()
+
 	// baseEntry builds an AuditEntry with fields common to all outcomes.
+	// It also records the decision/outcome for the deferred backup log.
 	baseEntry := func(decision, outcome string, taskID *string) *store.AuditEntry {
+		outDecision, outOutcome = decision, outcome
 		return &store.AuditEntry{
 			ID:         auditID,
 			UserID:     agent.UserID,
@@ -237,6 +261,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// ── Step 2: Task ID required ─────────────────────────────────────────────
 	if req.TaskID == "" {
+		outDecision, outOutcome = "reject", "validation_error"
 		writeError(w, http.StatusBadRequest, "TASK_REQUIRED",
 			"task_id is required; create a task first via POST /api/tasks")
 		return
@@ -251,14 +276,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	{
 		task, taskErr := h.store.GetTask(ctx, req.TaskID)
 		if taskErr != nil {
+			outDecision, outOutcome = "reject", "validation_error"
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "task not found")
 			return
 		}
 		if task.UserID != agent.UserID {
+			outDecision, outOutcome = "reject", "forbidden"
 			writeError(w, http.StatusForbidden, "FORBIDDEN", "task does not belong to this agent's user")
 			return
 		}
 		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
+			outDecision, outOutcome = "reject", "task_expired"
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":  "task_expired",
 				"task_id": req.TaskID,
@@ -267,6 +295,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if task.Status != "active" {
+			outDecision, outOutcome = "reject", "invalid_state"
 			writeError(w, http.StatusConflict, "INVALID_STATE",
 				fmt.Sprintf("task is %s, not active", task.Status))
 			return

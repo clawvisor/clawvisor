@@ -70,6 +70,9 @@ type Store interface {
 	DeleteNotificationConfig(ctx context.Context, userID, channel string) error
 	ListNotificationConfigsByChannel(ctx context.Context, channel string) ([]NotificationConfig, error)
 
+	// Gateway request log (append-only backup)
+	LogGatewayRequest(ctx context.Context, entry *GatewayRequestLog) error
+
 	// Audit log
 	LogAudit(ctx context.Context, entry *AuditEntry) error
 	UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error
@@ -232,6 +235,23 @@ type NotificationConfig struct {
 	Config    json.RawMessage `json:"config"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// GatewayRequestLog is an append-only backup record of every gateway request.
+// Written before the primary audit insert so we retain visibility even if that
+// insert is silently dropped.
+type GatewayRequestLog struct {
+	AuditID    string
+	RequestID  string
+	AgentID    string
+	UserID     string
+	Service    string
+	Action     string
+	TaskID     string
+	Reason     string
+	Decision   string
+	Outcome    string
+	DurationMS int
 }
 
 // AuditEntry is one row in the audit_log table.
