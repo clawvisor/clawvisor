@@ -1176,6 +1176,30 @@ func (h *ServicesHandler) sweepExpiredOAuthStates() {
 		}
 		return true
 	})
+	h.sweepExpiredDeviceFlows(now)
+	h.sweepExpiredPKCEFlows(now)
+}
+
+// sweepExpiredDeviceFlows removes device flow entries that have passed their expiry.
+func (h *ServicesHandler) sweepExpiredDeviceFlows(now time.Time) {
+	h.deviceFlows.Range(func(key, value any) bool {
+		entry := value.(deviceFlowEntry)
+		if now.After(entry.ExpiresAt) {
+			h.deviceFlows.Delete(key)
+		}
+		return true
+	})
+}
+
+// sweepExpiredPKCEFlows removes PKCE flow entries that have passed their expiry.
+func (h *ServicesHandler) sweepExpiredPKCEFlows(now time.Time) {
+	h.pkceFlows.Range(func(key, value any) bool {
+		entry := value.(pkceFlowEntry)
+		if now.After(entry.ExpiresAt) {
+			h.pkceFlows.Delete(key)
+		}
+		return true
+	})
 }
 
 // oauthAuthURL builds the OAuth2 authorization URL. When selectAccount is true

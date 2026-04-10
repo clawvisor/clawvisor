@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,13 @@ import (
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// writeAuthError writes a JSON error response consistent with handler writeError format.
+func writeAuthError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message, "code": code})
+}
 
 type contextKey string
 
@@ -30,26 +38,26 @@ func RequireUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) ht
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
 			if token == "" {
-				http.Error(w, `{"error":"missing authorization header","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authorization header")
 				return
 			}
 
 			claims, err := jwtSvc.ValidateToken(token)
 			if err != nil {
-				http.Error(w, `{"error":"invalid or expired token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
 				return
 			}
 
 			// Reject purpose-restricted tokens (setup, totp_verify, register) — they
 			// are only accepted by the specific endpoints that check for them.
 			if claims.Purpose != "" {
-				http.Error(w, `{"error":"invalid or expired token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
 				return
 			}
 
 			user, err := st.GetUserByID(r.Context(), claims.UserID)
 			if err != nil {
-				http.Error(w, `{"error":"user not found","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not found")
 				return
 			}
 
@@ -76,19 +84,19 @@ func RequireUserOrTicket(jwtSvc auth.TokenService, st store.Store, tickets *inta
 			// Fall back to ticket query param.
 			ticket := r.URL.Query().Get("ticket")
 			if ticket == "" {
-				http.Error(w, `{"error":"missing authorization","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authorization")
 				return
 			}
 
 			userID, err := tickets.Validate(ticket)
 			if err != nil {
-				http.Error(w, `{"error":"invalid or expired ticket","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired ticket")
 				return
 			}
 
 			user, err := st.GetUserByID(r.Context(), userID)
 			if err != nil {
-				http.Error(w, `{"error":"user not found","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not found")
 				return
 			}
 
