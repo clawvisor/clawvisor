@@ -135,4 +135,5 @@ type FeatureSet struct {
 	Teams             bool `json:"teams"`
 	UsageMetering     bool `json:"usage_metering"`
 	PasswordAuth      bool `json:"password_auth"`
+	Billing           bool `json:"billing"`
 }

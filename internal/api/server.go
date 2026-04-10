@@ -118,6 +118,7 @@ type FeatureSet struct {
 	UsageMetering     bool `json:"usage_metering"`
 	PasswordAuth      bool `json:"password_auth"`
 	AdapterGen        bool `json:"adapter_gen"`
+	Billing           bool `json:"billing"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional

@@ -438,6 +438,7 @@ export interface FeatureSet {
   usage_metering: boolean
   password_auth: boolean
   adapter_gen: boolean
+  billing: boolean
 }
 
 export interface VersionInfo {
@@ -543,6 +544,58 @@ export interface AdapterGenResult {
   actions: AdapterGenActionPreview[]
   warnings?: string[]
   installed: boolean
+}
+
+// ── Billing types ─────────────────────────────────────────────────────────────
+
+export interface BillingPlan {
+  name: string
+  display_name: string
+  monthly_price?: number
+  max_connections: number
+  included_requests: number
+  overage_per_request?: number
+  contact_us?: boolean
+}
+
+export interface BillingStatus {
+  plan: string
+  plan_display_name?: string
+  status: string
+  current_period_start?: string
+  current_period_end?: string
+  cancel_at_period_end?: boolean
+  trial_ends_at?: string
+  trial_days_remaining?: number
+  stripe_publishable_key?: string
+  usage?: {
+    requests: { used: number; limit: number }
+    connections: { limit: number }
+  }
+  discount?: {
+    name?: string
+    percent_off?: number
+    amount_off?: number
+    ends_at?: string
+  }
+}
+
+export interface PromoValidation {
+  valid: boolean
+  name: string
+  percent_off?: number
+  amount_off?: number
+  duration_months?: number
+  duration?: string
+}
+
+export interface BillingPlansResponse {
+  plans: BillingPlan[]
+  trial: {
+    duration_days: number
+    included_requests: number
+    max_connections: number
+  }
 }
 
 // ── Org types ─────────────────────────────────────────────────────────────────
@@ -891,6 +944,20 @@ export const api = {
     services: (orgId: string) => get<{ services: OrgService[] }>(`/api/orgs/${orgId}/services`),
     adapters: (orgId: string) => get<CustomAdapter[]>(`/api/orgs/${orgId}/adapters`),
     mcpServers: (orgId: string) => get<CustomMCPServer[]>(`/api/orgs/${orgId}/mcp-servers`),
+  },
+  billing: {
+    status: () => get<BillingStatus>('/api/billing/status'),
+    plans: () => get<BillingPlansResponse>('/api/billing/plans'),
+    checkout: (plan: string, successUrl: string, cancelUrl: string) =>
+      post<{ url: string }>('/api/billing/checkout', { plan, success_url: successUrl, cancel_url: cancelUrl }),
+    portal: (returnUrl: string) =>
+      post<{ url: string }>('/api/billing/portal', { return_url: returnUrl }),
+    applyPromo: (code: string) =>
+      post<{ status: string }>('/api/billing/promo', { code }),
+    validatePromo: (code: string) =>
+      post<PromoValidation>('/api/billing/promo/validate', { code }),
+    startTrial: (promoCode?: string) =>
+      post<{ status: string }>('/api/billing/trial', { promo_code: promoCode || '' }),
   },
   oauthApprove: (params: {
     client_id: string

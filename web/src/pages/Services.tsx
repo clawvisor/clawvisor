@@ -293,11 +293,13 @@ function AddServiceModal({
   onClose,
   onSuccess,
   googleOAuthMissing,
+  activeConnectionCount,
 }: {
   services: ServiceInfo[]
   onClose: () => void
   onSuccess: (serviceId: string) => void
   googleOAuthMissing: boolean
+  activeConnectionCount: number
 }) {
   const qc = useQueryClient()
   const [aliasInputFor, setAliasInputFor] = useState<string | null>(null)
@@ -309,6 +311,20 @@ function AddServiceModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activatingServiceId, setActivatingServiceId] = useState<string | null>(null)
+
+  // Billing: connection limit awareness (only when billing is enabled)
+  const { features: modalFeatures } = useAuth()
+  const { data: billingStatus } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => api.billing.status(),
+    enabled: !!modalFeatures?.billing,
+    staleTime: 60_000,
+  })
+  const connectionLimit = billingStatus?.usage?.connections?.limit ?? -1
+  const atConnectionLimit = connectionLimit >= 0 && activeConnectionCount >= connectionLimit
+  const STARTER_CONNECTION_LIMIT = 5
+  const isTrialing = billingStatus?.status === 'trialing'
+  const trialExceedsStarter = isTrialing && activeConnectionCount >= STARTER_CONNECTION_LIMIT
 
   // Search filter
   const [search, setSearch] = useState('')
@@ -614,6 +630,20 @@ function AddServiceModal({
         </div>
 
         <div className="px-6 py-3 overflow-y-auto">
+          {atConnectionLimit && (
+            <div className="mb-3 px-3 py-2.5 rounded-md bg-warning/10 border border-warning/30 text-sm">
+              <span className="font-medium text-text-primary">Connection limit reached</span>
+              <span className="text-text-secondary"> ({activeConnectionCount}/{connectionLimit}). </span>
+              <a href="/pricing" className="text-brand hover:text-brand/80 font-medium">Upgrade your plan</a>
+              <span className="text-text-secondary"> for more connections.</span>
+            </div>
+          )}
+          {!atConnectionLimit && trialExceedsStarter && (
+            <div className="mb-3 px-3 py-2.5 rounded-md bg-brand-muted border border-brand/30 text-sm">
+              <span className="font-medium text-text-primary">Heads up:</span>
+              <span className="text-text-secondary"> You have {activeConnectionCount} connections. The Starter plan only allows {STARTER_CONNECTION_LIMIT}. If you choose Starter after your trial, you won't be able to create new tasks or make any requests until you're under the limit.</span>
+            </div>
+          )}
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
           <div className="grid grid-cols-2 gap-4">
@@ -661,7 +691,13 @@ function AddServiceModal({
                       ) : (
                         <button
                           onClick={() => handleActivate(st)}
-                          className="w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40 transition-colors"
+                          disabled={atConnectionLimit}
+                          className={`w-full text-xs px-3 py-2 rounded-lg border transition-colors ${
+                            atConnectionLimit
+                              ? 'border-border-subtle text-text-tertiary cursor-not-allowed'
+                              : 'border-border-strong text-text-primary hover:bg-surface-2 hover:border-brand/40'
+                          }`}
+                          title={atConnectionLimit ? `Connection limit reached (${activeConnectionCount}/${connectionLimit})` : undefined}
                         >
                           {isActivated ? 'Add account' : 'Connect'}
                         </button>
@@ -1032,6 +1068,7 @@ export default function Services() {
           onClose={() => setShowModal(false)}
           onSuccess={handleConnectionSuccess}
           googleOAuthMissing={googleOAuthMissing}
+          activeConnectionCount={activeServices.length}
         />
       )}
     </div>

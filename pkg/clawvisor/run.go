@@ -24,6 +24,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		Teams:             opts.Features.Teams,
 		UsageMetering:     opts.Features.UsageMetering,
 		PasswordAuth:      opts.Features.PasswordAuth,
+		Billing:           opts.Features.Billing,
 	}))
 
 	if opts.ExtraRoutes != nil {
