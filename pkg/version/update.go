@@ -17,7 +17,7 @@ import (
 // replaces the current binary. It returns the old and new version strings.
 // The caller is responsible for any restart logic (daemon restart, process re-exec, etc.).
 func Apply(targetVersion string) (oldVersion, newVersion string, err error) {
-	oldVersion = Version
+	oldVersion = GetCurrent()
 	newVersion = strings.TrimPrefix(targetVersion, "v")
 	tag := "v" + newVersion
 
