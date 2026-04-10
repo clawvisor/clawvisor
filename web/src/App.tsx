@@ -9,6 +9,8 @@ import VerifyEmail from './pages/VerifyEmail'
 import SetupAuth from './pages/SetupAuth'
 import TOTPVerify from './pages/TOTPVerify'
 import Dashboard from './pages/Dashboard'
+import Pricing from './pages/Pricing'
+import Welcome from './pages/Welcome'
 import OAuthAuthorize from './pages/OAuthAuthorize'
 import OAuthCallback from './pages/OAuthCallback'
 import MFAVerify from './pages/MFAVerify'
@@ -83,6 +85,15 @@ export default function App() {
       <Route path="/magic-link" element={<MagicLink />} />
       <Route path="/check-email" element={<CheckEmail />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/pricing" element={<Pricing />} />
+      <Route
+        path="/welcome"
+        element={
+          <RequireAuth>
+            <Welcome />
+          </RequireAuth>
+        }
+      />
       <Route path="/setup-auth" element={<SetupAuth />} />
       <Route path="/totp-verify" element={<TOTPVerify />} />
       <Route path="/login/oauth/callback" element={<OAuthCallback />} />

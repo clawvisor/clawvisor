@@ -16,6 +16,7 @@ import OrgSettings from './OrgSettings'
 import OrgMembers from './OrgMembers'
 import OrgAdapters from './OrgAdapters'
 import OrgMCPServers from './OrgMCPServers'
+import Billing from './Billing'
 import OrgSelector from '../components/OrgSelector'
 import OnboardingBanner from '../components/OnboardingBanner'
 
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/dashboard/agents', label: 'Agents', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg> },
 { to: '/dashboard/audit', label: 'Gateway Log', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
   { to: '/dashboard/settings', label: 'Settings', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg> },
+  { to: '/dashboard/billing', label: 'Billing', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> },
 ]
 
 const orgNavItems = [
@@ -63,6 +65,19 @@ export default function Dashboard() {
     queryKey: ['llm-status'],
     queryFn: () => api.llm.status(),
   })
+
+  // Billing status (for trial banner and expired state)
+  const { data: billingStatus, isLoading: billingLoading } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => api.billing.status(),
+    refetchInterval: 300_000, // 5 minutes
+    staleTime: 60_000,
+  })
+
+  // Redirect to welcome page if user has no billing setup yet.
+  if (!billingLoading && billingStatus?.status === 'none' && billingStatus?.plan === 'none') {
+    return <Navigate to="/welcome" replace />
+  }
 
   return (
     <div className="min-h-screen bg-surface-0 flex">
@@ -226,6 +241,48 @@ export default function Dashboard() {
             </NavLink>
           </div>
         )}
+        {billingStatus?.status === 'trialing' && billingStatus.trial_days_remaining != null && (
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
+            <span className="text-text-primary">
+              <span className="font-medium">{billingStatus.trial_days_remaining} day{billingStatus.trial_days_remaining !== 1 ? 's' : ''} left in your free trial.</span>
+              <span className="text-text-secondary"> Choose a plan to keep using Clawvisor.</span>
+            </span>
+            <NavLink
+              to="/pricing"
+              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap ml-3"
+            >
+              Choose a plan
+            </NavLink>
+          </div>
+        )}
+        {billingStatus && !['trialing', 'active', 'past_due', 'none'].includes(billingStatus.status) && billingStatus.plan !== 'none' && (
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-danger/10 border border-danger/30 flex items-center justify-between text-sm">
+            <span className="text-text-primary">
+              <span className="font-medium">Your subscription has expired.</span>
+              <span className="text-text-secondary"> Choose a plan to continue using Clawvisor.</span>
+            </span>
+            <NavLink
+              to="/pricing"
+              className="text-danger hover:text-danger/80 font-medium transition-colors whitespace-nowrap ml-3"
+            >
+              Choose a plan
+            </NavLink>
+          </div>
+        )}
+        {billingStatus?.status === 'past_due' && (
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex items-center justify-between text-sm">
+            <span className="text-text-primary">
+              <span className="font-medium">Payment past due.</span>
+              <span className="text-text-secondary"> Please update your payment method to avoid service interruption.</span>
+            </span>
+            <NavLink
+              to="/dashboard/billing"
+              className="text-warning hover:text-warning/80 font-medium transition-colors whitespace-nowrap ml-3"
+            >
+              Manage billing
+            </NavLink>
+          </div>
+        )}
         <Routes>
           <Route index element={<Overview />} />
           <Route path="tasks" element={<Tasks />} />
@@ -235,6 +292,7 @@ export default function Dashboard() {
           <Route path="audit" element={<Audit />} />
           <Route path="agents" element={<Agents />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="billing" element={<Billing />} />
           {features?.teams && (
             <>
               <Route path="org" element={<OrgSettings />} />
