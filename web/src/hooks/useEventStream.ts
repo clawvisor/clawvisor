@@ -67,7 +67,13 @@ export function useEventStream() {
       })
 
       es.addEventListener('audit', (e) => {
-        const { id } = JSON.parse(e.data)
+        let id: string | undefined
+        try {
+          ({ id } = JSON.parse(e.data))
+        } catch (err) {
+          console.error('useEventStream: failed to parse audit event data', err)
+          return
+        }
         qc.invalidateQueries({ queryKey: ['audit'] })
         if (id) {
           qc.invalidateQueries({ queryKey: ['audit', { task_id: id }] })

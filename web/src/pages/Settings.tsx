@@ -626,7 +626,7 @@ function TelegramSetupSection() {
           if (s.status === 'ready' || s.status === 'expired' || s.status === 'confirmed') {
             stopPolling()
           }
-        } catch { /* ignore */ }
+        } catch (e) { console.warn('Settings: pairing status poll failed', e) }
       }, 2000)
     },
     onError: (err: Error) => setError(err.message),
