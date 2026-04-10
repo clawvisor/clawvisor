@@ -441,7 +441,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				if req.Context.CallbackURL != "" {
 					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
 					go func() {
-						_ = callback.DeliverResult(context.Background(), req.Context.CallbackURL, &callback.Payload{
+						cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
 							Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
 						}, cbKey)
 					}()
@@ -477,7 +479,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if chainSessionID != "" && verdict != nil && verdict.ExtractContext {
 				resultJSON, _ := json.Marshal(result)
 				go func() {
-					facts, err := h.extractor.Extract(context.Background(), intent.ExtractRequest{
+					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer extractCancel()
+					facts, err := h.extractor.Extract(extractCtx, intent.ExtractRequest{
 						TaskPurpose:       task.Purpose,
 						AuthorizedActions: task.AuthorizedActions,
 						Service:           req.Service,
@@ -492,7 +496,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 					if len(facts) > 0 {
-						if err := h.store.SaveChainFacts(context.Background(), facts); err != nil {
+						saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer saveCancel()
+						if err := h.store.SaveChainFacts(saveCtx, facts); err != nil {
 							h.logger.Warn("chain facts save failed", "err", err, "task_id", req.TaskID)
 						}
 					}
@@ -502,7 +508,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if req.Context.CallbackURL != "" {
 				cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
 				go func() {
-					_ = callback.DeliverResult(context.Background(), req.Context.CallbackURL, &callback.Payload{
+					cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
 						Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
 					}, cbKey)
 				}()

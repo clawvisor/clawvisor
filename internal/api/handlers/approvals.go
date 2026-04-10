@@ -122,8 +122,12 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 // executing it. The agent is expected to call HandleExecuteApproved to claim
 // the result. If a callback URL is registered, a notification is sent.
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval) {
-	_ = h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved")
-	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0)
+	if err := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved"); err != nil {
+		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
+	}
+	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0); err != nil {
+		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+	}
 
 	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, "✅ <b>Approved</b> — waiting for agent to execute.")
 	h.decrementNotifierPolling(pa.UserID)
@@ -138,7 +142,9 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 		auditID := pa.AuditID
 		callbackURL := *pa.CallbackURL
 		go func() {
-			_ = callback.DeliverResult(context.Background(), callbackURL, &callback.Payload{
+			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = callback.DeliverResult(cbCtx, callbackURL, &callback.Payload{
 				Type:      "request",
 				RequestID: requestID,
 				Status:    "approved",
@@ -162,8 +168,12 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	var denyBlob pendingRequestBlob
 	_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
 
-	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0)
-	_ = h.st.DeletePendingApproval(ctx, requestID)
+	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0); err != nil {
+		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+	}
+	if err := h.st.DeletePendingApproval(ctx, requestID); err != nil {
+		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
+	}
 
 	h.updateNotificationMsg(ctx, "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
@@ -172,7 +182,9 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, denyBlob.AgentID)
 		go func() {
-			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
+			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
 				Type:      "request",
 				RequestID: requestID,
 				Status:    "denied",
@@ -214,8 +226,12 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	var denyBlob pendingRequestBlob
 	_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
 
-	_ = h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0)
-	_ = h.st.DeletePendingApproval(r.Context(), requestID)
+	if err := h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0); err != nil {
+		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+	}
+	if err := h.st.DeletePendingApproval(r.Context(), requestID); err != nil {
+		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
+	}
 
 	h.updateNotificationMsg(r.Context(), "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
@@ -224,7 +240,9 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(r.Context(), denyBlob.AgentID)
 		go func() {
-			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
+			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
 				Type:      "request",
 				RequestID: requestID,
 				Status:    "denied",
@@ -263,8 +281,12 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 		errMsg = execErr.Error()
 	}
 
-	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur)
-	_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
+	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur); err != nil {
+		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
+	}
+	if err := h.st.DeletePendingApproval(ctx, pa.RequestID); err != nil {
+		h.logger.Error("failed to delete pending approval", "request_id", pa.RequestID, "err", err)
+	}
 
 	notifyText := "✅ <b>Approved</b> — request executed."
 	if errMsg != "" {
@@ -282,7 +304,9 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 		requestID := pa.RequestID
 		auditID := pa.AuditID
 		go func() {
-			_ = callback.DeliverResult(context.Background(), *pa.CallbackURL, &callback.Payload{
+			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
 				Type:      "request",
 				RequestID: requestID,
 				Status:    outcome,

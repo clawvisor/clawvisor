@@ -23,7 +23,8 @@ export default function MagicLink() {
         localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
         window.location.href = '/dashboard'
       })
-      .catch(() => {
+      .catch((e) => {
+        console.error('MagicLink: token exchange failed', e)
         setError('Link expired or already used. Restart the server for a new one.')
         setExchanging(false)
       })

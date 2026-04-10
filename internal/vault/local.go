@@ -249,6 +249,14 @@ func LoadKey(path string) ([]byte, error) {
 func loadOrCreateKey(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
+		// Validate file permissions — the key file should not be readable by
+		// group or others. Skip the check on Windows where Unix permissions
+		// don't apply (FileMode always reports 0666).
+		if info, statErr := os.Stat(path); statErr == nil {
+			if perm := info.Mode().Perm(); perm&0077 != 0 {
+				return nil, fmt.Errorf("vault key file %s has insecure permissions %04o (expected 0600)", path, perm)
+			}
+		}
 		key, decErr := base64.StdEncoding.DecodeString(string(data))
 		if decErr != nil {
 			return nil, fmt.Errorf("vault key file %s: invalid base64: %w", path, decErr)

@@ -93,6 +93,10 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation: %w", err)
+	}
+
 	callback.Init(cfg.Callback.AllowPrivateCIDRs, cfg.Callback.RequireHTTPS, !cfg.Server.IsLocal())
 
 	// ── Database + Store ────────────────────────────────────────────────────
@@ -451,6 +455,9 @@ func ConnectStore(logger *slog.Logger) (*config.Config, store.Store, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading config: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("config validation: %w", err)
 	}
 
 	var st store.Store
