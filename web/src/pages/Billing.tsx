@@ -86,7 +86,7 @@ export default function Billing() {
             </div>
           </div>
 
-          {isTrialing && status?.trial_days_remaining != null && (
+          {isTrialing && status?.trial_days_remaining != null && !status?.discount && (
             <div className="text-sm text-text-secondary">
               Trial ends in <span className="font-medium text-text-primary">{status.trial_days_remaining} day{status.trial_days_remaining !== 1 ? 's' : ''}</span>
             </div>
@@ -101,6 +101,16 @@ export default function Billing() {
           {isCanceling && (
             <div className="text-sm text-warning">
               Your subscription will cancel at the end of the current billing period. You can undo this via "Manage subscription" below.
+            </div>
+          )}
+
+          {status?.discount && (
+            <div className="text-sm text-success">
+              <span className="font-medium">{status.discount.name || 'Discount applied'}</span>
+              {status.discount.percent_off === 100 ? ' — 100% off' : status.discount.percent_off ? ` — ${status.discount.percent_off}% off` : ''}
+              {status.discount.ends_at && (
+                <span className="text-text-tertiary"> until {new Date(status.discount.ends_at).toLocaleDateString()}</span>
+              )}
             </div>
           )}
 
@@ -121,7 +131,7 @@ export default function Billing() {
                   {portalMut.isPending ? 'Opening...' : 'Manage subscription'}
                 </button>
               )}
-              {(!hasSubscription || isTrialing || isCanceled) && (
+              {(!hasSubscription || (isTrialing && !status?.discount) || isCanceled) && (
                 <button
                   onClick={() => navigate('/pricing')}
                   className="px-3 py-1.5 text-sm font-medium rounded-md bg-brand text-surface-0 hover:bg-brand-strong transition-colors"

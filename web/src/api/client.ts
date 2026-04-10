@@ -571,6 +571,21 @@ export interface BillingStatus {
     requests: { used: number; limit: number }
     connections: { limit: number }
   }
+  discount?: {
+    name?: string
+    percent_off?: number
+    amount_off?: number
+    ends_at?: string
+  }
+}
+
+export interface PromoValidation {
+  valid: boolean
+  name: string
+  percent_off?: number
+  amount_off?: number
+  duration_months?: number
+  duration?: string
 }
 
 export interface BillingPlansResponse {
@@ -938,8 +953,10 @@ export const api = {
       post<{ url: string }>('/api/billing/portal', { return_url: returnUrl }),
     applyPromo: (code: string) =>
       post<{ status: string }>('/api/billing/promo', { code }),
-    startTrial: () =>
-      post<{ status: string }>('/api/billing/trial', {}),
+    validatePromo: (code: string) =>
+      post<PromoValidation>('/api/billing/promo/validate', { code }),
+    startTrial: (promoCode?: string) =>
+      post<{ status: string }>('/api/billing/trial', { promo_code: promoCode || '' }),
   },
   oauthApprove: (params: {
     client_id: string

@@ -241,7 +241,7 @@ export default function Dashboard() {
             </NavLink>
           </div>
         )}
-        {billingStatus?.status === 'trialing' && billingStatus.trial_days_remaining != null && (
+        {billingStatus?.status === 'trialing' && billingStatus.trial_days_remaining != null && !billingStatus.discount && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
             <span className="text-text-primary">
               <span className="font-medium">{billingStatus.trial_days_remaining} day{billingStatus.trial_days_remaining !== 1 ? 's' : ''} left in your free trial.</span>

@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, type PromoValidation } from '../api/client'
 
 export default function Welcome() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [promoCode, setPromoCode] = useState('')
   const [promoError, setPromoError] = useState<string | null>(null)
-  const [promoApplied] = useState(false)
+  const [validatedPromo, setValidatedPromo] = useState<PromoValidation | null>(null)
 
   // If the user already has an active plan (e.g. grandfathered), skip welcome.
   const { data: billingStatus, isLoading } = useQuery({
@@ -20,26 +20,39 @@ export default function Welcome() {
     return <Navigate to="/dashboard" replace />
   }
 
+  const validateMut = useMutation({
+    mutationFn: (code: string) => api.billing.validatePromo(code),
+    onSuccess: (data) => {
+      setValidatedPromo(data)
+      setPromoError(null)
+    },
+    onError: () => {
+      setValidatedPromo(null)
+      setPromoError('Invalid or expired promo code')
+    },
+  })
+
   const trialMut = useMutation({
-    mutationFn: () => api.billing.startTrial(),
+    mutationFn: (promo?: string) => api.billing.startTrial(promo),
     onSuccess: async () => {
-      // If a promo code was entered, apply it after trial starts.
-      if (promoCode.trim() && !promoApplied) {
-        try {
-          await api.billing.applyPromo(promoCode.trim())
-        } catch {
-          // Non-blocking — trial started, promo can be applied later.
-        }
-      }
-      // Invalidate cached billing status so Dashboard sees the new trial.
       await qc.invalidateQueries({ queryKey: ['billing-status'] })
       navigate('/dashboard')
     },
   })
 
-  const handleStart = () => {
-    trialMut.mutate()
+  const handleApplyPromo = () => {
+    const code = promoCode.trim()
+    if (!code) return
+    validateMut.mutate(code)
   }
+
+  const handleStart = () => {
+    trialMut.mutate(validatedPromo ? promoCode.trim() : undefined)
+  }
+
+  const promoDescription = validatedPromo
+    ? formatPromo(validatedPromo)
+    : null
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center">
@@ -75,14 +88,30 @@ export default function Welcome() {
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-text-primary">Promo code <span className="text-text-tertiary font-normal">(optional)</span></label>
-            <input
-              type="text"
-              value={promoCode}
-              onChange={(e) => { setPromoCode(e.target.value); setPromoError(null) }}
-              placeholder="Enter promo code"
-              className="w-full px-3 py-2 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-brand"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={promoCode}
+                onChange={(e) => {
+                  setPromoCode(e.target.value)
+                  setPromoError(null)
+                  if (validatedPromo) setValidatedPromo(null)
+                }}
+                placeholder="Enter promo code"
+                className="flex-1 px-3 py-2 text-sm rounded-md border border-border-default bg-surface-0 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-brand"
+              />
+              <button
+                onClick={handleApplyPromo}
+                disabled={!promoCode.trim() || validateMut.isPending}
+                className="px-3 py-2 text-sm rounded-md border border-border-default text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {validateMut.isPending ? 'Checking...' : 'Apply'}
+              </button>
+            </div>
             {promoError && <p className="text-xs text-danger">{promoError}</p>}
+            {promoDescription && (
+              <p className="text-xs text-success font-medium">{promoDescription}</p>
+            )}
           </div>
 
           <button
@@ -90,7 +119,11 @@ export default function Welcome() {
             disabled={trialMut.isPending}
             className="w-full py-2.5 px-4 rounded-md bg-brand text-surface-0 text-sm font-medium hover:bg-brand-strong transition-colors disabled:opacity-70"
           >
-            {trialMut.isPending ? 'Starting trial...' : 'Start free trial'}
+            {trialMut.isPending
+              ? 'Starting...'
+              : validatedPromo
+                ? `Start with ${validatedPromo.name}`
+                : 'Start free trial'}
           </button>
 
           {trialMut.isError && (
@@ -104,4 +137,21 @@ export default function Welcome() {
       </div>
     </div>
   )
+}
+
+function formatPromo(promo: PromoValidation): string {
+  const parts: string[] = []
+  if (promo.percent_off === 100) {
+    parts.push('100% off')
+  } else if (promo.percent_off) {
+    parts.push(`${promo.percent_off}% off`)
+  } else if (promo.amount_off) {
+    parts.push(`$${(promo.amount_off / 100).toFixed(0)} off`)
+  }
+  if (promo.duration_months) {
+    parts.push(`for ${promo.duration_months} months`)
+  } else if (promo.duration === 'forever') {
+    parts.push('forever')
+  }
+  return `${promo.name} applied — ${parts.join(' ')}`
 }
