@@ -109,7 +109,7 @@ jobs:
           VERSION=$(jq -r '."."' .release-please-manifest.json)
           npx clawhub publish "$GITHUB_WORKSPACE/dist/skill" --slug clawvisor --version "$VERSION"
 
-  sync-cowork-plugin:
+  sync-cowork-plugins:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
@@ -145,20 +145,21 @@ jobs:
         if: steps.skill-changes.outputs.changed == 'true'
         run: go run ./cmd/render-skill cowork > /tmp/SKILL.md
 
-      - name: Push to cowork-plugin repo
+      - name: Push to cowork-plugins repo
         if: steps.skill-changes.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.COWORK_PLUGIN_TOKEN }}
+          GH_TOKEN: ${{ secrets.COWORK_PLUGINS_TOKEN }}
         run: |
-          git clone https://x-access-token:${GH_TOKEN}@github.com/clawvisor/cowork-plugin.git /tmp/cowork-plugin
-          cp /tmp/SKILL.md /tmp/cowork-plugin/skills/clawvisor/SKILL.md
-          cd /tmp/cowork-plugin
+          git clone https://x-access-token:${GH_TOKEN}@github.com/clawvisor/cowork-plugins.git /tmp/cowork-plugins
+          cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor/skills/clawvisor/SKILL.md
+          cp /tmp/SKILL.md /tmp/cowork-plugins/plugins/clawvisor-local/skills/clawvisor/SKILL.md
+          cd /tmp/cowork-plugins
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git diff --quiet; then
             echo "No changes to SKILL.md, skipping"
           else
-            git add skills/clawvisor/SKILL.md
+            git add plugins/clawvisor/skills/clawvisor/SKILL.md plugins/clawvisor-local/skills/clawvisor/SKILL.md
             git commit -m "chore: sync SKILL.md from cayenne ${{ needs.release-please.outputs.tag_name }}"
             git push
           fi
