@@ -18,7 +18,9 @@
 package imessage
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,8 +40,14 @@ import (
 
 const serviceID = "apple.imessage"
 
-// helperBinaryName is the name of the FDA-holding helper binary.
+// helperAppName is the .app bundle that holds Full Disk Access.
+const helperAppName = "Clawvisor iMessage Helper.app"
+
+// helperBinaryName is the executable inside the .app bundle.
 const helperBinaryName = "clawvisor-imessage-helper"
+
+// helperRelBinary is the path from the .app root to the executable.
+const helperRelBinary = "Contents/MacOS/clawvisor-imessage-helper"
 
 // requiredProtocolVersion must match the helper's ProtocolVersion constant.
 // Bump this when a new helper binary is needed (new actions, changed behavior).
@@ -201,25 +209,40 @@ func (a *IMessageAdapter) ensureHelper() error {
 	_ = a.runCheckPermissions()
 
 	if path == "" {
-		return fmt.Errorf("imessage helper installed — grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperBinaryName)
+		return fmt.Errorf("imessage helper installed — grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperAppName)
 	}
 	// Replaced an existing binary — FDA needs re-granting.
-	return fmt.Errorf("imessage helper updated (protocol version changed) — re-grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperBinaryName)
+	return fmt.Errorf("imessage helper updated (protocol version changed) — re-grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperAppName)
 }
 
 // runCheckPermissions calls the helper's check_permissions action, which
 // attempts to open chat.db. The result is ignored — the purpose is to trigger
-// macOS to register the binary for the FDA list.
+// macOS to register the .app bundle in the FDA list.
 func (a *IMessageAdapter) runCheckPermissions() error {
 	reqBody, _ := json.Marshal(helperRequest{Action: "check_permissions"})
-	cmd := exec.Command(a.helperPath)
-	cmd.Stdin = bytes.NewReader(reqBody)
-	_, err := cmd.Output()
+	_, err := a.execHelper(context.Background(), reqBody)
 	return err
 }
 
+// helperAppDir returns the .app bundle path for the given binary path.
+// If the binary is not inside a .app bundle, returns empty string.
+func helperAppDir(binaryPath string) string {
+	// binaryPath is like /path/to/Clawvisor iMessage Helper.app/Contents/MacOS/clawvisor-imessage-helper
+	// Walk up to find the .app directory.
+	dir := binaryPath
+	for {
+		dir = filepath.Dir(dir)
+		if dir == "/" || dir == "." {
+			return ""
+		}
+		if filepath.Ext(dir) == ".app" {
+			return dir
+		}
+	}
+}
+
 // findHelper looks for an existing helper binary in standard locations.
-// Returns the path if found, empty string otherwise.
+// Returns the path to the binary inside the .app bundle if found, empty string otherwise.
 func (a *IMessageAdapter) findHelper() string {
 	// 1. Cached from a previous call.
 	if a.helperPath != "" {
@@ -229,9 +252,9 @@ func (a *IMessageAdapter) findHelper() string {
 		a.helperPath = ""
 	}
 
-	// 2. Next to the running binary.
+	// 2. Next to the running binary (as .app bundle).
 	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), helperBinaryName)
+		candidate := filepath.Join(filepath.Dir(exe), helperAppName, helperRelBinary)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
@@ -239,13 +262,13 @@ func (a *IMessageAdapter) findHelper() string {
 
 	// 3. Standard install location.
 	if home, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(home, ".clawvisor", "bin", helperBinaryName)
+		candidate := filepath.Join(home, ".clawvisor", "bin", helperAppName, helperRelBinary)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
 	}
 
-	// 4. PATH lookup.
+	// 4. PATH lookup (dev convenience — bare binary without .app bundle).
 	if p, err := exec.LookPath(helperBinaryName); err == nil {
 		return p
 	}
@@ -274,11 +297,11 @@ func (a *IMessageAdapter) queryHelperVersion(helperPath string) (string, error) 
 	return resp.Data.ProtocolVersion, nil
 }
 
-// downloadHelper downloads the helper binary from the GitHub release matching
-// the current clawvisor version.
+// downloadHelper downloads the helper .app bundle from the GitHub release
+// matching the current clawvisor version.
 func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 	tag := "v" + version.Version
-	assetName := fmt.Sprintf("clawvisor-imessage-helper-%s-%s", runtime.GOOS, runtime.GOARCH)
+	assetName := fmt.Sprintf("clawvisor-imessage-helper-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s",
 		githubOwner, githubRepo, tag, assetName)
 
@@ -296,38 +319,73 @@ func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 		return "", err
 	}
 
-	// Write to a temp file in the same directory, then atomic-rename.
-	tmpFile, err := os.CreateTemp(installDir, helperBinaryName+"-*")
+	// Extract to a temp dir, then atomic-rename into place.
+	tmpDir, err := os.MkdirTemp(installDir, ".helper-install-*")
 	if err != nil {
 		return "", err
 	}
-	tmpPath := tmpFile.Name()
+	defer os.RemoveAll(tmpDir) // clean up on failure
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return "", err
-	}
-	tmpFile.Close()
-
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
-		return "", err
+	if err := extractTarGz(resp.Body, tmpDir); err != nil {
+		return "", fmt.Errorf("extract: %w", err)
 	}
 
-	// Ad-hoc codesign on macOS (required for FDA registration).
-	if out, err := exec.Command("codesign", "-s", "-", tmpPath).CombinedOutput(); err != nil {
-		os.Remove(tmpPath)
+	// Codesign the binary inside the .app bundle.
+	binaryPath := filepath.Join(tmpDir, helperAppName, helperRelBinary)
+	if out, err := exec.Command("codesign", "-s", "-", binaryPath).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("codesign: %w — %s", err, out)
 	}
 
-	dest := filepath.Join(installDir, helperBinaryName)
-	if err := os.Rename(tmpPath, dest); err != nil {
-		os.Remove(tmpPath)
+	// Atomic swap: remove old .app, rename new one into place.
+	destApp := filepath.Join(installDir, helperAppName)
+	os.RemoveAll(destApp)
+	if err := os.Rename(filepath.Join(tmpDir, helperAppName), destApp); err != nil {
 		return "", err
 	}
 
-	return dest, nil
+	return filepath.Join(destApp, helperRelBinary), nil
+}
+
+// extractTarGz extracts a gzipped tar archive into destDir.
+func extractTarGz(r io.Reader, destDir string) error {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		target := filepath.Join(destDir, filepath.Clean(hdr.Name))
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+		}
+	}
 }
 
 // helperInstallDir returns ~/.clawvisor/bin, creating it if needed.
@@ -368,31 +426,65 @@ func (a *IMessageAdapter) callHelper(ctx context.Context, action string, params 
 		return nil, fmt.Errorf("imessage: marshal request: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, a.helperPath)
-	cmd.Stdin = bytes.NewReader(reqBody)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	stdout, err := a.execHelper(ctx, reqBody)
+	if err != nil {
 		// If the helper wrote a JSON error to stdout before exiting, use that.
-		if stdout.Len() > 0 {
+		if len(stdout) > 0 {
 			var resp helperResponse
-			if json.Unmarshal(stdout.Bytes(), &resp) == nil && resp.Error != "" {
+			if json.Unmarshal(stdout, &resp) == nil && resp.Error != "" {
 				return nil, fmt.Errorf("imessage: %s", resp.Error)
 			}
 		}
-		return nil, fmt.Errorf("imessage: helper failed: %w — %s", err, truncate(stderr.String(), 200))
+		return nil, fmt.Errorf("imessage: helper failed: %w", err)
 	}
 
 	var resp helperResponse
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(stdout, &resp); err != nil {
 		return nil, fmt.Errorf("imessage: parse helper response: %w", err)
 	}
 	if resp.Error != "" {
 		return nil, fmt.Errorf("imessage: %s", resp.Error)
 	}
 	return &resp, nil
+}
+
+// execHelper launches the helper and returns its stdout. Uses `open` for .app
+// bundles so macOS TCC attributes file access to the helper, not clawvisor.
+func (a *IMessageAdapter) execHelper(ctx context.Context, reqBody []byte) ([]byte, error) {
+	appDir := helperAppDir(a.helperPath)
+	if appDir == "" {
+		// Bare binary (dev/PATH fallback) — exec directly.
+		cmd := exec.CommandContext(ctx, a.helperPath)
+		cmd.Stdin = bytes.NewReader(reqBody)
+		return cmd.Output()
+	}
+
+	// Write request to a temp file for stdin.
+	stdinFile, err := os.CreateTemp("", "clawvisor-helper-req-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(stdinFile.Name())
+	if _, err := stdinFile.Write(reqBody); err != nil {
+		stdinFile.Close()
+		return nil, err
+	}
+	stdinFile.Close()
+
+	// Capture stdout via temp file.
+	stdoutFile, err := os.CreateTemp("", "clawvisor-helper-resp-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(stdoutFile.Name())
+	stdoutFile.Close()
+
+	cmd := exec.CommandContext(ctx, "open", "-W", "-g", "-j", "-i", stdinFile.Name(), "-o", stdoutFile.Name(), appDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("%w — %s", err, truncate(string(out), 200))
+	}
+
+	return os.ReadFile(stdoutFile.Name())
 }
 
 func truncate(s string, max int) string {

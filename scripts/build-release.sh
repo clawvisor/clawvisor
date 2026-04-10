@@ -37,19 +37,26 @@ for PLATFORM in $PLATFORMS; do
     go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor
 done
 
-# Build the iMessage helper for macOS only. This is a separate, stable binary
-# that holds Full Disk Access so users don't need to re-grant FDA on every
-# clawvisor update. The Info.plist (display name in FDA settings) can only be
-# embedded when building on macOS; CI cross-compilation omits it.
+# Build the iMessage helper .app bundle for macOS only. This is a separate,
+# stable binary that holds Full Disk Access so users don't need to re-grant
+# FDA on every clawvisor update. The .app bundle structure lets macOS read
+# Info.plist for the display name in FDA settings, no CGO required.
+HELPER_APP="Clawvisor iMessage Helper.app"
 HELPER_PLATFORMS="darwin/arm64 darwin/amd64"
 for PLATFORM in $HELPER_PLATFORMS; do
   GOOS="${PLATFORM%/*}"
   GOARCH="${PLATFORM#*/}"
-  OUTPUT="dist/clawvisor-imessage-helper-${GOOS}-${GOARCH}"
+  TARBALL="dist/clawvisor-imessage-helper-${GOOS}-${GOARCH}.tar.gz"
 
-  echo "Building ${OUTPUT}..."
+  echo "Building ${TARBALL}..."
   CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/imessage-helper
+    go build -ldflags="$LDFLAGS" -o "dist/.helper-tmp" ./cmd/imessage-helper
+
+  mkdir -p "dist/${HELPER_APP}/Contents/MacOS"
+  mv "dist/.helper-tmp" "dist/${HELPER_APP}/Contents/MacOS/clawvisor-imessage-helper"
+  cp cmd/imessage-helper/Info.plist "dist/${HELPER_APP}/Contents/Info.plist"
+  tar -czf "$TARBALL" -C dist "${HELPER_APP}"
+  rm -rf "dist/${HELPER_APP}"
 done
 
 echo "Generating checksums..."
