@@ -1,13 +1,35 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, APIError } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 
 export default function CheckEmail() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { setSession } = useAuth()
   const email = (location.state as { email?: string })?.email ?? ''
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [skipping, setSkipping] = useState(false)
+
+  async function handleDevSkip() {
+    if (!email || skipping) return
+    setError(null)
+    setSkipping(true)
+    try {
+      const resp = await api.auth.devSkipOnboarding(email)
+      setSession(resp.access_token, resp.refresh_token, resp.user)
+      navigate('/dashboard', { replace: true })
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message)
+      } else {
+        setError('Could not skip onboarding')
+      }
+      setSkipping(false)
+    }
+  }
 
   async function handleResend() {
     if (!email || resending) return
@@ -65,6 +87,19 @@ export default function CheckEmail() {
             Back to registration
           </Link>
         </p>
+
+        {import.meta.env.DEV && email && (
+          <div className="border-t border-border-default pt-4">
+            <p className="text-xs text-text-tertiary mb-2">Dev only</p>
+            <button
+              onClick={handleDevSkip}
+              disabled={skipping}
+              className="w-full py-2 px-4 bg-warning/10 text-warning border border-warning/30 rounded text-sm font-medium hover:bg-warning/20 disabled:opacity-50"
+            >
+              {skipping ? 'Skipping...' : 'Skip to dashboard'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
