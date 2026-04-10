@@ -14,6 +14,10 @@ import (
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Version=0.3.0"
 var Version = "dev"
 
+// SkillPublishedAt is set at build time via -ldflags. It records the date (YYYY-MM-DD)
+// the release was built so the skill can display when it was last updated.
+var SkillPublishedAt = "dev"
+
 // Environment is set at build time via -ldflags. Valid values: "production" (default), "staging".
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Environment=staging"
 var Environment = "production"

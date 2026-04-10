@@ -468,6 +468,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /ready", healthHandler.Ready)
 	mux.HandleFunc("GET /api/config/public", healthHandler.ConfigPublic)
 	mux.HandleFunc("GET /api/version", healthHandler.Version)
+	mux.HandleFunc("GET /api/skill/version", healthHandler.SkillVersion)
 
 	// LLM status and runtime config update
 	configPath := os.Getenv("CONFIG_FILE")

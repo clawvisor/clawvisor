@@ -20,7 +20,8 @@ if [ ! -d "web/dist" ]; then
 fi
 
 MODULE="github.com/clawvisor/clawvisor/pkg/version"
-LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION}"
+BUILD_DATE=$(date -u +%Y-%m-%d)
+LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
 PLATFORMS="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
 
 rm -rf dist
