@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.9](https://github.com/clawvisor/clawvisor/compare/v0.8.8...v0.8.9) (2026-04-10)
+
+
+### Bug Fixes
+
+* extract publish-skill into reusable workflow with manual trigger ([#189](https://github.com/clawvisor/clawvisor/issues/189)) ([babfa59](https://github.com/clawvisor/clawvisor/commit/babfa59b25fddeffd45e658ee87ddc73c3900ecb))
+* move inline dark-mode script to external file to fix CSP violation ([#191](https://github.com/clawvisor/clawvisor/issues/191)) ([c05d819](https://github.com/clawvisor/clawvisor/commit/c05d819c61d92665feadce1a0bc7f96454837b4d))
+
 ## [0.8.8](https://github.com/clawvisor/clawvisor/compare/v0.8.7...v0.8.8) (2026-04-10)
 
 
