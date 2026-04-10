@@ -194,11 +194,28 @@ func (a *IMessageAdapter) ensureHelper() error {
 
 	a.helperPath = installed
 
+	// Attempt to open chat.db so macOS registers the helper in the FDA list.
+	// This will fail with a permission error (which is expected), but the
+	// attempt is what causes the helper to appear in System Settings →
+	// Privacy & Security → Full Disk Access.
+	_ = a.runCheckPermissions()
+
 	if path == "" {
 		return fmt.Errorf("imessage helper installed — grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperBinaryName)
 	}
 	// Replaced an existing binary — FDA needs re-granting.
 	return fmt.Errorf("imessage helper updated (protocol version changed) — re-grant Full Disk Access to %q in System Settings → Privacy & Security → Full Disk Access", helperBinaryName)
+}
+
+// runCheckPermissions calls the helper's check_permissions action, which
+// attempts to open chat.db. The result is ignored — the purpose is to trigger
+// macOS to register the binary for the FDA list.
+func (a *IMessageAdapter) runCheckPermissions() error {
+	reqBody, _ := json.Marshal(helperRequest{Action: "check_permissions"})
+	cmd := exec.Command(a.helperPath)
+	cmd.Stdin = bytes.NewReader(reqBody)
+	_, err := cmd.Output()
+	return err
 }
 
 // findHelper looks for an existing helper binary in standard locations.
