@@ -63,7 +63,7 @@ func RequireUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) ht
 // RequireUserOrTicket is middleware that first tries JWT auth (via Authorization
 // header), then falls back to a single-use ticket query parameter. This is used
 // for SSE endpoints where EventSource cannot set custom headers.
-func RequireUserOrTicket(jwtSvc auth.TokenService, st store.Store, tickets *intauth.TicketStore) func(http.Handler) http.Handler {
+func RequireUserOrTicket(jwtSvc auth.TokenService, st store.Store, tickets intauth.TicketStorer) func(http.Handler) http.Handler {
 	jwtMiddleware := RequireUser(jwtSvc, st)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

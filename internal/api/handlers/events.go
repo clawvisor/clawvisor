@@ -14,11 +14,11 @@ import (
 // EventsHandler serves the SSE event stream.
 type EventsHandler struct {
 	hub     events.EventHub
-	tickets *auth.TicketStore
+	tickets auth.TicketStorer
 }
 
 // NewEventsHandler creates a new SSE handler.
-func NewEventsHandler(hub events.EventHub, tickets *auth.TicketStore) *EventsHandler {
+func NewEventsHandler(hub events.EventHub, tickets auth.TicketStorer) *EventsHandler {
 	return &EventsHandler{hub: hub, tickets: tickets}
 }
 

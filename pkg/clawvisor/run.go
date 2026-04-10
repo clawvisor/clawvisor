@@ -89,6 +89,32 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		}))
 	}
 
+	// Multi-instance Redis-backed stores.
+	if opts.TicketStore != nil {
+		apiOpts = append(apiOpts, api.WithTicketStore(opts.TicketStore))
+	}
+	if opts.ReplayCache != nil {
+		apiOpts = append(apiOpts, api.WithReplayCache(opts.ReplayCache))
+	}
+	if opts.TokenCache != nil {
+		apiOpts = append(apiOpts, api.WithTokenCache(opts.TokenCache))
+	}
+	if opts.DevicePairingStore != nil {
+		apiOpts = append(apiOpts, api.WithDevicePairingStore(opts.DevicePairingStore))
+	}
+	if opts.OAuthStateStore != nil {
+		apiOpts = append(apiOpts, api.WithOAuthStateStore(opts.OAuthStateStore))
+	}
+	if opts.PairingCodeStore != nil {
+		apiOpts = append(apiOpts, api.WithPairingCodeStore(opts.PairingCodeStore))
+	}
+	if opts.DedupCache != nil {
+		apiOpts = append(apiOpts, api.WithDedupCache(opts.DedupCache))
+	}
+	if opts.VerdictCache != nil {
+		apiOpts = append(apiOpts, api.WithVerdictCache(opts.VerdictCache))
+	}
+
 	srv, err := api.New(
 		opts.Config, opts.Store, opts.Vault, opts.JWTService,
 		opts.AdapterReg, opts.Notifier, opts.Config.LLM, opts.MagicStore,

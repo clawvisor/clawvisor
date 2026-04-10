@@ -76,13 +76,22 @@ type Server struct {
 	devicesHandler     *handlers.DevicesHandler
 
 	pushNotifier *push.Notifier                // concrete push notifier; may be nil
-	msgBuffer    *groupchat.MessageBuffer // group chat message buffer; may be nil
+	msgBuffer    groupchat.Buffer // group chat message buffer; may be nil
 	decisionBus  notify.DecisionBus      // cross-instance decision delivery; may be nil
 	gatewayHooks *GatewayHooks  // cloud-injected gateway authorization hooks; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
-	ticketStore *intauth.TicketStore
+	ticketStore intauth.TicketStorer
+
+	// Multi-instance stores (set via options; nil = use defaults).
+	replayCache        middleware.ReplayCache
+	tokenCache         handlers.TokenCache
+	devicePairingStore handlers.DevicePairingStore
+	oauthStateStore    handlers.OAuthStateStore
+	pairingCodeStore   handlers.PairingCodeStore
+	dedupCache         handlers.DedupCache
+	verdictCache       intent.VerdictCacher
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -175,7 +184,7 @@ func WithPushNotifier(pn *push.Notifier) ServerOption {
 // WithGroupChatBuffer sets the message buffer for Telegram group chat
 // observation. When set, task creation checks recent messages for user
 // approval via LLM analysis.
-func WithGroupChatBuffer(buf *groupchat.MessageBuffer) ServerOption {
+func WithGroupChatBuffer(buf groupchat.Buffer) ServerOption {
 	return func(s *Server) { s.msgBuffer = buf }
 }
 
@@ -200,6 +209,46 @@ func WithAdapterGenFactory(f handlers.GeneratorFactory) ServerOption {
 // WithGatewayHooks injects additional authorization logic into the gateway.
 func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
 	return func(s *Server) { s.gatewayHooks = hooks }
+}
+
+// WithTicketStore overrides the default in-memory SSE ticket store.
+func WithTicketStore(ts intauth.TicketStorer) ServerOption {
+	return func(s *Server) { s.ticketStore = ts }
+}
+
+// WithReplayCache overrides the default in-memory HMAC replay cache.
+func WithReplayCache(rc middleware.ReplayCache) ServerOption {
+	return func(s *Server) { s.replayCache = rc }
+}
+
+// WithTokenCache overrides the default in-memory connection token cache.
+func WithTokenCache(tc handlers.TokenCache) ServerOption {
+	return func(s *Server) { s.tokenCache = tc }
+}
+
+// WithDevicePairingStore overrides the default in-memory device pairing store.
+func WithDevicePairingStore(ps handlers.DevicePairingStore) ServerOption {
+	return func(s *Server) { s.devicePairingStore = ps }
+}
+
+// WithOAuthStateStore overrides the default in-memory OAuth state store.
+func WithOAuthStateStore(os handlers.OAuthStateStore) ServerOption {
+	return func(s *Server) { s.oauthStateStore = os }
+}
+
+// WithPairingCodeStore overrides the default in-memory MCP pairing code store.
+func WithPairingCodeStore(ps handlers.PairingCodeStore) ServerOption {
+	return func(s *Server) { s.pairingCodeStore = ps }
+}
+
+// WithDedupCache overrides the default in-memory content dedup cache.
+func WithDedupCache(dc handlers.DedupCache) ServerOption {
+	return func(s *Server) { s.dedupCache = dc }
+}
+
+// WithVerdictCache overrides the default in-memory intent verdict cache.
+func WithVerdictCache(vc intent.VerdictCacher) ServerOption {
+	return func(s *Server) { s.verdictCache = vc }
 }
 
 // New creates a Server and registers all routes.
@@ -315,7 +364,11 @@ func (s *Server) routes() http.Handler {
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
-		verifier = intent.NewLLMVerifier(s.llmHealth, s.logger)
+		v := intent.NewLLMVerifier(s.llmHealth, s.logger)
+		if s.verdictCache != nil {
+			v.SetVerdictCache(s.verdictCache)
+		}
+		verifier = v
 	}
 
 	// Construct chain context extractor (noop if disabled).
@@ -334,6 +387,9 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL, s.eventHub)
+	if s.oauthStateStore != nil {
+		servicesHandler.SetOAuthStateStore(s.oauthStateStore)
+	}
 	// Set relay daemon URL for PKCE flows that require HTTPS redirect URIs.
 	if s.cfg.Relay.Enabled && s.cfg.Relay.URL != "" && s.cfg.Relay.DaemonID != "" {
 		relayHost := strings.TrimPrefix(strings.TrimPrefix(s.cfg.Relay.URL, "wss://"), "ws://")
@@ -351,11 +407,16 @@ func (s *Server) routes() http.Handler {
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
+	if s.dedupCache != nil {
+		tasksHandler.SetDedupCache(s.dedupCache)
+	}
 	if s.msgBuffer != nil {
 		tasksHandler.SetGroupApproval(s.msgBuffer, s.llmHealth, agentPairer)
 	}
 	s.tasksHandler = tasksHandler
-	s.ticketStore = intauth.NewTicketStore()
+	if s.ticketStore == nil {
+		s.ticketStore = intauth.NewTicketStore()
+	}
 	eventsHandler := handlers.NewEventsHandler(s.eventHub, s.ticketStore)
 
 	// Middleware
@@ -485,6 +546,9 @@ func (s *Server) routes() http.Handler {
 
 	// Connection requests (unauthenticated — agents requesting access)
 	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger, s.features.MultiTenant)
+	if s.tokenCache != nil {
+		connectionsHandler.SetTokenCache(s.tokenCache)
+	}
 	s.connectionsHandler = connectionsHandler
 	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
@@ -500,6 +564,9 @@ func (s *Server) routes() http.Handler {
 	var pairingHandler *handlers.PairingHandler
 	if s.daemonID != "" {
 		pairingHandler = handlers.NewPairingHandler(s.daemonID)
+		if s.pairingCodeStore != nil {
+			pairingHandler.SetPairingCodeStore(s.pairingCodeStore)
+		}
 		corsOrigins := version.CORSOrigins()
 		mux.Handle("GET /api/pairing/code",
 			middleware.CORSAllowOrigins(corsOrigins, http.HandlerFunc(pairingHandler.GenerateCode)))
@@ -509,6 +576,9 @@ func (s *Server) routes() http.Handler {
 
 	// Device pairing and management
 	devicesHandler := handlers.NewDevicesHandler(s.store, s.pushNotifier, s.eventHub, s.logger, baseURL, s.jwtSvc)
+	if s.devicePairingStore != nil {
+		devicesHandler.SetPairingStore(s.devicePairingStore)
+	}
 	if s.daemonID != "" {
 		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		devicesHandler.SetRelayInfo(s.daemonID, relayHost)
@@ -521,7 +591,12 @@ func (s *Server) routes() http.Handler {
 		middleware.RateLimit(devicesRL, ipKeyFn, 5)(e2e(http.HandlerFunc(devicesHandler.CompletePairing))))
 	mux.Handle("GET /api/devices", user(devicesHandler.List))
 	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
-	requireDevice := middleware.RequireDevice(s.store)
+	var requireDevice func(http.Handler) http.Handler
+	if s.replayCache != nil {
+		requireDevice = middleware.RequireDeviceWithReplayCache(s.store, s.replayCache)
+	} else {
+		requireDevice = middleware.RequireDevice(s.store)
+	}
 	mux.Handle("POST /api/devices/{id}/action", requireDevice(e2e(http.HandlerFunc(devicesHandler.Action))))
 	mux.Handle("POST /api/devices/{id}/token", requireDevice(e2e(http.HandlerFunc(devicesHandler.MintToken))))
 	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
@@ -989,7 +1064,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 // newKeyedLimiterFromBucket creates a KeyedLimiter from a config bucket.
 // Returns nil when the bucket has zero values (unconfigured).
-func newKeyedLimiterFromBucket(b config.RateLimitBucket) *ratelimit.KeyedLimiter {
+func newKeyedLimiterFromBucket(b config.RateLimitBucket) ratelimit.Limiter {
 	if b.Limit <= 0 || b.Window <= 0 {
 		return nil
 	}

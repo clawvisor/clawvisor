@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
@@ -20,16 +19,20 @@ const (
 // MCP OAuth consent page. Only one active code at a time.
 type PairingHandler struct {
 	daemonID string
-
-	mu       sync.Mutex
-	code     string
-	created  time.Time
-	attempts int
+	store    PairingCodeStore
 }
 
 // NewPairingHandler creates a PairingHandler for the given daemon ID.
 func NewPairingHandler(daemonID string) *PairingHandler {
-	return &PairingHandler{daemonID: daemonID}
+	return &PairingHandler{
+		daemonID: daemonID,
+		store:    newMemoryPairingCodeStore(pairingCodeExpiry, maxPairingCodeAttempts),
+	}
+}
+
+// SetPairingCodeStore overrides the default in-memory pairing code store.
+func (h *PairingHandler) SetPairingCodeStore(s PairingCodeStore) {
+	h.store = s
 }
 
 // GenerateCode handles GET /api/pairing/code (no auth — localhost is the security boundary).
@@ -46,17 +49,12 @@ func (h *PairingHandler) GenerateCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.Lock()
 	code, err := generatePairingCode6()
 	if err != nil {
-		h.mu.Unlock()
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate pairing code")
 		return
 	}
-	h.code = code
-	h.created = time.Now()
-	h.attempts = 0
-	h.mu.Unlock()
+	h.store.Set(code)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"daemon_id":  h.daemonID,
@@ -69,27 +67,7 @@ func (h *PairingHandler) GenerateCode(w http.ResponseWriter, r *http.Request) {
 // attempts per code to prevent brute-force guessing. Returns true if the code
 // is valid and was consumed, false otherwise.
 func (h *PairingHandler) Verify(code string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// No active code or expired.
-	if h.code == "" || time.Since(h.created) > pairingCodeExpiry {
-		h.code = ""
-		return false
-	}
-
-	// Wrong code — count the attempt.
-	if h.code != code {
-		h.attempts++
-		if h.attempts >= maxPairingCodeAttempts {
-			h.code = "" // burn the code after max attempts
-		}
-		return false
-	}
-
-	// Correct — consume the code.
-	h.code = ""
-	return true
+	return h.store.Verify(code)
 }
 
 func generatePairingCode6() (string, error) {

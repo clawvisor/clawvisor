@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -38,8 +37,7 @@ type DevicesHandler struct {
 	daemonID  string
 	relayHost string
 
-	pairingsMu sync.Mutex
-	pairings   map[string]*pairingSession
+	pairingStore DevicePairingStore
 }
 
 // SetRelayInfo sets daemon_id and relay host so the web dashboard can construct
@@ -59,14 +57,19 @@ type pairingSession struct {
 
 func NewDevicesHandler(st store.Store, pushN *push.Notifier, eventHub events.EventHub, logger *slog.Logger, baseURL string, jwtSvc pkgauth.TokenService) *DevicesHandler {
 	return &DevicesHandler{
-		st:       st,
-		pushN:    pushN,
-		eventHub: eventHub,
-		logger:   logger,
-		baseURL:  baseURL,
-		jwtSvc:   jwtSvc,
-		pairings: make(map[string]*pairingSession),
+		st:           st,
+		pushN:        pushN,
+		eventHub:     eventHub,
+		logger:       logger,
+		baseURL:      baseURL,
+		jwtSvc:       jwtSvc,
+		pairingStore: newMemoryDevicePairingStore(),
 	}
+}
+
+// SetPairingStore overrides the default in-memory pairing store.
+func (h *DevicesHandler) SetPairingStore(ps DevicePairingStore) {
+	h.pairingStore = ps
 }
 
 // StartPairing handles POST /api/devices/pair (user JWT).
@@ -96,9 +99,7 @@ func (h *DevicesHandler) StartPairing(w http.ResponseWriter, r *http.Request) {
 		Code:      code,
 		ExpiresAt: time.Now().Add(pairingExpiry),
 	}
-	h.pairingsMu.Lock()
-	h.pairings[token] = session
-	h.pairingsMu.Unlock()
+	h.pairingStore.Store(token, session)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pairing_token": token,
@@ -146,20 +147,17 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Hold the mutex for the entire validate-and-consume sequence to prevent
+	// Hold the lock for the entire validate-and-consume sequence to prevent
 	// concurrent requests from racing past the attempt limit or both succeeding
 	// with the correct code.
-	h.pairingsMu.Lock()
-	session, ok := h.pairings[body.PairingToken]
+	session, ok, done := h.pairingStore.LoadAndLock(body.PairingToken)
 	if !ok {
-		h.pairingsMu.Unlock()
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "pairing session not found or expired")
 		return
 	}
 
 	if time.Now().After(session.ExpiresAt) {
-		delete(h.pairings, body.PairingToken)
-		h.pairingsMu.Unlock()
+		done(true) // delete
 		writeError(w, http.StatusGone, "EXPIRED", "pairing session has expired")
 		return
 	}
@@ -167,19 +165,17 @@ func (h *DevicesHandler) CompletePairing(w http.ResponseWriter, r *http.Request)
 	if session.Code != body.Code {
 		session.Attempts++
 		if session.Attempts >= maxPairingAttempts {
-			delete(h.pairings, body.PairingToken)
-			h.pairingsMu.Unlock()
+			done(true) // delete
 			writeError(w, http.StatusUnauthorized, "MAX_ATTEMPTS", "too many incorrect code attempts")
 			return
 		}
-		h.pairingsMu.Unlock()
+		done(false) // write back updated attempts
 		writeError(w, http.StatusUnauthorized, "INVALID_CODE", "incorrect pairing code")
 		return
 	}
 
-	// Code is correct — remove the session before releasing the lock.
-	delete(h.pairings, body.PairingToken)
-	h.pairingsMu.Unlock()
+	// Code is correct — remove the session.
+	done(true)
 
 	// Generate HMAC key (32 random bytes, hex-encoded).
 	hmacKey := make([]byte, 32)
@@ -385,23 +381,12 @@ func (h *DevicesHandler) UpdatePushToStartToken(w http.ResponseWriter, r *http.R
 
 // RunCleanup periodically sweeps expired pairing sessions.
 func (h *DevicesHandler) RunCleanup(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			now := time.Now()
-			h.pairingsMu.Lock()
-			for token, session := range h.pairings {
-				if now.After(session.ExpiresAt) {
-					delete(h.pairings, token)
-				}
-			}
-			h.pairingsMu.Unlock()
-		}
-	}
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+	h.pairingStore.RunCleanup(done)
 }
 
 // generatePairingToken returns a 32-byte URL-safe base64 token.

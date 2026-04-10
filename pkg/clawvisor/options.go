@@ -10,8 +10,11 @@ import (
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
+	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -60,7 +63,7 @@ type ServerOptions struct {
 
 	// MessageBuffer stores recent group chat messages for on-demand LLM
 	// approval checking. Set when group observation is enabled.
-	MessageBuffer *groupchat.MessageBuffer
+	MessageBuffer groupchat.Buffer
 
 	// AdapterGenFactory creates a per-request Generator scoped to the authenticated user.
 	// For local mode, returns the same generator for all users.
@@ -99,6 +102,16 @@ type ServerOptions struct {
 	// Quiet suppresses user-facing messages and sets server log level to WARN.
 	// Used during daemon setup when a temporary server runs in the background.
 	Quiet bool
+
+	// Multi-instance Redis-backed stores. When nil, in-memory defaults are used.
+	TicketStore       intauth.TicketStorer
+	ReplayCache       middleware.ReplayCache
+	TokenCache        handlers.TokenCache
+	DevicePairingStore handlers.DevicePairingStore
+	OAuthStateStore   handlers.OAuthStateStore
+	PairingCodeStore  handlers.PairingCodeStore
+	DedupCache        handlers.DedupCache
+	VerdictCache      intent.VerdictCacher
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

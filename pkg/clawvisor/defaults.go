@@ -24,9 +24,12 @@ import (
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	"github.com/clawvisor/clawvisor/internal/api/handlers"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/display"
@@ -39,7 +42,6 @@ import (
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
-	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
@@ -258,7 +260,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 
 	// ── Group chat message buffer ────────────────────────────────────────────
-	msgBuffer := groupchat.NewMessageBuffer(20, 15*time.Minute)
+	var msgBuffer groupchat.Buffer = groupchat.NewMessageBuffer(20, 15*time.Minute)
 
 	// ── Notifier ─────────────────────────────────────────────────────────────
 	telegramN := telegramnotify.New(st, ctx)
@@ -298,6 +300,14 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// ── Redis (cloud/multi-instance) ────────────────────────────────────────
 	var eventHub events.EventHub
 	var decisionBus notify.DecisionBus
+	var ticketStore auth.TicketStorer
+	var replayCache middleware.ReplayCache
+	var tokenCache handlers.TokenCache
+	var devicePairingStore handlers.DevicePairingStore
+	var oauthStateStore handlers.OAuthStateStore
+	var pairingCodeStore handlers.PairingCodeStore
+	var dedupCache handlers.DedupCache
+	var verdictCache intent.VerdictCacher
 	if cfg.Redis.URL != "" {
 		rdb, err := intredis.Connect(ctx, cfg.Redis.URL)
 		if err != nil {
@@ -306,6 +316,39 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		eventHub = events.NewRedisHub(ctx, rdb, logger)
 		magicStore = auth.NewRedisMagicTokenStore(rdb)
 		decisionBus = intnotify.NewRedisDecisionBus(rdb, logger)
+
+		// Multi-instance stores.
+		ticketStore = auth.NewRedisTicketStore(rdb)
+		replayCache = middleware.NewRedisReplayCache(rdb)
+		tokenCache = handlers.NewRedisTokenCache(rdb, 5*time.Minute)
+		devicePairingStore = handlers.NewRedisDevicePairingStore(rdb)
+		oauthStateStore = handlers.NewRedisOAuthStateStore(rdb)
+		pairingCodeStore = handlers.NewRedisPairingCodeStore(rdb, 5*time.Minute, 3)
+
+		dedupTTL := time.Duration(cfg.Gateway.ContentDedupTTLSeconds) * time.Second
+		if dedupTTL <= 0 {
+			dedupTTL = 5 * time.Second
+		}
+		dedupCache = handlers.NewRedisDedupCache(rdb, dedupTTL)
+
+		verdictTTL := time.Duration(cfg.LLM.Verification.CacheTTLSeconds) * time.Second
+		if verdictTTL <= 0 {
+			verdictTTL = 60 * time.Second
+		}
+		verdictCache = intent.NewRedisVerdictCache(rdb, verdictTTL)
+
+		// Redis-backed group chat buffer.
+		msgBuffer = groupchat.NewRedisMessageBuffer(rdb, 20, 15*time.Minute)
+
+		// Telegram multi-instance stores.
+		instanceID, _ := os.Hostname()
+		telegramN.SetRedisStores(
+			telegramnotify.NewRedisCallbackTokenStore(rdb),
+			telegramnotify.NewRedisPendingGroupStore(rdb),
+			telegramnotify.NewRedisGroupPairingStore(rdb),
+			telegramnotify.NewRedisPollingLock(rdb, instanceID),
+		)
+
 		logger.Info("redis connected", "addr", rdb.Options().Addr)
 	}
 
@@ -314,20 +357,28 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 
 	opts := &ServerOptions{
-		Logger:           logger,
-		Config:           cfg,
-		Store:            st,
-		Vault:            v,
-		JWTService:       jwtSvc,
-		AdapterReg:       adapterReg,
-		Notifier:         notifier,
-		PushNotifier:     pushN,
-		MessageBuffer:    msgBuffer,
-		AdapterGenFactory: adapterGenFactory,
-		MagicStore:       magicStore,
-		EventHub:         eventHub,
-		DecisionBus:      decisionBus,
-		Features:         features,
+		Logger:             logger,
+		Config:             cfg,
+		Store:              st,
+		Vault:              v,
+		JWTService:         jwtSvc,
+		AdapterReg:         adapterReg,
+		Notifier:           notifier,
+		PushNotifier:       pushN,
+		MessageBuffer:      msgBuffer,
+		AdapterGenFactory:  adapterGenFactory,
+		MagicStore:         magicStore,
+		EventHub:           eventHub,
+		DecisionBus:        decisionBus,
+		Features:           features,
+		TicketStore:        ticketStore,
+		ReplayCache:        replayCache,
+		TokenCache:         tokenCache,
+		DevicePairingStore: devicePairingStore,
+		OAuthStateStore:    oauthStateStore,
+		PairingCodeStore:   pairingCodeStore,
+		DedupCache:         dedupCache,
+		VerdictCache:       verdictCache,
 	}
 
 	// Wire relay client when configured.
