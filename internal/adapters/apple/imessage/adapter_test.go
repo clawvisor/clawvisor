@@ -24,8 +24,8 @@ func TestFindHelper_StandardLocation(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	// Create fake helper in ~/.clawvisor/bin/
-	binDir := filepath.Join(tmpDir, ".clawvisor", "bin")
+	// Create fake helper inside .app bundle at ~/.clawvisor/bin/
+	binDir := filepath.Join(tmpDir, ".clawvisor", "bin", helperAppName, "Contents", "MacOS")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,11 @@ func TestFindHelper_StandardLocation(t *testing.T) {
 
 func TestFindHelper_CachedPath(t *testing.T) {
 	tmpDir := t.TempDir()
-	helperPath := filepath.Join(tmpDir, helperBinaryName)
+	appBinDir := filepath.Join(tmpDir, helperAppName, "Contents", "MacOS")
+	if err := os.MkdirAll(appBinDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	helperPath := filepath.Join(appBinDir, helperBinaryName)
 	if err := os.WriteFile(helperPath, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +60,7 @@ func TestFindHelper_CachedPath(t *testing.T) {
 }
 
 func TestFindHelper_CachedPathStale(t *testing.T) {
-	a := &IMessageAdapter{helperPath: "/nonexistent/clawvisor-imessage-helper"}
+	a := &IMessageAdapter{helperPath: "/nonexistent/Clawvisor iMessage Helper.app/Contents/MacOS/clawvisor-imessage-helper"}
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 	t.Setenv("PATH", tmpDir)
