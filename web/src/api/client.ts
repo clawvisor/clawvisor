@@ -213,6 +213,8 @@ export interface Agent {
   name: string
   created_at: string
   token?: string // only present on creation
+  active_task_count: number
+  last_task_at?: string
 }
 
 export interface ConnectionRequest {
@@ -646,7 +648,7 @@ export const api = {
     list: () => get<Agent[]>('/api/agents'),
     create: (name: string) =>
       post<Agent>('/api/agents', { name }),
-    delete: (id: string) => del<void>(`/api/agents/${id}`),
+    delete: (id: string) => del<{ revoked_tasks: number }>(`/api/agents/${id}`),
   },
   connections: {
     list: () => get<ConnectionRequest[]>('/api/agents/connections'),
@@ -835,7 +837,7 @@ export const api = {
     createAgent: (orgId: string, name: string) =>
       post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name }),
     deleteAgent: (orgId: string, agentId: string) =>
-      del<void>(`/api/orgs/${orgId}/agents/${agentId}`),
+      del<{ revoked_tasks: number }>(`/api/orgs/${orgId}/agents/${agentId}`),
     revokeTask: (orgId: string, taskId: string) =>
       post<{ status: string }>(`/api/orgs/${orgId}/tasks/${taskId}/revoke`, {}),
     tasks: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) => {

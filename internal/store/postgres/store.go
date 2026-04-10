@@ -224,7 +224,7 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	a := &store.Agent{}
 	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = $1`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
 		tokenHash,
 	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -237,8 +237,15 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 }
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE user_id = $1 ORDER BY created_at DESC`,
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		       COALESCE((SELECT COUNT(*) FROM tasks t
+		                 WHERE t.agent_id = a.id
+		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		FROM agents a
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL
+		ORDER BY a.created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -250,7 +257,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM agents WHERE id = $1 AND user_id = $2`,
+		`UPDATE agents SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
 		id, userID,
 	)
 	if err != nil {
@@ -264,7 +271,7 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 
 func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE agents SET callback_secret = $1 WHERE id = $2`,
+		`UPDATE agents SET callback_secret = $1 WHERE id = $2 AND deleted_at IS NULL`,
 		secret, agentID)
 	if err != nil {
 		return err
@@ -278,7 +285,7 @@ func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret stri
 func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (string, error) {
 	var secret *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT callback_secret FROM agents WHERE id = $1`, agentID,
+		`SELECT callback_secret FROM agents WHERE id = $1 AND deleted_at IS NULL`, agentID,
 	).Scan(&secret)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
@@ -296,7 +303,7 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a := &store.Agent{}
 	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = $1`,
+		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = $1 AND deleted_at IS NULL`,
 		id,
 	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -916,6 +923,17 @@ func (s *Store) RevokeTask(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+func (s *Store) RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET status = 'revoked'
+		 WHERE agent_id = $1 AND user_id = $2 AND status IN ('active', 'pending_approval', 'pending_scope_expansion')`,
+		agentID, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions,
@@ -1298,7 +1316,7 @@ func (s *Store) TelemetryCounts(ctx context.Context) (*store.TelemetryCounts, er
 		RequestsByService: make(map[string]int),
 	}
 
-	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM agents").Scan(&c.Agents); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM agents WHERE deleted_at IS NULL").Scan(&c.Agents); err != nil {
 		return nil, fmt.Errorf("counting agents: %w", err)
 	}
 
@@ -1525,7 +1543,8 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	for rows.Next() {
 		a := &store.Agent{}
 		var orgID *string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID,
+			&a.ActiveTaskCount, &a.LastTaskAt); err != nil {
 			return nil, err
 		}
 		if orgID != nil {

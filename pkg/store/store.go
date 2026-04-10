@@ -89,6 +89,7 @@ type Store interface {
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
 	ListExpiredTasks(ctx context.Context) ([]*Task, error)
 	RevokeTask(ctx context.Context, id, userID string) error
+	RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error)
 
 	// Pending approvals
 	SavePendingApproval(ctx context.Context, pa *PendingApproval) error
@@ -181,12 +182,14 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	TokenHash string    `json:"-"`
-	OrgID     string    `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	Name            string     `json:"name"`
+	TokenHash       string     `json:"-"`
+	OrgID           string     `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt       time.Time  `json:"created_at"`
+	ActiveTaskCount int        `json:"active_task_count"`
+	LastTaskAt      *time.Time `json:"last_task_at,omitempty"`
 }
 
 // ServiceMeta records that a user has activated a given service.

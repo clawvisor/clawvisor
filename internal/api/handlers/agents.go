@@ -1,20 +1,24 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // AgentsHandler manages agent token lifecycle.
 type AgentsHandler struct {
-	st store.Store
+	st       store.Store
+	eventHub events.EventHub
+	logger   *slog.Logger
 }
 
-func NewAgentsHandler(st store.Store) *AgentsHandler {
-	return &AgentsHandler{st: st}
+func NewAgentsHandler(st store.Store, eventHub events.EventHub, logger *slog.Logger) *AgentsHandler {
+	return &AgentsHandler{st: st, eventHub: eventHub, logger: logger}
 }
 
 // Create registers a new agent and returns its raw bearer token (shown once).
@@ -97,19 +101,28 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents)
 }
 
-// Delete removes an agent by ID.
+// Delete removes an agent by ID. Any active or pending tasks belonging to
+// the agent are revoked before the agent record is deleted.
 //
 // DELETE /api/agents/{id}
 // Auth: user JWT
 func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	user := middleware.UserFromContext(r.Context())
+	ctx := r.Context()
+	user := middleware.UserFromContext(ctx)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
 
 	id := r.PathValue("id")
-	if err := h.st.DeleteAgent(r.Context(), id, user.ID); err != nil {
+
+	// Revoke all active/pending tasks for this agent before deleting.
+	revokedCount, err := h.st.RevokeTasksByAgent(ctx, id, user.ID)
+	if err != nil {
+		h.logger.Warn("failed to revoke tasks for agent", "err", err, "agent_id", id)
+	}
+
+	if err := h.st.DeleteAgent(ctx, id, user.ID); err != nil {
 		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
 			return
@@ -117,5 +130,13 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete agent")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+
+	if revokedCount > 0 {
+		h.eventHub.Publish(user.ID, events.Event{Type: "tasks"})
+		h.eventHub.Publish(user.ID, events.Event{Type: "queue"})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"revoked_tasks": revokedCount,
+	})
 }

@@ -340,7 +340,7 @@ func (s *Server) routes() http.Handler {
 	}
 	healthHandler := handlers.NewHealthHandler(s.store, s.vault, authMode)
 	restrictionsHandler := handlers.NewRestrictionsHandler(s.store)
-	agentsHandler := handlers.NewAgentsHandler(s.store)
+	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger)
 	auditHandler := handlers.NewAuditHandler(s.store)
 	// The Telegram notifier also implements TelegramPairer and GroupObserver for
 	// pairing and group chat observation flows.
