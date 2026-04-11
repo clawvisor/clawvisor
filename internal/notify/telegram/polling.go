@@ -25,9 +25,9 @@ type pollingSession struct {
 	cancel   context.CancelFunc
 	pending  int32 // number of pending callback tokens
 
-	mu          sync.Mutex // protects groupChatID and persistent
-	groupChatID string     // group chat ID for observation; empty if not configured
-	persistent  bool       // true when group observation is active (don't stop on pending=0)
+	mu           sync.Mutex        // protects groupChatIDs and persistent
+	groupChatIDs map[string]bool   // set of group chat IDs being observed; nil if none
+	persistent   bool              // true when any group observation is active (don't stop on pending=0)
 }
 
 // ensurePolling starts a polling goroutine for the user if one isn't running,
@@ -55,22 +55,25 @@ func (n *Notifier) ensurePolling(userID, botToken, chatID string) {
 }
 
 // EnsureGroupObservation starts or upgrades a polling session to persistent
-// mode for group chat observation. If a session already exists, it updates the
-// groupChatID and sets persistent=true. If none exists, it creates a new
+// mode for group chat observation. If a session already exists, it adds the
+// groupChatID to the observed set. If none exists, it creates a new
 // persistent session and starts polling.
 func (n *Notifier) EnsureGroupObservation(userID, botToken, chatID, groupChatID string) {
 	key := userID
 	if val, loaded := n.pollers.LoadOrStore(key, &pollingSession{
-		userID:      userID,
-		botToken:    botToken,
-		chatID:      chatID,
-		groupChatID: groupChatID,
-		persistent:  true,
+		userID:       userID,
+		botToken:     botToken,
+		chatID:       chatID,
+		groupChatIDs: map[string]bool{groupChatID: true},
+		persistent:   true,
 	}); loaded {
-		// Already running — upgrade to persistent and set group chat ID.
+		// Already running — add groupChatID to the set.
 		ps := val.(*pollingSession)
 		ps.mu.Lock()
-		ps.groupChatID = groupChatID
+		if ps.groupChatIDs == nil {
+			ps.groupChatIDs = make(map[string]bool)
+		}
+		ps.groupChatIDs[groupChatID] = true
 		ps.persistent = true
 		ps.mu.Unlock()
 		return
@@ -84,19 +87,22 @@ func (n *Notifier) EnsureGroupObservation(userID, botToken, chatID, groupChatID 
 	go n.pollForCallbacks(ctx, ps)
 }
 
-// StopGroupObservation clears the persistent flag and group chat ID.
-// If there are no pending callback tokens, the polling loop is stopped.
-func (n *Notifier) StopGroupObservation(userID string) {
+// StopGroupObservation removes a specific group from observation.
+// If no groups remain and there are no pending callbacks, polling stops.
+func (n *Notifier) StopGroupObservation(userID, groupChatID string) {
 	val, ok := n.pollers.Load(userID)
 	if !ok {
 		return
 	}
 	ps := val.(*pollingSession)
 	ps.mu.Lock()
-	ps.persistent = false
-	ps.groupChatID = ""
+	delete(ps.groupChatIDs, groupChatID)
+	if len(ps.groupChatIDs) == 0 {
+		ps.persistent = false
+	}
+	persistent := ps.persistent
 	ps.mu.Unlock()
-	if atomic.LoadInt32(&ps.pending) <= 0 {
+	if !persistent && atomic.LoadInt32(&ps.pending) <= 0 {
 		ps.cancel()
 		n.pollers.Delete(userID)
 	}
@@ -119,25 +125,43 @@ func (n *Notifier) DecrementPolling(userID string) {
 	}
 }
 
-// BootstrapGroupObservation reads all Telegram notification configs from the
-// store and starts persistent polling for any that have a group_chat_id
-// configured. Called once at server startup.
+// BootstrapGroupObservation reads all telegram_groups from the store and
+// starts persistent polling for each. The bot token and DM chat ID are
+// read from the user's notification config. Called once at server startup.
 func (n *Notifier) BootstrapGroupObservation(ctx context.Context) {
-	configs, err := n.store.ListNotificationConfigsByChannel(ctx, "telegram")
+	groups, err := n.store.ListAllTelegramGroups(ctx)
 	if err != nil {
-		slog.Default().Warn("bootstrap group observation: list configs failed", "err", err)
+		slog.Default().Warn("bootstrap group observation: list telegram_groups failed", "err", err)
 		return
 	}
-	for _, nc := range configs {
-		var cfg telegramCfg
-		if err := json.Unmarshal(nc.Config, &cfg); err != nil {
+
+	// Cache notification configs to avoid repeated lookups for the same user.
+	type botInfo struct {
+		botToken string
+		chatID   string
+	}
+	configCache := make(map[string]*botInfo)
+
+	for _, g := range groups {
+		bi, ok := configCache[g.UserID]
+		if !ok {
+			nc, err := n.store.GetNotificationConfig(ctx, g.UserID, "telegram")
+			if err != nil {
+				continue
+			}
+			var cfg telegramCfg
+			if err := json.Unmarshal(nc.Config, &cfg); err != nil || cfg.BotToken == "" || cfg.ChatID == "" {
+				configCache[g.UserID] = nil
+				continue
+			}
+			bi = &botInfo{botToken: cfg.BotToken, chatID: cfg.ChatID}
+			configCache[g.UserID] = bi
+		}
+		if bi == nil {
 			continue
 		}
-		if cfg.GroupChatID == "" || cfg.BotToken == "" || cfg.ChatID == "" {
-			continue
-		}
-		n.EnsureGroupObservation(nc.UserID, cfg.BotToken, cfg.ChatID, cfg.GroupChatID)
-		slog.Default().Info("group observation bootstrapped", "user_id", nc.UserID)
+		n.EnsureGroupObservation(g.UserID, bi.botToken, bi.chatID, g.GroupChatID)
+		slog.Default().Info("group observation bootstrapped", "user_id", g.UserID, "group_chat_id", g.GroupChatID)
 	}
 }
 
@@ -188,7 +212,10 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 		}
 
 		ps.mu.Lock()
-		gcid := ps.groupChatID
+		gcids := make(map[string]bool, len(ps.groupChatIDs))
+		for k, v := range ps.groupChatIDs {
+			gcids[k] = v
+		}
 		ps.mu.Unlock()
 
 		for _, u := range updates {
@@ -198,8 +225,11 @@ func (n *Notifier) pollForCallbacks(ctx context.Context, ps *pollingSession) {
 			if u.CallbackQuery != nil {
 				n.handleCallbackQuery(ctx, ps, u.CallbackQuery)
 			}
-			if u.Message != nil && gcid != "" {
-				n.handleGroupMessage(ctx, ps, u.Message, gcid)
+			if u.Message != nil && len(gcids) > 0 {
+				msgChatID := fmt.Sprintf("%d", u.Message.Chat.ID)
+				if gcids[msgChatID] {
+					n.handleGroupMessage(ctx, ps, u.Message, msgChatID)
+				}
 			}
 			if u.MyChatMember != nil {
 				n.handleChatMemberUpdate(ctx, ps, u.MyChatMember)

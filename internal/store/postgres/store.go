@@ -1616,7 +1616,101 @@ func (s *Store) DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID
 	return err
 }
 
-// ── Generated Adapters ─────────────────────────────────────────────────────────
+// ── Telegram Groups ─────────────────────────���───────────────────────────────
+
+func (s *Store) CreateTelegramGroup(ctx context.Context, userID, groupChatID, title string) (*store.TelegramGroup, error) {
+	id := uuid.New().String()
+	g := &store.TelegramGroup{ID: id, UserID: userID, GroupChatID: groupChatID, Title: title}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO telegram_groups (id, user_id, group_chat_id, title)
+		VALUES ($1, $2, $3, $4)
+		RETURNING auto_approval_enabled, auto_approval_notify, created_at, updated_at
+	`, id, userID, groupChatID, title).Scan(&g.AutoApprovalEnabled, &g.AutoApprovalNotify, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	return g, nil
+}
+
+func (s *Store) GetTelegramGroup(ctx context.Context, userID, groupChatID string) (*store.TelegramGroup, error) {
+	var g store.TelegramGroup
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups WHERE user_id = $1 AND group_chat_id = $2
+	`, userID, groupChatID).Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &g.CreatedAt, &g.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+func (s *Store) ListTelegramGroups(ctx context.Context, userID string) ([]*store.TelegramGroup, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups WHERE user_id = $1 ORDER BY created_at
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []*store.TelegramGroup
+	for rows.Next() {
+		var g store.TelegramGroup
+		if err := rows.Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, &g)
+	}
+	return groups, rows.Err()
+}
+
+func (s *Store) ListAllTelegramGroups(ctx context.Context) ([]*store.TelegramGroup, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups ORDER BY created_at
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []*store.TelegramGroup
+	for rows.Next() {
+		var g store.TelegramGroup
+		if err := rows.Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, &g)
+	}
+	return groups, rows.Err()
+}
+
+func (s *Store) UpdateTelegramGroupAutoApproval(ctx context.Context, userID, groupChatID string, enabled bool, notify *bool) error {
+	if notify != nil {
+		_, err := s.pool.Exec(ctx, `
+			UPDATE telegram_groups SET auto_approval_enabled = $1, auto_approval_notify = $2, updated_at = NOW()
+			WHERE user_id = $3 AND group_chat_id = $4
+		`, enabled, *notify, userID, groupChatID)
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE telegram_groups SET auto_approval_enabled = $1, updated_at = NOW()
+		WHERE user_id = $2 AND group_chat_id = $3
+	`, enabled, userID, groupChatID)
+	return err
+}
+
+func (s *Store) DeleteTelegramGroup(ctx context.Context, userID, groupChatID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM telegram_groups WHERE user_id = $1 AND group_chat_id = $2`, userID, groupChatID)
+	return err
+}
+
+// ─��� Generated Adapters ─────────────────────────────────────────────────────────
 
 func (s *Store) SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error {
 	_, err := s.pool.Exec(ctx, `

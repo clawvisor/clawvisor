@@ -361,7 +361,11 @@ func (s *Server) routes() http.Handler {
 	if ap, ok := s.notifier.(notify.AgentGroupPairer); ok {
 		agentPairer = ap
 	}
-	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer, groupObs, groupDetector, agentPairer, baseURL)
+	var groupValidator notify.GroupMembershipValidator
+	if gv, ok := s.notifier.(notify.GroupMembershipValidator); ok {
+		groupValidator = gv
+	}
+	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer, groupObs, groupDetector, agentPairer, groupValidator, baseURL)
 	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
@@ -529,13 +533,16 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/notifications/telegram/pair/{pairing_id}", user(notificationsHandler.PairingStatus))
 	mux.Handle("POST /api/notifications/telegram/pair/{pairing_id}/confirm", user(notificationsHandler.ConfirmPairing))
 	mux.Handle("POST /api/notifications/telegram/group", user(notificationsHandler.UpsertTelegramGroup))
-	mux.Handle("DELETE /api/notifications/telegram/group", user(notificationsHandler.DeleteTelegramGroup))
 	mux.Handle("POST /api/notifications/telegram/groups/detect", user(notificationsHandler.DetectTelegramGroups))
 	mux.Handle("GET /api/notifications/telegram/groups", user(notificationsHandler.ListTelegramGroups))
 	mux.Handle("DELETE /api/notifications/telegram/groups/{chat_id}", user(notificationsHandler.DismissTelegramGroup))
-	mux.Handle("PUT /api/notifications/telegram/auto-approval", user(notificationsHandler.SetAutoApproval))
-	mux.Handle("GET /api/notifications/telegram/group/pair", user(notificationsHandler.ListPairedAgents))
-	mux.Handle("POST /api/notifications/telegram/group/pair", user(notificationsHandler.CreateGroupPairing))
+	// Multi-group management
+	mux.Handle("POST /api/notifications/telegram/groups/manual", user(notificationsHandler.AddGroupManually))
+	mux.Handle("GET /api/notifications/telegram/groups/active", user(notificationsHandler.ListActiveGroups))
+	mux.Handle("DELETE /api/notifications/telegram/groups/active/{group_chat_id}", user(notificationsHandler.DeleteTelegramGroup))
+	mux.Handle("PUT /api/notifications/telegram/groups/active/{group_chat_id}/auto-approval", user(notificationsHandler.SetAutoApproval))
+	mux.Handle("POST /api/notifications/telegram/groups/active/{group_chat_id}/pair", user(notificationsHandler.CreateGroupPairing))
+	mux.Handle("GET /api/notifications/telegram/groups/active/{group_chat_id}/agents", user(notificationsHandler.ListPairedAgents))
 	mux.Handle("POST /api/notifications/telegram/groups/pair/{session_id}", requireAgent(http.HandlerFunc(notificationsHandler.PairAgentToGroup)))
 
 	// E2E encryption middleware — wraps agent-facing routes so relay traffic is encrypted.

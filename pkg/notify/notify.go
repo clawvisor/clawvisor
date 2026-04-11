@@ -129,7 +129,7 @@ type PollingDecrementer interface {
 // in a Telegram group chat for pre-approval signals.
 type GroupObserver interface {
 	EnsureGroupObservation(userID, botToken, chatID, groupChatID string)
-	StopGroupObservation(userID string)
+	StopGroupObservation(userID, groupChatID string)
 }
 
 // PendingGroup represents a Telegram group that the bot has been added to
@@ -147,6 +147,18 @@ type GroupDetector interface {
 	DetectGroups(ctx context.Context, userID string) ([]PendingGroup, error)
 	PendingGroups(userID string) []PendingGroup
 	RemovePendingGroup(userID, chatID string)
+}
+
+// GroupInfo contains validated information about a Telegram group.
+type GroupInfo struct {
+	ChatID string `json:"chat_id"`
+	Title  string `json:"title"`
+	Type   string `json:"type"` // "group" or "supergroup"
+}
+
+// GroupMembershipValidator validates that the bot is a member of a Telegram group.
+type GroupMembershipValidator interface {
+	ValidateGroupMembership(ctx context.Context, userID, groupChatID string) (*GroupInfo, error)
 }
 
 // AgentGroupPairer manages agent-to-group-chat pairing for scoped approval checks.

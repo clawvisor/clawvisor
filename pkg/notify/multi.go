@@ -15,11 +15,12 @@ type MultiNotifier struct {
 	decisionCh chan CallbackDecision
 
 	// Delegated interfaces discovered on construction.
-	pairer        TelegramPairer
-	decrement     PollingDecrementer
-	groupObs      GroupObserver
-	groupDetector GroupDetector
-	agentPairer   AgentGroupPairer
+	pairer         TelegramPairer
+	decrement      PollingDecrementer
+	groupObs       GroupObserver
+	groupDetector  GroupDetector
+	agentPairer    AgentGroupPairer
+	groupValidator GroupMembershipValidator
 }
 
 // NewMultiNotifier creates a MultiNotifier that delegates to the given notifiers.
@@ -47,6 +48,9 @@ func NewMultiNotifier(ctx context.Context, logger *slog.Logger, notifiers ...Not
 		}
 		if ap, ok := n.(AgentGroupPairer); ok && m.agentPairer == nil {
 			m.agentPairer = ap
+		}
+		if gv, ok := n.(GroupMembershipValidator); ok && m.groupValidator == nil {
+			m.groupValidator = gv
 		}
 	}
 
@@ -92,7 +96,8 @@ var (
 	_ PollingDecrementer = (*MultiNotifier)(nil)
 	_ GroupObserver      = (*MultiNotifier)(nil)
 	_ GroupDetector      = (*MultiNotifier)(nil)
-	_ AgentGroupPairer   = (*MultiNotifier)(nil)
+	_ AgentGroupPairer        = (*MultiNotifier)(nil)
+	_ GroupMembershipValidator = (*MultiNotifier)(nil)
 )
 
 // ── Notifier interface ────────────────────────────────────────────────────────
@@ -272,9 +277,9 @@ func (m *MultiNotifier) EnsureGroupObservation(userID, botToken, chatID, groupCh
 	}
 }
 
-func (m *MultiNotifier) StopGroupObservation(userID string) {
+func (m *MultiNotifier) StopGroupObservation(userID, groupChatID string) {
 	if m.groupObs != nil {
-		m.groupObs.StopGroupObservation(userID)
+		m.groupObs.StopGroupObservation(userID, groupChatID)
 	}
 }
 
@@ -335,6 +340,15 @@ func (m *MultiNotifier) UnpairAgentsForGroup(ctx context.Context, groupChatID st
 		return nil
 	}
 	return m.agentPairer.UnpairAgentsForGroup(ctx, groupChatID)
+}
+
+// ── GroupMembershipValidator delegation ────────────────────────────────────────
+
+func (m *MultiNotifier) ValidateGroupMembership(ctx context.Context, userID, groupChatID string) (*GroupInfo, error) {
+	if m.groupValidator == nil {
+		return nil, errors.New("group membership validation not available")
+	}
+	return m.groupValidator.ValidateGroupMembership(ctx, userID, groupChatID)
 }
 
 // BootstrapGroupObservation delegates to the underlying notifier that supports it.

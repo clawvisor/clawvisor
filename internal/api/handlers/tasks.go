@@ -256,14 +256,9 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	autoApprovalEnabled := false
 	autoApprovalNotify := true // on by default
 	if groupChatID != "" {
-		if nc, err := h.st.GetNotificationConfig(ctx, agent.UserID, "telegram"); err == nil {
-			var cfgMap map[string]any
-			if json.Unmarshal(nc.Config, &cfgMap) == nil {
-				autoApprovalEnabled, _ = cfgMap["auto_approval_enabled"].(bool)
-				if v, ok := cfgMap["auto_approval_notify"].(bool); ok {
-					autoApprovalNotify = v
-				}
-			}
+		if tg, err := h.st.GetTelegramGroup(ctx, agent.UserID, groupChatID); err == nil {
+			autoApprovalEnabled = tg.AutoApprovalEnabled
+			autoApprovalNotify = tg.AutoApprovalNotify
 		}
 	}
 	if autoApprovalEnabled && groupChatID != "" && h.msgBuffer != nil && h.llmHealth != nil &&

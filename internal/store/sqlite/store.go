@@ -1789,6 +1789,115 @@ func (s *Store) DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID
 	return err
 }
 
+// ── Telegram Groups ─────────────────────────────────────────────────────────
+
+func (s *Store) CreateTelegramGroup(ctx context.Context, userID, groupChatID, title string) (*store.TelegramGroup, error) {
+	id := uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO telegram_groups (id, user_id, group_chat_id, title, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, id, userID, groupChatID, title, now, now)
+	if err != nil {
+		if isDuplicate(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	return &store.TelegramGroup{
+		ID:          id,
+		UserID:      userID,
+		GroupChatID: groupChatID,
+		Title:       title,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}, nil
+}
+
+func (s *Store) GetTelegramGroup(ctx context.Context, userID, groupChatID string) (*store.TelegramGroup, error) {
+	var g store.TelegramGroup
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups WHERE user_id = ? AND group_chat_id = ?
+	`, userID, groupChatID).Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	g.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	g.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	return &g, nil
+}
+
+func (s *Store) ListTelegramGroups(ctx context.Context, userID string) ([]*store.TelegramGroup, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups WHERE user_id = ? ORDER BY created_at
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []*store.TelegramGroup
+	for rows.Next() {
+		var g store.TelegramGroup
+		var createdAt, updatedAt string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		g.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		g.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		groups = append(groups, &g)
+	}
+	return groups, rows.Err()
+}
+
+func (s *Store) ListAllTelegramGroups(ctx context.Context) ([]*store.TelegramGroup, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, group_chat_id, title, auto_approval_enabled, auto_approval_notify, created_at, updated_at
+		FROM telegram_groups ORDER BY created_at
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []*store.TelegramGroup
+	for rows.Next() {
+		var g store.TelegramGroup
+		var createdAt, updatedAt string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.GroupChatID, &g.Title, &g.AutoApprovalEnabled, &g.AutoApprovalNotify, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		g.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		g.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		groups = append(groups, &g)
+	}
+	return groups, rows.Err()
+}
+
+func (s *Store) UpdateTelegramGroupAutoApproval(ctx context.Context, userID, groupChatID string, enabled bool, notify *bool) error {
+	if notify != nil {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE telegram_groups SET auto_approval_enabled = ?, auto_approval_notify = ?, updated_at = datetime('now')
+			WHERE user_id = ? AND group_chat_id = ?
+		`, enabled, *notify, userID, groupChatID)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE telegram_groups SET auto_approval_enabled = ?, updated_at = datetime('now')
+		WHERE user_id = ? AND group_chat_id = ?
+	`, enabled, userID, groupChatID)
+	return err
+}
+
+func (s *Store) DeleteTelegramGroup(ctx context.Context, userID, groupChatID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM telegram_groups WHERE user_id = ? AND group_chat_id = ?`, userID, groupChatID)
+	return err
+}
+
 // ── Generated Adapters ─────────────────────────────────────────────────────────
 
 func (s *Store) SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error {

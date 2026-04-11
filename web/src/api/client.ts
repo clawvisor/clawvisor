@@ -375,6 +375,17 @@ export interface PendingGroup {
   detected_at: string
 }
 
+export interface TelegramGroup {
+  id: string
+  user_id: string
+  group_chat_id: string
+  title: string
+  auto_approval_enabled: boolean
+  auto_approval_notify: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface TaskAction {
   service: string
   action: string
@@ -846,21 +857,27 @@ export const api = {
       post<NotificationConfig>(
         `/api/notifications/telegram/pair/${pairingId}/confirm`, { code }),
     // Group observation
-    upsertTelegramGroup: (groupChatId: string) =>
-      post<NotificationConfig>('/api/notifications/telegram/group', { group_chat_id: groupChatId }),
-    deleteTelegramGroup: () => del<void>('/api/notifications/telegram/group'),
+    upsertTelegramGroup: (groupChatId: string, title?: string) =>
+      post<TelegramGroup>('/api/notifications/telegram/group', { group_chat_id: groupChatId, title: title ?? '' }),
+    deleteTelegramGroup: (groupChatId: string) =>
+      del<void>(`/api/notifications/telegram/groups/active/${groupChatId}`),
     detectTelegramGroups: () =>
       post<PendingGroup[]>('/api/notifications/telegram/groups/detect', {}),
     listTelegramGroups: () =>
       get<PendingGroup[]>('/api/notifications/telegram/groups'),
     dismissTelegramGroup: (chatId: string) =>
       del<void>(`/api/notifications/telegram/groups/${chatId}`),
-    createGroupPairing: () =>
-      post<{ session_id: string; pairing_url: string; instruction: string }>('/api/notifications/telegram/group/pair', {}),
-    listPairedAgents: () =>
-      get<{ id: string; name: string }[]>('/api/notifications/telegram/group/pair'),
-    setAutoApproval: (enabled: boolean, notify?: boolean) =>
-      put<NotificationConfig>('/api/notifications/telegram/auto-approval', { enabled, ...(notify !== undefined && { notify }) }),
+    // Multi-group management
+    addGroupManually: (groupChatId: string) =>
+      post<TelegramGroup>('/api/notifications/telegram/groups/manual', { group_chat_id: groupChatId }),
+    listActiveGroups: () =>
+      get<TelegramGroup[]>('/api/notifications/telegram/groups/active'),
+    createGroupPairing: (groupChatId: string) =>
+      post<{ session_id: string; pairing_url: string; instruction: string }>(`/api/notifications/telegram/groups/active/${groupChatId}/pair`, {}),
+    listPairedAgents: (groupChatId: string) =>
+      get<{ id: string; name: string }[]>(`/api/notifications/telegram/groups/active/${groupChatId}/agents`),
+    setAutoApproval: (groupChatId: string, enabled: boolean, notify?: boolean) =>
+      put<TelegramGroup>(`/api/notifications/telegram/groups/active/${groupChatId}/auto-approval`, { enabled, ...(notify !== undefined && { notify }) }),
   },
   config: {
     public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey' }>('/api/config/public'),

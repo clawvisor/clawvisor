@@ -46,6 +46,14 @@ type Store interface {
 	DeleteAgentGroupPairing(ctx context.Context, agentID string) error
 	DeleteAgentGroupPairingsByGroup(ctx context.Context, groupChatID string) error
 
+	// Telegram groups (multi-group observation with per-group settings)
+	CreateTelegramGroup(ctx context.Context, userID, groupChatID, title string) (*TelegramGroup, error)
+	GetTelegramGroup(ctx context.Context, userID, groupChatID string) (*TelegramGroup, error)
+	ListTelegramGroups(ctx context.Context, userID string) ([]*TelegramGroup, error)
+	ListAllTelegramGroups(ctx context.Context) ([]*TelegramGroup, error)
+	UpdateTelegramGroupAutoApproval(ctx context.Context, userID, groupChatID string, enabled bool, notify *bool) error
+	DeleteTelegramGroup(ctx context.Context, userID, groupChatID string) error
+
 	// Sessions (refresh tokens)
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (*Session, error)
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
@@ -434,6 +442,19 @@ type GeneratedAdapter struct {
 	YAMLContent string    `json:"yaml_content"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// TelegramGroup represents a Telegram group configured for observation.
+// Each group has independent auto-approval settings.
+type TelegramGroup struct {
+	ID                  string    `json:"id"`
+	UserID              string    `json:"user_id"`
+	GroupChatID         string    `json:"group_chat_id"`
+	Title               string    `json:"title"`
+	AutoApprovalEnabled bool      `json:"auto_approval_enabled"`
+	AutoApprovalNotify  bool      `json:"auto_approval_notify"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // OAuthAuthorizationCode is a one-time-use authorization code for the OAuth 2.1 flow.

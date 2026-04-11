@@ -486,6 +486,151 @@ func (n *Notifier) SendTestMessage(ctx context.Context, userID string) error {
 	return nil
 }
 
+// ValidateGroupMembership checks that the bot is a member of the given group
+// using the Telegram getChat and getChatMember APIs. Returns group info on success.
+func (n *Notifier) ValidateGroupMembership(ctx context.Context, userID, groupChatID string) (*notify.GroupInfo, error) {
+	botToken, _, err := n.userConfig(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the bot's own user ID via getMe.
+	botUserID, err := n.getMeID(ctx, botToken)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: getMe: %w", err)
+	}
+
+	// Verify the bot is a member of the group via getChatMember.
+	status, err := n.getChatMember(ctx, botToken, groupChatID, botUserID)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: bot is not a member of group %s (or group does not exist)", groupChatID)
+	}
+	if status != "member" && status != "administrator" && status != "creator" {
+		return nil, fmt.Errorf("telegram: bot status in group is %q (need member or administrator)", status)
+	}
+
+	// Get group info via getChat.
+	info, err := n.getChat(ctx, botToken, groupChatID)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: getChat: %w", err)
+	}
+
+	return info, nil
+}
+
+// getMeID returns the bot's numeric user ID.
+func (n *Notifier) getMeID(ctx context.Context, botToken string) (int64, error) {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", botToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var r struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			ID int64 `json:"id"`
+		} `json:"result"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return 0, err
+	}
+	if !r.OK {
+		return 0, fmt.Errorf("getMe failed: %s", r.Description)
+	}
+	return r.Result.ID, nil
+}
+
+// getChatMember returns the bot's membership status in a chat.
+func (n *Notifier) getChatMember(ctx context.Context, botToken, chatID string, userID int64) (string, error) {
+	payload := map[string]any{
+		"chat_id": chatID,
+		"user_id": userID,
+	}
+	body, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getChatMember", botToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	var r struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Status string `json:"status"`
+		} `json:"result"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(respBody, &r); err != nil {
+		return "", err
+	}
+	if !r.OK {
+		return "", fmt.Errorf("getChatMember failed: %s", r.Description)
+	}
+	return r.Result.Status, nil
+}
+
+// getChat returns information about a chat.
+func (n *Notifier) getChat(ctx context.Context, botToken, chatID string) (*notify.GroupInfo, error) {
+	payload := map[string]any{"chat_id": chatID}
+	body, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getChat", botToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	var r struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			ID    int64  `json:"id"`
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		} `json:"result"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(respBody, &r); err != nil {
+		return nil, err
+	}
+	if !r.OK {
+		return nil, fmt.Errorf("getChat failed: %s", r.Description)
+	}
+	if r.Result.Type != "group" && r.Result.Type != "supergroup" {
+		return nil, fmt.Errorf("chat %s is type %q, not a group", chatID, r.Result.Type)
+	}
+
+	return &notify.GroupInfo{
+		ChatID: fmt.Sprintf("%d", r.Result.ID),
+		Title:  r.Result.Title,
+		Type:   r.Result.Type,
+	}, nil
+}
+
 // ── Message formatting ────────────────────────────────────────────────────────
 
 func formatApprovalMessage(req notify.ApprovalRequest) string {
@@ -766,10 +911,10 @@ func (n *Notifier) editMessage(ctx context.Context, botToken, chatID, messageID,
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // telegramCfg is the JSON structure stored in notification_configs for channel="telegram".
+// Group chat IDs are stored separately in the telegram_groups table.
 type telegramCfg struct {
-	BotToken    string `json:"bot_token"`
-	ChatID      string `json:"chat_id"`
-	GroupChatID string `json:"group_chat_id,omitempty"`
+	BotToken string `json:"bot_token"`
+	ChatID   string `json:"chat_id"`
 }
 
 // userConfig fetches the per-user bot_token and chat_id from the store.

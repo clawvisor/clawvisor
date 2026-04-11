@@ -31,17 +31,18 @@ func sanitizeNotificationConfig(raw json.RawMessage) json.RawMessage {
 
 // NotificationsHandler manages per-user notification channel configuration.
 type NotificationsHandler struct {
-	st            store.Store
-	notifier      notify.Notifier             // may be nil
-	pairer        notify.TelegramPairer        // may be nil
-	groupObs      notify.GroupObserver         // may be nil
-	groupDetector notify.GroupDetector         // may be nil
-	agentPairer   notify.AgentGroupPairer     // may be nil
-	baseURL       string
+	st             store.Store
+	notifier       notify.Notifier                 // may be nil
+	pairer         notify.TelegramPairer            // may be nil
+	groupObs       notify.GroupObserver             // may be nil
+	groupDetector  notify.GroupDetector             // may be nil
+	agentPairer    notify.AgentGroupPairer          // may be nil
+	groupValidator notify.GroupMembershipValidator  // may be nil
+	baseURL        string
 }
 
-func NewNotificationsHandler(st store.Store, notifier notify.Notifier, pairer notify.TelegramPairer, groupObs notify.GroupObserver, groupDetector notify.GroupDetector, agentPairer notify.AgentGroupPairer, baseURL string) *NotificationsHandler {
-	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, baseURL: baseURL}
+func NewNotificationsHandler(st store.Store, notifier notify.Notifier, pairer notify.TelegramPairer, groupObs notify.GroupObserver, groupDetector notify.GroupDetector, agentPairer notify.AgentGroupPairer, groupValidator notify.GroupMembershipValidator, baseURL string) *NotificationsHandler {
+	return &NotificationsHandler{st: st, notifier: notifier, pairer: pairer, groupObs: groupObs, groupDetector: groupDetector, agentPairer: agentPairer, groupValidator: groupValidator, baseURL: baseURL}
 }
 
 // List returns all notification configs for the authenticated user.
@@ -295,13 +296,12 @@ func (h *NotificationsHandler) ConfirmPairing(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, cfg)
 }
 
-// UpsertTelegramGroup adds or updates the group_chat_id on the existing
-// Telegram notification config, enabling group chat observation for
-// pre-approval signals.
+// UpsertTelegramGroup enables group chat observation for a specific group.
+// Creates a row in telegram_groups and starts observation.
 //
 // POST /api/notifications/telegram/group
 // Auth: user JWT
-// Body: {"group_chat_id": "..."}
+// Body: {"group_chat_id": "...", "title": "..."}
 func (h *NotificationsHandler) UpsertTelegramGroup(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -311,6 +311,7 @@ func (h *NotificationsHandler) UpsertTelegramGroup(w http.ResponseWriter, r *htt
 
 	var body struct {
 		GroupChatID string `json:"group_chat_id"`
+		Title       string `json:"title"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -320,56 +321,45 @@ func (h *NotificationsHandler) UpsertTelegramGroup(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Read existing Telegram config.
+	// Read existing Telegram config to get bot token for observation.
 	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
 		return
 	}
 
-	// Parse existing config and add group_chat_id.
-	var cfgMap map[string]any
-	if err := json.Unmarshal(nc.Config, &cfgMap); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not parse existing config")
-		return
-	}
-	cfgMap["group_chat_id"] = body.GroupChatID
-
-	cfgBytes, err := json.Marshal(cfgMap)
+	// Create the telegram_groups row.
+	tg, err := h.st.CreateTelegramGroup(r.Context(), user.ID, body.GroupChatID, body.Title)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode config")
-		return
-	}
-
-	if err := h.st.UpsertNotificationConfig(r.Context(), user.ID, "telegram", cfgBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save notification config")
+		if err == store.ErrConflict {
+			writeError(w, http.StatusConflict, "ALREADY_EXISTS", "this group is already connected")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save group")
 		return
 	}
 
 	// Start group observation.
 	if h.groupObs != nil {
-		botToken, _ := cfgMap["bot_token"].(string)
-		chatID, _ := cfgMap["chat_id"].(string)
-		h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, body.GroupChatID)
+		var cfgMap map[string]any
+		if json.Unmarshal(nc.Config, &cfgMap) == nil {
+			botToken, _ := cfgMap["bot_token"].(string)
+			chatID, _ := cfgMap["chat_id"].(string)
+			h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, body.GroupChatID)
+		}
 	}
 	// Remove from pending list now that it's been enabled.
 	if h.groupDetector != nil {
 		h.groupDetector.RemovePendingGroup(user.ID, body.GroupChatID)
 	}
 
-	updatedCfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "configured"})
-		return
-	}
-	updatedCfg.Config = sanitizeNotificationConfig(updatedCfg.Config)
-	writeJSON(w, http.StatusOK, updatedCfg)
+	writeJSON(w, http.StatusOK, tg)
 }
 
-// DeleteTelegramGroup removes the group_chat_id from the Telegram notification
-// config and stops group chat observation.
+// DeleteTelegramGroup removes a specific group from observation,
+// stops polling for it, and cleans up agent pairings.
 //
-// DELETE /api/notifications/telegram/group
+// DELETE /api/notifications/telegram/groups/active/{group_chat_id}
 // Auth: user JWT
 func (h *NotificationsHandler) DeleteTelegramGroup(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
@@ -378,36 +368,22 @@ func (h *NotificationsHandler) DeleteTelegramGroup(w http.ResponseWriter, r *htt
 		return
 	}
 
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
-	if err != nil {
-		w.WriteHeader(http.StatusNoContent)
+	groupChatID := r.PathValue("group_chat_id")
+	if groupChatID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "group_chat_id is required")
 		return
 	}
 
-	var cfgMap map[string]any
-	if err := json.Unmarshal(nc.Config, &cfgMap); err != nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	groupChatID, _ := cfgMap["group_chat_id"].(string)
-	delete(cfgMap, "group_chat_id")
-
-	cfgBytes, err := json.Marshal(cfgMap)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode config")
-		return
-	}
-
-	if err := h.st.UpsertNotificationConfig(r.Context(), user.ID, "telegram", cfgBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save notification config")
+	if err := h.st.DeleteTelegramGroup(r.Context(), user.ID, groupChatID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete group")
 		return
 	}
 
 	// Stop group observation and clean up agent pairings.
 	if h.groupObs != nil {
-		h.groupObs.StopGroupObservation(user.ID)
+		h.groupObs.StopGroupObservation(user.ID, groupChatID)
 	}
-	if h.agentPairer != nil && groupChatID != "" {
+	if h.agentPairer != nil {
 		_ = h.agentPairer.UnpairAgentsForGroup(r.Context(), groupChatID)
 	}
 
@@ -487,16 +463,21 @@ func (h *NotificationsHandler) DismissTelegramGroup(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SetAutoApproval toggles the auto_approval_enabled and auto_approval_notify
-// flags on the Telegram config.
+// SetAutoApproval toggles auto-approval settings for a specific group.
 //
-// PUT /api/notifications/telegram/auto-approval
+// PUT /api/notifications/telegram/groups/active/{group_chat_id}/auto-approval
 // Auth: user JWT
 // Body: {"enabled": true, "notify": false}
 func (h *NotificationsHandler) SetAutoApproval(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	groupChatID := r.PathValue("group_chat_id")
+	if groupChatID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "group_chat_id is required")
 		return
 	}
 
@@ -508,54 +489,22 @@ func (h *NotificationsHandler) SetAutoApproval(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
+	if err := h.st.UpdateTelegramGroupAutoApproval(r.Context(), user.ID, groupChatID, body.Enabled, body.Notify); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update auto-approval settings")
 		return
 	}
 
-	var cfgMap map[string]any
-	if err := json.Unmarshal(nc.Config, &cfgMap); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not parse config")
-		return
-	}
-	if body.Enabled {
-		cfgMap["auto_approval_enabled"] = true
-	} else {
-		delete(cfgMap, "auto_approval_enabled")
-	}
-	if body.Notify != nil {
-		if *body.Notify {
-			delete(cfgMap, "auto_approval_notify") // absent = true (default)
-		} else {
-			cfgMap["auto_approval_notify"] = false
-		}
-	}
-
-	cfgBytes, err := json.Marshal(cfgMap)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode config")
-		return
-	}
-
-	if err := h.st.UpsertNotificationConfig(r.Context(), user.ID, "telegram", cfgBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save config")
-		return
-	}
-
-	updatedCfg, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
+	tg, err := h.st.GetTelegramGroup(r.Context(), user.ID, groupChatID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 		return
 	}
-	updatedCfg.Config = sanitizeNotificationConfig(updatedCfg.Config)
-	writeJSON(w, http.StatusOK, updatedCfg)
+	writeJSON(w, http.StatusOK, tg)
 }
 
-// CreateGroupPairing creates a new pairing session and returns the pairing
-// URL and instructions for the user to share with their agent.
+// CreateGroupPairing creates a new pairing session for a specific group.
 //
-// POST /api/notifications/telegram/group/pair
+// POST /api/notifications/telegram/groups/active/{group_chat_id}/pair
 // Auth: user JWT
 func (h *NotificationsHandler) CreateGroupPairing(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
@@ -568,20 +517,15 @@ func (h *NotificationsHandler) CreateGroupPairing(w http.ResponseWriter, r *http
 		return
 	}
 
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
+	groupChatID := r.PathValue("group_chat_id")
+	if groupChatID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "group_chat_id is required")
 		return
 	}
 
-	var cfgMap map[string]any
-	if err := json.Unmarshal(nc.Config, &cfgMap); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not parse config")
-		return
-	}
-	groupChatID, _ := cfgMap["group_chat_id"].(string)
-	if groupChatID == "" {
-		writeError(w, http.StatusBadRequest, "NO_GROUP", "no group chat is active")
+	// Verify the group exists for this user.
+	if _, err := h.st.GetTelegramGroup(r.Context(), user.ID, groupChatID); err != nil {
+		writeError(w, http.StatusBadRequest, "NO_GROUP", "group not found")
 		return
 	}
 
@@ -640,9 +584,9 @@ func (h *NotificationsHandler) PairAgentToGroup(w http.ResponseWriter, r *http.R
 	})
 }
 
-// ListPairedAgents returns the agents paired to the user's active group chat.
+// ListPairedAgents returns the agents paired to a specific group chat.
 //
-// GET /api/notifications/telegram/group/pair
+// GET /api/notifications/telegram/groups/active/{group_chat_id}/agents
 // Auth: user JWT
 func (h *NotificationsHandler) ListPairedAgents(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
@@ -651,18 +595,7 @@ func (h *NotificationsHandler) ListPairedAgents(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
-	if err != nil {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
-
-	var cfgMap map[string]any
-	if err := json.Unmarshal(nc.Config, &cfgMap); err != nil {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
-	groupChatID, _ := cfgMap["group_chat_id"].(string)
+	groupChatID := r.PathValue("group_chat_id")
 	if groupChatID == "" || h.agentPairer == nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
@@ -698,4 +631,96 @@ func (h *NotificationsHandler) ListPairedAgents(w http.ResponseWriter, r *http.R
 		agents = []pairedAgent{}
 	}
 	writeJSON(w, http.StatusOK, agents)
+}
+
+// AddGroupManually validates that the bot is a member of the specified group
+// via the Telegram API, then creates a telegram_groups row and starts observation.
+//
+// POST /api/notifications/telegram/groups/manual
+// Auth: user JWT
+// Body: {"group_chat_id": "..."}
+func (h *NotificationsHandler) AddGroupManually(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.groupValidator == nil {
+		writeError(w, http.StatusServiceUnavailable, "VALIDATOR_UNAVAILABLE", "Telegram notifications must be configured before adding groups")
+		return
+	}
+
+	var body struct {
+		GroupChatID string `json:"group_chat_id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.GroupChatID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "group_chat_id is required")
+		return
+	}
+
+	// Validate that the bot is actually in this group.
+	info, err := h.groupValidator.ValidateGroupMembership(r.Context(), user.ID, body.GroupChatID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "NOT_A_MEMBER", err.Error())
+		return
+	}
+
+	// Read existing Telegram config to get bot token for observation.
+	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
+		return
+	}
+
+	// Create the telegram_groups row.
+	tg, err := h.st.CreateTelegramGroup(r.Context(), user.ID, info.ChatID, info.Title)
+	if err != nil {
+		if err == store.ErrConflict {
+			writeError(w, http.StatusConflict, "ALREADY_EXISTS", "this group is already connected")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save group")
+		return
+	}
+
+	// Start group observation.
+	if h.groupObs != nil {
+		var cfgMap map[string]any
+		if json.Unmarshal(nc.Config, &cfgMap) == nil {
+			botToken, _ := cfgMap["bot_token"].(string)
+			chatID, _ := cfgMap["chat_id"].(string)
+			h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, info.ChatID)
+		}
+	}
+	// Remove from pending list if it was there.
+	if h.groupDetector != nil {
+		h.groupDetector.RemovePendingGroup(user.ID, info.ChatID)
+	}
+
+	writeJSON(w, http.StatusOK, tg)
+}
+
+// ListActiveGroups returns all connected telegram groups for the user.
+//
+// GET /api/notifications/telegram/groups/active
+// Auth: user JWT
+func (h *NotificationsHandler) ListActiveGroups(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	groups, err := h.st.ListTelegramGroups(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list groups")
+		return
+	}
+	if groups == nil {
+		groups = []*store.TelegramGroup{}
+	}
+	writeJSON(w, http.StatusOK, groups)
 }
