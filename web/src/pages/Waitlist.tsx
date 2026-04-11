@@ -36,9 +36,17 @@ export default function Waitlist() {
           <p className="text-sm text-text-tertiary">
             We'll let you know when your account is ready. Keep an eye on <strong>{email}</strong> for updates.
           </p>
-          <Link to="/login" className="inline-block py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong">
-            Back to login
-          </Link>
+          <p className="text-sm text-text-tertiary">
+            In the meantime, <a href="https://discord.gg/sZAV4xfAKd" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">join our Discord</a> to connect with the community, or get started right away with the <a href="https://github.com/clawvisor/clawvisor" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">self-hosted version</a>.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <a href="https://discord.gg/sZAV4xfAKd" target="_blank" rel="noopener noreferrer" className="py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong">
+              Join Discord
+            </a>
+            <Link to="/login" className="py-2 px-4 border border-border-default text-text-secondary rounded font-medium hover:bg-surface-2">
+              Back to login
+            </Link>
+          </div>
         </div>
       </div>
     )
