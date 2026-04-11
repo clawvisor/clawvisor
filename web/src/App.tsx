@@ -15,6 +15,7 @@ import OAuthAuthorize from './pages/OAuthAuthorize'
 import OAuthCallback from './pages/OAuthCallback'
 import MFAVerify from './pages/MFAVerify'
 import SecuritySetup from './pages/SecuritySetup'
+import Waitlist from './pages/Waitlist'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -85,6 +86,7 @@ export default function App() {
       <Route path="/magic-link" element={<MagicLink />} />
       <Route path="/check-email" element={<CheckEmail />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/waitlist" element={<Waitlist />} />
       <Route path="/pricing" element={<Pricing />} />
       <Route
         path="/welcome"

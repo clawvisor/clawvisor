@@ -1,17 +1,14 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 
 export default function Register() {
 
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const [email, setEmail] = useState(searchParams.get('email') ?? '')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [showWaitlist, setShowWaitlist] = useState(searchParams.get('waitlist') === '1')
-  const [waitlistJoined, setWaitlistJoined] = useState(false)
 
 
   async function handleGoogleRegister() {
@@ -29,11 +26,7 @@ export default function Register() {
       })
       window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
     } catch (err: any) {
-      if (err instanceof APIError && err.waitlistAvailable) {
-        setShowWaitlist(true)
-      } else {
-        setError(err instanceof APIError ? err.message : 'Google sign-up is not available')
-      }
+      setError(err instanceof APIError ? err.message : 'Google sign-up is not available')
       setIsSubmitting(false)
     }
   }
@@ -47,7 +40,7 @@ export default function Register() {
       navigate('/check-email', { state: { email } })
     } catch (err) {
       if (err instanceof APIError && err.waitlistAvailable) {
-        setShowWaitlist(true)
+        navigate(`/waitlist?email=${encodeURIComponent(email)}`)
       } else if (err instanceof APIError) {
         setError(err.message)
       } else {
@@ -56,40 +49,6 @@ export default function Register() {
     } finally {
       setIsSubmitting(false)
     }
-  }
-
-  async function handleJoinWaitlist() {
-    setError(null)
-    setIsSubmitting(true)
-    try {
-      await api.auth.joinWaitlist(email)
-      setWaitlistJoined(true)
-    } catch (err) {
-      if (err instanceof APIError) {
-        setError(err.message)
-      } else {
-        setError('An unexpected error occurred')
-      }
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  if (waitlistJoined) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-0">
-        <div className="max-w-md w-full p-8 bg-surface-1 border border-border-default rounded-md text-center space-y-4">
-          <h1 className="text-3xl font-bold text-text-primary">Clawvisor</h1>
-          <h2 className="text-lg text-text-secondary">You're on the waitlist!</h2>
-          <p className="text-sm text-text-tertiary">
-            We'll let you know when your account is ready. Keep an eye on <strong>{email}</strong> for updates.
-          </p>
-          <Link to="/login" className="inline-block py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong">
-            Back to login
-          </Link>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -102,21 +61,6 @@ export default function Register() {
 
         {error && (
           <div className="p-3 bg-danger/10 text-danger rounded text-sm">{error}</div>
-        )}
-
-        {showWaitlist && (
-          <div className="p-4 bg-brand/5 border border-brand/20 rounded space-y-3">
-            <p className="text-sm text-text-secondary">
-              Registration is currently closed. Join the waitlist and we'll notify you when a spot opens up.
-            </p>
-            <button
-              onClick={handleJoinWaitlist}
-              disabled={isSubmitting}
-              className="w-full py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong disabled:opacity-50"
-            >
-              {isSubmitting ? 'Joining...' : 'Join the waitlist'}
-            </button>
-          </div>
         )}
 
         <div className="space-y-3">
