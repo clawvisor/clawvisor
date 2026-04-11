@@ -927,7 +927,6 @@ function TelegramGroupCard({ group, onDisconnect }: { group: TelegramGroup; onDi
   const { data: pairedAgents } = useQuery({
     queryKey: ['paired-agents', group.group_chat_id],
     queryFn: () => api.notifications.listPairedAgents(group.group_chat_id),
-    enabled: expanded,
     refetchInterval: expanded ? 10000 : false,
   })
 
@@ -944,21 +943,24 @@ function TelegramGroupCard({ group, onDisconnect }: { group: TelegramGroup; onDi
 
   return (
     <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <button onClick={() => setExpanded(prev => !prev)} className="flex items-center gap-2 text-left flex-1 min-w-0">
-          <span className={`flex-shrink-0 w-2 h-2 rounded-full ${group.auto_approval_enabled ? 'bg-green-500' : 'bg-surface-2 border border-border-default'}`} />
+      <button onClick={() => setExpanded(prev => !prev)} className="flex items-center justify-between w-full text-left cursor-pointer">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className={`flex-shrink-0 w-2 h-2 rounded-full ${group.auto_approval_enabled && pairedAgents && pairedAgents.length > 0 ? 'bg-green-500' : 'bg-surface-2 border border-border-default'}`} />
           <span className="text-sm font-medium text-text-primary truncate">{group.title || group.group_chat_id}</span>
           {group.title && <span className="text-xs text-text-tertiary font-mono">{group.group_chat_id}</span>}
-        </button>
+        </div>
         <div className="flex items-center gap-3">
-          {group.auto_approval_enabled && (
+          {pairedAgents && pairedAgents.length === 0 && (
+            <span className="text-xs text-yellow-500">No agents paired</span>
+          )}
+          {group.auto_approval_enabled && pairedAgents && pairedAgents.length > 0 && (
             <span className="text-xs text-green-500">Auto-approval on</span>
           )}
           <svg className={`w-4 h-4 text-text-tertiary transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M6 9l6 6 6-6" />
           </svg>
         </div>
-      </div>
+      </button>
 
       {expanded && (
         <div className="space-y-4 pt-2 border-t border-border-default">
@@ -998,6 +1000,19 @@ function TelegramGroupCard({ group, onDisconnect }: { group: TelegramGroup; onDi
               </label>
             )}
           </div>
+
+          {/* No agents warning */}
+          {(!pairedAgents || pairedAgents.length === 0) && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-md bg-yellow-500/10 border border-yellow-500/20">
+              <svg className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                No agents paired to this group. Pair an agent below for auto-approval to take effect.
+              </p>
+            </div>
+          )}
 
           {/* Paired agents */}
           <div className="space-y-2">
