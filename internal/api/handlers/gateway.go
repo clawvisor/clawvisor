@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -221,12 +222,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
-			writeJSON(w, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"status":     "blocked",
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
 				"reason":     err.Error(),
-			})
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 	}
@@ -250,12 +253,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		if reason == "" {
 			reason = fmt.Sprintf("Restricted: %s:%s is blocked", restriction.Service, restriction.Action)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		resp := map[string]any{
 			"status":     "blocked",
 			"request_id": req.RequestID,
 			"audit_id":   auditID,
 			"reason":     reason,
-		})
+		}
+		h.maybeInjectNPS(ctx, resp, agent.ID)
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -287,11 +292,13 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
 			outDecision, outOutcome = "reject", "task_expired"
-			writeJSON(w, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"status":  "task_expired",
 				"task_id": req.TaskID,
 				"message": "Task has expired. Use POST /api/tasks/{id}/expand to extend.",
-			})
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 		if task.Status != "active" {
@@ -323,13 +330,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
-			writeJSON(w, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"status":     "pending_scope_expansion",
 				"task_id":    req.TaskID,
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
 				"message":    msg,
-			})
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 
@@ -403,6 +412,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				if len(warnings) > 0 {
 					resp["warnings"] = warnings
 				}
+				h.maybeInjectNPS(ctx, resp, agent.ID)
 				writeJSON(w, http.StatusOK, resp)
 				return
 			}
@@ -477,13 +487,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						}, cbKey)
 					}()
 				}
-				writeJSON(w, http.StatusOK, map[string]any{
+				resp := map[string]any{
 					"status":     "error",
 					"request_id": req.RequestID,
 					"audit_id":   auditID,
 					"error":      errMsg,
 					"code":       "EXECUTION_ERROR",
-				})
+				}
+				h.maybeInjectNPS(ctx, resp, agent.ID)
+				writeJSON(w, http.StatusOK, resp)
 				return
 			}
 
@@ -553,6 +565,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if len(warnings) > 0 {
 				resp["warnings"] = warnings
 			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
@@ -647,7 +660,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		timeout := parseLongPollTimeout(r)
 		pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, time.Duration(timeout)*time.Second)
 		if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
-			h.executeAndRespond(w, r.Context(), pa)
+			h.executeAndRespond(w, r.Context(), pa, agent.ID)
 			return
 		}
 		// pa == nil means the row was deleted (denied/expired). Check the audit
@@ -758,7 +771,7 @@ func (h *GatewayHandler) waitForApprovalDecision(ctx context.Context, requestID,
 // adapter, and writes the result as JSON. The atomic claim prevents double-
 // execution when multiple code paths race (e.g. wait=true long-poll + /execute).
 // Shared by HandleRequest (wait=true) and HandleExecuteApproved.
-func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Context, pa *store.PendingApproval) {
+func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Context, pa *store.PendingApproval, agentID string) {
 	// Atomic claim: only one caller wins. Prevents double-execution of
 	// non-idempotent actions (emails, payments, etc.).
 	claimed, claimErr := h.store.ClaimPendingApprovalForExecution(ctx, pa.RequestID)
@@ -809,6 +822,7 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	} else {
 		resp["result"] = result
 	}
+	h.maybeInjectNPS(ctx, resp, agentID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -878,7 +892,39 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.executeAndRespond(w, r.Context(), pa)
+	h.executeAndRespond(w, r.Context(), pa, agent.ID)
+}
+
+// maybeInjectNPS probabilistically adds an NPS survey prompt to a gateway response.
+// Sample rate is controlled by Gateway.NPSSamplePercent (default 1%). At most once per agent per week.
+// Only fires when the feedback system is enabled (LLM.FeedbackReview.Enabled).
+func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any, agentID string) {
+	if !h.cfg.LLM.FeedbackReview.Enabled {
+		return
+	}
+	pct := h.cfg.Gateway.NPSSamplePercent
+	if pct <= 0 || rand.Intn(100) >= pct {
+		return
+	}
+	lastNPS, err := h.store.GetAgentLastNPSTime(ctx, agentID)
+	if err != nil {
+		h.logger.Warn("nps cooldown check failed, skipping cooldown", "err", err, "agent_id", agentID)
+		// Fall through — don't suppress NPS just because the cooldown check failed.
+	}
+	if lastNPS != nil && time.Since(*lastNPS) < 7*24*time.Hour {
+		return
+	}
+	taskID, _ := resp["task_id"].(string)
+	resp["meta"] = map[string]any{
+		"survey": map[string]any{
+			"type":     "nps",
+			"prompt":   "As an agent, how has your experience working with Clawvisor been? We're looking for your perspective on the authorization flow, intent verification, and overall developer experience — not your user's. Rate us from 1-10 using the submit_nps tool.",
+			"tool":     "submit_nps",
+			"endpoint": fmt.Sprintf("POST %s/api/feedback/nps", h.baseURL),
+			"request":  map[string]any{"score": "1-10", "task_id": taskID, "feedback": "optional free-text"},
+			"task_id":  taskID,
+		},
+	}
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.

@@ -188,5 +188,32 @@ func toolDefs() []Tool {
 				"required": ["service_id"]
 			}`),
 		},
+		{
+			Name:        "report_bug",
+			Description: "Report a bug or issue with a Clawvisor decision. Use this when you believe Clawvisor made the wrong call — blocked a legitimate request, denied a task that should have been approved, was too slow, or gave unclear errors. Your report will be reviewed by Clawvisor and you'll receive a personalized, actionable response. Include the request_id and/or task_id so we can look up the full context. This helps us improve Clawvisor for all agents.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"request_id": {"type": "string", "description": "The request_id from the gateway request that triggered this report (highly recommended — lets us look up exactly what happened)"},
+					"task_id": {"type": "string", "description": "The task_id that was active when the issue occurred (highly recommended — lets us see the task scope and history)"},
+					"description": {"type": "string", "description": "Describe what happened, what you expected to happen, and why you think the decision was wrong. Be as specific as possible — we'll review this and respond with guidance."},
+					"context": {"type": "object", "description": "Any additional structured context that might help diagnose the issue (e.g. the params you tried to send, the error message you received)"}
+				},
+				"required": ["description"]
+			}`),
+		},
+		{
+			Name:        "submit_nps",
+			Description: "Submit a satisfaction score for your experience as an agent working with Clawvisor. Rate from 1 (terrible) to 10 (excellent). We want your perspective on the authorization flow, intent verification, and developer experience — not your user's. Optional feedback text is appreciated.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"score": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Your satisfaction score from 1 (very dissatisfied) to 10 (delighted)"},
+					"task_id": {"type": "string", "description": "The task_id you were working on (if applicable)"},
+					"feedback": {"type": "string", "description": "Optional free-text feedback about your experience"}
+				},
+				"required": ["score"]
+			}`),
+		},
 	}
 }

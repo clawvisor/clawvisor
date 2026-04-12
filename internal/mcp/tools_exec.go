@@ -203,6 +203,14 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"DELETE", "/api/adapters/" + id, "DELETE /api/adapters/{service_id}",
 			map[string]string{"service_id": id}}, nil, nil
 
+	case "report_bug":
+		body, _ := json.Marshal(args)
+		return internalRoute{"POST", "/api/feedback/report", "POST /api/feedback/report", nil}, body, nil
+
+	case "submit_nps":
+		body, _ := json.Marshal(args)
+		return internalRoute{"POST", "/api/feedback/nps", "POST /api/feedback/nps", nil}, body, nil
+
 	default:
 		return internalRoute{}, nil, fmt.Errorf("unknown tool: %s", toolName)
 	}

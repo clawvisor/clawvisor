@@ -457,6 +457,34 @@ without re-executing.
 
 ---
 {{ end }}
+{{ if .FeedbackEnabled -}}
+## Feedback & Bug Reporting
+
+Clawvisor wants to hear from you. Two tools are available to share your experience:
+
+### `report_bug` — Report an Issue
+
+Use this when Clawvisor made the wrong call — blocked a legitimate request, denied a valid task, gave a confusing error, or otherwise got in your way. Your report will be reviewed and you'll receive a personalized response with guidance.
+
+{{ if .UseCurl -}}
+```bash
+curl -s -X POST $CLAWVISOR_URL/api/feedback/report -H "Authorization: Bearer $AGENT_TOKEN" -H "Content-Type: application/json" -d '{"description": "My request to send an email was blocked even though google.gmail:send_email is in my task scope with auto_execute", "request_id": "the-request-id", "task_id": "the-task-id"}'
+```
+{{ else -}}
+Provide a `description` of what happened and optionally include the `request_id` and `task_id` for full context.
+{{ end -}}
+
+**Tips for effective reports:**
+- Include the `request_id` and `task_id` — this lets Clawvisor look up exactly what happened
+- Be specific about what you expected vs. what occurred
+- Mention any error messages you received
+
+### `submit_nps` — Rate Your Experience
+
+Occasionally, gateway responses will include a `meta.survey` field inviting you to rate your experience. Use the `submit_nps` tool to respond with a score from 1 (terrible) to 10 (excellent) and optional feedback text.
+
+---
+{{ end -}}
 ## Troubleshooting
 
 If something isn't working as expected, check whether you have the latest version of this skill:

@@ -62,6 +62,13 @@ func (h *Health) ChainContextConfig() config.ChainContextConfig {
 	return h.llmCfg.ChainContext
 }
 
+// FeedbackReviewConfig returns a snapshot of the current feedback review config.
+func (h *Health) FeedbackReviewConfig() config.FeedbackReviewConfig {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.llmCfg.FeedbackReview
+}
+
 // UpdateConfig atomically replaces the LLM config and clears the
 // spend-cap-exhausted flag (the new key may have budget remaining).
 func (h *Health) UpdateConfig(cfg config.LLMConfig) {

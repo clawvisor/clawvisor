@@ -21,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/feedback"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/mcp"
@@ -632,6 +633,16 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("DELETE /api/adapters/{service_id}", user(adapterGenHandler.Remove))
 	}
 
+	// Agent feedback (agent token for reporting, user JWT for listing)
+	var feedbackReviewer feedback.Reviewer = feedback.NoopReviewer{}
+	if s.llmCfg.FeedbackReview.Enabled {
+		feedbackReviewer = feedback.NewLLMReviewer(s.llmHealth, s.logger)
+	}
+	feedbackHandler := handlers.NewFeedbackHandler(s.store, feedbackReviewer, s.logger)
+	mux.Handle("POST /api/feedback/report", requireAgent(e2e(http.HandlerFunc(feedbackHandler.ReportBug))))
+	mux.Handle("POST /api/feedback/nps", requireAgent(e2e(http.HandlerFunc(feedbackHandler.SubmitNPS))))
+	mux.Handle("GET /api/feedback/reports", user(feedbackHandler.ListReports))
+
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
@@ -727,7 +738,11 @@ func (s *Server) routes() http.Handler {
 			}
 			url = scheme + "://" + r.Host
 		}
-		return skillfiles.RenderOptions{ClawvisorURL: url, ViaRelay: viaRelay}
+		return skillfiles.RenderOptions{
+			ClawvisorURL:    url,
+			ViaRelay:        viaRelay,
+			FeedbackEnabled: s.llmCfg.FeedbackReview.Enabled,
+		}
 	}
 
 	mux.HandleFunc("GET /skill/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
