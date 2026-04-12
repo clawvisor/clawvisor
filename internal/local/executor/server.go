@@ -261,9 +261,10 @@ func (sp *ServerProcess) startLocked() error {
 	}
 
 	// Wait for health check — release the lock so health check HTTP requests
-	// and concurrent Dispatch calls are not blocked.
+	// and concurrent Dispatch calls are not blocked. Pass the done channel
+	// so we bail early if the process exits during startup.
 	sp.mu.Unlock()
-	err := sp.waitForHealthy()
+	err := sp.waitForHealthy(done)
 	sp.mu.Lock()
 
 	// Recheck: if the process exited during health check, reflect that.
@@ -306,11 +307,18 @@ func (sp *ServerProcess) startLocked() error {
 	return nil
 }
 
-func (sp *ServerProcess) waitForHealthy() error {
+func (sp *ServerProcess) waitForHealthy(done <-chan struct{}) error {
 	deadline := time.Now().Add(sp.svc.StartupTimeout)
 	healthURL := "http://unix" + sp.svc.HealthCheck
 
 	for time.Now().Before(deadline) {
+		// Bail early if the process exited.
+		select {
+		case <-done:
+			return fmt.Errorf("server process exited during startup")
+		default:
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		resp, err := sp.httpClient.Do(req)
