@@ -129,27 +129,29 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
 
   return (
     <div className="group">
-      <div className="flex items-center gap-4 px-5 py-4">
-        {/* Icon */}
-        <ServiceIconBadge iconSvg={svc.icon_svg} serviceId={svc.id} size={28} />
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          {/* Icon */}
+          <ServiceIconBadge iconSvg={svc.icon_svg} serviceId={svc.id} size={28} />
 
-        {/* Name + description */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-text-primary text-sm truncate">{serviceName(svc.id, svc.alias)}</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" title="Connected" />
-            <button
-              onClick={() => { setRenaming(true); setRenameValue(svc.alias && svc.alias !== 'default' ? svc.alias : '') }}
-              className="text-xs text-text-tertiary hover:text-text-secondary opacity-0 group-hover:opacity-100"
-            >
-              rename
-            </button>
+          {/* Name + description */}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-text-primary text-sm truncate">{serviceName(svc.id, svc.alias)}</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" title="Connected" />
+              <button
+                onClick={() => { setRenaming(true); setRenameValue(svc.alias && svc.alias !== 'default' ? svc.alias : '') }}
+                className="text-xs text-text-tertiary hover:text-text-secondary opacity-0 group-hover:opacity-100"
+              >
+                rename
+              </button>
+            </div>
+            {desc && <p className="text-xs text-text-tertiary mt-0.5">{desc}</p>}
           </div>
-          {desc && <p className="text-xs text-text-tertiary mt-0.5 truncate">{desc}</p>}
         </div>
 
         {/* Actions + connected time */}
-        <div className="shrink-0 flex flex-col items-end gap-1">
+        <div className="shrink-0 flex flex-col items-end gap-1 ml-auto sm:ml-0">
           {svc.requires_activation !== false && (
             <div className="flex gap-1.5">
               {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
