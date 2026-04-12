@@ -1749,3 +1749,103 @@ func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID st
 		userID, serviceID)
 	return err
 }
+
+// ── Agent feedback ──────────────────────────────────────────────────────
+
+func (s *Store) CreateFeedbackReport(ctx context.Context, r *store.FeedbackReport) error {
+	ctxJSON := []byte("{}")
+	if len(r.Context) > 0 {
+		ctxJSON = r.Context
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO feedback_reports (id, user_id, agent_id, agent_name, request_id, task_id, category, description, severity, context, response)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, r.ID, r.UserID, r.AgentID, r.AgentName, r.RequestID, r.TaskID, r.Category, r.Description, r.Severity, ctxJSON, r.Response)
+	return err
+}
+
+func (s *Store) GetFeedbackReport(ctx context.Context, id string) (*store.FeedbackReport, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, agent_id, agent_name, request_id, task_id, category, description, severity, context, response, created_at
+		FROM feedback_reports WHERE id = $1
+	`, id)
+	r := &store.FeedbackReport{}
+	if err := row.Scan(&r.ID, &r.UserID, &r.AgentID, &r.AgentName, &r.RequestID, &r.TaskID,
+		&r.Category, &r.Description, &r.Severity, &r.Context, &r.Response, &r.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *Store) ListFeedbackReports(ctx context.Context, userID string, limit, offset int) ([]*store.FeedbackReport, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM feedback_reports WHERE user_id = $1`, userID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, agent_name, request_id, task_id, category, description, severity, context, response, created_at
+		FROM feedback_reports WHERE user_id = $1
+		ORDER BY created_at DESC LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []*store.FeedbackReport
+	for rows.Next() {
+		r := &store.FeedbackReport{}
+		if err := rows.Scan(&r.ID, &r.UserID, &r.AgentID, &r.AgentName, &r.RequestID, &r.TaskID,
+			&r.Category, &r.Description, &r.Severity, &r.Context, &r.Response, &r.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
+}
+
+func (s *Store) SaveNPSResponse(ctx context.Context, nps *store.NPSResponse) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO nps_responses (id, user_id, agent_id, agent_name, task_id, score, feedback)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, nps.ID, nps.UserID, nps.AgentID, nps.AgentName, nps.TaskID, nps.Score, nps.Feedback)
+	return err
+}
+
+func (s *Store) GetAgentNPSStats(ctx context.Context, agentID string) (*store.NPSStats, error) {
+	stats := &store.NPSStats{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(AVG(score), 0)
+		FROM nps_responses WHERE agent_id = $1
+	`, agentID).Scan(&stats.TotalResponses, &stats.AverageScore)
+	if err != nil {
+		return nil, err
+	}
+	if stats.TotalResponses > 0 {
+		_ = s.pool.QueryRow(ctx, `
+			SELECT score, feedback FROM nps_responses
+			WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 1
+		`, agentID).Scan(&stats.LastScore, &stats.LastFeedback)
+	}
+	return stats, nil
+}
+
+func (s *Store) GetAgentLastNPSTime(ctx context.Context, agentID string) (*time.Time, error) {
+	var createdAt time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT created_at FROM nps_responses
+		WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, agentID).Scan(&createdAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &createdAt, nil
+}

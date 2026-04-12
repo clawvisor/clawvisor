@@ -44,6 +44,7 @@ type Config struct {
 // GatewayConfig holds settings for the gateway request handler.
 type GatewayConfig struct {
 	ContentDedupTTLSeconds int `yaml:"content_dedup_ttl_seconds"` // default: 5
+	NPSSamplePercent       int `yaml:"nps_sample_percent"`        // 0-100, default: 1
 }
 
 // RelayConfig holds settings for the cloud relay connection.
@@ -175,6 +176,11 @@ type AdapterGenConfig struct {
 	LLMProviderConfig `yaml:",inline"`
 }
 
+// FeedbackReviewConfig holds settings for LLM-powered agent feedback review.
+type FeedbackReviewConfig struct {
+	LLMProviderConfig `yaml:",inline"`
+}
+
 // LLMConfig groups all LLM provider configurations.
 // Shared fields (provider, endpoint, api_key, model, timeout_seconds) are inherited
 // by subsections unless explicitly overridden at the subsection level.
@@ -185,10 +191,11 @@ type LLMConfig struct {
 	Model          string `yaml:"model"`            // Shared default: "claude-haiku-4-5-20251001"
 	TimeoutSeconds int    `yaml:"timeout_seconds"`  // Shared default: 10
 
-	Verification VerificationConfig `yaml:"verification"`  // Intent verification (runtime)
-	TaskRisk     TaskRiskConfig     `yaml:"task_risk"`      // Task risk assessment (creation time)
-	ChainContext ChainContextConfig `yaml:"chain_context"`  // Chain context extraction (multi-step tasks)
-	AdapterGen   AdapterGenConfig   `yaml:"adapter_gen"`    // LLM-powered adapter generation
+	Verification   VerificationConfig   `yaml:"verification"`    // Intent verification (runtime)
+	TaskRisk       TaskRiskConfig       `yaml:"task_risk"`        // Task risk assessment (creation time)
+	ChainContext   ChainContextConfig   `yaml:"chain_context"`    // Chain context extraction (multi-step tasks)
+	AdapterGen     AdapterGenConfig     `yaml:"adapter_gen"`      // LLM-powered adapter generation
+	FeedbackReview FeedbackReviewConfig `yaml:"feedback_review"`  // Agent feedback report review
 }
 
 // MCPConfig holds settings for the MCP server.
@@ -240,6 +247,7 @@ func Default() *Config {
 		},
 		Gateway: GatewayConfig{
 			ContentDedupTTLSeconds: 5,
+			NPSSamplePercent:      1,
 		},
 		LLM: LLMConfig{
 			Provider:       "anthropic",
@@ -263,6 +271,11 @@ func Default() *Config {
 					Enabled:        false, // opt-in: requires explicit enablement
 					Model:          "claude-opus-4-6",
 					TimeoutSeconds: 120, // two LLM passes (generate + risk classify) need headroom
+				},
+			},
+			FeedbackReview: FeedbackReviewConfig{
+				LLMProviderConfig: LLMProviderConfig{
+					Enabled: false,
 				},
 			},
 		},
@@ -470,6 +483,28 @@ func Load(path string) (*Config, error) {
 		cfg.LLM.AdapterGen.Model = v
 	}
 
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_ENABLED"); v != "" {
+		cfg.LLM.FeedbackReview.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_PROVIDER"); v != "" {
+		cfg.LLM.FeedbackReview.Provider = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_ENDPOINT"); v != "" {
+		cfg.LLM.FeedbackReview.Endpoint = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_API_KEY"); v != "" {
+		cfg.LLM.FeedbackReview.APIKey = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_MODEL"); v != "" {
+		cfg.LLM.FeedbackReview.Model = v
+	}
+
+	if v := os.Getenv("CLAWVISOR_NPS_SAMPLE_PERCENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+			cfg.Gateway.NPSSamplePercent = n
+		}
+	}
+
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
 	}
@@ -519,6 +554,7 @@ func Load(path string) (*Config, error) {
 	inheritLLMDefaults(&cfg.LLM.TaskRisk.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.ChainContext.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.AdapterGen.LLMProviderConfig, &cfg.LLM)
+	inheritLLMDefaults(&cfg.LLM.FeedbackReview.LLMProviderConfig, &cfg.LLM)
 
 	// Resolve empty database driver: explicit env/config wins; otherwise auto-detect.
 	if cfg.Database.Driver == "" {

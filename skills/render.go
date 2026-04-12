@@ -36,6 +36,10 @@ type RenderOptions struct {
 	// ViaRelay is true when the skill is being served through the cloud relay.
 	// The template uses this to include E2E encryption guidance.
 	ViaRelay bool
+
+	// FeedbackEnabled is true when the agent feedback system (report_bug, submit_nps)
+	// is active on this instance. When false, the feedback documentation is omitted.
+	FeedbackEnabled bool
 }
 
 // templateData holds the flags that control conditional rendering.
@@ -45,6 +49,7 @@ type templateData struct {
 	Condensed        bool
 	ClawvisorURL     string // concrete instance URL, empty if unknown
 	ViaRelay         bool   // true when served through the relay
+	FeedbackEnabled  bool   // true when agent feedback tools are active
 	SkillVersion     string // current skill version
 	SkillPublishedAt string // date the skill version was published
 }
@@ -97,6 +102,7 @@ func RenderWithOptions(target Target, opts RenderOptions) (string, error) {
 	data := dataForTarget(target)
 	data.ClawvisorURL = opts.ClawvisorURL
 	data.ViaRelay = opts.ViaRelay
+	data.FeedbackEnabled = opts.FeedbackEnabled
 	data.SkillVersion = version.Version
 	data.SkillPublishedAt = version.SkillPublishedAt
 

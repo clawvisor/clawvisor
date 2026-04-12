@@ -159,6 +159,14 @@ type Store interface {
 	// code. Returns ErrNotFound if the code does not exist (or was already consumed).
 	ConsumeAuthorizationCode(ctx context.Context, codeHash string) (*OAuthAuthorizationCode, error)
 
+	// Agent feedback (bug reports and NPS)
+	CreateFeedbackReport(ctx context.Context, report *FeedbackReport) error
+	GetFeedbackReport(ctx context.Context, id string) (*FeedbackReport, error)
+	ListFeedbackReports(ctx context.Context, userID string, limit, offset int) ([]*FeedbackReport, int, error)
+	SaveNPSResponse(ctx context.Context, nps *NPSResponse) error
+	GetAgentNPSStats(ctx context.Context, agentID string) (*NPSStats, error)
+	GetAgentLastNPSTime(ctx context.Context, agentID string) (*time.Time, error)
+
 	// Aggregate counts (telemetry)
 	TelemetryCounts(ctx context.Context) (*TelemetryCounts, error)
 
@@ -468,4 +476,40 @@ type OAuthAuthorizationCode struct {
 	Scope         string    `json:"scope"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// FeedbackReport is an agent-submitted bug report about a Clawvisor decision.
+type FeedbackReport struct {
+	ID          string          `json:"id"`
+	UserID      string          `json:"user_id"`
+	AgentID     string          `json:"agent_id"`
+	AgentName   string          `json:"agent_name"`
+	RequestID   string          `json:"request_id,omitempty"`   // the gateway request that triggered the report
+	TaskID      string          `json:"task_id,omitempty"`      // the task scope at the time
+	Category    string          `json:"category"`               // wrong_block | wrong_deny | slow_approval | scope_too_narrow | other
+	Description string          `json:"description"`            // free-form agent narrative
+	Severity    string          `json:"severity"`               // low | medium | high | critical
+	Context     json.RawMessage `json:"context,omitempty"`      // optional structured context the agent provides
+	Response    string          `json:"response,omitempty"`     // Clawvisor's response to the agent
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// NPSResponse is a periodic satisfaction score submitted by an agent.
+type NPSResponse struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	AgentID   string    `json:"agent_id"`
+	AgentName string    `json:"agent_name"`
+	TaskID    string    `json:"task_id,omitempty"` // task active when prompted
+	Score     int       `json:"score"`             // 1-10
+	Feedback  string    `json:"feedback,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// NPSStats holds aggregate NPS data for an agent.
+type NPSStats struct {
+	TotalResponses int     `json:"total_responses"`
+	AverageScore   float64 `json:"average_score"`
+	LastScore      int     `json:"last_score"`
+	LastFeedback   string  `json:"last_feedback,omitempty"`
 }
