@@ -27,13 +27,16 @@ func NewOnboardingHandler(relayHost, daemonID string, isLocal bool) *OnboardingH
 // Setup serves the onboarding markdown document.
 func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	clawvisorURL := h.resolveURL(r)
+	viaRelay := relay.ViaRelay(r.Context())
 
 	var b strings.Builder
+	stepNum := 1
 	fmt.Fprintf(&b, "# Clawvisor Agent Setup\n\n")
 	fmt.Fprintf(&b, "Welcome! This document will walk you through connecting to a Clawvisor daemon.\n")
 	fmt.Fprintf(&b, "Follow each step in order.\n\n")
 
-	fmt.Fprintf(&b, "## 1. Set your endpoint\n\n")
+	fmt.Fprintf(&b, "## %d. Set your endpoint\n\n", stepNum)
+	stepNum++
 	fmt.Fprintf(&b, "```\n")
 	fmt.Fprintf(&b, "CLAWVISOR_URL=%s\n", clawvisorURL)
 	fmt.Fprintf(&b, "```\n\n")
@@ -44,7 +47,8 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		userID = ""
 	}
 
-	fmt.Fprintf(&b, "## 2. Register with the daemon and wait for approval\n\n")
+	fmt.Fprintf(&b, "## %d. Register with the daemon and wait for approval\n\n", stepNum)
+	stepNum++
 	fmt.Fprintf(&b, "Send a connection request with `?wait=true`. The daemon owner will be notified,\n")
 	fmt.Fprintf(&b, "and the request blocks until they approve (or the timeout elapses).\n\n")
 	fmt.Fprintf(&b, "```bash\n")
@@ -77,34 +81,38 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "CLAWVISOR_AGENT_TOKEN=<your agent token>\n")
 	fmt.Fprintf(&b, "```\n\n")
 
-	fmt.Fprintf(&b, "## 3. Set up E2E encryption\n\n")
-	fmt.Fprintf(&b, "All **API requests** (`/api/...`) through the relay **require** end-to-end encryption.\n")
-	fmt.Fprintf(&b, "Static skill files (`/skill/...`) and the key-discovery endpoint (`/.well-known/...`) are served in plaintext — no E2E needed to fetch them.\n\n")
-	fmt.Fprintf(&b, "Fetch the daemon's public key (cache this — it rarely changes):\n\n")
-	fmt.Fprintf(&b, "```bash\n")
-	fmt.Fprintf(&b, "curl -s \"$CLAWVISOR_URL/.well-known/clawvisor-keys\"\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "Response:\n")
-	fmt.Fprintf(&b, "```json\n")
-	fmt.Fprintf(&b, "{\n")
-	fmt.Fprintf(&b, "  \"daemon_id\": \"...\",\n")
-	fmt.Fprintf(&b, "  \"x25519\": \"<base64 public key>\",\n")
-	fmt.Fprintf(&b, "  \"algorithm\": \"x25519-ecdh-aes256gcm\"\n")
-	fmt.Fprintf(&b, "}\n")
-	fmt.Fprintf(&b, "```\n\n")
-	fmt.Fprintf(&b, "For each request:\n")
-	fmt.Fprintf(&b, "1. Generate an ephemeral X25519 keypair\n")
-	fmt.Fprintf(&b, "2. ECDH: your ephemeral private key × daemon's public key = 32-byte shared secret\n")
-	fmt.Fprintf(&b, "3. AES-256-GCM encrypt the JSON request body with a random 12-byte nonce (skip for GET requests)\n")
-	fmt.Fprintf(&b, "4. Send with headers:\n")
-	fmt.Fprintf(&b, "   - `X-Clawvisor-E2E: aes-256-gcm`\n")
-	fmt.Fprintf(&b, "   - `X-Clawvisor-Ephemeral-Key: <base64 ephemeral public key>`\n")
-	fmt.Fprintf(&b, "5. Body (POST only): `base64(nonce ‖ ciphertext ‖ GCM auth tag)`\n")
-	fmt.Fprintf(&b, "6. Decrypt the response the same way (response also has `X-Clawvisor-E2E` header)\n\n")
-	fmt.Fprintf(&b, "If a helper is available, use it — the bundled [`e2e.mjs`](%s/skill/e2e.mjs) (Node.js, zero deps) or `cvis-e2e` (Go) handle all of this automatically.\n", clawvisorURL)
-	fmt.Fprintf(&b, "The `e2e.mjs` client exposes `request(method, endpoint, body)` for any endpoint and `gatewayRequest(body)` as a shorthand.\n\n")
+	if viaRelay {
+		fmt.Fprintf(&b, "## %d. Set up E2E encryption\n\n", stepNum)
+		stepNum++
+		fmt.Fprintf(&b, "All **API requests** (`/api/...`) through the relay **require** end-to-end encryption.\n")
+		fmt.Fprintf(&b, "Static skill files (`/skill/...`) and the key-discovery endpoint (`/.well-known/...`) are served in plaintext — no E2E needed to fetch them.\n\n")
+		fmt.Fprintf(&b, "Fetch the daemon's public key (cache this — it rarely changes):\n\n")
+		fmt.Fprintf(&b, "```bash\n")
+		fmt.Fprintf(&b, "curl -s \"$CLAWVISOR_URL/.well-known/clawvisor-keys\"\n")
+		fmt.Fprintf(&b, "```\n\n")
+		fmt.Fprintf(&b, "Response:\n")
+		fmt.Fprintf(&b, "```json\n")
+		fmt.Fprintf(&b, "{\n")
+		fmt.Fprintf(&b, "  \"daemon_id\": \"...\",\n")
+		fmt.Fprintf(&b, "  \"x25519\": \"<base64 public key>\",\n")
+		fmt.Fprintf(&b, "  \"algorithm\": \"x25519-ecdh-aes256gcm\"\n")
+		fmt.Fprintf(&b, "}\n")
+		fmt.Fprintf(&b, "```\n\n")
+		fmt.Fprintf(&b, "For each request:\n")
+		fmt.Fprintf(&b, "1. Generate an ephemeral X25519 keypair\n")
+		fmt.Fprintf(&b, "2. ECDH: your ephemeral private key × daemon's public key = 32-byte shared secret\n")
+		fmt.Fprintf(&b, "3. AES-256-GCM encrypt the JSON request body with a random 12-byte nonce (skip for GET requests)\n")
+		fmt.Fprintf(&b, "4. Send with headers:\n")
+		fmt.Fprintf(&b, "   - `X-Clawvisor-E2E: aes-256-gcm`\n")
+		fmt.Fprintf(&b, "   - `X-Clawvisor-Ephemeral-Key: <base64 ephemeral public key>`\n")
+		fmt.Fprintf(&b, "5. Body (POST only): `base64(nonce ‖ ciphertext ‖ GCM auth tag)`\n")
+		fmt.Fprintf(&b, "6. Decrypt the response the same way (response also has `X-Clawvisor-E2E` header)\n\n")
+		fmt.Fprintf(&b, "If a helper is available, use it — the bundled [`e2e.mjs`](%s/skill/e2e.mjs) (Node.js, zero deps) or `cvis-e2e` (Go) handle all of this automatically.\n", clawvisorURL)
+		fmt.Fprintf(&b, "The `e2e.mjs` client exposes `request(method, endpoint, body)` for any endpoint and `gatewayRequest(body)` as a shorthand.\n\n")
+	}
 
-	fmt.Fprintf(&b, "## 4. Install the Clawvisor skill\n\n")
+	fmt.Fprintf(&b, "## %d. Install the Clawvisor skill\n\n", stepNum)
+	stepNum++
 	fmt.Fprintf(&b, "Fetch **and install** the full skill so you can use it for the rest of this session:\n\n")
 	fmt.Fprintf(&b, "```\n")
 	fmt.Fprintf(&b, "GET %s/skill/SKILL.md\n", clawvisorURL)
@@ -117,7 +125,8 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "GET %s/skill/skill.zip\n", clawvisorURL)
 	fmt.Fprintf(&b, "```\n\n")
 
-	fmt.Fprintf(&b, "## 5. Verify the connection\n\n")
+	fmt.Fprintf(&b, "## %d. Verify the connection\n\n", stepNum)
+	stepNum++
 	fmt.Fprintf(&b, "Create a test task to confirm everything works end-to-end:\n\n")
 	fmt.Fprintf(&b, "1. Fetch your service catalog: `GET $CLAWVISOR_URL/api/skill/catalog`\n")
 	fmt.Fprintf(&b, "2. Pick any active read-only action (e.g. `google.gmail` → `list_messages`, or `google.calendar` → `list_events`)\n")
