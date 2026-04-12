@@ -1,4 +1,4 @@
-.PHONY: build build-staging install test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
+.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
@@ -17,6 +17,15 @@ build-imessage-helper:
 	mkdir -p "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS"
 	cp bin/clawvisor-imessage-helper "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper"
 	cp cmd/imessage-helper/Info.plist "bin/$(IMESSAGE_HELPER_APP)/Contents/Info.plist"
+
+build-local:
+	go build $(LDFLAGS) -o bin/clawvisor-local ./cmd/clawvisor-local
+
+install-local: build-local
+	mkdir -p $(HOME)/.clawvisor/bin
+	cp bin/clawvisor-local $(HOME)/.clawvisor/bin/clawvisor-local
+	[ "$$(uname)" = "Darwin" ] && codesign -s - $(HOME)/.clawvisor/bin/clawvisor-local 2>/dev/null || true
+	@echo "Installed clawvisor-local to ~/.clawvisor/bin/"
 
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
