@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -350,13 +349,11 @@ func (c *Client) buildCapabilities() CapabilitiesPayload {
 	return caps
 }
 
+// authFailureCode is the WebSocket close code the cloud sends on auth failure.
+const authFailureCode = websocket.StatusCode(4001)
+
 func isAuthFailure(err error) bool {
-	// coder/websocket wraps close frames in its error messages.
-	// Auth failure is signaled by close code 4001 from the cloud.
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "4001")
+	return websocket.CloseStatus(err) == authFailureCode
 }
 
 func generateFrameID() string {
