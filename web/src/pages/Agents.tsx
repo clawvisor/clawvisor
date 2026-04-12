@@ -287,17 +287,19 @@ function StepNumber({ n }: { n: number }) {
 
 function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void }) {
   return (
-    <div className="relative group">
-      <pre className="bg-surface-0 border border-border-subtle rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden">
+      <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
         {children}
       </pre>
       {onCopy && (
-        <button
-          onClick={onCopy}
-          className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1 opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          Copy
-        </button>
+        <div className="border-t border-border-subtle px-3 py-1.5 flex justify-end bg-surface-0">
+          <button
+            onClick={onCopy}
+            className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+          >
+            Copy
+          </button>
+        </div>
       )}
     </div>
   )
@@ -443,16 +445,18 @@ function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
           <StepNumber n={1} />
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-            <div className="relative group">
-              <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+            <div className="bg-surface-0 border border-brand/20 rounded overflow-hidden">
+              <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
                 {prompt}
               </pre>
-              <button
-                onClick={() => onCopy(prompt)}
-                className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-              >
-                {copied ? 'Copied' : 'Copy'}
-              </button>
+              <div className="border-t border-brand/20 px-3 py-1.5 flex justify-end">
+                <button
+                  onClick={() => onCopy(prompt)}
+                  className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
             </div>
             <p className="text-xs text-text-tertiary">
               Your OpenClaw agent will follow the setup instructions — registering itself
@@ -506,16 +510,18 @@ function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
           <StepNumber n={1} />
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
-            <div className="relative group">
-              <pre className="bg-surface-0 border border-brand/20 rounded px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+            <div className="bg-surface-0 border border-brand/20 rounded overflow-hidden">
+              <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
                 {prompt}
               </pre>
-              <button
-                onClick={() => onCopy(prompt)}
-                className="absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
-              >
-                {copied ? 'Copied' : 'Copy'}
-              </button>
+              <div className="border-t border-brand/20 px-3 py-1.5 flex justify-end">
+                <button
+                  onClick={() => onCopy(prompt)}
+                  className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
             </div>
             <p className="text-xs text-text-tertiary">
               The agent will follow the setup instructions at that URL — it registers itself,
