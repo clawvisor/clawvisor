@@ -121,6 +121,7 @@ type FeatureSet struct {
 	AdapterGen        bool `json:"adapter_gen"`
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
+	MobilePairing     bool `json:"mobile_pairing"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -595,22 +596,26 @@ func (s *Server) routes() http.Handler {
 		devicesHandler.SetRelayInfo(s.daemonID, relayHost)
 	}
 	s.devicesHandler = devicesHandler
-	devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
-	mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
-	mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
-	mux.Handle("POST /api/devices/pair/complete",
-		middleware.RateLimit(devicesRL, ipKeyFn, 5)(e2e(http.HandlerFunc(devicesHandler.CompletePairing))))
-	mux.Handle("GET /api/devices", user(devicesHandler.List))
-	mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
 	var requireDevice func(http.Handler) http.Handler
 	if s.replayCache != nil {
 		requireDevice = middleware.RequireDeviceWithReplayCache(s.store, s.replayCache)
 	} else {
 		requireDevice = middleware.RequireDevice(s.store)
 	}
+	// Device-to-server routes (always available for already-paired devices)
 	mux.Handle("POST /api/devices/{id}/action", requireDevice(e2e(http.HandlerFunc(devicesHandler.Action))))
 	mux.Handle("POST /api/devices/{id}/token", requireDevice(e2e(http.HandlerFunc(devicesHandler.MintToken))))
 	mux.Handle("POST /api/devices/{id}/push-to-start-token", requireDevice(e2e(http.HandlerFunc(devicesHandler.UpdatePushToStartToken))))
+	// Pairing and management routes (gated by mobile_pairing feature flag)
+	if s.features.MobilePairing {
+		devicesRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 5, Window: 60})
+		mux.Handle("GET /api/devices/pair/info", user(devicesHandler.PairInfo))
+		mux.Handle("POST /api/devices/pair", user(devicesHandler.StartPairing))
+		mux.Handle("POST /api/devices/pair/complete",
+			middleware.RateLimit(devicesRL, ipKeyFn, 5)(e2e(http.HandlerFunc(devicesHandler.CompletePairing))))
+		mux.Handle("GET /api/devices", user(devicesHandler.List))
+		mux.Handle("DELETE /api/devices/{id}", user(devicesHandler.Delete))
+	}
 
 	// Guard (agent token — Claude Code permission check)
 	guardHandler := handlers.NewGuardHandler(s.store, verifier, s.adapterReg, s.logger)

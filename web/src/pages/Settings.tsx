@@ -18,7 +18,7 @@ export default function Settings() {
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <OAuthCredentialsSection />}
-      <DevicePairing />
+      {features?.mobile_pairing && <DevicePairing />}
       {features?.local_daemon && <LocalDaemonPairing />}
       <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}

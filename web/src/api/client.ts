@@ -456,6 +456,7 @@ export interface FeatureSet {
   adapter_gen: boolean
   billing: boolean
   local_daemon: boolean
+  mobile_pairing: boolean
 }
 
 export interface VersionInfo {
