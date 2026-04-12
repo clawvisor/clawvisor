@@ -25,6 +25,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		UsageMetering:     opts.Features.UsageMetering,
 		PasswordAuth:      opts.Features.PasswordAuth,
 		Billing:           opts.Features.Billing,
+		LocalDaemon:       opts.Features.LocalDaemon,
 	}))
 
 	if opts.ExtraRoutes != nil {
