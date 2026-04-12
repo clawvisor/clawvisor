@@ -37,6 +37,7 @@ type ServerProcess struct {
 	state         ServerState
 	cmd           *exec.Cmd
 	done          chan struct{} // closed when cmd.Wait() returns
+	ready         chan struct{} // closed when startLocked finishes (success or failure)
 	socketPath    string
 	httpClient    *http.Client
 	runDir        string
@@ -167,11 +168,11 @@ func (sp *ServerProcess) EnsureRunning() error {
 			}
 			return sp.startLocked()
 		case ServerStarting:
-			// Already starting — wait for it without holding the lock.
-			done := sp.done
+			// Already starting — wait for startup to complete without holding the lock.
+			ready := sp.ready
 			sp.mu.Unlock()
-			if done != nil {
-				<-done
+			if ready != nil {
+				<-ready
 			}
 			sp.mu.Lock()
 			// Recheck state — startLocked may have failed or succeeded.
@@ -209,6 +210,12 @@ func (sp *ServerProcess) start() error {
 
 func (sp *ServerProcess) startLocked() error {
 	sp.state = ServerStarting
+
+	// Create a ready channel so concurrent EnsureRunning callers can wait
+	// for startup to complete (not for the process to exit).
+	ready := make(chan struct{})
+	sp.ready = ready
+	defer close(ready)
 
 	// Clean up old socket.
 	_ = os.Remove(sp.socketPath)

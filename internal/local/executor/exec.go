@@ -91,7 +91,7 @@ func RunExec(
 		// Context cancelled (timeout or WebSocket disconnect).
 		// Send SIGTERM, then SIGKILL after 3s grace period.
 		cancelled = true
-		killProcessGroup(cmd, doneCh, 3*time.Second)
+		killProcessGroup(cmd, 3*time.Second)
 		err = <-doneCh // Wait for process to actually exit.
 	}
 
@@ -215,9 +215,9 @@ func buildEnv(svc *services.Service, action *services.Action, params map[string]
 }
 
 // killProcessGroup sends SIGTERM to the process group, then SIGKILL after the
-// grace period. It does NOT call Wait — the caller is responsible for waiting
-// via cmd.Wait() to avoid double-Wait races.
-func killProcessGroup(cmd *exec.Cmd, doneCh <-chan error, grace time.Duration) {
+// grace period. It does NOT call Wait or read from any channel — the caller is
+// responsible for collecting the exit status via cmd.Wait().
+func killProcessGroup(cmd *exec.Cmd, grace time.Duration) {
 	if cmd.Process == nil {
 		return
 	}
@@ -226,12 +226,8 @@ func killProcessGroup(cmd *exec.Cmd, doneCh <-chan error, grace time.Duration) {
 		return
 	}
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-doneCh:
-		// Process exited after SIGTERM.
-	case <-timer.C:
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	}
+	// Sleep for the grace period, then unconditionally SIGKILL.
+	// If the process already exited from SIGTERM, the kill is a harmless no-op.
+	time.Sleep(grace)
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
