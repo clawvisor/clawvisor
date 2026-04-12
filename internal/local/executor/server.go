@@ -36,6 +36,7 @@ type ServerProcess struct {
 	svc           *services.Service
 	state         ServerState
 	cmd           *exec.Cmd
+	done          chan struct{} // closed when cmd.Wait() returns
 	socketPath    string
 	httpClient    *http.Client
 	runDir        string
@@ -148,28 +149,36 @@ func (sp *ServerProcess) EnsureRunning() error {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
-	switch sp.state {
-	case ServerHealthy:
+	for {
+		switch sp.state {
+		case ServerHealthy:
+			return nil
+		case ServerStartFailed:
+			return fmt.Errorf("server failed to start after %d attempts", sp.maxFailures)
+		case ServerStopped, ServerUnhealthy:
+			if sp.state == ServerUnhealthy {
+				// Apply backoff delay before restart.
+				delay := sp.restartBackoff()
+				sp.mu.Unlock()
+				time.Sleep(delay)
+				sp.mu.Lock()
+				// Recheck — another goroutine may have started it while we slept.
+				continue
+			}
+			return sp.startLocked()
+		case ServerStarting:
+			// Already starting — wait for it without holding the lock.
+			done := sp.done
+			sp.mu.Unlock()
+			if done != nil {
+				<-done
+			}
+			sp.mu.Lock()
+			// Recheck state — startLocked may have failed or succeeded.
+			continue
+		}
 		return nil
-	case ServerStartFailed:
-		return fmt.Errorf("server failed to start after %d attempts", sp.maxFailures)
-	case ServerStopped:
-		return sp.startLocked()
-	case ServerUnhealthy:
-		// Apply backoff delay before restart: 1s, 2s, 4s, 8s, 16s, 30s (capped).
-		delay := sp.restartBackoff()
-		sp.mu.Unlock()
-		time.Sleep(delay)
-		sp.mu.Lock()
-		return sp.startLocked()
-	case ServerStarting:
-		// Already starting — unlock and wait.
-		sp.mu.Unlock()
-		err := sp.waitForHealthy()
-		sp.mu.Lock()
-		return err
 	}
-	return nil
 }
 
 // State returns the current server state.
@@ -226,9 +235,16 @@ func (sp *ServerProcess) startLocked() error {
 
 	sp.cmd = cmd
 
+	// Create a done channel that closes when the process exits.
+	// This is the single Wait point — no other code should call cmd.Wait().
+	done := make(chan struct{})
+	sp.done = done
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+
 	// Set up HTTP client for Unix socket.
-	// No Timeout on the client itself — action timeouts are enforced via request contexts,
-	// and health check timeouts are enforced via the waitForHealthy deadline.
 	sp.httpClient = &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -237,10 +253,31 @@ func (sp *ServerProcess) startLocked() error {
 		},
 	}
 
-	// Wait for health check in background (but we hold the lock here, so do it inline).
+	// Wait for health check — release the lock so health check HTTP requests
+	// and concurrent Dispatch calls are not blocked.
 	sp.mu.Unlock()
 	err := sp.waitForHealthy()
 	sp.mu.Lock()
+
+	// Recheck: if the process exited during health check, reflect that.
+	select {
+	case <-done:
+		if sp.state == ServerStarting {
+			sp.startFailures++
+			if sp.startFailures >= sp.maxFailures {
+				sp.state = ServerStartFailed
+			} else {
+				sp.state = ServerUnhealthy
+			}
+		}
+		sp.cmd = nil
+		sp.done = nil
+		if err == nil {
+			err = fmt.Errorf("server process exited during startup")
+		}
+		return err
+	default:
+	}
 
 	if err != nil {
 		sp.startFailures++
@@ -257,7 +294,7 @@ func (sp *ServerProcess) startLocked() error {
 	sp.startFailures = 0
 
 	// Monitor for unexpected exit.
-	go sp.monitor()
+	go sp.monitor(done)
 
 	return nil
 }
@@ -282,11 +319,9 @@ func (sp *ServerProcess) waitForHealthy() error {
 	return fmt.Errorf("server health check timed out after %s", sp.svc.StartupTimeout)
 }
 
-func (sp *ServerProcess) monitor() {
-	if sp.cmd == nil || sp.cmd.Process == nil {
-		return
-	}
-	_ = sp.cmd.Wait()
+// monitor watches for process exit via the done channel (no Wait call needed).
+func (sp *ServerProcess) monitor(done <-chan struct{}) {
+	<-done
 
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
@@ -303,25 +338,31 @@ func (sp *ServerProcess) stop() {
 	_ = os.Remove(sp.socketPath)
 }
 
+// killLocked sends SIGTERM, waits for exit via the done channel, then
+// SIGKILL if the grace period expires. Does not call Wait directly.
 func (sp *ServerProcess) killLocked() {
 	if sp.cmd == nil || sp.cmd.Process == nil {
 		return
 	}
 
+	done := sp.done
 	_ = sp.cmd.Process.Signal(syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		_, _ = sp.cmd.Process.Wait()
-		close(done)
-	}()
 
+	// Release lock while waiting so monitor/other goroutines aren't blocked.
+	sp.mu.Unlock()
+
+	timer := time.NewTimer(5 * time.Second)
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+		timer.Stop()
+	case <-timer.C:
 		_ = sp.cmd.Process.Kill()
 		<-done
 	}
+
+	sp.mu.Lock()
 	sp.cmd = nil
+	sp.done = nil
 }
 
 // Dispatch sends an HTTP request to the server process for a server-mode action.

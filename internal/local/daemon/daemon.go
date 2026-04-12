@@ -24,17 +24,17 @@ import (
 type Daemon struct {
 	baseDir    string
 	cfg        *config.Config
-	state      *state.State
 	registry   *services.Registry
 	serverMgr  *executor.ServerManager
 	dispatcher *executor.Dispatcher
 	pairServer *pairing.Server
-	tunnelClient *tunnel.Client
 	logger     *slog.Logger
+	startTime  time.Time
 
-	mu        sync.RWMutex
-	startTime time.Time
-	connected bool
+	// mu protects state, tunnelClient, and connected.
+	mu           sync.RWMutex
+	state        *state.State
+	tunnelClient *tunnel.Client
 }
 
 // New creates a new daemon instance.
@@ -75,7 +75,12 @@ func (d *Daemon) Run() error {
 	// Configure log level.
 	configureLogLevel(d.cfg.LogLevel)
 
-	d.logger.Info("starting", "version", version.Version, "daemon_id", d.state.DaemonID)
+	d.mu.RLock()
+	daemonID := d.state.DaemonID
+	paired := d.state.IsPaired()
+	d.mu.RUnlock()
+
+	d.logger.Info("starting", "version", version.Version, "daemon_id", daemonID)
 
 	// Initialize server manager.
 	d.serverMgr = executor.NewServerManager(d.baseDir)
@@ -98,7 +103,7 @@ func (d *Daemon) Run() error {
 	// Start pairing HTTP server.
 	d.pairServer = pairing.NewServer(pairing.ServerConfig{
 		Port:           d.cfg.Port,
-		DaemonID:       d.state.DaemonID,
+		DaemonID:       daemonID,
 		DaemonName:     d.cfg.Name,
 		AllowedOrigins: d.cfg.AllowedCloudOrigins,
 		OnPairComplete: d.handlePairComplete,
@@ -111,7 +116,7 @@ func (d *Daemon) Run() error {
 	}
 
 	// If already paired, connect to cloud.
-	if d.state.IsPaired() {
+	if paired {
 		d.connectTunnel()
 	}
 
@@ -138,8 +143,11 @@ func (d *Daemon) Run() error {
 	}
 
 	// Stop tunnel.
-	if d.tunnelClient != nil {
-		d.tunnelClient.Close()
+	d.mu.RLock()
+	tc := d.tunnelClient
+	d.mu.RUnlock()
+	if tc != nil {
+		tc.Close()
 	}
 
 	// Stop server processes.
@@ -152,11 +160,14 @@ func (d *Daemon) Run() error {
 }
 
 func (d *Daemon) handlePairComplete(token, origin string) error {
+	d.mu.Lock()
 	d.state.ConnectionToken = token
 	d.state.CloudOrigin = origin
 	d.state.PairedAt = time.Now()
+	st := d.state
+	d.mu.Unlock()
 
-	if err := state.Save(d.baseDir, d.state); err != nil {
+	if err := state.Save(d.baseDir, st); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 
@@ -169,6 +180,8 @@ func (d *Daemon) handlePairComplete(token, origin string) error {
 }
 
 func (d *Daemon) connectTunnel() {
+	d.mu.Lock()
+
 	// Close any existing tunnel client to avoid duplicate connections.
 	if d.tunnelClient != nil {
 		d.tunnelClient.Close()
@@ -186,12 +199,16 @@ func (d *Daemon) connectTunnel() {
 		OnAuthFailure: func() {
 			// Only clear state if this client is still the active one.
 			// A stale client from a previous pairing must not wipe the new token.
+			d.mu.Lock()
 			if d.tunnelClient == client {
-				d.handleAuthFailure()
+				d.handleAuthFailureLocked()
 			}
+			d.mu.Unlock()
 		},
 	})
 	d.tunnelClient = client
+
+	d.mu.Unlock()
 
 	go client.Connect()
 }
@@ -206,12 +223,19 @@ func (d *Daemon) handleRequest(ctx context.Context, id string, req *tunnel.Reque
 		Error:   resp.Error,
 	}
 
-	if err := d.tunnelClient.SendResponse(id, payload); err != nil {
-		d.logger.Warn("failed to send response", "request_id", id, "err", err)
+	d.mu.RLock()
+	tc := d.tunnelClient
+	d.mu.RUnlock()
+
+	if tc != nil {
+		if err := tc.SendResponse(id, payload); err != nil {
+			d.logger.Warn("failed to send response", "request_id", id, "err", err)
+		}
 	}
 }
 
-func (d *Daemon) handleAuthFailure() {
+// handleAuthFailureLocked clears pairing state. Caller must hold d.mu.
+func (d *Daemon) handleAuthFailureLocked() {
 	d.logger.Warn("auth failure, clearing pairing state")
 	_ = state.Clear(d.baseDir, d.state.DaemonID)
 	d.state.ConnectionToken = ""
@@ -264,8 +288,11 @@ func (d *Daemon) reloadServices() {
 	d.logger.Info("services loaded", "count", len(result.Services), "excluded", len(result.Excluded))
 
 	// Send capabilities update if connected.
-	if d.tunnelClient != nil && d.tunnelClient.IsConnected() {
-		if err := d.tunnelClient.SendCapabilitiesUpdate(); err != nil {
+	d.mu.RLock()
+	tc := d.tunnelClient
+	d.mu.RUnlock()
+	if tc != nil && tc.IsConnected() {
+		if err := tc.SendCapabilitiesUpdate(); err != nil {
 			d.logger.Warn("failed to send capabilities update", "err", err)
 		}
 	}
@@ -314,16 +341,23 @@ func (d *Daemon) buildServiceList() []serviceEntry {
 }
 
 func (d *Daemon) handleStatus() interface{} {
-	connected := d.tunnelClient != nil && d.tunnelClient.IsConnected()
+	d.mu.RLock()
+	tc := d.tunnelClient
+	daemonID := d.state.DaemonID
+	paired := d.state.IsPaired()
+	cloudOrigin := d.state.CloudOrigin
+	d.mu.RUnlock()
+
+	connected := tc != nil && tc.IsConnected()
 	uptime := time.Since(d.startTime).Seconds()
 
 	return map[string]interface{}{
-		"daemon_id":         d.state.DaemonID,
+		"daemon_id":         daemonID,
 		"name":              d.cfg.Name,
 		"version":           version.Version,
-		"paired":            d.state.IsPaired(),
+		"paired":            paired,
 		"connected":         connected,
-		"cloud_origin":      d.state.CloudOrigin,
+		"cloud_origin":      cloudOrigin,
 		"uptime_seconds":    int(uptime),
 		"services":          d.buildServiceList(),
 		"excluded_services": d.registry.Excluded(),

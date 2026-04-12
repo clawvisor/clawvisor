@@ -21,6 +21,10 @@ const (
 	readTimeout  = 90 * time.Second
 	writeTimeout = 10 * time.Second
 	maxReadSize  = 1 << 20 // 1 MB
+
+	// stableConnectionThreshold is how long a connection must stay alive
+	// before backoff is reset on disconnect.
+	stableConnectionThreshold = 60 * time.Second
 )
 
 // Client manages the WebSocket connection to the cloud.
@@ -34,9 +38,15 @@ type Client struct {
 	onAuthFailure   func()
 	logger          *slog.Logger
 
+	// mu protects conn and connStop for reading. Writes to the WebSocket use
+	// writeMu to avoid blocking readers during slow writes.
 	mu       sync.Mutex
 	conn     *websocket.Conn
-	connStop context.CancelFunc // cancelled when the connection drops
+	connStop context.CancelFunc
+
+	// writeMu serializes WebSocket writes. Held only during conn.Write, never
+	// during conn reads or status checks, so IsConnected/Close stay responsive.
+	writeMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -86,7 +96,7 @@ func (c *Client) Connect() {
 		default:
 		}
 
-		err := c.connectOnce()
+		connectedAt, err := c.connectOnce()
 		if err != nil {
 			if isAuthFailure(err) {
 				c.logger.Warn("tunnel: auth failure, clearing pairing state")
@@ -95,6 +105,12 @@ func (c *Client) Connect() {
 				}
 				return
 			}
+
+			// Reset backoff if the connection was stable before dropping.
+			if !connectedAt.IsZero() && time.Since(connectedAt) > stableConnectionThreshold {
+				backoff.Reset()
+			}
+
 			delay := backoff.Next()
 			c.logger.Warn("tunnel: disconnected, reconnecting", "err", err, "delay", delay)
 			select {
@@ -102,16 +118,16 @@ func (c *Client) Connect() {
 			case <-c.ctx.Done():
 				return
 			}
-		} else {
-			backoff.Reset()
 		}
 	}
 }
 
-func (c *Client) connectOnce() error {
+// connectOnce returns (connectedAt, error). connectedAt is set once the
+// connection is authenticated and serving; it is zero if dial/auth failed.
+func (c *Client) connectOnce() (time.Time, error) {
 	u, err := url.Parse(c.cloudOrigin)
 	if err != nil {
-		return fmt.Errorf("parsing cloud origin: %w", err)
+		return time.Time{}, fmt.Errorf("parsing cloud origin: %w", err)
 	}
 	u.Scheme = "wss"
 	u.Path = "/ws/daemon"
@@ -120,7 +136,7 @@ func (c *Client) connectOnce() error {
 		HTTPHeader: http.Header{},
 	})
 	if err != nil {
-		return fmt.Errorf("websocket dial: %w", err)
+		return time.Time{}, fmt.Errorf("websocket dial: %w", err)
 	}
 	conn.SetReadLimit(maxReadSize)
 
@@ -142,86 +158,37 @@ func (c *Client) connectOnce() error {
 	}()
 
 	// Send auth frame.
-	if err := c.sendAuth(connCtx, conn); err != nil {
-		return err
+	if err := c.writeToConn(connCtx, conn, FrameAuth, "auth", AuthPayload{
+		ConnectionToken: c.connectionToken,
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("sending auth: %w", err)
 	}
 
 	// Send capabilities frame.
-	if err := c.sendCapabilities(connCtx, conn); err != nil {
-		return err
+	caps := c.buildCapabilities()
+	if err := c.writeToConn(connCtx, conn, FrameCapabilities, generateFrameID(), caps); err != nil {
+		return time.Time{}, fmt.Errorf("sending capabilities: %w", err)
 	}
+
+	connectedAt := time.Now()
 
 	// Start ping loop tied to this connection's context.
 	go c.pingLoop(connCtx, connCancel)
 
 	// Read loop.
-	return c.readLoop(connCtx, conn)
-}
-
-func (c *Client) sendAuth(ctx context.Context, conn *websocket.Conn) error {
-	payload, err := json.Marshal(AuthPayload{
-		ConnectionToken: c.connectionToken,
-	})
-	if err != nil {
-		return fmt.Errorf("marshalling auth: %w", err)
-	}
-	frame := Frame{
-		Type:    FrameAuth,
-		ID:      "auth",
-		Payload: payload,
-	}
-	return c.writeJSON(ctx, conn, frame)
-}
-
-func (c *Client) sendCapabilities(ctx context.Context, conn *websocket.Conn) error {
-	caps := c.buildCapabilities()
-	payload, err := json.Marshal(caps)
-	if err != nil {
-		return fmt.Errorf("marshalling capabilities: %w", err)
-	}
-	frame := Frame{
-		Type:    FrameCapabilities,
-		ID:      generateFrameID(),
-		Payload: payload,
-	}
-	return c.writeJSON(ctx, conn, frame)
+	readErr := c.readLoop(connCtx, conn)
+	return connectedAt, readErr
 }
 
 // SendCapabilitiesUpdate sends an updated capabilities frame (e.g., after reload).
 func (c *Client) SendCapabilitiesUpdate() error {
-	c.mu.Lock()
-	conn := c.conn
-	c.mu.Unlock()
-
-	if conn == nil {
-		return fmt.Errorf("not connected")
-	}
-
 	caps := c.buildCapabilities()
-	payload, err := json.Marshal(caps)
-	if err != nil {
-		return fmt.Errorf("marshalling capabilities: %w", err)
-	}
-	frame := Frame{
-		Type:    FrameCapabilities,
-		ID:      generateFrameID(),
-		Payload: payload,
-	}
-	return c.writeJSONLocked(frame)
+	return c.writeFrame(FrameCapabilities, generateFrameID(), caps)
 }
 
 // SendResponse sends a response frame for a given request.
 func (c *Client) SendResponse(requestID string, resp *ResponsePayload) error {
-	payload, err := json.Marshal(resp)
-	if err != nil {
-		return fmt.Errorf("marshalling response: %w", err)
-	}
-	frame := Frame{
-		Type:    FrameResponse,
-		ID:      requestID,
-		Payload: payload,
-	}
-	return c.writeJSONLocked(frame)
+	return c.writeFrame(FrameResponse, requestID, resp)
 }
 
 // Close disconnects the client.
@@ -286,13 +253,7 @@ func (c *Client) pingLoop(connCtx context.Context, connCancel context.CancelFunc
 		case <-connCtx.Done():
 			return
 		case <-ticker.C:
-			payload, _ := json.Marshal(map[string]string{})
-			frame := Frame{
-				Type:    FramePing,
-				ID:      generateFrameID(),
-				Payload: payload,
-			}
-			if err := c.writeJSONLocked(frame); err != nil {
+			if err := c.writeFrame(FramePing, generateFrameID(), map[string]string{}); err != nil {
 				c.logger.Warn("tunnel: ping write failed, closing connection", "err", err)
 				connCancel()
 				return
@@ -301,10 +262,16 @@ func (c *Client) pingLoop(connCtx context.Context, connCancel context.CancelFunc
 	}
 }
 
-// writeJSON writes a frame to a specific connection with a write timeout.
-// Used during connection setup when we have a direct reference to the conn.
-func (c *Client) writeJSON(ctx context.Context, conn *websocket.Conn, v any) error {
-	data, err := json.Marshal(v)
+// writeToConn writes a frame to a specific connection with a write timeout.
+// Used during connection setup when we have a direct reference to the conn
+// and no other goroutines are writing yet.
+func (c *Client) writeToConn(ctx context.Context, conn *websocket.Conn, typ FrameType, id string, payload any) error {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling payload: %w", err)
+	}
+	frame := Frame{Type: typ, ID: id, Payload: payloadBytes}
+	data, err := json.Marshal(frame)
 	if err != nil {
 		return fmt.Errorf("marshalling frame: %w", err)
 	}
@@ -313,24 +280,34 @@ func (c *Client) writeJSON(ctx context.Context, conn *websocket.Conn, v any) err
 	return conn.Write(writeCtx, websocket.MessageText, data)
 }
 
-// writeJSONLocked writes a frame using the current connection under lock.
-// Used by SendResponse, SendCapabilitiesUpdate, and pingLoop.
-func (c *Client) writeJSONLocked(v any) error {
-	data, err := json.Marshal(v)
+// writeFrame grabs the current connection under mu, then writes under writeMu.
+// mu is NOT held during the write itself, so IsConnected/Close remain responsive.
+func (c *Client) writeFrame(typ FrameType, id string, payload any) error {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling payload: %w", err)
+	}
+	frame := Frame{Type: typ, ID: id, Payload: payloadBytes}
+	data, err := json.Marshal(frame)
 	if err != nil {
 		return fmt.Errorf("marshalling frame: %w", err)
 	}
 
+	// Grab conn reference under mu (fast).
 	c.mu.Lock()
 	conn := c.conn
+	c.mu.Unlock()
 	if conn == nil {
-		c.mu.Unlock()
 		return fmt.Errorf("not connected")
 	}
+
+	// Serialize writes under writeMu (potentially slow).
+	c.writeMu.Lock()
 	writeCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	writeErr := conn.Write(writeCtx, websocket.MessageText, data)
-	c.mu.Unlock()
 	cancel()
+	c.writeMu.Unlock()
+
 	return writeErr
 }
 
