@@ -136,4 +136,5 @@ type FeatureSet struct {
 	UsageMetering     bool `json:"usage_metering"`
 	PasswordAuth      bool `json:"password_auth"`
 	Billing           bool `json:"billing"`
+	LocalDaemon       bool `json:"local_daemon"`
 }

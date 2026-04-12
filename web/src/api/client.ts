@@ -455,6 +455,7 @@ export interface FeatureSet {
   password_auth: boolean
   adapter_gen: boolean
   billing: boolean
+  local_daemon: boolean
 }
 
 export interface VersionInfo {
@@ -532,6 +533,50 @@ export interface PairSession {
   pairing_token: string
   code: string
   expires_at: string
+}
+
+export interface LocalDaemon {
+  id: string
+  user_id: string
+  daemon_id: string
+  name: string
+  paired_at: string
+  last_connected_at: string | null
+  connected: boolean
+}
+
+export interface LocalDaemonPairResult {
+  daemon_id: string
+  name: string
+  connection_token: string
+}
+
+export interface LocalDaemonServices {
+  version: string
+  name: string
+  services: LocalService[]
+}
+
+export interface LocalService {
+  id: string
+  name: string
+  description?: string
+  icon?: string
+  actions: LocalServiceAction[]
+}
+
+export interface LocalServiceAction {
+  id: string
+  name: string
+  description?: string
+  params?: LocalServiceParam[]
+}
+
+export interface LocalServiceParam {
+  name: string
+  type: string
+  required: boolean
+  description?: string
 }
 
 export interface AdapterGenParamPreview {
@@ -916,6 +961,15 @@ export const api = {
     delete: (id: string) => del<void>(`/api/devices/${id}`),
     pairInfo: () => get<PairInfo>('/api/devices/pair/info'),
     startPairing: () => post<PairSession>('/api/devices/pair', {}),
+  },
+  localDaemon: {
+    list: () => get<LocalDaemon[]>('/api/daemon/list'),
+    pair: (daemonId: string, code: string, nonce: string, name?: string) =>
+      post<LocalDaemonPairResult>('/api/daemon/pair', { daemon_id: daemonId, code, nonce, ...(name ? { name } : {}) }),
+    delete: (id: string) => del<void>(`/api/daemon/${id}`),
+    services: (id: string) => get<LocalDaemonServices>(`/api/daemon/${id}/services`),
+    request: (id: string, service: string, action: string, params?: Record<string, string>) =>
+      post<{ success: boolean; data?: unknown; error?: string }>(`/api/daemon/${id}/request`, { service, action, params }),
   },
   orgs: {
     list: () => get<OrgMembership[]>('/api/orgs'),

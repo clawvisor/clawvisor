@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { NotificationConfig, PendingGroup, TelegramGroup } from '../api/client'
+import type { LocalDaemon, NotificationConfig, PendingGroup, TelegramGroup } from '../api/client'
 import { useNavigate } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
@@ -19,6 +19,7 @@ export default function Settings() {
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <OAuthCredentialsSection />}
       <DevicePairing />
+      {features?.local_daemon && <LocalDaemonPairing />}
       <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
@@ -1371,6 +1372,213 @@ function DevicePairing() {
             {startMut.isPending ? 'Starting…' : 'Pair Device'}
           </button>
         </div>
+      )}
+    </section>
+  )
+}
+
+// ── Local daemon pairing ──────────────────────────────────────────────────────
+
+function DaemonCard({ daemon, onDelete, deleting }: {
+  daemon: LocalDaemon & { connected: boolean }
+  onDelete: () => void
+  deleting: boolean
+}) {
+  const { data: caps } = useQuery({
+    queryKey: ['daemon-services', daemon.id],
+    queryFn: () => api.localDaemon.services(daemon.id),
+    enabled: daemon.connected,
+    refetchInterval: 30000,
+  })
+
+  const services = caps?.services ?? []
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 max-w-lg">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-text-primary">{daemon.name || 'Local Computer'}</span>
+            <span className={`inline-block w-2 h-2 rounded-full ${daemon.connected ? 'bg-success' : 'bg-text-tertiary'}`} />
+            <span className="text-xs text-text-tertiary">{daemon.connected ? 'Connected' : 'Disconnected'}</span>
+          </div>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            Paired {formatDistanceToNow(new Date(daemon.paired_at), { addSuffix: true })}
+            {daemon.last_connected_at && ` · Last seen ${formatDistanceToNow(new Date(daemon.last_connected_at), { addSuffix: true })}`}
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            if (confirm(`Unpair "${daemon.name || 'Local Computer'}"? Local services will stop working.`)) {
+              onDelete()
+            }
+          }}
+          disabled={deleting}
+          className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
+        >
+          Unpair
+        </button>
+      </div>
+
+      {daemon.connected && services.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-border-default">
+          <p className="text-xs font-medium text-text-secondary mb-2">Services</p>
+          <div className="space-y-1.5">
+            {services.map(svc => (
+              <div key={svc.id} className="text-sm">
+                <span className="text-text-primary">{svc.name}</span>
+                {svc.description && <span className="text-text-tertiary ml-1.5">— {svc.description}</span>}
+                <div className="flex flex-wrap gap-1.5 mt-0.5">
+                  {svc.actions.map(act => (
+                    <span key={act.id} className="text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-secondary">
+                      {act.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const LOCAL_DAEMON_PORT = 25299
+
+function LocalDaemonPairing() {
+  const qc = useQueryClient()
+  const [pairing, setPairing] = useState(false)
+  const [pairError, setPairError] = useState<string | null>(null)
+  const [pairSuccess, setPairSuccess] = useState(false)
+  const [waitingForConnection, setWaitingForConnection] = useState(false)
+
+  const { data: daemons, isLoading } = useQuery({
+    queryKey: ['local-daemons'],
+    queryFn: () => api.localDaemon.list(),
+  })
+
+  // Probe localhost to see if a daemon is running and get its ID.
+  const { data: localDaemonId } = useQuery({
+    queryKey: ['local-daemon-probe'],
+    queryFn: async () => {
+      try {
+        const resp = await fetch(`http://localhost:${LOCAL_DAEMON_PORT}/api/status`, { signal: AbortSignal.timeout(2000) })
+        if (!resp.ok) return null
+        const data = await resp.json() as { daemon_id?: string }
+        return data.daemon_id ?? null
+      } catch { return null }
+    },
+    staleTime: 30000,
+  })
+
+  const localAlreadyPaired = !!(localDaemonId && daemons?.some(d => d.daemon_id === localDaemonId))
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.localDaemon.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['local-daemons'] }),
+  })
+
+  async function startPairing() {
+    setPairing(true)
+    setPairError(null)
+    setPairSuccess(false)
+
+    try {
+      // Fetch pairing code from the locally-running daemon.
+      const localResp = await fetch(`http://localhost:${LOCAL_DAEMON_PORT}/api/pairing/code`, {
+        signal: AbortSignal.timeout(3000),
+      })
+      if (!localResp.ok) {
+        throw new Error('Local daemon returned an error')
+      }
+      const { daemon_id, code, nonce, name: daemonName } = await localResp.json() as {
+        daemon_id: string; code: string; nonce: string; name?: string
+      }
+
+      if (!daemon_id || !code || !nonce) {
+        throw new Error('Invalid response from local daemon')
+      }
+
+      // Send to cloud to complete pairing.
+      const result = await api.localDaemon.pair(daemon_id, code, nonce, daemonName)
+
+      // Tell the local daemon the connection token so it can connect via WebSocket.
+      try {
+        await fetch(`http://localhost:${LOCAL_DAEMON_PORT}/api/pairing/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, nonce, connection_token: result.connection_token }),
+          signal: AbortSignal.timeout(3000),
+        })
+      } catch {
+        // Non-fatal — daemon may connect on its own if it polls
+      }
+
+      setPairSuccess(true)
+      setWaitingForConnection(true)
+      // Poll for the daemon to finish connecting (DB row is created on WS connect).
+      let connected = false
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000))
+        const result = await qc.fetchQuery({ queryKey: ['local-daemons'], queryFn: () => api.localDaemon.list() })
+        if (result.some(d => d.daemon_id === daemon_id && d.connected)) {
+          connected = true
+          break
+        }
+      }
+      setWaitingForConnection(false)
+      qc.invalidateQueries({ queryKey: ['local-daemons'] })
+      if (!connected) {
+        setPairError('Paired but daemon did not connect. Check that the daemon is running and can reach this server.')
+      }
+      setTimeout(() => setPairSuccess(false), 5000)
+    } catch (err) {
+      if (err instanceof TypeError || (err instanceof DOMException && err.name === 'AbortError')) {
+        setPairError('Could not reach local daemon. Make sure it is running on port ' + LOCAL_DAEMON_PORT + '.')
+      } else {
+        setPairError(err instanceof Error ? err.message : 'Pairing failed')
+      }
+    } finally {
+      setPairing(false)
+    }
+  }
+
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Local Computer</h2>
+        <p className="text-sm text-text-tertiary mt-0.5">
+          Pair a local daemon to use local-only services like iMessage, file access, and browser navigation.
+        </p>
+      </div>
+
+      {/* Paired daemons list */}
+      {!isLoading && (daemons ?? []).length > 0 && (
+        <div className="space-y-3">
+          {daemons!.map(daemon => (
+            <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} />
+          ))}
+        </div>
+      )}
+
+      {pairError && <div className="text-sm text-danger max-w-lg">{pairError}</div>}
+      {waitingForConnection && (
+        <div className="text-sm text-text-secondary max-w-lg flex items-center gap-2">
+          <span className="inline-block w-3 h-3 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+          Waiting for daemon to connect…
+        </div>
+      )}
+      {pairSuccess && !waitingForConnection && <div className="text-sm text-success max-w-lg">Local computer paired successfully.</div>}
+
+      {!isLoading && !localAlreadyPaired && (
+        <button
+          onClick={startPairing}
+          disabled={pairing}
+          className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {pairing ? 'Pairing…' : (daemons ?? []).length > 0 ? 'Pair Another Computer' : 'Pair with Local Computer'}
+        </button>
       )}
     </section>
   )
