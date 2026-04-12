@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useEventStream } from '../hooks/useEventStream'
@@ -45,6 +45,7 @@ export default function Dashboard() {
   const { resolvedTheme, setTheme } = useTheme()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
 
   // Close sidebar on route change (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
@@ -104,9 +105,12 @@ export default function Dashboard() {
           Clawvisor
         </span>
         {queueCount > 0 && (
-          <span className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-warning text-surface-0 ml-auto">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-warning text-surface-0 ml-auto"
+          >
             {queueCount > 9 ? '9+' : queueCount}
-          </span>
+          </button>
         )}
       </div>
 
