@@ -26,12 +26,7 @@ func NewOnboardingHandler(relayHost, daemonID string, isLocal bool) *OnboardingH
 
 // Setup serves the onboarding markdown document.
 func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
-	if h.daemonID == "" || h.relayHost == "" {
-		http.Error(w, "Daemon not registered with relay. Re-run `clawvisor setup`.", http.StatusServiceUnavailable)
-		return
-	}
-
-	clawvisorURL := fmt.Sprintf("https://%s/d/%s", h.relayHost, h.daemonID)
+	clawvisorURL := h.resolveURL(r)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Clawvisor Agent Setup\n\n")
