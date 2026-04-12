@@ -105,7 +105,7 @@ export default function Overview() {
   }, [])
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 sm:p-8 space-y-8">
       <h1 className="text-2xl font-bold text-text-primary">Dashboard</h1>
 
       {/* Deep link result banner */}

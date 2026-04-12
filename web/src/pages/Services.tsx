@@ -646,7 +646,7 @@ function AddServiceModal({
           )}
           {error && <p className="text-xs text-danger mb-3">{error}</p>}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {serviceTypes.map(st => {
               const isActivated = st.activatedCount > 0
               const isGoogleBlocked = googleOAuthMissing && isGoogleService(st.baseId)
@@ -884,7 +884,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   const services = data?.services ?? []
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-text-primary">{orgName} Services</h1>
         <p className="text-sm text-text-tertiary mt-1">
@@ -972,8 +972,8 @@ export default function Services() {
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Services</h1>
           <p className="text-sm text-text-tertiary mt-1">

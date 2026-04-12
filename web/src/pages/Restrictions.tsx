@@ -190,7 +190,7 @@ function WildcardToggle({
         Block all actions
       </span>
       {showReason && !isBlocked && (
-        <div className="flex items-center gap-2 ml-2">
+        <div className="flex flex-wrap items-center gap-2 ml-2">
           <input
             type="text"
             value={reason}
@@ -292,7 +292,7 @@ export default function Restrictions() {
   const unactivated = allServices.filter(s => s.status !== 'activated')
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-8 space-y-6">
       <h1 className="text-2xl font-bold text-text-primary">Restrictions</h1>
       <p className="text-sm text-text-tertiary">
         Block specific service actions. Any agent request matching a restriction is rejected immediately.

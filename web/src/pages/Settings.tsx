@@ -13,7 +13,7 @@ export default function Settings() {
   const passwordAuth = features?.password_auth ?? false
 
   return (
-    <div className="p-8 space-y-10">
+    <div className="p-4 sm:p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
       <DaemonInfo />
       {!features?.multi_tenant && <LLMSection />}

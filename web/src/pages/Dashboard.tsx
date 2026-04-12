@@ -1,4 +1,5 @@
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useEventStream } from '../hooks/useEventStream'
@@ -42,6 +43,11 @@ const orgNavItems = [
 export default function Dashboard() {
   const { user, logout, features, currentOrg } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => { setSidebarOpen(false) }, [location.pathname])
 
   // SSE event stream for instant dashboard updates
   useEventStream()
@@ -84,8 +90,36 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-surface-0 flex">
+      {/* Mobile header */}
+      <div className="fixed top-0 left-0 right-0 z-40 flex items-center gap-3 px-4 py-3 bg-surface-1 border-b border-border-default md:hidden">
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="text-text-primary p-1 -ml-1"
+          aria-label="Open menu"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <span className="font-bold text-lg tracking-tight text-text-primary flex items-center gap-2">
+          <img src="/favicon.svg" alt="" className="w-5 h-5" />
+          Clawvisor
+        </span>
+        {queueCount > 0 && (
+          <span className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-warning text-surface-0 ml-auto">
+            {queueCount > 9 ? '9+' : queueCount}
+          </span>
+        )}
+      </div>
+
+      {/* Sidebar overlay (mobile) */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <nav className="w-56 bg-surface-1 border-r border-border-default flex flex-col shrink-0 sticky top-0 h-screen">
+      <nav className={`fixed inset-y-0 left-0 z-50 w-56 bg-surface-1 border-r border-border-default flex flex-col shrink-0 transform transition-transform duration-200 ease-in-out md:sticky md:top-0 md:h-screen md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-4 py-5 border-b border-border-default">
           <span className="font-bold text-lg tracking-tight text-text-primary flex items-center gap-2">
             <img src="/favicon.svg" alt="" className="w-5 h-5" />
@@ -199,9 +233,9 @@ export default function Dashboard() {
       </nav>
 
       {/* Main content */}
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto pt-14 md:pt-0">
         {versionData?.update_available && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">Clawvisor v{versionData.latest}</span> is available
               {versionData.current && <span className="text-text-secondary"> (current: v{versionData.current})</span>}
@@ -231,56 +265,56 @@ export default function Dashboard() {
         )}
         <OnboardingBanner />
         {llmStatus?.spend_cap_exhausted && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex items-center justify-between text-sm">
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">Free LLM credit exhausted</span>
               <span className="text-text-secondary"> — verification and risk assessment are paused. Add your own API key to restore them.</span>
             </span>
             <NavLink
               to="/dashboard/settings"
-              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap ml-3"
+              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap"
             >
               Configure API key
             </NavLink>
           </div>
         )}
         {billingStatus?.status === 'trialing' && billingStatus.trial_days_remaining != null && !billingStatus.discount && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex items-center justify-between text-sm">
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">{billingStatus.trial_days_remaining} day{billingStatus.trial_days_remaining !== 1 ? 's' : ''} left in your free trial.</span>
               <span className="text-text-secondary"> Choose a plan to keep using Clawvisor.</span>
             </span>
             <NavLink
               to="/pricing"
-              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap ml-3"
+              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap"
             >
               Choose a plan
             </NavLink>
           </div>
         )}
         {billingStatus && !['trialing', 'active', 'past_due', 'none'].includes(billingStatus.status) && billingStatus.plan !== 'none' && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-danger/10 border border-danger/30 flex items-center justify-between text-sm">
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-danger/10 border border-danger/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">Your subscription has expired.</span>
               <span className="text-text-secondary"> Choose a plan to continue using Clawvisor.</span>
             </span>
             <NavLink
               to="/pricing"
-              className="text-danger hover:text-danger/80 font-medium transition-colors whitespace-nowrap ml-3"
+              className="text-danger hover:text-danger/80 font-medium transition-colors whitespace-nowrap"
             >
               Choose a plan
             </NavLink>
           </div>
         )}
         {billingStatus?.status === 'past_due' && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex items-center justify-between text-sm">
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-warning/10 border border-warning/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">Payment past due.</span>
               <span className="text-text-secondary"> Please update your payment method to avoid service interruption.</span>
             </span>
             <NavLink
               to="/dashboard/billing"
-              className="text-warning hover:text-warning/80 font-medium transition-colors whitespace-nowrap ml-3"
+              className="text-warning hover:text-warning/80 font-medium transition-colors whitespace-nowrap"
             >
               Manage billing
             </NavLink>

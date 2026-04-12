@@ -314,7 +314,7 @@ export default function AdapterGen() {
   })
 
   return (
-    <div className="p-8 space-y-6 max-w-5xl">
+    <div className="p-4 sm:p-8 space-y-6 max-w-5xl">
       <div>
         <h1 className="text-2xl font-bold text-text-primary">Generate Integration</h1>
         <p className="text-sm text-text-tertiary mt-1">

@@ -92,7 +92,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
       {expanded && (
         <tr className="border-t border-border-default bg-surface-2">
           <td colSpan={7} className="px-4 py-3">
-            <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <div className="text-text-tertiary font-medium mb-1">
                   {formatServiceAction(entry.service, entry.action)}
@@ -213,8 +213,8 @@ export default function Audit() {
   }, [outcomeFilter, serviceFilter, orgId])
 
   return (
-    <div className="p-8 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-text-primary">{orgId ? `${currentOrg!.name} Gateway Log` : 'Gateway Log'}</h1>
         <div className="flex items-center gap-3">
           <button
@@ -264,8 +264,8 @@ export default function Audit() {
       )}
 
       {entries.length > 0 && (
-        <div className="bg-surface-1 border border-border-default rounded-md overflow-hidden">
-          <table className="w-full">
+        <div className="bg-surface-1 border border-border-default rounded-md overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-surface-2 text-xs text-text-tertiary font-medium">
               <tr>
                 <th className="px-4 py-2 text-left">Time</th>
@@ -286,7 +286,7 @@ export default function Audit() {
 
       {/* Pagination */}
       {total > PAGE_SIZE && (
-        <div className="flex items-center justify-between text-sm text-text-tertiary">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm text-text-tertiary">
           <span>Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}</span>
           <div className="flex gap-2">
             <button

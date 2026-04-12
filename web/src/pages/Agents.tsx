@@ -52,7 +52,7 @@ export default function Agents() {
   const pending = (!orgId ? connections : undefined) ?? []
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 sm:p-8 space-y-8">
       <h1 className="text-2xl font-bold text-text-primary">Agents</h1>
       <p className="text-sm text-text-tertiary">
         An agent is any AI system (Claude, a custom bot, etc.) that you want to give controlled access to your services.
@@ -150,7 +150,7 @@ export default function Agents() {
             return (
               <div
                 key={agent.id}
-                className={`bg-surface-1 border rounded-md px-5 py-4 flex items-center justify-between ${
+                className={`bg-surface-1 border rounded-md px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   hasActiveTasks
                     ? 'border-brand/40 border-l-[3px] border-l-brand'
                     : 'border-border-default'
@@ -251,7 +251,7 @@ function ConnectAgentGuide() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-0 px-5 mt-4 border-b border-border-subtle">
+      <div className="flex gap-0 px-5 mt-4 border-b border-border-subtle overflow-x-auto">
         {tabs.map(t => (
           <button
             key={t.id}
