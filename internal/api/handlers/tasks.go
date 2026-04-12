@@ -246,7 +246,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for group chat approval via LLM analysis of recent messages.
-	// Only auto-approve low/medium risk tasks without hardcoded approval actions.
+	// Only auto-approve session tasks with low/medium risk and no hardcoded approval actions.
+	// Standing tasks always require explicit user approval.
 	// The agent must be paired to a group chat and the user must have opted in.
 	preApproved := false
 	groupChatID := ""
@@ -262,6 +263,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if autoApprovalEnabled && groupChatID != "" && h.msgBuffer != nil && h.llmHealth != nil &&
+		task.Lifetime != "standing" &&
 		task.RiskLevel != "high" && task.RiskLevel != "critical" {
 		hasHardcoded := false
 		for _, a := range req.AuthorizedActions {
@@ -290,13 +292,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 					task.Status = "active"
 					now := time.Now().UTC()
 					task.ApprovedAt = &now
-					if task.Lifetime == "standing" {
-						sentinel := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-						task.ExpiresAt = &sentinel
-					} else {
-						expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-						task.ExpiresAt = &expiresAt
-					}
+					expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+					task.ExpiresAt = &expiresAt
 					task.ApprovalSource = "telegram_group"
 					rationale, _ := json.Marshal(map[string]any{
 						"explanation": result.Explanation,
