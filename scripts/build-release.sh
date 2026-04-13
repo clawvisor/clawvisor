@@ -37,6 +37,18 @@ for PLATFORM in $PLATFORMS; do
     go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor
 done
 
+# Build clawvisor-local for all platforms. This is a standalone binary with no
+# frontend dependency, so it doesn't need web/dist.
+for PLATFORM in $PLATFORMS; do
+  GOOS="${PLATFORM%/*}"
+  GOARCH="${PLATFORM#*/}"
+  OUTPUT="dist/clawvisor-local-${GOOS}-${GOARCH}"
+
+  echo "Building ${OUTPUT}..."
+  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+    go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+done
+
 # Build the iMessage helper .app bundle for macOS only. This is a separate,
 # stable binary that holds Full Disk Access so users don't need to re-grant
 # FDA on every clawvisor update. The .app bundle structure lets macOS read
