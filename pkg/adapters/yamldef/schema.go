@@ -89,6 +89,10 @@ type OAuthDef struct {
 	ClientSecretEnv string `yaml:"client_secret_env,omitempty"`
 	AuthorizeURL    string `yaml:"authorize_url,omitempty"`
 	TokenURL        string `yaml:"token_url,omitempty"`
+
+	// Provider-specific overrides for non-standard OAuth flows.
+	ScopeParam string `yaml:"scope_param,omitempty"` // authorize URL param name for scopes (default "scope"; Slack v2 uses "user_scope")
+	TokenPath  string `yaml:"token_path,omitempty"`  // JSON path to access token in token response (e.g. "authed_user.access_token")
 }
 
 // ConditionalScope is a scope that is only included when an env var condition is met.
