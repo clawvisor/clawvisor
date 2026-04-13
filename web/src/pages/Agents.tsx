@@ -268,7 +268,7 @@ function ConnectAgentGuide() {
       </div>
 
       <div className="p-5">
-        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} isLocal={isLocal} copied={copied} onCopy={copyText} />}
+        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
         {tab === 'claude-desktop' && <ClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -435,9 +435,8 @@ function ClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (te
   )
 }
 
-function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
+function OpenClawGuide({ setupURL, copied, onCopy }: {
   setupURL: string
-  isLocal: boolean
   copied: boolean
   onCopy: (text: string) => void
 }) {
@@ -475,7 +474,7 @@ function OpenClawGuide({ setupURL, isLocal, copied, onCopy }: {
             </div>
             <p className="text-xs text-text-tertiary">
               Your agent will follow the setup instructions — registering itself
-              {isLocal && ', setting up E2E encryption,'} and installing the Clawvisor skill.
+              and installing the Clawvisor skill.
             </p>
           </div>
         </div>
