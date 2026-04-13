@@ -10,21 +10,29 @@ import (
 )
 
 // credential is the JSON shape stored in the vault for API-key and basic-auth services.
+// When credentials come from a PKCE flow, the token is in the access_token field instead.
 type credential struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
+	Type        string `json:"type"`
+	Token       string `json:"token"`
+	AccessToken string `json:"access_token"`
 }
 
 // extractToken parses the vault credential JSON and returns the token string.
+// Supports both direct API-key credentials ({"token": "..."}) and PKCE-sourced
+// credentials ({"access_token": "..."}).
 func extractToken(credBytes []byte) (string, error) {
 	var cred credential
 	if err := json.Unmarshal(credBytes, &cred); err != nil {
 		return "", fmt.Errorf("parsing credential: %w", err)
 	}
-	if cred.Token == "" {
+	token := cred.Token
+	if token == "" {
+		token = cred.AccessToken
+	}
+	if token == "" {
 		return "", fmt.Errorf("credential missing token")
 	}
-	return cred.Token, nil
+	return token, nil
 }
 
 // buildHTTPClient creates an *http.Client that injects authentication headers
