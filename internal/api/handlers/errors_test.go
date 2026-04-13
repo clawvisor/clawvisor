@@ -282,12 +282,15 @@ func TestValidateRequestParams_AllPresent(t *testing.T) {
 			},
 		},
 	}
-	result := validateRequestParams(adapter, "send", map[string]any{
+	result, warns := validateRequestParams(adapter, "send", map[string]any{
 		"to":   "alice",
 		"body": "hello",
 	})
 	if result != nil {
-		t.Fatalf("expected nil, got %+v", result)
+		t.Fatalf("expected nil error, got %+v", result)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("expected no warnings, got %v", warns)
 	}
 }
 
@@ -301,7 +304,7 @@ func TestValidateRequestParams_MissingRequired(t *testing.T) {
 			},
 		},
 	}
-	result := validateRequestParams(adapter, "send", map[string]any{
+	result, _ := validateRequestParams(adapter, "send", map[string]any{
 		"subject": "hi",
 	})
 	if result == nil {
@@ -320,8 +323,73 @@ func TestValidateRequestParams_MissingRequired(t *testing.T) {
 
 func TestValidateRequestParams_NoDescriber(t *testing.T) {
 	// An adapter that doesn't implement ActionParamDescriber should pass.
-	result := validateRequestParams(nil, "send", nil)
+	result, warns := validateRequestParams(nil, "send", nil)
 	if result != nil {
 		t.Fatalf("expected nil for nil adapter, got %+v", result)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("expected no warnings, got %v", warns)
+	}
+}
+
+func TestValidateRequestParams_UnknownParams_Warning(t *testing.T) {
+	adapter := &mockParamAdapter{
+		params: map[string][]adapters.ParamInfo{
+			"send": {
+				{Name: "to", Type: "string", Required: true},
+				{Name: "body", Type: "string", Required: true},
+				{Name: "subject", Type: "string", Required: false},
+			},
+		},
+	}
+	result, warns := validateRequestParams(adapter, "send", map[string]any{
+		"to":       "alice",
+		"body":     "hello",
+		"subjectt": "typo",  // close to "subject"
+		"foo":      "extra", // no close match
+	})
+	if result != nil {
+		t.Fatalf("expected no error (required params present), got %+v", result)
+	}
+	if len(warns) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(warns), warns)
+	}
+	// One should suggest "subject", the other should say "ignored".
+	var hasSuggestion, hasIgnored bool
+	for _, w := range warns {
+		if strings.Contains(w, "did you mean") && strings.Contains(w, "subject") {
+			hasSuggestion = true
+		}
+		if strings.Contains(w, "ignored") {
+			hasIgnored = true
+		}
+	}
+	if !hasSuggestion {
+		t.Errorf("expected a typo suggestion warning, got %v", warns)
+	}
+	if !hasIgnored {
+		t.Errorf("expected an ignored-param warning, got %v", warns)
+	}
+}
+
+func TestEditDistance(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"abc", "abd", 1},
+		{"subject", "subjectt", 1},
+		{"recipent", "recipient", 1},
+		{"to", "body", 3},
+	}
+	for _, c := range cases {
+		got := editDistance(c.a, c.b)
+		if got != c.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
 	}
 }

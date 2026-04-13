@@ -505,7 +505,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 			// Validate required params before execution.
 			if execAdapter, adOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); adOK {
-				if paramErr := validateRequestParams(execAdapter, req.Action, req.Params); paramErr != nil {
+				paramErr, paramWarnings := validateRequestParams(execAdapter, req.Action, req.Params)
+				warnings = append(warnings, paramWarnings...)
+				if paramErr != nil {
 					errMsg := paramErr.Error
 					e := baseEntry("reject", "validation_error", taskIDPtr)
 					e.DurationMS = int(time.Since(start).Milliseconds())
@@ -1535,17 +1537,24 @@ func adapterSupportsAction(adapter adapters.Adapter, action string) bool {
 
 // validateRequestParams checks the request params against the adapter's
 // parameter definitions (if available). Returns an apiErrorDetail if required
-// params are missing, or nil if everything looks good.
-func validateRequestParams(adapter adapters.Adapter, action string, params map[string]any) *apiErrorDetail {
+// params are missing, and warnings for unknown params (possible typos).
+func validateRequestParams(adapter adapters.Adapter, action string, params map[string]any) (paramErr *apiErrorDetail, paramWarnings []string) {
 	describer, ok := adapter.(adapters.ActionParamDescriber)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	paramDefs := describer.ActionParams(action)
 	if len(paramDefs) == 0 {
-		return nil
+		return nil, nil
 	}
 
+	// Build a set of known param names.
+	known := make(map[string]bool, len(paramDefs))
+	for _, p := range paramDefs {
+		known[p.Name] = true
+	}
+
+	// Check for missing required params.
 	var missing []string
 	for _, p := range paramDefs {
 		if !p.Required {
@@ -1555,8 +1564,21 @@ func validateRequestParams(adapter adapters.Adapter, action string, params map[s
 			missing = append(missing, p.Name)
 		}
 	}
+
+	// Check for unknown params and suggest close matches.
+	for name := range params {
+		if known[name] {
+			continue
+		}
+		if suggestion := closestParamName(name, paramDefs); suggestion != "" {
+			paramWarnings = append(paramWarnings, fmt.Sprintf("Unknown param %q — did you mean %q?", name, suggestion))
+		} else {
+			paramWarnings = append(paramWarnings, fmt.Sprintf("Unknown param %q is not defined for this action and will be ignored.", name))
+		}
+	}
+
 	if len(missing) == 0 {
-		return nil
+		return nil, paramWarnings
 	}
 
 	// Build an example showing all params with placeholder values.
@@ -1582,7 +1604,60 @@ func validateRequestParams(adapter adapters.Adapter, action string, params map[s
 		MissingFields: missing,
 		Hint:          "These parameters are required for this action. Check the service catalog for parameter details.",
 		Example:       map[string]any{"params": example},
+	}, paramWarnings
+}
+
+// closestParamName returns the closest known param name if the edit distance
+// is small enough to be a likely typo, or "" if no close match exists.
+func closestParamName(input string, defs []adapters.ParamInfo) string {
+	best := ""
+	bestDist := len(input)/2 + 1 // threshold: must be closer than half the input length
+	for _, p := range defs {
+		d := editDistance(input, p.Name)
+		if d < bestDist {
+			bestDist = d
+			best = p.Name
+		}
 	}
+	return best
+}
+
+// editDistance computes the Levenshtein distance between two strings.
+func editDistance(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	// Use a single-row DP approach.
+	prev := make([]int, lb+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		cur := make([]int, lb+1)
+		cur[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			del := prev[j] + 1
+			ins := cur[j-1] + 1
+			sub := prev[j-1] + cost
+			cur[j] = del
+			if ins < cur[j] {
+				cur[j] = ins
+			}
+			if sub < cur[j] {
+				cur[j] = sub
+			}
+		}
+		prev = cur
+	}
+	return prev[lb]
 }
 
 func nullableStr(s string) *string {
