@@ -228,7 +228,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			Name:                 name,
 			Description:          desc,
 			IconSVG:              iconSVG,
-			OAuth:                len(a.RequiredScopes()) > 0,
+			OAuth:                a.RequiredScopes() != nil,
 			OAuthEndpoint:        oauthEndpoint,
 			DeviceFlow:           deviceFlow,
 			PKCEFlow:             pkceFlowDefined,              // show PKCE option if defined, even without client ID
