@@ -235,7 +235,7 @@ function ConnectAgentGuide() {
   }
 
   const tabs: { id: AgentTab; label: string }[] = [
-    { id: 'openclaw', label: 'OpenClaw' },
+    { id: 'openclaw', label: 'OpenClaw / Hermes' },
     { id: 'claude-code', label: 'Claude Code' },
     { id: 'claude-desktop', label: 'Claude Desktop' },
     { id: 'other', label: 'Other Agents' },
