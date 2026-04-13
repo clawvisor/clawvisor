@@ -668,7 +668,7 @@ h2{color:#16a34a;margin:0 0 8px}p{color:#6b7280;margin:0;font-size:14px}</style>
 <body><div class="card"><h2>&#10003; Authorized</h2><p>Service activated. You can close this tab.</p></div>
 <script>
 if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},'*')}catch(e){}}
-%sif(window.opener){try{window.close()}catch(e){}}else{window.location.href='/services'}
+%sif(window.opener){try{window.close()}catch(e){}}else{window.location.href='/dashboard/services'}
 </script></body></html>`, cliCallbackSnippet)
 }
 
