@@ -67,7 +67,8 @@ actions:
       to: { type: string }
       subject: { type: string }
       body: { type: string }
-      thread_id: { type: string }
+      thread_id: { type: string, description: "Gmail thread ID for replying in-thread (preferred — auto-populates to/subject, quotes previous message)" }
+      in_reply_to: { type: string, description: "RFC 2822 Message-ID to reply to (alternative to thread_id — will resolve the thread automatically)" }
 
   create_draft:
     display_name: "Create draft"

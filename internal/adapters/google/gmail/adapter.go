@@ -378,9 +378,24 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
 	threadID, _ := params["thread_id"].(string)
+	legacyInReplyTo, _ := params["in_reply_to"].(string)
 
-	// When thread_id is provided, this is a reply — fetch thread context.
+	// Resolve thread context for replies. Prefer thread_id (full context);
+	// fall back to in_reply_to (legacy — search for the referenced message
+	// to discover its thread).
 	var inReplyTo, references, quotedBody string
+
+	// If we have in_reply_to but no thread_id, search for the message to
+	// discover its thread_id so we get full threading + quoting.
+	if threadID == "" && legacyInReplyTo != "" {
+		if tid := resolveThreadFromMessageID(ctx, client, legacyInReplyTo); tid != "" {
+			threadID = tid
+		} else {
+			// Can't find the thread — use the Message-ID as a bare In-Reply-To header.
+			inReplyTo = legacyInReplyTo
+		}
+	}
+
 	if threadID != "" {
 		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
 		var threadResp struct {
@@ -578,6 +593,25 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 		return fmt.Errorf("gmail API POST %s: %d: %s", url, resp.StatusCode, truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
+}
+
+// resolveThreadFromMessageID searches for a message by its RFC 2822 Message-ID
+// header (e.g. "<abc@mail.gmail.com>") and returns the Gmail thread ID.
+// Returns "" if the message can't be found.
+func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messageID string) string {
+	// Gmail search supports rfc822msgid: operator for Message-ID lookup.
+	query := "rfc822msgid:" + messageID
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=%s", encodeParam(query))
+	var resp struct {
+		Messages []struct {
+			ID       string `json:"id"`
+			ThreadId string `json:"threadId"`
+		} `json:"messages"`
+	}
+	if err := gmailGET(ctx, client, url, &resp); err != nil || len(resp.Messages) == 0 {
+		return ""
+	}
+	return resp.Messages[0].ThreadId
 }
 
 // fetchSenderAddress resolves the authenticated user's display name and email
