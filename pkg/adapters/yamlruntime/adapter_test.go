@@ -512,6 +512,26 @@ func TestYAMLAdapter_ValidateCredential_OAuth2(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_ValidateCredential_APIKeyWithPKCECred(t *testing.T) {
+	// api_key adapters with pkce_flow store credentials in OAuth2 format.
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key"},
+	}
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// PKCE-sourced credential has access_token, not token.
+	if err := adapter.ValidateCredential(testOAuthCred("pkce-access-token", "")); err != nil {
+		t.Errorf("expected PKCE credential (access_token) to validate for api_key adapter: %v", err)
+	}
+	if err := adapter.ValidateCredential(testOAuthCred("", "")); err == nil {
+		t.Error("expected error for empty credential")
+	}
+}
+
 // ── Expr-lang integration tests ──────────────────────────────────────────────
 
 func TestYAMLAdapter_ExprFieldExtraction(t *testing.T) {

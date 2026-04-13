@@ -298,7 +298,7 @@ func (a *YAMLAdapter) ValidateCredential(credBytes []byte) error {
 	if err := json.Unmarshal(credBytes, &cred); err != nil {
 		return fmt.Errorf("%s: invalid credential: %w", a.def.Service.ID, err)
 	}
-	if cred.Token == "" {
+	if cred.Token == "" && cred.AccessToken == "" {
 		return fmt.Errorf("%s: credential missing token", a.def.Service.ID)
 	}
 
@@ -353,35 +353,77 @@ func (a *YAMLAdapter) OAuthTokenPath() string {
 
 // buildAuthClient creates an *http.Client with proper authentication.
 // For OAuth2 services, this uses the OAuthConfig token source which handles
-// automatic token refresh. For other auth types, delegates to buildHTTPClient.
+// automatic token refresh. For api_key services with PKCE flow credentials,
+// it also uses an OAuth2 token source for refresh. For other auth types,
+// delegates to buildHTTPClient.
 func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte) (*http.Client, error) {
 	if a.def.Auth.Type == "oauth2" {
 		oauthCfg := a.OAuthConfig()
 		if oauthCfg == nil {
 			return nil, fmt.Errorf("OAuth not configured — missing app credentials")
 		}
-		var stored struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-			Expiry       string `json:"expiry"`
-		}
-		if err := json.Unmarshal(credBytes, &stored); err != nil {
-			return nil, fmt.Errorf("parsing oauth2 credential: %w", err)
-		}
-		token := &oauth2.Token{
-			AccessToken:  stored.AccessToken,
-			RefreshToken: stored.RefreshToken,
-			TokenType:    "Bearer",
-		}
-		if stored.Expiry != "" {
-			if t, err := time.Parse(time.RFC3339, stored.Expiry); err == nil {
-				token.Expiry = t
-			}
-		}
-		ts := oauthCfg.TokenSource(ctx, token)
-		return oauth2.NewClient(ctx, ts), nil
+		return a.buildOAuthClient(ctx, credBytes, oauthCfg)
 	}
+
+	// For api_key adapters with PKCE flow, credentials are in OAuth2 format
+	// and may have refresh tokens. Use an OAuth2 token source for auto-refresh.
+	if a.def.Auth.PKCEFlow != nil {
+		if oauthCfg := a.pkceOAuthConfig(); oauthCfg != nil {
+			if client, err := a.buildOAuthClient(ctx, credBytes, oauthCfg); err == nil {
+				return client, nil
+			}
+			// Fall through to static auth if credential isn't in OAuth2 format.
+		}
+	}
+
 	return buildHTTPClient(a.def.Auth, credBytes)
+}
+
+// buildOAuthClient creates an *http.Client using an OAuth2 token source that
+// handles automatic token refresh.
+func (a *YAMLAdapter) buildOAuthClient(ctx context.Context, credBytes []byte, oauthCfg *oauth2.Config) (*http.Client, error) {
+	var stored struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Expiry       string `json:"expiry"`
+	}
+	if err := json.Unmarshal(credBytes, &stored); err != nil {
+		return nil, fmt.Errorf("parsing oauth2 credential: %w", err)
+	}
+	if stored.AccessToken == "" && stored.RefreshToken == "" {
+		return nil, fmt.Errorf("credential missing oauth2 tokens")
+	}
+	token := &oauth2.Token{
+		AccessToken:  stored.AccessToken,
+		RefreshToken: stored.RefreshToken,
+		TokenType:    "Bearer",
+	}
+	if stored.Expiry != "" {
+		if t, err := time.Parse(time.RFC3339, stored.Expiry); err == nil {
+			token.Expiry = t
+		}
+	}
+	ts := oauthCfg.TokenSource(ctx, token)
+	return oauth2.NewClient(ctx, ts), nil
+}
+
+// pkceOAuthConfig builds a minimal oauth2.Config from the PKCE flow definition,
+// sufficient for token refresh (which only needs client_id and token_url).
+func (a *YAMLAdapter) pkceOAuthConfig() *oauth2.Config {
+	pf := a.def.Auth.PKCEFlow
+	if pf == nil {
+		return nil
+	}
+	clientID := a.resolvePKCEFlowClientID()
+	if clientID == "" || pf.TokenURL == "" {
+		return nil
+	}
+	return &oauth2.Config{
+		ClientID: clientID,
+		Endpoint: oauth2.Endpoint{
+			TokenURL: pf.TokenURL,
+		},
+	}
 }
 
 // ── MetadataProvider implementation ─────────────────────────────────────────
