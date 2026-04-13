@@ -276,28 +276,6 @@ The `reason` field on gateway requests is verified by a language model, not patt
 
 ---
 
-## Preset Task Definitions
-
-Agents tend to write narrow task scopes, which causes intent verification to reject legitimate follow-up requests. **Use these presets instead of writing your own scopes.** They are intentionally broad to cover the full range of operations in each workflow.
-{{ if .UseCurl }}
-Fetch a preset and use it directly as the request body for `POST /api/tasks`:
-
-```
-GET $CLAWVISOR_URL/skill/presets/<name>.json
-```
-{{ end }}
-| Preset | Description | {{ if .UseCurl }}File{{ else }}Fetch{{ end }} |
-|---|---|---|
-| **Email EA** | Full inbox management: triage, search, read, draft, send (approval-gated) | {{ if .UseCurl }}`email-ea.json`{{ else }}`GET /skill/presets/email-ea.json`{{ end }} |
-| **Calendar** | Full calendar: view, search, create (approval-gated), update (approval-gated) | {{ if .UseCurl }}`calendar.json`{{ else }}`GET /skill/presets/calendar.json`{{ end }} |
-| **iMessage** | Thread review, search, read, send (approval-gated) | {{ if .UseCurl }}`imessage.json`{{ else }}`GET /skill/presets/imessage.json`{{ end }} |
-
-{{ if .UseCurl -}}
-For example: `curl -s "$CLAWVISOR_URL/skill/presets/email-ea.json" | curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" -H "Content-Type: application/json" -d @-`
-{{- end }}
-
----
-
 ## Gateway Requests
 
 Every gateway request must include a `task_id` from an approved task.
