@@ -298,6 +298,9 @@ func (a *ContactsAdapter) searchContacts(ctx context.Context, client *http.Clien
 	q.Set("query", query)
 	q.Set("readMask", "names,emailAddresses,phoneNumbers")
 	q.Set("pageSize", fmt.Sprintf("%d", maxResults))
+	if pt, _ := params["page_token"].(string); pt != "" {
+		q.Set("pageToken", pt)
+	}
 
 	apiURL := "https://people.googleapis.com/v1/people:searchContacts?" + q.Encode()
 	var resp struct {

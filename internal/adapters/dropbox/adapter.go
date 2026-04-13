@@ -33,6 +33,8 @@ func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.
 		return nil, fmt.Errorf("dropbox: %w", err)
 	}
 	switch req.Action {
+	case "list_folder":
+		return a.listFolder(ctx, token, req.Params)
 	case "download_file":
 		return a.downloadFile(ctx, token, req.Params)
 	case "upload_file":
@@ -40,6 +42,95 @@ func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.
 	default:
 		return nil, fmt.Errorf("dropbox: unsupported action %q", req.Action)
 	}
+}
+
+// ── list_folder ──────────────────────────────────────────────────────────────
+
+const apiURL = "https://api.dropboxapi.com/2"
+
+func (a *Adapter) listFolder(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+	// If a cursor is provided, call list_folder/continue instead.
+	cursor, _ := params["cursor"].(string)
+
+	var apiEndpoint string
+	var body map[string]any
+
+	if cursor != "" {
+		apiEndpoint = apiURL + "/files/list_folder/continue"
+		body = map[string]any{"cursor": cursor}
+	} else {
+		apiEndpoint = apiURL + "/files/list_folder"
+		path, _ := params["path"].(string)
+		body = map[string]any{"path": path}
+		if limit, ok := params["limit"]; ok {
+			body["limit"] = limit
+		}
+	}
+
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiEndpoint, strings.NewReader(string(b)))
+	if err != nil {
+		return nil, fmt.Errorf("dropbox list_folder: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dropbox list_folder: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("dropbox list_folder: status %d: %s", resp.StatusCode, truncate(string(respBody), 200))
+	}
+
+	var result struct {
+		Entries []struct {
+			Tag            string `json:".tag"`
+			Name           string `json:"name"`
+			PathDisplay    string `json:"path_display"`
+			ID             string `json:"id"`
+			Size           *int64 `json:"size"`
+			ClientModified string `json:"client_modified"`
+		} `json:"entries"`
+		Cursor  string `json:"cursor"`
+		HasMore bool   `json:"has_more"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("dropbox list_folder: parsing response: %w", err)
+	}
+
+	items := make([]map[string]any, 0, len(result.Entries))
+	for _, e := range result.Entries {
+		item := map[string]any{
+			"type": e.Tag,
+			"name": format.SanitizeText(e.Name, format.MaxFieldLen),
+			"path": e.PathDisplay,
+			"id":   e.ID,
+		}
+		if e.Size != nil {
+			item["size"] = *e.Size
+		}
+		if e.ClientModified != "" {
+			item["client_modified"] = e.ClientModified
+		}
+		items = append(items, item)
+	}
+
+	res := &adapters.Result{
+		Summary: format.Summary("%d item(s)", len(items)),
+		Data:    items,
+	}
+	if result.HasMore || result.Cursor != "" {
+		res.Meta = map[string]any{}
+		if result.HasMore {
+			res.Meta["has_more"] = result.HasMore
+			res.Meta["cursor"] = result.Cursor
+		}
+	}
+	return res, nil
 }
 
 // ── download_file ────────────────────────────────────────────────────────────

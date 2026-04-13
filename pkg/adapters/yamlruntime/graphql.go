@@ -85,11 +85,13 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 	}
 
 	data := extractData(raw, action.Response, nil)
+	meta := extractMeta(raw, action.Response.Meta)
 	summary := renderSummary(action.Response.Summary, data)
 
 	return &adapters.Result{
 		Summary: summary,
 		Data:    data,
+		Meta:    meta,
 	}, nil
 }
 

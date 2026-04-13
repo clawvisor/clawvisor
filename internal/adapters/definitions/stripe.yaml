@@ -34,6 +34,8 @@ actions:
         - { name: email }
         - { name: name, sanitize: true }
         - { name: created }
+      meta:
+        - { name: has_more }
       summary: "{{len .Data}} customer(s)"
 
   get_customer:
@@ -72,6 +74,8 @@ actions:
         - { name: status }
         - { name: customer }
         - { name: created }
+      meta:
+        - { name: has_more }
       summary: "{{len .Data}} charge(s)"
 
   get_charge:
@@ -103,6 +107,7 @@ actions:
       limit: { type: int, default: 25, max: 100, location: query }
       customer: { type: string, location: query }
       status: { type: string, location: query }
+      starting_after: { type: string, location: query }
     response:
       data_path: "data"
       fields:
@@ -112,6 +117,8 @@ actions:
         - { name: current_period_start }
         - { name: current_period_end }
         - { name: created }
+      meta:
+        - { name: has_more }
       summary: "{{len .Data}} subscription(s)"
 
   get_subscription:
