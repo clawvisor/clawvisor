@@ -1,42 +1,42 @@
 package api
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"archive/zip"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	intauth "github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/feedback"
-	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
+	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
-	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
-	"github.com/clawvisor/clawvisor/pkg/config"
-	"github.com/clawvisor/clawvisor/pkg/version"
-	"github.com/clawvisor/clawvisor/internal/intent"
-	"github.com/clawvisor/clawvisor/internal/taskrisk"
-	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
+	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/clawvisor/clawvisor/pkg/version"
 	skillfiles "github.com/clawvisor/clawvisor/skills"
 	webfs "github.com/clawvisor/clawvisor/web"
 
@@ -59,16 +59,16 @@ type Server struct {
 	magicStore pkgauth.MagicTokenStore
 
 	// Extension points for open-core customization.
-	extraRoutes func(*http.ServeMux, Dependencies)
-	wrapRoutes  func(http.Handler) http.Handler
+	extraRoutes           func(*http.ServeMux, Dependencies)
+	wrapRoutes            func(http.Handler) http.Handler
 	features              FeatureSet
 	skipBuiltinAuthRoutes bool
 	quiet                 bool // suppress user-facing messages (e.g. during daemon setup)
 
 	// Relay/E2E keys.
-	x25519Key    *ecdh.PrivateKey // X25519 key for E2E encryption of gateway requests
-	daemonID     string           // relay daemon ID
-	ed25519PubB64 string          // base64-encoded Ed25519 public key for .well-known
+	x25519Key     *ecdh.PrivateKey // X25519 key for E2E encryption of gateway requests
+	daemonID      string           // relay daemon ID
+	ed25519PubB64 string           // base64-encoded Ed25519 public key for .well-known
 
 	// Handler references for background goroutines and decision dispatch.
 	approvalsHandler   *handlers.ApprovalsHandler
@@ -76,10 +76,10 @@ type Server struct {
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
 
-	pushNotifier *push.Notifier                // concrete push notifier; may be nil
-	msgBuffer    groupchat.Buffer // group chat message buffer; may be nil
-	decisionBus  notify.DecisionBus      // cross-instance decision delivery; may be nil
-	gatewayHooks *GatewayHooks  // cloud-injected gateway authorization hooks; may be nil
+	pushNotifier *push.Notifier     // concrete push notifier; may be nil
+	msgBuffer    groupchat.Buffer   // group chat message buffer; may be nil
+	decisionBus  notify.DecisionBus // cross-instance decision delivery; may be nil
+	gatewayHooks *GatewayHooks      // cloud-injected gateway authorization hooks; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
@@ -557,7 +557,7 @@ func (s *Server) routes() http.Handler {
 	}
 
 	// Connection requests (unauthenticated — agents requesting access)
-	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger, s.features.MultiTenant)
+	connectionsHandler := handlers.NewConnectionsHandler(s.store, s.notifier, s.eventHub, s.logger, baseURL, s.features.MultiTenant)
 	if s.tokenCache != nil {
 		connectionsHandler.SetTokenCache(s.tokenCache)
 	}
@@ -654,9 +654,9 @@ func (s *Server) routes() http.Handler {
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
-	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))     // fetch → returns {"url":"..."}
-	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart))    // kept for compat
-	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback) // no auth: browser redirect
+	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
+	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat
+	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback)    // no auth: browser redirect
 	mux.Handle("POST /api/services/{serviceID}/activate", user(servicesHandler.Activate))
 	mux.Handle("POST /api/services/{serviceID}/activate-key", user(servicesHandler.ActivateWithKey))
 	mux.Handle("POST /api/services/{serviceID}/deactivate", user(servicesHandler.Deactivate))
@@ -802,13 +802,13 @@ func (s *Server) routes() http.Handler {
 		// No auth middleware here: the MCP handler already authenticates the agent
 		// and injects it into the context before tool execution.
 		mcpHandlers := map[string]http.Handler{
-			"GET /api/skill/catalog":                           http.HandlerFunc(skillHandler.Catalog),
-			"POST /api/tasks":                                  http.HandlerFunc(tasksHandler.Create),
-			"GET /api/tasks/{id}":                              http.HandlerFunc(tasksHandler.Get),
-			"POST /api/tasks/{id}/complete":                    http.HandlerFunc(tasksHandler.Complete),
-			"POST /api/tasks/{id}/expand":                      http.HandlerFunc(tasksHandler.Expand),
-			"POST /api/gateway/request":                        http.HandlerFunc(gatewayHandler.HandleRequest),
-			"POST /api/gateway/request/{request_id}/execute":   http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
+			"GET /api/skill/catalog":                         http.HandlerFunc(skillHandler.Catalog),
+			"POST /api/tasks":                                http.HandlerFunc(tasksHandler.Create),
+			"GET /api/tasks/{id}":                            http.HandlerFunc(tasksHandler.Get),
+			"POST /api/tasks/{id}/complete":                  http.HandlerFunc(tasksHandler.Complete),
+			"POST /api/tasks/{id}/expand":                    http.HandlerFunc(tasksHandler.Expand),
+			"POST /api/gateway/request":                      http.HandlerFunc(gatewayHandler.HandleRequest),
+			"POST /api/gateway/request/{request_id}/execute": http.HandlerFunc(gatewayHandler.HandleExecuteApproved),
 		}
 
 		// Register adapter generation routes in MCP handler map if enabled.

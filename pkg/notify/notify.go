@@ -52,10 +52,10 @@ type ActivationRequest struct {
 
 // CallbackPayload is posted to the agent's callback URL when a pending request resolves.
 type CallbackPayload struct {
-	RequestID string          `json:"request_id"`
-	Status    string          `json:"status"` // "executed" | "denied" | "timeout"
+	RequestID string           `json:"request_id"`
+	Status    string           `json:"status"` // "executed" | "denied" | "timeout"
 	Result    *adapters.Result `json:"result,omitempty"`
-	AuditID   string          `json:"audit_id"`
+	AuditID   string           `json:"audit_id"`
 }
 
 // TaskApprovalRequest carries the data needed to ask the user to approve a task scope.
@@ -90,6 +90,8 @@ type ConnectionRequest struct {
 	UserID       string
 	AgentName    string
 	IPAddress    string
+	ApproveURL   string
+	DenyURL      string
 }
 
 // PairingSession represents an in-progress Telegram bot pairing.
@@ -112,7 +114,7 @@ type TelegramPairer interface {
 // CallbackDecision is sent by the Telegram notifier when a user taps an
 // inline Approve/Deny button. The server routes this to the appropriate handler.
 type CallbackDecision struct {
-	Type     string // "approval", "task", "scope_expansion"
+	Type     string // "approval", "task", "scope_expansion", "connection"
 	Action   string // "approve" or "deny"
 	TargetID string
 	UserID   string

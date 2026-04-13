@@ -16,7 +16,7 @@ var (
 
 // callbackEntry is one pair of approve/deny tokens for a single target.
 type callbackEntry struct {
-	Type      string // "approval", "task", "scope_expansion"
+	Type      string // "approval", "task", "scope_expansion", "connection"
 	TargetID  string
 	UserID    string
 	ChatID    string

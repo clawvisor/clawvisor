@@ -25,11 +25,11 @@ var (
 )
 
 const (
-	connectionRequestExpiry   = 5 * time.Minute
-	connectionTokenWindow     = 5 * time.Minute
-	maxPendingRequests        = 10
-	pollTimeout               = 30 * time.Second
-	maxConcurrentPolls  int64 = 50
+	connectionRequestExpiry       = 5 * time.Minute
+	connectionTokenWindow         = 5 * time.Minute
+	maxPendingRequests            = 10
+	pollTimeout                   = 30 * time.Second
+	maxConcurrentPolls      int64 = 50
 )
 
 // ConnectionsHandler manages agent connection request lifecycle.
@@ -38,6 +38,7 @@ type ConnectionsHandler struct {
 	notifier    notify.Notifier
 	eventHub    events.EventHub
 	logger      *slog.Logger
+	baseURL     string
 	multiTenant bool
 
 	// Token cache for approved agent tokens. Backed by either in-memory
@@ -58,12 +59,13 @@ type approvedToken struct {
 }
 
 func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
-	eventHub events.EventHub, logger *slog.Logger, multiTenant bool) *ConnectionsHandler {
+	eventHub events.EventHub, logger *slog.Logger, baseURL string, multiTenant bool) *ConnectionsHandler {
 	return &ConnectionsHandler{
 		st:          st,
 		notifier:    notifier,
 		eventHub:    eventHub,
 		logger:      logger,
+		baseURL:     baseURL,
 		multiTenant: multiTenant,
 		tokenCache:  newMemoryTokenCache(connectionTokenWindow),
 		ipPolls:     make(map[string]int),
@@ -143,13 +145,19 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		h.eventHub.Publish(owner.ID, events.Event{Type: "queue"})
 	}
 	if h.notifier != nil {
-		if _, err := h.notifier.SendConnectionRequest(r.Context(), notify.ConnectionRequest{
+		approveURL := fmt.Sprintf("%s/dashboard/agents?action=approve&connection_id=%s", h.baseURL, req.ID)
+		denyURL := fmt.Sprintf("%s/dashboard/agents?action=deny&connection_id=%s", h.baseURL, req.ID)
+		if msgID, err := h.notifier.SendConnectionRequest(r.Context(), notify.ConnectionRequest{
 			ConnectionID: req.ID,
 			UserID:       owner.ID,
 			AgentName:    body.Name,
 			IPAddress:    r.RemoteAddr,
+			ApproveURL:   approveURL,
+			DenyURL:      denyURL,
 		}); err != nil {
 			h.logger.Warn("failed to send connection request notification", "err", err)
+		} else if msgID != "" {
+			_ = h.st.SaveNotificationMessage(r.Context(), "connection", req.ID, "telegram", msgID)
 		}
 	}
 
@@ -198,8 +206,9 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 
 		// Check expiry.
 		if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
-			_ = h.st.UpdateConnectionRequestStatus(r.Context(), id, "expired", "")
-			cr.Status = "expired"
+			if err := h.expireByID(r.Context(), id, cr.UserID); err == nil {
+				cr.Status = "expired"
+			}
 		}
 
 		if cr.Status == "pending" {
@@ -303,8 +312,9 @@ func (h *ConnectionsHandler) waitForConnectionResolution(ctx context.Context, co
 				return &store.ConnectionRequest{ID: connID, Status: "pending"}, false
 			}
 			if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
-				_ = h.st.UpdateConnectionRequestStatus(c, connID, "expired", "")
-				cr.Status = "expired"
+				if err := h.expireByID(c, connID, cr.UserID); err == nil {
+					cr.Status = "expired"
+				}
 			}
 			return cr, cr.Status != "pending"
 		},
@@ -357,7 +367,7 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 		return "", errAlreadyResolved
 	}
 	if time.Now().After(cr.ExpiresAt) {
-		_ = h.st.UpdateConnectionRequestStatus(ctx, id, "expired", "")
+		_ = h.expireByID(ctx, id, userID)
 		return "", errExpired
 	}
 
@@ -376,6 +386,8 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 	}
 
 	h.tokenCache.Store(id, rawToken)
+	h.decrementNotifierPolling(userID)
+	h.updateNotificationMsg(ctx, id, userID, "✅ <b>Approved</b> — agent connected.")
 
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
@@ -428,10 +440,47 @@ func (h *ConnectionsHandler) DenyByID(ctx context.Context, id, userID string) er
 		return fmt.Errorf("update status: %w", err)
 	}
 
+	h.decrementNotifierPolling(userID)
+	h.updateNotificationMsg(ctx, id, userID, "❌ <b>Denied</b> — connection rejected.")
+
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
 	}
 	return nil
+}
+
+func (h *ConnectionsHandler) expireByID(ctx context.Context, id, userID string) error {
+	if err := h.st.UpdateConnectionRequestStatus(ctx, id, "expired", ""); err != nil {
+		return err
+	}
+	h.decrementNotifierPolling(userID)
+	h.updateNotificationMsg(ctx, id, userID, "⏰ <b>Expired</b> — connection request timed out.")
+	if h.eventHub != nil {
+		h.eventHub.Publish(userID, events.Event{Type: "queue"})
+	}
+	return nil
+}
+
+func (h *ConnectionsHandler) decrementNotifierPolling(userID string) {
+	if h.notifier == nil {
+		return
+	}
+	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
+		pd.DecrementPolling(userID)
+	}
+}
+
+func (h *ConnectionsHandler) updateNotificationMsg(ctx context.Context, targetID, userID, text string) {
+	if h.notifier == nil {
+		return
+	}
+	msgID, err := h.st.GetNotificationMessage(ctx, "connection", targetID, "telegram")
+	if err != nil {
+		return
+	}
+	if err := h.notifier.UpdateMessage(ctx, userID, msgID, text); err != nil {
+		h.logger.Warn("telegram message update failed", "err", err, "target_type", "connection", "target_id", targetID)
+	}
 }
 
 // List handles GET /api/agents/connections (user JWT).
@@ -449,4 +498,3 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, requests)
 }
-

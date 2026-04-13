@@ -35,8 +35,8 @@ type Notifier struct {
 	decisionCh    chan notify.CallbackDecision
 	serverCtx     context.Context
 	msgBuffer     groupchat.Buffer // may be nil; set via SetMessageBuffer
-	pendingGroups sync.Map                // userID → *pendingGroupList (in-memory fallback)
-	groupPairings sync.Map                // sessionID → *groupPairingSession (in-memory fallback)
+	pendingGroups sync.Map         // userID → *pendingGroupList (in-memory fallback)
+	groupPairings sync.Map         // sessionID → *groupPairingSession (in-memory fallback)
 
 	// Redis-backed stores for multi-instance mode. When nil, in-memory fallbacks are used.
 	pendingGroupStore PendingGroupStore
@@ -454,12 +454,32 @@ func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.Connect
 	if err != nil {
 		return "", err
 	}
-	text := fmt.Sprintf("🔗 <b>Agent Connection Request</b>\n\nAgent <b>%s</b> is requesting to connect from %s.",
-		req.AgentName, req.IPAddress)
-	msgID, err := n.sendMessage(ctx, botToken, chatID, text, nil)
+
+	text := formatConnectionRequestMessage(req)
+
+	approveID, denyID, tokenErr := n.cbTokens.Generate("connection", req.ConnectionID, req.UserID, chatID, 6*time.Minute)
+	var keyboard any
+	if tokenErr == nil {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Connection", CallbackData: "a:" + approveID},
+			{Text: "❌ Deny Connection", CallbackData: "d:" + denyID},
+		}})
+	} else {
+		keyboard = inlineKeyboard([][]inlineButton{{
+			{Text: "✅ Approve Connection", URL: req.ApproveURL},
+			{Text: "❌ Deny Connection", URL: req.DenyURL},
+		}})
+	}
+
+	msgID, err := n.sendMessage(ctx, botToken, chatID, text, keyboard)
 	if err != nil {
 		return "", fmt.Errorf("telegram: send connection request: %w", err)
 	}
+
+	if tokenErr == nil {
+		n.ensurePolling(req.UserID, botToken, chatID)
+	}
+
 	return msgID, nil
 }
 
@@ -746,6 +766,16 @@ func formatScopeExpansionMessage(req notify.ScopeExpansionRequest) string {
 	}
 
 	return sb.String()
+}
+
+func formatConnectionRequestMessage(req notify.ConnectionRequest) string {
+	return fmt.Sprintf(
+		"🔗 <b>Agent Connection Request</b>\n\n"+
+			"<b>Agent:</b> %s\n"+
+			"<b>Source:</b> %s",
+		html.EscapeString(req.AgentName),
+		html.EscapeString(req.IPAddress),
+	)
 }
 
 // hasVerificationWarning returns true if the approval request contains a non-clean verification result.
