@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
@@ -78,8 +80,12 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 		_ = json.Unmarshal([]byte(resultHeader), &meta)
 	}
 
-	// Determine if content is text or binary.
-	contentType := resp.Header.Get("Content-Type")
+	// Infer content type from filename — Dropbox always returns
+	// application/octet-stream regardless of actual file type.
+	contentType := mime.TypeByExtension(filepath.Ext(meta.Name))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
 	result := map[string]any{
 		"name":         format.SanitizeText(meta.Name, format.MaxFieldLen),
 		"id":           meta.ID,
