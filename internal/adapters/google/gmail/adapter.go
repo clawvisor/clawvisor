@@ -204,12 +204,11 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		summary = format.Summary("%d of ~%d messages (%d unread)", len(items), total, unread)
 	}
 
-	data := map[string]any{"messages": items}
+	result := &adapters.Result{Summary: summary, Data: map[string]any{"messages": items}}
 	if listResp.NextPageToken != "" {
-		data["next_page_token"] = listResp.NextPageToken
+		result.Meta = map[string]any{"next_page_token": listResp.NextPageToken}
 	}
-
-	return &adapters.Result{Summary: summary, Data: data}, nil
+	return result, nil
 }
 
 // ── get_message ───────────────────────────────────────────────────────────────

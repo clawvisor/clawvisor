@@ -267,15 +267,20 @@ func (a *Adapter) uploadFile(ctx context.Context, token string, params map[strin
 
 func extractToken(credBytes []byte) (string, error) {
 	var cred struct {
-		Token string `json:"token"`
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(credBytes, &cred); err != nil {
 		return "", fmt.Errorf("parsing credential: %w", err)
 	}
-	if cred.Token == "" {
+	token := cred.Token
+	if token == "" {
+		token = cred.AccessToken
+	}
+	if token == "" {
 		return "", fmt.Errorf("credential missing token")
 	}
-	return cred.Token, nil
+	return token, nil
 }
 
 func isTextContent(contentType string) bool {

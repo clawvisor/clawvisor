@@ -72,6 +72,8 @@ actions:
           expr: "attendees"
           optional: true
         - { name: status }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} event(s)"
 
   get_event:
@@ -181,4 +183,6 @@ actions:
         - { name: id }
         - { name: summary }
         - { name: primary }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} calendar(s)"

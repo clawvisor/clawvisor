@@ -176,4 +176,6 @@ actions:
         - { name: name, rename: file }
         - { name: path }
         - { name: html_url, rename: url }
+      meta:
+        - { name: total_count }
       summary: "{{len .Data}} code result(s)"

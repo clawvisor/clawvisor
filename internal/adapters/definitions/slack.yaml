@@ -130,6 +130,9 @@ actions:
         - { name: permalink }
         - { name: channel_id, path: "channel.id" }
         - { name: channel_name, path: "channel.name" }
+      meta:
+        - { name: messages.paging.pages, rename: total_pages }
+        - { name: messages.paging.total, rename: total_results }
       summary: "{{len .Data}} result(s)"
 
   list_users:

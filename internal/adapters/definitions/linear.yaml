@@ -233,7 +233,7 @@ actions:
     risk: { category: search, sensitivity: low, description: "Search Linear issues" }
     query: |
       query($query: String!, $first: Int, $after: String, $includeComments: Boolean) {
-        searchIssues(query: $query, first: $first, after: $after, includeComments: $includeComments) {
+        searchIssues(term: $query, first: $first, after: $after, includeComments: $includeComments) {
           nodes {
             id identifier title
             state { name }
