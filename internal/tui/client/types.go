@@ -197,6 +197,7 @@ type ServiceInfo struct {
 	Status             string            `json:"status"` // "activated" or "not_activated"
 	ActivatedAt        string            `json:"activated_at,omitempty"`
 	SetupURL           string            `json:"setup_url,omitempty"`
+	KeyHint            string            `json:"key_hint,omitempty"`
 }
 
 // VariableMeta holds metadata for a user-configurable adapter variable.

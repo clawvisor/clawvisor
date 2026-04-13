@@ -12,6 +12,7 @@ service:
   display_name: <string> # human-readable name
   description: <string>  # one-line description
   setup_url: <string>    # optional: link to API key / OAuth app setup page
+  key_hint: <string>     # optional: placeholder text for API key input (e.g. "Stripe secret key (sk_...)")
   icon_svg: <string>     # optional: inline SVG markup
   identity:              # optional: auto-detect account identity after activation
     endpoint: <string>   # URL path to fetch identity (e.g. "/user")
@@ -426,6 +427,7 @@ service:
   display_name: Acme API
   description: "Manage widgets and orders in the Acme platform."
   setup_url: "https://acme.com/settings/api-keys"
+  key_hint: "Acme API key"
   identity:
     endpoint: "/me"
     field: "email"
