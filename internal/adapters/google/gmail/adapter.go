@@ -155,7 +155,7 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 	query, _ := params["query"].(string)
 	maxResults := 10
 	if v, ok := paramInt(params, "max_results"); ok {
-		if v > 0 && v <= 50 {
+		if v > 0 && v <= 200 {
 			maxResults = v
 		}
 	}

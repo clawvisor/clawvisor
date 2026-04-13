@@ -374,6 +374,41 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			warnings = append(warnings, "Chain context is disabled because session_id was not provided on this standing task request. Intent verification cannot verify that entity references (message IDs, thread IDs, etc.) came from prior results. Provide a consistent session_id across related requests to enable chain context.")
 		}
 
+		// Check whether the action exists on the adapter before checking task scope.
+		// This prevents confusing "out of scope" errors when the real issue is a
+		// non-existent action (e.g. calling search_messages on Gmail instead of list_messages).
+		if adp, adpOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); adpOK {
+			supported := adp.SupportedActions()
+			found := false
+			for _, a := range supported {
+				if a == req.Action {
+					found = true
+					break
+				}
+			}
+			if !found {
+				_ = h.store.IncrementTaskRequestCount(ctx, req.TaskID)
+				msg := fmt.Sprintf(
+					"Action %q does not exist on service %s. Available actions: %s",
+					req.Action, serviceType, strings.Join(supported, ", "),
+				)
+				taskIDPtr := &req.TaskID
+				e := baseEntry("unknown_action", "blocked", taskIDPtr)
+				e.DurationMS = int(time.Since(start).Milliseconds())
+				e.ErrorMsg = &msg
+				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					h.logger.Warn("audit log failed", "err", logErr)
+				}
+				h.publishAuditAndQueue(agent.UserID, req.TaskID)
+				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+					Error: msg,
+					Code:  "UNKNOWN_ACTION",
+					Hint:  fmt.Sprintf("This service does not have a %q action. Check the available actions listed above and use the correct one.", req.Action),
+				})
+				return
+			}
+		}
+
 		match := CheckTaskScope(task, serviceType, serviceAlias, req.Action)
 
 		if !match.InScope {
