@@ -55,6 +55,9 @@ func New(def yamldef.ServiceDef, overrides map[string]ActionFunc) (*YAMLAdapter,
 
 func (a *YAMLAdapter) ServiceID() string { return a.def.Service.ID }
 
+// Overrides returns the Go action override functions registered on this adapter.
+func (a *YAMLAdapter) Overrides() map[string]ActionFunc { return a.overrides }
+
 func (a *YAMLAdapter) SupportedActions() []string {
 	actions := make([]string, 0, len(a.def.Actions))
 	for name := range a.def.Actions {
