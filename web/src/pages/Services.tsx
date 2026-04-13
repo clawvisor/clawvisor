@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type ServiceInfo, type ServiceActionInfo, type VariableMeta } from '../api/client'
+import { api, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -930,6 +930,163 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   )
 }
 
+// ── Local Services Section ────────────────────────────────────────────────────
+
+function LocalServicesSection() {
+  const qc = useQueryClient()
+
+  const { data: daemons } = useQuery({
+    queryKey: ['local-daemons'],
+    queryFn: () => api.localDaemon.list(),
+  })
+
+  const { data: enabledServices } = useQuery({
+    queryKey: ['enabled-local-services'],
+    queryFn: () => api.localDaemon.listEnabledServices(),
+  })
+
+  // Fetch capabilities for each connected daemon.
+  const connectedDaemons = (daemons ?? []).filter(d => d.connected)
+  const daemonCaps = useQuery({
+    queryKey: ['all-daemon-caps', connectedDaemons.map(d => d.id).join(',')],
+    queryFn: async () => {
+      const results: Record<string, LocalService[]> = {}
+      for (const d of connectedDaemons) {
+        try {
+          const caps = await api.localDaemon.services(d.id)
+          results[d.id] = caps.services
+        } catch { /* daemon may have disconnected */ }
+      }
+      return results
+    },
+    enabled: connectedDaemons.length > 0,
+    staleTime: 30000,
+  })
+
+  const enableMut = useMutation({
+    mutationFn: ({ daemonId, serviceId }: { daemonId: string; serviceId: string }) =>
+      api.localDaemon.enableService(daemonId, serviceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['enabled-local-services'] })
+    },
+  })
+
+  const disableMut = useMutation({
+    mutationFn: ({ daemonId, serviceId }: { daemonId: string; serviceId: string }) =>
+      api.localDaemon.disableService(daemonId, serviceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['enabled-local-services'] })
+    },
+  })
+
+  if (!daemons || daemons.length === 0) return null
+
+  const enabledSet = new Set((enabledServices ?? []).map(s => s.service_id))
+  const enabledByDaemon = new Map<string, Set<string>>()
+  for (const s of enabledServices ?? []) {
+    if (!enabledByDaemon.has(s.daemon_id)) enabledByDaemon.set(s.daemon_id, new Set())
+    enabledByDaemon.get(s.daemon_id)!.add(s.service_id)
+  }
+
+  const caps = daemonCaps.data ?? {}
+  const hasAnyServices = Object.values(caps).some(svcs => svcs.length > 0)
+
+  if (!hasAnyServices && connectedDaemons.length === 0) return null
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Local Services</h2>
+        <p className="text-xs text-text-tertiary mt-0.5">
+          Services from your paired local computers. Enable services to make them available to your agents.
+        </p>
+      </div>
+
+      {daemons.map(daemon => {
+        const daemonServices = caps[daemon.id] ?? []
+        if (!daemon.connected && !enabledByDaemon.has(daemon.id)) return null
+
+        return (
+          <div key={daemon.id} className="bg-surface-1 border border-border-default rounded-lg overflow-hidden">
+            <div className="px-5 py-3 flex items-center gap-2 border-b border-border-subtle">
+              <span className={`inline-block w-2 h-2 rounded-full ${daemon.connected ? 'bg-success' : 'bg-text-tertiary'}`} />
+              <span className="font-medium text-text-primary text-sm">{daemon.name || 'Local Computer'}</span>
+              {!daemon.connected && (
+                <span className="text-xs text-text-tertiary">(offline)</span>
+              )}
+            </div>
+
+            {!daemon.connected && (
+              <div className="px-5 py-4 text-sm text-text-tertiary">
+                Daemon is offline. Enabled services will become available when it reconnects.
+              </div>
+            )}
+
+            {daemon.connected && daemonServices.length === 0 && (
+              <div className="px-5 py-4 text-sm text-text-tertiary">
+                No services reported by this daemon.
+              </div>
+            )}
+
+            {daemonServices.length > 0 && (
+              <div className="divide-y divide-border-subtle">
+                {daemonServices.map(svc => {
+                  const enabled = enabledSet.has(svc.id)
+                  const toggling = enableMut.isPending || disableMut.isPending
+
+                  return (
+                    <div key={svc.id} className="px-5 py-3 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-text-primary">{svc.name}</span>
+                          <span className="text-xs text-text-tertiary font-mono">local.{svc.id}</span>
+                        </div>
+                        {svc.description && (
+                          <p className="text-xs text-text-tertiary mt-0.5">{svc.description}</p>
+                        )}
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {svc.actions.map(act => (
+                            <span key={act.id} className="text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-secondary">
+                              {act.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        disabled={toggling}
+                        onClick={() => {
+                          if (enabled) {
+                            disableMut.mutate({ daemonId: daemon.id, serviceId: svc.id })
+                          } else {
+                            enableMut.mutate({ daemonId: daemon.id, serviceId: svc.id })
+                          }
+                        }}
+                        className={`ml-4 shrink-0 text-xs px-3 py-1.5 rounded border font-medium transition-colors ${
+                          enabled
+                            ? 'bg-success/10 text-success border-success/20 hover:bg-success/20'
+                            : 'bg-surface-2 text-text-secondary border-border-default hover:bg-surface-3'
+                        }`}
+                      >
+                        {enabled ? 'Enabled' : 'Enable'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {enableMut.isError && (
+              <div className="px-5 py-2 text-xs text-danger bg-danger/5 border-t border-border-subtle">
+                Failed to enable service: {(enableMut.error as Error).message}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Services() {
@@ -1072,6 +1229,8 @@ export default function Services() {
           ))}
         </div>
       )}
+
+      {features?.local_daemon && <LocalServicesSection />}
 
       {showModal && (
         <AddServiceModal

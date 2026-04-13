@@ -582,6 +582,14 @@ export interface LocalServiceParam {
   description?: string
 }
 
+export interface EnabledLocalService {
+  id: string
+  user_id: string
+  daemon_id: string
+  service_id: string
+  enabled_at: string
+}
+
 export interface AdapterGenParamPreview {
   name: string
   type: string
@@ -974,6 +982,14 @@ export const api = {
     services: (id: string) => get<LocalDaemonServices>(`/api/daemon/${id}/services`),
     request: (id: string, service: string, action: string, params?: Record<string, string>) =>
       post<{ success: boolean; data?: unknown; error?: string }>(`/api/daemon/${id}/request`, { service, action, params }),
+    rename: (id: string, name: string) =>
+      put<LocalDaemon>(`/api/daemon/${id}`, { name }),
+    enableService: (daemonId: string, serviceId: string) =>
+      post<EnabledLocalService>(`/api/daemon/${daemonId}/services/${serviceId}/enable`, {}),
+    disableService: (daemonId: string, serviceId: string) =>
+      post<void>(`/api/daemon/${daemonId}/services/${serviceId}/disable`, {}),
+    listEnabledServices: () =>
+      get<EnabledLocalService[]>('/api/daemon/services/enabled'),
   },
   orgs: {
     list: () => get<OrgMembership[]>('/api/orgs'),

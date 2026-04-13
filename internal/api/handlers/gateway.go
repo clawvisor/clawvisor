@@ -52,6 +52,20 @@ type GatewayHooks struct {
 	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
 }
 
+// LocalServiceExecutor handles execution of local daemon service requests.
+// Implemented by the cloud layer; nil in self-hosted mode.
+type LocalServiceExecutor interface {
+	// Execute forwards a request to the appropriate local daemon.
+	// The service should include the "local." prefix (e.g. "local.my_service").
+	// The caller has already enforced restrictions and task scope.
+	Execute(ctx context.Context, userID, service, action string, params map[string]any) (*adapters.Result, error)
+}
+
+// isLocalService returns true for services provided by local daemons.
+func isLocalService(serviceType string) bool {
+	return strings.HasPrefix(serviceType, "local.")
+}
+
 // GatewayHandler handles POST /api/gateway/request.
 type GatewayHandler struct {
 	store        store.Store
@@ -64,7 +78,8 @@ type GatewayHandler struct {
 	logger       *slog.Logger
 	baseURL      string
 	eventHub     events.EventHub
-	gatewayHooks *GatewayHooks // cloud-injected authorization hooks; may be nil
+	gatewayHooks *GatewayHooks        // cloud-injected authorization hooks; may be nil
+	localExec    LocalServiceExecutor  // cloud-injected local service executor; may be nil
 }
 
 func NewGatewayHandler(
@@ -91,6 +106,11 @@ func NewGatewayHandler(
 // Must be called before any requests are handled.
 func (h *GatewayHandler) SetGatewayHooks(hooks *GatewayHooks) {
 	h.gatewayHooks = hooks
+}
+
+// SetLocalServiceExecutor configures the local daemon service executor.
+func (h *GatewayHandler) SetLocalServiceExecutor(e LocalServiceExecutor) {
+	h.localExec = e
 }
 
 // HandleRequest is the main gateway entry point.
@@ -445,6 +465,94 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		if match.AutoExecute && !hardcoded {
 			taskIDPtr := &req.TaskID
 
+			// ── Local service shortcut ───────────────────────────────────
+			// Local services skip intent verification and adapter lookup;
+			// the daemon handles execution directly.
+			if isLocalService(serviceType) {
+				if h.localExec == nil {
+					dur := int(time.Since(start).Milliseconds())
+					e := baseEntry("execute", "error", taskIDPtr)
+					e.DurationMS = dur
+					errMsg := "local services are not available in this deployment"
+					e.ErrorMsg = &errMsg
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
+					}
+					h.publishAuditAndQueue(agent.UserID, req.TaskID)
+					writeJSON(w, http.StatusOK, map[string]any{
+						"status":     "error",
+						"request_id": req.RequestID,
+						"audit_id":   auditID,
+						"error":      errMsg,
+						"code":       "LOCAL_SERVICE_UNAVAILABLE",
+					})
+					return
+				}
+				result, execErr := h.localExec.Execute(ctx, agent.UserID, serviceType, req.Action, req.Params)
+				dur := int(time.Since(start).Milliseconds())
+				if execErr != nil {
+					errMsg := execErr.Error()
+					e := baseEntry("execute", "error", taskIDPtr)
+					e.DurationMS = dur
+					e.ErrorMsg = &errMsg
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
+					}
+					h.publishAuditAndQueue(agent.UserID, req.TaskID)
+					if req.Context.CallbackURL != "" {
+						cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
+						go func() {
+							cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+							defer cancel()
+							_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
+								Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
+							}, cbKey)
+						}()
+					}
+					resp := map[string]any{
+						"status":     "error",
+						"request_id": req.RequestID,
+						"audit_id":   auditID,
+						"error":      errMsg,
+						"code":       "EXECUTION_ERROR",
+					}
+					h.maybeInjectNPS(ctx, resp, agent.ID)
+					writeJSON(w, http.StatusOK, resp)
+					return
+				}
+				// Success
+				middleware.AddLogField(ctx, "decision", "execute")
+				middleware.AddLogField(ctx, "outcome", "executed")
+				e := baseEntry("execute", "executed", taskIDPtr)
+				e.DurationMS = dur
+				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					h.logger.Warn("audit log failed", "err", logErr)
+				}
+				h.publishAuditAndQueue(agent.UserID, req.TaskID)
+				if req.Context.CallbackURL != "" {
+					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
+					go func() {
+						cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
+							Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
+						}, cbKey)
+					}()
+				}
+				resp := map[string]any{
+					"status":     "executed",
+					"request_id": req.RequestID,
+					"audit_id":   auditID,
+					"result":     result,
+				}
+				if len(warnings) > 0 {
+					resp["warnings"] = warnings
+				}
+				h.maybeInjectNPS(ctx, resp, agent.ID)
+				writeJSON(w, http.StatusOK, resp)
+				return
+			}
+
 			// ── Intent verification ──────────────────────────────────────
 			// Load chain facts (needed for both planned call matching and verification).
 			chainFacts := h.loadChainFacts(ctx, task, req)
@@ -694,45 +802,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// ── Step 5: Per-request approval ─────────────────────────────────────────
 	// Task in-scope but not auto-execute, or hardcoded approval.
 
-	// Reject unknown services immediately.
-	approveAdapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
-	if !ok {
-		e := baseEntry("approve", "error", nil)
-		e.DurationMS = int(time.Since(start).Milliseconds())
-		errMsg := fmt.Sprintf("unknown service %q", serviceType)
-		e.ErrorMsg = &errMsg
-		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-			h.logger.Warn("audit log failed", "err", logErr)
-		}
-		h.publishAuditAndQueue(agent.UserID, "")
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"status":     "error",
-			"request_id": req.RequestID,
-			"audit_id":   auditID,
-			"error":      fmt.Sprintf("unknown service %q: not a supported service", serviceType),
-			"code":       "UNKNOWN_SERVICE",
-		})
-		return
-	}
-
-	// Check if service needs activation.
-	{
-		notActivated := false
-		if approveAdapter.ValidateCredential(nil) == nil {
-			if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-				notActivated = true
-			}
-		} else {
-			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
-			if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
-				notActivated = true
-			}
-		}
-		if notActivated {
-			e := baseEntry("block", "error", nil)
+	// Local services skip adapter/activation checks — the daemon validates.
+	if !isLocalService(serviceType) {
+		// Reject unknown services immediately.
+		approveAdapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
+		if !ok {
+			e := baseEntry("approve", "error", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
-			e.ErrorMsg = &auditMsg
+			errMsg := fmt.Sprintf("unknown service %q", serviceType)
+			e.ErrorMsg = &errMsg
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
@@ -741,10 +819,43 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				"status":     "error",
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
-				"error":      userErr,
-				"code":       code,
+				"error":      fmt.Sprintf("unknown service %q: not a supported service", serviceType),
+				"code":       "UNKNOWN_SERVICE",
 			})
 			return
+		}
+
+		// Check if service needs activation.
+		{
+			notActivated := false
+			if approveAdapter.ValidateCredential(nil) == nil {
+				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
+					notActivated = true
+				}
+			} else {
+				vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
+				if _, vaultErr := h.vault.Get(ctx, agent.UserID, vKey); errors.Is(vaultErr, vault.ErrNotFound) {
+					notActivated = true
+				}
+			}
+			if notActivated {
+				e := baseEntry("block", "error", nil)
+				e.DurationMS = int(time.Since(start).Milliseconds())
+				code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
+				e.ErrorMsg = &auditMsg
+				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					h.logger.Warn("audit log failed", "err", logErr)
+				}
+				h.publishAuditAndQueue(agent.UserID, "")
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"status":     "error",
+					"request_id": req.RequestID,
+					"audit_id":   auditID,
+					"error":      userErr,
+					"code":       code,
+				})
+				return
+			}
 		}
 	}
 
@@ -907,13 +1018,20 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	}
 
 	serviceType, alias := parseServiceAlias(blob.Service)
-	// Resolve (and cache) the adapter before VaultKeyWithAliasForUser and executeAdapterRequest.
-	h.adapterReg.GetForUser(ctx, serviceType, pa.UserID)
-	vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, pa.UserID)
 
+	var result *adapters.Result
+	var execErr error
 	start := time.Now()
-	result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
-		pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
+
+	if isLocalService(serviceType) && h.localExec != nil {
+		result, execErr = h.localExec.Execute(ctx, pa.UserID, serviceType, blob.Action, blob.Params)
+	} else {
+		// Resolve (and cache) the adapter before VaultKeyWithAliasForUser and executeAdapterRequest.
+		h.adapterReg.GetForUser(ctx, serviceType, pa.UserID)
+		vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, alias, pa.UserID)
+		result, execErr = executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
+			pa.UserID, blob.Service, blob.Action, blob.Params, vKey)
+	}
 	dur := int(time.Since(start).Milliseconds())
 
 	outcome := "executed"

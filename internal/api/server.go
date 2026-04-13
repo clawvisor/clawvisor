@@ -76,10 +76,12 @@ type Server struct {
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
 
-	pushNotifier *push.Notifier     // concrete push notifier; may be nil
-	msgBuffer    groupchat.Buffer   // group chat message buffer; may be nil
-	decisionBus  notify.DecisionBus // cross-instance decision delivery; may be nil
-	gatewayHooks *GatewayHooks      // cloud-injected gateway authorization hooks; may be nil
+	pushNotifier         *push.Notifier                 // concrete push notifier; may be nil
+	msgBuffer            groupchat.Buffer               // group chat message buffer; may be nil
+	decisionBus          notify.DecisionBus             // cross-instance decision delivery; may be nil
+	gatewayHooks         *GatewayHooks                  // cloud-injected gateway authorization hooks; may be nil
+	localServiceProvider handlers.LocalServiceProvider  // cloud-injected local daemon service provider; may be nil
+	localServiceExecutor handlers.LocalServiceExecutor  // cloud-injected local service executor; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
@@ -213,6 +215,18 @@ func WithAdapterGenFactory(f handlers.GeneratorFactory) ServerOption {
 // WithGatewayHooks injects additional authorization logic into the gateway.
 func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
 	return func(s *Server) { s.gatewayHooks = hooks }
+}
+
+// WithLocalServiceProvider injects a provider of local daemon services into
+// the skill catalog.
+func WithLocalServiceProvider(p handlers.LocalServiceProvider) ServerOption {
+	return func(s *Server) { s.localServiceProvider = p }
+}
+
+// WithLocalServiceExecutor injects a local daemon service executor into
+// the gateway for routing agent requests to connected daemons.
+func WithLocalServiceExecutor(e handlers.LocalServiceExecutor) ServerOption {
+	return func(s *Server) { s.localServiceExecutor = e }
 }
 
 // WithTicketStore overrides the default in-memory SSE ticket store.
@@ -394,6 +408,9 @@ func (s *Server) routes() http.Handler {
 			BeforeAuthorize: s.gatewayHooks.BeforeAuthorize,
 		})
 	}
+	if s.localServiceExecutor != nil {
+		gatewayHandler.SetLocalServiceExecutor(s.localServiceExecutor)
+	}
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL, s.eventHub)
 	if s.oauthStateStore != nil {
 		servicesHandler.SetOAuthStateStore(s.oauthStateStore)
@@ -404,6 +421,9 @@ func (s *Server) routes() http.Handler {
 		servicesHandler.SetRelayDaemonURL(fmt.Sprintf("https://%s/d/%s", relayHost, s.cfg.Relay.DaemonID))
 	}
 	skillHandler := handlers.NewSkillHandler(s.store, s.vault, s.adapterReg, s.logger)
+	if s.localServiceProvider != nil {
+		skillHandler.SetLocalServiceProvider(s.localServiceProvider)
+	}
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger, s.eventHub)
 	s.approvalsHandler = approvalsHandler
 

@@ -169,10 +169,9 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 		serviceType, serviceAlias := parseServiceAlias(a.Service)
 
-		// Guard virtual services (file, bash, search, web, agent, unknown) are
-		// scope-only markers used by permission hooks — they never execute
-		// through adapters, so skip adapter/activation validation.
-		if !isGuardVirtualService(serviceType) {
+		// Guard virtual services and local daemon services skip adapter/activation
+		// validation — they don't have adapters in the registry.
+		if !isGuardVirtualService(serviceType) && !isLocalService(serviceType) {
 			adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 			if !ok {
 				available := h.adapterReg.SupportedServices()
@@ -853,9 +852,9 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate service and action exist (skip for guard virtual services).
+	// Validate service and action exist (skip for guard virtual and local services).
 	serviceType, serviceAlias := parseServiceAlias(req.Service)
-	if !isGuardVirtualService(serviceType) {
+	if !isGuardVirtualService(serviceType) && !isLocalService(serviceType) {
 		adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",

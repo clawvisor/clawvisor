@@ -99,6 +99,14 @@ type ServerOptions struct {
 	// Used by cloud for org-level restrictions, policies, etc.
 	GatewayHooks *GatewayHooks
 
+	// LocalServiceProvider supplies local daemon services for the agent catalog.
+	// Set by the cloud layer; nil in self-hosted mode.
+	LocalServiceProvider LocalServiceProvider
+
+	// LocalServiceExecutor routes agent gateway requests to local daemons.
+	// Set by the cloud layer; nil in self-hosted mode.
+	LocalServiceExecutor LocalServiceExecutor
+
 	// Quiet suppresses user-facing messages and sets server log level to WARN.
 	// Used during daemon setup when a temporary server runs in the background.
 	Quiet bool
@@ -123,6 +131,43 @@ type Dependencies struct {
 	Notifier   notify.Notifier
 	Logger     *slog.Logger
 	BaseURL    string
+}
+
+// LocalServiceProvider supplies local daemon services for the agent catalog.
+// Implemented by the cloud layer; nil in self-hosted mode.
+type LocalServiceProvider interface {
+	ActiveLocalServices(ctx context.Context, userID string) ([]LocalCatalogService, error)
+}
+
+// LocalServiceExecutor routes agent gateway requests to local daemons.
+// Implemented by the cloud layer; nil in self-hosted mode.
+type LocalServiceExecutor interface {
+	Execute(ctx context.Context, userID, service, action string, params map[string]any) (*adapters.Result, error)
+}
+
+// LocalCatalogService describes a local daemon service for the agent catalog.
+type LocalCatalogService struct {
+	ServiceID   string
+	DaemonName  string
+	Name        string
+	Description string
+	Actions     []LocalCatalogAction
+}
+
+// LocalCatalogAction describes an action within a local service.
+type LocalCatalogAction struct {
+	ID          string
+	Name        string
+	Description string
+	Params      []LocalCatalogParam
+}
+
+// LocalCatalogParam describes a parameter for a local action.
+type LocalCatalogParam struct {
+	Name        string
+	Type        string
+	Required    bool
+	Description string
 }
 
 // FeatureSet tells the frontend (and API consumers) which capabilities are available.

@@ -1380,16 +1380,30 @@ function DevicePairing() {
 
 // ── Local daemon pairing ──────────────────────────────────────────────────────
 
-function DaemonCard({ daemon, onDelete, deleting }: {
+function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
   daemon: LocalDaemon & { connected: boolean }
   onDelete: () => void
   deleting: boolean
+  enabledServiceIds: Set<string>
 }) {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [newName, setNewName] = useState(daemon.name || '')
+  const navigate = useNavigate()
+
   const { data: caps } = useQuery({
     queryKey: ['daemon-services', daemon.id],
     queryFn: () => api.localDaemon.services(daemon.id),
     enabled: daemon.connected,
     refetchInterval: 30000,
+  })
+
+  const renameMut = useMutation({
+    mutationFn: (name: string) => api.localDaemon.rename(daemon.id, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['local-daemons'] })
+      setEditing(false)
+    },
   })
 
   const services = caps?.services ?? []
@@ -1399,7 +1413,25 @@ function DaemonCard({ daemon, onDelete, deleting }: {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-medium text-text-primary">{daemon.name || 'Local Computer'}</span>
+            {editing ? (
+              <form onSubmit={e => { e.preventDefault(); if (newName.trim()) renameMut.mutate(newName.trim()) }} className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  className="text-sm font-medium px-2 py-0.5 rounded border border-border-default bg-surface-0 text-text-primary w-40"
+                />
+                <button type="submit" disabled={renameMut.isPending} className="text-xs text-brand hover:underline">Save</button>
+                <button type="button" onClick={() => { setEditing(false); setNewName(daemon.name || '') }} className="text-xs text-text-tertiary hover:underline">Cancel</button>
+              </form>
+            ) : (
+              <>
+                <span className="font-medium text-text-primary">{daemon.name || 'Local Computer'}</span>
+                <button onClick={() => setEditing(true)} className="text-xs text-text-tertiary hover:text-text-primary" title="Rename">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5V8.5l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              </>
+            )}
             <span className={`inline-block w-2 h-2 rounded-full ${daemon.connected ? 'bg-success' : 'bg-text-tertiary'}`} />
             <span className="text-xs text-text-tertiary">{daemon.connected ? 'Connected' : 'Disconnected'}</span>
           </div>
@@ -1423,19 +1455,23 @@ function DaemonCard({ daemon, onDelete, deleting }: {
 
       {daemon.connected && services.length > 0 && (
         <div className="mt-3 pt-3 border-t border-border-default">
-          <p className="text-xs font-medium text-text-secondary mb-2">Services</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-medium text-text-secondary">Services</p>
+            <button
+              onClick={() => navigate('/dashboard/services')}
+              className="text-xs text-brand hover:underline"
+            >
+              Manage services
+            </button>
+          </div>
           <div className="space-y-1.5">
             {services.map(svc => (
-              <div key={svc.id} className="text-sm">
+              <div key={svc.id} className="text-sm flex items-center gap-2">
                 <span className="text-text-primary">{svc.name}</span>
-                {svc.description && <span className="text-text-tertiary ml-1.5">— {svc.description}</span>}
-                <div className="flex flex-wrap gap-1.5 mt-0.5">
-                  {svc.actions.map(act => (
-                    <span key={act.id} className="text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-secondary">
-                      {act.name}
-                    </span>
-                  ))}
-                </div>
+                {enabledServiceIds.has(svc.id) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">Enabled</span>
+                )}
+                {svc.description && <span className="text-text-tertiary">— {svc.description}</span>}
               </div>
             ))}
           </div>
@@ -1458,6 +1494,13 @@ function LocalDaemonPairing() {
     queryKey: ['local-daemons'],
     queryFn: () => api.localDaemon.list(),
   })
+
+  const { data: enabledServices } = useQuery({
+    queryKey: ['enabled-local-services'],
+    queryFn: () => api.localDaemon.listEnabledServices(),
+  })
+
+  const enabledServiceIds = new Set((enabledServices ?? []).map(s => s.service_id))
 
   // Probe localhost to see if a daemon is running and get its ID.
   const { data: localDaemonId } = useQuery({
@@ -1558,7 +1601,7 @@ function LocalDaemonPairing() {
       {!isLoading && (daemons ?? []).length > 0 && (
         <div className="space-y-3">
           {daemons!.map(daemon => (
-            <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} />
+            <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} enabledServiceIds={enabledServiceIds} />
           ))}
         </div>
       )}
