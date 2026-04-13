@@ -1098,6 +1098,57 @@ func TestYAMLAdapter_PathParamEscapesReservedChars(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_PathParamPreservesSlashes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := "/v1/people/123"
+		if r.URL.EscapedPath() != want {
+			t.Errorf("unexpected escaped path: %s (want %s)", r.URL.EscapedPath(), want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"resourceName": "people/123",
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "google.contacts"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL + "/v1", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"get_contact": {
+				Method: "GET",
+				Path:   "/{{.contact_id}}",
+				Params: map[string]yamldef.Param{
+					"contact_id": {Type: "string", Required: true, Location: "path"},
+				},
+				Response: yamldef.ResponseDef{
+					Fields: []yamldef.FieldDef{
+						{Name: "resourceName"},
+					},
+					Summary: "Contact {{.resourceName}}",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "get_contact",
+		Params: map[string]any{
+			"contact_id": "people/123",
+		},
+		Credential: testCred("test-token"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
 func TestYAMLAdapter_UnresolvedPathParam(t *testing.T) {
 	// When a required path param is missing and has no default, the error
 	// should mention the parameter name, not silently send a broken URL.

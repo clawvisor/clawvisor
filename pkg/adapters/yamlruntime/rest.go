@@ -150,12 +150,19 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 func interpolatePath(path string, params map[string]any, credFields map[string]string) string {
 	result := path
 	for k, v := range params {
-		result = strings.ReplaceAll(result, "{{."+k+"}}", url.PathEscape(fmt.Sprintf("%v", v)))
+		result = strings.ReplaceAll(result, "{{."+k+"}}", escapePathValue(fmt.Sprintf("%v", v)))
 	}
 	for k, v := range credFields {
-		result = strings.ReplaceAll(result, "{{.credential."+k+"}}", url.PathEscape(v))
+		result = strings.ReplaceAll(result, "{{.credential."+k+"}}", escapePathValue(v))
 	}
 	return result
+}
+
+// escapePathValue encodes reserved characters inside a path placeholder while
+// preserving literal "/" so adapters can keep using multi-segment resource
+// names like "people/123".
+func escapePathValue(v string) string {
+	return strings.ReplaceAll(url.PathEscape(v), "%2F", "/")
 }
 
 // resolveParamWithExpr extracts a parameter value from the input, applying
