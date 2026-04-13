@@ -10,13 +10,16 @@ service:
     field: "email"
 
 auth:
-  type: oauth2
-  oauth:
-    client_id_env: DROPBOX_CLIENT_ID
-    client_secret_env: DROPBOX_CLIENT_SECRET
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+  pkce_flow:
+    client_id: "0uyiqcfgyda77uu"
+    client_id_env: "DROPBOX_CLIENT_ID"
+    scopes: []
     authorize_url: "https://www.dropbox.com/oauth2/authorize"
     token_url: "https://api.dropboxapi.com/oauth2/token"
-    scopes: []
+    localhost_redirect: true
 
 api:
   base_url: "https://api.dropboxapi.com/2"
