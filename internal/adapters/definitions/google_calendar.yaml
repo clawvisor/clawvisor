@@ -53,7 +53,7 @@ actions:
         transform: "endOfDay(to)"
         map_to: timeMax
         location: query
-      max_results: { type: int, default: 25, max: 50, map_to: maxResults, location: query }
+      max_results: { type: int, default: 10, max: 50, map_to: maxResults, location: query }
       single_events: { type: string, default: "true", map_to: singleEvents, location: query }
       order_by: { type: string, default: "startTime", map_to: orderBy, location: query }
     response:
