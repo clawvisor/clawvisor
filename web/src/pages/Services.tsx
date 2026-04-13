@@ -7,6 +7,17 @@ import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
 import { ServiceIconBadge } from '../components/ServiceIcon'
 
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+
+function openOAuthUrl(url: string) {
+  if (isMobile) {
+    window.location.href = url
+    return
+  }
+  const popup = window.open(url, '_blank', 'width=600,height=700')
+  if (!popup) window.location.href = url
+}
+
 // ── Active Service Row ───────────────────────────────────────────────────────
 
 function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
@@ -30,8 +41,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
       if (svc.pkce_flow) {
         const resp = await api.services.pkceFlowStart(svc.id, alias)
         if (resp.authorize_url) {
-          const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=700')
-          if (!popup) window.location.href = resp.authorize_url
+          openOAuthUrl(resp.authorize_url)
         }
       } else if (svc.device_flow) {
         const resp = await api.services.deviceFlowStart(svc.id, alias)
@@ -66,8 +76,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
           return
         }
         if (resp.url) {
-          const popup = window.open(resp.url, '_blank', 'width=600,height=700')
-          if (!popup) window.location.href = resp.url
+          openOAuthUrl(resp.url)
         }
       }
     } catch (e: any) {
@@ -416,8 +425,7 @@ function AddServiceModal({
         return
       }
       if (resp.url) {
-        const popup = window.open(resp.url, '_blank', 'width=600,height=700')
-        if (!popup) window.location.href = resp.url
+        openOAuthUrl(resp.url)
       }
     } catch (e: any) {
       setError(e.message ?? 'Failed to start OAuth flow')
@@ -462,8 +470,7 @@ function AddServiceModal({
     try {
       const resp = await api.services.pkceFlowStart(serviceId, alias, clientId)
       if (resp.authorize_url) {
-        const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=700')
-        if (!popup) window.location.href = resp.authorize_url
+        openOAuthUrl(resp.authorize_url)
       }
     } catch (e: any) {
       setError(e.message ?? 'Failed to start authorization')
