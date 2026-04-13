@@ -2,13 +2,17 @@
 package gmail
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -27,6 +31,7 @@ var gmailBaseScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
 	"https://www.googleapis.com/auth/userinfo.email",
+	"https://www.googleapis.com/auth/userinfo.profile",
 }
 
 // draftsEnabled reports whether the create_draft action is available.
@@ -57,7 +62,7 @@ func New(provider adapters.OAuthCredentialProvider) *GmailAdapter {
 func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
-	actions := []string{"list_messages", "get_message", "get_attachment", "send_message"}
+	actions := []string{"list_messages", "get_message", "get_thread", "get_attachment", "send_message"}
 	if draftsEnabled() {
 		actions = append(actions, "create_draft")
 	}
@@ -108,6 +113,8 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 		return a.listMessages(ctx, client, req.Params)
 	case "get_message":
 		return a.getMessage(ctx, client, req.Params)
+	case "get_thread":
+		return a.getThread(ctx, client, req.Params)
 	case "get_attachment":
 		return a.getAttachment(ctx, client, req.Params)
 	case "send_message":
@@ -175,7 +182,7 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		}
 		item := msgListItem{
 			ID:       m.ID,
-			From:     format.SanitizeText(meta.from, format.MaxFieldLen),
+			From:     format.SanitizeHeader(meta.from, format.MaxFieldLen),
 			Subject:  format.SanitizeText(meta.subject, format.MaxFieldLen),
 			Snippet:  format.SanitizeText(meta.snippet, format.MaxSnippetLen),
 			Date:     meta.date,
@@ -209,11 +216,15 @@ type msgDetail struct {
 	ID          string           `json:"id"`
 	From        string           `json:"from"`
 	To          string           `json:"to"`
+	Cc          string           `json:"cc,omitempty"`
+	ReplyTo     string           `json:"reply_to,omitempty"`
 	Subject     string           `json:"subject"`
 	Date        string           `json:"timestamp"`
 	Body        string           `json:"body"`
 	IsUnread    bool             `json:"is_unread"`
 	ThreadID    string           `json:"thread_id"`
+	MessageID   string           `json:"message_id_header,omitempty"`
+	References  string           `json:"references,omitempty"`
 	Attachments []attachmentMeta `json:"attachments,omitempty"`
 }
 
@@ -229,18 +240,76 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 		return nil, fmt.Errorf("gmail get_message: %w", err)
 	}
 
-	// Extract headers
-	var from, to, subject, date string
+	detail := parseMessageDetail(raw)
+
+	summary := format.Summary("Email from %s: %q", detail.From, detail.Subject)
+	if len(detail.Attachments) > 0 {
+		summary = format.Summary("Email from %s: %q (%d attachments)", detail.From, detail.Subject, len(detail.Attachments))
+	}
+	return &adapters.Result{Summary: summary, Data: detail}, nil
+}
+
+// ── get_thread ────────────────────────────────────────────────────────────────
+
+type threadDetail struct {
+	ThreadID string      `json:"thread_id"`
+	Messages []msgDetail `json:"messages"`
+}
+
+func (a *GmailAdapter) getThread(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	threadID, _ := params["thread_id"].(string)
+	if threadID == "" {
+		return nil, fmt.Errorf("gmail get_thread: thread_id is required")
+	}
+
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+	var raw struct {
+		ID       string         `json:"id"`
+		Messages []gmailMessage `json:"messages"`
+	}
+	if err := gmailGET(ctx, client, url, &raw); err != nil {
+		return nil, fmt.Errorf("gmail get_thread: %w", err)
+	}
+
+	messages := make([]msgDetail, 0, len(raw.Messages))
+	for _, msg := range raw.Messages {
+		detail := parseMessageDetail(msg)
+		messages = append(messages, detail)
+	}
+
+	result := threadDetail{
+		ThreadID: raw.ID,
+		Messages: messages,
+	}
+
+	summary := format.Summary("Thread %s: %d messages", threadID, len(messages))
+	if len(messages) > 0 {
+		summary = format.Summary("Thread %s: %d messages (subject: %q)", threadID, len(messages), messages[0].Subject)
+	}
+	return &adapters.Result{Summary: summary, Data: result}, nil
+}
+
+// parseMessageDetail extracts a msgDetail from a raw gmailMessage.
+func parseMessageDetail(raw gmailMessage) msgDetail {
+	var from, to, cc, replyTo, subject, date, messageID, references string
 	for _, h := range raw.Payload.Headers {
 		switch strings.ToLower(h.Name) {
 		case "from":
 			from = h.Value
 		case "to":
 			to = h.Value
+		case "cc":
+			cc = h.Value
+		case "reply-to":
+			replyTo = h.Value
 		case "subject":
 			subject = h.Value
 		case "date":
 			date = h.Value
+		case "message-id":
+			messageID = h.Value
+		case "references":
+			references = h.Value
 		}
 	}
 
@@ -258,23 +327,21 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 
 	attachments := extractAttachments(raw.Payload)
 
-	detail := msgDetail{
+	return msgDetail{
 		ID:          raw.ID,
-		From:        format.SanitizeText(from, format.MaxFieldLen),
-		To:          format.SanitizeText(to, format.MaxFieldLen),
+		From:        format.SanitizeHeader(from, format.MaxFieldLen),
+		To:          format.SanitizeHeader(to, format.MaxFieldLen),
+		Cc:          format.SanitizeHeader(cc, format.MaxFieldLen),
+		ReplyTo:     format.SanitizeHeader(replyTo, format.MaxFieldLen),
 		Subject:     format.SanitizeText(subject, format.MaxFieldLen),
 		Date:        date,
 		Body:        format.SanitizeText(body, format.MaxBodyLen),
 		IsUnread:    isUnread,
 		ThreadID:    raw.ThreadId,
+		MessageID:   messageID,
+		References:  references,
 		Attachments: attachments,
 	}
-
-	summary := format.Summary("Email from %s: %q", detail.From, detail.Subject)
-	if len(attachments) > 0 {
-		summary = format.Summary("Email from %s: %q (%d attachments)", detail.From, detail.Subject, len(attachments))
-	}
-	return &adapters.Result{Summary: summary, Data: detail}, nil
 }
 
 // ── get_attachment ────────────────────────────────────────────────────────────
@@ -314,7 +381,85 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	to, _ := params["to"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
-	inReplyTo, _ := params["in_reply_to"].(string)
+	threadID, _ := params["thread_id"].(string)
+	legacyInReplyTo, _ := params["in_reply_to"].(string)
+
+	// Resolve thread context for replies. Prefer thread_id (full context);
+	// fall back to in_reply_to (legacy — search for the referenced message
+	// to discover its thread).
+	var inReplyTo, references, quotedBody, htmlBody string
+
+	// If we have in_reply_to but no thread_id, search for the message to
+	// discover its thread_id so we get full threading + quoting.
+	if threadID == "" && legacyInReplyTo != "" {
+		if tid := resolveThreadFromMessageID(ctx, client, legacyInReplyTo); tid != "" {
+			threadID = tid
+		} else {
+			// Can't find the thread — use the Message-ID as a bare In-Reply-To header.
+			inReplyTo = legacyInReplyTo
+		}
+	}
+
+	if threadID != "" {
+		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+		var threadResp struct {
+			ID       string         `json:"id"`
+			Messages []gmailMessage `json:"messages"`
+		}
+		if err := gmailGET(ctx, client, threadURL, &threadResp); err != nil {
+			return nil, fmt.Errorf("gmail send_message: fetch thread: %w", err)
+		}
+		if len(threadResp.Messages) == 0 {
+			return nil, fmt.Errorf("gmail send_message: thread %s has no messages", threadID)
+		}
+
+		lastMsg := threadResp.Messages[len(threadResp.Messages)-1]
+		lastDetail := parseMessageDetail(lastMsg)
+
+		// Derive recipient from thread if not explicitly provided.
+		if to == "" {
+			to = lastDetail.ReplyTo
+		}
+		if to == "" {
+			to = lastDetail.From
+		}
+
+		// Derive subject from thread if not explicitly provided.
+		if subject == "" {
+			subject = lastDetail.Subject
+			if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+				subject = "Re: " + subject
+			}
+		}
+
+		// Build threading headers.
+		inReplyTo = lastDetail.MessageID
+		references = lastDetail.References
+		if lastDetail.MessageID != "" {
+			if references != "" {
+				references += " " + lastDetail.MessageID
+			} else {
+				references = lastDetail.MessageID
+			}
+		}
+
+		// Quote the previous message.
+		if lastDetail.Body != "" {
+			var qb strings.Builder
+			qb.WriteString("\r\n\r\nOn ")
+			qb.WriteString(lastDetail.Date)
+			qb.WriteString(", ")
+			qb.WriteString(lastDetail.From)
+			qb.WriteString(" wrote:\r\n")
+			for _, line := range strings.Split(lastDetail.Body, "\n") {
+				qb.WriteString("> ")
+				qb.WriteString(strings.TrimRight(line, "\r"))
+				qb.WriteString("\r\n")
+			}
+			quotedBody = qb.String()
+			htmlBody = buildReplyHTML(body, lastDetail.Date, lastDetail.From, lastDetail.Body)
+		}
+	}
 
 	if to == "" {
 		return nil, fmt.Errorf("gmail send_message: to is required")
@@ -323,14 +468,23 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 		return nil, fmt.Errorf("gmail send_message: subject is required")
 	}
 
-	raw := buildMIMEMessage(to, subject, body, inReplyTo)
-	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	// Fetch the sender's address for a proper From header.
+	from, _ := fetchSenderAddress(ctx, client)
+
+	fullBody := body + quotedBody
+	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
+
+	payload := map[string]string{"raw": encoded}
+	if threadID != "" {
+		payload["threadId"] = threadID
+	}
 
 	var sendResp struct {
 		ID string `json:"id"`
 	}
 	if err := gmailPOST(ctx, client, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-		map[string]string{"raw": encoded}, &sendResp); err != nil {
+		payload, &sendResp); err != nil {
 		return nil, fmt.Errorf("gmail send_message: %w", err)
 	}
 
@@ -338,6 +492,9 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 		"message_id": sendResp.ID,
 		"to":         to,
 		"subject":    subject,
+	}
+	if threadID != "" {
+		result["thread_id"] = threadID
 	}
 	summary := format.Summary("Email sent to %s (subject: %q)", to, subject)
 	return &adapters.Result{Summary: summary, Data: result}, nil
@@ -372,8 +529,10 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 		return nil, fmt.Errorf("gmail create_draft: subject is required")
 	}
 
-	raw := buildMIMEMessage(to, subject, body, inReplyTo)
-	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	from, _ := fetchSenderAddress(ctx, client)
+
+	raw := buildMIMEMessage(from, to, subject, body, "", inReplyTo, "")
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]any{
 		"message": map[string]string{"raw": encoded},
@@ -439,6 +598,94 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 		return fmt.Errorf("gmail API POST %s: %d: %s", url, resp.StatusCode, truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
+}
+
+// resolveThreadFromMessageID searches for a message by its RFC 2822 Message-ID
+// header (e.g. "<abc@mail.gmail.com>") and returns the Gmail thread ID.
+// Returns "" if the message can't be found.
+func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messageID string) string {
+	// Gmail search supports rfc822msgid: operator for Message-ID lookup.
+	query := "rfc822msgid:" + messageID
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=%s", encodeParam(query))
+	var resp struct {
+		Messages []struct {
+			ID       string `json:"id"`
+			ThreadId string `json:"threadId"`
+		} `json:"messages"`
+	}
+	if err := gmailGET(ctx, client, url, &resp); err != nil {
+		return ""
+	}
+	if len(resp.Messages) == 0 {
+		return ""
+	}
+	return resp.Messages[0].ThreadId
+}
+
+// fetchSenderAddress resolves the authenticated user's display name and email
+// for the From header (e.g. "Eric Levine <eric@clawvisor.com>").
+//
+// Strategy:
+//  1. Try Gmail sendAs settings (has display name + email together).
+//  2. If sendAs returns a bare email (no display name), supplement with Google
+//     userinfo which reliably has the account name.
+//  3. Returns "" on complete failure so callers can fall back to "me".
+func fetchSenderAddress(ctx context.Context, client *http.Client) (string, error) {
+	var email, displayName string
+
+	// Try sendAs first — it has the canonical send-from address.
+	var sendAsResp struct {
+		SendAs []struct {
+			SendAsEmail string `json:"sendAsEmail"`
+			DisplayName string `json:"displayName"`
+			IsDefault   bool   `json:"isDefault"`
+			IsPrimary   bool   `json:"isPrimary"`
+		} `json:"sendAs"`
+	}
+	if err := gmailGET(ctx, client, "https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs", &sendAsResp); err == nil {
+		for _, sa := range sendAsResp.SendAs {
+			if sa.IsDefault {
+				email = sa.SendAsEmail
+				displayName = sa.DisplayName
+				break
+			}
+		}
+		if email == "" && len(sendAsResp.SendAs) > 0 {
+			email = sendAsResp.SendAs[0].SendAsEmail
+			displayName = sendAsResp.SendAs[0].DisplayName
+		}
+	}
+
+	// If we still don't have a display name, try Google userinfo.
+	if displayName == "" {
+		if name, addr, err := fetchGoogleProfile(ctx, client); err == nil {
+			displayName = name
+			if email == "" {
+				email = addr
+			}
+		}
+	}
+
+	if email == "" {
+		return "", fmt.Errorf("could not determine sender address")
+	}
+	if displayName != "" {
+		return fmt.Sprintf("%s <%s>", displayName, email), nil
+	}
+	return email, nil
+}
+
+// fetchGoogleProfile returns the user's name and email from the Google
+// userinfo endpoint (requires the userinfo.email scope we already request).
+func fetchGoogleProfile(ctx context.Context, client *http.Client) (name, email string, err error) {
+	var info struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := gmailGET(ctx, client, "https://www.googleapis.com/oauth2/v2/userinfo", &info); err != nil {
+		return "", "", err
+	}
+	return info.Name, info.Email, nil
 }
 
 // ── Gmail API message types ───────────────────────────────────────────────────
@@ -642,33 +889,89 @@ func stripHTML(s string) string {
 
 func decodeBase64(s string) string {
 	// Gmail uses URL-safe base64
-	b, err := base64.URLEncoding.DecodeString(s)
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		b, err = base64.URLEncoding.DecodeString(s)
+	}
+	if err != nil {
+		b, err = base64.RawStdEncoding.DecodeString(s)
+	}
 	if err != nil {
 		b, err = base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return ""
-		}
+	}
+	if err != nil {
+		return ""
 	}
 	return string(b)
 }
 
-func buildMIMEMessage(to, subject, body, inReplyTo string) string {
+func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references string) string {
 	var sb strings.Builder
-	sb.WriteString("From: me\r\n")
+	if from != "" {
+		sb.WriteString("From: " + from + "\r\n")
+	} else {
+		sb.WriteString("From: me\r\n")
+	}
 	sb.WriteString("To: " + to + "\r\n")
 	sb.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	if inReplyTo != "" {
 		sb.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
 	}
+	if references != "" {
+		sb.WriteString("References: " + references + "\r\n")
+	}
 	sb.WriteString("MIME-Version: 1.0\r\n")
+	if htmlBody != "" {
+		boundary := "clawvisor-alt"
+		sb.WriteString(`Content-Type: multipart/alternative; boundary="` + boundary + `"` + "\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString("--" + boundary + "\r\n")
+		sb.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+		sb.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(quotePrintable(body))
+		sb.WriteString("\r\n--" + boundary + "\r\n")
+		sb.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+		sb.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(quotePrintable(htmlBody))
+		sb.WriteString("\r\n--" + boundary + "--\r\n")
+		return sb.String()
+	}
 	sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	sb.WriteString("\r\n")
 	sb.WriteString(body)
 	return sb.String()
 }
 
+func buildReplyHTML(body, date, from, quotedText string) string {
+	var sb strings.Builder
+	sb.WriteString(`<div dir="ltr">`)
+	sb.WriteString(textToHTML(body))
+	sb.WriteString(`</div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">On `)
+	sb.WriteString(html.EscapeString(date))
+	sb.WriteString(`, `)
+	sb.WriteString(html.EscapeString(from))
+	sb.WriteString(` wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">`)
+	sb.WriteString(textToHTML(quotedText))
+	sb.WriteString(`</blockquote></div>`)
+	return sb.String()
+}
+
+func textToHTML(s string) string {
+	return strings.ReplaceAll(html.EscapeString(s), "\n", "<br>\n")
+}
+
+func quotePrintable(s string) string {
+	var buf bytes.Buffer
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = io.WriteString(w, strings.ReplaceAll(s, "\n", "\r\n"))
+	_ = w.Close()
+	return buf.String()
+}
+
 func encodeParam(s string) string {
-	return strings.ReplaceAll(s, " ", "+")
+	return url.QueryEscape(s)
 }
 
 func paramInt(params map[string]any, key string) (int, bool) {

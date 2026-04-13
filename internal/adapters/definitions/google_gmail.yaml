@@ -15,6 +15,7 @@ auth:
       - "https://www.googleapis.com/auth/gmail.readonly"
       - "https://www.googleapis.com/auth/gmail.send"
       - "https://www.googleapis.com/auth/userinfo.email"
+      - "https://www.googleapis.com/auth/userinfo.profile"
     conditional_scopes:
       - scope: "https://www.googleapis.com/auth/gmail.compose"
         env_gate: "GMAIL_DRAFTS_ENABLED"
@@ -43,6 +44,13 @@ actions:
     params:
       message_id: { type: string, required: true }
 
+  get_thread:
+    display_name: "Get thread"
+    risk: { category: read, sensitivity: low, description: "Read all messages in an email thread" }
+    override: go
+    params:
+      thread_id: { type: string, required: true }
+
   get_attachment:
     display_name: "Get attachment"
     risk: { category: read, sensitivity: low, description: "Download an email attachment" }
@@ -56,10 +64,11 @@ actions:
     risk: { category: write, sensitivity: high, description: "Send email as the user" }
     override: go
     params:
-      to: { type: string, required: true }
-      subject: { type: string, required: true }
+      to: { type: string }
+      subject: { type: string }
       body: { type: string }
-      in_reply_to: { type: string }
+      thread_id: { type: string, description: "Gmail thread ID for replying in-thread (preferred — auto-populates to/subject, quotes previous message)" }
+      in_reply_to: { type: string, description: "RFC 2822 Message-ID to reply to (alternative to thread_id — will resolve the thread automatically)" }
 
   create_draft:
     display_name: "Create draft"
