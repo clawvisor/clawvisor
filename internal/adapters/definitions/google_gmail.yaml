@@ -37,6 +37,7 @@ actions:
     params:
       query: { type: string }
       max_results: { type: int, default: 10, max: 50 }
+      page_token: { type: string }
 
   get_message:
     display_name: "Get message"

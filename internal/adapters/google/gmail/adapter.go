@@ -160,16 +160,20 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		}
 	}
 
-	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=%d", maxResults)
+	u := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=%d", maxResults)
 	if query != "" {
-		url += "&q=" + encodeParam(query)
+		u += "&q=" + encodeParam(query)
+	}
+	if pt, _ := params["page_token"].(string); pt != "" {
+		u += "&pageToken=" + encodeParam(pt)
 	}
 
 	var listResp struct {
 		Messages           []struct{ ID string `json:"id"` } `json:"messages"`
-		ResultSizeEstimate int                               `json:"resultSizeEstimate"`
+		NextPageToken      string                             `json:"nextPageToken"`
+		ResultSizeEstimate int                                `json:"resultSizeEstimate"`
 	}
-	if err := gmailGET(ctx, client, url, &listResp); err != nil {
+	if err := gmailGET(ctx, client, u, &listResp); err != nil {
 		return nil, fmt.Errorf("gmail list_messages: %w", err)
 	}
 
@@ -200,7 +204,12 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		summary = format.Summary("%d of ~%d messages (%d unread)", len(items), total, unread)
 	}
 
-	return &adapters.Result{Summary: summary, Data: items}, nil
+	data := map[string]any{"messages": items}
+	if listResp.NextPageToken != "" {
+		data["next_page_token"] = listResp.NextPageToken
+	}
+
+	return &adapters.Result{Summary: summary, Data: data}, nil
 }
 
 // ── get_message ───────────────────────────────────────────────────────────────
