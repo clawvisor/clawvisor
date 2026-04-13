@@ -591,9 +591,20 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		scopes := entry.Scopes
-		if len(scopes) == 0 {
-			scopes = adapter.RequiredScopes()
+		// Use the scopes actually granted by the user. Google returns them in
+		// the token exchange response as a space-separated "scope" field. Users
+		// can deselect individual scopes on the consent screen, so the granted
+		// set may be a subset of what we requested.
+		var scopes []string
+		if grantedRaw, ok := token.Extra("scope").(string); ok && grantedRaw != "" {
+			scopes = strings.Split(grantedRaw, " ")
+			sort.Strings(scopes)
+		} else {
+			// Fallback for providers that don't return scope in the token response.
+			scopes = entry.Scopes
+			if len(scopes) == 0 {
+				scopes = adapter.RequiredScopes()
+			}
 		}
 
 		if token.RefreshToken == "" {

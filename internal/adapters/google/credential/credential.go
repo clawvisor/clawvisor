@@ -113,6 +113,21 @@ func FetchGoogleEmail(ctx context.Context, client *http.Client) (string, error) 
 	return info.Email, nil
 }
 
+// MissingScopes returns the subset of required scopes not present in existing.
+func MissingScopes(existing, required []string) []string {
+	set := make(map[string]bool, len(existing))
+	for _, s := range existing {
+		set[s] = true
+	}
+	var missing []string
+	for _, s := range required {
+		if !set[s] {
+			missing = append(missing, s)
+		}
+	}
+	return missing
+}
+
 // HasAllScopes returns true if existing contains all of the required scopes.
 func HasAllScopes(existing, required []string) bool {
 	set := make(map[string]bool, len(existing))

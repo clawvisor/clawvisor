@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
@@ -147,6 +149,13 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
 				code, userErr, _ := serviceNotActivatedResponse(ctx, h.vault, h.st, h.adapterReg, agent.UserID, serviceType, serviceAlias, a.Service, adapter)
 				writeError(w, http.StatusBadRequest, code, userErr)
+				return
+			}
+			if missing := h.missingCredentialScopes(ctx, agent.UserID, serviceType, serviceAlias, adapter); len(missing) > 0 {
+				writeError(w, http.StatusBadRequest, "MISSING_SCOPES",
+					fmt.Sprintf("service %q is connected but missing required OAuth scopes: %s — "+
+						"the user needs to reconnect the service to grant these permissions",
+						a.Service, strings.Join(missing, ", ")))
 				return
 			}
 		}
@@ -1240,6 +1249,27 @@ func (h *TasksHandler) serviceActivated(ctx context.Context, userID, serviceType
 	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
 	_, err := h.vault.Get(ctx, userID, vKey)
 	return err == nil
+}
+
+// missingCredentialScopes loads the vault credential for a service and returns
+// any required OAuth scopes that are not present. Returns nil when the adapter
+// has no required scopes or the credential is missing (already caught by
+// serviceActivated).
+func (h *TasksHandler) missingCredentialScopes(ctx context.Context, userID, serviceType, alias string, adapter adapters.Adapter) []string {
+	required := adapter.RequiredScopes()
+	if len(required) == 0 {
+		return nil
+	}
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceType, alias)
+	credBytes, err := h.vault.Get(ctx, userID, vKey)
+	if err != nil || len(credBytes) == 0 {
+		return nil
+	}
+	cred, err := credential.Parse(credBytes)
+	if err != nil {
+		return nil
+	}
+	return credential.MissingScopes(cred.Scopes, required)
 }
 
 // ── Task scope check helper ───────────────────────────────────────────────────
