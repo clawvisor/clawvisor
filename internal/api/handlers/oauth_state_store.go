@@ -111,6 +111,7 @@ type oauthStateJSON struct {
 	CLICallback  string            `json:"cli_callback,omitempty"`
 	Scopes       []string          `json:"scopes,omitempty"`
 	Config       map[string]string `json:"config,omitempty"`
+	TokenPath    string            `json:"token_path,omitempty"`
 	ExpiresAt    time.Time         `json:"expires_at"`
 }
 
@@ -123,6 +124,7 @@ func marshalOAuthState(e oauthStateEntry) ([]byte, error) {
 		CLICallback:  e.CLICallback,
 		Scopes:       e.Scopes,
 		Config:       e.Config,
+		TokenPath:    e.TokenPath,
 		ExpiresAt:    e.ExpiresAt,
 	})
 }
@@ -140,6 +142,7 @@ func unmarshalOAuthState(data []byte) (oauthStateEntry, error) {
 		CLICallback:  j.CLICallback,
 		Scopes:       j.Scopes,
 		Config:       j.Config,
+		TokenPath:    j.TokenPath,
 		ExpiresAt:    j.ExpiresAt,
 	}, nil
 }
