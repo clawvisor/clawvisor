@@ -2,13 +2,17 @@
 package gmail
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -383,7 +387,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	// Resolve thread context for replies. Prefer thread_id (full context);
 	// fall back to in_reply_to (legacy — search for the referenced message
 	// to discover its thread).
-	var inReplyTo, references, quotedBody string
+	var inReplyTo, references, quotedBody, htmlBody string
 
 	// If we have in_reply_to but no thread_id, search for the message to
 	// discover its thread_id so we get full threading + quoting.
@@ -453,6 +457,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 				qb.WriteString("\r\n")
 			}
 			quotedBody = qb.String()
+			htmlBody = buildReplyHTML(body, lastDetail.Date, lastDetail.From, lastDetail.Body)
 		}
 	}
 
@@ -467,7 +472,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	from, _ := fetchSenderAddress(ctx, client)
 
 	fullBody := body + quotedBody
-	raw := buildMIMEMessage(from, to, subject, fullBody, inReplyTo, references)
+	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]string{"raw": encoded}
@@ -526,7 +531,7 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 
 	from, _ := fetchSenderAddress(ctx, client)
 
-	raw := buildMIMEMessage(from, to, subject, body, inReplyTo, "")
+	raw := buildMIMEMessage(from, to, subject, body, "", inReplyTo, "")
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]any{
@@ -608,7 +613,10 @@ func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messag
 			ThreadId string `json:"threadId"`
 		} `json:"messages"`
 	}
-	if err := gmailGET(ctx, client, url, &resp); err != nil || len(resp.Messages) == 0 {
+	if err := gmailGET(ctx, client, url, &resp); err != nil {
+		return ""
+	}
+	if len(resp.Messages) == 0 {
 		return ""
 	}
 	return resp.Messages[0].ThreadId
@@ -881,17 +889,23 @@ func stripHTML(s string) string {
 
 func decodeBase64(s string) string {
 	// Gmail uses URL-safe base64
-	b, err := base64.URLEncoding.DecodeString(s)
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		b, err = base64.URLEncoding.DecodeString(s)
+	}
+	if err != nil {
+		b, err = base64.RawStdEncoding.DecodeString(s)
+	}
 	if err != nil {
 		b, err = base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return ""
-		}
+	}
+	if err != nil {
+		return ""
 	}
 	return string(b)
 }
 
-func buildMIMEMessage(from, to, subject, body, inReplyTo, references string) string {
+func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references string) string {
 	var sb strings.Builder
 	if from != "" {
 		sb.WriteString("From: " + from + "\r\n")
@@ -907,14 +921,57 @@ func buildMIMEMessage(from, to, subject, body, inReplyTo, references string) str
 		sb.WriteString("References: " + references + "\r\n")
 	}
 	sb.WriteString("MIME-Version: 1.0\r\n")
+	if htmlBody != "" {
+		boundary := "clawvisor-alt"
+		sb.WriteString(`Content-Type: multipart/alternative; boundary="` + boundary + `"` + "\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString("--" + boundary + "\r\n")
+		sb.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+		sb.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(quotePrintable(body))
+		sb.WriteString("\r\n--" + boundary + "\r\n")
+		sb.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+		sb.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(quotePrintable(htmlBody))
+		sb.WriteString("\r\n--" + boundary + "--\r\n")
+		return sb.String()
+	}
 	sb.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	sb.WriteString("\r\n")
 	sb.WriteString(body)
 	return sb.String()
 }
 
+func buildReplyHTML(body, date, from, quotedText string) string {
+	var sb strings.Builder
+	sb.WriteString(`<div dir="ltr">`)
+	sb.WriteString(textToHTML(body))
+	sb.WriteString(`</div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">On `)
+	sb.WriteString(html.EscapeString(date))
+	sb.WriteString(`, `)
+	sb.WriteString(html.EscapeString(from))
+	sb.WriteString(` wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">`)
+	sb.WriteString(textToHTML(quotedText))
+	sb.WriteString(`</blockquote></div>`)
+	return sb.String()
+}
+
+func textToHTML(s string) string {
+	return strings.ReplaceAll(html.EscapeString(s), "\n", "<br>\n")
+}
+
+func quotePrintable(s string) string {
+	var buf bytes.Buffer
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = io.WriteString(w, strings.ReplaceAll(s, "\n", "\r\n"))
+	_ = w.Close()
+	return buf.String()
+}
+
 func encodeParam(s string) string {
-	return strings.ReplaceAll(s, " ", "+")
+	return url.QueryEscape(s)
 }
 
 func paramInt(params map[string]any, key string) (int, bool) {
