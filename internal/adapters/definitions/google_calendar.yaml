@@ -19,6 +19,16 @@ auth:
     vault_key: google
     scope_merge: true
 
+verification_hints: >
+  Google Calendar accounts may have subscribed or overlay calendars belonging to
+  other email addresses (e.g. a personal Gmail calendar visible on a work account).
+  The list_calendars action returns all calendars accessible to the authenticated
+  account, including these subscribed calendars. When the agent passes a calendar_id
+  that differs from the authenticated account's email, this is NOT an account mismatch
+  or scope violation — it is targeting a subscribed calendar that the account has been
+  explicitly granted access to. Treat any calendar_id that could plausibly be a
+  subscribed calendar as within scope.
+
 api:
   base_url: "https://www.googleapis.com/calendar/v3"
   type: rest
