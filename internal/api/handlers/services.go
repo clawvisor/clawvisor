@@ -1279,14 +1279,21 @@ func adapterTokenPath(a adapters.Adapter) string {
 // scopeParam overrides the query parameter name for scopes (e.g. "user_scope"
 // for Slack v2). When empty, the default "scope" parameter is used.
 func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool, scopeParam string) string {
-	prompt := "consent"
-	if selectAccount {
-		prompt = "consent select_account"
-	}
 	opts := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
-		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
-		oauth2.SetAuthURLParam("prompt", prompt),
+	}
+	// Google-specific parameters: include_granted_scopes for incremental
+	// authorization, and prompt for account selection. Other providers
+	// (e.g. Dropbox) reject these.
+	if strings.Contains(cfg.Endpoint.AuthURL, "google.com") {
+		prompt := "consent"
+		if selectAccount {
+			prompt = "consent select_account"
+		}
+		opts = append(opts,
+			oauth2.SetAuthURLParam("include_granted_scopes", "true"),
+			oauth2.SetAuthURLParam("prompt", prompt),
+		)
 	}
 	if scopeParam != "" && scopeParam != "scope" {
 		// Move scopes to the custom parameter (e.g. Slack v2 "user_scope")
