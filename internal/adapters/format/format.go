@@ -32,6 +32,19 @@ func SanitizeText(s string, maxLen int) string {
 	return s
 }
 
+// SanitizeHeader removes dangerous Unicode and truncates, but does NOT strip
+// HTML. Use this for email header fields (From, To, Cc, Reply-To) where
+// angle-bracket addresses like <user@example.com> must be preserved.
+func SanitizeHeader(s string, maxLen int) string {
+	s = removeDangerousUnicode(s)
+	s = strings.TrimSpace(s)
+	if maxLen > 0 && utf8.RuneCountInString(s) > maxLen {
+		runes := []rune(s)
+		s = string(runes[:maxLen]) + " [truncated]"
+	}
+	return s
+}
+
 // Summary builds a one-line summary using fmt.Sprintf-style formatting.
 func Summary(template string, args ...any) string {
 	if len(args) == 0 {

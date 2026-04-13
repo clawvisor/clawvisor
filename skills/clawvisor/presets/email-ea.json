@@ -16,9 +16,15 @@
     },
     {
       "service": "google.gmail",
+      "action": "get_thread",
+      "auto_execute": true,
+      "expected_use": "Read all messages in an email thread to understand the full conversation context. Used for thread summaries, tracking back-and-forth exchanges, identifying all participants, and building context before composing a reply. Any thread referenced by the owner or discovered via search."
+    },
+    {
+      "service": "google.gmail",
       "action": "send_message",
       "auto_execute": false,
-      "expected_use": "Send emails only when the owner explicitly instructs. Includes replying to threads, CCing colleagues, sending intros, following up with any contact."
+      "expected_use": "Send emails only when the owner explicitly instructs. Includes composing new emails and replying to threads (pass thread_id to reply in-thread with proper threading headers and quoted content). CCing colleagues, sending intros, following up with any contact."
     },
     {
       "service": "google.gmail",

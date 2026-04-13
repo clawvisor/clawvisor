@@ -2,6 +2,7 @@ package gmail
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -187,5 +188,104 @@ func TestExtractAttachments_SkipsPartsWithoutAttachmentID(t *testing.T) {
 	}
 	if got[0].Filename != "real.pdf" {
 		t.Errorf("attachment = %q, want %q", got[0].Filename, "real.pdf")
+	}
+}
+
+func TestParseMessageDetail_ExtractsAllHeaders(t *testing.T) {
+	msg := gmailMessage{
+		ID:       "msg-1",
+		ThreadId: "thread-1",
+		LabelIds: []string{"INBOX", "UNREAD"},
+		Payload: gmailPayload{
+			MimeType: "text/plain",
+			Headers: []gmailHeader{
+				{Name: "From", Value: "alice@example.com"},
+				{Name: "To", Value: "bob@example.com"},
+				{Name: "Cc", Value: "charlie@example.com"},
+				{Name: "Reply-To", Value: "alice-reply@example.com"},
+				{Name: "Subject", Value: "Test subject"},
+				{Name: "Date", Value: "Mon, 7 Apr 2026 12:00:00 +0000"},
+				{Name: "Message-ID", Value: "<abc123@mail.gmail.com>"},
+				{Name: "References", Value: "<ref1@mail.gmail.com> <ref2@mail.gmail.com>"},
+			},
+			Body: gmailBody{Data: b64("Hello!")},
+		},
+	}
+
+	detail := parseMessageDetail(msg)
+
+	if detail.ID != "msg-1" {
+		t.Errorf("ID = %q, want %q", detail.ID, "msg-1")
+	}
+	if detail.ThreadID != "thread-1" {
+		t.Errorf("ThreadID = %q, want %q", detail.ThreadID, "thread-1")
+	}
+	if detail.From != "alice@example.com" {
+		t.Errorf("From = %q, want %q", detail.From, "alice@example.com")
+	}
+	if detail.To != "bob@example.com" {
+		t.Errorf("To = %q, want %q", detail.To, "bob@example.com")
+	}
+	if detail.Cc != "charlie@example.com" {
+		t.Errorf("Cc = %q, want %q", detail.Cc, "charlie@example.com")
+	}
+	if detail.ReplyTo != "alice-reply@example.com" {
+		t.Errorf("ReplyTo = %q, want %q", detail.ReplyTo, "alice-reply@example.com")
+	}
+	if detail.Subject != "Test subject" {
+		t.Errorf("Subject = %q, want %q", detail.Subject, "Test subject")
+	}
+	if detail.MessageID != "<abc123@mail.gmail.com>" {
+		t.Errorf("MessageID = %q, want %q", detail.MessageID, "<abc123@mail.gmail.com>")
+	}
+	if detail.References != "<ref1@mail.gmail.com> <ref2@mail.gmail.com>" {
+		t.Errorf("References = %q, want %q", detail.References, "<ref1@mail.gmail.com> <ref2@mail.gmail.com>")
+	}
+	if !detail.IsUnread {
+		t.Error("IsUnread should be true")
+	}
+	if detail.Body != "Hello!" {
+		t.Errorf("Body = %q, want %q", detail.Body, "Hello!")
+	}
+}
+
+func TestBuildMIMEMessage_WithReferences(t *testing.T) {
+	msg := buildMIMEMessage(
+		"Alice Smith <alice@example.com>",
+		"bob@example.com",
+		"Re: Test",
+		"Reply body",
+		"<orig@mail.gmail.com>",
+		"<ref1@mail.gmail.com> <orig@mail.gmail.com>",
+	)
+
+	if !strings.Contains(msg, "From: Alice Smith <alice@example.com>") {
+		t.Error("missing From header with display name")
+	}
+	if !strings.Contains(msg, "In-Reply-To: <orig@mail.gmail.com>") {
+		t.Error("missing In-Reply-To header")
+	}
+	if !strings.Contains(msg, "References: <ref1@mail.gmail.com> <orig@mail.gmail.com>") {
+		t.Error("missing References header")
+	}
+	if !strings.Contains(msg, "To: bob@example.com") {
+		t.Error("missing To header")
+	}
+	if !strings.Contains(msg, "Reply body") {
+		t.Error("missing body")
+	}
+}
+
+func TestBuildMIMEMessage_WithoutReferences(t *testing.T) {
+	msg := buildMIMEMessage("", "bob@example.com", "Hello", "Body", "", "")
+
+	if !strings.Contains(msg, "From: me") {
+		t.Error("should fall back to From: me when from is empty")
+	}
+	if strings.Contains(msg, "In-Reply-To:") {
+		t.Error("should not have In-Reply-To header")
+	}
+	if strings.Contains(msg, "References:") {
+		t.Error("should not have References header")
 	}
 }
