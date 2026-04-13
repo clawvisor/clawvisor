@@ -1049,6 +1049,55 @@ func TestYAMLAdapter_PathParamDefault(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_PathParamEscapesReservedChars(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := "/v3/calendars/en.usa%23holiday@group.v.calendar.google.com/events"
+		if r.URL.EscapedPath() != want {
+			t.Errorf("unexpected escaped path: %s (want %s)", r.URL.EscapedPath(), want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"items": []any{},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "google.calendar"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL + "/v3", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list_events": {
+				Method: "GET",
+				Path:   "/calendars/{{.calendar_id}}/events",
+				Params: map[string]yamldef.Param{
+					"calendar_id": {Type: "string", Default: "primary", Location: "path"},
+				},
+				Response: yamldef.ResponseDef{
+					DataPath: "items",
+					Summary:  "{{len .Data}} event(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "list_events",
+		Params: map[string]any{
+			"calendar_id": "en.usa#holiday@group.v.calendar.google.com",
+		},
+		Credential: testCred("test-token"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
 func TestYAMLAdapter_UnresolvedPathParam(t *testing.T) {
 	// When a required path param is missing and has no default, the error
 	// should mention the parameter name, not silently send a broken URL.
