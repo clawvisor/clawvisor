@@ -453,7 +453,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 
 	fullBody := body + quotedBody
 	raw := buildMIMEMessage(from, to, subject, fullBody, inReplyTo, references)
-	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]string{"raw": encoded}
 	if threadID != "" {
@@ -512,7 +512,7 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 	from, _ := fetchSenderAddress(ctx, client)
 
 	raw := buildMIMEMessage(from, to, subject, body, inReplyTo, "")
-	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]any{
 		"message": map[string]string{"raw": encoded},
