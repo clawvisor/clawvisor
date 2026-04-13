@@ -113,18 +113,49 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Service == "" || req.Action == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service and action are required")
-		return
+
+	// Collect all missing top-level required fields.
+	{
+		var missing []string
+		if req.Service == "" {
+			missing = append(missing, "service")
+		}
+		if req.Action == "" {
+			missing = append(missing, "action")
+		}
+		if req.Reason == "" {
+			missing = append(missing, "reason")
+		}
+		if req.TaskID == "" {
+			missing = append(missing, "task_id")
+		}
+		if len(missing) > 0 {
+			code := "INVALID_REQUEST"
+			if len(missing) == 1 && missing[0] == "reason" {
+				code = "MISSING_REASON"
+			} else if len(missing) == 1 && missing[0] == "task_id" {
+				code = "TASK_REQUIRED"
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         "missing required fields: " + strings.Join(missing, ", "),
+				Code:          code,
+				MissingFields: missing,
+				Hint:          "Every gateway request must specify the target service, action, a reason for the request, and the task_id from an approved task.",
+				Example: map[string]any{
+					"service": "google.gmail",
+					"action":  "list_messages",
+					"reason":  "Fetch recent emails to summarize for the user",
+					"task_id": "<task_id from POST /api/tasks>",
+					"params":  map[string]any{"max_results": 10},
+				},
+			})
+			return
+		}
 	}
 
 	middleware.AddLogField(ctx, "service", req.Service)
 	middleware.AddLogField(ctx, "action", req.Action)
 
-	if req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "MISSING_REASON", "reason is required on every gateway request")
-		return
-	}
 	if req.Context.CallbackURL != "" {
 		if err := callback.ValidateCallbackURL(req.Context.CallbackURL); err != nil {
 			h.logger.Warn("callback URL blocked by SSRF policy",
@@ -264,13 +295,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Step 2: Task ID required ─────────────────────────────────────────────
-	if req.TaskID == "" {
-		outDecision, outOutcome = "reject", "validation_error"
-		writeError(w, http.StatusBadRequest, "TASK_REQUIRED",
-			"task_id is required; create a task first via POST /api/tasks")
-		return
-	}
+	// ── Step 2: Task ID already validated above ─────────────────────────────
 
 	// ── Step 3: Hardcoded approval check ─────────────────────────────────────
 	hardcoded := RequiresHardcodedApproval(serviceType, req.Action)
@@ -282,12 +307,20 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		task, taskErr := h.store.GetTask(ctx, req.TaskID)
 		if taskErr != nil {
 			outDecision, outOutcome = "reject", "validation_error"
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "task not found")
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: fmt.Sprintf("task %q not found", req.TaskID),
+				Code:  "INVALID_REQUEST",
+				Hint:  "The task_id may be incorrect, or the task may have been deleted. Create a new task via POST /api/tasks and use the returned task_id.",
+			})
 			return
 		}
 		if task.UserID != agent.UserID {
 			outDecision, outOutcome = "reject", "forbidden"
-			writeError(w, http.StatusForbidden, "FORBIDDEN", "task does not belong to this agent's user")
+			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
+				Error: "task does not belong to this agent's user",
+				Code:  "FORBIDDEN",
+				Hint:  "This agent's bearer token is associated with a different user than the task owner. Ensure you are using the correct agent token and task_id.",
+			})
 			return
 		}
 		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
@@ -295,7 +328,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			resp := map[string]any{
 				"status":  "task_expired",
 				"task_id": req.TaskID,
-				"message": "Task has expired. Use POST /api/tasks/{id}/expand to extend.",
+				"message": "Task has expired. Create a new task via POST /api/tasks, or use POST /api/tasks/{id}/expand to request an extension before expiry.",
 			}
 			h.maybeInjectNPS(ctx, resp, agent.ID)
 			writeJSON(w, http.StatusOK, resp)
@@ -303,8 +336,24 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if task.Status != "active" {
 			outDecision, outOutcome = "reject", "invalid_state"
-			writeError(w, http.StatusConflict, "INVALID_STATE",
-				fmt.Sprintf("task is %s, not active", task.Status))
+			hint := "Create a new task via POST /api/tasks."
+			switch task.Status {
+			case "pending_approval":
+				hint = "The task is still waiting for user approval. Poll with GET /api/tasks/{id}?wait=true or wait for the callback."
+			case "denied":
+				hint = "The user denied this task. Create a new task with a revised purpose/scope."
+			case "completed":
+				hint = "This task was already marked complete. Create a new task for additional work."
+			case "revoked":
+				hint = "The user revoked this task. Create a new task if you need to continue."
+			case "pending_scope_expansion":
+				hint = "A scope expansion is pending approval. Wait for it to be approved before making requests."
+			}
+			writeDetailedError(w, http.StatusConflict, apiErrorDetail{
+				Error: fmt.Sprintf("task is %s, not active", task.Status),
+				Code:  "INVALID_STATE",
+				Hint:  hint,
+			})
 			return
 		}
 
@@ -437,6 +486,22 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						"error":      userErr,
 						"code":       code,
 					})
+					return
+				}
+			}
+
+			// Validate required params before execution.
+			if execAdapter, adOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); adOK {
+				if paramErr := validateRequestParams(execAdapter, req.Action, req.Params); paramErr != nil {
+					errMsg := paramErr.Error
+					e := baseEntry("reject", "validation_error", taskIDPtr)
+					e.DurationMS = int(time.Since(start).Milliseconds())
+					e.ErrorMsg = &errMsg
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
+					}
+					h.publishAuditAndQueue(agent.UserID, req.TaskID)
+					writeDetailedError(w, http.StatusBadRequest, *paramErr)
 					return
 				}
 			}
@@ -1453,6 +1518,58 @@ func adapterSupportsAction(adapter adapters.Adapter, action string) bool {
 		}
 	}
 	return false
+}
+
+// validateRequestParams checks the request params against the adapter's
+// parameter definitions (if available). Returns an apiErrorDetail if required
+// params are missing, or nil if everything looks good.
+func validateRequestParams(adapter adapters.Adapter, action string, params map[string]any) *apiErrorDetail {
+	describer, ok := adapter.(adapters.ActionParamDescriber)
+	if !ok {
+		return nil
+	}
+	paramDefs := describer.ActionParams(action)
+	if len(paramDefs) == 0 {
+		return nil
+	}
+
+	var missing []string
+	for _, p := range paramDefs {
+		if !p.Required {
+			continue
+		}
+		if _, provided := params[p.Name]; !provided {
+			missing = append(missing, p.Name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	// Build an example showing all params with placeholder values.
+	example := make(map[string]any, len(paramDefs))
+	for _, p := range paramDefs {
+		switch p.Type {
+		case "int":
+			example[p.Name] = 10
+		case "bool":
+			example[p.Name] = true
+		case "object":
+			example[p.Name] = map[string]any{}
+		case "array":
+			example[p.Name] = []any{}
+		default:
+			example[p.Name] = "<" + p.Type + ">"
+		}
+	}
+
+	return &apiErrorDetail{
+		Error:         fmt.Sprintf("missing required params: %s", strings.Join(missing, ", ")),
+		Code:          "INVALID_PARAMS",
+		MissingFields: missing,
+		Hint:          "These parameters are required for this action. Check the service catalog for parameter details.",
+		Example:       map[string]any{"params": example},
+	}
 }
 
 func nullableStr(s string) *string {

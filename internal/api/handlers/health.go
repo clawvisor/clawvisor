@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -89,16 +92,129 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+// apiErrorDetail is an enriched error response with actionable debugging info.
+// Fields beyond error/code are omitted when empty.
+type apiErrorDetail struct {
+	Error         string         `json:"error"`
+	Code          string         `json:"code"`
+	Hint          string         `json:"hint,omitempty"`
+	MissingFields []string       `json:"missing_fields,omitempty"`
+	Example       map[string]any `json:"example,omitempty"`
+	Available     []string       `json:"available,omitempty"`
+}
+
+// writeDetailedError writes an enriched error response with optional actionable fields.
+func writeDetailedError(w http.ResponseWriter, status int, d apiErrorDetail) {
+	writeJSON(w, status, d)
+}
+
 // maxRequestBodySize is the default limit for JSON request bodies (1 MB).
 const maxRequestBodySize = 1 << 20
 
 // decodeJSON decodes the request body into v.
-// It enforces a 1 MB body size limit. On failure it writes a 400 error and returns false.
+// It enforces a 1 MB body size limit. On failure it writes a detailed error and returns false.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		writeDetailedError(w, http.StatusBadRequest, diagnoseJSONError(err))
 		return false
 	}
 	return true
+}
+
+// diagnoseJSONError inspects a JSON decode error and returns an actionable error detail.
+func diagnoseJSONError(err error) apiErrorDetail {
+	d := apiErrorDetail{
+		Error: "invalid JSON body",
+		Code:  "INVALID_REQUEST",
+	}
+
+	switch {
+	case errors.Is(err, io.EOF):
+		d.Error = "request body is empty"
+		d.Hint = "Send a JSON object in the request body. Ensure Content-Type is application/json."
+		return d
+
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		d.Error = "request body contains incomplete JSON"
+		d.Hint = "The JSON is truncated — check for missing closing braces or brackets."
+		return d
+	}
+
+	msg := err.Error()
+
+	// http.MaxBytesError
+	if strings.Contains(msg, "http: request body too large") {
+		d.Error = "request body exceeds the 1 MB size limit"
+		d.Hint = "Reduce the size of params or split into multiple requests."
+		return d
+	}
+
+	// json.SyntaxError
+	var synErr *json.SyntaxError
+	if errors.As(err, &synErr) {
+		d.Error = "JSON syntax error at byte offset " + strings.TrimPrefix(msg, "invalid character ")
+		d.Hint = diagnoseJSONSyntaxHint(msg)
+		return d
+	}
+
+	// json.UnmarshalTypeError
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		if typeErr.Field == "" {
+			// Top-level type mismatch — the caller sent a string/array/number instead of an object.
+			d.Error = "expected a JSON object, got " + typeErr.Value
+			d.Hint = "The request body must be a JSON object ({...}), not a " + typeErr.Value + ". Wrap your data in an object with the required fields."
+		} else {
+			d.Error = "wrong type for field \"" + typeErr.Field + "\""
+			d.Hint = "Expected " + friendlyTypeName(typeErr.Type.String()) + " but got " + typeErr.Value + ". Check that field values match the expected types."
+		}
+		return d
+	}
+
+	// Fallback: include the raw error for anything else.
+	d.Error = "invalid JSON body: " + msg
+	d.Hint = "Ensure the body is valid JSON. Common issues: trailing commas, single quotes instead of double quotes, unquoted keys."
+	return d
+}
+
+// friendlyTypeName converts Go type names into JSON-friendly descriptions.
+func friendlyTypeName(goType string) string {
+	switch {
+	case goType == "string":
+		return "a string"
+	case goType == "int", goType == "int64", goType == "float64":
+		return "a number"
+	case goType == "bool":
+		return "a boolean"
+	case strings.HasPrefix(goType, "map["):
+		return "an object"
+	case strings.HasPrefix(goType, "[]"):
+		return "an array"
+	case strings.Contains(goType, "."):
+		// Struct types like "store.TaskAction" — strip the package prefix
+		// and convert to a friendlier form.
+		parts := strings.SplitN(goType, ".", 2)
+		return "an object (" + parts[len(parts)-1] + ")"
+	default:
+		return goType
+	}
+}
+
+// diagnoseJSONSyntaxHint returns a human-friendly hint for common JSON syntax problems.
+func diagnoseJSONSyntaxHint(msg string) string {
+	switch {
+	case strings.Contains(msg, "looking for beginning of value"):
+		return "Check for trailing commas, missing values, or a non-JSON body. Ensure Content-Type is application/json."
+	case strings.Contains(msg, "looking for beginning of object key string"):
+		return "Object keys must be double-quoted strings. Check for trailing commas after the last field or single-quoted keys."
+	case strings.Contains(msg, "after object key"):
+		return "Expected ':' after object key. Check that keys and values are separated by colons."
+	case strings.Contains(msg, "after object key:value pair"):
+		return "Expected ',' or '}' after a key-value pair. Check for missing commas between fields."
+	case strings.Contains(msg, "after array element"):
+		return "Expected ',' or ']' after an array element. Check for missing commas between elements."
+	default:
+		return "Check the JSON syntax near the reported position. Common issues: trailing commas, single quotes, unquoted keys."
+	}
 }

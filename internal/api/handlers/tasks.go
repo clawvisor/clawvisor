@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -116,17 +117,55 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+
+	// Collect all missing top-level required fields at once so the caller
+	// can fix everything in a single round-trip.
+	var missingFields []string
 	if req.Purpose == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "purpose is required")
-		return
+		missingFields = append(missingFields, "purpose")
 	}
 	if len(req.AuthorizedActions) == 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "authorized_actions is required and must be non-empty")
+		missingFields = append(missingFields, "authorized_actions")
+	}
+	if len(missingFields) > 0 {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         "missing required fields: " + strings.Join(missingFields, ", "),
+			Code:          "INVALID_REQUEST",
+			Hint:          "A task requires a purpose describing what the agent will do and at least one authorized action.",
+			MissingFields: missingFields,
+			Example: map[string]any{
+				"purpose": "Read and summarize recent emails",
+				"authorized_actions": []map[string]any{
+					{"service": "google.gmail", "action": "list_messages", "auto_execute": true},
+				},
+			},
+		})
 		return
 	}
 
 	// Validate each authorized action.
-	for _, a := range req.AuthorizedActions {
+	for i, a := range req.AuthorizedActions {
+		// Validate that each action entry has the required service and action fields.
+		if a.Service == "" || a.Action == "" {
+			var actionMissing []string
+			if a.Service == "" {
+				actionMissing = append(actionMissing, "service")
+			}
+			if a.Action == "" {
+				actionMissing = append(actionMissing, "action")
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         fmt.Sprintf("authorized_actions[%d] is missing required fields: %s", i, strings.Join(actionMissing, ", ")),
+				Code:          "INVALID_REQUEST",
+				MissingFields: actionMissing,
+				Hint:          "Each authorized action must specify a service ID and an action name (or \"*\" for all actions).",
+				Example: map[string]any{
+					"service": "google.gmail", "action": "list_messages", "auto_execute": true,
+				},
+			})
+			return
+		}
+
 		serviceType, serviceAlias := parseServiceAlias(a.Service)
 
 		// Guard virtual services (file, bash, search, web, agent, unknown) are
@@ -135,13 +174,26 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if !isGuardVirtualService(serviceType) {
 			adapter, ok := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 			if !ok {
-				writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-					fmt.Sprintf("unknown service %q", a.Service))
+				available := h.adapterReg.SupportedServices()
+				var ids []string
+				for _, s := range available {
+					ids = append(ids, s.ID)
+				}
+				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+					Error:     fmt.Sprintf("unknown service %q in authorized_actions[%d]", a.Service, i),
+					Code:      "INVALID_REQUEST",
+					Hint:      "Use the service ID from the catalog (GET /api/skill/catalog). Service IDs look like \"google.gmail\", not display names like \"Gmail\".",
+					Available: ids,
+				})
 				return
 			}
-			if !adapterSupportsAction(adapter, a.Action) {
-				writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-					fmt.Sprintf("service %q does not support action %q", serviceType, a.Action))
+			if a.Action != "*" && !adapterSupportsAction(adapter, a.Action) {
+				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+					Error:     fmt.Sprintf("service %q does not support action %q", serviceType, a.Action),
+					Code:      "INVALID_REQUEST",
+					Hint:      fmt.Sprintf("Use \"*\" to authorize all actions, or pick from the supported actions for this service."),
+					Available: adapter.SupportedActions(),
+				})
 				return
 			}
 			if !h.serviceActivated(ctx, agent.UserID, serviceType, serviceAlias, adapter) {
@@ -151,21 +203,40 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if a.AutoExecute && RequiresHardcodedApproval(a.Service, a.Action) {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("action %s:%s has hardcoded approval — auto_execute must be false", a.Service, a.Action))
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: fmt.Sprintf("action %s:%s requires per-request human approval — auto_execute must be false", a.Service, a.Action),
+				Code:  "INVALID_REQUEST",
+				Hint:  "Some actions (like sending iMessages) always require individual approval for safety. Set auto_execute to false for this action.",
+				Example: map[string]any{
+					"service": a.Service, "action": a.Action, "auto_execute": false,
+				},
+			})
 			return
 		}
 	}
 
 	// Validate planned calls: each must reference a service:action covered by authorized_actions.
-	for _, pc := range req.PlannedCalls {
-		if pc.Service == "" || pc.Action == "" {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "planned_calls entries must have service and action")
-			return
+	for i, pc := range req.PlannedCalls {
+		var pcMissing []string
+		if pc.Service == "" {
+			pcMissing = append(pcMissing, "service")
+		}
+		if pc.Action == "" {
+			pcMissing = append(pcMissing, "action")
 		}
 		if pc.Reason == "" {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("planned_calls entry %s:%s must have a reason", pc.Service, pc.Action))
+			pcMissing = append(pcMissing, "reason")
+		}
+		if len(pcMissing) > 0 {
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         fmt.Sprintf("planned_calls[%d] is missing required fields: %s", i, strings.Join(pcMissing, ", ")),
+				Code:          "INVALID_REQUEST",
+				MissingFields: pcMissing,
+				Hint:          "Each planned call must specify the service, action, and a reason explaining why this call will be made.",
+				Example: map[string]any{
+					"service": "google.gmail", "action": "send_message", "reason": "Send the daily summary email to the user",
+				},
+			})
 			return
 		}
 		covered := false
@@ -178,8 +249,16 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !covered {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-				fmt.Sprintf("planned_calls entry %s:%s is not covered by authorized_actions", pc.Service, pc.Action))
+			var authorizedStrs []string
+			for _, a := range req.AuthorizedActions {
+				authorizedStrs = append(authorizedStrs, a.Service+":"+a.Action)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:     fmt.Sprintf("planned_calls[%d] (%s:%s) is not covered by authorized_actions", i, pc.Service, pc.Action),
+				Code:      "INVALID_REQUEST",
+				Hint:      "Every planned call must match a service:action pair (or wildcard) in authorized_actions. Add the missing action or use \"*\" as the action.",
+				Available: authorizedStrs,
+			})
 			return
 		}
 	}
@@ -189,12 +268,20 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		lifetime = "session"
 	}
 	if lifetime != "session" && lifetime != "standing" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "lifetime must be \"session\" or \"standing\"")
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:     fmt.Sprintf("invalid lifetime %q", req.Lifetime),
+			Code:      "INVALID_REQUEST",
+			Hint:      "Session tasks expire after a timeout. Standing tasks persist until revoked.",
+			Available: []string{"session", "standing"},
+		})
 		return
 	}
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
-			"expires_in_seconds cannot be set on a standing task — standing tasks have no expiry (revoke them to deactivate)")
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error: "expires_in_seconds cannot be set on a standing task",
+			Code:  "INVALID_REQUEST",
+			Hint:  "Standing tasks have no expiry — they remain active until explicitly revoked via POST /api/tasks/{id}/revoke. Remove expires_in_seconds or change lifetime to \"session\".",
+		})
 		return
 	}
 

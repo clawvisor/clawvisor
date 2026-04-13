@@ -191,6 +191,21 @@ type Adapter interface {
 	RequiredScopes() []string
 }
 
+// ParamInfo describes a single action parameter for validation and error reporting.
+type ParamInfo struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`               // "string", "int", "bool", "object", "array"
+	Required bool   `json:"required"`
+}
+
+// ActionParamDescriber is an optional interface that adapters can implement
+// to expose parameter metadata for pre-execution validation.
+type ActionParamDescriber interface {
+	// ActionParams returns the parameter definitions for the given action.
+	// Returns nil if no param info is available.
+	ActionParams(action string) []ParamInfo
+}
+
 // ServiceInfo is returned by the service catalog endpoint.
 type ServiceInfo struct {
 	ID          string   `json:"id"`

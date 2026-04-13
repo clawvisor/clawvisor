@@ -64,6 +64,25 @@ func (a *YAMLAdapter) SupportedActions() []string {
 	return actions
 }
 
+// ActionParams returns parameter definitions for the given action.
+// Implements adapters.ActionParamDescriber.
+func (a *YAMLAdapter) ActionParams(actionName string) []adapters.ParamInfo {
+	action, ok := a.def.Actions[actionName]
+	if !ok {
+		return nil
+	}
+	params := make([]adapters.ParamInfo, 0, len(action.Params))
+	for name, p := range action.Params {
+		params = append(params, adapters.ParamInfo{
+			Name:     name,
+			Type:     p.Type,
+			Required: p.Required,
+		})
+	}
+	sort.Slice(params, func(i, j int) bool { return params[i].Name < params[j].Name })
+	return params
+}
+
 func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
 	action, ok := a.def.Actions[req.Action]
 	if !ok {
