@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,8 +26,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -60,6 +62,8 @@ type oauthStateEntry struct {
 	TokenPath    string            // JSON path to access token in token response (e.g. "authed_user.access_token")
 	ExpiresAt    time.Time
 }
+
+var errEmptyAccessToken = errors.New("oauth token response missing access token")
 
 // validAliasRe matches safe alias values: alphanumeric, underscores, hyphens,
 // dots, spaces, and @ (to support auto-detected identities like emails and workspace names).
@@ -147,24 +151,24 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type serviceEntry struct {
-		ID                 string        `json:"id"`
-		Name               string        `json:"name"`
-		Description        string        `json:"description"`
-		IconSVG            string        `json:"icon_svg,omitempty"`
-		Alias              string        `json:"alias,omitempty"`
-		OAuth              bool          `json:"oauth"`
-		OAuthEndpoint      string        `json:"oauth_endpoint,omitempty"`
-		DeviceFlow         bool          `json:"device_flow,omitempty"`
-		PKCEFlow              bool          `json:"pkce_flow,omitempty"`
-		PKCEClientIDRequired  bool          `json:"pkce_client_id_required,omitempty"`
-		AutoIdentity          bool          `json:"auto_identity,omitempty"`
-		RequiresActivation bool          `json:"requires_activation"`
-		CredentialFree     bool          `json:"credential_free"`
-		Actions            []actionEntry          `json:"actions"`
-		Variables          []adapters.VariableMeta `json:"variables,omitempty"`
-		Status             string                 `json:"status"`
-		ActivatedAt        *time.Time             `json:"activated_at,omitempty"`
-		SetupURL           string                 `json:"setup_url,omitempty"`
+		ID                   string                  `json:"id"`
+		Name                 string                  `json:"name"`
+		Description          string                  `json:"description"`
+		IconSVG              string                  `json:"icon_svg,omitempty"`
+		Alias                string                  `json:"alias,omitempty"`
+		OAuth                bool                    `json:"oauth"`
+		OAuthEndpoint        string                  `json:"oauth_endpoint,omitempty"`
+		DeviceFlow           bool                    `json:"device_flow,omitempty"`
+		PKCEFlow             bool                    `json:"pkce_flow,omitempty"`
+		PKCEClientIDRequired bool                    `json:"pkce_client_id_required,omitempty"`
+		AutoIdentity         bool                    `json:"auto_identity,omitempty"`
+		RequiresActivation   bool                    `json:"requires_activation"`
+		CredentialFree       bool                    `json:"credential_free"`
+		Actions              []actionEntry           `json:"actions"`
+		Variables            []adapters.VariableMeta `json:"variables,omitempty"`
+		Status               string                  `json:"status"`
+		ActivatedAt          *time.Time              `json:"activated_at,omitempty"`
+		SetupURL             string                  `json:"setup_url,omitempty"`
 	}
 
 	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
@@ -220,20 +224,20 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		return serviceEntry{
-			ID:                    a.ServiceID(),
-			Name:                  name,
-			Description:           desc,
-			IconSVG:               iconSVG,
-			OAuth:                 len(a.RequiredScopes()) > 0,
-			OAuthEndpoint:         oauthEndpoint,
-			DeviceFlow:            deviceFlow,
-			PKCEFlow:              pkceFlowDefined, // show PKCE option if defined, even without client ID
-			PKCEClientIDRequired:  pkceFlowDefined && !pkceFlow, // client ID still needed
-			AutoIdentity:          autoIdentity,
-			RequiresActivation:    true,
-			Actions:               actions,
-			Variables:             variables,
-			SetupURL:              setupURL,
+			ID:                   a.ServiceID(),
+			Name:                 name,
+			Description:          desc,
+			IconSVG:              iconSVG,
+			OAuth:                len(a.RequiredScopes()) > 0,
+			OAuthEndpoint:        oauthEndpoint,
+			DeviceFlow:           deviceFlow,
+			PKCEFlow:             pkceFlowDefined,              // show PKCE option if defined, even without client ID
+			PKCEClientIDRequired: pkceFlowDefined && !pkceFlow, // client ID still needed
+			AutoIdentity:         autoIdentity,
+			RequiresActivation:   true,
+			Actions:              actions,
+			Variables:            variables,
+			SetupURL:             setupURL,
 		}
 	}
 
@@ -562,19 +566,20 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		accessToken := extractTokenFromPath(rawResp, entry.TokenPath)
-		if accessToken == "" {
-			h.logger.Warn("oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
-			oauthPopupClose(w, "Provider returned empty access token.", "")
-			return
+		scopes := entry.Scopes
+		if len(scopes) == 0 {
+			scopes = adapter.RequiredScopes()
 		}
-
-		credBytes, err = json.Marshal(map[string]string{
-			"type":  "api_key",
-			"token": accessToken,
-		})
+		existingRefreshToken := h.loadExistingRefreshToken(r.Context(), entry.UserID, entry.ServiceID, alias)
+		credBytes, err = credentialFromTokenPathResponse(rawResp, entry.TokenPath, scopes, existingRefreshToken, time.Now())
 		if err != nil {
-			oauthPopupClose(w, "Failed to encode credential.", "")
+			if errors.Is(err, errEmptyAccessToken) {
+				h.logger.Warn("oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
+				oauthPopupClose(w, "Provider returned empty access token.", "")
+				return
+			}
+			h.logger.Warn("credential from token_path response failed", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Failed to process credential.", "")
 			return
 		}
 	} else {
@@ -1769,7 +1774,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 	params := url.Values{
 		"client_id":             {clientID},
 		"scope":                 {strings.Join(pfCfg.Scopes, " ")},
-		"redirect_uri":         {redirectURI},
+		"redirect_uri":          {redirectURI},
 		"state":                 {stateToken},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
@@ -1810,6 +1815,16 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	if time.Now().After(entry.ExpiresAt) {
 		oauthPopupClose(w, "PKCE session expired. Please try again.", "")
 		return
+	}
+
+	adapter, ok := h.adapterReg.Get(entry.ServiceID)
+	if !ok {
+		oauthPopupClose(w, "Service not found.", "")
+		return
+	}
+	alias := entry.Alias
+	if alias == "" {
+		alias = "default"
 	}
 
 	// Exchange authorization code for access token using PKCE.
@@ -1853,26 +1868,26 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Extract access token using token_path.
-	accessToken := extractTokenFromPath(rawResp, entry.TokenPath)
-	if accessToken == "" {
-		h.logger.Warn("pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
-		oauthPopupClose(w, "Provider returned empty access token.", "")
-		return
-	}
-
-	// Store as api_key credential (same format as device flow / PAT).
-	credBytes, err := json.Marshal(map[string]string{
-		"type":  "api_key",
-		"token": accessToken,
-	})
+	credBytes, err := credentialFromTokenPathResponse(
+		rawResp,
+		entry.TokenPath,
+		adapter.RequiredScopes(),
+		h.loadExistingRefreshToken(r.Context(), entry.UserID, entry.ServiceID, alias),
+		time.Now(),
+	)
 	if err != nil {
-		oauthPopupClose(w, "Failed to encode credential.", "")
+		if errors.Is(err, errEmptyAccessToken) {
+			h.logger.Warn("pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
+			oauthPopupClose(w, "Provider returned empty access token.", "")
+			return
+		}
+		h.logger.Warn("pkce flow: failed to process token response", "service", entry.ServiceID, "err", err)
+		oauthPopupClose(w, "Failed to process credential.", "")
 		return
 	}
 
 	// Auto-detect identity before storing.
-	alias := h.resolveIdentityAlias(r.Context(), entry.ServiceID, entry.Alias, credBytes, entry.Config)
+	alias = h.resolveIdentityAlias(r.Context(), entry.ServiceID, alias, credBytes, entry.Config)
 
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
@@ -1895,11 +1910,34 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 func extractTokenFromPath(m map[string]any, path string) string {
 	if path == "" {
 		// Default: look for "access_token" at the top level.
-		if v, ok := m["access_token"].(string); ok {
-			return v
-		}
-		return ""
+		return extractStringFromPath(m, "access_token")
 	}
+	return extractStringFromPath(m, path)
+}
+
+func credentialFromTokenPathResponse(rawResp map[string]any, tokenPath string, scopes []string, existingRefreshToken string, now time.Time) ([]byte, error) {
+	accessToken := extractTokenFromPath(rawResp, tokenPath)
+	if accessToken == "" {
+		return nil, errEmptyAccessToken
+	}
+
+	refreshToken := extractStringFromPath(rawResp, siblingTokenFieldPath(tokenPath, "refresh_token"))
+	if refreshToken == "" {
+		refreshToken = existingRefreshToken
+	}
+
+	token := &oauth2.Token{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+	}
+	if expiresIn, ok := extractIntFromPath(rawResp, siblingTokenFieldPath(tokenPath, "expires_in")); ok && expiresIn > 0 {
+		token.Expiry = now.Add(time.Duration(expiresIn) * time.Second)
+	}
+	return credential.FromToken(token, scopes)
+}
+
+func extractStringFromPath(m map[string]any, path string) string {
 	parts := strings.Split(path, ".")
 	var current any = m
 	for _, part := range parts {
@@ -1913,6 +1951,53 @@ func extractTokenFromPath(m map[string]any, path string) string {
 		return s
 	}
 	return ""
+}
+
+func extractIntFromPath(m map[string]any, path string) (int, bool) {
+	parts := strings.Split(path, ".")
+	var current any = m
+	for _, part := range parts {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return 0, false
+		}
+		current = obj[part]
+	}
+	switch v := current.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		i, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	case string:
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
+func siblingTokenFieldPath(tokenPath, field string) string {
+	if tokenPath == "" {
+		return field
+	}
+	lastDot := strings.LastIndex(tokenPath, ".")
+	if lastDot == -1 {
+		return field
+	}
+	return tokenPath[:lastDot+1] + field
 }
 
 // ── System OAuth Config ──────────────────────────────────────────────────────

@@ -18,6 +18,14 @@ func testCred(token string) []byte {
 	return b
 }
 
+func testOAuthCred(accessToken, refreshToken string) []byte {
+	b, _ := json.Marshal(map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+	})
+	return b
+}
+
 func TestYAMLAdapter_RESTListAction(t *testing.T) {
 	// Mock API server.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -483,6 +491,27 @@ func TestYAMLAdapter_ValidateCredential(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_ValidateCredential_OAuth2(t *testing.T) {
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "oauth2"},
+	}
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	if err := adapter.ValidateCredential(testOAuthCred("access", "")); err != nil {
+		t.Fatalf("expected access-token oauth2 credential to validate: %v", err)
+	}
+	if err := adapter.ValidateCredential(testOAuthCred("", "refresh")); err != nil {
+		t.Fatalf("expected refresh-token oauth2 credential to validate: %v", err)
+	}
+	if err := adapter.ValidateCredential(testOAuthCred("", "")); err == nil {
+		t.Fatal("expected error for oauth2 credential with no tokens")
+	}
+}
+
 // ── Expr-lang integration tests ──────────────────────────────────────────────
 
 func TestYAMLAdapter_ExprFieldExtraction(t *testing.T) {
@@ -492,14 +521,14 @@ func TestYAMLAdapter_ExprFieldExtraction(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"connections": []map[string]any{
 				{
-					"resourceName": "people/123",
-					"names":        []map[string]any{{"displayName": "Alice Smith"}},
+					"resourceName":   "people/123",
+					"names":          []map[string]any{{"displayName": "Alice Smith"}},
 					"emailAddresses": []map[string]any{{"value": "alice@example.com"}},
 					"phoneNumbers":   []map[string]any{{"value": "+1234567890"}},
 				},
 				{
-					"resourceName": "people/456",
-					"names":        []map[string]any{{"displayName": "Bob Jones"}},
+					"resourceName":   "people/456",
+					"names":          []map[string]any{{"displayName": "Bob Jones"}},
 					"emailAddresses": []map[string]any{{"value": "bob@example.com"}},
 					// No phone number — tests optional field omission.
 				},
@@ -650,8 +679,8 @@ func TestYAMLAdapter_SparseBodyMode(t *testing.T) {
 	}
 	// Only provide "title" — other body params should be omitted in sparse mode.
 	_, err = adapter.Execute(context.Background(), adapters.Request{
-		Action: "update",
-		Params: map[string]any{"id": "42", "title": "New Title"},
+		Action:     "update",
+		Params:     map[string]any{"id": "42", "title": "New Title"},
 		Credential: testCred("test"),
 	})
 	if err != nil {

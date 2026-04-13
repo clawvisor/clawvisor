@@ -25,9 +25,9 @@ type ActionFunc func(ctx context.Context, req adapters.Request) (*adapters.Resul
 // YAMLAdapter implements adapters.Adapter from a YAML service definition.
 type YAMLAdapter struct {
 	def           yamldef.ServiceDef
-	overrides     map[string]ActionFunc              // action_name → Go override
-	oauthProvider adapters.OAuthCredentialProvider    // lazy OAuth credential source
-	compiled      map[string]*compiledAction          // action_name → compiled exprs (nil if none)
+	overrides     map[string]ActionFunc            // action_name → Go override
+	oauthProvider adapters.OAuthCredentialProvider // lazy OAuth credential source
+	compiled      map[string]*compiledAction       // action_name → compiled exprs (nil if none)
 }
 
 // New creates a YAMLAdapter from a parsed service definition.
@@ -257,6 +257,21 @@ func (a *YAMLAdapter) ValidateCredential(credBytes []byte) error {
 	if credBytes == nil {
 		return fmt.Errorf("%s: credential required", a.def.Service.ID)
 	}
+
+	if a.def.Auth.Type == "oauth2" {
+		var cred struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.Unmarshal(credBytes, &cred); err != nil {
+			return fmt.Errorf("%s: invalid credential: %w", a.def.Service.ID, err)
+		}
+		if cred.AccessToken == "" && cred.RefreshToken == "" {
+			return fmt.Errorf("%s: oauth2 credential missing access_token and refresh_token", a.def.Service.ID)
+		}
+		return nil
+	}
+
 	var cred credential
 	if err := json.Unmarshal(credBytes, &cred); err != nil {
 		return fmt.Errorf("%s: invalid credential: %w", a.def.Service.ID, err)
