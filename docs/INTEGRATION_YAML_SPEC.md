@@ -154,6 +154,9 @@ auth:
     client_secret_env: "ACME_CLIENT_SECRET"
     authorize_url: "https://acme.com/oauth/authorize"
     token_url: "https://acme.com/oauth/token"
+    # Provider-specific overrides (for non-standard OAuth flows):
+    scope_param: "user_scope"                       # override the authorize URL scope parameter name
+    token_path: "authed_user.access_token"          # JSON path to access token in token response
 ```
 
 **Fields:**
@@ -169,6 +172,8 @@ auth:
 - `client_secret` / `client_secret_env` — client secret (inline or via env var)
 - `authorize_url` — OAuth2 authorization endpoint
 - `token_url` — OAuth2 token endpoint
+- `scope_param` — override the query parameter name used for scopes in the authorize URL (default `"scope"`). Slack v2 OAuth requires `"user_scope"` for user token flows
+- `token_path` — dot-delimited JSON path to extract the access token from the token response (default: top-level `"access_token"`). Slack v2 returns the user token at `"authed_user.access_token"`
 
 ### No Auth
 

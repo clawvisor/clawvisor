@@ -285,6 +285,24 @@ func (a *YAMLAdapter) RequiredScopes() []string {
 	return a.def.Auth.OAuth.Scopes
 }
 
+// OAuthScopeParam returns the authorize URL parameter name for scopes.
+// Returns "" to use the default ("scope"). Slack v2 requires "user_scope".
+func (a *YAMLAdapter) OAuthScopeParam() string {
+	if a.def.Auth.OAuth == nil {
+		return ""
+	}
+	return a.def.Auth.OAuth.ScopeParam
+}
+
+// OAuthTokenPath returns the JSON path to the access token in the token
+// response, or "" to use the standard top-level "access_token" field.
+func (a *YAMLAdapter) OAuthTokenPath() string {
+	if a.def.Auth.OAuth == nil {
+		return ""
+	}
+	return a.def.Auth.OAuth.TokenPath
+}
+
 // buildAuthClient creates an *http.Client with proper authentication.
 // For OAuth2 services, this uses the OAuthConfig token source which handles
 // automatic token refresh. For other auth types, delegates to buildHTTPClient.

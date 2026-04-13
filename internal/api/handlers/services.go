@@ -57,6 +57,7 @@ type oauthStateEntry struct {
 	CLICallback  string            // TUI local server callback URL (may be empty)
 	Scopes       []string          // merged scopes for this OAuth flow
 	Config       map[string]string // per-service variable values (may be nil)
+	TokenPath    string            // JSON path to access token in token response (e.g. "authed_user.access_token")
 	ExpiresAt    time.Time
 }
 
@@ -403,11 +404,12 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		CLICallback:  validateCLICallback(r.URL.Query().Get("cli_callback")),
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
+		TokenPath:    adapterTokenPath(adapter),
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
 
 	oauthCfg.Scopes = mergedScopes
-	authURL := oauthAuthURL(oauthCfg, stateToken, newAccount || (alias != "" && alias != "default"))
+	authURL := oauthAuthURL(oauthCfg, stateToken, newAccount || (alias != "" && alias != "default"), adapterScopeParam(adapter))
 	writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
 }
 
@@ -467,11 +469,12 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		PendingReqID: r.URL.Query().Get("pending_request_id"),
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
+		TokenPath:    adapterTokenPath(adapter),
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
 
 	oauthCfg.Scopes = mergedScopes
-	authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default")
+	authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default", adapterScopeParam(adapter))
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -511,35 +514,95 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if len(entry.Scopes) > 0 {
 		oauthCfg.Scopes = entry.Scopes
 	}
-	token, err := oauthCfg.Exchange(r.Context(), code)
-	if err != nil {
-		h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
-		oauthPopupClose(w, "Token exchange with provider failed.", "")
-		return
-	}
 
-	// Use the merged scopes from the state entry for the credential.
-	scopes := entry.Scopes
-	if len(scopes) == 0 {
-		scopes = adapter.RequiredScopes()
-	}
-
-	// Preserve existing refresh token if Google didn't issue a new one on re-consent.
+	var credBytes []byte
 	alias := entry.Alias
 	if alias == "" {
 		alias = "default"
 	}
-	if token.RefreshToken == "" {
-		if existing := h.loadExistingRefreshToken(r.Context(), entry.UserID, entry.ServiceID, alias); existing != "" {
-			token.RefreshToken = existing
-		}
-	}
 
-	credBytes, err := credential.FromToken(token, scopes)
-	if err != nil {
-		h.logger.Warn("credential from token failed", "service", entry.ServiceID, "err", err)
-		oauthPopupClose(w, "Failed to process credential.", "")
-		return
+	if entry.TokenPath != "" {
+		// Non-standard token response (e.g. Slack v2 with user tokens at a nested path).
+		// Do a manual exchange and extract the token from the custom path.
+		form := url.Values{
+			"client_id":     {oauthCfg.ClientID},
+			"client_secret": {oauthCfg.ClientSecret},
+			"code":          {code},
+			"redirect_uri":  {oauthCfg.RedirectURL},
+			"grant_type":    {"authorization_code"},
+		}
+		tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", oauthCfg.Endpoint.TokenURL, strings.NewReader(form.Encode()))
+		if err != nil {
+			oauthPopupClose(w, "Failed to build token request.", "")
+			return
+		}
+		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		tokenReq.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(tokenReq)
+		if err != nil {
+			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Token exchange with provider failed.", "")
+			return
+		}
+		defer resp.Body.Close()
+
+		var rawResp map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&rawResp); err != nil {
+			oauthPopupClose(w, "Invalid response from token endpoint.", "")
+			return
+		}
+		if errVal, ok := rawResp["error"].(string); ok && errVal != "" {
+			desc, _ := rawResp["error_description"].(string)
+			if desc == "" {
+				desc = errVal
+			}
+			h.logger.Warn("oauth token exchange: provider error", "service", entry.ServiceID, "error", errVal, "desc", desc)
+			oauthPopupClose(w, "Authorization failed: "+desc, "")
+			return
+		}
+
+		accessToken := extractTokenFromPath(rawResp, entry.TokenPath)
+		if accessToken == "" {
+			h.logger.Warn("oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
+			oauthPopupClose(w, "Provider returned empty access token.", "")
+			return
+		}
+
+		credBytes, err = json.Marshal(map[string]string{
+			"type":  "api_key",
+			"token": accessToken,
+		})
+		if err != nil {
+			oauthPopupClose(w, "Failed to encode credential.", "")
+			return
+		}
+	} else {
+		// Standard OAuth2 token exchange.
+		token, err := oauthCfg.Exchange(r.Context(), code)
+		if err != nil {
+			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Token exchange with provider failed.", "")
+			return
+		}
+
+		scopes := entry.Scopes
+		if len(scopes) == 0 {
+			scopes = adapter.RequiredScopes()
+		}
+
+		if token.RefreshToken == "" {
+			if existing := h.loadExistingRefreshToken(r.Context(), entry.UserID, entry.ServiceID, alias); existing != "" {
+				token.RefreshToken = existing
+			}
+		}
+
+		credBytes, err = credential.FromToken(token, scopes)
+		if err != nil {
+			h.logger.Warn("credential from token failed", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Failed to process credential.", "")
+			return
+		}
 	}
 
 	// Auto-detect identity (e.g. email) before storing so the vault key is correct.
@@ -671,12 +734,13 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			PendingReqID: body.PendingRequestID,
 			Config:       body.Config,
 			Scopes:       mergedScopes,
+			TokenPath:    adapterTokenPath(adapter),
 			ExpiresAt:    time.Now().Add(10 * time.Minute),
 		})
 		oauthCfg := adapter.OAuthConfig()
 		oauthCfg.RedirectURL = h.oauthRedirectURL()
 		oauthCfg.Scopes = mergedScopes
-		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default")
+		authURL := oauthAuthURL(oauthCfg, stateToken, alias != "" && alias != "default", adapterScopeParam(adapter))
 		writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
 		return
 	}
@@ -1170,10 +1234,33 @@ func (h *ServicesHandler) sweepExpiredOAuthStates() {
 	h.oauthStore.Cleanup()
 }
 
+// adapterScopeParam returns the custom OAuth scope parameter name (e.g.
+// "user_scope" for Slack v2) if the adapter declares one, or "" for default.
+func adapterScopeParam(a adapters.Adapter) string {
+	type scopeParamer interface{ OAuthScopeParam() string }
+	if sp, ok := a.(scopeParamer); ok {
+		return sp.OAuthScopeParam()
+	}
+	return ""
+}
+
+// adapterTokenPath returns the custom token path (e.g.
+// "authed_user.access_token" for Slack v2) if the adapter declares one.
+func adapterTokenPath(a adapters.Adapter) string {
+	type tokenPather interface{ OAuthTokenPath() string }
+	if tp, ok := a.(tokenPather); ok {
+		return tp.OAuthTokenPath()
+	}
+	return ""
+}
+
 // oauthAuthURL builds the OAuth2 authorization URL. When selectAccount is true
 // (multi-account or new_account flow), it adds prompt=consent select_account
 // so the user can choose a different Google account.
-func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool) string {
+//
+// scopeParam overrides the query parameter name for scopes (e.g. "user_scope"
+// for Slack v2). When empty, the default "scope" parameter is used.
+func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool, scopeParam string) string {
 	prompt := "consent"
 	if selectAccount {
 		prompt = "consent select_account"
@@ -1182,6 +1269,17 @@ func oauthAuthURL(cfg *oauth2.Config, stateToken string, selectAccount bool) str
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
 		oauth2.SetAuthURLParam("prompt", prompt),
+	}
+	if scopeParam != "" && scopeParam != "scope" {
+		// Move scopes to the custom parameter (e.g. Slack v2 "user_scope")
+		// and clear the default so AuthCodeURL doesn't emit both.
+		opts = append(opts, oauth2.SetAuthURLParam(scopeParam, strings.Join(cfg.Scopes, " ")))
+		cfg = &oauth2.Config{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			Endpoint:     cfg.Endpoint,
+			RedirectURL:  cfg.RedirectURL,
+		}
 	}
 	return cfg.AuthCodeURL(stateToken, opts...)
 }
