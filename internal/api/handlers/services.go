@@ -169,13 +169,14 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Status               string                  `json:"status"`
 		ActivatedAt          *time.Time              `json:"activated_at,omitempty"`
 		SetupURL             string                  `json:"setup_url,omitempty"`
+		KeyHint              string                  `json:"key_hint,omitempty"`
 	}
 
 	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
 	buildEntry := func(a adapters.Adapter) serviceEntry {
 		name := display.ServiceName(a.ServiceID())
 		desc := display.ServiceDescription(a.ServiceID())
-		var setupURL, oauthEndpoint, iconSVG string
+		var setupURL, oauthEndpoint, iconSVG, keyHint string
 		var variables []adapters.VariableMeta
 		actionNames := map[string]adapters.ActionMeta{}
 
@@ -190,6 +191,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			setupURL = meta.SetupURL
 			iconSVG = meta.IconSVG
 			oauthEndpoint = meta.OAuthEndpoint
+			keyHint = meta.KeyHint
 			actionNames = meta.ActionMeta
 			variables = meta.Variables
 		}
@@ -238,6 +240,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			Actions:              actions,
 			Variables:            variables,
 			SetupURL:             setupURL,
+			KeyHint:              keyHint,
 		}
 	}
 

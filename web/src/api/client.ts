@@ -281,6 +281,7 @@ export interface ServiceInfo {
   status: 'activated' | 'not_activated'
   activated_at?: string
   setup_url?: string
+  key_hint?: string
 }
 
 export interface VariableMeta {

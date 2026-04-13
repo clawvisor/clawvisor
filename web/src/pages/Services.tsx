@@ -263,7 +263,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
             value={apiKeyInput}
             onChange={e => setApiKeyInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-            placeholder="Paste your token…"
+            placeholder={svc.key_hint || "Paste your token…"}
             className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
             autoFocus
           />
@@ -297,6 +297,7 @@ interface ServiceType {
   activatedCount: number
   description: string
   setupUrl?: string
+  keyHint?: string
 }
 
 function AddServiceModal({
@@ -401,6 +402,7 @@ function AddServiceModal({
         activatedCount: svc.status === 'activated' ? 1 : 0,
         description: svc.description || serviceDescription(svc.id),
         setupUrl: svc.setup_url,
+        keyHint: svc.key_hint,
       })
     }
   }
@@ -769,7 +771,7 @@ function AddServiceModal({
                           value={keyValue}
                           onChange={e => setKeyValue(e.target.value)}
                           onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-                          placeholder="Paste your token…"
+                          placeholder={st.keyHint || "Paste your token…"}
                           className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
                           autoFocus={!st.variables || st.variables.length === 0}
                         />

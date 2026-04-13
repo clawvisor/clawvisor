@@ -26,6 +26,7 @@ type ServiceInfo struct {
 	DisplayName string       `yaml:"display_name"`
 	Description string       `yaml:"description"`
 	SetupURL    string       `yaml:"setup_url,omitempty"`
+	KeyHint     string       `yaml:"key_hint,omitempty"`
 	IconSVG     string       `yaml:"icon_svg,omitempty"`
 	Identity    *IdentityDef `yaml:"identity,omitempty"`
 }

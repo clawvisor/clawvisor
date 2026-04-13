@@ -310,7 +310,7 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 					// API key path.
 					s.inputStep = stepKeyEntry
 					ki := textinput.New()
-					ki.Placeholder = "paste token here"
+					ki.Placeholder = s.keyPlaceholder()
 					ki.EchoMode = textinput.EchoPassword
 					ki.Focus()
 					s.keyInput = &ki
@@ -363,7 +363,7 @@ func (s *ServicesScreen) Update(msg tea.Msg) (tui.ScreenModel, tea.Cmd) {
 					// API key path.
 					s.inputStep = stepKeyEntry
 					ki := textinput.New()
-					ki.Placeholder = "paste token here"
+					ki.Placeholder = s.keyPlaceholder()
 					ki.EchoMode = textinput.EchoPassword
 					ki.Focus()
 					s.keyInput = &ki
@@ -980,11 +980,18 @@ func (s *ServicesScreen) proceedAfterAlias() tea.Cmd {
 	// API key service — show key input.
 	s.inputStep = stepKeyEntry
 	ki := textinput.New()
-	ki.Placeholder = "paste token here"
+	ki.Placeholder = s.keyPlaceholder()
 	ki.EchoMode = textinput.EchoPassword
 	ki.Focus()
 	s.keyInput = &ki
 	return nil
+}
+
+func (s *ServicesScreen) keyPlaceholder() string {
+	if s.activatingService != nil && s.activatingService.KeyHint != "" {
+		return s.activatingService.KeyHint
+	}
+	return "paste token here"
 }
 
 func (s *ServicesScreen) startVariableCollection() tea.Cmd {

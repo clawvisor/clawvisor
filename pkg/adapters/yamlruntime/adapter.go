@@ -501,6 +501,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		DisplayName:       a.def.Service.DisplayName,
 		Description:       a.def.Service.Description,
 		SetupURL:          a.def.Service.SetupURL,
+		KeyHint:           a.def.Service.KeyHint,
 		IconSVG:           a.def.Service.IconSVG,
 		VaultKey:          vaultKey,
 		OAuthEndpoint:     oauthEndpoint,
