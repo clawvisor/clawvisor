@@ -32,6 +32,7 @@ actions:
   list_messages:
     display_name: "List messages"
     risk: { category: read, sensitivity: low, description: "List email messages" }
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
     override: go
     params:
       query: { type: string }
@@ -40,6 +41,7 @@ actions:
   get_message:
     display_name: "Get message"
     risk: { category: read, sensitivity: low, description: "Read a specific email message" }
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
     override: go
     params:
       message_id: { type: string, required: true }
@@ -47,6 +49,7 @@ actions:
   get_thread:
     display_name: "Get thread"
     risk: { category: read, sensitivity: low, description: "Read all messages in an email thread" }
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
     override: go
     params:
       thread_id: { type: string, required: true }
@@ -54,6 +57,7 @@ actions:
   get_attachment:
     display_name: "Get attachment"
     risk: { category: read, sensitivity: low, description: "Download an email attachment" }
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
     override: go
     params:
       message_id: { type: string, required: true }
@@ -62,6 +66,7 @@ actions:
   send_message:
     display_name: "Send message"
     risk: { category: write, sensitivity: high, description: "Send email as the user" }
+    scopes: ["https://www.googleapis.com/auth/gmail.send"]
     override: go
     params:
       to: { type: string }
@@ -73,6 +78,7 @@ actions:
   create_draft:
     display_name: "Create draft"
     risk: { category: write, sensitivity: low, description: "Create an email draft (not sent)" }
+    scopes: ["https://www.googleapis.com/auth/gmail.compose"]
     override: go
     params:
       to: { type: string, required: true }

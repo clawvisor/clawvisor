@@ -596,9 +596,11 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		// can deselect individual scopes on the consent screen, so the granted
 		// set may be a subset of what we requested.
 		var scopes []string
+		scopesGranted := false
 		if grantedRaw, ok := token.Extra("scope").(string); ok && grantedRaw != "" {
 			scopes = strings.Split(grantedRaw, " ")
 			sort.Strings(scopes)
+			scopesGranted = true
 		} else {
 			// Fallback for providers that don't return scope in the token response.
 			scopes = entry.Scopes
@@ -613,7 +615,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		credBytes, err = credential.FromToken(token, scopes)
+		credBytes, err = credential.FromToken(token, scopes, scopesGranted)
 		if err != nil {
 			h.logger.Warn("credential from token failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Failed to process credential.", "")
@@ -1945,7 +1947,7 @@ func credentialFromTokenPathResponse(rawResp map[string]any, tokenPath string, s
 	if expiresIn, ok := extractIntFromPath(rawResp, siblingTokenFieldPath(tokenPath, "expires_in")); ok && expiresIn > 0 {
 		token.Expiry = now.Add(time.Duration(expiresIn) * time.Second)
 	}
-	return credential.FromToken(token, scopes)
+	return credential.FromToken(token, scopes, false)
 }
 
 func extractStringFromPath(m map[string]any, path string) string {

@@ -27,6 +27,7 @@ actions:
     display_name: "List contacts"
     override: go
     risk: { category: read, sensitivity: low, description: "List contacts" }
+    scopes: ["https://www.googleapis.com/auth/contacts.readonly"]
     method: GET
     path: "/people/me/connections"
     params:
@@ -60,6 +61,7 @@ actions:
   get_contact:
     display_name: "Get contact"
     risk: { category: read, sensitivity: low, description: "Read a specific contact" }
+    scopes: ["https://www.googleapis.com/auth/contacts.readonly"]
     method: GET
     path: "/{{.contact_id}}"
     params:
@@ -93,6 +95,7 @@ actions:
   search_contacts:
     display_name: "Search contacts"
     risk: { category: search, sensitivity: low, description: "Search contacts" }
+    scopes: ["https://www.googleapis.com/auth/contacts.readonly"]
     method: GET
     path: "/people:searchContacts"
     params:

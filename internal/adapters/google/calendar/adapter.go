@@ -59,7 +59,7 @@ func (a *CalendarAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *CalendarAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, calendarScopes)
+	return credential.FromToken(token, calendarScopes, false)
 }
 
 func (a *CalendarAdapter) ValidateCredential(credBytes []byte) error {

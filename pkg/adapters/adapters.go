@@ -160,6 +160,15 @@ type VerificationHinter interface {
 	VerificationHints() string
 }
 
+// ActionScoper is an optional interface adapters can implement to declare
+// which OAuth scopes each action requires. When implemented, scope checks
+// can validate per-action instead of requiring all adapter scopes.
+type ActionScoper interface {
+	// ScopesForAction returns the OAuth scopes required by a specific action.
+	// Returns nil if the action has no specific scope requirements.
+	ScopesForAction(action string) []string
+}
+
 // IdentityFetcher is an optional interface adapters can implement to
 // auto-discover the account identity after activation (e.g. the email
 // address for a Google account, the username for GitHub). When implemented,

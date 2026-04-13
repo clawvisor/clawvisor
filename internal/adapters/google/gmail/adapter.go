@@ -85,7 +85,7 @@ func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, gmailScopes())
+	return credential.FromToken(token, gmailScopes(), false)
 }
 
 func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {

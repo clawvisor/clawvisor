@@ -58,7 +58,7 @@ func (a *ContactsAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *ContactsAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, contactsScopes)
+	return credential.FromToken(token, contactsScopes, false)
 }
 
 func (a *ContactsAdapter) ValidateCredential(credBytes []byte) error {

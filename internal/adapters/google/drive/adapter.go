@@ -60,7 +60,7 @@ func (a *DriveAdapter) OAuthConfig() *oauth2.Config {
 }
 
 func (a *DriveAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, driveScopes)
+	return credential.FromToken(token, driveScopes, false)
 }
 
 func (a *DriveAdapter) ValidateCredential(credBytes []byte) error {

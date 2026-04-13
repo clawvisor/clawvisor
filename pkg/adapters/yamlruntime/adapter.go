@@ -300,6 +300,17 @@ func (a *YAMLAdapter) RequiredScopes() []string {
 	return a.def.Auth.OAuth.Scopes
 }
 
+// ScopesForAction returns the OAuth scopes required by a specific action,
+// as declared in the YAML definition. Returns nil if the action has no
+// per-action scope requirements or doesn't exist.
+func (a *YAMLAdapter) ScopesForAction(action string) []string {
+	act, ok := a.def.Actions[action]
+	if !ok {
+		return nil
+	}
+	return act.Scopes
+}
+
 // OAuthScopeParam returns the authorize URL parameter name for scopes.
 // Returns "" to use the default ("scope"). Slack v2 requires "user_scope".
 func (a *YAMLAdapter) OAuthScopeParam() string {

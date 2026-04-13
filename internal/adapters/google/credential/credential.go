@@ -17,11 +17,12 @@ import (
 
 // Stored is the JSON structure saved (encrypted) in the vault under key "google".
 type Stored struct {
-	Type         string    `json:"type"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	Expiry       time.Time `json:"expiry"`
-	Scopes       []string  `json:"scopes"`
+	Type          string    `json:"type"`
+	AccessToken   string    `json:"access_token"`
+	RefreshToken  string    `json:"refresh_token"`
+	Expiry        time.Time `json:"expiry"`
+	Scopes        []string  `json:"scopes"`
+	ScopesGranted bool      `json:"scopes_granted,omitempty"`
 }
 
 // Parse unmarshals vault credential bytes into a Stored credential.
@@ -47,13 +48,17 @@ func Validate(data []byte) error {
 }
 
 // FromToken builds storable vault bytes from an OAuth2 token and scope list.
-func FromToken(token *oauth2.Token, scopes []string) ([]byte, error) {
+// When scopesGranted is true, the scopes are known to reflect what the user
+// actually granted (read from the token exchange response). When false, scopes
+// are what we requested — we can't verify the user granted all of them.
+func FromToken(token *oauth2.Token, scopes []string, scopesGranted bool) ([]byte, error) {
 	c := Stored{
-		Type:         "oauth2",
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		Expiry:       token.Expiry,
-		Scopes:       scopes,
+		Type:          "oauth2",
+		AccessToken:   token.AccessToken,
+		RefreshToken:  token.RefreshToken,
+		Expiry:        token.Expiry,
+		Scopes:        scopes,
+		ScopesGranted: scopesGranted,
 	}
 	return json.Marshal(c)
 }

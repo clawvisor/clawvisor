@@ -112,6 +112,7 @@ type APIDef struct {
 type Action struct {
 	DisplayName string            `yaml:"display_name"`
 	Risk        RiskDef           `yaml:"risk"`
+	Scopes      []string          `yaml:"scopes,omitempty"`   // OAuth scopes required by this action (for per-action validation)
 	Override    string            `yaml:"override,omitempty"` // "go" signals delegation to a registered Go function
 
 	// REST fields
