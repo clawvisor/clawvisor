@@ -114,7 +114,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect all missing top-level required fields.
+	// Collect missing pre-restriction required fields (service, action, reason).
+	// task_id is checked after restriction checks — restrictions can block requests
+	// before a task is created, so task_id is intentionally not required here.
 	{
 		var missing []string
 		if req.Service == "" {
@@ -126,21 +128,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		if req.Reason == "" {
 			missing = append(missing, "reason")
 		}
-		if req.TaskID == "" {
-			missing = append(missing, "task_id")
-		}
 		if len(missing) > 0 {
 			code := "INVALID_REQUEST"
 			if len(missing) == 1 && missing[0] == "reason" {
 				code = "MISSING_REASON"
-			} else if len(missing) == 1 && missing[0] == "task_id" {
-				code = "TASK_REQUIRED"
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 				Error:         "missing required fields: " + strings.Join(missing, ", "),
 				Code:          code,
 				MissingFields: missing,
-				Hint:          "Every gateway request must specify the target service, action, a reason for the request, and the task_id from an approved task.",
+				Hint:          "Every gateway request must specify the target service, action, and a reason for the request.",
 				Example: map[string]any{
 					"service": "google.gmail",
 					"action":  "list_messages",
@@ -295,7 +292,23 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Step 2: Task ID already validated above ─────────────────────────────
+	// ── Step 2: Task ID required ─────────────────────────────────────────────
+	if req.TaskID == "" {
+		outDecision, outOutcome = "reject", "validation_error"
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         "missing required field: task_id",
+			Code:          "TASK_REQUIRED",
+			MissingFields: []string{"task_id"},
+			Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
+			Example: map[string]any{
+				"service": "google.gmail",
+				"action":  "list_messages",
+				"reason":  "Fetch recent emails to summarize for the user",
+				"task_id": "<task_id from POST /api/tasks>",
+			},
+		})
+		return
+	}
 
 	// ── Step 3: Hardcoded approval check ─────────────────────────────────────
 	hardcoded := RequiresHardcodedApproval(serviceType, req.Action)
