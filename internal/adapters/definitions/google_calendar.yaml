@@ -54,6 +54,7 @@ actions:
         map_to: timeMax
         location: query
       max_results: { type: int, default: 10, max: 50, map_to: maxResults, location: query }
+      page_token: { type: string, map_to: pageToken, location: query }
       single_events: { type: string, default: "true", map_to: singleEvents, location: query }
       order_by: { type: string, default: "startTime", map_to: orderBy, location: query }
     response:
@@ -71,6 +72,8 @@ actions:
           expr: "attendees"
           optional: true
         - { name: status }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} event(s)"
 
   get_event:
@@ -171,10 +174,15 @@ actions:
     scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
     method: GET
     path: "/users/me/calendarList"
+    params:
+      max_results: { type: int, default: 50, max: 250, map_to: maxResults, location: query }
+      page_token: { type: string, map_to: pageToken, location: query }
     response:
       data_path: "items"
       fields:
         - { name: id }
         - { name: summary }
         - { name: primary }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} calendar(s)"

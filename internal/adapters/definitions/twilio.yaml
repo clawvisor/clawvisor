@@ -56,6 +56,7 @@ actions:
     path: "/Messages.json"
     params:
       page_size: { type: int, default: 20, max: 1000, location: query }
+      page: { type: int, default: 0, location: query }
       to: { type: string, location: query }
       from: { type: string, location: query }
     response:

@@ -92,7 +92,7 @@ func (a *CalendarAdapter) Execute(ctx context.Context, req adapters.Request) (*a
 	case "delete_event":
 		return a.deleteEvent(ctx, client, req.Params)
 	case "list_calendars":
-		return a.listCalendars(ctx, client)
+		return a.listCalendars(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("calendar: unsupported action %q", req.Action)
 	}
@@ -146,6 +146,9 @@ func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, p
 	if timeMax != "" {
 		q.Set("timeMax", timeMax)
 	}
+	if pt, _ := params["page_token"].(string); pt != "" {
+		q.Set("pageToken", pt)
+	}
 
 	apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events?%s",
 		url.PathEscape(calendarID), q.Encode())
@@ -169,6 +172,7 @@ func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, p
 				Email string `json:"email"`
 			} `json:"attendees"`
 		} `json:"items"`
+		NextPageToken string `json:"nextPageToken"`
 	}
 	if err := apiGET(ctx, client, apiURL, &resp); err != nil {
 		return nil, fmt.Errorf("calendar list_events: %w", err)
@@ -204,7 +208,11 @@ func (a *CalendarAdapter) listEvents(ctx context.Context, client *http.Client, p
 	if len(events) == 1 {
 		summary = format.Summary("1 event: %s", events[0].Summary)
 	}
-	return &adapters.Result{Summary: summary, Data: events}, nil
+	result := &adapters.Result{Summary: summary, Data: events}
+	if resp.NextPageToken != "" {
+		result.Meta = map[string]any{"next_page_token": resp.NextPageToken}
+	}
+	return result, nil
 }
 
 // ── get_event ─────────────────────────────────────────────────────────────────
@@ -402,15 +410,27 @@ func (a *CalendarAdapter) deleteEvent(ctx context.Context, client *http.Client, 
 
 // ── list_calendars ────────────────────────────────────────────────────────────
 
-func (a *CalendarAdapter) listCalendars(ctx context.Context, client *http.Client) (*adapters.Result, error) {
+func (a *CalendarAdapter) listCalendars(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	q := url.Values{}
+	maxResults := 50
+	if v, ok := paramInt(params, "max_results"); ok && v > 0 && v <= 250 {
+		maxResults = v
+	}
+	q.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	if pt, _ := params["page_token"].(string); pt != "" {
+		q.Set("pageToken", pt)
+	}
+
+	apiURL := "https://www.googleapis.com/calendar/v3/users/me/calendarList?" + q.Encode()
 	var resp struct {
 		Items []struct {
 			ID      string `json:"id"`
 			Summary string `json:"summary"`
 			Primary bool   `json:"primary"`
 		} `json:"items"`
+		NextPageToken string `json:"nextPageToken"`
 	}
-	if err := apiGET(ctx, client, "https://www.googleapis.com/calendar/v3/users/me/calendarList", &resp); err != nil {
+	if err := apiGET(ctx, client, apiURL, &resp); err != nil {
 		return nil, fmt.Errorf("calendar list_calendars: %w", err)
 	}
 	type calItem struct {
@@ -426,10 +446,14 @@ func (a *CalendarAdapter) listCalendars(ctx context.Context, client *http.Client
 			Primary: c.Primary,
 		})
 	}
-	return &adapters.Result{
+	result := &adapters.Result{
 		Summary: format.Summary("%d calendar(s)", len(items)),
 		Data:    items,
-	}, nil
+	}
+	if resp.NextPageToken != "" {
+		result.Meta = map[string]any{"next_page_token": resp.NextPageToken}
+	}
+	return result, nil
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

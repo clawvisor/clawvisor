@@ -120,8 +120,9 @@ type Request struct {
 
 // Result is the semantic output of an adapter action.
 type Result struct {
-	Summary string `json:"summary"`
-	Data    any    `json:"data"`
+	Summary string         `json:"summary"`
+	Data    any            `json:"data"`
+	Meta    map[string]any `json:"meta,omitempty"`
 }
 
 // ContactsChecker is an optional interface implemented by the google.contacts adapter.

@@ -30,12 +30,16 @@ actions:
       query: { type: string, location: body }
       filter: { type: object, location: body }
       page_size: { type: int, default: 20, max: 100, location: body }
+      start_cursor: { type: string, location: body }
     response:
       data_path: "results"
       fields:
         - { name: id }
         - { name: object }
         - { name: url }
+      meta:
+        - { name: next_cursor }
+        - { name: has_more }
       summary: "{{len .Data}} search result(s)"
 
   get_page:
@@ -94,12 +98,16 @@ actions:
       filter: { type: object, location: body }
       sorts: { type: array, location: body }
       page_size: { type: int, default: 50, max: 100, location: body }
+      start_cursor: { type: string, location: body }
     response:
       data_path: "results"
       fields:
         - { name: id }
         - { name: url }
         - { name: properties, transform: notion_flatten_properties }
+      meta:
+        - { name: next_cursor }
+        - { name: has_more }
       summary: "{{len .Data}} row(s)"
 
   list_databases:
@@ -109,9 +117,13 @@ actions:
     path: "/search"
     params:
       page_size: { type: int, default: 20, max: 100, location: body }
+      start_cursor: { type: string, location: body }
     response:
       data_path: "results"
       fields:
         - { name: id }
         - { name: url }
+      meta:
+        - { name: next_cursor }
+        - { name: has_more }
       summary: "{{len .Data}} database(s)"

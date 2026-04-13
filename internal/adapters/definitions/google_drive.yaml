@@ -33,9 +33,10 @@ actions:
     params:
       query: { type: string, map_to: q, location: query }
       max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      page_token: { type: string, map_to: pageToken, location: query }
       fields_param:
         type: string
-        default: "files(id,name,mimeType,modifiedTime,size,webViewLink)"
+        default: "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink)"
         map_to: fields
         location: query
     response:
@@ -47,6 +48,8 @@ actions:
         - { name: modifiedTime }
         - { name: size }
         - { name: webViewLink }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} file(s)"
 
   get_file:
@@ -111,9 +114,10 @@ actions:
         transform: "'fullText contains \\'' + replace(query, \"'\", \"\\\\'\") + '\\''"
         map_to: q
       max_results: { type: int, default: 10, max: 50, map_to: pageSize, location: query }
+      page_token: { type: string, map_to: pageToken, location: query }
       fields_param:
         type: string
-        default: "files(id,name,mimeType,modifiedTime,size,webViewLink)"
+        default: "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink)"
         map_to: fields
         location: query
     response:
@@ -125,4 +129,6 @@ actions:
         - { name: modifiedTime }
         - { name: size }
         - { name: webViewLink }
+      meta:
+        - { name: nextPageToken, rename: next_page_token }
       summary: "{{len .Data}} file(s)"

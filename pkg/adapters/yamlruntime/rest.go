@@ -138,11 +138,13 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 
 	// Extract data from the response.
 	data := extractData(raw, action.Response, ca)
+	meta := extractMeta(raw, action.Response.Meta)
 	summary := renderSummary(action.Response.Summary, data)
 
 	return &adapters.Result{
 		Summary: summary,
 		Data:    data,
+		Meta:    meta,
 	}, nil
 }
 
@@ -243,6 +245,34 @@ func checkResponseError(raw any, check *yamldef.ErrorCheckDef) error {
 		}
 	}
 	return nil
+}
+
+// extractMeta extracts top-level metadata fields from the raw response (e.g.
+// pagination cursors that live outside the data_path).
+func extractMeta(raw any, metaDefs []yamldef.MetaDef) map[string]any {
+	if len(metaDefs) == 0 {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	meta := make(map[string]any, len(metaDefs))
+	for _, md := range metaDefs {
+		val, found := navigatePath(m, md.Name)
+		if !found || val == nil || val == "" {
+			continue
+		}
+		key := md.Name
+		if md.Rename != "" {
+			key = md.Rename
+		}
+		meta[key] = val
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
 }
 
 // extractData navigates to the data_path in the response and extracts fields.

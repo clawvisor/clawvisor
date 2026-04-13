@@ -57,6 +57,7 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 	if err != nil {
 		return nil, fmt.Errorf("building GraphQL request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -85,11 +86,13 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 	}
 
 	data := extractData(raw, action.Response, nil)
+	meta := extractMeta(raw, action.Response.Meta)
 	summary := renderSummary(action.Response.Summary, data)
 
 	return &adapters.Result{
 		Summary: summary,
 		Data:    data,
+		Meta:    meta,
 	}, nil
 }
 

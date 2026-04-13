@@ -165,6 +165,15 @@ type ResponseDef struct {
 	DataPath string     `yaml:"data_path,omitempty"` // dot-delimited path to the data (e.g. "data", "data.issues.nodes")
 	Fields   []FieldDef `yaml:"fields"`
 	Summary  string     `yaml:"summary"` // Go template string
+	Meta     []MetaDef  `yaml:"meta,omitempty"`
+}
+
+// MetaDef describes a field to extract from the top-level response as metadata
+// (e.g. pagination cursors). These are returned in Result.Meta, separate from
+// the primary data items.
+type MetaDef struct {
+	Name   string `yaml:"name"`             // field name in the raw response (dot-delimited path supported)
+	Rename string `yaml:"rename,omitempty"` // output key name (defaults to Name)
 }
 
 // FieldDef describes a single field to extract from the response.

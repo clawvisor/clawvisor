@@ -342,6 +342,9 @@ response:
       expr: "start.dateTime ?? start.date ?? ''"
     - { name: location, optional: true }          # omit if nil
     - { name: notes, nullable: true }             # return "" if nil
+  meta:                                            # optional: extract top-level metadata (e.g. pagination)
+    - { name: nextPageToken, rename: next_page_token }
+    - { name: has_more }
   summary: "{{len .Data}} item(s)"
 ```
 
@@ -357,6 +360,29 @@ response:
 | `expr` | Expr-lang expression (takes precedence over path/name) |
 | `optional` | Omit field from output if expr returns nil |
 | `nullable` | Return empty string if nil instead of erroring |
+
+### Response Metadata
+
+The `meta` field extracts top-level response fields that live outside the `data_path` — typically pagination cursors or totals. These are returned in `result.meta` separately from `result.data`, so agents can discover how to fetch the next page.
+
+```yaml
+response:
+  data_path: "channels"
+  fields:
+    - { name: id }
+    - { name: name }
+  meta:
+    - { name: nextPageToken, rename: next_page_token }
+    - { name: response_metadata.next_cursor, rename: next_cursor }  # dot paths supported
+    - { name: has_more }
+```
+
+| Field | Description |
+|-------|-------------|
+| `name` | Field name in the raw API response (supports dot-delimited paths) |
+| `rename` | Output key name in `result.meta` (defaults to `name`) |
+
+Meta fields that are absent, null, or empty string in the response are silently omitted — `result.meta` is only present when at least one field has a value.
 
 ### Summary Templates
 
@@ -428,6 +454,7 @@ actions:
     params:
       status: { type: string, default: "active", location: query }
       limit: { type: int, default: 25, max: 100, location: query }
+      cursor: { type: string, location: query }
     response:
       data_path: "data"
       fields:
@@ -435,6 +462,9 @@ actions:
         - { name: name }
         - { name: status }
         - { name: created_at }
+      meta:
+        - { name: next_cursor }
+        - { name: has_more }
       summary: "{{len .Data}} widget(s)"
 
   create_widget:

@@ -1208,6 +1208,232 @@ func TestYAMLAdapter_UnresolvedPathParam(t *testing.T) {
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
 }
+func TestYAMLAdapter_ResponseMeta(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"files":         []any{map[string]any{"id": "1", "name": "test.txt"}},
+			"nextPageToken": "token_abc",
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/files",
+				Params: map[string]yamldef.Param{
+					"page_size": {Type: "int", Default: 10, Location: "query"},
+				},
+				Response: yamldef.ResponseDef{
+					DataPath: "files",
+					Fields:   []yamldef.FieldDef{{Name: "id"}, {Name: "name"}},
+					Meta: []yamldef.MetaDef{
+						{Name: "nextPageToken", Rename: "next_page_token"},
+					},
+					Summary: "{{len .Data}} file(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected non-nil Meta")
+	}
+	if result.Meta["next_page_token"] != "token_abc" {
+		t.Errorf("expected meta next_page_token=token_abc, got %v", result.Meta["next_page_token"])
+	}
+
+	// Verify Data is still correct.
+	items, ok := result.Data.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected Data to be []map[string]any, got %T", result.Data)
+	}
+	if len(items) != 1 || items[0]["id"] != "1" {
+		t.Errorf("unexpected data: %v", items)
+	}
+}
+
+func TestYAMLAdapter_ResponseMetaNested(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"channels": []any{map[string]any{"id": "C1", "name": "general"}},
+			"response_metadata": map[string]any{
+				"next_cursor": "cursor_xyz",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/channels",
+				Response: yamldef.ResponseDef{
+					DataPath: "channels",
+					Fields:   []yamldef.FieldDef{{Name: "id"}, {Name: "name"}},
+					Meta: []yamldef.MetaDef{
+						{Name: "response_metadata.next_cursor", Rename: "next_cursor"},
+					},
+					Summary: "{{len .Data}} channel(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected non-nil Meta")
+	}
+	if result.Meta["next_cursor"] != "cursor_xyz" {
+		t.Errorf("expected meta next_cursor=cursor_xyz, got %v", result.Meta["next_cursor"])
+	}
+}
+
+func TestYAMLAdapter_ResponseMetaGraphQL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"issues": map[string]any{
+					"nodes": []any{
+						map[string]any{"id": "1", "title": "Bug"},
+					},
+					"pageInfo": map[string]any{
+						"hasNextPage": true,
+						"endCursor":   "cursor_end",
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "graphql"},
+		Actions: map[string]yamldef.Action{
+			"list_issues": {
+				Query: `query($first: Int!) { issues(first: $first) { nodes { id title } pageInfo { hasNextPage endCursor } } }`,
+				Params: map[string]yamldef.Param{
+					"first": {Type: "int", Default: 50, GraphQLVar: true},
+				},
+				Response: yamldef.ResponseDef{
+					DataPath: "data.issues.nodes",
+					Fields:   []yamldef.FieldDef{{Name: "id"}, {Name: "title"}},
+					Meta: []yamldef.MetaDef{
+						{Name: "data.issues.pageInfo.hasNextPage", Rename: "has_more"},
+						{Name: "data.issues.pageInfo.endCursor", Rename: "end_cursor"},
+					},
+					Summary: "{{len .Data}} issue(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list_issues", Params: map[string]any{}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if result.Meta == nil {
+		t.Fatal("expected non-nil Meta")
+	}
+	if result.Meta["has_more"] != true {
+		t.Errorf("expected meta has_more=true, got %v", result.Meta["has_more"])
+	}
+	if result.Meta["end_cursor"] != "cursor_end" {
+		t.Errorf("expected meta end_cursor=cursor_end, got %v", result.Meta["end_cursor"])
+	}
+}
+
+func TestYAMLAdapter_ResponseMetaOmittedWhenEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"files": []any{map[string]any{"id": "1"}},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list": {
+				Method: "GET", Path: "/files",
+				Response: yamldef.ResponseDef{
+					DataPath: "files",
+					Fields:   []yamldef.FieldDef{{Name: "id"}},
+					Meta: []yamldef.MetaDef{
+						{Name: "nextPageToken", Rename: "next_page_token"},
+					},
+					Summary: "{{len .Data}} file(s)",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	result, err := adapter.Execute(context.Background(), adapters.Request{
+		Action: "list", Params: map[string]any{}, Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// When the API doesn't return the meta field, Meta should be nil.
+	if result.Meta != nil {
+		t.Errorf("expected nil Meta when no pagination token, got %v", result.Meta)
+	}
+
+	// Verify JSON serialization omits meta.
+	b, _ := json.Marshal(result)
+	if containsHelper(string(b), "meta") {
+		t.Errorf("expected 'meta' to be omitted from JSON, got %s", string(b))
+	}
+}
+
 func containsHelper(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

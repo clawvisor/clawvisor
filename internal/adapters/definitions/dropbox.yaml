@@ -34,29 +34,19 @@ actions:
   list_folder:
     display_name: "List folder"
     risk: { category: read, sensitivity: low, description: "List files and folders in a Dropbox directory" }
-    method: POST
-    path: "/files/list_folder"
+    override: go
     params:
       path:
         type: string
         default: ""
-        location: body
         description: "Folder path (use empty string \"\" for root)"
       limit:
         type: int
         default: 25
         max: 100
-        location: body
-    response:
-      data_path: "entries"
-      fields:
-        - { name: ".tag", rename: type }
-        - { name: name }
-        - { name: path_display, rename: path }
-        - { name: id }
-        - { name: size, nullable: true }
-        - { name: client_modified, nullable: true }
-      summary: "{{len .Data}} item(s)"
+      cursor:
+        type: string
+        description: "Cursor from a previous response to fetch the next page"
 
   get_metadata:
     display_name: "Get file metadata"
@@ -121,6 +111,10 @@ actions:
         type: object
         location: body
         description: "Search options (e.g. path, max_results, file_extensions)"
+      cursor:
+        type: string
+        location: body
+        description: "Cursor from a previous search response for pagination"
     response:
       data_path: "matches"
       fields:
@@ -129,6 +123,9 @@ actions:
         - { name: type, expr: 'metadata["metadata"][".tag"]' }
         - { name: id, path: "metadata.metadata.id" }
         - { name: size, path: "metadata.metadata.size", nullable: true }
+      meta:
+        - { name: has_more }
+        - { name: cursor }
       summary: "{{len .Data}} match(es)"
 
   create_folder:
@@ -253,10 +250,17 @@ actions:
         type: string
         location: body
         description: "File or folder path (omit to list all shared links)"
+      cursor:
+        type: string
+        location: body
+        description: "Cursor from a previous response for pagination"
     response:
       data_path: "links"
       fields:
         - { name: url }
         - { name: name }
         - { name: path_lower, rename: path }
+      meta:
+        - { name: has_more }
+        - { name: cursor }
       summary: "{{len .Data}} link(s)"

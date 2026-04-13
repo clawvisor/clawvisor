@@ -167,7 +167,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	goOverrides["google.contacts:list_contacts"] = contacts.Execute
 
 	dbx := dropboxadapter.New()
-	for _, action := range []string{"download_file", "upload_file"} {
+	for _, action := range []string{"list_folder", "download_file", "upload_file"} {
 		goOverrides["dropbox:"+action] = dbx.Execute
 	}
 

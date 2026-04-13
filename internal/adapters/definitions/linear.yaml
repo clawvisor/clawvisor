@@ -33,8 +33,8 @@ actions:
     display_name: "List issues"
     risk: { category: read, sensitivity: low, description: "List Linear issues" }
     query: |
-      query($first: Int!, $filter: IssueFilter) {
-        issues(first: $first, filter: $filter) {
+      query($first: Int!, $after: String, $filter: IssueFilter) {
+        issues(first: $first, after: $after, filter: $filter) {
           nodes {
             id identifier title
             state { name }
@@ -43,10 +43,12 @@ actions:
             team { name key }
             createdAt url
           }
+          pageInfo { hasNextPage endCursor }
         }
       }
     params:
       first: { type: int, default: 50, max: 250, graphql_var: true }
+      after: { type: string, graphql_var: true }
       team_id: { type: string, filter_path: "team.id.eq" }
       state: { type: string, filter_path: "state.name.eq" }
       assignee_id: { type: string, filter_path: "assignee.id.eq" }
@@ -62,6 +64,9 @@ actions:
         - { name: team, path: "team.name" }
         - { name: createdAt, rename: created_at }
         - { name: url }
+      meta:
+        - { name: data.issues.pageInfo.hasNextPage, rename: has_more }
+        - { name: data.issues.pageInfo.endCursor, rename: end_cursor }
       summary: "{{len .Data}} issue(s)"
 
   get_issue:
@@ -176,30 +181,39 @@ actions:
     display_name: "List teams"
     risk: { category: read, sensitivity: low, description: "List Linear teams" }
     query: |
-      query {
-        teams {
+      query($first: Int!, $after: String) {
+        teams(first: $first, after: $after) {
           nodes { id name key }
+          pageInfo { hasNextPage endCursor }
         }
       }
+    params:
+      first: { type: int, default: 50, max: 250, graphql_var: true }
+      after: { type: string, graphql_var: true }
     response:
       data_path: "data.teams.nodes"
       fields:
         - { name: id }
         - { name: name }
         - { name: key }
+      meta:
+        - { name: data.teams.pageInfo.hasNextPage, rename: has_more }
+        - { name: data.teams.pageInfo.endCursor, rename: end_cursor }
       summary: "{{len .Data}} team(s)"
 
   list_projects:
     display_name: "List projects"
     risk: { category: read, sensitivity: low, description: "List Linear projects" }
     query: |
-      query($first: Int!) {
-        projects(first: $first) {
+      query($first: Int!, $after: String) {
+        projects(first: $first, after: $after) {
           nodes { id name state startDate targetDate url }
+          pageInfo { hasNextPage endCursor }
         }
       }
     params:
       first: { type: int, default: 50, max: 250, graphql_var: true }
+      after: { type: string, graphql_var: true }
     response:
       data_path: "data.projects.nodes"
       fields:
@@ -209,14 +223,17 @@ actions:
         - { name: startDate, rename: start_date }
         - { name: targetDate, rename: target_date }
         - { name: url }
+      meta:
+        - { name: data.projects.pageInfo.hasNextPage, rename: has_more }
+        - { name: data.projects.pageInfo.endCursor, rename: end_cursor }
       summary: "{{len .Data}} project(s)"
 
   search_issues:
     display_name: "Search issues"
     risk: { category: search, sensitivity: low, description: "Search Linear issues" }
     query: |
-      query($first: Int!, $filter: IssueFilter!) {
-        issues(first: $first, filter: $filter) {
+      query($query: String!, $first: Int, $after: String, $includeComments: Boolean) {
+        searchIssues(term: $query, first: $first, after: $after, includeComments: $includeComments) {
           nodes {
             id identifier title
             state { name }
@@ -225,13 +242,16 @@ actions:
             team { name key }
             url
           }
+          pageInfo { hasNextPage endCursor }
         }
       }
     params:
-      query: { type: string, required: true }
+      query: { type: string, required: true, graphql_var: true }
       first: { type: int, default: 20, max: 250, graphql_var: true }
+      after: { type: string, graphql_var: true }
+      includeComments: { type: bool, default: true, graphql_var: true }
     response:
-      data_path: "data.issues.nodes"
+      data_path: "data.searchIssues.nodes"
       fields:
         - { name: id }
         - { name: identifier }
@@ -241,4 +261,7 @@ actions:
         - { name: assignee, path: "assignee.name", nullable: true }
         - { name: team, path: "team.name" }
         - { name: url }
+      meta:
+        - { name: data.searchIssues.pageInfo.hasNextPage, rename: has_more }
+        - { name: data.searchIssues.pageInfo.endCursor, rename: end_cursor }
       summary: "{{len .Data}} result(s)"

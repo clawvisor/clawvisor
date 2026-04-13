@@ -50,6 +50,8 @@ actions:
         - { name: name }
         - { name: num_members }
         - { name: is_private }
+      meta:
+        - { name: response_metadata.next_cursor, rename: next_cursor }
       summary: "{{len .Data}} channel(s)"
 
   get_channel:
@@ -89,6 +91,8 @@ actions:
         - { name: text, sanitize: true }
         - { name: ts }
         - { name: thread_ts, optional: true }
+      meta:
+        - { name: response_metadata.next_cursor, rename: next_cursor }
       summary: "{{len .Data}} message(s)"
 
   send_message:
@@ -115,6 +119,7 @@ actions:
     params:
       query: { type: string, required: true, location: query }
       count: { type: int, default: 20, max: 100, location: query }
+      page: { type: int, default: 1, location: query }
     error_check: { success_path: "ok", error_path: "error" }
     response:
       data_path: "messages.matches"
@@ -125,6 +130,9 @@ actions:
         - { name: permalink }
         - { name: channel_id, path: "channel.id" }
         - { name: channel_name, path: "channel.name" }
+      meta:
+        - { name: messages.paging.pages, rename: total_pages }
+        - { name: messages.paging.total, rename: total_results }
       summary: "{{len .Data}} result(s)"
 
   list_users:
@@ -144,4 +152,6 @@ actions:
         - { name: real_name }
         - { name: is_bot }
         - { name: is_admin }
+      meta:
+        - { name: response_metadata.next_cursor, rename: next_cursor }
       summary: "{{len .Data}} user(s)"

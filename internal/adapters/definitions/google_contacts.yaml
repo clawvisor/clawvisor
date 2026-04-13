@@ -101,6 +101,7 @@ actions:
     params:
       query: { type: string, required: true, location: query }
       max_results: { type: int, default: 10, max: 30, map_to: pageSize, location: query }
+      page_token: { type: string, map_to: pageToken, location: query }
       read_mask:
         type: string
         default: "names,emailAddresses,phoneNumbers"

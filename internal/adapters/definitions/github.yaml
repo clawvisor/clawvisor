@@ -35,7 +35,8 @@ actions:
       owner: { type: string, required: true, location: path }
       repo: { type: string, required: true, location: path }
       state: { type: string, default: "open", location: query }
-      max_results: { type: int, default: 30, max: 100, location: query }
+      max_results: { type: int, default: 30, max: 100, map_to: per_page, location: query }
+      page: { type: int, default: 1, location: query }
       labels: { type: string, location: query }
       assignee: { type: string, location: query }
     response:
@@ -110,7 +111,8 @@ actions:
       owner: { type: string, required: true, location: path }
       repo: { type: string, required: true, location: path }
       state: { type: string, default: "open", location: query }
-      max_results: { type: int, default: 30, max: 100, location: query }
+      max_results: { type: int, default: 30, max: 100, map_to: per_page, location: query }
+      page: { type: int, default: 1, location: query }
     response:
       fields:
         - { name: number }
@@ -146,7 +148,8 @@ actions:
     method: GET
     path: "/user/repos"
     params:
-      max_results: { type: int, default: 30, max: 100, location: query }
+      max_results: { type: int, default: 30, max: 100, map_to: per_page, location: query }
+      page: { type: int, default: 1, location: query }
     response:
       fields:
         - { name: name }
@@ -165,10 +168,14 @@ actions:
     path: "/search/code"
     params:
       query: { type: string, required: true, location: query, map_to: "q" }
+      max_results: { type: int, default: 30, max: 100, map_to: per_page, location: query }
+      page: { type: int, default: 1, location: query }
     response:
       data_path: "items"
       fields:
         - { name: name, rename: file }
         - { name: path }
         - { name: html_url, rename: url }
+      meta:
+        - { name: total_count }
       summary: "{{len .Data}} code result(s)"
