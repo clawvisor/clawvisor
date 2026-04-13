@@ -21,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
+	dropboxadapter "github.com/clawvisor/clawvisor/internal/adapters/dropbox"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
@@ -164,6 +165,11 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 	contacts := contactsadapter.New(oauthProvider)
 	goOverrides["google.contacts:list_contacts"] = contacts.Execute
+
+	dbx := dropboxadapter.New()
+	for _, action := range []string{"download_file", "upload_file"} {
+		goOverrides["dropbox:"+action] = dbx.Execute
+	}
 
 	// Build adapter loading source (for startup) and generator factory (for per-request use).
 	var adapterSource yamlloader.UserAdapterSource
