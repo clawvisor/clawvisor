@@ -413,6 +413,32 @@ func TestClient_Vertex_FallbackOn429(t *testing.T) {
 	}
 }
 
+func TestClient_Vertex_FallbackOn529Overloaded(t *testing.T) {
+	// Primary returns 529 (overloaded), fallback returns success.
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(529)
+		w.Write([]byte(`{"error": "overloaded"}`))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("fallback after overload"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback success after 529, got error: %v", err)
+	}
+	if got != "fallback after overload" {
+		t.Errorf("got %q, want %q", got, "fallback after overload")
+	}
+}
+
 func TestClient_Vertex_NoFallbackOn401(t *testing.T) {
 	// 401 is not retriable — should not try fallback.
 	calls := 0

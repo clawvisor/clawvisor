@@ -293,16 +293,6 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 
 // ── Vertex AI ────────────────────────────────────────────────────────────────
 
-// vertexRetriable returns true for errors/status codes worth retrying on a
-// different region (server errors, rate limits, and timeouts).
-func vertexRetriable(statusCode int) bool {
-	return statusCode == http.StatusTooManyRequests ||
-		statusCode == http.StatusServiceUnavailable ||
-		statusCode == http.StatusBadGateway ||
-		statusCode == http.StatusGatewayTimeout ||
-		statusCode >= 500
-}
-
 func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (string, error) {
 	if c.tokenSource == nil {
 		return "", fmt.Errorf("llm: vertex provider requires application default credentials")
@@ -360,24 +350,31 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 	return "", lastErr
 }
 
-// isVertexRetriableErr checks whether the error came from a retriable HTTP
-// status or a network-level failure (timeout, connection refused, etc.).
+// isVertexRetriableErr checks whether the error is worth retrying on a
+// different region: overloaded (529/503), retriable HTTP status, or network failure.
 func isVertexRetriableErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Check for our status-based errors by scanning the message for known codes.
-	// Network errors (context deadline, connection refused) are always retriable.
+	// ErrOverloaded is wrapped by statusError for 529 and 503.
+	if errors.Is(err, ErrOverloaded) {
+		return true
+	}
+	// Network-level failures (timeout, connection refused, DNS).
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
 	msg := err.Error()
-	for _, code := range []string{"status 429", "status 500", "status 502", "status 503", "status 504"} {
+	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "no such host") {
+		return true
+	}
+	// Remaining retriable HTTP statuses (429, 500, 502, 504) not covered by ErrOverloaded.
+	for _, code := range []string{"status 429", "status 500", "status 502", "status 504"} {
 		if strings.Contains(msg, code) {
 			return true
 		}
 	}
-	// Context deadline exceeded, connection refused, etc.
-	return errors.Is(err, context.DeadlineExceeded) ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "no such host")
+	return false
 }
 
 // doVertexRequest performs a single Vertex AI rawPredict call against the given endpoint.
