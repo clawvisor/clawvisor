@@ -333,18 +333,23 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 
 	var lastErr error
 	for _, ep := range endpoints {
-		result, err := c.doVertexRequest(ctx, ep, body)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		// Don't retry spend-cap errors on a different region.
-		if errors.Is(err, ErrSpendCapExhausted) {
-			return "", err
-		}
-		// Only try the next region for retriable errors.
-		if !isVertexRetriableErr(err) {
-			return "", err
+		// Try each region up to 2 times before moving to the next.
+		for attempt := range 2 {
+			result, err := c.doVertexRequest(ctx, ep, body)
+			if err == nil {
+				return result, nil
+			}
+			lastErr = err
+			// Don't retry spend-cap errors at all.
+			if errors.Is(err, ErrSpendCapExhausted) {
+				return "", err
+			}
+			if !isVertexRetriableErr(err) {
+				return "", err
+			}
+			// First attempt failed with retriable error — retry same region.
+			// Second attempt failed — move to next region.
+			_ = attempt
 		}
 	}
 	return "", lastErr

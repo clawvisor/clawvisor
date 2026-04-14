@@ -498,6 +498,47 @@ func TestClient_Vertex_PrimarySucceedsNoFallback(t *testing.T) {
 	}
 }
 
+func TestClient_Vertex_SameRegionRetry(t *testing.T) {
+	// Primary fails once then succeeds on retry — should never hit fallback.
+	primaryCalls := 0
+	fallbackCalls := 0
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryCalls++
+		if primaryCalls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error": "transient"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("retry worked"))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("fallback"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("expected success on retry, got error: %v", err)
+	}
+	if got != "retry worked" {
+		t.Errorf("got %q, want %q", got, "retry worked")
+	}
+	if primaryCalls != 2 {
+		t.Errorf("expected 2 primary calls, got %d", primaryCalls)
+	}
+	if fallbackCalls != 0 {
+		t.Errorf("expected 0 fallback calls, got %d", fallbackCalls)
+	}
+}
+
 func TestClient_Vertex_AllRegionsFail(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
