@@ -694,6 +694,7 @@ function TelegramSetupSection() {
                           <li>Send <code className="bg-surface-1 px-1 rounded">/newbot</code> and follow the prompts</li>
                           <li>Copy the bot token you receive</li>
                         </ol>
+                        <p className="text-text-tertiary mt-1">This must be a <span className="text-text-secondary font-medium">separate bot</span> from the one your agent uses to chat with you. Clawvisor needs its own bot to send approval requests.</p>
                       </div>
                       <div>
                         <label className="text-xs font-medium text-text-tertiary">Bot Token</label>
@@ -899,7 +900,7 @@ function TelegramSetupSection() {
                 <div className="bg-surface-2 border border-border-default rounded-md p-3 text-xs text-text-secondary space-y-2 mt-3">
                   <p className="font-medium text-text-primary">Setup instructions:</p>
                   <ol className="list-decimal list-inside space-y-1.5">
-                    <li>Create a new Telegram group and add your bot</li>
+                    <li>Create a new Telegram group and add your Clawvisor bot</li>
                     <li>
                       <strong>Disable bot privacy mode:</strong> message{' '}
                       <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand hover:underline">@BotFather</a>,
