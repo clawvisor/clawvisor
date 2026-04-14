@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/internal/llm"
+	"github.com/clawvisor/clawvisor/pkg/config"
+	"golang.org/x/oauth2"
 )
 
 // oaResponse builds a minimal OpenAI-compatible chat completions response.
@@ -331,6 +332,195 @@ func TestClient_Anthropic_DefaultProviderIsOpenAI(t *testing.T) {
 	}
 	if got != "default" {
 		t.Errorf("empty provider: got %q, want default", got)
+	}
+}
+
+// ── Vertex AI fallback ────────────────────────────────────────────────────────
+
+// staticToken implements oauth2.TokenSource for testing.
+type staticToken struct{}
+
+func (staticToken) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: "fake-token"}, nil
+}
+
+func newVertexClient(t *testing.T, endpoint string, fallbacks ...string) *llm.Client {
+	t.Helper()
+	cfg := config.LLMProviderConfig{
+		Enabled:        true,
+		Provider:       "vertex",
+		Endpoint:       endpoint,
+		Model:          "claude-haiku-4-5-20251001",
+		TimeoutSeconds: 5,
+	}
+	c := llm.NewClient(cfg)
+	c = c.WithTokenSource(staticToken{})
+	if len(fallbacks) > 0 {
+		c = c.WithFallbackEndpoints(fallbacks)
+	}
+	return c
+}
+
+func TestClient_Vertex_FallbackOnServerError(t *testing.T) {
+	// Primary returns 503, fallback returns success.
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error": "region down"}`))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("from fallback"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+	if got != "from fallback" {
+		t.Errorf("got %q, want %q", got, "from fallback")
+	}
+}
+
+func TestClient_Vertex_FallbackOn429(t *testing.T) {
+	// Primary returns 429, fallback returns success.
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error": "rate limited"}`))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("fallback ok"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("expected fallback success, got error: %v", err)
+	}
+	if got != "fallback ok" {
+		t.Errorf("got %q, want %q", got, "fallback ok")
+	}
+}
+
+func TestClient_Vertex_NoFallbackOn401(t *testing.T) {
+	// 401 is not retriable — should not try fallback.
+	calls := 0
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error": "unauthorized"}`))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("should not reach"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no fallback), got %d", calls)
+	}
+}
+
+func TestClient_Vertex_PrimarySucceedsNoFallback(t *testing.T) {
+	fallbackCalled := false
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("primary ok"))
+	}))
+	t.Cleanup(primary.Close)
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("fallback"))
+	}))
+	t.Cleanup(fallback.Close)
+
+	client := newVertexClient(t, primary.URL, fallback.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "primary ok" {
+		t.Errorf("got %q, want %q", got, "primary ok")
+	}
+	if fallbackCalled {
+		t.Error("fallback should not have been called when primary succeeds")
+	}
+}
+
+func TestClient_Vertex_AllRegionsFail(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error": "down"}`))
+	})
+	primary := httptest.NewServer(handler)
+	t.Cleanup(primary.Close)
+	fb1 := httptest.NewServer(handler)
+	t.Cleanup(fb1.Close)
+	fb2 := httptest.NewServer(handler)
+	t.Cleanup(fb2.Close)
+
+	client := newVertexClient(t, primary.URL, fb1.URL, fb2.URL)
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err == nil {
+		t.Fatal("expected error when all regions fail")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("expected 503 in error, got: %v", err)
+	}
+}
+
+func TestClient_Vertex_MultipleFallbacks(t *testing.T) {
+	// Primary and first fallback fail, second fallback succeeds.
+	failHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error": "bad gateway"}`))
+	})
+	primary := httptest.NewServer(failHandler)
+	t.Cleanup(primary.Close)
+	fb1 := httptest.NewServer(failHandler)
+	t.Cleanup(fb1.Close)
+	fb2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("third region"))
+	}))
+	t.Cleanup(fb2.Close)
+
+	client := newVertexClient(t, primary.URL, fb1.URL, fb2.URL)
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("expected success from third region, got error: %v", err)
+	}
+	if got != "third region" {
+		t.Errorf("got %q, want %q", got, "third region")
 	}
 }
 
