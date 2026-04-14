@@ -465,10 +465,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		if match.AutoExecute && !hardcoded {
 			taskIDPtr := &req.TaskID
 
-			// ── Local service shortcut ───────────────────────────────────
-			// Local services skip intent verification and adapter lookup;
-			// the daemon handles execution directly.
+			var result *adapters.Result
+			var execErr error
+			var verdict *intent.VerificationVerdict
+
 			if isLocalService(serviceType) {
+				// ── Local service shortcut ───────────────────────────────
+				// Local services skip intent verification and adapter
+				// lookup; the daemon handles execution directly.
 				if h.localExec == nil {
 					dur := int(time.Since(start).Milliseconds())
 					e := baseEntry("execute", "error", taskIDPtr)
@@ -488,192 +492,127 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					})
 					return
 				}
-				result, execErr := h.localExec.Execute(ctx, agent.UserID, serviceType, req.Action, req.Params)
-				dur := int(time.Since(start).Milliseconds())
-				if execErr != nil {
-					errMsg := execErr.Error()
-					e := baseEntry("execute", "error", taskIDPtr)
+				result, execErr = h.localExec.Execute(ctx, agent.UserID, serviceType, req.Action, req.Params)
+			} else {
+				// ── Intent verification ──────────────────────────────────
+				// Load chain facts (needed for both planned call matching and verification).
+				chainFacts := h.loadChainFacts(ctx, task, req)
+
+				// Check if the request matches a pre-registered planned call.
+				// If so, skip LLM-based intent verification entirely — the call
+				// was evaluated during task risk assessment and approved by the user.
+				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
+
+				if matchedPlannedCall != nil {
+					h.logger.Info("request matches planned call — skipping intent verification",
+						"task_id", req.TaskID,
+						"service", req.Service,
+						"action", req.Action,
+						"planned_reason", matchedPlannedCall.Reason,
+					)
+					verdict = &intent.VerificationVerdict{
+						Allow:           true,
+						ParamScope:      "ok",
+						ReasonCoherence: "ok",
+						ExtractContext:  true,
+						Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
+					}
+				} else {
+					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
+				}
+				// Chain context fallback: if the LLM flagged a missing entity,
+				// check programmatically — the LLM may have missed it in a long
+				// table, or it may exist beyond the loaded fact limit.
+				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
+					verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+				}
+				if verdict != nil && !verdict.Allow {
+					dur := int(time.Since(start).Milliseconds())
+					e := baseEntry("verify", "restricted", taskIDPtr)
 					e.DurationMS = dur
-					e.ErrorMsg = &errMsg
+					e.Verification = intent.MarshalVerdict(verdict)
 					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
-					if req.Context.CallbackURL != "" {
-						cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-						go func() {
-							cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-							defer cancel()
-							_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-								Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
-							}, cbKey)
-						}()
+					// Alert on incoherent reason
+					if verdict.ReasonCoherence == "incoherent" && h.notifier != nil {
+						alertText := fmt.Sprintf(
+							"⚠️ <b>Clawvisor — Intent Alert</b>\n\n"+
+								"<b>Task:</b> %s\n"+
+								"<b>Agent reason:</b> %s\n"+
+								"<b>Verdict:</b> %s",
+							task.Purpose, req.Reason, verdict.Explanation)
+						if alertErr := h.notifier.SendAlert(ctx, agent.UserID, alertText); alertErr != nil {
+							h.logger.Warn("intent alert failed", "err", alertErr)
+						}
 					}
 					resp := map[string]any{
-						"status":     "error",
-						"request_id": req.RequestID,
-						"audit_id":   auditID,
-						"error":      errMsg,
-						"code":       "EXECUTION_ERROR",
+						"status":       "restricted",
+						"request_id":   req.RequestID,
+						"audit_id":     auditID,
+						"reason":       verdict.Explanation,
+						"verification": verdict,
+					}
+					if len(warnings) > 0 {
+						resp["warnings"] = warnings
 					}
 					h.maybeInjectNPS(ctx, resp, agent.ID)
 					writeJSON(w, http.StatusOK, resp)
 					return
 				}
-				// Success
-				middleware.AddLogField(ctx, "decision", "execute")
-				middleware.AddLogField(ctx, "outcome", "executed")
-				e := baseEntry("execute", "executed", taskIDPtr)
-				e.DurationMS = dur
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
-				}
-				h.publishAuditAndQueue(agent.UserID, req.TaskID)
-				if req.Context.CallbackURL != "" {
-					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-					go func() {
-						cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-							Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
-						}, cbKey)
-					}()
-				}
-				resp := map[string]any{
-					"status":     "executed",
-					"request_id": req.RequestID,
-					"audit_id":   auditID,
-					"result":     result,
-				}
-				if len(warnings) > 0 {
-					resp["warnings"] = warnings
-				}
-				h.maybeInjectNPS(ctx, resp, agent.ID)
-				writeJSON(w, http.StatusOK, resp)
-				return
-			}
+				// ── End intent verification ──────────────────────────────
 
-			// ── Intent verification ──────────────────────────────────────
-			// Load chain facts (needed for both planned call matching and verification).
-			chainFacts := h.loadChainFacts(ctx, task, req)
-
-			// Check if the request matches a pre-registered planned call.
-			// If so, skip LLM-based intent verification entirely — the call
-			// was evaluated during task risk assessment and approved by the user.
-			matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
-
-			var verdict *intent.VerificationVerdict
-			if matchedPlannedCall != nil {
-				h.logger.Info("request matches planned call — skipping intent verification",
-					"task_id", req.TaskID,
-					"service", req.Service,
-					"action", req.Action,
-					"planned_reason", matchedPlannedCall.Reason,
-				)
-				verdict = &intent.VerificationVerdict{
-					Allow:           true,
-					ParamScope:      "ok",
-					ReasonCoherence: "ok",
-					ExtractContext:  true,
-					Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
-				}
-			} else {
-				verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
-			}
-			// Chain context fallback: if the LLM flagged a missing entity,
-			// check programmatically — the LLM may have missed it in a long
-			// table, or it may exist beyond the loaded fact limit.
-			if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
-				verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
-			}
-			if verdict != nil && !verdict.Allow {
-				dur := int(time.Since(start).Milliseconds())
-				e := baseEntry("verify", "restricted", taskIDPtr)
-				e.DurationMS = dur
-				e.Verification = intent.MarshalVerdict(verdict)
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
-				}
-				h.publishAuditAndQueue(agent.UserID, req.TaskID)
-				// Alert on incoherent reason
-				if verdict.ReasonCoherence == "incoherent" && h.notifier != nil {
-					alertText := fmt.Sprintf(
-						"⚠️ <b>Clawvisor — Intent Alert</b>\n\n"+
-							"<b>Task:</b> %s\n"+
-							"<b>Agent reason:</b> %s\n"+
-							"<b>Verdict:</b> %s",
-						task.Purpose, req.Reason, verdict.Explanation)
-					if alertErr := h.notifier.SendAlert(ctx, agent.UserID, alertText); alertErr != nil {
-						h.logger.Warn("intent alert failed", "err", alertErr)
+				// Check activation for credential-free services before executing.
+				if taskAdapter, taskAdapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
+					if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
+						dur := int(time.Since(start).Milliseconds())
+						e := baseEntry("block", "error", taskIDPtr)
+						e.DurationMS = dur
+						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
+						e.ErrorMsg = &auditMsg
+						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+							h.logger.Warn("audit log failed", "err", logErr)
+						}
+						h.publishAuditAndQueue(agent.UserID, req.TaskID)
+						writeJSON(w, http.StatusBadRequest, map[string]any{
+							"status":     "error",
+							"request_id": req.RequestID,
+							"audit_id":   auditID,
+							"error":      userErr,
+							"code":       code,
+						})
+						return
 					}
 				}
-				resp := map[string]any{
-					"status":       "restricted",
-					"request_id":   req.RequestID,
-					"audit_id":     auditID,
-					"reason":       verdict.Explanation,
-					"verification": verdict,
-				}
-				if len(warnings) > 0 {
-					resp["warnings"] = warnings
-				}
-				h.maybeInjectNPS(ctx, resp, agent.ID)
-				writeJSON(w, http.StatusOK, resp)
-				return
-			}
-			// ── End intent verification ──────────────────────────────────
 
-			// Check activation for credential-free services before executing.
-			if taskAdapter, taskAdapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); taskAdapterOK && taskAdapter.ValidateCredential(nil) == nil {
-				if _, metaErr := h.store.GetServiceMeta(ctx, agent.UserID, serviceType, serviceAlias); metaErr != nil {
-					dur := int(time.Since(start).Milliseconds())
-					e := baseEntry("block", "error", taskIDPtr)
-					e.DurationMS = dur
-					code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
-					e.ErrorMsg = &auditMsg
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
+				// Validate required params before execution.
+				if execAdapter, adOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); adOK {
+					paramErr, paramWarnings := validateRequestParams(execAdapter, req.Action, req.Params)
+					warnings = append(warnings, paramWarnings...)
+					if paramErr != nil {
+						errMsg := paramErr.Error
+						e := baseEntry("reject", "validation_error", taskIDPtr)
+						e.DurationMS = int(time.Since(start).Milliseconds())
+						e.ErrorMsg = &errMsg
+						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+							h.logger.Warn("audit log failed", "err", logErr)
+						}
+						h.publishAuditAndQueue(agent.UserID, req.TaskID)
+						writeDetailedError(w, http.StatusBadRequest, *paramErr)
+						return
 					}
-					h.publishAuditAndQueue(agent.UserID, req.TaskID)
-					writeJSON(w, http.StatusBadRequest, map[string]any{
-						"status":     "error",
-						"request_id": req.RequestID,
-						"audit_id":   auditID,
-						"error":      userErr,
-						"code":       code,
-					})
-					return
 				}
-			}
 
-			// Validate required params before execution.
-			if execAdapter, adOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID); adOK {
-				paramErr, paramWarnings := validateRequestParams(execAdapter, req.Action, req.Params)
-				warnings = append(warnings, paramWarnings...)
-				if paramErr != nil {
-					errMsg := paramErr.Error
-					e := baseEntry("reject", "validation_error", taskIDPtr)
-					e.DurationMS = int(time.Since(start).Milliseconds())
-					e.ErrorMsg = &errMsg
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-						h.logger.Warn("audit log failed", "err", logErr)
-					}
-					h.publishAuditAndQueue(agent.UserID, req.TaskID)
-					writeDetailedError(w, http.StatusBadRequest, *paramErr)
-					return
-				}
-			}
+				vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
+				result, execErr = executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
+					agent.UserID, serviceType, req.Action, req.Params, vKey)
 
-			vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
-			result, execErr := executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
-				agent.UserID, serviceType, req.Action, req.Params, vKey)
-			dur := int(time.Since(start).Milliseconds())
-
-			if execErr != nil {
-				if errors.Is(execErr, vault.ErrNotFound) {
-					// Vault credential missing — fail immediately.
+				// Vault credential missing — return activation error.
+				if execErr != nil && errors.Is(execErr, vault.ErrNotFound) {
 					adapter, adapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
+						dur := int(time.Since(start).Milliseconds())
 						e := baseEntry("block", "error", taskIDPtr)
 						e.DurationMS = dur
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
@@ -692,6 +631,13 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 				}
+			}
+
+			// ── Shared execution result handling (local + cloud) ────────
+
+			dur := int(time.Since(start).Milliseconds())
+
+			if execErr != nil {
 				errMsg := execErr.Error()
 				e := baseEntry("execute", "error", taskIDPtr)
 				e.DurationMS = dur
@@ -735,7 +681,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
 
-			// Chain context extraction (async — after response is written)
+			// Chain context extraction (async — cloud services only, guarded by verdict != nil)
 			chainSessionID := req.SessionID
 			if chainSessionID == "" && task.Lifetime != "standing" {
 				chainSessionID = req.TaskID
@@ -1023,8 +969,12 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	var execErr error
 	start := time.Now()
 
-	if isLocalService(serviceType) && h.localExec != nil {
-		result, execErr = h.localExec.Execute(ctx, pa.UserID, serviceType, blob.Action, blob.Params)
+	if isLocalService(serviceType) {
+		if h.localExec == nil {
+			execErr = fmt.Errorf("local services are not available in this deployment")
+		} else {
+			result, execErr = h.localExec.Execute(ctx, pa.UserID, serviceType, blob.Action, blob.Params)
+		}
 	} else {
 		// Resolve (and cache) the adapter before VaultKeyWithAliasForUser and executeAdapterRequest.
 		h.adapterReg.GetForUser(ctx, serviceType, pa.UserID)

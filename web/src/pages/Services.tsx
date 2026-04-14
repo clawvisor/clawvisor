@@ -981,7 +981,6 @@ function LocalServicesSection() {
 
   if (!daemons || daemons.length === 0) return null
 
-  const enabledSet = new Set((enabledServices ?? []).map(s => s.service_id))
   const enabledByDaemon = new Map<string, Set<string>>()
   for (const s of enabledServices ?? []) {
     if (!enabledByDaemon.has(s.daemon_id)) enabledByDaemon.set(s.daemon_id, new Set())
@@ -1031,11 +1030,15 @@ function LocalServicesSection() {
             {daemonServices.length > 0 && (
               <div className="divide-y divide-border-subtle">
                 {daemonServices.map(svc => {
-                  const enabled = enabledSet.has(svc.id)
-                  const toggling = enableMut.isPending || disableMut.isPending
+                  const daemonEnabled = enabledByDaemon.get(daemon.id)
+                  const enabled = daemonEnabled?.has(svc.id) ?? false
+                  const mutKey = `${daemon.id}:${svc.id}`
+                  const toggling =
+                    (enableMut.isPending && enableMut.variables?.daemonId === daemon.id && enableMut.variables?.serviceId === svc.id) ||
+                    (disableMut.isPending && disableMut.variables?.daemonId === daemon.id && disableMut.variables?.serviceId === svc.id)
 
                   return (
-                    <div key={svc.id} className="px-5 py-3 flex items-center justify-between">
+                    <div key={mutKey} className="px-5 py-3 flex items-center justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-text-primary">{svc.name}</span>
@@ -1075,9 +1078,11 @@ function LocalServicesSection() {
               </div>
             )}
 
-            {enableMut.isError && (
+            {(enableMut.isError || disableMut.isError) && (
               <div className="px-5 py-2 text-xs text-danger bg-danger/5 border-t border-border-subtle">
-                Failed to enable service: {(enableMut.error as Error).message}
+                {enableMut.isError
+                  ? `Failed to enable service: ${(enableMut.error as Error).message}`
+                  : `Failed to disable service: ${(disableMut.error as Error).message}`}
               </div>
             )}
           </div>
