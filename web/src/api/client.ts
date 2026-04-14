@@ -627,6 +627,8 @@ export interface BillingPlan {
   max_connections: number
   included_requests: number
   overage_per_request?: number
+  soft_cap_note?: string
+  features?: string[]
   contact_us?: boolean
 }
 
@@ -637,8 +639,6 @@ export interface BillingStatus {
   current_period_start?: string
   current_period_end?: string
   cancel_at_period_end?: boolean
-  trial_ends_at?: string
-  trial_days_remaining?: number
   stripe_publishable_key?: string
   usage?: {
     requests: { used: number; limit: number }
@@ -663,11 +663,6 @@ export interface PromoValidation {
 
 export interface BillingPlansResponse {
   plans: BillingPlan[]
-  trial: {
-    duration_days: number
-    included_requests: number
-    max_connections: number
-  }
 }
 
 // ── Org types ─────────────────────────────────────────────────────────────────
@@ -1056,8 +1051,8 @@ export const api = {
       post<{ status: string }>('/api/billing/promo', { code }),
     validatePromo: (code: string) =>
       post<PromoValidation>('/api/billing/promo/validate', { code }),
-    startTrial: (promoCode?: string) =>
-      post<{ status: string }>('/api/billing/trial', { promo_code: promoCode || '' }),
+    activateFreeTier: () =>
+      post<{ status: string }>('/api/billing/activate', {}),
   },
   oauthApprove: (params: {
     client_id: string

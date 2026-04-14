@@ -74,7 +74,7 @@ export default function Dashboard() {
     queryFn: () => api.llm.status(),
   })
 
-  // Billing status (for trial banner and expired state) — only when billing is enabled.
+  // Billing status (for expired state banner) — only when billing is enabled.
   const billingEnabled = !!features?.billing
   const { data: billingStatus, isLoading: billingLoading } = useQuery({
     queryKey: ['billing-status'],
@@ -282,21 +282,7 @@ export default function Dashboard() {
             </NavLink>
           </div>
         )}
-        {billingStatus?.status === 'trialing' && billingStatus.trial_days_remaining != null && !billingStatus.discount && (
-          <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
-            <span className="text-text-primary">
-              <span className="font-medium">{billingStatus.trial_days_remaining} day{billingStatus.trial_days_remaining !== 1 ? 's' : ''} left in your free trial.</span>
-              <span className="text-text-secondary"> Choose a plan to keep using Clawvisor.</span>
-            </span>
-            <NavLink
-              to="/pricing"
-              className="text-brand hover:text-brand/80 font-medium transition-colors whitespace-nowrap"
-            >
-              Choose a plan
-            </NavLink>
-          </div>
-        )}
-        {billingStatus && !['trialing', 'active', 'past_due', 'none'].includes(billingStatus.status) && billingStatus.plan !== 'none' && (
+        {billingStatus && !['active', 'past_due', 'none'].includes(billingStatus.status) && billingStatus.plan !== 'none' && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-danger/10 border border-danger/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">
               <span className="font-medium">Your subscription has expired.</span>
