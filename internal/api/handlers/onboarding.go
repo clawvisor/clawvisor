@@ -32,7 +32,11 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 	stepNum := 1
 	fmt.Fprintf(&b, "# Clawvisor Agent Setup\n\n")
-	fmt.Fprintf(&b, "Welcome! This document will walk you through connecting to a Clawvisor daemon.\n")
+	if h.isLocal {
+		fmt.Fprintf(&b, "Welcome! This document will walk you through connecting to a Clawvisor daemon.\n")
+	} else {
+		fmt.Fprintf(&b, "Welcome! This document will walk you through connecting to Clawvisor.\n")
+	}
 	fmt.Fprintf(&b, "Follow each step in order.\n\n")
 
 	fmt.Fprintf(&b, "## %d. Set your endpoint\n\n", stepNum)
@@ -47,10 +51,19 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		userID = ""
 	}
 
-	fmt.Fprintf(&b, "## %d. Register with the daemon and wait for approval\n\n", stepNum)
+	if h.isLocal {
+		fmt.Fprintf(&b, "## %d. Register with the daemon and wait for approval\n\n", stepNum)
+	} else {
+		fmt.Fprintf(&b, "## %d. Register and wait for approval\n\n", stepNum)
+	}
 	stepNum++
-	fmt.Fprintf(&b, "Send a connection request with `?wait=true`. The daemon owner will be notified,\n")
-	fmt.Fprintf(&b, "and the request blocks until they approve (or the timeout elapses).\n\n")
+	if h.isLocal {
+		fmt.Fprintf(&b, "Send a connection request with `?wait=true`. The daemon owner will be notified,\n")
+		fmt.Fprintf(&b, "and the request blocks until they approve (or the timeout elapses).\n\n")
+	} else {
+		fmt.Fprintf(&b, "Send a connection request with `?wait=true`. The account owner will be notified,\n")
+		fmt.Fprintf(&b, "and the request blocks until they approve (or the timeout elapses).\n\n")
+	}
 	fmt.Fprintf(&b, "```bash\n")
 	fmt.Fprintf(&b, "curl -s -X POST \"$CLAWVISOR_URL/api/agents/connect?wait=true&timeout=120\" \\\n")
 	fmt.Fprintf(&b, "  -H \"Content-Type: application/json\" \\\n")
@@ -184,11 +197,19 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("## Steps\n\n")
 
 	b.WriteString("### 1. Connect as an agent\n\n")
-	b.WriteString("Register with the daemon and wait for the user to approve:\n\n")
+	if h.isLocal {
+		b.WriteString("Register with the daemon and wait for the user to approve:\n\n")
+	} else {
+		b.WriteString("Register with Clawvisor and wait for the user to approve:\n\n")
+	}
 	b.WriteString("```bash\n")
 	fmt.Fprintf(&b, "curl -s -X POST \"%s/api/agents/connect?wait=true&timeout=120\" -H \"Content-Type: application/json\" -d '%s'\n", clawvisorURL, connectBody)
 	b.WriteString("```\n\n")
-	b.WriteString("This sends a connection request to the daemon. The user will be notified\n")
+	if h.isLocal {
+		b.WriteString("This sends a connection request to the daemon. The user will be notified\n")
+	} else {
+		b.WriteString("This sends a connection request to Clawvisor. The user will be notified\n")
+	}
 	b.WriteString("to approve. The `?wait=true` parameter makes the request block until the\n")
 	b.WriteString("user approves (or the timeout elapses).\n\n")
 	b.WriteString("Parse the JSON response. If `status` is `approved`, save the `token`\n")
@@ -198,7 +219,7 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("until it resolves.\n\n")
 
 	b.WriteString("### 2. Set environment variables\n\n")
-	b.WriteString("Save the agent token and daemon URL to `~/.claude/settings.json` so they\n")
+	b.WriteString("Save the agent token and Clawvisor URL to `~/.claude/settings.json` so they\n")
 	b.WriteString("persist across all Claude Code sessions and projects.\n\n")
 	b.WriteString("Read `~/.claude/settings.json` (create it if it doesn't exist). Merge the\n")
 	b.WriteString("following into the `env` object at the top level, preserving all other keys:\n\n")
@@ -242,7 +263,11 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	fmt.Fprintf(&b, "curl -sf -H \"Authorization: Bearer $CLAWVISOR_AGENT_TOKEN\" \\\n  %s/api/skill/catalog | head -20\n", clawvisorURL)
 	b.WriteString("```\n\n")
 	b.WriteString("This should return a JSON service catalog. If it returns 401, the token is\n")
-	b.WriteString("wrong. If it fails to connect, the daemon is not running.\n\n")
+	if h.isLocal {
+		b.WriteString("wrong. If it fails to connect, the daemon is not running.\n\n")
+	} else {
+		b.WriteString("wrong. If it fails to connect, check the Clawvisor URL.\n\n")
+	}
 
 	stepNum++
 	fmt.Fprintf(&b, "### %d. End-to-end smoke test\n\n", stepNum)
