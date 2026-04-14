@@ -269,6 +269,20 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE agents SET token_hash = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+		newTokenHash, id, userID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE agents SET callback_secret = $1 WHERE id = $2 AND deleted_at IS NULL`,

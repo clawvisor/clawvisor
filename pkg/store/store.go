@@ -36,6 +36,7 @@ type Store interface {
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	DeleteAgent(ctx context.Context, id, userID string) error
+	RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error
 	SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error
 	GetAgentCallbackSecret(ctx context.Context, agentID string) (string, error)
 

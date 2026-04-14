@@ -304,6 +304,21 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET token_hash = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		newTokenHash, id, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET callback_secret = ? WHERE id = ? AND deleted_at IS NULL`,

@@ -33,14 +33,32 @@ var agentCreateCmd = &cobra.Command{
 			return err
 		}
 
-		// If --replace, delete any existing agent with the same name first.
+		// If --replace and an agent with the same name exists, rotate its
+		// token instead of deleting and recreating. This preserves the
+		// agent ID, active tasks, and group pairings.
 		if agentCreateReplace {
 			existing, _ := cl.GetAgents()
 			for _, a := range existing {
 				if a.Name == name {
-					_ = cl.DeleteAgent(a.ID)
+					rotated, err := cl.RotateAgentToken(a.ID)
+					if err != nil {
+						return fmt.Errorf("rotating token: %w", err)
+					}
+					if agentCreateJSON {
+						out := map[string]string{
+							"id":    rotated.ID,
+							"name":  name,
+							"token": rotated.Token,
+						}
+						enc := json.NewEncoder(os.Stdout)
+						return enc.Encode(out)
+					}
+					fmt.Printf("Agent token rotated: %s (id: %s)\n", name, rotated.ID)
+					fmt.Printf("Token: %s\n", rotated.Token)
+					return nil
 				}
 			}
+			// No existing agent found — fall through to create.
 		}
 
 		agent, err := cl.CreateAgentWithOpts(name, agentCreateWithCallback)
@@ -148,7 +166,7 @@ var agentDeleteCmd = &cobra.Command{
 func init() {
 	agentCreateCmd.Flags().BoolVar(&agentCreateJSON, "json", false, "Output in JSON format")
 	agentCreateCmd.Flags().BoolVar(&agentCreateWithCallback, "with-callback-secret", false, "Generate and register a callback signing secret")
-	agentCreateCmd.Flags().BoolVar(&agentCreateReplace, "replace", false, "Delete existing agent with same name before creating")
+	agentCreateCmd.Flags().BoolVar(&agentCreateReplace, "replace", false, "Rotate token for existing agent with same name, or create if not found")
 
 	agentListCmd.Flags().BoolVar(&agentListJSON, "json", false, "Output in JSON format")
 
