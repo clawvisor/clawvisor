@@ -1508,6 +1508,9 @@ function LocalDaemonPairing() {
   }
 
   // Probe localhost to see if a daemon is running and get its ID.
+  // Only probe when there are already paired daemons — avoids unnecessary
+  // localhost requests (and CSP/network errors) when no daemon exists.
+  const hasDaemons = (daemons ?? []).length > 0
   const { data: localDaemonId } = useQuery({
     queryKey: ['local-daemon-probe'],
     queryFn: async () => {
@@ -1519,6 +1522,7 @@ function LocalDaemonPairing() {
       } catch { return null }
     },
     staleTime: 30000,
+    enabled: hasDaemons,
   })
 
   const localAlreadyPaired = !!(localDaemonId && daemons?.some(d => d.daemon_id === localDaemonId))
