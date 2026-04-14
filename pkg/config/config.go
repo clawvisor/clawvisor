@@ -256,7 +256,7 @@ func Default() *Config {
 			TimeoutSeconds: 10,
 			Verification: VerificationConfig{
 				LLMProviderConfig: LLMProviderConfig{
-					TimeoutSeconds: 5,
+					TimeoutSeconds: 15,
 				},
 				FailClosed:      true,
 				CacheTTLSeconds: 60,
