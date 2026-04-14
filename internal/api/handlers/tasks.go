@@ -178,7 +178,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 		// Validate local daemon services against the active service list.
 		if isLocalService(serviceType) {
-			if err := h.validateLocalService(ctx, agent.UserID, serviceType); err != nil {
+			if err := h.validateLocalService(ctx, agent.UserID, serviceType, a.Action); err != nil {
 				writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 				return
 			}
@@ -870,7 +870,7 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	// Validate service and action exist.
 	serviceType, serviceAlias := parseServiceAlias(req.Service)
 	if isLocalService(serviceType) {
-		if err := h.validateLocalService(ctx, agent.UserID, serviceType); err != nil {
+		if err := h.validateLocalService(ctx, agent.UserID, serviceType, req.Action); err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 			return
 		}
@@ -1347,10 +1347,11 @@ func (h *TasksHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 // Credential-free services check service_meta; credential-backed services check the vault.
 // It requires an exact alias match — callers should use serviceNotActivatedResponse
 // to produce a helpful error listing available connections when this returns false.
-// validateLocalService checks that a local.* service is real and enabled for the user.
+// validateLocalService checks that a local.* service is real, enabled for the
+// user, and (when action is not "*") that the requested action exists.
 // Returns nil if the provider is not configured (self-hosted mode where all local
-// services are allowed) or if the service is found in the active list.
-func (h *TasksHandler) validateLocalService(ctx context.Context, userID, serviceType string) error {
+// services are allowed) or if the service and action are found in the active list.
+func (h *TasksHandler) validateLocalService(ctx context.Context, userID, serviceType, action string) error {
 	if h.localSvcProvider == nil {
 		return nil // no provider — skip validation (self-hosted)
 	}
@@ -1362,7 +1363,21 @@ func (h *TasksHandler) validateLocalService(ctx context.Context, userID, service
 	svcID := strings.TrimPrefix(serviceType, "local.")
 	for _, svc := range active {
 		if svc.ServiceID == svcID {
-			return nil
+			// Service found — validate action if not wildcard.
+			if action == "*" || action == "" {
+				return nil
+			}
+			for _, a := range svc.Actions {
+				if a.ID == action {
+					return nil
+				}
+			}
+			available := make([]string, len(svc.Actions))
+			for i, a := range svc.Actions {
+				available[i] = a.ID
+			}
+			return fmt.Errorf("local service %q does not support action %q — available actions: %s",
+				serviceType, action, strings.Join(available, ", "))
 		}
 	}
 	return fmt.Errorf("local service %q is not enabled or does not exist — enable it from the Services page", serviceType)

@@ -470,9 +470,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			var verdict *intent.VerificationVerdict
 
 			if isLocalService(serviceType) {
-				// ── Local service shortcut ───────────────────────────────
-				// Local services skip intent verification and adapter
-				// lookup; the daemon handles execution directly.
+				// ── Local service execution ──────────────────────────────
 				if h.localExec == nil {
 					dur := int(time.Since(start).Milliseconds())
 					e := baseEntry("execute", "error", taskIDPtr)
@@ -492,6 +490,66 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					})
 					return
 				}
+
+				// ── Intent verification (same pipeline as cloud services) ──
+				chainFacts := h.loadChainFacts(ctx, task, req)
+
+				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
+				if matchedPlannedCall != nil {
+					h.logger.Info("request matches planned call — skipping intent verification",
+						"task_id", req.TaskID,
+						"service", req.Service,
+						"action", req.Action,
+						"planned_reason", matchedPlannedCall.Reason,
+					)
+					verdict = &intent.VerificationVerdict{
+						Allow:           true,
+						ParamScope:      "ok",
+						ReasonCoherence: "ok",
+						ExtractContext:  true,
+						Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
+					}
+				} else {
+					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
+				}
+				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
+					verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+				}
+				if verdict != nil && !verdict.Allow {
+					dur := int(time.Since(start).Milliseconds())
+					e := baseEntry("verify", "restricted", taskIDPtr)
+					e.DurationMS = dur
+					e.Verification = intent.MarshalVerdict(verdict)
+					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						h.logger.Warn("audit log failed", "err", logErr)
+					}
+					h.publishAuditAndQueue(agent.UserID, req.TaskID)
+					if verdict.ReasonCoherence == "incoherent" && h.notifier != nil {
+						alertText := fmt.Sprintf(
+							"⚠️ <b>Clawvisor — Intent Alert</b>\n\n"+
+								"<b>Task:</b> %s\n"+
+								"<b>Agent reason:</b> %s\n"+
+								"<b>Verdict:</b> %s",
+							task.Purpose, req.Reason, verdict.Explanation)
+						if alertErr := h.notifier.SendAlert(ctx, agent.UserID, alertText); alertErr != nil {
+							h.logger.Warn("intent alert failed", "err", alertErr)
+						}
+					}
+					resp := map[string]any{
+						"status":       "restricted",
+						"request_id":   req.RequestID,
+						"audit_id":     auditID,
+						"reason":       verdict.Explanation,
+						"verification": verdict,
+					}
+					if len(warnings) > 0 {
+						resp["warnings"] = warnings
+					}
+					h.maybeInjectNPS(ctx, resp, agent.ID)
+					writeJSON(w, http.StatusOK, resp)
+					return
+				}
+
 				result, execErr = h.localExec.Execute(ctx, agent.UserID, serviceType, req.Action, req.Params)
 			} else {
 				// ── Intent verification ──────────────────────────────────
