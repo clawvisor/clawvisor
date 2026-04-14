@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, APIError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
@@ -12,6 +12,9 @@ export default function VerifyEmail() {
   const [verifying, setVerifying] = useState(true)
   const [destination, setDestination] = useState<string | null>(null)
   const { isAuthenticated } = useAuth()
+  // Prevents React StrictMode's double-invoke from firing two concurrent
+  // verify requests for the same single-use token.
+  const didVerify = useRef(false)
 
   useEffect(() => {
     if (!token) {
@@ -19,6 +22,8 @@ export default function VerifyEmail() {
       setVerifying(false)
       return
     }
+    if (didVerify.current) return
+    didVerify.current = true
 
     let cancelled = false
     async function verify() {
