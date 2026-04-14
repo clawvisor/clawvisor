@@ -80,6 +80,7 @@ type Server struct {
 	msgBuffer            groupchat.Buffer               // group chat message buffer; may be nil
 	decisionBus          notify.DecisionBus             // cross-instance decision delivery; may be nil
 	gatewayHooks         *GatewayHooks                  // cloud-injected gateway authorization hooks; may be nil
+	feedbackHooks        *FeedbackHooks                 // cloud-injected feedback event hooks; may be nil
 	localServiceProvider handlers.LocalServiceProvider  // cloud-injected local daemon service provider; may be nil
 	localServiceExecutor handlers.LocalServiceExecutor  // cloud-injected local service executor; may be nil
 
@@ -133,6 +134,12 @@ type GatewayHooks struct {
 	// The agent (including OrgID) is available via middleware.AgentFromContext(ctx).
 	// Return a non-nil error to block the request (treated as an org policy block).
 	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
+}
+
+// FeedbackHooks allows cloud/enterprise layers to react to feedback events.
+type FeedbackHooks struct {
+	// AfterBugReport is called after a bug report is successfully saved.
+	AfterBugReport func(report *store.FeedbackReport)
 }
 
 // ServerOption configures optional behavior on the Server.
@@ -215,6 +222,11 @@ func WithAdapterGenFactory(f handlers.GeneratorFactory) ServerOption {
 // WithGatewayHooks injects additional authorization logic into the gateway.
 func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
 	return func(s *Server) { s.gatewayHooks = hooks }
+}
+
+// WithFeedbackHooks injects callbacks for feedback events (e.g. bug reports).
+func WithFeedbackHooks(hooks *FeedbackHooks) ServerOption {
+	return func(s *Server) { s.feedbackHooks = hooks }
 }
 
 // WithLocalServiceProvider injects a provider of local daemon services into
@@ -672,6 +684,9 @@ func (s *Server) routes() http.Handler {
 		feedbackReviewer = feedback.NewLLMReviewer(s.llmHealth, s.logger)
 	}
 	feedbackHandler := handlers.NewFeedbackHandler(s.store, feedbackReviewer, s.logger)
+	if s.feedbackHooks != nil && s.feedbackHooks.AfterBugReport != nil {
+		feedbackHandler.SetAfterBugReport(s.feedbackHooks.AfterBugReport)
+	}
 	mux.Handle("POST /api/feedback/report", requireAgent(e2e(http.HandlerFunc(feedbackHandler.ReportBug))))
 	mux.Handle("POST /api/feedback/nps", requireAgent(e2e(http.HandlerFunc(feedbackHandler.SubmitNPS))))
 	mux.Handle("GET /api/feedback/reports", user(feedbackHandler.ListReports))

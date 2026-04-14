@@ -34,6 +34,13 @@ type GatewayHooks struct {
 	BeforeAuthorize func(ctx context.Context, agentID, userID, service, action string) error
 }
 
+// FeedbackHooks allows cloud/enterprise layers to react to feedback events.
+type FeedbackHooks struct {
+	// AfterBugReport is called after a bug report is successfully saved.
+	// It runs in a goroutine so it does not block the HTTP response.
+	AfterBugReport func(report *store.FeedbackReport)
+}
+
 // ServerOptions holds everything needed to start a Clawvisor server.
 // Use DefaultOptions to get the standard open-source defaults, then
 // selectively override fields before passing to Run.
@@ -98,6 +105,10 @@ type ServerOptions struct {
 	// GatewayHooks injects additional authorization logic into the gateway flow.
 	// Used by cloud for org-level restrictions, policies, etc.
 	GatewayHooks *GatewayHooks
+
+	// FeedbackHooks allows cloud/enterprise layers to react to feedback events
+	// (e.g. sending Slack alerts on bug reports).
+	FeedbackHooks *FeedbackHooks
 
 	// LocalServiceProvider supplies local daemon services for the agent catalog.
 	// Set by the cloud layer; nil in self-hosted mode.
