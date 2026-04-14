@@ -1,0 +1,199 @@
+service:
+  id: supabase
+  display_name: Supabase
+  description: "Query and manage Postgres tables, call RPC functions, manage storage buckets, and administer users through the Supabase API."
+  setup_url: "https://supabase.com/dashboard/project/_/settings/api"
+  key_hint: "Supabase service_role key (eyJ...)"
+  icon_svg: '<svg viewBox="0 0 109 113" fill="none"><path d="M63.708 110.284c-2.86 3.601-8.658 1.628-8.727-2.97l-1.007-67.251h45.22c8.19 0 12.758 9.46 7.665 15.874L63.708 110.284z" fill="url(#a)"/><path d="M63.708 110.284c-2.86 3.601-8.658 1.628-8.727-2.97l-1.007-67.251h45.22c8.19 0 12.758 9.46 7.665 15.874L63.708 110.284z" fill="url(#b)" fill-opacity=".2"/><path d="M45.317 2.071c2.86-3.601 8.657-1.628 8.726 2.97l.442 67.251H9.83c-8.19 0-12.759-9.46-7.665-15.875L45.317 2.072z" fill="#3ECF8E"/><defs><linearGradient id="a" x1="53.974" y1="54.974" x2="94.163" y2="71.829" gradientUnits="userSpaceOnUse"><stop stop-color="#249361"/><stop offset="1" stop-color="#3ECF8E"/></linearGradient><linearGradient id="b" x1="36.156" y1="30.578" x2="54.484" y2="65.081" gradientUnits="userSpaceOnUse"><stop/><stop offset="1" stop-opacity="0"/></linearGradient></defs></svg>'
+
+auth:
+  type: api_key
+  header: "apikey"
+  mirror_header: "Authorization"
+  mirror_header_prefix: "Bearer "
+  extra_headers:
+    Content-Type: "application/json"
+
+api:
+  base_url: "{{.var.project_url}}"
+  type: rest
+
+variables:
+  project_url:
+    display_name: "Project URL"
+    description: "Your Supabase project URL (e.g. https://abcdefgh.supabase.co)"
+    required: true
+
+verification_hints: |
+  Supabase actions target a specific project. The service_role key bypasses Row Level Security —
+  treat write and delete actions as high sensitivity. Table names are user-provided and map to
+  Postgres tables in the project's public schema.
+
+actions:
+  query_table:
+    display_name: "Query table"
+    risk: { category: read, sensitivity: low, description: "Read rows from a Supabase table" }
+    method: GET
+    path: "/rest/v1/{{.table}}"
+    params:
+      table: { type: string, required: true, location: path }
+      select: { type: string, default: "*", location: query }
+      limit: { type: int, default: 100, max: 1000, location: query }
+      offset: { type: int, location: query }
+      order: { type: string, location: query }
+      # PostgREST filter params — passed as raw query params (e.g. id=eq.5)
+      filters: { type: object, location: query }
+    response:
+      summary: "{{len .Data}} row(s)"
+
+  get_row:
+    display_name: "Get row by ID"
+    risk: { category: read, sensitivity: low, description: "Read a single row from a Supabase table" }
+    method: GET
+    path: "/rest/v1/{{.table}}"
+    params:
+      table: { type: string, required: true, location: path }
+      select: { type: string, default: "*", location: query }
+      id: { type: string, required: true, location: query, map_to: "id", transform: "\"eq.\" + value" }
+    response:
+      summary: "{{len .Data}} row(s)"
+
+  insert_rows:
+    display_name: "Insert rows"
+    risk: { category: write, sensitivity: high, description: "Insert rows into a Supabase table (bypasses RLS with service_role key)" }
+    method: POST
+    path: "/rest/v1/{{.table}}"
+    params:
+      table: { type: string, required: true, location: path }
+      rows: { type: array, required: true, location: body }
+      on_conflict: { type: string, location: query }
+    response:
+      summary: "Inserted row(s)"
+
+  update_rows:
+    display_name: "Update rows"
+    risk: { category: write, sensitivity: high, description: "Update rows in a Supabase table (bypasses RLS with service_role key)" }
+    method: PATCH
+    path: "/rest/v1/{{.table}}"
+    params:
+      table: { type: string, required: true, location: path }
+      updates: { type: object, required: true, location: body }
+      filters: { type: object, required: true, location: query }
+    response:
+      summary: "Updated row(s)"
+
+  delete_rows:
+    display_name: "Delete rows"
+    risk: { category: delete, sensitivity: high, description: "Delete rows from a Supabase table (bypasses RLS with service_role key)" }
+    method: DELETE
+    path: "/rest/v1/{{.table}}"
+    params:
+      table: { type: string, required: true, location: path }
+      filters: { type: object, required: true, location: query }
+    response:
+      summary: "Deleted row(s)"
+
+  call_rpc:
+    display_name: "Call RPC function"
+    risk: { category: write, sensitivity: medium, description: "Call a Postgres function via Supabase RPC" }
+    method: POST
+    path: "/rest/v1/rpc/{{.function_name}}"
+    params:
+      function_name: { type: string, required: true, location: path }
+      args: { type: object, location: body }
+    response:
+      summary: "RPC result"
+
+  list_buckets:
+    display_name: "List storage buckets"
+    risk: { category: read, sensitivity: low, description: "List storage buckets in the Supabase project" }
+    method: GET
+    path: "/storage/v1/bucket"
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: public }
+        - { name: created_at }
+      summary: "{{len .Data}} bucket(s)"
+
+  list_files:
+    display_name: "List files in bucket"
+    risk: { category: read, sensitivity: low, description: "List files in a Supabase storage bucket" }
+    method: POST
+    path: "/storage/v1/object/list/{{.bucket}}"
+    params:
+      bucket: { type: string, required: true, location: path }
+      prefix: { type: string, location: body }
+      limit: { type: int, default: 100, location: body }
+      offset: { type: int, location: body }
+    response:
+      fields:
+        - { name: name }
+        - { name: id }
+        - { name: metadata }
+        - { name: created_at }
+      summary: "{{len .Data}} file(s)"
+
+  delete_file:
+    display_name: "Delete files"
+    risk: { category: delete, sensitivity: high, description: "Delete files from a Supabase storage bucket" }
+    method: DELETE
+    path: "/storage/v1/object/{{.bucket}}"
+    params:
+      bucket: { type: string, required: true, location: path }
+      prefixes: { type: array, required: true, location: body }
+    response:
+      summary: "Deleted file(s)"
+
+  list_users:
+    display_name: "List users"
+    risk: { category: read, sensitivity: medium, description: "List auth users in the Supabase project" }
+    method: GET
+    path: "/auth/v1/admin/users"
+    params:
+      page: { type: int, default: 1, location: query }
+      per_page: { type: int, default: 50, max: 1000, location: query }
+    response:
+      data_path: "users"
+      fields:
+        - { name: id }
+        - { name: email }
+        - { name: phone }
+        - { name: created_at }
+        - { name: last_sign_in_at }
+        - { name: role }
+      summary: "{{len .Data}} user(s)"
+
+  get_user:
+    display_name: "Get user"
+    risk: { category: read, sensitivity: medium, description: "Read a specific auth user" }
+    method: GET
+    path: "/auth/v1/admin/users/{{.user_id}}"
+    params:
+      user_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: email }
+        - { name: phone }
+        - { name: email_confirmed_at }
+        - { name: created_at }
+        - { name: last_sign_in_at }
+        - { name: role }
+        - { name: app_metadata }
+        - { name: user_metadata }
+      summary: "User {{.id}}: {{.email}}"
+
+  invite_user:
+    display_name: "Invite user"
+    risk: { category: write, sensitivity: high, description: "Send an email invitation to a new user" }
+    method: POST
+    path: "/auth/v1/invite"
+    params:
+      email: { type: string, required: true, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: email }
+      summary: "Invited {{.email}}"
