@@ -47,7 +47,8 @@ export default function Welcome() {
               </li>
               <li className="flex items-center gap-2">
                 <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
-                1,000 gateway requests/month
+                <span className="line-through text-text-tertiary">1,000 gateway requests/month</span>{' '}
+                <span className="text-brand font-medium">Uncapped during early access</span>
               </li>
               <li className="flex items-center gap-2">
                 <svg className="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>

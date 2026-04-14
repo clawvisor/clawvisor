@@ -52,8 +52,14 @@ function PlanCard({ plan, isCurrent, onSelect, loading }: {
         <li className="flex items-start gap-2">
           {checkIcon}
           <span>
-            {plan.included_requests < 0 ? 'Unlimited' : plan.included_requests.toLocaleString()} requests/month
-            {plan.soft_cap_note && <span className="block text-xs text-text-tertiary mt-0.5">{plan.soft_cap_note}</span>}
+            {plan.soft_cap_note ? (
+              <>
+                <span className="line-through text-text-tertiary">{plan.included_requests.toLocaleString()} requests/month</span>{' '}
+                <span className="text-brand font-medium text-sm">Uncapped during early access</span>
+              </>
+            ) : (
+              <>{plan.included_requests < 0 ? 'Unlimited' : plan.included_requests.toLocaleString()} requests/month</>
+            )}
           </span>
         </li>
         {plan.overage_per_request != null && plan.overage_per_request > 0 && (
