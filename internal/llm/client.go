@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -332,11 +333,14 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 	}
 
 	var lastErr error
-	for _, ep := range endpoints {
+	for i, ep := range endpoints {
 		// Try each region up to 2 times before moving to the next.
 		for attempt := range 2 {
 			result, err := c.doVertexRequest(ctx, ep, body)
 			if err == nil {
+				if i > 0 || attempt > 0 {
+					slog.Info("vertex fallback succeeded", "endpoint", ep, "region_index", i, "attempt", attempt+1)
+				}
 				return result, nil
 			}
 			lastErr = err
@@ -347,9 +351,7 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 			if !isVertexRetriableErr(err) {
 				return "", err
 			}
-			// First attempt failed with retriable error — retry same region.
-			// Second attempt failed — move to next region.
-			_ = attempt
+			slog.Warn("vertex request failed, will retry", "endpoint", ep, "region_index", i, "attempt", attempt+1, "error", err)
 		}
 	}
 	return "", lastErr
