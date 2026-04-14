@@ -1500,7 +1500,12 @@ function LocalDaemonPairing() {
     queryFn: () => api.localDaemon.listEnabledServices(),
   })
 
-  const enabledServiceIds = new Set((enabledServices ?? []).map(s => s.service_id))
+  const enabledByDaemon = new Map<string, Set<string>>()
+  for (const s of enabledServices ?? []) {
+    let set = enabledByDaemon.get(s.daemon_id)
+    if (!set) { set = new Set(); enabledByDaemon.set(s.daemon_id, set) }
+    set.add(s.service_id)
+  }
 
   // Probe localhost to see if a daemon is running and get its ID.
   const { data: localDaemonId } = useQuery({
@@ -1601,7 +1606,7 @@ function LocalDaemonPairing() {
       {!isLoading && (daemons ?? []).length > 0 && (
         <div className="space-y-3">
           {daemons!.map(daemon => (
-            <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} enabledServiceIds={enabledServiceIds} />
+            <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} enabledServiceIds={enabledByDaemon.get(daemon.id) ?? new Set()} />
           ))}
         </div>
       )}

@@ -246,7 +246,7 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 		} else if len(localServices) > 0 {
 			buf.WriteString("---\n\n")
 			buf.WriteString("# Local Services\n\n")
-			buf.WriteString("_These services run on your locally paired daemon(s)._\n\n")
+			buf.WriteString("_These services run on your locally paired daemon(s). Each service can only be enabled on one daemon at a time._\n\n")
 
 			for _, svc := range localServices {
 				buf.WriteString(fmt.Sprintf("## %s\n", svc.Name))
@@ -269,8 +269,70 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 	}
 }
 
+// writeLocalServiceDetail renders the detailed view for a single local service.
+func (h *SkillHandler) writeLocalServiceDetail(buf *strings.Builder, ctx context.Context, serviceID, userID string) {
+	if h.localSvcProvider == nil {
+		buf.WriteString(fmt.Sprintf("Service %q is not available in this deployment.\n", serviceID))
+		return
+	}
+	localServices, err := h.localSvcProvider.ActiveLocalServices(ctx, userID)
+	if err != nil {
+		buf.WriteString(fmt.Sprintf("Unable to load local service %q.\n", serviceID))
+		return
+	}
+	svcID := strings.TrimPrefix(serviceID, "local.")
+	var found *LocalCatalogService
+	for i := range localServices {
+		if localServices[i].ServiceID == svcID {
+			found = &localServices[i]
+			break
+		}
+	}
+	if found == nil {
+		buf.WriteString(fmt.Sprintf("Local service %q is not enabled or does not exist.\n", serviceID))
+		return
+	}
+
+	buf.WriteString(fmt.Sprintf("# %s\n", found.Name))
+	if found.Description != "" {
+		buf.WriteString(fmt.Sprintf("_%s_\n", found.Description))
+	}
+	buf.WriteString(fmt.Sprintf("Service: `local.%s` (via %s)\n\n", found.ServiceID, found.DaemonName))
+	buf.WriteString("_This service runs on a locally paired daemon._\n\n")
+
+	for _, action := range found.Actions {
+		desc := action.Description
+		if desc == "" {
+			desc = action.Name
+		}
+		buf.WriteString(fmt.Sprintf("## %s\n", action.ID))
+		buf.WriteString(fmt.Sprintf("%s\n", desc))
+		if len(action.Params) > 0 {
+			buf.WriteString("Parameters:\n")
+			for _, p := range action.Params {
+				reqTag := "optional"
+				if p.Required {
+					reqTag = "**required**"
+				}
+				extras := []string{p.Type, reqTag}
+				buf.WriteString(fmt.Sprintf("- `%s` (%s)\n", p.Name, strings.Join(extras, ", ")))
+				if p.Description != "" {
+					buf.WriteString(fmt.Sprintf("  %s\n", p.Description))
+				}
+			}
+		}
+		buf.WriteString("\n")
+	}
+}
+
 // writeServiceDetail renders the detailed view for a single service.
 func (h *SkillHandler) writeServiceDetail(buf *strings.Builder, ctx context.Context, serviceID string, entries []*catalogEntry, adapterMeta map[string]adapters.ServiceMetadata, userID string) {
+	// Check if this is a local service request.
+	if strings.HasPrefix(serviceID, "local.") {
+		h.writeLocalServiceDetail(buf, ctx, serviceID, userID)
+		return
+	}
+
 	// Find the matching entry.
 	var entry *catalogEntry
 	for _, e := range entries {

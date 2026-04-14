@@ -441,6 +441,9 @@ func (s *Server) routes() http.Handler {
 	if s.msgBuffer != nil {
 		tasksHandler.SetGroupApproval(s.msgBuffer, s.llmHealth, agentPairer)
 	}
+	if s.localServiceProvider != nil {
+		tasksHandler.SetLocalServiceProvider(s.localServiceProvider)
+	}
 	s.tasksHandler = tasksHandler
 	if s.ticketStore == nil {
 		s.ticketStore = intauth.NewTicketStore()
