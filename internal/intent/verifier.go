@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
@@ -115,6 +116,16 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 				break // no point retrying a spend cap error
 			}
 			if attempt == 0 {
+				// Jittered backoff: 2s ± 1s (uniform [1s, 3s]).
+				jitter := time.Duration(1000+rand.IntN(2001)) * time.Millisecond
+				t := time.NewTimer(jitter)
+				select {
+				case <-t.C:
+				case <-ctx.Done():
+					t.Stop()
+					lastErr = ctx.Err()
+					break // breaks select; next Complete call will fail fast on cancelled ctx
+				}
 				continue
 			}
 			break

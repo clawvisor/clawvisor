@@ -25,6 +25,10 @@ import (
 // user-facing prompt to provide their own API key.
 var ErrSpendCapExhausted = errors.New("haiku proxy spend cap exhausted")
 
+// ErrOverloaded is returned when the LLM provider signals it is overloaded
+// (HTTP 529 or 503). Callers can check with errors.Is to apply back-off.
+var ErrOverloaded = errors.New("llm provider overloaded")
+
 const anthropicVersion       = "2023-06-01"
 const vertexAnthropicVersion = "vertex-2023-10-16"
 
@@ -114,6 +118,9 @@ func (c *Client) statusError(statusCode int, body []byte) error {
 	base := fmt.Errorf("llm: %s %s status %d: %s", c.provider, c.model, statusCode, body)
 	if strings.HasPrefix(c.apiKey, "hkp_") && (statusCode == http.StatusPaymentRequired || statusCode == http.StatusTooManyRequests) {
 		return fmt.Errorf("%w: %w", ErrSpendCapExhausted, base)
+	}
+	if statusCode == 529 || statusCode == http.StatusServiceUnavailable {
+		return fmt.Errorf("%w: %w", ErrOverloaded, base)
 	}
 	return base
 }
