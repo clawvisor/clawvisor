@@ -525,6 +525,7 @@ func (s *Server) routes() http.Handler {
 	// Agents (user JWT)
 	mux.Handle("GET /api/agents", user(agentsHandler.List))
 	mux.Handle("POST /api/agents", user(agentsHandler.Create))
+	mux.Handle("POST /api/agents/{id}/rotate", user(agentsHandler.RotateToken))
 	mux.Handle("DELETE /api/agents/{id}", user(agentsHandler.Delete))
 
 	// Notifications (user JWT)

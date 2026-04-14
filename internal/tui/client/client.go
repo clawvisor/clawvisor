@@ -448,6 +448,16 @@ func (c *Client) DeleteAgent(id string) error {
 	return c.delete("/api/agents/" + id)
 }
 
+// RotateAgentToken generates a new token for an existing agent, preserving
+// the agent ID, tasks, and group pairings.
+func (c *Client) RotateAgentToken(id string) (*Agent, error) {
+	var resp Agent
+	if err := c.post("/api/agents/"+id+"/rotate", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ── Health ──────────────────────────────────────────────────────────────────
 
 func (c *Client) Health() error {

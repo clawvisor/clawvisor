@@ -101,6 +101,41 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents)
 }
 
+// RotateToken generates a new token for an existing agent without deleting
+// the agent record, preserving the agent ID, tasks, and group pairings.
+//
+// POST /api/agents/{id}/rotate
+// Auth: user JWT
+func (h *AgentsHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	rawToken, err := auth.GenerateAgentToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate token")
+		return
+	}
+
+	if err := h.st.RotateAgentToken(r.Context(), id, user.ID, auth.HashToken(rawToken)); err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not rotate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":    id,
+		"token": rawToken,
+	})
+}
+
 // Delete removes an agent by ID. Any active or pending tasks belonging to
 // the agent are revoked before the agent record is deleted.
 //

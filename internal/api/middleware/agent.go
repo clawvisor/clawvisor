@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
@@ -29,7 +30,14 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 			hash := auth.HashToken(token)
 			agent, err := st.GetAgentByToken(r.Context(), hash)
 			if err != nil {
-				http.Error(w, `{"error":"invalid agent token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				if errors.Is(err, store.ErrNotFound) {
+					http.Error(w, `{"error":"invalid agent token","code":"UNAUTHORIZED"}`, http.StatusUnauthorized)
+				} else {
+					// Transient database error (e.g. SQLite busy) — return 503
+					// so agents know to retry instead of assuming their token
+					// was revoked.
+					http.Error(w, `{"error":"temporary service error, please retry","code":"SERVICE_UNAVAILABLE"}`, http.StatusServiceUnavailable)
+				}
 				return
 			}
 

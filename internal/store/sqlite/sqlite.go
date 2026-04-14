@@ -30,8 +30,14 @@ func New(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("pinging sqlite: %w", err)
 	}
 
-	// Enable WAL mode and foreign keys for every connection
+	// Enable WAL mode, foreign keys, and a busy timeout so concurrent
+	// readers (agent auth) don't fail immediately when the single
+	// connection is held by a dashboard write.
 	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
 		db.Close()
 		return nil, err
 	}
