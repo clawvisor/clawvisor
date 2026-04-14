@@ -46,6 +46,8 @@ type AuthDef struct {
 	Type         string            `yaml:"type"` // "api_key", "oauth2", "basic", "none"
 	Header       string            `yaml:"header,omitempty"`
 	HeaderPrefix string            `yaml:"header_prefix,omitempty"`
+	MirrorHeader       string `yaml:"mirror_header,omitempty"`        // additional header that also receives the API key
+	MirrorHeaderPrefix string `yaml:"mirror_header_prefix,omitempty"` // prefix for the mirror header value
 	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
 	OAuth      *OAuthDef      `yaml:"oauth,omitempty"`
 	DeviceFlow *DeviceFlowDef `yaml:"device_flow,omitempty"`

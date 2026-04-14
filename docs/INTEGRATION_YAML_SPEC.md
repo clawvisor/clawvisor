@@ -72,6 +72,18 @@ auth:
   header_prefix: "Bearer "
 ```
 
+Some APIs require the same key in two different headers. Use `mirror_header` to send the key to a second header with an optional prefix:
+
+```yaml
+auth:
+  type: api_key
+  header: "apikey"
+  mirror_header: "Authorization"
+  mirror_header_prefix: "Bearer "
+```
+
+This sends the key as-is in the `apikey` header and as `Bearer <key>` in the `Authorization` header. Supabase is a notable example — the `apikey` header authenticates with the API gateway while `Authorization` controls row-level security in PostgREST.
+
 ### Basic Auth
 
 The credential is stored as a `user:pass` string. The runtime splits on `:` and uses Go's `SetBasicAuth()` to produce a standard `Authorization: Basic <base64>` header.
