@@ -411,6 +411,9 @@ func (s *Server) routes() http.Handler {
 	if s.localServiceExecutor != nil {
 		gatewayHandler.SetLocalServiceExecutor(s.localServiceExecutor)
 	}
+	if s.localServiceProvider != nil {
+		gatewayHandler.SetLocalServiceProvider(s.localServiceProvider)
+	}
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL, s.eventHub)
 	if s.oauthStateStore != nil {
 		servicesHandler.SetOAuthStateStore(s.oauthStateStore)

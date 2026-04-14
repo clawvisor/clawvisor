@@ -78,8 +78,9 @@ type GatewayHandler struct {
 	logger       *slog.Logger
 	baseURL      string
 	eventHub     events.EventHub
-	gatewayHooks *GatewayHooks        // cloud-injected authorization hooks; may be nil
-	localExec    LocalServiceExecutor  // cloud-injected local service executor; may be nil
+	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
+	localExec        LocalServiceExecutor  // cloud-injected local service executor; may be nil
+	localSvcProvider LocalServiceProvider  // cloud-injected local service catalog; may be nil
 }
 
 func NewGatewayHandler(
@@ -111,6 +112,12 @@ func (h *GatewayHandler) SetGatewayHooks(hooks *GatewayHooks) {
 // SetLocalServiceExecutor configures the local daemon service executor.
 func (h *GatewayHandler) SetLocalServiceExecutor(e LocalServiceExecutor) {
 	h.localExec = e
+}
+
+// SetLocalServiceProvider configures the local service catalog provider for
+// request-time action validation.
+func (h *GatewayHandler) SetLocalServiceProvider(p LocalServiceProvider) {
+	h.localSvcProvider = p
 }
 
 // HandleRequest is the main gateway entry point.
@@ -424,6 +431,26 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					Error: msg,
 					Code:  "UNKNOWN_ACTION",
 					Hint:  fmt.Sprintf("This service does not have a %q action. Check the available actions listed above and use the correct one.", req.Action),
+				})
+				return
+			}
+		} else if isLocalService(serviceType) && h.localSvcProvider != nil {
+			// Validate action exists on the local service (mirrors cloud adapter check above).
+			if localErr := h.validateLocalAction(ctx, agent.UserID, serviceType, req.Action); localErr != nil {
+				_ = h.store.IncrementTaskRequestCount(ctx, req.TaskID)
+				msg := localErr.Error()
+				taskIDPtr := &req.TaskID
+				e := baseEntry("unknown_action", "blocked", taskIDPtr)
+				e.DurationMS = int(time.Since(start).Milliseconds())
+				e.ErrorMsg = &msg
+				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					h.logger.Warn("audit log failed", "err", logErr)
+				}
+				h.publishAuditAndQueue(agent.UserID, req.TaskID)
+				writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+					Error: msg,
+					Code:  "UNKNOWN_ACTION",
+					Hint:  fmt.Sprintf("This local service does not have a %q action. Check the available actions listed above and use the correct one.", req.Action),
 				})
 				return
 			}
@@ -1237,6 +1264,35 @@ func (h *GatewayHandler) loadChainFacts(ctx context.Context, task *store.Task, r
 		}
 	}
 	return chainFacts
+}
+
+// validateLocalAction checks that a local service action exists at request time.
+// Returns nil if the action is valid or the service is not found (let execution
+// handle that). Returns an error with available actions if the action is unknown.
+func (h *GatewayHandler) validateLocalAction(ctx context.Context, userID, serviceType, action string) error {
+	active, err := h.localSvcProvider.ActiveLocalServices(ctx, userID)
+	if err != nil {
+		return nil // can't validate — let execution handle it
+	}
+	svcID := strings.TrimPrefix(serviceType, "local.")
+	for _, svc := range active {
+		if svc.ServiceID == svcID {
+			for _, a := range svc.Actions {
+				if a.ID == action {
+					return nil
+				}
+			}
+			available := make([]string, len(svc.Actions))
+			for i, a := range svc.Actions {
+				available[i] = a.ID
+			}
+			return fmt.Errorf(
+				"Action %q does not exist on service %s. Available actions: %s",
+				action, serviceType, strings.Join(available, ", "),
+			)
+		}
+	}
+	return nil // service not found — let execution handle it
 }
 
 // Returns nil if the verifier is a no-op or if verification fails.
