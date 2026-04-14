@@ -47,6 +47,8 @@ type AuthDef struct {
 	Type         string            `yaml:"type"` // "api_key", "oauth2", "basic", "none"
 	Header       string            `yaml:"header,omitempty"`
 	HeaderPrefix string            `yaml:"header_prefix,omitempty"`
+	MirrorHeader       string `yaml:"mirror_header,omitempty"`        // additional header that also receives the API key
+	MirrorHeaderPrefix string `yaml:"mirror_header_prefix,omitempty"` // prefix for the mirror header value
 	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
 	// UserVar (basic auth only): name of a variable that holds the username
 	// portion. When set, the credential is used as the password directly
