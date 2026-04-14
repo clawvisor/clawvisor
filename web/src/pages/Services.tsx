@@ -334,9 +334,6 @@ function AddServiceModal({
   })
   const connectionLimit = billingStatus?.usage?.connections?.limit ?? -1
   const atConnectionLimit = connectionLimit >= 0 && activeConnectionCount >= connectionLimit
-  const STARTER_CONNECTION_LIMIT = 5
-  const isTrialing = billingStatus?.status === 'trialing'
-  const trialExceedsStarter = isTrialing && activeConnectionCount >= STARTER_CONNECTION_LIMIT
 
   // Search filter
   const [search, setSearch] = useState('')
@@ -647,12 +644,6 @@ function AddServiceModal({
               <span className="text-text-secondary"> ({activeConnectionCount}/{connectionLimit}). </span>
               <a href="/pricing" className="text-brand hover:text-brand/80 font-medium">Upgrade your plan</a>
               <span className="text-text-secondary"> for more connections.</span>
-            </div>
-          )}
-          {!atConnectionLimit && trialExceedsStarter && (
-            <div className="mb-3 px-3 py-2.5 rounded-md bg-brand-muted border border-brand/30 text-sm">
-              <span className="font-medium text-text-primary">Heads up:</span>
-              <span className="text-text-secondary"> You have {activeConnectionCount} connections. The Starter plan only allows {STARTER_CONNECTION_LIMIT}. If you choose Starter after your trial, you won't be able to create new tasks or make any requests until you're under the limit.</span>
             </div>
           )}
           {error && <p className="text-xs text-danger mb-3">{error}</p>}

@@ -51,7 +51,10 @@ function PlanCard({ plan, isCurrent, onSelect, loading }: {
         </li>
         <li className="flex items-start gap-2">
           {checkIcon}
-          <span>{plan.included_requests < 0 ? 'Unlimited' : plan.included_requests.toLocaleString()} requests/month</span>
+          <span>
+            {plan.included_requests < 0 ? 'Unlimited' : plan.included_requests.toLocaleString()} requests/month
+            {plan.soft_cap_note && <span className="block text-xs text-text-tertiary mt-0.5">{plan.soft_cap_note}</span>}
+          </span>
         </li>
         {plan.overage_per_request != null && plan.overage_per_request > 0 && (
           <li className="flex items-start gap-2">
@@ -142,21 +145,9 @@ export default function Pricing() {
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-text-primary mb-3">Choose your plan</h1>
           <p className="text-text-secondary max-w-lg mx-auto">
-            Start with a free 7-day trial. No credit card required.
+            Get started for free. Upgrade when you need more.
           </p>
         </div>
-
-        {/* Trial banner */}
-        {(!isAuthenticated || currentPlan === 'none') && (
-          <div className="mb-10 text-center">
-            <div className="inline-flex items-center gap-2 bg-brand-muted text-brand text-sm font-medium px-4 py-2 rounded-full">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              7-day free trial with Pro plan features
-            </div>
-          </div>
-        )}
 
         {isLoading ? (
           <div className="text-center text-text-tertiary py-12">Loading plans...</div>

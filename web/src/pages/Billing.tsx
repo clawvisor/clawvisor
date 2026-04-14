@@ -55,8 +55,7 @@ export default function Billing() {
   const planDisplay = status?.plan_display_name ?? plan
   const subStatus = status?.status ?? 'none'
   const isGrandfathered = plan === 'grandfathered'
-  const isTrialing = subStatus === 'trialing'
-  const isActive = subStatus === 'active' || subStatus === 'trialing'
+  const isActive = subStatus === 'active'
   const isPastDue = subStatus === 'past_due'
   const isCanceled = subStatus === 'canceled' || subStatus === 'unpaid'
   const isCanceling = !!(status?.cancel_at_period_end && isActive)
@@ -85,12 +84,6 @@ export default function Billing() {
               <StatusBadge status={subStatus} />
             </div>
           </div>
-
-          {isTrialing && status?.trial_days_remaining != null && !status?.discount && (
-            <div className="text-sm text-text-secondary">
-              Trial ends in <span className="font-medium text-text-primary">{status.trial_days_remaining} day{status.trial_days_remaining !== 1 ? 's' : ''}</span>
-            </div>
-          )}
 
           {isPastDue && (
             <div className="text-sm text-warning">
@@ -131,7 +124,7 @@ export default function Billing() {
                   {portalMut.isPending ? 'Opening...' : 'Manage subscription'}
                 </button>
               )}
-              {(!hasSubscription || (isTrialing && !status?.discount) || isCanceled) && (
+              {(!hasSubscription || isCanceled || plan === 'free') && (
                 <button
                   onClick={() => navigate('/pricing')}
                   className="px-3 py-1.5 text-sm font-medium rounded-md bg-brand text-surface-0 hover:bg-brand-strong transition-colors"
@@ -260,14 +253,12 @@ export default function Billing() {
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     active: 'bg-success/10 text-success',
-    trialing: 'bg-brand-muted text-brand',
     past_due: 'bg-warning/10 text-warning',
     canceled: 'bg-danger/10 text-danger',
     unpaid: 'bg-danger/10 text-danger',
   }
   const labels: Record<string, string> = {
     active: 'Active',
-    trialing: 'Trial',
     past_due: 'Past due',
     canceled: 'Canceled',
     unpaid: 'Unpaid',
