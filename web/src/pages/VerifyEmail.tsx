@@ -25,27 +25,21 @@ export default function VerifyEmail() {
     if (didVerify.current) return
     didVerify.current = true
 
-    let cancelled = false
     async function verify() {
       try {
         const result = await api.auth.verifyEmail(token)
-        if (!cancelled) {
-          setSession(result.access_token, result.refresh_token, result.user)
-          setDestination('/onboarding')
-        }
+        setSession(result.access_token, result.refresh_token, result.user)
+        setDestination('/onboarding')
       } catch (err) {
-        if (!cancelled) {
-          if (err instanceof APIError) {
-            setError(err.message)
-          } else {
-            setError('Verification failed. The link may have expired.')
-          }
-          setVerifying(false)
+        if (err instanceof APIError) {
+          setError(err.message)
+        } else {
+          setError('Verification failed. The link may have expired.')
         }
+        setVerifying(false)
       }
     }
     verify()
-    return () => { cancelled = true }
   }, [token, setSession])
 
   useEffect(() => {
