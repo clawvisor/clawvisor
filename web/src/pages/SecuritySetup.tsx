@@ -4,7 +4,7 @@ import { api, APIError, type OnboardingStatus } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
 
-type Step = 'loading' | 'security' | 'passkey' | 'totp' | 'totp-confirm' | 'backup-codes' | 'done'
+type Step = 'loading' | 'tos' | 'security' | 'passkey' | 'totp' | 'totp-confirm' | 'backup-codes' | 'done'
 
 export default function SecuritySetup() {
   const { user, refreshOnboarding } = useAuth()
@@ -18,6 +18,9 @@ export default function SecuritySetup() {
   const [totpQR, setTotpQR] = useState<string | null>(null)
   const [totpSecret, setTotpSecret] = useState<string | null>(null)
   const [totpCode, setTotpCode] = useState('')
+
+  // TOS state
+  const [tosChecked, setTosChecked] = useState(false)
 
   // Backup codes state
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null)
@@ -33,6 +36,8 @@ export default function SecuritySetup() {
       setStatus(s)
       if (s.onboarding_completed) {
         navigate('/dashboard', { replace: true })
+      } else if (!s.tos_accepted) {
+        setStep('tos')
       } else if (s.has_security_method && s.has_backup_codes) {
         setStep('done')
       } else if (s.has_security_method) {
@@ -42,6 +47,21 @@ export default function SecuritySetup() {
       }
     } catch {
       setStep('security')
+    }
+  }
+
+  // ── TOS acceptance ───────────────────────────────────────────────────────
+
+  async function handleAcceptTos() {
+    setError(null)
+    setIsSubmitting(true)
+    try {
+      await api.auth.onboarding.acceptTos()
+      await loadStatus()
+    } catch (err: any) {
+      setError(err instanceof APIError ? err.message : 'Failed to accept terms')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -171,12 +191,15 @@ export default function SecuritySetup() {
       <div className="max-w-md w-full space-y-6 p-8 bg-surface-1 border border-border-default rounded-md">
         <div>
           <h1 className="text-3xl font-bold text-text-primary">Clawvisor</h1>
-          <h2 className="mt-2 text-lg text-text-secondary">Secure your account</h2>
+          <h2 className="mt-2 text-lg text-text-secondary">
+            {step === 'tos' ? 'Terms of Service' : 'Secure your account'}
+          </h2>
           <div className="mt-3 flex gap-2">
-            {['Security', 'Backup codes', 'Done'].map((label, i) => {
-              const stepIndex = step === 'security' || step === 'passkey' || step === 'totp' || step === 'totp-confirm' ? 0
-                : step === 'backup-codes' ? 1
-                : 2
+            {['Terms', 'Security', 'Backup codes', 'Done'].map((label, i) => {
+              const stepIndex = step === 'tos' ? 0
+                : step === 'security' || step === 'passkey' || step === 'totp' || step === 'totp-confirm' ? 1
+                : step === 'backup-codes' ? 2
+                : 3
               return (
                 <div key={label} className="flex-1">
                   <div className={`h-1 rounded-full ${i <= stepIndex ? 'bg-brand' : 'bg-surface-3'}`} />
@@ -189,6 +212,40 @@ export default function SecuritySetup() {
 
         {error && (
           <div className="p-3 bg-danger/10 text-danger rounded text-sm">{error}</div>
+        )}
+
+        {/* Step: Terms of Service */}
+        {step === 'tos' && (
+          <div className="space-y-4">
+            <p className="text-sm text-text-secondary">
+              Before getting started, please review and accept our terms.
+            </p>
+            <label className="flex items-start gap-2 text-sm text-text-secondary">
+              <input
+                type="checkbox"
+                checked={tosChecked}
+                onChange={(e) => setTosChecked(e.target.checked)}
+                className="mt-0.5 accent-brand"
+              />
+              <span>
+                I agree to the{' '}
+                <a href="https://clawvisor.com/terms" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a href="https://clawvisor.com/privacy" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                  Privacy Policy
+                </a>
+              </span>
+            </label>
+            <button
+              onClick={handleAcceptTos}
+              disabled={isSubmitting || !tosChecked}
+              className="w-full py-2 px-4 bg-brand text-surface-0 rounded font-medium hover:bg-brand-strong disabled:opacity-50"
+            >
+              {isSubmitting ? 'Continuing...' : 'Continue'}
+            </button>
+          </div>
         )}
 
         {/* Step: Choose security method */}

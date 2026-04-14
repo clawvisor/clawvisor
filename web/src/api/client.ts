@@ -224,6 +224,7 @@ export interface UserAuthMethods {
 }
 
 export interface OnboardingStatus {
+  tos_accepted: boolean
   has_security_method: boolean
   has_backup_codes: boolean
   onboarding_completed: boolean
@@ -800,6 +801,7 @@ export const api = {
     },
     onboarding: {
       status: () => get<OnboardingStatus>('/api/auth/onboarding/status'),
+      acceptTos: () => post<{ accepted: boolean }>('/api/auth/onboarding/accept-tos', {}),
       generateBackupCodes: () => post<BackupCodesResponse>('/api/auth/onboarding/backup-codes', {}),
       complete: () => post<{ completed: boolean }>('/api/auth/onboarding/complete', {}),
     },
