@@ -96,6 +96,10 @@ actions:
         - { name: location, sanitize: true }
         - { name: description, sanitize: true }
         - { name: attendees }
+        - name: transparency
+          expr: "transparency ?? 'opaque'"
+        - name: visibility
+          expr: "visibility ?? 'default'"
         - { name: status }
       summary: "Event: {{.summary}}"
 
@@ -107,6 +111,7 @@ actions:
     path: "/calendars/{{.calendar_id}}/events"
     params:
       calendar_id: { type: string, default: "primary", location: path }
+      send_updates: { type: string, default: "none", location: query, map_to: sendUpdates }
       summary: { type: string, required: true, location: body }
       description: { type: string, location: body }
       start:
@@ -123,6 +128,14 @@ actions:
         type: array
         location: body
         transform: "emailList(attendees)"
+      transparency:
+        type: string
+        location: body
+        description: "Whether the event blocks time on the calendar. 'opaque' (default/busy) or 'transparent' (free)."
+      visibility:
+        type: string
+        location: body
+        description: "Visibility of the event. 'default', 'public', 'private', or 'confidential'."
     response:
       fields:
         - { name: id, rename: event_id }
@@ -140,6 +153,7 @@ actions:
     params:
       event_id: { type: string, required: true, location: path }
       calendar_id: { type: string, default: "primary", location: path }
+      send_updates: { type: string, default: "none", location: query, map_to: sendUpdates }
       summary: { type: string, location: body }
       description: { type: string, location: body }
       start:
@@ -150,6 +164,18 @@ actions:
         type: string
         location: body
         transform: "isAllDay(end) ? {date: end} : {dateTime: rfc3339(end)}"
+      attendees:
+        type: array
+        location: body
+        transform: "emailList(attendees)"
+      transparency:
+        type: string
+        location: body
+        description: "Whether the event blocks time on the calendar. 'opaque' (default/busy) or 'transparent' (free)."
+      visibility:
+        type: string
+        location: body
+        description: "Visibility of the event. 'default', 'public', 'private', or 'confidential'."
     response:
       fields:
         - { name: id, rename: event_id }

@@ -177,8 +177,12 @@ func emailListFunc(params ...any) (any, error) {
 	}
 	result := make([]any, 0, len(list))
 	for _, item := range list {
-		if s, ok := item.(string); ok {
-			result = append(result, map[string]any{"email": s})
+		switch v := item.(type) {
+		case string:
+			result = append(result, map[string]any{"email": v})
+		case map[string]any:
+			// Already in object form (e.g. {"email": "..."}); pass through.
+			result = append(result, v)
 		}
 	}
 	return result, nil
