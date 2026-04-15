@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
+	"slices"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/local/config"
@@ -31,10 +31,35 @@ type Daemon struct {
 	logger     *slog.Logger
 	startTime  time.Time
 
+	cfgMu sync.RWMutex
+
 	// mu protects state, tunnelClient, and connected.
 	mu           sync.RWMutex
 	state        *state.State
 	tunnelClient *tunnel.Client
+}
+
+// StatusSummary is a compact view of daemon state for local UI surfaces.
+type StatusSummary struct {
+	DaemonID      string
+	Name          string
+	Paired        bool
+	Connected     bool
+	CloudOrigin   string
+	UptimeSeconds int
+	ServiceCount  int
+	ExcludedCount int
+}
+
+// ServiceOption represents a service that can be enabled or disabled by the user.
+type ServiceOption struct {
+	Key        string
+	ID         string
+	Name       string
+	Enabled    bool
+	Toggleable bool
+	Problem    string
+	Tooltip    string
 }
 
 // New creates a new daemon instance.
@@ -65,15 +90,25 @@ func New(baseDir string) (*Daemon, error) {
 
 // OverridePort overrides the configured port for the pairing server.
 func (d *Daemon) OverridePort(port int) {
+	d.cfgMu.Lock()
 	d.cfg.Port = port
+	d.cfgMu.Unlock()
 }
 
 // Run starts the daemon and blocks until shutdown.
 func (d *Daemon) Run() error {
+	ctx, stop := signalContext()
+	defer stop()
+	return d.RunContext(ctx)
+}
+
+// RunContext starts the daemon and blocks until the context is cancelled.
+func (d *Daemon) RunContext(ctx context.Context) error {
 	d.startTime = time.Now()
+	cfg := d.configSnapshot()
 
 	// Configure log level.
-	configureLogLevel(d.cfg.LogLevel)
+	configureLogLevel(cfg.LogLevel)
 
 	d.mu.RLock()
 	daemonID := d.state.DaemonID
@@ -95,17 +130,17 @@ func (d *Daemon) Run() error {
 	d.dispatcher = executor.NewDispatcher(
 		d.registry,
 		d.serverMgr,
-		d.cfg.Env,
-		d.cfg.MaxOutputSize,
-		d.cfg.MaxConcurrentReqs,
+		cfg.Env,
+		cfg.MaxOutputSize,
+		cfg.MaxConcurrentReqs,
 	)
 
 	// Start pairing HTTP server.
 	d.pairServer = pairing.NewServer(pairing.ServerConfig{
-		Port:           d.cfg.Port,
+		Port:           cfg.Port,
 		DaemonID:       daemonID,
-		DaemonName:     d.cfg.Name,
-		AllowedOrigins: d.cfg.AllowedCloudOrigins,
+		DaemonName:     cfg.Name,
+		AllowedOrigins: cfg.AllowedCloudOrigins,
 		OnPairComplete: d.handlePairComplete,
 		StatusHandler:  d.handleStatus,
 		ReloadHandler:  d.handleReload,
@@ -122,8 +157,8 @@ func (d *Daemon) Run() error {
 
 	// Set up periodic scan if configured.
 	var scanTicker *time.Ticker
-	if d.cfg.ScanInterval > 0 {
-		scanTicker = time.NewTicker(time.Duration(d.cfg.ScanInterval) * time.Second)
+	if cfg.ScanInterval > 0 {
+		scanTicker = time.NewTicker(time.Duration(cfg.ScanInterval) * time.Second)
 		go func() {
 			for range scanTicker.C {
 				d.reloadServices()
@@ -131,10 +166,7 @@ func (d *Daemon) Run() error {
 		}()
 	}
 
-	// Wait for shutdown signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	<-ctx.Done()
 
 	d.logger.Info("shutting down")
 
@@ -159,6 +191,162 @@ func (d *Daemon) Run() error {
 	return nil
 }
 
+// Summary returns a compact daemon status snapshot.
+func (d *Daemon) Summary() StatusSummary {
+	d.mu.RLock()
+	tc := d.tunnelClient
+	daemonID := d.state.DaemonID
+	paired := d.state.IsPaired()
+	cloudOrigin := d.state.CloudOrigin
+	d.mu.RUnlock()
+
+	serviceCount := 0
+	excludedCount := 0
+	if d.registry != nil {
+		serviceCount = len(d.registry.All())
+		excludedCount = len(d.registry.Excluded())
+	}
+
+	uptime := 0
+	if !d.startTime.IsZero() {
+		uptime = int(time.Since(d.startTime).Seconds())
+	}
+
+	return StatusSummary{
+		DaemonID:      daemonID,
+		Name:          d.configSnapshot().Name,
+		Paired:        paired,
+		Connected:     tc != nil && tc.IsConnected(),
+		CloudOrigin:   cloudOrigin,
+		UptimeSeconds: uptime,
+		ServiceCount:  serviceCount,
+		ExcludedCount: excludedCount,
+	}
+}
+
+// ReloadServices re-scans manifests and refreshes tunnel capabilities.
+func (d *Daemon) ReloadServices() {
+	d.reloadServices()
+}
+
+// KeepAwakeEnabled reports whether the daemon should keep the machine awake.
+func (d *Daemon) KeepAwakeEnabled() bool {
+	return d.configSnapshot().KeepAwake
+}
+
+// SetKeepAwake updates and persists the keep-awake preference.
+func (d *Daemon) SetKeepAwake(enabled bool) error {
+	return d.updateConfig(func(cfg *config.Config) {
+		cfg.KeepAwake = enabled
+	})
+}
+
+// AutoUpdateEnabled reports whether automatic updates are enabled.
+func (d *Daemon) AutoUpdateEnabled() bool {
+	return d.configSnapshot().AutoUpdateEnabled
+}
+
+// AutoUpdateInterval reports how often update checks should run.
+func (d *Daemon) AutoUpdateInterval() time.Duration {
+	return d.configSnapshot().AutoUpdateInterval.Duration
+}
+
+// SetAutoUpdateEnabled updates and persists the auto-update preference.
+func (d *Daemon) SetAutoUpdateEnabled(enabled bool) error {
+	return d.updateConfig(func(cfg *config.Config) {
+		cfg.AutoUpdateEnabled = enabled
+	})
+}
+
+// ServiceOptions returns discoverable services and whether each is enabled.
+func (d *Daemon) ServiceOptions() []ServiceOption {
+	cfg := d.configSnapshot()
+	result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
+	seen := make(map[string]ServiceOption)
+
+	for _, svc := range result.Services {
+		seen["service:"+svc.ID] = ServiceOption{
+			Key:        "service:" + svc.ID,
+			ID:         svc.ID,
+			Name:       svc.Name,
+			Enabled:    true,
+			Toggleable: true,
+			Tooltip:    svc.ID,
+		}
+	}
+	for _, ex := range result.Excluded {
+		if ex.Category == "disabled" && ex.ID != "" {
+			seen["service:"+ex.ID] = ServiceOption{
+				Key:        "service:" + ex.ID,
+				ID:         ex.ID,
+				Name:       ex.Name,
+				Enabled:    false,
+				Toggleable: true,
+				Tooltip:    ex.ID,
+			}
+			continue
+		}
+
+		name := ex.Name
+		if name == "" {
+			name = strings.TrimSuffix(ex.Path, "/service.yaml")
+			name = strings.TrimSuffix(name, "service.yaml")
+			name = strings.TrimSuffix(name, "/")
+			if name == "" {
+				name = "Unknown service"
+			}
+		}
+		key := "problem:" + ex.Path + ":" + ex.Category
+		seen[key] = ServiceOption{
+			Key:        key,
+			ID:         ex.ID,
+			Name:       fmt.Sprintf("%s (%s)", name, serviceProblemLabel(ex.Category)),
+			Enabled:    false,
+			Toggleable: false,
+			Problem:    ex.Category,
+			Tooltip:    ex.Error,
+		}
+	}
+
+	options := make([]ServiceOption, 0, len(seen))
+	for _, opt := range seen {
+		options = append(options, opt)
+	}
+	slices.SortFunc(options, func(a, b ServiceOption) int {
+		return strings.Compare(a.Name+"|"+a.Key, b.Name+"|"+b.Key)
+	})
+	return options
+}
+
+// SetServiceEnabled updates and persists whether a service should be loaded.
+func (d *Daemon) SetServiceEnabled(serviceID string, enabled bool) error {
+	if serviceID == "" {
+		return fmt.Errorf("service ID is required")
+	}
+
+	return d.updateConfig(func(cfg *config.Config) {
+		current := make(map[string]bool, len(cfg.DisabledServices))
+		for _, id := range cfg.DisabledServices {
+			if id != "" {
+				current[id] = true
+			}
+		}
+
+		if enabled {
+			delete(current, serviceID)
+		} else {
+			current[serviceID] = true
+		}
+
+		updated := make([]string, 0, len(current))
+		for id := range current {
+			updated = append(updated, id)
+		}
+		slices.Sort(updated)
+		cfg.DisabledServices = updated
+	})
+}
+
 func (d *Daemon) handlePairComplete(token, origin string) error {
 	d.mu.Lock()
 	d.state.ConnectionToken = token
@@ -180,6 +368,8 @@ func (d *Daemon) handlePairComplete(token, origin string) error {
 }
 
 func (d *Daemon) connectTunnel() {
+	name := d.configSnapshot().Name
+
 	d.mu.Lock()
 
 	// Close any existing tunnel client to avoid duplicate connections.
@@ -191,7 +381,7 @@ func (d *Daemon) connectTunnel() {
 	client = tunnel.NewClient(tunnel.ClientConfig{
 		CloudOrigin:     d.state.CloudOrigin,
 		ConnectionToken: d.state.ConnectionToken,
-		DaemonName:      d.cfg.Name,
+		DaemonName:      name,
 		Version:         version.Version,
 		Registry:        d.registry,
 		Logger:          d.logger.With("component", "tunnel"),
@@ -243,7 +433,13 @@ func (d *Daemon) handleAuthFailureLocked() {
 }
 
 func (d *Daemon) reloadServices() {
-	result := services.Discover(d.cfg.ServiceDirs, d.cfg.DefaultTimeout.Duration)
+	cfg := d.configSnapshot()
+	result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
+
+	if d.serverMgr == nil {
+		d.registry.Load(result)
+		return
+	}
 
 	// Track old server hashes for restart decisions.
 	oldServices := d.registry.All()
@@ -295,6 +491,33 @@ func (d *Daemon) reloadServices() {
 		if err := tc.SendCapabilitiesUpdate(); err != nil {
 			d.logger.Warn("failed to send capabilities update", "err", err)
 		}
+	}
+}
+
+func disabledServiceSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		out[id] = true
+	}
+	return out
+}
+
+func serviceProblemLabel(category string) string {
+	switch category {
+	case "invalid":
+		return "Invalid config"
+	case "conflict":
+		return "Duplicate ID"
+	case "unsupported":
+		return "Unsupported"
+	default:
+		return "Unavailable"
 	}
 }
 
@@ -353,7 +576,7 @@ func (d *Daemon) handleStatus() interface{} {
 
 	return map[string]interface{}{
 		"daemon_id":         daemonID,
-		"name":              d.cfg.Name,
+		"name":              d.configSnapshot().Name,
 		"version":           version.Version,
 		"paired":            paired,
 		"connected":         connected,
@@ -387,4 +610,41 @@ func configureLogLevel(level string) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: lvl,
 	})))
+}
+
+func (d *Daemon) configSnapshot() *config.Config {
+	d.cfgMu.RLock()
+	defer d.cfgMu.RUnlock()
+	return cloneConfig(d.cfg)
+}
+
+func (d *Daemon) updateConfig(mutator func(*config.Config)) error {
+	d.cfgMu.Lock()
+	mutator(d.cfg)
+	snapshot := cloneConfig(d.cfg)
+	d.cfgMu.Unlock()
+	return config.Save(d.baseDir, snapshot)
+}
+
+func cloneConfig(cfg *config.Config) *config.Config {
+	if cfg == nil {
+		return nil
+	}
+	clone := *cfg
+	if cfg.ServiceDirs != nil {
+		clone.ServiceDirs = append([]string(nil), cfg.ServiceDirs...)
+	}
+	if cfg.DisabledServices != nil {
+		clone.DisabledServices = append([]string(nil), cfg.DisabledServices...)
+	}
+	if cfg.AllowedCloudOrigins != nil {
+		clone.AllowedCloudOrigins = append([]string(nil), cfg.AllowedCloudOrigins...)
+	}
+	if cfg.Env != nil {
+		clone.Env = make(map[string]string, len(cfg.Env))
+		for key, value := range cfg.Env {
+			clone.Env[key] = value
+		}
+	}
+	return &clone
 }

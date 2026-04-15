@@ -43,10 +43,16 @@ func main() {
 	rootCmd.AddCommand(
 		statusCmd(),
 		servicesCmd(),
+		listRemoteCmd(),
+		inspectCmd(),
+		installCmd(),
+		upgradeCmd(),
+		uninstallCmd(),
 		unpairCmd(),
 		reloadCmd(),
 		validateCmd(),
 		runCmd(),
+		toolbarCmd(),
 		installServiceCmd(),
 		uninstallServiceCmd(),
 	)
@@ -97,7 +103,7 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 
-			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration)
+			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
 
 			fmt.Printf("Daemon ID:    %s\n", st.DaemonID)
 			fmt.Printf("Name:         %s\n", cfg.Name)
@@ -231,7 +237,7 @@ func servicesCmd() *cobra.Command {
 				return err
 			}
 
-			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration)
+			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
 
 			for _, svc := range result.Services {
 				header := fmt.Sprintf("%s (%s)", svc.ID, svc.Name)
@@ -353,7 +359,7 @@ func validateCmd() *cobra.Command {
 			}
 
 			// Validate all discovered services.
-			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration)
+			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
 			hasErrors := false
 
 			for _, svc := range result.Services {
@@ -395,7 +401,7 @@ func runCmd() *cobra.Command {
 			}
 
 			// Discover services.
-			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration)
+			result := services.Discover(cfg.ServiceDirs, cfg.DefaultTimeout.Duration, disabledServiceSet(cfg.DisabledServices))
 			registry := services.NewRegistry()
 			registry.Load(result)
 
@@ -503,6 +509,7 @@ func installLaunchd() error {
     <key>ProgramArguments</key>
     <array>
         <string>%s</string>
+        <string>toolbar</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -613,4 +620,18 @@ func httpPost(url string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func disabledServiceSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		out[id] = true
+	}
+	return out
 }

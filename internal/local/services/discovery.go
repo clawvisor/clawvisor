@@ -16,7 +16,7 @@ type DiscoverResult struct {
 
 // Discover walks the given directories looking for service.yaml files,
 // parses them, and returns loaded services plus any that were excluded.
-func Discover(dirs []string, defaultTimeout time.Duration) *DiscoverResult {
+func Discover(dirs []string, defaultTimeout time.Duration, disabledIDs map[string]bool) *DiscoverResult {
 	result := &DiscoverResult{}
 
 	type candidate struct {
@@ -83,6 +83,16 @@ func Discover(dirs []string, defaultTimeout time.Duration) *DiscoverResult {
 
 	for id, cs := range idMap {
 		if len(cs) == 1 {
+			if disabledIDs != nil && disabledIDs[id] {
+				result.Excluded = append(result.Excluded, ExcludedService{
+					ID:       cs[0].service.ID,
+					Name:     cs[0].service.Name,
+					Path:     filepath.Join(cs[0].relPath, "service.yaml"),
+					Category: "disabled",
+					Error:    "disabled by user",
+				})
+				continue
+			}
 			result.Services = append(result.Services, cs[0].service)
 		} else {
 			// All duplicates are excluded. Use relative paths for display.
@@ -98,6 +108,8 @@ func Discover(dirs []string, defaultTimeout time.Duration) *DiscoverResult {
 					}
 				}
 				result.Excluded = append(result.Excluded, ExcludedService{
+					ID:       cs[i].service.ID,
+					Name:     cs[i].service.Name,
 					Path:     relPaths[i],
 					Category: "conflict",
 					Error:    fmt.Sprintf("duplicate ID: %s (also defined in %s)", id, strings.Join(otherPaths, ", ")),

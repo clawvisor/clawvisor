@@ -11,16 +11,20 @@ import (
 
 // Config represents the daemon-level configuration from config.yaml.
 type Config struct {
-	Name                 string            `yaml:"name"`
-	Port                 int               `yaml:"port"`
-	LogLevel             string            `yaml:"log_level"`
-	ServiceDirs          []string          `yaml:"service_dirs"`
-	ScanInterval         int               `yaml:"scan_interval"`
-	DefaultTimeout       Duration          `yaml:"default_timeout"`
-	MaxOutputSize        int64             `yaml:"max_output_size"`
-	MaxConcurrentReqs    int               `yaml:"max_concurrent_requests"`
-	Env                  map[string]string `yaml:"env"`
-	AllowedCloudOrigins  []string          `yaml:"allowed_cloud_origins"`
+	Name                string            `yaml:"name"`
+	Port                int               `yaml:"port"`
+	LogLevel            string            `yaml:"log_level"`
+	KeepAwake           bool              `yaml:"keep_awake,omitempty"`
+	AutoUpdateEnabled   bool              `yaml:"auto_update_enabled,omitempty"`
+	AutoUpdateInterval  Duration          `yaml:"auto_update_interval,omitempty"`
+	DisabledServices    []string          `yaml:"disabled_services,omitempty"`
+	ServiceDirs         []string          `yaml:"service_dirs"`
+	ScanInterval        int               `yaml:"scan_interval"`
+	DefaultTimeout      Duration          `yaml:"default_timeout"`
+	MaxOutputSize       int64             `yaml:"max_output_size"`
+	MaxConcurrentReqs   int               `yaml:"max_concurrent_requests"`
+	Env                 map[string]string `yaml:"env"`
+	AllowedCloudOrigins []string          `yaml:"allowed_cloud_origins"`
 }
 
 // Duration wraps time.Duration for YAML unmarshalling of strings like "30s".
@@ -55,6 +59,7 @@ func DefaultConfig(baseDir string) *Config {
 		Name:                hostname,
 		Port:                25299,
 		LogLevel:            "info",
+		AutoUpdateInterval:  Duration{6 * time.Hour},
 		ServiceDirs:         []string{filepath.Join(baseDir, "services")},
 		ScanInterval:        0,
 		DefaultTimeout:      Duration{30 * time.Second},
@@ -100,8 +105,29 @@ func Load(baseDir string) (*Config, error) {
 	if cfg.MaxOutputSize < 1 {
 		cfg.MaxOutputSize = 1048576
 	}
+	if cfg.AutoUpdateInterval.Duration <= 0 {
+		cfg.AutoUpdateInterval = Duration{6 * time.Hour}
+	}
 
 	return cfg, nil
+}
+
+// Save writes config.yaml to the given base directory.
+func Save(baseDir string, cfg *Config) error {
+	if err := os.MkdirAll(baseDir, 0700); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshalling config: %w", err)
+	}
+
+	path := filepath.Join(baseDir, "config.yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	return nil
 }
 
 // BaseDir returns the default base directory (~/.clawvisor/local).

@@ -20,6 +20,18 @@ The local daemon is a lightweight process that runs on the user's machine. It:
 The daemon never stores API keys or credentials — it is a "dumb executor." The
 cloud handles authorization, credential injection, and audit logging.
 
+## Install
+
+Install the latest released `clawvisor-local` binary with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh
+```
+
+This downloads the latest published `clawvisor-local` binary for your platform,
+verifies it against the release `checksums.txt`, installs it into
+`~/.clawvisor/bin`, and runs `clawvisor-local install-service`.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                   Clawvisor Cloud                       │
@@ -363,6 +375,7 @@ The daemon reads `~/.clawvisor/local/config.yaml`:
 name: my-machine              # Display name (defaults to hostname)
 port: 25299                    # Pairing server port
 log_level: info                # debug, info, warn, error
+keep_awake: false              # macOS toolbar mode: prevent idle sleep when enabled
 
 service_dirs:
   - ~/.clawvisor/local/services   # Tilde expansion supported
@@ -378,6 +391,11 @@ env:                           # Global env vars injected into all actions
 allowed_cloud_origins:
   - https://app.clawvisor.com  # CORS whitelist for the pairing server
 ```
+
+On macOS, `clawvisor-local toolbar` runs the local daemon as a menu bar app.
+`clawvisor-local install-service` now installs that toolbar mode as a LaunchAgent
+so the daemon stays visible in the menu bar and can toggle `keep_awake`.
+Remove it with `clawvisor-local uninstall-service`.
 
 ---
 

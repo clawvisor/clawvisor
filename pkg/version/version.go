@@ -68,12 +68,12 @@ const (
 
 // Info holds current and latest version info.
 type Info struct {
-	Current       string `json:"current"`
-	Latest        string `json:"latest,omitempty"`
-	UpdateAvail   bool   `json:"update_available"`
-	ReleaseURL    string `json:"release_url,omitempty"`
-	UpgradeCmd    string `json:"upgrade_command,omitempty"`
-	AutoUpdate    bool   `json:"auto_update"`
+	Current     string `json:"current"`
+	Latest      string `json:"latest,omitempty"`
+	UpdateAvail bool   `json:"update_available"`
+	ReleaseURL  string `json:"release_url,omitempty"`
+	UpgradeCmd  string `json:"upgrade_command,omitempty"`
+	AutoUpdate  bool   `json:"auto_update"`
 }
 
 var (
@@ -116,6 +116,15 @@ func Check() *Info {
 	cachedInfo = info
 	cachedAt = time.Now()
 	return info
+}
+
+// CheckNow clears the cached release info and fetches fresh version data.
+func CheckNow() *Info {
+	cacheMu.Lock()
+	cachedInfo = nil
+	cachedAt = time.Time{}
+	cacheMu.Unlock()
+	return Check()
 }
 
 // GetCurrent returns the current version without checking for updates.

@@ -71,20 +71,20 @@ type Param struct {
 
 // rawManifest is the YAML structure before validation.
 type rawManifest struct {
-	Name        string            `yaml:"name"`
-	ID          string            `yaml:"id"`
-	Description string            `yaml:"description"`
-	Icon        string            `yaml:"icon"`
-	Platform    string            `yaml:"platform"`
-	Type        string            `yaml:"type"`
-	Start       interface{}       `yaml:"start"`
-	StartupTimeout int            `yaml:"startup_timeout"`
-	Startup     string            `yaml:"startup"`
-	HealthCheck string            `yaml:"health_check"`
-	Env         map[string]string `yaml:"env"`
-	Headers     map[string]string `yaml:"headers"`
-	WorkingDir  string            `yaml:"working_dir"`
-	Actions     []rawAction       `yaml:"actions"`
+	Name           string            `yaml:"name"`
+	ID             string            `yaml:"id"`
+	Description    string            `yaml:"description"`
+	Icon           string            `yaml:"icon"`
+	Platform       string            `yaml:"platform"`
+	Type           string            `yaml:"type"`
+	Start          interface{}       `yaml:"start"`
+	StartupTimeout int               `yaml:"startup_timeout"`
+	Startup        string            `yaml:"startup"`
+	HealthCheck    string            `yaml:"health_check"`
+	Env            map[string]string `yaml:"env"`
+	Headers        map[string]string `yaml:"headers"`
+	WorkingDir     string            `yaml:"working_dir"`
+	Actions        []rawAction       `yaml:"actions"`
 }
 
 type rawAction struct {
@@ -113,6 +113,8 @@ type rawParam struct {
 
 // ExcludedService represents a service that failed to load.
 type ExcludedService struct {
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
 	Path     string `json:"path"`
 	Category string `json:"category"` // "invalid", "conflict", "unsupported"
 	Error    string `json:"error"`

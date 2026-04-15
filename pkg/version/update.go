@@ -21,7 +21,11 @@ func Apply(targetVersion string) (oldVersion, newVersion string, err error) {
 	newVersion = strings.TrimPrefix(targetVersion, "v")
 	tag := "v" + newVersion
 
-	assetName := fmt.Sprintf("clawvisor-%s-%s", runtime.GOOS, runtime.GOARCH)
+	assetBase, err := currentAssetBaseName()
+	if err != nil {
+		return oldVersion, newVersion, fmt.Errorf("resolving asset name: %w", err)
+	}
+	assetName := fmt.Sprintf("%s-%s-%s", assetBase, runtime.GOOS, runtime.GOARCH)
 	baseURL := fmt.Sprintf("https://github.com/clawvisor/clawvisor/releases/download/%s", tag)
 	binaryURL := baseURL + "/" + assetName
 	checksumsURL := baseURL + "/checksums.txt"
@@ -78,6 +82,18 @@ func Apply(targetVersion string) (oldVersion, newVersion string, err error) {
 	}
 
 	return oldVersion, newVersion, nil
+}
+
+func currentAssetBaseName() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Base(exe), nil
 }
 
 func httpGet(client *http.Client, url string) ([]byte, error) {

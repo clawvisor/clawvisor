@@ -1482,6 +1482,7 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
 }
 
 const LOCAL_DAEMON_PORT = 25299
+const LOCAL_DAEMON_INSTALL_CMD = 'curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh'
 
 function LocalDaemonPairing() {
   const qc = useQueryClient()
@@ -1603,6 +1604,18 @@ function LocalDaemonPairing() {
         <h2 className="text-lg font-semibold text-text-primary">Local Computer</h2>
         <p className="text-sm text-text-tertiary mt-0.5">
           Pair a local daemon to use local-only services like iMessage, file access, and browser navigation.
+        </p>
+      </div>
+
+      <div className="max-w-2xl rounded-md border border-border-default bg-surface-1 p-4 space-y-2">
+        <p className="text-sm text-text-secondary">
+          Install the local daemon with:
+        </p>
+        <code className="block overflow-x-auto rounded bg-surface-0 border border-border-default px-3 py-2 text-xs sm:text-sm font-mono text-text-primary select-all whitespace-nowrap">
+          {LOCAL_DAEMON_INSTALL_CMD}
+        </code>
+        <p className="text-xs text-text-tertiary">
+          Review the script before running it. It downloads the latest published <span className="font-mono">clawvisor-local</span> binary from GitHub Releases, installs it into <span className="font-mono">~/.clawvisor/bin</span>, and starts the local daemon service.
         </p>
       </div>
 
