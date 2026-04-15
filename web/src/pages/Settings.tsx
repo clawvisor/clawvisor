@@ -1389,6 +1389,7 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [newName, setNewName] = useState(daemon.name || '')
+  const [showMenu, setShowMenu] = useState(false)
   const navigate = useNavigate()
 
   const { data: caps } = useQuery({
@@ -1409,71 +1410,117 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
   const services = caps?.services ?? []
 
   return (
-    <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 max-w-lg">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            {editing ? (
-              <form onSubmit={e => { e.preventDefault(); if (newName.trim()) renameMut.mutate(newName.trim()) }} className="flex items-center gap-1.5">
-                <input
-                  autoFocus
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  className="text-sm font-medium px-2 py-0.5 rounded border border-border-default bg-surface-0 text-text-primary w-40"
-                />
-                <button type="submit" disabled={renameMut.isPending} className="text-xs text-brand hover:underline">Save</button>
-                <button type="button" onClick={() => { setEditing(false); setNewName(daemon.name || '') }} className="text-xs text-text-tertiary hover:underline">Cancel</button>
-              </form>
-            ) : (
-              <>
-                <span className="font-medium text-text-primary">{daemon.name || 'Local Computer'}</span>
-                <button onClick={() => setEditing(true)} className="text-xs text-text-tertiary hover:text-text-primary" title="Rename">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5V8.5l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </button>
-              </>
-            )}
-            <span className={`inline-block w-2 h-2 rounded-full ${daemon.connected ? 'bg-success' : 'bg-text-tertiary'}`} />
-            <span className="text-xs text-text-tertiary">{daemon.connected ? 'Connected' : 'Disconnected'}</span>
+    <div className="bg-surface-1 border border-border-default rounded-lg px-5 py-4 max-w-xl">
+      {/* Device header */}
+      <div className="flex items-start gap-3.5">
+        {/* Laptop icon */}
+        <div className="shrink-0 mt-0.5 text-text-secondary">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="12" rx="2" />
+            <path d="M2 20h20" />
+            <path d="M7 16v4" />
+            <path d="M17 16v4" />
+          </svg>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              {editing ? (
+                <form onSubmit={e => { e.preventDefault(); if (newName.trim()) renameMut.mutate(newName.trim()) }} className="flex items-center gap-1.5">
+                  <input
+                    autoFocus
+                    value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    className="text-sm font-medium px-2 py-0.5 rounded border border-border-default bg-surface-0 text-text-primary w-40"
+                  />
+                  <button type="submit" disabled={renameMut.isPending} className="text-xs text-brand hover:underline">Save</button>
+                  <button type="button" onClick={() => { setEditing(false); setNewName(daemon.name || '') }} className="text-xs text-text-tertiary hover:underline">Cancel</button>
+                </form>
+              ) : (
+                <>
+                  <span className="font-medium text-text-primary truncate">{daemon.name || 'Local Computer'}</span>
+                  <button onClick={() => setEditing(true)} className="shrink-0 text-text-tertiary hover:text-text-primary" title="Rename">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-7 7H1.5V8.5l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
+                </>
+              )}
+              <span className={`shrink-0 inline-block w-2 h-2 rounded-full ${daemon.connected ? 'bg-success animate-pulse' : 'bg-text-tertiary'}`} />
+              <span className="shrink-0 text-xs text-text-tertiary">{daemon.connected ? 'Connected' : 'Disconnected'}</span>
+            </div>
+
+            {/* Overflow menu */}
+            <div className="relative shrink-0 ml-2">
+              <button
+                onClick={() => setShowMenu(!showMenu)}
+                className="p-1 rounded hover:bg-surface-2 text-text-tertiary hover:text-text-primary"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="8" cy="13" r="1.25"/></svg>
+              </button>
+              {showMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-20 bg-surface-0 border border-border-default rounded-md shadow-lg py-1 min-w-[140px]">
+                    <button
+                      onClick={() => { setShowMenu(false); setEditing(true) }}
+                      className="w-full text-left px-3 py-1.5 text-sm text-text-primary hover:bg-surface-1"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowMenu(false)
+                        if (confirm(`Unpair "${daemon.name || 'Local Computer'}"? Local services will stop working.`)) {
+                          onDelete()
+                        }
+                      }}
+                      disabled={deleting}
+                      className="w-full text-left px-3 py-1.5 text-sm text-danger hover:bg-surface-1"
+                    >
+                      Unpair
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+
           <p className="text-xs text-text-tertiary mt-0.5">
             Paired {formatDistanceToNow(new Date(daemon.paired_at), { addSuffix: true })}
             {daemon.last_connected_at && ` · Last seen ${formatDistanceToNow(new Date(daemon.last_connected_at), { addSuffix: true })}`}
           </p>
         </div>
-        <button
-          onClick={() => {
-            if (confirm(`Unpair "${daemon.name || 'Local Computer'}"? Local services will stop working.`)) {
-              onDelete()
-            }
-          }}
-          disabled={deleting}
-          className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
-        >
-          Unpair
-        </button>
       </div>
 
+      {/* Services */}
       {daemon.connected && services.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-border-default">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-text-secondary">Services</p>
+        <div className="mt-4 pt-4 border-t border-border-default">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">Services</p>
             <button
               onClick={() => navigate('/dashboard/services')}
               className="text-xs text-brand hover:underline"
             >
-              Manage services
+              Manage
             </button>
           </div>
-          <div className="space-y-1.5">
-            {services.map(svc => (
-              <div key={svc.id} className="text-sm flex items-center gap-2">
-                <span className="text-text-primary">{svc.name}</span>
-                {enabledServiceIds.has(svc.id) && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">Enabled</span>
-                )}
-                {svc.description && <span className="text-text-tertiary">— {svc.description}</span>}
-              </div>
-            ))}
+          <div className="space-y-2.5">
+            {services.map(svc => {
+              const enabled = enabledServiceIds.has(svc.id)
+              return (
+                <div key={svc.id} className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-text-primary leading-tight">{svc.name}</p>
+                    {svc.description && <p className="text-xs text-text-tertiary leading-tight mt-0.5">{svc.description}</p>}
+                  </div>
+                  {enabled ? (
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">Active</span>
+                  ) : (
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-tertiary font-medium">Inactive</span>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -1483,6 +1530,8 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
 
 const LOCAL_DAEMON_PORT = 25299
 const LOCAL_DAEMON_INSTALL_CMD = 'curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh'
+const LOCAL_SERVICES_INSTALL_CMD = 'clawvisor-local install clawvisor/local-services'
+const LOCAL_SERVICES_GUIDE_URL = 'https://github.com/clawvisor/clawvisor/blob/main/docs/LOCAL_ADAPTER_GUIDE.md'
 
 function LocalDaemonPairing() {
   const qc = useQueryClient()
@@ -1598,6 +1647,52 @@ function LocalDaemonPairing() {
     }
   }
 
+  const hasPairedDaemons = !isLoading && (daemons ?? []).length > 0
+  const [showSetup, setShowSetup] = useState(false)
+
+  const [daemonCopied, setDaemonCopied] = useState(false)
+  const [servicesCopied, setServicesCopied] = useState(false)
+
+  const copyButton = (text: string, copied: boolean, setCopied: (v: boolean) => void) => (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }}
+      className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-hover bg-surface-0"
+    >
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  )
+
+  const installBlock = (
+    <div className="max-w-xl rounded-md border border-border-default bg-surface-1 p-4 space-y-3">
+      <div className="space-y-1.5">
+        <p className="text-sm text-text-secondary">1. Install the local daemon:</p>
+        <div className="relative">
+          <pre className="overflow-x-auto rounded bg-surface-0 border border-border-default px-3 py-2 pr-20 text-xs sm:text-sm font-mono text-text-primary whitespace-nowrap">
+            {LOCAL_DAEMON_INSTALL_CMD}
+          </pre>
+          {copyButton(LOCAL_DAEMON_INSTALL_CMD, daemonCopied, setDaemonCopied)}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <p className="text-sm text-text-secondary">2. Install the official services:</p>
+        <div className="relative">
+          <pre className="overflow-x-auto rounded bg-surface-0 border border-border-default px-3 py-2 pr-20 text-xs sm:text-sm font-mono text-text-primary whitespace-nowrap">
+            {LOCAL_SERVICES_INSTALL_CMD}
+          </pre>
+          {copyButton(LOCAL_SERVICES_INSTALL_CMD, servicesCopied, setServicesCopied)}
+        </div>
+      </div>
+      <p className="text-xs text-text-tertiary">
+        This allows your agents to execute registered service commands on your computer. Only enable services you trust.
+        {' '}<a href={LOCAL_SERVICES_GUIDE_URL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Learn more about local services &rarr;</a>
+      </p>
+    </div>
+  )
+
   return (
     <section className="space-y-4">
       <div>
@@ -1607,20 +1702,26 @@ function LocalDaemonPairing() {
         </p>
       </div>
 
-      <div className="max-w-2xl rounded-md border border-border-default bg-surface-1 p-4 space-y-2">
-        <p className="text-sm text-text-secondary">
-          Install the local daemon with:
-        </p>
-        <code className="block overflow-x-auto rounded bg-surface-0 border border-border-default px-3 py-2 text-xs sm:text-sm font-mono text-text-primary select-all whitespace-nowrap">
-          {LOCAL_DAEMON_INSTALL_CMD}
-        </code>
-        <p className="text-xs text-text-tertiary">
-          Review the script before running it. It downloads the latest published <span className="font-mono">clawvisor-local</span> binary from GitHub Releases, installs it into <span className="font-mono">~/.clawvisor/bin</span>, and starts the local daemon service.
-        </p>
-      </div>
+      {/* Install instructions: prominent when no daemons, collapsible when paired */}
+      {hasPairedDaemons ? (
+        <div>
+          <button
+            onClick={() => setShowSetup(v => !v)}
+            className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary"
+          >
+            <svg className={`w-3 h-3 transition-transform ${showSetup ? 'rotate-90' : ''}`} viewBox="0 0 6 10" fill="currentColor"><path d="M1 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+            Setup instructions
+          </button>
+          <div className={`overflow-hidden transition-all duration-200 ${showSetup ? 'max-h-[500px] opacity-100 mt-3' : 'max-h-0 opacity-0'}`}>
+            {installBlock}
+          </div>
+        </div>
+      ) : (
+        installBlock
+      )}
 
       {/* Paired daemons list */}
-      {!isLoading && (daemons ?? []).length > 0 && (
+      {hasPairedDaemons && (
         <div className="space-y-3">
           {daemons!.map(daemon => (
             <DaemonCard key={daemon.id} daemon={daemon} onDelete={() => deleteMut.mutate(daemon.id)} deleting={deleteMut.isPending} enabledServiceIds={enabledByDaemon.get(daemon.id) ?? new Set()} />
@@ -1628,14 +1729,14 @@ function LocalDaemonPairing() {
         </div>
       )}
 
-      {pairError && <div className="text-sm text-danger max-w-lg">{pairError}</div>}
+      {pairError && <div className="text-sm text-danger max-w-xl">{pairError}</div>}
       {waitingForConnection && (
-        <div className="text-sm text-text-secondary max-w-lg flex items-center gap-2">
+        <div className="text-sm text-text-secondary max-w-xl flex items-center gap-2">
           <span className="inline-block w-3 h-3 border-2 border-brand border-t-transparent rounded-full animate-spin" />
           Waiting for daemon to connect…
         </div>
       )}
-      {pairSuccess && !waitingForConnection && <div className="text-sm text-success max-w-lg">Local computer paired successfully.</div>}
+      {pairSuccess && !waitingForConnection && <div className="text-sm text-success max-w-xl">Local computer paired successfully.</div>}
 
       {!isLoading && !localAlreadyPaired && (
         <button
@@ -1643,7 +1744,7 @@ function LocalDaemonPairing() {
           disabled={pairing}
           className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
         >
-          {pairing ? 'Pairing…' : (daemons ?? []).length > 0 ? 'Pair Another Computer' : 'Pair with Local Computer'}
+          {pairing ? 'Pairing…' : hasPairedDaemons ? 'Pair Another Computer' : 'Pair with Local Computer'}
         </button>
       )}
     </section>
