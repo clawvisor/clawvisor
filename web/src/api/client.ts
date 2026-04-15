@@ -215,6 +215,12 @@ export interface WebAuthnCredential {
   created_at: string
 }
 
+export interface ResetMethods {
+  has_totp: boolean
+  has_backup_codes: boolean
+  passkey_count: number
+}
+
 export interface UserAuthMethods {
   has_password: boolean
   has_totp: boolean
@@ -801,6 +807,18 @@ export const api = {
     backupCode: {
       verify: (pendingToken: string, code: string) =>
         requestWithToken<AuthResponse>('POST', '/api/auth/backup-codes/mfa-verify', pendingToken, { code }),
+    },
+    resetPassword: {
+      forgot: (email: string) =>
+        post<{ status: string }>('/api/auth/forgot-password', { email }),
+      methods: (resetToken: string) =>
+        requestWithToken<ResetMethods>('POST', '/api/auth/reset-password/methods', resetToken, {}),
+      verifyBackupCode: (resetToken: string, code: string) =>
+        requestWithToken<{ reset_token: string }>('POST', '/api/auth/reset-password/verify-backup-code', resetToken, { code }),
+      verifyTotp: (resetToken: string, code: string) =>
+        requestWithToken<{ reset_token: string }>('POST', '/api/auth/reset-password/verify-totp', resetToken, { code }),
+      reset: (verifiedToken: string, password: string) =>
+        requestWithToken<AuthResponse>('POST', '/api/auth/reset-password', verifiedToken, { password }),
     },
     onboarding: {
       status: () => get<OnboardingStatus>('/api/auth/onboarding/status'),
