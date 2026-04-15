@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.11](https://github.com/clawvisor/clawvisor/compare/v0.8.10...v0.8.11) (2026-04-15)
+
+
+### Features
+
+* redesign daemon card and local services settings ([#256](https://github.com/clawvisor/clawvisor/issues/256)) ([f970d35](https://github.com/clawvisor/clawvisor/commit/f970d3578a4b39fe9b3cf066dfdf1fb9906f4cd9))
+
+
+### Bug Fixes
+
+* make local services installer idempotent ([#259](https://github.com/clawvisor/clawvisor/issues/259)) ([29b044b](https://github.com/clawvisor/clawvisor/commit/29b044b17feff8ec8082be25565a9db6d270569c))
+
 ## [0.8.10](https://github.com/clawvisor/clawvisor/compare/v0.8.9...v0.8.10) (2026-04-15)
 
 
