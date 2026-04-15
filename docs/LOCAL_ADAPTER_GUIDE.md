@@ -22,7 +22,7 @@ cloud handles authorization, credential injection, and audit logging.
 
 ## Install
 
-Install the latest released `clawvisor-local` binary with:
+Install the latest released `clawvisor-local` binary on macOS or Linux with:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh
@@ -31,6 +31,9 @@ curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/in
 This downloads the latest published `clawvisor-local` binary for your platform,
 verifies it against the release `checksums.txt`, installs it into
 `~/.clawvisor/bin`, and runs `clawvisor-local install-service`.
+
+If you want to publish installable services from your own GitHub repo, see
+[LOCAL_SERVICE_DISTRIBUTION_GUIDE.md](./LOCAL_SERVICE_DISTRIBUTION_GUIDE.md).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -267,8 +270,8 @@ server.serve_forever()
 | `description` | string | | Human-readable description |
 | `icon` | string | | Icon identifier |
 | `type` | string | `exec` | `exec` or `server` |
-| `platform` | string | | Restrict to `linux`, `darwin`, or `windows`. Skipped on other platforms. |
-| `env` | map | | Service-level environment variables, inherited by all actions. Supports `{{param}}` interpolation. |
+| `platform` | string | | Restrict to `linux`, `darwin`, or `windows`. Excluded as unsupported on other platforms. |
+| `env` | map | | Service-level environment variables, inherited by all actions. In exec mode, values support `{{param}}` interpolation. Server startup env is passed through literally. |
 | `working_dir` | string | service directory | Working directory for commands. Relative paths resolve against the service directory. |
 
 ### Server-specific fields
@@ -289,7 +292,7 @@ server.serve_forever()
 | `name` | string | same as `id` | Display name |
 | `description` | string | | Human-readable description |
 | `timeout` | string | `30s` | Go duration (e.g. `10s`, `2m`). Overrides the global default. |
-| `env` | map | | Action-level environment variables (exec mode). Supports `{{param}}` interpolation. |
+| `env` | map | | Action-level environment variables for exec actions. Supports `{{param}}` interpolation. |
 | `params` | list | | Parameter declarations (see below) |
 
 **Exec-specific action fields:**
@@ -344,7 +347,8 @@ dots. For example:
 with a conflict error.
 
 **Platform filtering:** If `platform` is set in the manifest and doesn't match
-the current OS, the service is silently skipped.
+the current OS, the service is excluded as unsupported and reported in status /
+reload output.
 
 **Reloading:** Services can be reloaded without restarting the daemon by calling
 `POST http://localhost:25299/api/services/reload`.
@@ -353,17 +357,17 @@ the current OS, the service is silently skipped.
 
 ## Template interpolation
 
-Both exec and server modes support `{{param_name}}` placeholders in several
-fields:
+Template interpolation is supported in a few specific fields:
 
 - `stdin` (exec mode)
 - `body` (server mode)
-- `env` values (both modes)
+- `env` values (exec mode)
 
 Only declared parameters are interpolated — unknown placeholders are left
 as-is. When the format is `json`, values are JSON-escaped (special characters
 like `"` and `\n` are properly escaped). When the format is `text`, values are
-inserted raw.
+inserted raw. The daemon does not interpolate placeholders inside `run`,
+`start`, `path`, or header keys/values.
 
 ---
 
@@ -499,7 +503,7 @@ description: Local file operations
 actions:
   - id: list_files
     name: List files
-    run: "ls -la {{directory}}"
+    run: ./list-files.sh
     params:
       - name: directory
         type: string
@@ -508,7 +512,7 @@ actions:
 
   - id: read_file
     name: Read file contents
-    run: "cat {{path}}"
+    run: ./read-file.sh
     timeout: 5s
     params:
       - name: path
@@ -518,7 +522,7 @@ actions:
 
   - id: search
     name: Search files
-    run: "grep -r {{pattern}} {{directory}}"
+    run: ./search-files.sh
     timeout: 30s
     params:
       - name: pattern
@@ -528,6 +532,9 @@ actions:
         type: string
         required: true
 ```
+
+Each script reads its parameters from `PARAM_*` environment variables, e.g.
+`PARAM_DIRECTORY`, `PARAM_PATH`, and `PARAM_PATTERN`.
 
 ---
 
