@@ -1,7 +1,7 @@
 # Go
-clawvisor
-clawvisor-local
-imessage-helper
+/clawvisor
+/clawvisor-local
+/imessage-helper
 bin/
 dist/
 *.test
