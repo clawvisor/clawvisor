@@ -496,6 +496,9 @@ func installLaunchd() error {
 	plistDir := filepath.Join(home, "Library", "LaunchAgents")
 	plistPath := filepath.Join(plistDir, "com.clawvisor.local.plist")
 
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(plistDir, 0755); err != nil {
 		return err
 	}
@@ -527,6 +530,8 @@ func installLaunchd() error {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
+	// Unload first so re-running install-service is idempotent.
+	exec.Command("launchctl", "unload", plistPath).Run() //nolint:errcheck
 	if err := exec.Command("launchctl", "load", plistPath).Run(); err != nil {
 		return fmt.Errorf("loading launchd service: %w", err)
 	}
