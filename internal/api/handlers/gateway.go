@@ -398,7 +398,12 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if task.Lifetime == "standing" && req.SessionID == "" {
-			warnings = append(warnings, "Chain context is disabled because session_id was not provided on this standing task request. Intent verification cannot verify that entity references (message IDs, thread IDs, etc.) came from prior results. Provide a consistent session_id across related requests to enable chain context.")
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: "session_id is required for standing task requests",
+				Code:  "MISSING_SESSION_ID",
+				Hint:  "Standing tasks require a session_id on every gateway request to enable chain context verification. Generate a UUID per workflow invocation and pass it as session_id.",
+			})
+			return
 		}
 
 		// Check whether the action exists on the adapter before checking task scope.
@@ -1316,7 +1321,6 @@ func (h *GatewayHandler) runVerification(
 			serviceHints = hinter.VerificationHints()
 		}
 	}
-	chainContextOptOut := task.Lifetime == "standing" && req.SessionID == ""
 	verdict, _ := h.verifier.Verify(ctx, intent.VerifyRequest{
 		TaskPurpose:         task.Purpose,
 		ExpectedUse:         expectedUse,
@@ -1328,7 +1332,7 @@ func (h *GatewayHandler) runVerification(
 		TaskID:              req.TaskID,
 		ServiceHints:        serviceHints,
 		ChainFacts:          chainFacts,
-		ChainContextOptOut:  chainContextOptOut,
+		ChainContextOptOut:  false, // standing tasks without session_id are now rejected earlier
 		ChainContextEnabled: h.cfg.LLM.ChainContext.Enabled,
 	})
 	return verdict

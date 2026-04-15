@@ -442,14 +442,39 @@ func TestStandingTask_OutOfScope_MessageSuggestsNewTask(t *testing.T) {
 
 	taskID := sc.createApprovedStandingTask(t, env, "mock.echo", "echo", true)
 
-	// Request an action outside the standing task's scope
-	result := sc.gatewayRequestWithTask(env, fmt.Sprintf("req-standing-oos-%s", randSuffix()), "mock.echo", "other", taskID)
+	// Request an action outside the standing task's scope (with session_id to avoid MISSING_SESSION_ID error)
+	result := sc.gatewayRequestWithTaskAndSession(env, fmt.Sprintf("req-standing-oos-%s", randSuffix()), "mock.echo", "other", taskID, "sess-standing-oos")
 	if result["status"] != "pending_scope_expansion" {
 		t.Errorf("expected status=pending_scope_expansion, got %v", result["status"])
 	}
 	msg, _ := result["message"].(string)
 	strContains(t, msg, "standing task", "gateway out-of-scope message for standing task")
 	strContains(t, msg, "cannot be expanded", "gateway out-of-scope message for standing task")
+}
+
+func TestStandingTask_MissingSessionID_Error(t *testing.T) {
+	adapter := newMockAdapter("mock.echo", "echo")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "automation")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.echo", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	taskID := sc.createApprovedStandingTask(t, env, "mock.echo", "echo", true)
+
+	// Gateway request with standing task but no session_id should return 400.
+	resp := env.do("POST", "/api/gateway/request", sc.AgentToken, map[string]any{
+		"service":    "mock.echo",
+		"action":     "echo",
+		"params":     map[string]any{"to": "bob@example.com"},
+		"reason":     "test reason",
+		"request_id": fmt.Sprintf("req-no-session-%s", randSuffix()),
+		"task_id":    taskID,
+	})
+	body := mustStatus(t, resp, http.StatusBadRequest)
+	if body["code"] != "MISSING_SESSION_ID" {
+		t.Errorf("expected code=MISSING_SESSION_ID, got %v", body["code"])
+	}
 }
 
 // ── Scope expansion ───────────────────────────────────────────────────────────

@@ -119,6 +119,12 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 				serviceHints = hinter.VerificationHints()
 			}
 		}
+		// Standing tasks require an explicit session_id.
+		if task.Lifetime == "standing" && req.SessionID == "" {
+			respond("deny", "session_id is required for standing task requests — chain context cannot be verified without it", taskID, nil)
+			return
+		}
+
 		// Chain context: ephemeral tasks use task_id as implicit session;
 		// standing tasks require an explicit session_id to scope facts.
 		chainSessionID := req.SessionID
@@ -133,7 +139,6 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		chainContextOptOut := task.Lifetime == "standing" && req.SessionID == ""
 		verdict, _ := h.verifier.Verify(ctx, intent.VerifyRequest{
 			TaskPurpose:        task.Purpose,
 			ExpectedUse:        expectedUse,
@@ -144,7 +149,7 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 			TaskID:             req.TaskID,
 			ServiceHints:       serviceHints,
 			ChainFacts:         chainFacts,
-			ChainContextOptOut: chainContextOptOut,
+			ChainContextOptOut: false, // standing tasks without session_id are now rejected earlier
 		})
 
 		// Chain context fallback: same as gateway handler.

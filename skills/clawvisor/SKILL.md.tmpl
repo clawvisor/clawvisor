@@ -165,6 +165,8 @@ actions you need using `create_task`:
 
 **Always request the broadest reasonable scope upfront.** The user reviews scope once at task creation; mid-task `pending_scope_expansion` interrupts their flow. Scope for the full range of operations the request could entail — not just the first step.
 
+For examples of well-scoped tasks and effective gateway requests, see the [Task & Request Examples](https://github.com/clawvisor/clawvisor/blob/main/docs/TASK_EXAMPLES.md).
+
 All tasks start as `pending_approval`
 {{- if .UseCurl }} — the user is notified to approve the
 scope before it becomes active. **Always use `?wait=true`** on `POST /api/tasks`
@@ -201,7 +203,7 @@ related requests. Use a consistent `session_id` (e.g., a UUID you generate once
 per workflow) across all related requests in a single invocation.
 {{- end }}
 
-> **⚠️ Standing tasks MUST use `session_id` on every gateway request.** Without `session_id`, chain context is disabled — meaning intent verification cannot see that a message ID or thread ID came from your own prior search results. The verifier will treat those IDs as unexplained entity references and block them. Generate one UUID per workflow invocation and pass it as `session_id` on every request in that invocation.
+> **⚠️ Standing tasks MUST use `session_id` on every gateway request.** Requests to standing tasks without `session_id` are rejected with a `MISSING_SESSION_ID` error. Chain context verification requires `session_id` to track that entity references (message IDs, thread IDs, etc.) came from your own prior results. Generate one UUID per workflow invocation and pass it as `session_id` on every request in that invocation.
 
 ### Chain context verification
 
@@ -211,7 +213,7 @@ Chain context verification extracts structural facts (IDs, email addresses, phon
 
 **Standing tasks** require a `session_id` in gateway requests to enable chain context. Use a consistent `session_id` (e.g., a UUID you generate once per workflow) across all related requests in a single invocation. This scopes facts to one invocation and prevents unrelated facts from prior invocations from mixing together.
 
-If you omit `session_id` on a standing task, chain context is disabled and intent verification will apply stricter scrutiny to entity references — any specific targets (email addresses, IDs, etc.) must be justified by the task purpose or expected use alone, not by prior results.
+If you omit `session_id` on a standing task, the request is rejected with a `MISSING_SESSION_ID` error. Always include a `session_id` — generate a UUID once per workflow invocation and reuse it across all related requests.
 
 - Chain facts are automatically cleaned up when a task is completed, denied, or revoked
 
@@ -358,7 +360,7 @@ Every {{ if .UseCurl -}} response has a `status` field. Handle each case as foll
 | `error` (`EXECUTION_ERROR`) | Adapter failed | Report the error{{ if .UseCurl }} to the user{{ end }}. Do not silently retry. |
 | `error` (other) | Something went wrong | Report the error{{ if .UseCurl }} message to the user{{ end }}. Do not silently retry. |
 
-**Warnings:** Responses may include a `"warnings"` array with actionable messages about misconfiguration. For example, if you make a standing task request without `session_id`, the response will warn that chain context is disabled. Always check for and act on warnings.
+**Warnings:** Responses may include a `"warnings"` array with actionable messages about misconfiguration. Always check for and act on warnings.
 
 **Pagination:** Results may be paginated. Check `result.meta` for continuation fields (e.g. `next_page_token`, `cursor`, `has_more`) and pass them as params in a follow-up gateway request to fetch the next page.
 {{ if not .Condensed }}

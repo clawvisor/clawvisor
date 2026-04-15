@@ -470,6 +470,11 @@ func (sc *scenario) gatewayRequest(env *testEnv, reqID, service, action string) 
 
 // gatewayRequestWithTask sends a gateway request with an optional task_id.
 func (sc *scenario) gatewayRequestWithTask(env *testEnv, reqID, service, action, taskID string) map[string]any {
+	return sc.gatewayRequestWithTaskAndSession(env, reqID, service, action, taskID, "")
+}
+
+// gatewayRequestWithTaskAndSession sends a gateway request with an optional task_id and session_id.
+func (sc *scenario) gatewayRequestWithTaskAndSession(env *testEnv, reqID, service, action, taskID, sessionID string) map[string]any {
 	body := map[string]any{
 		"service":    service,
 		"action":     action,
@@ -479,6 +484,9 @@ func (sc *scenario) gatewayRequestWithTask(env *testEnv, reqID, service, action,
 	}
 	if taskID != "" {
 		body["task_id"] = taskID
+	}
+	if sessionID != "" {
+		body["session_id"] = sessionID
 	}
 	resp := env.do("POST", "/api/gateway/request", sc.AgentToken, body)
 	var m map[string]any
