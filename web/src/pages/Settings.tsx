@@ -1530,7 +1530,7 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
 
 const LOCAL_DAEMON_PORT = 25299
 const LOCAL_DAEMON_INSTALL_CMD = 'curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh'
-const LOCAL_SERVICES_INSTALL_CMD = 'clawvisor-local install clawvisor/local-services'
+const LOCAL_SERVICES_INSTALL_CMD = 'clawvisor-local install clawvisor/local-integrations'
 const LOCAL_SERVICES_GUIDE_URL = 'https://github.com/clawvisor/clawvisor/blob/main/docs/LOCAL_ADAPTER_GUIDE.md'
 
 function LocalDaemonPairing() {
