@@ -359,6 +359,8 @@ Every {{ if .UseCurl -}} response has a `status` field. Handle each case as foll
 | `error` (other) | Something went wrong | Report the error{{ if .UseCurl }} message to the user{{ end }}. Do not silently retry. |
 
 **Warnings:** Responses may include a `"warnings"` array with actionable messages about misconfiguration. For example, if you make a standing task request without `session_id`, the response will warn that chain context is disabled. Always check for and act on warnings.
+
+**Pagination:** Results may be paginated. Check `result.meta` for continuation fields (e.g. `next_page_token`, `cursor`, `has_more`) and pass them as params in a follow-up gateway request to fetch the next page.
 {{ if not .Condensed }}
 ---
 
