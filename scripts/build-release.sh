@@ -23,6 +23,7 @@ MODULE="github.com/clawvisor/clawvisor/pkg/version"
 BUILD_DATE=$(date -u +%Y-%m-%d)
 LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
 PLATFORMS="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
+HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 rm -rf dist
 mkdir -p dist
@@ -45,8 +46,17 @@ for PLATFORM in $PLATFORMS; do
   OUTPUT="dist/clawvisor-local-${GOOS}-${GOARCH}"
 
   echo "Building ${OUTPUT}..."
-  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+  if [ "$GOOS" = "darwin" ]; then
+    if [ "$HOST_OS" != "darwin" ]; then
+      echo "Error: darwin clawvisor-local builds require a macOS runner" >&2
+      exit 1
+    fi
+    CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" \
+      go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+  else
+    CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+      go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+  fi
 done
 
 # Build the iMessage helper .app bundle for macOS only. This is a separate,
