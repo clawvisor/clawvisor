@@ -15,13 +15,19 @@ import (
 
 // FeedbackHandler handles agent feedback endpoints: bug reports and NPS.
 type FeedbackHandler struct {
-	store    store.Store
-	reviewer feedback.Reviewer
-	logger   *slog.Logger
+	store          store.Store
+	reviewer       feedback.Reviewer
+	logger         *slog.Logger
+	afterBugReport func(report *store.FeedbackReport)
 }
 
 func NewFeedbackHandler(st store.Store, reviewer feedback.Reviewer, logger *slog.Logger) *FeedbackHandler {
 	return &FeedbackHandler{store: st, reviewer: reviewer, logger: logger}
+}
+
+// SetAfterBugReport registers a callback invoked (in a goroutine) after a bug report is saved.
+func (h *FeedbackHandler) SetAfterBugReport(fn func(report *store.FeedbackReport)) {
+	h.afterBugReport = fn
 }
 
 // ── Report Bug ──────────────────────────────────────────────────────────
@@ -110,6 +116,10 @@ func (h *FeedbackHandler) ReportBug(w http.ResponseWriter, r *http.Request) {
 		"severity", reviewResult.Severity,
 		"is_valid", reviewResult.IsValid,
 	)
+
+	if h.afterBugReport != nil {
+		go h.afterBugReport(report)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":       report.ID,

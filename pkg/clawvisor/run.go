@@ -93,6 +93,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		}))
 	}
 
+	if opts.FeedbackHooks != nil {
+		apiOpts = append(apiOpts, api.WithFeedbackHooks(&api.FeedbackHooks{
+			AfterBugReport: opts.FeedbackHooks.AfterBugReport,
+		}))
+	}
+
 	// Multi-instance Redis-backed stores.
 	if opts.TicketStore != nil {
 		apiOpts = append(apiOpts, api.WithTicketStore(opts.TicketStore))
