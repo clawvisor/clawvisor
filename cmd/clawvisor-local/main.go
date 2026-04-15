@@ -55,6 +55,9 @@ func main() {
 		toolbarCmd(),
 		installServiceCmd(),
 		uninstallServiceCmd(),
+		startServiceCmd(),
+		stopServiceCmd(),
+		restartServiceCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -493,8 +496,8 @@ func installLaunchd() error {
 
 	home, _ := os.UserHomeDir()
 	logPath := filepath.Join(home, ".clawvisor", "local", "daemon.log")
-	plistDir := filepath.Join(home, "Library", "LaunchAgents")
-	plistPath := filepath.Join(plistDir, "com.clawvisor.local.plist")
+	plistPath := localPlistPath()
+	plistDir := filepath.Dir(plistPath)
 
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 		return err
@@ -543,8 +546,7 @@ func installLaunchd() error {
 }
 
 func uninstallLaunchd() error {
-	home, _ := os.UserHomeDir()
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.clawvisor.local.plist")
+	plistPath := localPlistPath()
 
 	_ = exec.Command("launchctl", "unload", plistPath).Run()
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
@@ -612,6 +614,95 @@ func uninstallSystemd() error {
 
 	fmt.Println("Uninstalled clawvisor-local.service")
 	return nil
+}
+
+const localLaunchdLabel = "com.clawvisor.local"
+
+func localPlistPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "LaunchAgents", localLaunchdLabel+".plist")
+}
+
+func startServiceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start",
+		Short: "Start the installed system service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch runtime.GOOS {
+			case "darwin":
+				plistPath := localPlistPath()
+				if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+					return fmt.Errorf("service not installed; run install-service first")
+				}
+				if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil {
+					return fmt.Errorf("launchctl load: %s", strings.TrimSpace(string(out)))
+				}
+			case "linux":
+				if out, err := exec.Command("systemctl", "--user", "start", "clawvisor-local").CombinedOutput(); err != nil {
+					return fmt.Errorf("systemctl start: %s", strings.TrimSpace(string(out)))
+				}
+			default:
+				return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+			}
+			fmt.Println("Service started.")
+			return nil
+		},
+	}
+}
+
+func stopServiceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the running system service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch runtime.GOOS {
+			case "darwin":
+				plistPath := localPlistPath()
+				if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+					return fmt.Errorf("service not installed; run install-service first")
+				}
+				if out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput(); err != nil {
+					return fmt.Errorf("launchctl unload: %s", strings.TrimSpace(string(out)))
+				}
+			case "linux":
+				if out, err := exec.Command("systemctl", "--user", "stop", "clawvisor-local").CombinedOutput(); err != nil {
+					return fmt.Errorf("systemctl stop: %s", strings.TrimSpace(string(out)))
+				}
+			default:
+				return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+			}
+			fmt.Println("Service stopped.")
+			return nil
+		},
+	}
+}
+
+func restartServiceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart",
+		Short: "Restart the system service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch runtime.GOOS {
+			case "darwin":
+				plistPath := localPlistPath()
+				if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+					return fmt.Errorf("service not installed; run install-service first")
+				}
+				exec.Command("launchctl", "unload", plistPath).Run() //nolint:errcheck
+				if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil {
+					return fmt.Errorf("launchctl load: %s", strings.TrimSpace(string(out)))
+				}
+			case "linux":
+				if out, err := exec.Command("systemctl", "--user", "restart", "clawvisor-local").CombinedOutput(); err != nil {
+					return fmt.Errorf("systemctl restart: %s", strings.TrimSpace(string(out)))
+				}
+			default:
+				return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+			}
+			fmt.Println("Service restarted.")
+			return nil
+		},
+	}
 }
 
 func httpPost(url string) (string, error) {
