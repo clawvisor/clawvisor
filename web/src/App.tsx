@@ -13,6 +13,8 @@ import Pricing from './pages/Pricing'
 import Welcome from './pages/Welcome'
 import OAuthAuthorize from './pages/OAuthAuthorize'
 import OAuthCallback from './pages/OAuthCallback'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 import MFAVerify from './pages/MFAVerify'
 import SecuritySetup from './pages/SecuritySetup'
 import Waitlist from './pages/Waitlist'
@@ -83,6 +85,8 @@ export default function App() {
       />
       {passwordAuth && <Route path="/login" element={<Login />} />}
       {passwordAuth && <Route path="/register" element={<Register />} />}
+      {passwordAuth && <Route path="/forgot-password" element={<ForgotPassword />} />}
+      {passwordAuth && <Route path="/reset-password" element={<ResetPassword />} />}
       <Route path="/magic-link" element={<MagicLink />} />
       <Route path="/check-email" element={<CheckEmail />} />
       <Route path="/verify-email" element={<VerifyEmail />} />

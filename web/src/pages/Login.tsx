@@ -162,12 +162,19 @@ export default function Login() {
           </button>
         </form>
 
-        <p className="text-center text-sm text-text-secondary">
-          Don't have an account?{' '}
-          <Link to="/register" className="text-brand hover:underline">
-            Register
-          </Link>
-        </p>
+        <div className="text-center text-sm text-text-secondary space-y-2">
+          <p>
+            <Link to="/forgot-password" className="text-brand hover:underline">
+              Forgot your password?
+            </Link>
+          </p>
+          <p>
+            Don't have an account?{' '}
+            <Link to="/register" className="text-brand hover:underline">
+              Register
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )
