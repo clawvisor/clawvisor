@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.8.10](https://github.com/clawvisor/clawvisor/compare/v0.8.9...v0.8.10) (2026-04-15)
+
+
+### Features
+
+* actionable API error responses for task and gateway endpoints ([#220](https://github.com/clawvisor/clawvisor/issues/220)) ([001a394](https://github.com/clawvisor/clawvisor/commit/001a394475b1fa93b22a4eee8e4658f38dda9e0b))
+* add agent feedback system with bug reports and NPS surveys ([#201](https://github.com/clawvisor/clawvisor/issues/201)) ([fcf420c](https://github.com/clawvisor/clawvisor/commit/fcf420c41e0fce7045852728592c23b84e9fa701))
+* add connect-src CSP directive for local daemon pairing ([#247](https://github.com/clawvisor/clawvisor/issues/247)) ([25daacc](https://github.com/clawvisor/clawvisor/commit/25daacc3bb58e7749ab2eacd8e6f5d945a77f013))
+* add copy buttons to Claude Desktop setup commands ([#195](https://github.com/clawvisor/clawvisor/issues/195)) ([11c0434](https://github.com/clawvisor/clawvisor/commit/11c04345cdb6aa900c1eaa2c8525d8d3ad229d58))
+* add Discord and self-hosted CTAs to waitlist success screen ([#199](https://github.com/clawvisor/clawvisor/issues/199)) ([f2e731e](https://github.com/clawvisor/clawvisor/commit/f2e731ef3116bd2637463c0d4f367f7cddcad38f))
+* add Dropbox adapter ([#217](https://github.com/clawvisor/clawvisor/issues/217)) ([3b187e9](https://github.com/clawvisor/clawvisor/commit/3b187e98481c752bd7e7dfcc31ddfb3b5262a3ac))
+* add feedback hooks for cloud-layer event callbacks ([#250](https://github.com/clawvisor/clawvisor/issues/250)) ([fd13060](https://github.com/clawvisor/clawvisor/commit/fd1306082045ee6534978de6ab1c9cd07a5325d5))
+* add Hermes to OpenClaw tab label ([#232](https://github.com/clawvisor/clawvisor/issues/232)) ([e1a534b](https://github.com/clawvisor/clawvisor/commit/e1a534ba5cbe34493d58b0c18244c10f996444b9))
+* add key_hint field for service-specific token placeholder text ([#235](https://github.com/clawvisor/clawvisor/issues/235)) ([739f432](https://github.com/clawvisor/clawvisor/commit/739f432d082290d631f58aa775f69e75f62414ff))
+* add local_daemon feature flag and daemon pairing UI ([#203](https://github.com/clawvisor/clawvisor/issues/203)) ([b92c384](https://github.com/clawvisor/clawvisor/commit/b92c38447acd514b02c4d9ca2e849e8b8503bab6))
+* add mobile_pairing feature flag, disabled by default ([#208](https://github.com/clawvisor/clawvisor/issues/208)) ([8e91879](https://github.com/clawvisor/clawvisor/commit/8e91879dc4da4957a5ecee4a9e8096a52f83df42))
+* add Overrides() getter to YAMLAdapter ([#223](https://github.com/clawvisor/clawvisor/issues/223)) ([3364831](https://github.com/clawvisor/clawvisor/commit/3364831a2056df98ed77ab042272b77a6e6c8544))
+* add pagination support to all adapters ([#230](https://github.com/clawvisor/clawvisor/issues/230)) ([c7b6164](https://github.com/clawvisor/clawvisor/commit/c7b61643e88a9515969e625fa797d91d050da269))
+* add pagination support to Gmail list_messages ([#226](https://github.com/clawvisor/clawvisor/issues/226)) ([cee3348](https://github.com/clawvisor/clawvisor/commit/cee3348be0e4e9988fd000dcfa8a746f960605c0))
+* add scope_param and token_path to OAuthDef for non-standard OAuth flows ([#210](https://github.com/clawvisor/clawvisor/issues/210)) ([c9e4979](https://github.com/clawvisor/clawvisor/commit/c9e49795ef3324467be0f6ee10297bc58d126705))
+* add TOS acceptance step to onboarding flow ([#239](https://github.com/clawvisor/clawvisor/issues/239)) ([9d4712f](https://github.com/clawvisor/clawvisor/commit/9d4712fce00ba5dfcd9b4bbb5ee466bb3a303a3a))
+* add Vertex AI region fallback for LLM requests ([#243](https://github.com/clawvisor/clawvisor/issues/243)) ([2515ab3](https://github.com/clawvisor/clawvisor/commit/2515ab3201019299ec382699084c9069ae9e8f3b))
+* add waitlist signup flow to frontend ([#197](https://github.com/clawvisor/clawvisor/issues/197)) ([a2cb023](https://github.com/clawvisor/clawvisor/commit/a2cb0233f94d4e71a9e964ffe433de53bc742728))
+* detect partial Google OAuth scopes at task creation ([#211](https://github.com/clawvisor/clawvisor/issues/211)) ([ed1db9e](https://github.com/clawvisor/clawvisor/commit/ed1db9eab77a9440114e770b473dd5a57cb719d5))
+* Gmail thread support, reply threading, and sender display name ([#216](https://github.com/clawvisor/clawvisor/issues/216)) ([14a11bd](https://github.com/clawvisor/clawvisor/commit/14a11bde7e7c5b581d9106598f5621c24e2e1c3a))
+* local service integration for cloud-hosted agents ([#215](https://github.com/clawvisor/clawvisor/issues/215)) ([735296a](https://github.com/clawvisor/clawvisor/commit/735296a92ce90a20fd0a2bedc9663eabd129842d))
+* make webapp responsive for mobile devices ([#209](https://github.com/clawvisor/clawvisor/issues/209)) ([27b6169](https://github.com/clawvisor/clawvisor/commit/27b61699e4d1b042ebc8c17069918501f449fd0f))
+* open-source the local services connector ([#206](https://github.com/clawvisor/clawvisor/issues/206)) ([c46b276](https://github.com/clawvisor/clawvisor/commit/c46b276f3282aa5b55380d442c31136f9ddebcba))
+* replace free trial with permanent free tier ([#240](https://github.com/clawvisor/clawvisor/issues/240)) ([51a0de5](https://github.com/clawvisor/clawvisor/commit/51a0de52da8af63aeaecf2053ccd0268d4540b18))
+* support multiple Telegram groups with independent monitoring ([#200](https://github.com/clawvisor/clawvisor/issues/200)) ([25151e8](https://github.com/clawvisor/clawvisor/commit/25151e8b683e447e10dca1d7df556b85eaf19c87))
+* warn on unknown gateway request params with typo detection ([#224](https://github.com/clawvisor/clawvisor/issues/224)) ([2b00ba1](https://github.com/clawvisor/clawvisor/commit/2b00ba13d2e939b601b3eb1a7d8941c71f08507f))
+
+
+### Bug Fixes
+
+* add missing field support for Google Calendar create/update events ([#251](https://github.com/clawvisor/clawvisor/issues/251)) ([e0444a3](https://github.com/clawvisor/clawvisor/commit/e0444a339d4b8b4932db14bc2cc9f938038458fe))
+* add retry with jittered backoff for LLM verification overload ([#242](https://github.com/clawvisor/clawvisor/issues/242)) ([e210705](https://github.com/clawvisor/clawvisor/commit/e2107058f5ec07148606fdc0f4f69938f3be30c7))
+* allow subscribed calendar access in intent verification ([#225](https://github.com/clawvisor/clawvisor/issues/225)) ([b409b02](https://github.com/clawvisor/clawvisor/commit/b409b0229e7da6622e4e7a14f63007186b756ba0))
+* auto-join waitlist from Google OAuth flow ([#198](https://github.com/clawvisor/clawvisor/issues/198)) ([38ddb26](https://github.com/clawvisor/clawvisor/commit/38ddb261683b4e646469ada7ef03afeaa3b39cbb))
+* clarify that Clawvisor needs a separate Telegram bot from agent ([#238](https://github.com/clawvisor/clawvisor/issues/238)) ([f8279cc](https://github.com/clawvisor/clawvisor/commit/f8279ccf7e72331cb2b088db6d6cc745af99f7fa))
+* correct OAuth mobile redirect path to /dashboard/services ([#213](https://github.com/clawvisor/clawvisor/issues/213)) ([7612848](https://github.com/clawvisor/clawvisor/commit/761284818118bdbc37c532a6904b054f3af21931))
+* exclude standing tasks from group chat auto-approval ([#202](https://github.com/clawvisor/clawvisor/issues/202)) ([639f9ca](https://github.com/clawvisor/clawvisor/commit/639f9ca46b11e916b74bc21b838a9785fa682dd3))
+* guard verify-email effect against StrictMode double-invoke ([#236](https://github.com/clawvisor/clawvisor/issues/236)) ([c81592f](https://github.com/clawvisor/clawvisor/commit/c81592f709f65559eec4e3c3ee56b8e7a09d986e))
+* include TokenPath in Redis OAuth state serialization ([#214](https://github.com/clawvisor/clawvisor/issues/214)) ([ae80d04](https://github.com/clawvisor/clawvisor/commit/ae80d0477f7278137fcefb5776c08f38770f0f00))
+* only send Google-specific OAuth params for Google endpoints ([#233](https://github.com/clawvisor/clawvisor/issues/233)) ([ee0fbdd](https://github.com/clawvisor/clawvisor/commit/ee0fbdd784d0e22d16ee02a122512ad961a76b61))
+* pass LocalDaemon feature flag through to API server ([#205](https://github.com/clawvisor/clawvisor/issues/205)) ([a9e08af](https://github.com/clawvisor/clawvisor/commit/a9e08aff57297e3e7b6369efacb3dc4e76dfdc8c))
+* remove cancelled flag that blocks verify in StrictMode ([#237](https://github.com/clawvisor/clawvisor/issues/237)) ([299b3c2](https://github.com/clawvisor/clawvisor/commit/299b3c25652f04ce775310c51b52784cf2164db6))
+* return UNKNOWN_ACTION error for non-existent adapter actions ([#228](https://github.com/clawvisor/clawvisor/issues/228)) ([228588e](https://github.com/clawvisor/clawvisor/commit/228588e6deaa559639ec52bb47a9d7e9031610d0))
+* rotate agent token on --replace instead of delete+recreate ([#244](https://github.com/clawvisor/clawvisor/issues/244)) ([2d5483b](https://github.com/clawvisor/clawvisor/commit/2d5483b81c249a0ee7c30c565b68031bd2473012))
+* serve /skill/setup route without requiring daemon ID ([#204](https://github.com/clawvisor/clawvisor/issues/204)) ([187aa5f](https://github.com/clawvisor/clawvisor/commit/187aa5f072b70c84365a09219771659481747ecf))
+* skip E2E encryption instructions in /skill/setup for direct connections ([#207](https://github.com/clawvisor/clawvisor/issues/207)) ([69cdbc8](https://github.com/clawvisor/clawvisor/commit/69cdbc85100c0baa8b221c41c0435583be02076c))
+* skip localhost daemon probe when no daemons are paired ([#248](https://github.com/clawvisor/clawvisor/issues/248)) ([dcddb04](https://github.com/clawvisor/clawvisor/commit/dcddb041c7fc798d5dd0e784fd0a022d753fcd62))
+* support PKCE-sourced credentials in api_key adapters ([#227](https://github.com/clawvisor/clawvisor/issues/227)) ([d7f2d6f](https://github.com/clawvisor/clawvisor/commit/d7f2d6f9a507be8198acd73359c3a8303f63939b))
+* use context-appropriate language in setup endpoints for cloud vs local ([#241](https://github.com/clawvisor/clawvisor/issues/241)) ([c5b51ba](https://github.com/clawvisor/clawvisor/commit/c5b51babebdb5aebc08684ccd0a03301fde871bc))
+* use generic 'agent' label in OpenClaw connect guide ([#234](https://github.com/clawvisor/clawvisor/issues/234)) ([9c99923](https://github.com/clawvisor/clawvisor/commit/9c999236aa1b8c10e8a57c9180a76e8e65e7f083))
+* use same-tab navigation for OAuth on mobile instead of popups ([#212](https://github.com/clawvisor/clawvisor/issues/212)) ([3b013f5](https://github.com/clawvisor/clawvisor/commit/3b013f522a780c836beb70dfbed24dbc406d09f6))
+
 ## [0.8.9](https://github.com/clawvisor/clawvisor/compare/v0.8.8...v0.8.9) (2026-04-10)
 
 
