@@ -1579,7 +1579,20 @@ function LocalDaemonPairing() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.localDaemon.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['local-daemons'] }),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['local-daemons'] })
+      const prev = qc.getQueryData<(LocalDaemon & { connected: boolean })[]>(['local-daemons'])
+      qc.setQueryData<(LocalDaemon & { connected: boolean })[]>(['local-daemons'], old => old?.filter(d => d.id !== id))
+      return { prev }
+    },
+    onError: (_err, _id, context) => {
+      if (context?.prev) qc.setQueryData(['local-daemons'], context.prev)
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['local-daemons'] })
+      qc.invalidateQueries({ queryKey: ['local-daemon-probe'] })
+      qc.invalidateQueries({ queryKey: ['enabled-local-services'] })
+    },
   })
 
   async function startPairing() {
