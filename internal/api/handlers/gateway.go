@@ -321,9 +321,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// ── Step 2: Task ID required ─────────────────────────────────────────────
 	if req.TaskID == "" {
-		outDecision, outOutcome = "reject", "validation_error"
+		e := baseEntry("reject", "validation_error", nil)
+		e.DurationMS = int(time.Since(start).Milliseconds())
+		errMsg := "missing required field: task_id"
+		e.ErrorMsg = &errMsg
+		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			h.logger.Warn("audit log failed", "err", logErr)
+		}
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-			Error:         "missing required field: task_id",
+			Error:         errMsg,
 			Code:          "TASK_REQUIRED",
 			MissingFields: []string{"task_id"},
 			Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
@@ -346,25 +352,44 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	{
 		task, taskErr := h.store.GetTask(ctx, req.TaskID)
 		if taskErr != nil {
-			outDecision, outOutcome = "reject", "validation_error"
+			taskIDPtr := &req.TaskID
+			e := baseEntry("reject", "validation_error", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := fmt.Sprintf("task %q not found", req.TaskID)
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-				Error: fmt.Sprintf("task %q not found", req.TaskID),
+				Error: errMsg,
 				Code:  "INVALID_REQUEST",
 				Hint:  "The task_id may be incorrect, or the task may have been deleted. Create a new task via POST /api/tasks and use the returned task_id.",
 			})
 			return
 		}
 		if task.UserID != agent.UserID {
-			outDecision, outOutcome = "reject", "forbidden"
+			taskIDPtr := &req.TaskID
+			e := baseEntry("reject", "forbidden", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "task does not belong to this agent's user"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
 			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
-				Error: "task does not belong to this agent's user",
+				Error: errMsg,
 				Code:  "FORBIDDEN",
 				Hint:  "This agent's bearer token is associated with a different user than the task owner. Ensure you are using the correct agent token and task_id.",
 			})
 			return
 		}
 		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
-			outDecision, outOutcome = "reject", "task_expired"
+			taskIDPtr := &req.TaskID
+			e := baseEntry("reject", "task_expired", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
 			resp := map[string]any{
 				"status":  "task_expired",
 				"task_id": req.TaskID,
@@ -375,7 +400,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if task.Status != "active" {
-			outDecision, outOutcome = "reject", "invalid_state"
+			taskIDPtr := &req.TaskID
 			hint := "Create a new task via POST /api/tasks."
 			switch task.Status {
 			case "pending_approval":
@@ -389,8 +414,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			case "pending_scope_expansion":
 				hint = "A scope expansion is pending approval. Wait for it to be approved before making requests."
 			}
+			errMsg := fmt.Sprintf("task is %s, not active", task.Status)
+			e := baseEntry("reject", "invalid_state", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
 			writeDetailedError(w, http.StatusConflict, apiErrorDetail{
-				Error: fmt.Sprintf("task is %s, not active", task.Status),
+				Error: errMsg,
 				Code:  "INVALID_STATE",
 				Hint:  hint,
 			})
@@ -398,8 +430,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if task.Lifetime == "standing" && req.SessionID == "" {
+			taskIDPtr := &req.TaskID
+			e := baseEntry("reject", "validation_error", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "session_id is required for standing task requests"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-				Error: "session_id is required for standing task requests",
+				Error: errMsg,
 				Code:  "MISSING_SESSION_ID",
 				Hint:  "Standing tasks require a session_id on every gateway request to enable chain context verification. Generate a UUID per workflow invocation and pass it as session_id.",
 			})

@@ -652,7 +652,6 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
 		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT (request_id) DO NOTHING
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
 		e.PolicyID, e.RuleID, safetyFlagged, e.SafetyReason, e.Reason,
