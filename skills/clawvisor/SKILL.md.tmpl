@@ -119,7 +119,7 @@ curl -s -X POST "$CLAWVISOR_URL/api/tasks?wait=true" \
       {"service": "google.calendar:user@example.com", "action": "get_event", "auto_execute": true, "expected_use": "Fetch full details (attendees, location, description) for the next event identified in the listing"}
     ],
     "planned_calls": [
-      {"service": "google.calendar:user@example.com", "action": "list_events", "params": {"time_min": "2026-04-16T00:00:00Z", "time_max": "2026-04-17T00:00:00Z", "max_results": 10}, "reason": "List calendar events for today to find the next meeting"},
+      {"service": "google.calendar:user@example.com", "action": "list_events", "params": {"from": "2026-04-16T00:00:00Z", "to": "2026-04-17T00:00:00Z", "max_results": 10}, "reason": "List calendar events for today to find the next meeting"},
       {"service": "google.calendar:user@example.com", "action": "get_event", "params": {"event_id": "$chain"}, "reason": "Fetch full details of the next meeting surfaced by the listing"}
     ],
     "expires_in_seconds": 1800
