@@ -21,12 +21,6 @@ export default function Billing() {
     onSuccess: (data) => { window.location.href = data.url },
   })
 
-  const checkoutMut = useMutation({
-    mutationFn: (plan: string) =>
-      api.billing.checkout(plan, window.location.origin + '/dashboard/billing?checkout=success', window.location.origin + '/dashboard/billing?checkout=canceled'),
-    onSuccess: (data) => { window.location.href = data.url },
-  })
-
   const promoMut = useMutation({
     mutationFn: (code: string) => api.billing.applyPromo(code),
     onSuccess: () => {
@@ -217,32 +211,6 @@ export default function Billing() {
             </form>
             {promoError && <p className="text-sm text-danger mt-2">{promoError}</p>}
             {promoSuccess && <p className="text-sm text-success mt-2">Promotion code applied!</p>}
-          </div>
-        </section>
-      )}
-
-      {/* Quick Upgrade */}
-      {plan === 'starter' && (
-        <section className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold text-text-primary">Upgrade</h2>
-            <p className="text-sm text-text-tertiary mt-0.5">Get unlimited connections and more requests.</p>
-          </div>
-
-          <div className="bg-surface-1 border border-brand/30 rounded-md p-5 max-w-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-text-primary">Pro plan - $99/month</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Unlimited connections, 10,000 requests/month</p>
-              </div>
-              <button
-                onClick={() => checkoutMut.mutate('pro')}
-                disabled={checkoutMut.isPending}
-                className="px-3 py-1.5 text-sm font-medium rounded-md bg-brand text-surface-0 hover:bg-brand-strong transition-colors"
-              >
-                {checkoutMut.isPending ? 'Redirecting...' : 'Upgrade'}
-              </button>
-            </div>
           </div>
         </section>
       )}
