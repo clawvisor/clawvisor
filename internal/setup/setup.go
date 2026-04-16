@@ -683,7 +683,9 @@ func writeConfig(cfg *config, path string) error {
 	fmt.Fprintf(&b, "\ntelemetry:\n")
 	fmt.Fprintf(&b, "  enabled: %t\n", cfg.telemetryEnabled)
 
-	return os.WriteFile(path, []byte(b.String()), 0644)
+	// 0600: config.yaml can contain secrets (LLM API keys, Google OAuth client
+	// secret, database URL, JWT secret). Don't make it world-readable.
+	return os.WriteFile(path, []byte(b.String()), 0600)
 }
 
 func writeTUIConfig(cfg *config) error {

@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -354,6 +355,14 @@ func extractTarGz(r io.Reader, destDir string) error {
 	}
 	defer gz.Close()
 
+	// Resolve destDir once so we can reject entries that try to escape via
+	// absolute paths or `../` components (zip-slip).
+	absDest, err := filepath.Abs(destDir)
+	if err != nil {
+		return err
+	}
+	destPrefix := absDest + string(filepath.Separator)
+
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -365,6 +374,13 @@ func extractTarGz(r io.Reader, destDir string) error {
 		}
 
 		target := filepath.Join(destDir, filepath.Clean(hdr.Name))
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			return err
+		}
+		if absTarget != absDest && !strings.HasPrefix(absTarget, destPrefix) {
+			return fmt.Errorf("imessage: tar entry %q escapes extraction directory", hdr.Name)
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:

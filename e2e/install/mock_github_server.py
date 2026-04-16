@@ -13,6 +13,7 @@ using the naming convention expected by install.sh.
 """
 
 import gzip
+import hashlib
 import http.server
 import json
 import os
@@ -77,6 +78,12 @@ def main():
     with open(install_script_path, "rb") as f:
         install_script_data = f.read()
 
+    # Compute the checksums.txt contents served alongside the tarball. Format
+    # matches `sha256sum`/`shasum -a 256` ("<hash>  <filename>"), which is what
+    # install.sh parses.
+    tarball_sha256 = hashlib.sha256(tarball_data).hexdigest()
+    checksums_data = f"{tarball_sha256}  {asset_name}\n".encode()
+
     print(f"Tarball ready: {len(tarball_data)} bytes", flush=True)
 
     release_json = json.dumps({
@@ -96,6 +103,11 @@ def main():
                 self.send_header("Content-Type", "application/octet-stream")
                 self.end_headers()
                 self.wfile.write(tarball_data)
+            elif self.path == f"/{REPO}/releases/download/{VERSION}/checksums.txt":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(checksums_data)
             elif self.path == "/install.sh":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")

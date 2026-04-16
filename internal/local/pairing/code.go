@@ -2,6 +2,7 @@ package pairing
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -49,7 +50,11 @@ func (m *CodeManager) Validate(code, nonce string) bool {
 	if m.code == "" || time.Now().After(m.expires) {
 		return false
 	}
-	if m.code != code || m.nonce != nonce {
+	// Constant-time comparison prevents timing side-channels from narrowing the
+	// 6-digit code / 12-hex-char nonce space within the 60s window.
+	codeOK := subtle.ConstantTimeCompare([]byte(m.code), []byte(code)) == 1
+	nonceOK := subtle.ConstantTimeCompare([]byte(m.nonce), []byte(nonce)) == 1
+	if !codeOK || !nonceOK {
 		return false
 	}
 

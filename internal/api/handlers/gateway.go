@@ -1457,13 +1457,17 @@ func valueInChainFacts(v any, facts []store.ChainFact) bool {
 }
 
 // chainContextFallback handles chain context violations by checking whether
-// the missing values actually exist in the chain facts. Three outcomes:
+// the missing values actually exist in the chain facts. Two outcomes:
 //
 //  1. All missing values found (in loaded slice or DB) → override to allow.
-//  2. Values not found, but chain facts exist for this session → extraction
-//     was lossy (4KB truncation / 50-fact cap), so allow with a warning
-//     rather than hard-reject on incomplete data.
-//  3. Values not found and no chain facts exist → genuine violation, keep reject.
+//  2. Any missing value not found → genuine violation, keep reject.
+//
+// Historically there was a third branch that allowed when *any* chain facts
+// existed for the session on the theory that extraction is lossy (4KB
+// truncation / 50-fact cap). That blanket allow was too permissive — an
+// agent could run a `list_*` call to populate chain facts and then make
+// out-of-scope writes. The specific missing value must be found; the
+// presence of unrelated facts is not a substitute.
 func chainContextFallback(
 	ctx context.Context,
 	st store.Store,
@@ -1514,23 +1518,16 @@ func chainContextFallback(
 		return verdict
 	}
 
-	// Values not in DB — but if chain facts exist for this session, extraction
-	// was lossy (4KB result truncation / 50-fact cap per call). We can't
-	// distinguish "agent saw it but extraction missed it" from "agent never
-	// saw it", so allow with a note rather than hard-reject on incomplete data.
+	// Specific missing value not in loaded facts or DB — genuine violation.
+	// Log at warn so lossy-extraction cases are still visible even though
+	// they now reject rather than auto-allow.
 	if len(loadedFacts) > 0 {
-		logger.Warn("chain context fallback: extraction incomplete, allowing despite missing values",
+		logger.Warn("chain context fallback: missing value not in loaded facts or DB, rejecting",
 			"task_id", taskID,
 			"missing_values", verdict.MissingChainValues,
 			"loaded_facts", len(loadedFacts),
 		)
-		verdict.Allow = true
-		verdict.ParamScope = "ok"
-		verdict.Explanation = "Chain context incomplete (extraction lossy) — allowing despite unverified entities (" + verdict.Explanation + ")"
-		return verdict
 	}
-
-	// No chain facts at all for this session — genuine violation.
 	return verdict
 }
 

@@ -799,13 +799,16 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 		return nil, fmt.Errorf("unmarshal authorized_actions: %w", err)
 	}
 	if plannedCallsJSON != nil {
-		_ = json.Unmarshal(plannedCallsJSON, &t.PlannedCalls)
+		if err := json.Unmarshal(plannedCallsJSON, &t.PlannedCalls); err != nil {
+			return nil, fmt.Errorf("unmarshal planned_calls: %w", err)
+		}
 	}
 	if pendingActionJSON != nil {
 		var pa store.TaskAction
-		if err := json.Unmarshal(pendingActionJSON, &pa); err == nil {
-			t.PendingAction = &pa
+		if err := json.Unmarshal(pendingActionJSON, &pa); err != nil {
+			return nil, fmt.Errorf("unmarshal pending_action: %w", err)
 		}
+		t.PendingAction = &pa
 	}
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -831,11 +834,6 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		argIdx += 3
 		// Exclude session tasks that have expired but haven't been swept yet.
 		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < NOW())"
-	}
-	if filter.Status != "" {
-		where += fmt.Sprintf(" AND status = $%d", argIdx)
-		args = append(args, filter.Status)
-		argIdx++
 	}
 
 	// Count total matching rows.
@@ -988,15 +986,23 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(actionsJSON, &t.AuthorizedActions)
+		// authorized_actions IS the task scope — fail loudly rather than load
+		// a task with no authorized actions (which would silently fall through
+		// to per-request approval and mask data corruption).
+		if err := json.Unmarshal(actionsJSON, &t.AuthorizedActions); err != nil {
+			return nil, fmt.Errorf("unmarshal authorized_actions for task %s: %w", t.ID, err)
+		}
 		if plannedCallsJSON != nil {
-			_ = json.Unmarshal(plannedCallsJSON, &t.PlannedCalls)
+			if err := json.Unmarshal(plannedCallsJSON, &t.PlannedCalls); err != nil {
+				return nil, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
+			}
 		}
 		if pendingActionJSON != nil {
 			var pa store.TaskAction
-			if err := json.Unmarshal(pendingActionJSON, &pa); err == nil {
-				t.PendingAction = &pa
+			if err := json.Unmarshal(pendingActionJSON, &pa); err != nil {
+				return nil, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
 			}
+			t.PendingAction = &pa
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1225,8 +1231,11 @@ func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 }
 
 func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error {
+	// Guard: only transition from 'pending'. This prevents regressions from
+	// 'approved'/'executing' back to earlier states, which would undermine
+	// the atomicity of ClaimPendingApprovalForExecution.
 	_, err := s.pool.Exec(ctx,
-		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2`, status, requestID)
+		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = 'pending'`, status, requestID)
 	return err
 }
 
@@ -1278,6 +1287,9 @@ func (s *Store) SaveAuthorizationCode(ctx context.Context, code *store.OAuthAuth
 
 func (s *Store) ConsumeAuthorizationCode(ctx context.Context, codeHash string) (*store.OAuthAuthorizationCode, error) {
 	c := &store.OAuthAuthorizationCode{}
+	// NOTE: the DELETE is unconditional so one-time-use semantics hold even for
+	// expired codes (the row is removed and can't be retried). Callers MUST
+	// still reject codes where ExpiresAt is in the past.
 	err := s.pool.QueryRow(ctx,
 		`DELETE FROM oauth_authorization_codes WHERE code_hash = $1
 		 RETURNING code_hash, client_id, user_id, daemon_id, redirect_uri, code_challenge, scope, expires_at, created_at`,
