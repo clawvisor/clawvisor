@@ -201,7 +201,26 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 		buf.WriteString("To activate a service, direct the user to the Clawvisor dashboard.\n\n")
 	} else {
 		buf.WriteString("_For detailed parameter docs, fetch `?service=<service_id>`._\n\n")
-		buf.WriteString("**Important:** When invoking any service, use the full `service:account` identifier (e.g. `google.gmail:personal`) as the `service` value in requests. Using just the service name (e.g. `google.gmail`) will fail if every entry has an account suffix.\n\n")
+
+		// Pick a real aliased example from the user's catalog so the note
+		// reflects their actual services rather than a hardcoded placeholder.
+		// If no entry uses an account suffix, the note is not relevant — skip it.
+		var aliasedExample, baseExample string
+		for _, entry := range entries {
+			for _, a := range entry.aliases {
+				if strings.Contains(a, ":") {
+					aliasedExample = a
+					baseExample = entry.baseID
+					break
+				}
+			}
+			if aliasedExample != "" {
+				break
+			}
+		}
+		if aliasedExample != "" {
+			buf.WriteString(fmt.Sprintf("**Important:** When invoking any service, use the full `service:account` identifier (e.g. `%s`) as the `service` value in requests. Using just the service name (e.g. `%s`) will fail if every entry has an account suffix.\n\n", aliasedExample, baseExample))
+		}
 	}
 
 	for _, entry := range entries {
