@@ -158,4 +158,6 @@ release: web/dist
 	scripts/build-release.sh v$(VERSION)
 
 clean:
-	rm -rf bin/ web/dist/ dist/
+	rm -rf bin/ dist/
+	@# Preserve web/dist/{.gitkeep,placeholder.html} so go:embed still works after clean.
+	@if [ -d web/dist ]; then find web/dist -mindepth 1 -not -name '.gitkeep' -not -name 'placeholder.html' -delete; fi

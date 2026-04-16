@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && touch dist/.gitkeep dist/placeholder.html",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },

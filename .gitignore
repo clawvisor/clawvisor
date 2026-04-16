@@ -3,7 +3,7 @@
 /clawvisor-local
 /imessage-helper
 bin/
-dist/
+/dist/
 *.test
 *.out
 coverage.html
