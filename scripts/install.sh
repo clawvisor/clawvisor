@@ -44,6 +44,7 @@ echo "  Version: $LATEST"
 
 ASSET="${BINARY}_${LATEST#v}_${OS}_${ARCH}.tar.gz"
 URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/${ASSET}"
+CHECKSUMS_URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/checksums.txt"
 
 # Download and extract.
 mkdir -p "$INSTALL_DIR"
@@ -51,6 +52,37 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 curl -fsSL "$URL" -o "$TMP/$ASSET"
+
+# Verify checksum. Aborts if the release lacks checksums.txt, if no entry
+# matches our asset, or if the computed hash differs — guards against
+# tampered downloads and mirror/CDN corruption.
+curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  SHA_CMD="shasum -a 256"
+else
+  echo "Error: no sha256sum or shasum available for checksum verification" >&2
+  exit 1
+fi
+
+# checksums.txt format is "<hash> [* ]<filename>"; awk extracts the hash for
+# the matching asset (stripping a leading "*" that sha256sum adds in binary
+# mode on some systems).
+EXPECTED="$(awk -v a="$ASSET" '{n=$2; sub(/^\*/,"",n); if (n==a) print $1}' "$TMP/checksums.txt")"
+if [ -z "$EXPECTED" ]; then
+  echo "Error: no checksum entry for $ASSET in checksums.txt" >&2
+  exit 1
+fi
+ACTUAL="$($SHA_CMD "$TMP/$ASSET" | awk '{print $1}')"
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "Error: checksum mismatch for $ASSET" >&2
+  echo "  expected: $EXPECTED" >&2
+  echo "  actual:   $ACTUAL" >&2
+  exit 1
+fi
+
 tar -xzf "$TMP/$ASSET" -C "$TMP"
 mv "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 chmod +x "$INSTALL_DIR/$BINARY"

@@ -469,6 +469,7 @@ func (s *Server) routes() http.Handler {
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
 	logMiddleware := middleware.Logging(s.logger)
+	recoverMiddleware := middleware.Recover(s.logger)
 	securityMiddleware := middleware.Security(s.cfg.Server.IsLocal() && s.cfg.Server.PublicURL == "")
 
 	// Rate limiters (skip when config is zero-valued, e.g. in tests)
@@ -942,7 +943,10 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
-	handler := securityMiddleware(logMiddleware(mux))
+	// Recover is innermost (after logging/security) so panics become 500s
+	// with a logged stack trace, and the logging middleware still records the
+	// request line.
+	handler := securityMiddleware(logMiddleware(recoverMiddleware(mux)))
 
 	// Extension hook: let cloud/enterprise layers wrap the entire handler.
 	if s.wrapRoutes != nil {

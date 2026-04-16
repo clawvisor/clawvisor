@@ -922,13 +922,16 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 		return nil, fmt.Errorf("unmarshal authorized_actions: %w", err)
 	}
 	if plannedCallsStr != "" {
-		_ = json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls)
+		if err := json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls); err != nil {
+			return nil, fmt.Errorf("unmarshal planned_calls: %w", err)
+		}
 	}
 	if pendingActionStr != nil {
 		var pa store.TaskAction
-		if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
-			t.PendingAction = &pa
+		if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
+			return nil, fmt.Errorf("unmarshal pending_action: %w", err)
 		}
+		t.PendingAction = &pa
 	}
 	if riskDetailsStr != "" {
 		t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -951,10 +954,6 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		args = append(args, "active", "pending_approval", "pending_scope_expansion")
 		// Exclude session tasks that have expired but haven't been swept yet.
 		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < datetime('now'))"
-	}
-	if filter.Status != "" {
-		where += " AND status = ?"
-		args = append(args, filter.Status)
 	}
 
 	// Count total matching rows.
@@ -1001,15 +1000,20 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 			ts := parseTime(*expiresAt)
 			t.ExpiresAt = &ts
 		}
-		_ = json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions)
+		if err := json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal authorized_actions for task %s: %w", t.ID, err)
+		}
 		if plannedCallsStr != "" {
-			_ = json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls)
+			if err := json.Unmarshal([]byte(plannedCallsStr), &t.PlannedCalls); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
+			}
 		}
 		if pendingActionStr != nil {
 			var pa store.TaskAction
-			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
-				t.PendingAction = &pa
+			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
 			}
+			t.PendingAction = &pa
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1162,15 +1166,20 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 			ts := parseTime(*expiresAt)
 			t.ExpiresAt = &ts
 		}
-		_ = json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions)
+		if err := json.Unmarshal([]byte(actionsStr), &t.AuthorizedActions); err != nil {
+			return nil, fmt.Errorf("unmarshal authorized_actions for task %s: %w", t.ID, err)
+		}
 		if plannedCallsStr != nil {
-			_ = json.Unmarshal([]byte(*plannedCallsStr), &t.PlannedCalls)
+			if err := json.Unmarshal([]byte(*plannedCallsStr), &t.PlannedCalls); err != nil {
+				return nil, fmt.Errorf("unmarshal planned_calls for task %s: %w", t.ID, err)
+			}
 		}
 		if pendingActionStr != nil {
 			var pa store.TaskAction
-			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err == nil {
-				t.PendingAction = &pa
+			if err := json.Unmarshal([]byte(*pendingActionStr), &pa); err != nil {
+				return nil, fmt.Errorf("unmarshal pending_action for task %s: %w", t.ID, err)
 			}
+			t.PendingAction = &pa
 		}
 		if riskDetailsStr != "" {
 			t.RiskDetails = json.RawMessage(riskDetailsStr)
@@ -1269,8 +1278,11 @@ func scanSQLitePendingApprovals(rows *sql.Rows) ([]*store.PendingApproval, error
 }
 
 func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error {
+	// Guard: only transition from 'pending'. This prevents regressions from
+	// 'approved'/'executing' back to earlier states, which would undermine
+	// the atomicity of ClaimPendingApprovalForExecution.
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE pending_approvals SET status = ? WHERE request_id = ?`, status, requestID)
+		`UPDATE pending_approvals SET status = ? WHERE request_id = ? AND status = 'pending'`, status, requestID)
 	return err
 }
 
@@ -1356,6 +1368,9 @@ func (s *Store) SaveAuthorizationCode(ctx context.Context, code *store.OAuthAuth
 }
 
 func (s *Store) ConsumeAuthorizationCode(ctx context.Context, codeHash string) (*store.OAuthAuthorizationCode, error) {
+	// NOTE: the DELETE is unconditional so one-time-use semantics hold even for
+	// expired codes (the row is removed and can't be retried). Callers MUST
+	// still reject codes where ExpiresAt is in the past.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err

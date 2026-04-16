@@ -93,36 +93,36 @@ func TestChainContextFallback_ExplicitSession(t *testing.T) {
 	}
 }
 
-// --- Extraction incomplete: value not found anywhere, but chain facts exist ---
+// --- Specific missing value not found: reject even when other facts exist ---
 
-func TestChainContextFallback_ExtractionIncomplete(t *testing.T) {
-	// Value not in loaded facts or DB, but loaded facts exist →
-	// extraction was lossy, should allow rather than hard-reject.
+func TestChainContextFallback_MissingValueRejectsDespiteOtherFacts(t *testing.T) {
+	// Value not in loaded facts or DB. Other chain facts exist (extraction
+	// may have been lossy), but we reject rather than auto-allow — the
+	// specific missing value must be found, unrelated facts are not a
+	// substitute. Otherwise an agent could run a list_* to populate chain
+	// facts and then make out-of-scope writes.
 	st := &chainFallbackTestStore{facts: map[string]bool{}}
 	logger := slog.Default()
 	task := &store.Task{Lifetime: "session"}
 	loaded := []store.ChainFact{{FactValue: "msg_001"}, {FactValue: "msg_002"}}
 
 	v := chainContextFallback(context.Background(), st, logger, makeViolationVerdict("msg_unknown"), loaded, "task-1", task, "")
-	if !v.Allow {
-		t.Error("expected allow when extraction is incomplete (chain facts exist but value missing)")
-	}
-	if v.ParamScope != "ok" {
-		t.Errorf("expected param_scope=ok, got %q", v.ParamScope)
+	if v.Allow {
+		t.Error("expected reject when specific missing value not in facts (even if other facts exist)")
 	}
 }
 
-func TestChainContextFallback_ExtractionIncomplete_MultipleOneMissing(t *testing.T) {
-	// One value found in loaded facts, one not found anywhere — but chain
-	// facts exist so extraction was lossy.
+func TestChainContextFallback_PartialMatchStillRejects(t *testing.T) {
+	// One value found in loaded facts, one not found anywhere — reject,
+	// because partial coverage is not sufficient.
 	st := &chainFallbackTestStore{facts: map[string]bool{}}
 	logger := slog.Default()
 	task := &store.Task{Lifetime: "session"}
 	loaded := []store.ChainFact{{FactValue: "msg_001"}, {FactValue: "msg_002"}}
 
 	v := chainContextFallback(context.Background(), st, logger, makeViolationVerdict("msg_001", "msg_not_extracted"), loaded, "task-1", task, "")
-	if !v.Allow {
-		t.Error("expected allow when one value found and extraction incomplete")
+	if v.Allow {
+		t.Error("expected reject when not all missing values are found")
 	}
 }
 

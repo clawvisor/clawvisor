@@ -1,5 +1,11 @@
 // Renders a service icon from the SVG markup provided by the API (icon_svg field).
 // Falls back to a letter initial when no icon is available.
+//
+// icon_svg can originate from user-generated adapters (generated_adapters
+// table), so it's not trusted. We sanitize with DOMPurify's SVG profile
+// before injection to strip <script>, event handlers, foreignObject, and
+// other XSS vectors.
+import DOMPurify from 'dompurify'
 
 interface ServiceIconProps {
   iconSvg?: string
@@ -10,12 +16,13 @@ interface ServiceIconProps {
 
 export function ServiceIcon({ iconSvg, serviceId, size = 24, className = '' }: ServiceIconProps) {
   if (iconSvg) {
-    // Inject width/height into the SVG root element.
+    // Inject width/height into the SVG root element, then sanitize.
     const sized = iconSvg.replace(
       /^<svg/,
       `<svg width="${size}" height="${size}"`,
     )
-    return <span className={className} dangerouslySetInnerHTML={{ __html: sized }} />
+    const clean = DOMPurify.sanitize(sized, { USE_PROFILES: { svg: true, svgFilters: true } })
+    return <span className={className} dangerouslySetInnerHTML={{ __html: clean }} />
   }
   // Fallback: first letter of the service name.
   const base = serviceId.includes(':') ? serviceId.slice(0, serviceId.indexOf(':')) : serviceId
