@@ -27,7 +27,8 @@ type ServiceInfo struct {
 	Description string       `yaml:"description"`
 	SetupURL    string       `yaml:"setup_url,omitempty"`
 	KeyHint     string       `yaml:"key_hint,omitempty"`
-	IconSVG     string       `yaml:"icon_svg,omitempty"`
+	IconSVG     string       `yaml:"icon_svg,omitempty"` // optional: inline SVG markup (mutually exclusive with icon_url)
+	IconURL     string       `yaml:"icon_url,omitempty"` // optional: absolute or site-relative URL to the icon (e.g. "/logos/github.svg")
 	Identity    *IdentityDef `yaml:"identity,omitempty"`
 }
 

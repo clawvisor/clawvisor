@@ -155,6 +155,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Name                 string                  `json:"name"`
 		Description          string                  `json:"description"`
 		IconSVG              string                  `json:"icon_svg,omitempty"`
+		IconURL              string                  `json:"icon_url,omitempty"`
 		Alias                string                  `json:"alias,omitempty"`
 		OAuth                bool                    `json:"oauth"`
 		OAuthEndpoint        string                  `json:"oauth_endpoint,omitempty"`
@@ -176,7 +177,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	buildEntry := func(a adapters.Adapter) serviceEntry {
 		name := display.ServiceName(a.ServiceID())
 		desc := display.ServiceDescription(a.ServiceID())
-		var setupURL, oauthEndpoint, iconSVG, keyHint string
+		var setupURL, oauthEndpoint, iconSVG, iconURL, keyHint string
 		var variables []adapters.VariableMeta
 		actionNames := map[string]adapters.ActionMeta{}
 
@@ -190,6 +191,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			setupURL = meta.SetupURL
 			iconSVG = meta.IconSVG
+			iconURL = meta.IconURL
 			oauthEndpoint = meta.OAuthEndpoint
 			keyHint = meta.KeyHint
 			actionNames = meta.ActionMeta
@@ -230,6 +232,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			Name:                 name,
 			Description:          desc,
 			IconSVG:              iconSVG,
+			IconURL:              iconURL,
 			OAuth:                a.RequiredScopes() != nil,
 			OAuthEndpoint:        oauthEndpoint,
 			DeviceFlow:           deviceFlow,

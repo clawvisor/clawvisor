@@ -4,7 +4,7 @@ service:
   description: "List, search, read, and manage files and folders in Dropbox. Upload and download content, move and copy files."
   setup_url: "https://www.dropbox.com/developers/apps"
   key_hint: "Dropbox access token"
-  icon_svg: '<svg viewBox="0 0 24 24"><path fill="#0061FF" d="M6 1.807L0 5.629l6 3.822 6-3.822zM18 1.807l-6 3.822 6 3.822 6-3.822zM0 13.274l6 3.822 6-3.822-6-3.822zM18 9.452l-6 3.822 6 3.822 6-3.822zM6 18.339l6 3.822 6-3.822-6-3.822z"/></svg>'
+  icon_url: "/logos/dropbox.svg"
   identity:
     endpoint: "https://api.dropboxapi.com/2/users/get_current_account"
     method: POST

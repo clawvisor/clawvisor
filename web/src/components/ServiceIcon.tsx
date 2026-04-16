@@ -1,14 +1,27 @@
-// Renders a service icon from the SVG markup provided by the API (icon_svg field).
-// Falls back to a letter initial when no icon is available.
+// Renders a service icon. Prefers iconUrl (e.g. "/logos/github.svg") over inline
+// iconSvg markup. Falls back to a letter initial when no icon is available.
 
 interface ServiceIconProps {
   iconSvg?: string
+  iconUrl?: string
   serviceId: string
   size?: number
   className?: string
 }
 
-export function ServiceIcon({ iconSvg, serviceId, size = 24, className = '' }: ServiceIconProps) {
+export function ServiceIcon({ iconSvg, iconUrl, serviceId, size = 24, className = '' }: ServiceIconProps) {
+  if (iconUrl) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        width={size}
+        height={size}
+        className={className}
+        style={{ objectFit: 'contain' }}
+      />
+    )
+  }
   if (iconSvg) {
     // Inject width/height into the SVG root element.
     const sized = iconSvg.replace(
@@ -30,13 +43,13 @@ export function ServiceIcon({ iconSvg, serviceId, size = 24, className = '' }: S
 }
 
 // Icon background wrapper for consistent presentation in lists.
-export function ServiceIconBadge({ iconSvg, serviceId, size = 36 }: { iconSvg?: string; serviceId: string; size?: number }) {
+export function ServiceIconBadge({ iconSvg, iconUrl, serviceId, size = 36 }: { iconSvg?: string; iconUrl?: string; serviceId: string; size?: number }) {
   return (
     <div
       className="rounded-lg border border-border-subtle flex items-center justify-center shrink-0"
       style={{ width: size + 12, height: size + 12, backgroundColor: '#ffffff' }}
     >
-      <ServiceIcon iconSvg={iconSvg} serviceId={serviceId} size={size} />
+      <ServiceIcon iconSvg={iconSvg} iconUrl={iconUrl} serviceId={serviceId} size={size} />
     </div>
   )
 }

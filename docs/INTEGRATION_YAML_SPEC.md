@@ -13,7 +13,8 @@ service:
   description: <string>  # one-line description
   setup_url: <string>    # optional: link to API key / OAuth app setup page
   key_hint: <string>     # optional: placeholder text for API key input (e.g. "Stripe secret key (sk_...)")
-  icon_svg: <string>     # optional: inline SVG markup
+  icon_svg: <string>     # optional: inline SVG markup (good for small, self-contained glyphs)
+  icon_url: <string>     # optional: URL to the icon (absolute or site-relative, e.g. "/logos/stripe.svg"). Prefer this for larger official brand assets already served as static files. If both are set, icon_url takes precedence.
   identity:              # optional: auto-detect account identity after activation
     endpoint: <string>   # URL path to fetch identity (e.g. "/user")
     field: <string>      # dot-delimited JSON field (e.g. "login", "email")

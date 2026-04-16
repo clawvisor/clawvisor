@@ -275,6 +275,7 @@ export interface ServiceInfo {
   name: string
   description: string
   icon_svg?: string
+  icon_url?: string
   alias?: string
   oauth: boolean
   device_flow?: boolean

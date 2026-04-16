@@ -141,7 +141,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {/* Icon */}
-          <ServiceIconBadge iconSvg={svc.icon_svg} serviceId={svc.id} size={28} />
+          <ServiceIconBadge iconSvg={svc.icon_svg} iconUrl={svc.icon_url} serviceId={svc.id} size={28} />
 
           {/* Name + description */}
           <div className="min-w-0 flex-1">
@@ -285,6 +285,7 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
 interface ServiceType {
   baseId: string
   iconSvg?: string
+  iconUrl?: string
   oauth: boolean
   deviceFlow: boolean
   pkceFlow: boolean
@@ -387,6 +388,7 @@ function AddServiceModal({
       typeMap.set(baseId, {
         baseId,
         iconSvg: svc.icon_svg,
+        iconUrl: svc.icon_url,
         oauth: svc.oauth,
         deviceFlow: svc.device_flow ?? false,
         pkceFlow: svc.pkce_flow ?? false,
@@ -660,7 +662,7 @@ function AddServiceModal({
                 >
                   {/* Icon with optional connected indicator */}
                   <div className="relative mb-3">
-                    <ServiceIconBadge iconSvg={st.iconSvg} serviceId={st.baseId} size={32} />
+                    <ServiceIconBadge iconSvg={st.iconSvg} iconUrl={st.iconUrl} serviceId={st.baseId} size={32} />
                     {isActivated && (
                       <span
                         className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-success border-2 border-surface-1"

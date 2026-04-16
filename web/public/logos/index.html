@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Adapter Logos</title>
+  <style>
+    :root {
+      --bg: #0b0b0c;
+      --surface: #16171a;
+      --surface-alt: #ffffff;
+      --text: #e8e8ea;
+      --muted: #8a8a93;
+      --border: #2a2b30;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 28px 32px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 600; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    button {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button:hover { border-color: #444; }
+    button.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+      padding: 24px 32px 48px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .thumb {
+      aspect-ratio: 1 / 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      border-radius: 8px;
+      background: var(--surface-alt);
+      transition: background 120ms ease;
+    }
+    body.bg-dark .thumb { background: #0f0f10; }
+    body.bg-checker .thumb {
+      background-color: #fff;
+      background-image:
+        linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
+        linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
+        linear-gradient(-45deg, transparent 75%, #e5e5e5 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    }
+    .thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .meta { display: flex; flex-direction: column; gap: 2px; }
+    .name { font-size: 14px; font-weight: 500; }
+    .file { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .dims { font-size: 11px; color: var(--muted); }
+    footer {
+      padding: 16px 32px 32px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body class="bg-light">
+  <header>
+    <h1>Adapter Logos</h1>
+    <div class="controls">
+      <span style="font-size:12px;color:var(--muted);margin-right:4px">Background:</span>
+      <button data-bg="light" class="active">Light</button>
+      <button data-bg="dark">Dark</button>
+      <button data-bg="checker">Checker</button>
+    </div>
+  </header>
+  <div class="grid" id="grid"></div>
+  <footer>Served from <code>/logos/</code>. All assets full-color SVG.</footer>
+
+  <script>
+    const logos = [
+      { name: "Apple iMessage",   file: "apple-imessage.svg" },
+      { name: "Dropbox",          file: "dropbox.svg" },
+      { name: "GitHub",           file: "github.svg" },
+      { name: "Google Calendar",  file: "google-calendar.svg" },
+      { name: "Google Contacts",  file: "google-contacts.svg" },
+      { name: "Google Drive",     file: "google-drive.svg" },
+      { name: "Gmail",            file: "google-gmail.svg" },
+      { name: "Linear",           file: "linear.svg" },
+      { name: "Notion",           file: "notion.svg" },
+      { name: "Slack",            file: "slack.svg" },
+      { name: "Stripe",           file: "stripe.svg" },
+      { name: "Twilio",           file: "twilio.svg" },
+    ];
+
+    const grid = document.getElementById("grid");
+    for (const logo of logos) {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="thumb"><img src="${logo.file}" alt="${logo.name}" loading="lazy" /></div>
+        <div class="meta">
+          <div class="name">${logo.name}</div>
+          <div class="file">${logo.file}</div>
+          <div class="dims" data-dims></div>
+        </div>
+      `;
+      const img = card.querySelector("img");
+      const dimsEl = card.querySelector("[data-dims]");
+      img.addEventListener("load", async () => {
+        try {
+          const res = await fetch(logo.file);
+          const text = await res.text();
+          const m = text.match(/viewBox="([^"]+)"/);
+          if (m) dimsEl.textContent = `viewBox ${m[1]}`;
+        } catch {}
+      });
+      grid.appendChild(card);
+    }
+
+    for (const btn of document.querySelectorAll("button[data-bg]")) {
+      btn.addEventListener("click", () => {
+        document.body.className = "bg-" + btn.dataset.bg;
+        document.querySelectorAll("button[data-bg]").forEach(b => b.classList.toggle("active", b === btn));
+      });
+    }
+  </script>
+</body>
+</html>

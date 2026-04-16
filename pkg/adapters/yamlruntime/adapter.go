@@ -503,6 +503,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		SetupURL:          a.def.Service.SetupURL,
 		KeyHint:           a.def.Service.KeyHint,
 		IconSVG:           a.def.Service.IconSVG,
+		IconURL:           a.def.Service.IconURL,
 		VaultKey:          vaultKey,
 		OAuthEndpoint:     oauthEndpoint,
 		DeviceFlow:        a.def.Auth.DeviceFlow != nil && a.resolveDeviceFlowClientID() != "",
