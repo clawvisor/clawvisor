@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.13](https://github.com/clawvisor/clawvisor/compare/v0.8.12...v0.8.13) (2026-04-16)
+
+
+### Bug Fixes
+
+* security & code-quality audit pass (F1–F12) ([#265](https://github.com/clawvisor/clawvisor/issues/265)) ([7a11cf3](https://github.com/clawvisor/clawvisor/commit/7a11cf3d6140cfec0c5099534d1ad066a6ab5f0b))
+
 ## [0.8.12](https://github.com/clawvisor/clawvisor/compare/v0.8.11...v0.8.12) (2026-04-16)
 
 
