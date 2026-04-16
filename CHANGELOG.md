@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.12](https://github.com/clawvisor/clawvisor/compare/v0.8.11...v0.8.12) (2026-04-16)
+
+
+### Features
+
+* add forgot-password UI pages and API client methods ([#260](https://github.com/clawvisor/clawvisor/issues/260)) ([7894d2a](https://github.com/clawvisor/clawvisor/commit/7894d2a928b2b3ce223d5ebcae0659e123664366))
+
+
+### Bug Fixes
+
+* add audit logging to early gateway rejections and scope request_id uniqueness per user ([#262](https://github.com/clawvisor/clawvisor/issues/262)) ([8a9ddee](https://github.com/clawvisor/clawvisor/commit/8a9ddee904f0a1cc9a6f755f3c0f3306dda6e1bc))
+* use optimistic update for daemon unpair to prevent stale UI ([#263](https://github.com/clawvisor/clawvisor/issues/263)) ([5195766](https://github.com/clawvisor/clawvisor/commit/5195766a513238e3483ea25e7eed43cdd1856bf9))
+
 ## [0.8.11](https://github.com/clawvisor/clawvisor/compare/v0.8.10...v0.8.11) (2026-04-15)
 
 
