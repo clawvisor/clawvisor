@@ -34,6 +34,14 @@ description: >
 {{ if eq .Target "claude-code" -}}
 # Clawvisor Skill
 
+## Setup
+
+This skill assumes Clawvisor is already running and your agent has `CLAWVISOR_URL` and `CLAWVISOR_AGENT_TOKEN` configured. If you don't yet have Clawvisor running, sign up at [clawvisor.com](https://clawvisor.com) for hosted access, or self-host from the [GitHub repo](https://github.com/clawvisor/clawvisor).
+
+> ⚠️ **`CLAWVISOR_AGENT_TOKEN` is a high-privilege credential.** It grants the agent access to every service activated in Clawvisor. Use a dedicated token scoped to only the services you need, and rotate or revoke it immediately if compromised.
+
+---
+
 ## Overview
 
 {{ else -}}
