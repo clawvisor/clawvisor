@@ -506,6 +506,45 @@ export interface OverviewData {
   activity: ActivityBucket[]
 }
 
+export interface WelcomeAction {
+  id: string
+  display_name: string
+  category?: string
+  sensitivity?: string
+}
+
+export interface WelcomeService {
+  id: string
+  name: string
+  alias?: string
+  description?: string
+  icon_url?: string
+  icon_svg?: string
+  actions?: WelcomeAction[]
+}
+
+export interface WelcomeAgent {
+  id: string
+  name: string
+}
+
+export interface TaskSuggestion {
+  title: string
+  prompt: string
+  agent?: string
+  services: string[]
+  risk?: 'low' | 'medium' | 'high'
+}
+
+export interface WelcomeData {
+  ready: boolean
+  services: WelcomeService[]
+  agents: WelcomeAgent[]
+  suggestions: TaskSuggestion[]
+  llm_used: boolean
+  llm_status: 'ok' | 'unconfigured' | 'exhausted' | 'error'
+}
+
 export interface QueueApproval {
   request_id: string
   audit_id: string
@@ -981,6 +1020,9 @@ export const api = {
   },
   overview: {
     get: () => get<OverviewData>('/api/overview'),
+  },
+  welcome: {
+    suggestions: () => get<WelcomeData>('/api/welcome/suggestions'),
   },
   devices: {
     list: () => get<PairedDevice[]>('/api/devices'),

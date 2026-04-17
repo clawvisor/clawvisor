@@ -11,6 +11,7 @@ import Audit from './Audit'
 import Agents from './Agents'
 import Settings from './Settings'
 import Overview from './Overview'
+import GetStarted from './GetStarted'
 import Tasks from './Tasks'
 import AdapterGen from './AdapterGen'
 import OrgSettings from './OrgSettings'
@@ -23,6 +24,7 @@ import OnboardingBanner from '../components/OnboardingBanner'
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
+  { to: '/dashboard/get-started', label: 'Get Started', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg> },
   { to: '/dashboard/tasks', label: 'Tasks', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> },
   { to: '/dashboard/services', label: 'Services', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
   { to: '/dashboard/restrictions', label: 'Restrictions', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
@@ -312,6 +314,7 @@ export default function Dashboard() {
         )}
         <Routes>
           <Route index element={<Overview />} />
+          <Route path="get-started" element={<GetStarted />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="services" element={<Services />} />
           <Route path="restrictions" element={<Restrictions />} />
