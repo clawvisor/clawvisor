@@ -21,9 +21,11 @@ export default function GetStarted() {
 
   return (
     <div className="p-4 sm:p-8 space-y-10 max-w-5xl">
-      <Hero ready={ready} services={services} agents={agents} />
+      <Hero ready={ready} services={services} agents={agents} isLoading={isLoading} />
 
-      {ready ? (
+      {isLoading ? (
+        <LoadingState />
+      ) : ready ? (
         <>
           <SuggestionsSection data={data} isLoading={isLoading} isFetching={isFetching} onRefresh={() => refetch()} />
           <YourSetupSection services={services} agents={agents} />
@@ -39,9 +41,72 @@ export default function GetStarted() {
   )
 }
 
+function LoadingState() {
+  return (
+    <div className="space-y-10" aria-busy="true" aria-live="polite">
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <LoadingSpinner />
+          <h2 className="text-xl font-semibold text-text-primary">Checking your setup&hellip;</h2>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SkeletonCard label="Services" />
+          <SkeletonCard label="Agents" />
+        </div>
+      </section>
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <LoadingSpinner />
+          <h2 className="text-xl font-semibold text-text-primary">Generating task ideas&hellip;</h2>
+        </div>
+        <SuggestionsLoading />
+      </section>
+    </div>
+  )
+}
+
+function SkeletonCard({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg border border-border-subtle bg-surface-1 p-4 animate-pulse">
+      <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary mb-3">{label}</div>
+      <div className="flex flex-wrap gap-2">
+        <div className="h-6 w-24 bg-surface-2 rounded-md" />
+        <div className="h-6 w-28 bg-surface-2 rounded-md" />
+        <div className="h-6 w-20 bg-surface-2 rounded-md" />
+      </div>
+    </div>
+  )
+}
+
+function LoadingSpinner() {
+  return (
+    <svg
+      className="w-4 h-4 animate-spin text-brand"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="10" opacity="0.25" />
+      <path d="M22 12a10 10 0 01-10 10" />
+    </svg>
+  )
+}
+
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ ready, services, agents }: { ready: boolean; services: WelcomeService[]; agents: WelcomeAgent[] }) {
+function Hero({
+  ready,
+  services,
+  agents,
+  isLoading,
+}: {
+  ready: boolean
+  services: WelcomeService[]
+  agents: WelcomeAgent[]
+  isLoading: boolean
+}) {
   return (
     <header className="space-y-3">
       <h1 className="text-3xl sm:text-4xl font-bold text-text-primary tracking-tight">
@@ -53,12 +118,14 @@ function Hero({ ready, services, agents }: { ready: boolean; services: WelcomeSe
         approve the scope once, and Clawvisor handles credential injection, execution, and audit
         logging for every request.
       </p>
-      {ready && (
+      {isLoading ? (
+        <p className="text-sm text-text-tertiary">Loading your setup&hellip;</p>
+      ) : ready ? (
         <p className="text-sm text-text-tertiary">
           {services.length} service{services.length === 1 ? '' : 's'} connected · {agents.length}{' '}
           agent{agents.length === 1 ? '' : 's'} registered
         </p>
-      )}
+      ) : null}
     </header>
   )
 }
@@ -333,7 +400,10 @@ function SuggestionsSection({
       {isLoading ? (
         <SuggestionsLoading />
       ) : suggestions.length > 0 ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div
+          className={`grid gap-3 md:grid-cols-2 transition-opacity ${isFetching ? 'opacity-50' : ''}`}
+          aria-busy={isFetching}
+        >
           {suggestions.map((s, i) => (
             <SuggestionCard key={i} suggestion={s} serviceById={serviceById} />
           ))}
