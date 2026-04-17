@@ -1,0 +1,90 @@
+service:
+  id: perplexity
+  display_name: Perplexity
+  description: "Search the web and get AI-powered answers with citations using Perplexity Sonar models."
+  setup_url: "https://www.perplexity.ai/settings/api"
+  key_hint: "Perplexity API key (pplx-...)"
+  icon_url: "/logos/perplexity.svg"
+  # No identity endpoint — Perplexity has no unauthenticated user-info endpoint.
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+
+api:
+  base_url: "https://api.perplexity.ai"
+  type: rest
+
+actions:
+  chat:
+    display_name: "Chat / search"
+    risk:
+      category: search
+      sensitivity: low
+      description: "Search the web and get an AI-generated answer with citations"
+    # The messages array [{"role":"user","content":"..."}] cannot be expressed
+    # declaratively in YAML, so this action uses a Go override.
+    override: go
+    method: POST
+    path: "/chat/completions"
+    params:
+      query:
+        type: string
+        required: true
+        location: body
+      model:
+        type: string
+        default: "sonar"
+        location: body
+      search_mode:
+        type: string
+        location: body
+      search_recency_filter:
+        type: string
+        location: body
+    response:
+      fields:
+        - name: answer
+          sanitize: true
+        - name: citations
+          nullable: true
+      summary: "{{.answer}}"
+
+  search:
+    display_name: "Web search"
+    risk:
+      category: search
+      sensitivity: low
+      description: "Search the web and retrieve relevant page contents"
+    method: POST
+    path: "/search"
+    body_mode: sparse
+    params:
+      query:
+        type: string
+        required: true
+        location: body
+      max_results:
+        type: int
+        default: 5
+        max: 20
+        location: body
+      # search_recency_filter: hour | day | week | month | year (optional)
+      search_recency_filter:
+        type: string
+        location: body
+      # search_domain_filter: comma-separated list of domains to restrict search (optional)
+      search_domain_filter:
+        type: string
+        location: body
+    response:
+      data_path: "results"
+      fields:
+        - name: title
+        - name: url
+        - name: snippet
+          sanitize: true
+        - name: date
+          nullable: true
+      summary: "{{len .Data}} result(s)"
