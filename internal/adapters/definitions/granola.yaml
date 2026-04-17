@@ -1,0 +1,95 @@
+service:
+  id: granola
+  display_name: Granola
+  description: "Access meeting notes, summaries, attendees, and verbatim transcripts from your Granola account."
+  setup_url: "https://app.granola.ai/settings/api"
+  key_hint: "Granola API key (grn_...)"
+  icon_url: "/logos/granola.svg"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+  extra_headers:
+    Content-Type: "application/json"
+
+api:
+  base_url: "https://public-api.granola.ai/v1"
+  type: rest
+
+verification_hints: >
+  In Granola's API, "meetings" and "notes" are the same resource — a note is the
+  record Granola creates for each meeting. The public API only returns notes that
+  have a generated AI summary and transcript; in-progress meetings are excluded.
+  Transcripts, summaries, and attendees are all nested within a single note
+  object, so reading the transcript of a meeting you can already list is not a
+  scope escalation.
+
+actions:
+  list_meetings:
+    display_name: "List meetings"
+    risk: { category: read, sensitivity: low, description: "List Granola meeting notes" }
+    method: GET
+    path: "/notes"
+    params:
+      created_after: { type: string, location: query }
+      created_before: { type: string, location: query }
+      updated_after: { type: string, location: query }
+      page_size: { type: int, default: 25, max: 30, location: query }
+      cursor: { type: string, location: query }
+    response:
+      data_path: "notes"
+      fields:
+        - { name: id }
+        - { name: title, sanitize: true, nullable: true }
+        - { name: created_at }
+        - { name: updated_at }
+        - { name: owner_name, path: "owner.name", nullable: true }
+        - { name: owner_email, path: "owner.email" }
+      meta:
+        - { name: hasMore, rename: has_more }
+        - { name: cursor }
+      summary: "{{len .Data}} meeting(s)"
+
+  get_meeting:
+    display_name: "Get meeting"
+    risk: { category: read, sensitivity: low, description: "Read a Granola meeting's summary, attendees, and metadata" }
+    method: GET
+    path: "/notes/{{.note_id}}"
+    params:
+      note_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: title, sanitize: true, nullable: true }
+        - { name: created_at }
+        - { name: updated_at }
+        - { name: web_url }
+        - { name: owner }
+        - { name: attendees }
+        - { name: folder_membership }
+        - { name: calendar_event, optional: true }
+        - { name: summary_text, sanitize: true }
+        - { name: summary_markdown, nullable: true }
+      summary: "Meeting {{.id}}"
+
+  get_transcript:
+    display_name: "Get transcript"
+    risk: { category: read, sensitivity: low, description: "Get the verbatim transcript for a Granola meeting" }
+    method: GET
+    path: "/notes/{{.note_id}}"
+    params:
+      note_id: { type: string, required: true, location: path }
+      include: { type: string, default: "transcript", location: query }
+    response:
+      data_path: "transcript"
+      fields:
+        - { name: text, sanitize: true }
+        - { name: start_time }
+        - { name: end_time }
+        - { name: source, path: "speaker.source" }
+        - { name: diarization_label, path: "speaker.diarization_label", optional: true }
+      meta:
+        - { name: id, rename: note_id }
+        - { name: title }
+      summary: "{{len .Data}} transcript segment(s)"
