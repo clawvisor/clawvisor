@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { ConnectionRequest } from '../api/client'
@@ -32,6 +33,7 @@ export default function Agents() {
       : api.agents.create(name).then(agent => ({ agent, token: agent.token ?? '' })),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['welcome'] })
       setNewToken(result.token ?? null)
       setName('')
       setFormError(null)
@@ -46,6 +48,7 @@ export default function Agents() {
       qc.invalidateQueries({ queryKey: ['agents'] })
       qc.invalidateQueries({ queryKey: ['tasks'] })
       qc.invalidateQueries({ queryKey: ['overview'] })
+      qc.invalidateQueries({ queryKey: ['welcome'] })
     },
   })
 
@@ -200,8 +203,20 @@ export default function Agents() {
 
 type AgentTab = 'openclaw' | 'claude-code' | 'claude-desktop' | 'other'
 
+const AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
+
 function ConnectAgentGuide() {
-  const [tab, setTab] = useState<AgentTab>('openclaw')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialTab = (AGENT_TABS.includes(searchParams.get('agent') as AgentTab)
+    ? (searchParams.get('agent') as AgentTab)
+    : 'openclaw')
+  const [tab, setTabState] = useState<AgentTab>(initialTab)
+  const setTab = (next: AgentTab) => {
+    setTabState(next)
+    const params = new URLSearchParams(searchParams)
+    params.set('agent', next)
+    setSearchParams(params, { replace: true })
+  }
   const [copied, setCopied] = useState(false)
   const { user } = useAuth()
 
@@ -621,6 +636,7 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
       qc.invalidateQueries({ queryKey: ['connections'] })
       qc.invalidateQueries({ queryKey: ['agents'] })
       qc.invalidateQueries({ queryKey: ['overview'] })
+      qc.invalidateQueries({ queryKey: ['welcome'] })
     },
     onError: (err: Error) => setResult(`Failed: ${err.message}`),
   })

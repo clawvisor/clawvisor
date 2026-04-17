@@ -732,6 +732,10 @@ func (s *Server) routes() http.Handler {
 	overviewHandler := handlers.NewOverviewHandler(s.store)
 	mux.Handle("GET /api/overview", user(overviewHandler.Get))
 
+	// Welcome / "What is Clawvisor?" page (user JWT)
+	welcomeHandler := handlers.NewWelcomeHandler(s.store, s.vault, s.adapterReg, s.llmHealth, s.logger)
+	mux.Handle("GET /api/welcome/suggestions", user(welcomeHandler.Suggestions))
+
 	// Tasks (agent auth)
 	mux.Handle("POST /api/tasks", requireAgent(e2e(http.HandlerFunc(tasksHandler.Create))))
 	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))

@@ -480,6 +480,7 @@ function ConnectionQueueCard({ connection: cr }: { connection: ConnectionRequest
       qc.invalidateQueries({ queryKey: ['overview'] })
       qc.invalidateQueries({ queryKey: ['queue'] })
       qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['welcome'] })
     },
     onError: (err: Error) => setResult(`Failed: ${err.message}`),
   })
