@@ -576,38 +576,41 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
         </div>
       </div>
 
-      {expanded && entry.verification && (
+      {expanded && (
         <div className="px-4 pb-3 pt-1 space-y-2">
-          <div className={`ml-3 pl-3 border-l-2 space-y-1.5 ${
-            entry.outcome === 'blocked' || entry.outcome === 'restricted' ? 'border-danger'
-            : entry.verification.reason_coherence !== 'ok' || entry.verification.param_scope !== 'ok' ? 'border-warning'
-            : 'border-success'
-          }`}>
-            <div className="flex items-center gap-2">
-              <span className={`text-[10px] font-mono font-medium ${
-                entry.verification.param_scope === 'ok' ? 'text-success' : entry.verification.param_scope === 'violation' ? 'text-danger' : 'text-text-tertiary'
-              }`}>params: {entry.verification.param_scope}</span>
-              <span className={`text-[10px] font-mono font-medium ${
-                entry.verification.reason_coherence === 'ok' ? 'text-success'
-                : entry.verification.reason_coherence === 'incoherent' ? 'text-danger'
-                : entry.verification.reason_coherence === 'insufficient' ? 'text-warning'
-                : 'text-text-tertiary'
-              }`}>reason: {entry.verification.reason_coherence}</span>
+          {entry.verification && (
+            <div className={`ml-3 pl-3 border-l-2 space-y-1.5 ${
+              entry.outcome === 'blocked' || entry.outcome === 'restricted' ? 'border-danger'
+              : entry.verification.reason_coherence !== 'ok' || entry.verification.param_scope !== 'ok' ? 'border-warning'
+              : 'border-success'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-mono font-medium ${
+                  entry.verification.param_scope === 'ok' ? 'text-success' : entry.verification.param_scope === 'violation' ? 'text-danger' : 'text-text-tertiary'
+                }`}>params: {entry.verification.param_scope}</span>
+                <span className={`text-[10px] font-mono font-medium ${
+                  entry.verification.reason_coherence === 'ok' ? 'text-success'
+                  : entry.verification.reason_coherence === 'incoherent' ? 'text-danger'
+                  : entry.verification.reason_coherence === 'insufficient' ? 'text-warning'
+                  : 'text-text-tertiary'
+                }`}>reason: {entry.verification.reason_coherence}</span>
+              </div>
+              <p className="text-xs text-text-secondary">{entry.verification.explanation}</p>
+              <div className="text-[10px] font-mono text-text-tertiary">{entry.verification.model} &middot; {entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
             </div>
-            <p className="text-xs text-text-secondary">{entry.verification.explanation}</p>
-            <div className="text-[10px] font-mono text-text-tertiary">{entry.verification.model} &middot; {entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
-          </div>
-          <ParamsTable params={entry.params_safe} />
-        </div>
-      )}
-
-      {expanded && !entry.verification && (
-        <div className="px-4 pb-3 pt-1 space-y-2">
-          <div className="ml-3 pl-3 border-l-2 border-border-default space-y-1.5">
-            {entry.error_msg && <p className="text-xs text-danger">{entry.error_msg}</p>}
-            {entry.reason && <p className="text-xs text-text-secondary">{entry.reason}</p>}
-            <div className="text-[10px] font-mono text-text-tertiary">{entry.duration_ms}ms</div>
-          </div>
+          )}
+          {entry.error_msg && (
+            <div className="ml-3 pl-3 border-l-2 border-danger space-y-1">
+              <div className="text-[10px] font-mono font-medium text-danger">error</div>
+              <pre className="text-xs text-danger whitespace-pre-wrap break-words font-mono max-h-48 overflow-auto">{entry.error_msg}</pre>
+            </div>
+          )}
+          {!entry.verification && !entry.error_msg && (
+            <div className="ml-3 pl-3 border-l-2 border-border-default space-y-1.5">
+              {entry.reason && <p className="text-xs text-text-secondary">{entry.reason}</p>}
+              <div className="text-[10px] font-mono text-text-tertiary">{entry.duration_ms}ms</div>
+            </div>
+          )}
           <ParamsTable params={entry.params_safe} />
         </div>
       )}
