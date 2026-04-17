@@ -3,13 +3,21 @@ service:
   display_name: Twilio
   description: "Send and receive SMS and WhatsApp messages, check delivery status, and manage conversations via Twilio."
   setup_url: "https://console.twilio.com"
+  key_hint: "Twilio Auth Token"
   icon_url: "/logos/twilio.svg"
 
 auth:
   type: basic
+  user_var: account_sid
+
+variables:
+  account_sid:
+    display_name: "Account SID"
+    description: "Your Twilio Account SID (starts with AC...)"
+    required: true
 
 api:
-  base_url: "https://api.twilio.com/2010-04-01/Accounts/{{.credential.sid}}"
+  base_url: "https://api.twilio.com/2010-04-01/Accounts/{{.var.account_sid}}"
   type: rest
 
 actions:
@@ -20,9 +28,9 @@ actions:
     path: "/Messages.json"
     encoding: form
     params:
-      to: { type: string, required: true, location: body }
-      body: { type: string, required: true, location: body }
-      from: { type: string, location: body }
+      to:   { type: string, required: true, location: body, map_to: To }
+      body: { type: string, required: true, location: body, map_to: Body }
+      from: { type: string, location: body, map_to: From }
     response:
       fields:
         - { name: sid }
@@ -38,9 +46,9 @@ actions:
     path: "/Messages.json"
     encoding: form
     params:
-      to: { type: string, required: true, location: body }
-      body: { type: string, required: true, location: body }
-      from: { type: string, location: body }
+      to:   { type: string, required: true, location: body, map_to: To }
+      body: { type: string, required: true, location: body, map_to: Body }
+      from: { type: string, location: body, map_to: From }
     response:
       fields:
         - { name: sid }
@@ -55,10 +63,10 @@ actions:
     method: GET
     path: "/Messages.json"
     params:
-      page_size: { type: int, default: 20, max: 1000, location: query }
-      page: { type: int, default: 0, location: query }
-      to: { type: string, location: query }
-      from: { type: string, location: query }
+      page_size: { type: int, default: 20, max: 1000, location: query, map_to: PageSize }
+      page:      { type: int, default: 0, location: query, map_to: Page }
+      to:        { type: string, location: query, map_to: To }
+      from:      { type: string, location: query, map_to: From }
     response:
       data_path: "messages"
       fields:
@@ -70,6 +78,44 @@ actions:
         - { name: direction }
         - { name: date_sent }
       summary: "{{len .Data}} message(s)"
+
+  make_call:
+    display_name: "Make phone call"
+    risk: { category: write, sensitivity: high, description: "Place an outbound phone call (costs money)" }
+    method: POST
+    path: "/Calls.json"
+    encoding: form
+    params:
+      to:    { type: string, required: true, location: body, map_to: To }
+      from:  { type: string, required: true, location: body, map_to: From }
+      twiml: { type: string, location: body, map_to: Twiml }
+      url:   { type: string, location: body, map_to: Url }
+    response:
+      fields:
+        - { name: sid }
+        - { name: status }
+        - { name: to }
+        - { name: from }
+        - { name: direction }
+        - { name: date_created }
+      summary: "Call placed to {{.to}} (status: {{.status}})"
+
+  list_phone_numbers:
+    display_name: "List phone numbers"
+    risk: { category: read, sensitivity: low, description: "List Twilio phone numbers owned by this account" }
+    method: GET
+    path: "/IncomingPhoneNumbers.json"
+    params:
+      page_size: { type: int, default: 50, max: 1000, location: query, map_to: PageSize }
+      page:      { type: int, default: 0, location: query, map_to: Page }
+    response:
+      data_path: "incoming_phone_numbers"
+      fields:
+        - { name: sid }
+        - { name: phone_number }
+        - { name: friendly_name }
+        - { name: capabilities }
+      summary: "{{len .Data}} phone number(s)"
 
   get_message:
     display_name: "Get message"

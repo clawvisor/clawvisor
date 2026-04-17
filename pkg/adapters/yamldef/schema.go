@@ -48,9 +48,13 @@ type AuthDef struct {
 	Header       string            `yaml:"header,omitempty"`
 	HeaderPrefix string            `yaml:"header_prefix,omitempty"`
 	ExtraHeaders map[string]string `yaml:"extra_headers,omitempty"`
+	// UserVar (basic auth only): name of a variable that holds the username
+	// portion. When set, the credential is used as the password directly
+	// instead of being split on ":" into user:pass.
+	UserVar    string         `yaml:"user_var,omitempty"`
 	OAuth      *OAuthDef      `yaml:"oauth,omitempty"`
 	DeviceFlow *DeviceFlowDef `yaml:"device_flow,omitempty"`
-	PKCEFlow   *PKCEFlowDef  `yaml:"pkce_flow,omitempty"`
+	PKCEFlow   *PKCEFlowDef   `yaml:"pkce_flow,omitempty"`
 }
 
 // DeviceFlowDef holds configuration for OAuth2 device authorization grant (RFC 8628).

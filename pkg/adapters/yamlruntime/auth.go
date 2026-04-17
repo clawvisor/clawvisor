@@ -36,8 +36,9 @@ func extractToken(credBytes []byte) (string, error) {
 }
 
 // buildHTTPClient creates an *http.Client that injects authentication headers
-// based on the YAML auth definition.
-func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte) (*http.Client, error) {
+// based on the YAML auth definition. config carries variables collected at
+// activation time (used for basic auth's user_var).
+func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[string]string) (*http.Client, error) {
 	switch authDef.Type {
 	case "api_key":
 		token, err := extractToken(credBytes)
@@ -59,14 +60,24 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte) (*http.Client, e
 		if err != nil {
 			return nil, err
 		}
-		parts := strings.SplitN(token, ":", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return nil, fmt.Errorf("basic auth credential must be in format 'user:pass'")
+		var user, pass string
+		if authDef.UserVar != "" {
+			user = config[authDef.UserVar]
+			if user == "" {
+				return nil, fmt.Errorf("basic auth: variable %q has no value", authDef.UserVar)
+			}
+			pass = token
+		} else {
+			parts := strings.SplitN(token, ":", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return nil, fmt.Errorf("basic auth credential must be in format 'user:pass'")
+			}
+			user, pass = parts[0], parts[1]
 		}
 		return &http.Client{
 			Transport: &basicAuthTransport{
-				user:         parts[0],
-				pass:         parts[1],
+				user:         user,
+				pass:         pass,
 				extraHeaders: authDef.ExtraHeaders,
 				base:         http.DefaultTransport,
 			},
@@ -145,17 +156,17 @@ func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // credentialFields returns the parsed credential fields as a map for template interpolation.
-// For basic auth, it includes "user" and "pass" fields; for api_key, just "token".
+// For basic auth with a user:pass token, it includes "user" and "pass"; for
+// api_key (or basic auth with user_var), just "token".
 func credentialFields(authDef yamldef.AuthDef, credBytes []byte) (map[string]string, error) {
 	token, err := extractToken(credBytes)
 	if err != nil {
 		return nil, err
 	}
 	fields := map[string]string{"token": token}
-	if authDef.Type == "basic" {
+	if authDef.Type == "basic" && authDef.UserVar == "" {
 		parts := strings.SplitN(token, ":", 2)
 		if len(parts) == 2 {
-			fields["sid"] = parts[0] // Twilio convention
 			fields["user"] = parts[0]
 			fields["pass"] = parts[1]
 		}

@@ -109,16 +109,16 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	}
 
 	// Build the authenticated HTTP client.
-	client, err := a.buildAuthClient(ctx, req.Credential)
+	client, err := a.buildAuthClient(ctx, req.Credential, req.Config)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", a.def.Service.ID, err)
 	}
 
-	// Get credential fields for path interpolation.
+	// Get credential fields for path and base-URL interpolation.
 	credFields, _ := credentialFields(a.def.Auth, req.Credential)
 
 	// Resolve variables in base_url.
-	baseURL, err := a.resolvedBaseURL(req.Config)
+	baseURL, err := a.resolvedBaseURL(req.Config, credFields)
 	if err != nil {
 		return nil, err
 	}
@@ -141,12 +141,13 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, confi
 		return "", nil
 	}
 
-	client, err := a.buildAuthClient(ctx, credBytes)
+	client, err := a.buildAuthClient(ctx, credBytes, config)
 	if err != nil {
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
 
-	baseURL, err := a.resolvedBaseURL(config)
+	credFields, _ := credentialFields(a.def.Auth, credBytes)
+	baseURL, err := a.resolvedBaseURL(config, credFields)
 	if err != nil {
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
@@ -302,8 +303,9 @@ func (a *YAMLAdapter) ValidateCredential(credBytes []byte) error {
 		return fmt.Errorf("%s: credential missing token", a.def.Service.ID)
 	}
 
-	// Additional validation for basic auth credentials.
-	if a.def.Auth.Type == "basic" {
+	// Additional validation for basic auth credentials. When user_var is set,
+	// the credential is just the password; the username comes from config.
+	if a.def.Auth.Type == "basic" && a.def.Auth.UserVar == "" {
 		parts := strings.SplitN(cred.Token, ":", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			return fmt.Errorf("%s: credential must be in format 'user:pass'", a.def.Service.ID)
@@ -356,7 +358,7 @@ func (a *YAMLAdapter) OAuthTokenPath() string {
 // automatic token refresh. For api_key services with PKCE flow credentials,
 // it also uses an OAuth2 token source for refresh. For other auth types,
 // delegates to buildHTTPClient.
-func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte) (*http.Client, error) {
+func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte, config map[string]string) (*http.Client, error) {
 	if a.def.Auth.Type == "oauth2" {
 		oauthCfg := a.OAuthConfig()
 		if oauthCfg == nil {
@@ -376,7 +378,7 @@ func (a *YAMLAdapter) buildAuthClient(ctx context.Context, credBytes []byte) (*h
 		}
 	}
 
-	return buildHTTPClient(a.def.Auth, credBytes)
+	return buildHTTPClient(a.def.Auth, credBytes, a.mergedConfig(config))
 }
 
 // buildOAuthClient creates an *http.Client using an OAuth2 token source that
@@ -582,15 +584,19 @@ func (a *YAMLAdapter) resolvePKCEFlowClientID() string {
 	return pf.ClientID
 }
 
-// resolvedBaseURL returns the API base URL with any {{.var.X}} placeholders
-// replaced by values from config. It validates that all required variables
-// have values.
-func (a *YAMLAdapter) resolvedBaseURL(config map[string]string) (string, error) {
+// resolvedBaseURL returns the API base URL with any {{.var.X}} and
+// {{.credential.X}} placeholders replaced by values from config and the
+// parsed credential. It validates that all required variables have values.
+func (a *YAMLAdapter) resolvedBaseURL(config map[string]string, credFields map[string]string) (string, error) {
 	if err := a.validateVariables(config); err != nil {
 		return "", err
 	}
 	merged := a.mergedConfig(config)
-	return resolveVariables(a.def.API.BaseURL, merged), nil
+	resolved := resolveVariables(a.def.API.BaseURL, merged)
+	for k, v := range credFields {
+		resolved = strings.ReplaceAll(resolved, "{{.credential."+k+"}}", v)
+	}
+	return resolved, nil
 }
 
 // mergedConfig returns config with any missing keys filled in from variable defaults.

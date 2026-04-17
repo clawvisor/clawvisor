@@ -82,7 +82,20 @@ auth:
   type: basic
 ```
 
-No additional fields are needed — `header` and `header_prefix` are ignored for basic auth.
+For services where the username is a non-secret account identifier (e.g. Twilio's Account SID), use `user_var` to pull it from a variable instead of asking the user to paste `user:pass`. The vaulted credential is then just the password.
+
+```yaml
+auth:
+  type: basic
+  user_var: account_sid
+
+variables:
+  account_sid:
+    display_name: "Account SID"
+    required: true
+```
+
+`header` and `header_prefix` are ignored for basic auth.
 
 ### PKCE Flow (Recommended for OAuth)
 

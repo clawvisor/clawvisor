@@ -351,6 +351,52 @@ func TestYAMLAdapter_BasicAuth(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_BasicAuthUserVar(t *testing.T) {
+	// Twilio-style: the Account SID is collected as a non-secret variable
+	// and used both as the basic-auth username and in base_url. The vaulted
+	// credential is just the Auth Token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "AC123" || pass != "authtoken" {
+			t.Errorf("expected basic auth AC123:authtoken, got %s:%s (ok=%v)", user, pass, ok)
+		}
+		if r.URL.Path != "/Accounts/AC123/Messages.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service:   yamldef.ServiceInfo{ID: "twilio"},
+		Auth:      yamldef.AuthDef{Type: "basic", UserVar: "account_sid"},
+		Variables: map[string]yamldef.VariableDef{"account_sid": {DisplayName: "Account SID", Required: true}},
+		API:       yamldef.APIDef{BaseURL: srv.URL + "/Accounts/{{.var.account_sid}}", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"list_messages": {
+				Method: "GET",
+				Path:   "/Messages.json",
+				Response: yamldef.ResponseDef{
+					DataPath: "messages",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if _, err := adapter.Execute(context.Background(), adapters.Request{
+		Action:     "list_messages",
+		Config:     map[string]string{"account_sid": "AC123"},
+		Credential: testCred("authtoken"),
+	}); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
 func TestYAMLAdapter_ErrorCheckSlackStyle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
