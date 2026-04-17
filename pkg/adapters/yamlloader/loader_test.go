@@ -31,6 +31,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"google.contacts":  false,
 		"dropbox":          false,
 		"granola":          false,
+		"perplexity":       false,
 	}
 
 	for _, a := range adapters {
