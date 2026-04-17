@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.14](https://github.com/clawvisor/clawvisor/compare/v0.8.13...v0.8.14) (2026-04-17)
+
+
+### Features
+
+* add icon_url field and swap adapters to official full-color logos ([#268](https://github.com/clawvisor/clawvisor/issues/268)) ([b52f2a6](https://github.com/clawvisor/clawvisor/commit/b52f2a6d98efc393d57665ded8b28e9797042ada))
+
+
+### Bug Fixes
+
+* keep web/dist embed working without a frontend build ([#269](https://github.com/clawvisor/clawvisor/issues/269)) ([74ee805](https://github.com/clawvisor/clawvisor/commit/74ee8056d61d448128e83a2219c49e33e622cbb9))
+* **skill:** use correct list_events param names (from/to) ([#273](https://github.com/clawvisor/clawvisor/issues/273)) ([342ac23](https://github.com/clawvisor/clawvisor/commit/342ac23eebe3e821202dd1d2a7fd81ed66a89b13))
+* split OAuth scope string on both comma and space ([#275](https://github.com/clawvisor/clawvisor/issues/275)) ([d0769a7](https://github.com/clawvisor/clawvisor/commit/d0769a7f333bf3a40e9fd403e7ffde6d97d98689))
+* **twilio:** interpolate credentials in base_url and map params to Twilio's PascalCase ([#278](https://github.com/clawvisor/clawvisor/issues/278)) ([4d8696e](https://github.com/clawvisor/clawvisor/commit/4d8696e98ea58f45b6b60fd94a3b37946153e7bf))
+* use real activated alias in catalog's service:account note ([#271](https://github.com/clawvisor/clawvisor/issues/271)) ([67787ea](https://github.com/clawvisor/clawvisor/commit/67787eac6da5fca8b90f3ac794b6455655ad7938))
+
 ## [0.8.13](https://github.com/clawvisor/clawvisor/compare/v0.8.12...v0.8.13) (2026-04-16)
 
 
