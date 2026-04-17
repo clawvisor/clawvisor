@@ -123,6 +123,9 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 		return nil, err
 	}
 
+	// Interpolate credential fields in base_url (e.g. {{.credential.sid}} for Twilio).
+	baseURL = interpolatePath(baseURL, nil, credFields)
+
 	switch a.def.API.Type {
 	case "rest":
 		return executeREST(ctx, client, baseURL, action, req.Params, credFields, a.compiled[req.Action])
@@ -150,6 +153,10 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, confi
 	if err != nil {
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
+
+	// Interpolate credential fields in base_url (e.g. {{.credential.sid}} for Twilio).
+	credFields, _ := credentialFields(a.def.Auth, credBytes)
+	baseURL = interpolatePath(baseURL, nil, credFields)
 
 	endpoint := idDef.Endpoint
 	if !strings.HasPrefix(endpoint, "http") {
