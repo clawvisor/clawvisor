@@ -597,14 +597,15 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		// Use the scopes actually granted by the user. Google returns them in
-		// the token exchange response as a space-separated "scope" field. Users
-		// can deselect individual scopes on the consent screen, so the granted
-		// set may be a subset of what we requested.
+		// Use the scopes actually granted by the user. The OAuth2 spec (RFC 6749 §3.3)
+		// defines scopes as space-separated, but some providers (e.g. GitHub) return
+		// them comma-separated. Split on both to handle either format.
 		var scopes []string
 		scopesGranted := false
 		if grantedRaw, ok := token.Extra("scope").(string); ok && grantedRaw != "" {
-			scopes = strings.Split(grantedRaw, " ")
+			scopes = strings.FieldsFunc(grantedRaw, func(r rune) bool {
+				return r == ' ' || r == ','
+			})
 			sort.Strings(scopes)
 			scopesGranted = true
 		} else {
