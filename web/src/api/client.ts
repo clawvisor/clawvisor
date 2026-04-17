@@ -536,11 +536,20 @@ export interface TaskSuggestion {
   risk?: 'low' | 'medium' | 'high'
 }
 
+export interface WalkthroughExample {
+  user_prompt: string
+  agent_task: string
+  primary_name: string
+  secondary_name: string
+  services?: string[]
+}
+
 export interface WelcomeData {
   ready: boolean
   services: WelcomeService[]
   agents: WelcomeAgent[]
   suggestions: TaskSuggestion[]
+  walkthrough?: WalkthroughExample
   llm_used: boolean
   llm_status: 'ok' | 'unconfigured' | 'exhausted' | 'error'
 }

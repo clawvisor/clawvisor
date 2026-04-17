@@ -79,14 +79,26 @@ type taskSuggestion struct {
 	Risk     string   `json:"risk,omitempty"`     // "low" | "medium" | "high"
 }
 
+// walkthroughExample personalises the "here's what a task looks like" flow
+// using a coherent pairing of the user's connected services. Frontend falls
+// back to a hardcoded Gmail/Linear example when this is absent.
+type walkthroughExample struct {
+	UserPrompt   string   `json:"user_prompt"`           // what the user would ask, e.g. "Triage my Gmail…"
+	AgentTask    string   `json:"agent_task"`            // what the agent declares, e.g. "read Gmail…, create Linear issues"
+	PrimaryName  string   `json:"primary_name"`          // the main service name, for the subtitle
+	SecondaryName string  `json:"secondary_name"`        // the paired service name, for the subtitle
+	Services     []string `json:"services,omitempty"`    // service IDs referenced
+}
+
 // welcomeResponse is the payload for GET /api/welcome/suggestions.
 type welcomeResponse struct {
-	Ready       bool             `json:"ready"`        // true when ≥1 service + ≥1 agent
-	Services    []welcomeService `json:"services"`
-	Agents      []welcomeAgent   `json:"agents"`
-	Suggestions []taskSuggestion `json:"suggestions"`  // may be empty
-	LLMUsed     bool             `json:"llm_used"`     // true if suggestions came from LLM
-	LLMStatus   string           `json:"llm_status"`   // "ok" | "unconfigured" | "exhausted" | "error"
+	Ready       bool                `json:"ready"`        // true when ≥1 service + ≥1 agent
+	Services    []welcomeService    `json:"services"`
+	Agents      []welcomeAgent      `json:"agents"`
+	Suggestions []taskSuggestion    `json:"suggestions"`  // may be empty
+	Walkthrough *walkthroughExample `json:"walkthrough,omitempty"`
+	LLMUsed     bool                `json:"llm_used"`     // true if suggestions came from LLM
+	LLMStatus   string              `json:"llm_status"`   // "ok" | "unconfigured" | "exhausted" | "error"
 }
 
 // Suggestions returns the welcome-page payload.
@@ -145,7 +157,7 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	suggestions, err := h.generateSuggestions(ctx, cfg, services, agentSummaries)
+	suggestions, walkthrough, err := h.generateSuggestions(ctx, cfg, services, agentSummaries)
 	if err != nil {
 		if errors.Is(err, llm.ErrSpendCapExhausted) {
 			h.llmHealth.SetSpendCapExhausted()
@@ -159,6 +171,7 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Suggestions = suggestions
+	resp.Walkthrough = walkthrough
 	resp.LLMUsed = true
 	resp.LLMStatus = "ok"
 	writeJSON(w, http.StatusOK, resp)
@@ -292,9 +305,10 @@ func (h *WelcomeHandler) listActivatedServices(ctx context.Context, userID strin
 	return out, nil
 }
 
-// generateSuggestions asks the LLM for 3-5 task ideas tailored to the user's
-// connected services and agent names. Returns an error if the LLM call fails.
-func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.LLMConfig, services []welcomeService, agents []welcomeAgent) ([]taskSuggestion, error) {
+// generateSuggestions asks the LLM for 3-5 task ideas and a walkthrough example
+// tailored to the user's connected services and agent names. Returns an error
+// if the LLM call fails.
+func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.LLMConfig, services []welcomeService, agents []welcomeAgent) ([]taskSuggestion, *walkthroughExample, error) {
 	providerCfg := config.LLMProviderConfig{
 		Provider:       llmCfg.Provider,
 		Endpoint:       llmCfg.Endpoint,
@@ -303,7 +317,7 @@ func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.
 		TimeoutSeconds: llmCfg.TimeoutSeconds,
 	}
 
-	client := llm.NewClient(providerCfg).WithMaxTokens(1200)
+	client := llm.NewClient(providerCfg).WithMaxTokens(1400)
 
 	userMsg := buildSuggestionUserMessage(services, agents)
 
@@ -323,18 +337,18 @@ func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, llm.ErrSpendCapExhausted) {
-				return nil, err
+				return nil, nil, err
 			}
 			if attempt == 0 {
 				continue
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		raw = r
 		break
 	}
 	if raw == "" {
-		return nil, lastErr
+		return nil, nil, lastErr
 	}
 
 	return parseSuggestionResponse(raw)
@@ -349,25 +363,37 @@ You will be given (a) each connected service with its supported actions tagged w
 Produce 3-5 concrete, copy-pasteable task prompts tailored to this user's exact setup.
 
 Rules:
-- Reference a specific agent by name ("Ask <agent> to …") so the user learns which agent is which. Pick the most appropriate agent per suggestion.
+- Pick the most appropriate agent per suggestion and put its name in the "agent" field.
+- The "prompt" field is the direct instruction the user would paste into the agent chat. Write it as a direct imperative addressed to the agent ("Search my Gmail for …", "Find the most recent …"). DO NOT prefix it with "Ask <agent> to …" — the UI renders that framing separately from the agent field.
 - Lead with read-mostly workflows before destructive ones. At most one suggestion should involve high-sensitivity writes.
 - Favor combinations across services when natural (e.g. "read Gmail + create Linear issues for anything actionable").
 - Be specific: reference concrete fields, recent time windows, or named topics. No vague "summarize stuff".
 - Each prompt should be 1-2 sentences the user could literally paste into a chat with the agent.
 
+Also produce ONE walkthrough example illustrating the task → approval → enforcement flow using a coherent pairing of the user's services (e.g. an inbox/messaging service as the source and a task-tracker or notes service as the destination). Pick services that pair naturally; never pair an inbox with a calendar as the "destination". If no coherent pair is possible, use the single best service.
+
 Return ONLY a JSON object — no prose, no markdown fences:
 
-{"suggestions": [
-  {
-    "title": "Short headline (<=50 chars)",
-    "prompt": "Full example prompt the user can paste",
-    "agent": "agent name from the input, or empty",
-    "services": ["service.id.1", "service.id.2"],
-    "risk": "low" | "medium" | "high"
+{
+  "suggestions": [
+    {
+      "title": "Short headline (<=50 chars)",
+      "prompt": "Full example prompt the user can paste",
+      "agent": "agent name from the input, or empty",
+      "services": ["service.id.1", "service.id.2"],
+      "risk": "low" | "medium" | "high"
+    }
+  ],
+  "walkthrough": {
+    "user_prompt": "The quoted one-line natural-language ask, e.g. \"Triage my Gmail and add anything actionable to Linear.\"",
+    "agent_task": "One sentence describing what the agent declares, e.g. \"read Gmail messages received in the last 72 hours, create items in Linear.\"",
+    "primary_name": "Gmail",
+    "secondary_name": "Linear",
+    "services": ["service.id.primary", "service.id.secondary"]
   }
-]}
+}
 
-Use service IDs and agent names EXACTLY as given in the input. Return between 3 and 5 suggestions.`
+Use service IDs and agent names EXACTLY as given in the input. Return between 3 and 5 suggestions. Always include the walkthrough object.`
 
 // buildSuggestionUserMessage renders the context for the LLM.
 func buildSuggestionUserMessage(services []welcomeService, agents []welcomeAgent) string {
@@ -413,9 +439,43 @@ func buildSuggestionUserMessage(services []welcomeService, agents []welcomeAgent
 	return b.String()
 }
 
-// parseSuggestionResponse extracts the suggestions array from the LLM output.
-// It tolerates markdown code fences around the JSON.
-func parseSuggestionResponse(raw string) ([]taskSuggestion, error) {
+// stripAskPrefix removes a leading "Ask <agent> to " (case-insensitive) from a
+// prompt, along with any surrounding quote marks, and re-capitalizes the first
+// letter. The UI renders the "Ask <agent>:" framing separately.
+func stripAskPrefix(s string) string {
+	trimmed := strings.TrimSpace(s)
+	// Strip outer quotes if the whole thing is quoted.
+	if len(trimmed) >= 2 {
+		first, last := trimmed[0], trimmed[len(trimmed)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			trimmed = trimmed[1 : len(trimmed)-1]
+			trimmed = strings.TrimSpace(trimmed)
+		}
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "ask ") {
+		return trimmed
+	}
+	rest := trimmed[4:]
+	// Find " to " after the agent name.
+	idx := strings.Index(strings.ToLower(rest), " to ")
+	if idx < 0 {
+		return trimmed
+	}
+	remainder := strings.TrimSpace(rest[idx+4:])
+	if remainder == "" {
+		return trimmed
+	}
+	// Capitalize first letter.
+	r := []rune(remainder)
+	r[0] = []rune(strings.ToUpper(string(r[0])))[0]
+	return string(r)
+}
+
+// parseSuggestionResponse extracts the suggestions array and the walkthrough
+// example from the LLM output. Tolerates markdown code fences around the JSON.
+// The walkthrough is optional — returned as nil if malformed.
+func parseSuggestionResponse(raw string) ([]taskSuggestion, *walkthroughExample, error) {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "```json")
 	raw = strings.TrimPrefix(raw, "```")
@@ -423,22 +483,36 @@ func parseSuggestionResponse(raw string) ([]taskSuggestion, error) {
 	raw = strings.TrimSpace(raw)
 
 	var out struct {
-		Suggestions []taskSuggestion `json:"suggestions"`
+		Suggestions []taskSuggestion    `json:"suggestions"`
+		Walkthrough *walkthroughExample `json:"walkthrough"`
 	}
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, fmt.Errorf("parse suggestion response: %w", err)
+		return nil, nil, fmt.Errorf("parse suggestion response: %w", err)
 	}
 
-	// Filter out malformed entries.
+	// Filter out malformed entries and strip any leaked "Ask <agent> to …"
+	// prefix — the UI renders that framing from the agent field.
 	cleaned := make([]taskSuggestion, 0, len(out.Suggestions))
 	for _, s := range out.Suggestions {
 		if strings.TrimSpace(s.Title) == "" || strings.TrimSpace(s.Prompt) == "" {
 			continue
 		}
+		s.Prompt = stripAskPrefix(s.Prompt)
 		cleaned = append(cleaned, s)
 	}
 	if len(cleaned) == 0 {
-		return nil, fmt.Errorf("no valid suggestions in response")
+		return nil, nil, fmt.Errorf("no valid suggestions in response")
 	}
-	return cleaned, nil
+
+	walkthrough := out.Walkthrough
+	if walkthrough != nil {
+		if strings.TrimSpace(walkthrough.UserPrompt) == "" ||
+			strings.TrimSpace(walkthrough.AgentTask) == "" ||
+			strings.TrimSpace(walkthrough.PrimaryName) == "" ||
+			strings.TrimSpace(walkthrough.SecondaryName) == "" {
+			walkthrough = nil
+		}
+	}
+
+	return cleaned, walkthrough, nil
 }

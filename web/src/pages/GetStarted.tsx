@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, type TaskSuggestion, type WelcomeData, type WelcomeService, type WelcomeAgent } from '../api/client'
+import { api, type TaskSuggestion, type WelcomeData, type WelcomeService, type WelcomeAgent, type WalkthroughExample } from '../api/client'
 import { ServiceIcon } from '../components/ServiceIcon'
 
 // GetStarted — the "What is Clawvisor?" page. It's context-aware: users with
@@ -9,7 +9,7 @@ import { ServiceIcon } from '../components/ServiceIcon'
 // set up lead with personalized LLM-generated task ideas.
 export default function GetStarted() {
   const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['welcome-suggestions'],
+    queryKey: ['welcome'],
     queryFn: () => api.welcome.suggestions(),
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -27,12 +27,12 @@ export default function GetStarted() {
         <>
           <SuggestionsSection data={data} isLoading={isLoading} isFetching={isFetching} onRefresh={() => refetch()} />
           <YourSetupSection services={services} agents={agents} />
-          <ExampleWalkthrough services={services} compact />
+          <ExampleWalkthrough example={data?.walkthrough} />
         </>
       ) : (
         <>
           <SetupSteps services={services} agents={agents} isLoading={isLoading} />
-          <ExampleWalkthrough services={services} />
+          <ExampleWalkthrough example={data?.walkthrough} />
         </>
       )}
     </div>
@@ -44,10 +44,6 @@ export default function GetStarted() {
 function Hero({ ready, services, agents }: { ready: boolean; services: WelcomeService[]; agents: WelcomeAgent[] }) {
   return (
     <header className="space-y-3">
-      <div className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-brand bg-brand-muted px-2 py-1 rounded">
-        <img src="/favicon.svg" alt="" className="w-3.5 h-3.5" />
-        Clawvisor
-      </div>
       <h1 className="text-3xl sm:text-4xl font-bold text-text-primary tracking-tight">
         Your agents act. You stay in control.
       </h1>
@@ -102,7 +98,7 @@ function SetupSteps({
               <PopularService id="github" label="GitHub" />
               <PopularService id="linear" label="Linear" />
               <PopularService id="slack" label="Slack" />
-              <PopularService id="google.calendar" label="Calendar" />
+              <PopularService id="google.calendar" label="Google Calendar" />
               <Link
                 to="/dashboard/services"
                 className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-strong px-3 py-1.5 rounded-md border border-brand/40 bg-brand-muted transition-colors"
@@ -118,43 +114,19 @@ function SetupSteps({
 
         <SetupStepCard num={2} done={hasAgent} title="Connect an agent" loading={isLoading}>
           <p className="text-sm text-text-secondary mb-3">
-            Your agent gets a bearer token that lets it make requests through Clawvisor. Run one of
-            these commands to auto-install:
+            Pair an AI agent (Claude Code, Claude Desktop, OpenClaw, or any HTTP client) with
+            Clawvisor so it can create tasks on your behalf.
           </p>
           {hasAgent ? (
             <ConnectedAgentsStrip agents={agents} />
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <AgentInstallCard
-                name="Claude Code"
-                description="Install the Clawvisor skill so Claude Code can create tasks."
-                command="clawvisor connect-agent claude-code"
-              />
-              <AgentInstallCard
-                name="Claude Desktop"
-                description="Configure MCP so Claude Desktop routes tool calls via Clawvisor."
-                command="clawvisor connect-agent claude-desktop"
-              />
-              <AgentInstallCard
-                name="OpenClaw"
-                description="Pair an OpenClaw daemon over the relay."
-                command="clawvisor connect-agent openclaw"
-              />
-              <AgentInstallCard
-                name="Any HTTP agent"
-                description="Mint a raw token to use with any client."
-                command="clawvisor connect-agent"
-              />
+            <div className="flex flex-wrap gap-2">
+              <PopularAgent tab="claude-code" label="Claude Code" />
+              <PopularAgent tab="claude-desktop" label="Claude Desktop" />
+              <PopularAgent tab="openclaw" label="OpenClaw" />
+              <PopularAgent tab="other" label="Other agents" />
             </div>
           )}
-          <div className="mt-3">
-            <Link
-              to="/dashboard/agents"
-              className="text-sm text-brand hover:text-brand-strong font-medium"
-            >
-              Or create a token in the dashboard →
-            </Link>
-          </div>
         </SetupStepCard>
       </div>
     </section>
@@ -217,45 +189,14 @@ function PopularService({ id, label }: { id: string; label: string }) {
   )
 }
 
-function AgentInstallCard({
-  name,
-  description,
-  command,
-}: {
-  name: string
-  description: string
-  command: string
-}) {
-  const [copied, setCopied] = useState(false)
-  function copy() {
-    navigator.clipboard.writeText(command).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
+function PopularAgent({ tab, label }: { tab: string; label: string }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-surface-0 p-3">
-      <div className="font-medium text-sm text-text-primary">{name}</div>
-      <div className="text-xs text-text-secondary mb-2">{description}</div>
-      <button
-        onClick={copy}
-        className="w-full flex items-center justify-between gap-2 text-left font-mono text-xs text-text-primary bg-surface-2 hover:bg-surface-3 px-2.5 py-1.5 rounded border border-border-subtle transition-colors"
-      >
-        <span className="truncate">$ {command}</span>
-        <span className="shrink-0 text-text-tertiary">
-          {copied ? (
-            <svg className="w-3.5 h-3.5 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-            </svg>
-          )}
-        </span>
-      </button>
-    </div>
+    <Link
+      to={`/dashboard/agents?agent=${encodeURIComponent(tab)}`}
+      className="inline-flex items-center gap-1.5 text-sm text-text-primary bg-surface-2 hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-subtle transition-colors"
+    >
+      {label}
+    </Link>
   )
 }
 
@@ -427,22 +368,19 @@ function SuggestionCard({
         {suggestion.risk && <RiskBadge level={suggestion.risk} />}
       </div>
 
-      <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-        {suggestion.prompt}
-      </p>
+      <div className="space-y-1.5">
+        {suggestion.agent && (
+          <div className="text-xs text-text-tertiary">
+            Ask <span className="font-mono text-brand">{suggestion.agent}</span> to:
+          </div>
+        )}
+        <blockquote className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap border-l-2 border-brand/40 pl-3 italic">
+          {suggestion.prompt}
+        </blockquote>
+      </div>
 
       <div className="flex items-end justify-between gap-3 mt-auto pt-1">
         <div className="flex flex-wrap gap-1.5">
-          {suggestion.agent && (
-            <span className="inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded bg-brand-muted text-brand">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <rect x="3" y="11" width="18" height="10" rx="2" ry="2" />
-                <circle cx="12" cy="5" r="2" />
-                <path d="M12 7v4" />
-              </svg>
-              {suggestion.agent}
-            </span>
-          )}
           {suggestion.services.map(id => {
             const svc = serviceById.get(id)
             return (
@@ -536,28 +474,26 @@ function SuggestionsFallback({ status }: { status?: string }) {
 
 // ── Example walkthrough ───────────────────────────────────────────────────────
 
-function ExampleWalkthrough({
-  services,
-  compact = false,
-}: {
-  services: WelcomeService[]
-  compact?: boolean
-}) {
-  // Prefer concrete services from the user's actual setup; fall back to Gmail.
-  const primary = pickExampleService(services, ['google.gmail', 'gmail', 'imap', 'outlook'])
-  const secondary = pickExampleService(services, ['linear', 'github', 'jira', 'notion'], primary?.id)
+const DEFAULT_WALKTHROUGH: WalkthroughExample = {
+  user_prompt: 'Triage my Gmail and add anything actionable to Linear.',
+  agent_task:
+    'read Gmail messages received in the last 72 hours, create items in Linear.',
+  primary_name: 'Gmail',
+  secondary_name: 'Linear',
+}
 
-  const primaryName = primary?.name ?? 'Gmail'
-  const secondaryName = secondary?.name ?? 'Linear'
+function ExampleWalkthrough({ example }: { example?: WalkthroughExample }) {
+  const ex = example ?? DEFAULT_WALKTHROUGH
+  const personalized = !!example
 
   const steps: { label: string; body: string; detail?: string }[] = [
     {
       label: 'You ask',
-      body: `"Triage my ${primaryName} and add anything actionable to ${secondaryName}."`,
+      body: `"${ex.user_prompt}"`,
     },
     {
       label: 'Agent declares a task',
-      body: `The agent creates a Clawvisor task: read ${primaryName}, create ${secondaryName} issues, ask before sending replies.`,
+      body: `The agent creates a Clawvisor task: ${ex.agent_task}`,
       detail: 'The agent never holds credentials. It just says what it needs to do.',
     },
     {
@@ -574,12 +510,12 @@ function ExampleWalkthrough({
   return (
     <section>
       <h2 className="text-xl font-semibold text-text-primary mb-1">
-        {compact ? 'How it works' : 'Here\u2019s what a task looks like'}
+        Here&rsquo;s what a task looks like
       </h2>
       <p className="text-sm text-text-secondary mb-4">
-        {compact
-          ? 'Quick refresher on the flow:'
-          : `Using your connected ${primaryName} and ${secondaryName} as an example:`}
+        {personalized
+          ? `Using your connected ${ex.primary_name} and ${ex.secondary_name} as an example:`
+          : `Here\u2019s an example using ${ex.primary_name} and ${ex.secondary_name}:`}
       </p>
       <ol className="space-y-0 relative">
         {steps.map((step, i) => (
@@ -618,14 +554,3 @@ function ExampleWalkthrough({
   )
 }
 
-function pickExampleService(
-  services: WelcomeService[],
-  preferredIds: string[],
-  excludeId?: string,
-): WelcomeService | undefined {
-  for (const id of preferredIds) {
-    const match = services.find(s => s.id === id && s.id !== excludeId)
-    if (match) return match
-  }
-  return services.find(s => s.id !== excludeId)
-}
