@@ -30,11 +30,20 @@ Approve a purpose, not a permission. Clawvisor enforces it on every request.
 
 ## Get Started
 
-### Install (recommended)
+### Sign up (recommended)
+
+The fastest way to try Clawvisor is hosted: sign up at [clawvisor.com](https://clawvisor.com). No installation required — connect services and agents directly from the dashboard.
+
+### Self-host
+
+Prefer to run Clawvisor yourself? Install the daemon:
 
 ```bash
 curl -fsSL https://clawvisor.com/install.sh | sh
 ```
+
+> [!WARNING]
+> **Run your agent in a separate environment from Clawvisor** — a sandboxed container, separate machine, or cloud VM. If the agent shares a host with Clawvisor, it can bypass the gateway by reading the database or process environment directly.
 
 This downloads the latest binary, adds it to your PATH, and starts an interactive setup wizard that walks you through configuration — database, LLM provider for intent verification, Google OAuth, and more. No Go, Node, or Docker required.
 
@@ -42,7 +51,7 @@ Once setup completes, the daemon opens the web dashboard in your browser automat
 
 ### Connect your agent
 
-With Clawvisor running, connect your agent:
+With Clawvisor running (hosted or self-hosted), connect your agent:
 
 ```bash
 clawvisor connect-agent
@@ -57,7 +66,7 @@ clawvisor connect-agent claude-desktop   # configure MCP for Claude Desktop
 
 For manual setup or other agents, see the integration guides: [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) · [Claude Desktop (MCP)](docs/INTEGRATE_CLAUDE_COWORK.md) · [OpenClaw](docs/INTEGRATE_OPENCLAW.md) · [Any HTTP agent](docs/INTEGRATE_GENERIC.md)
 
-### Alternative installs
+### Other self-host options
 
 <details>
 <summary>From source (Go + Node)</summary>
@@ -537,7 +546,4 @@ make clean                          # remove build artifacts
 - **E2E encryption.** Device-authenticated endpoints support end-to-end encryption using X25519 ECDH key exchange with HKDF key derivation and AES encryption.
 - **Relay authentication.** The daemon authenticates to the relay service via Ed25519 challenge-response with a 60-second replay window.
 - **Rate limiting.** Per-agent gateway rate limits and per-user limits on OAuth, policy API, and review endpoints.
-
-### Agent isolation
-
-Clawvisor's security model assumes the agent can only reach it through the API — it should never have direct access to Clawvisor's database, configuration, or runtime environment. If the agent runs on the same machine with unrestricted shell access, it could bypass Clawvisor entirely by reading the database or inspecting process environment variables. The recommended deployment is to run the agent in an environment without direct access to Clawvisor's host — a sandboxed container (e.g. Docker), a separate machine, or in the cloud. This ensures the agent can only interact with Clawvisor through the gateway API, where restrictions, approval flows, and audit logging are enforced.
+- **Agent isolation.** Clawvisor's security model assumes the agent can only reach it through the API. When self-hosting, run the agent in a separate environment (sandboxed container, separate machine, or cloud VM) — see the [self-host warning](#self-host).
