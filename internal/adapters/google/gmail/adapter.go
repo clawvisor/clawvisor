@@ -143,12 +143,13 @@ func (a *GmailAdapter) httpClient(ctx context.Context, credBytes []byte) (*http.
 // ── list_messages ─────────────────────────────────────────────────────────────
 
 type msgListItem struct {
-	ID       string `json:"id"`
-	From     string `json:"from"`
-	Subject  string `json:"subject"`
-	Snippet  string `json:"snippet"`
-	Date     string `json:"timestamp"`
-	IsUnread bool   `json:"is_unread"`
+	ID       string   `json:"id"`
+	From     string   `json:"from"`
+	Subject  string   `json:"subject"`
+	Snippet  string   `json:"snippet"`
+	Date     string   `json:"timestamp"`
+	IsUnread bool     `json:"is_unread"`
+	Labels   []string `json:"labels,omitempty"`
 }
 
 func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -177,6 +178,7 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 		return nil, fmt.Errorf("gmail list_messages: %w", err)
 	}
 
+	labels := newLabelResolver(ctx, client)
 	items := make([]msgListItem, 0, len(listResp.Messages))
 	unread := 0
 	for _, m := range listResp.Messages {
@@ -191,6 +193,7 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 			Snippet:  format.SanitizeText(meta.snippet, format.MaxSnippetLen),
 			Date:     meta.date,
 			IsUnread: meta.isUnread,
+			Labels:   labels.resolve(meta.labelIDs),
 		}
 		items = append(items, item)
 		if meta.isUnread {
@@ -233,6 +236,7 @@ type msgDetail struct {
 	ThreadID    string           `json:"thread_id"`
 	MessageID   string           `json:"message_id_header,omitempty"`
 	References  string           `json:"references,omitempty"`
+	Labels      []string         `json:"labels,omitempty"`
 	Attachments []attachmentMeta `json:"attachments,omitempty"`
 }
 
@@ -248,7 +252,7 @@ func (a *GmailAdapter) getMessage(ctx context.Context, client *http.Client, para
 		return nil, fmt.Errorf("gmail get_message: %w", err)
 	}
 
-	detail := parseMessageDetail(raw)
+	detail := parseMessageDetail(raw, newLabelResolver(ctx, client))
 
 	summary := format.Summary("Email from %s: %q", detail.From, detail.Subject)
 	if len(detail.Attachments) > 0 {
@@ -279,9 +283,10 @@ func (a *GmailAdapter) getThread(ctx context.Context, client *http.Client, param
 		return nil, fmt.Errorf("gmail get_thread: %w", err)
 	}
 
+	labels := newLabelResolver(ctx, client)
 	messages := make([]msgDetail, 0, len(raw.Messages))
 	for _, msg := range raw.Messages {
-		detail := parseMessageDetail(msg)
+		detail := parseMessageDetail(msg, labels)
 		messages = append(messages, detail)
 	}
 
@@ -297,8 +302,9 @@ func (a *GmailAdapter) getThread(ctx context.Context, client *http.Client, param
 	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 
-// parseMessageDetail extracts a msgDetail from a raw gmailMessage.
-func parseMessageDetail(raw gmailMessage) msgDetail {
+// parseMessageDetail extracts a msgDetail from a raw gmailMessage. If
+// labels is non-nil, opaque label IDs are resolved to display names.
+func parseMessageDetail(raw gmailMessage, labels *labelResolver) msgDetail {
 	var from, to, cc, replyTo, subject, date, messageID, references string
 	for _, h := range raw.Payload.Headers {
 		switch strings.ToLower(h.Name) {
@@ -348,6 +354,7 @@ func parseMessageDetail(raw gmailMessage) msgDetail {
 		ThreadID:    raw.ThreadId,
 		MessageID:   messageID,
 		References:  references,
+		Labels:      labels.resolve(raw.LabelIds),
 		Attachments: attachments,
 	}
 }
@@ -422,7 +429,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 		}
 
 		lastMsg := threadResp.Messages[len(threadResp.Messages)-1]
-		lastDetail := parseMessageDetail(lastMsg)
+		lastDetail := parseMessageDetail(lastMsg, nil)
 
 		// Derive recipient from thread if not explicitly provided.
 		if to == "" {
@@ -732,11 +739,73 @@ type gmailBody struct {
 	Data         string `json:"data"`
 }
 
+// labelResolver returns display names for a slice of Gmail label IDs. System
+// labels (INBOX, UNREAD, IMPORTANT, STARRED, …) are already human-readable;
+// only user-created labels arrive as opaque IDs like "Label_4596042054184368034".
+// The labels.list API call is deferred until a message actually contains an
+// opaque ID, and is then memoized for the rest of the call.
+type labelResolver struct {
+	ctx    context.Context
+	client *http.Client
+	loaded bool
+	m      map[string]string
+}
+
+func newLabelResolver(ctx context.Context, client *http.Client) *labelResolver {
+	return &labelResolver{ctx: ctx, client: client}
+}
+
+func (r *labelResolver) resolve(ids []string) []string {
+	if len(ids) == 0 || r == nil {
+		return nil
+	}
+	needsLookup := false
+	for _, id := range ids {
+		if strings.HasPrefix(id, "Label_") {
+			needsLookup = true
+			break
+		}
+	}
+	if needsLookup && !r.loaded {
+		r.m = fetchLabelMap(r.ctx, r.client)
+		r.loaded = true
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		if name, ok := r.m[id]; ok {
+			out[i] = name
+		} else {
+			out[i] = id
+		}
+	}
+	return out
+}
+
+// fetchLabelMap returns a map of Gmail label ID → display name. Returns nil
+// on error so callers can degrade gracefully (opaque IDs will fall through).
+func fetchLabelMap(ctx context.Context, client *http.Client) map[string]string {
+	var raw struct {
+		Labels []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := gmailGET(ctx, client, "https://gmail.googleapis.com/gmail/v1/users/me/labels", &raw); err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(raw.Labels))
+	for _, l := range raw.Labels {
+		m[l.ID] = l.Name
+	}
+	return m
+}
+
 // ── Message parsing helpers ───────────────────────────────────────────────────
 
 type msgMeta struct {
 	from, subject, snippet, date string
 	isUnread                     bool
+	labelIDs                     []string
 }
 
 func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgMeta, error) {
@@ -752,7 +821,7 @@ func fetchMessageMeta(ctx context.Context, client *http.Client, id string) (msgM
 		return msgMeta{}, err
 	}
 
-	meta := msgMeta{snippet: raw.Snippet}
+	meta := msgMeta{snippet: raw.Snippet, labelIDs: raw.LabelIds}
 	for _, h := range raw.Payload.Headers {
 		switch strings.ToLower(h.Name) {
 		case "from":

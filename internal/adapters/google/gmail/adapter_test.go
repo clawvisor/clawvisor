@@ -234,7 +234,7 @@ func TestParseMessageDetail_ExtractsAllHeaders(t *testing.T) {
 		},
 	}
 
-	detail := parseMessageDetail(msg)
+	detail := parseMessageDetail(msg, newLabelResolver(context.Background(), nil))
 
 	if detail.ID != "msg-1" {
 		t.Errorf("ID = %q, want %q", detail.ID, "msg-1")
@@ -265,6 +265,9 @@ func TestParseMessageDetail_ExtractsAllHeaders(t *testing.T) {
 	}
 	if !detail.IsUnread {
 		t.Error("IsUnread should be true")
+	}
+	if len(detail.Labels) != 2 || detail.Labels[0] != "INBOX" || detail.Labels[1] != "UNREAD" {
+		t.Errorf("Labels = %v, want [INBOX UNREAD]", detail.Labels)
 	}
 	if detail.Body != "Hello!" {
 		t.Errorf("Body = %q, want %q", detail.Body, "Hello!")
