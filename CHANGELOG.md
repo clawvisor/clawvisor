@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.15](https://github.com/clawvisor/clawvisor/compare/v0.8.14...v0.8.15) (2026-04-18)
+
+
+### Features
+
+* add Get Started page with LLM-generated task suggestions ([#284](https://github.com/clawvisor/clawvisor/issues/284)) ([ce9b219](https://github.com/clawvisor/clawvisor/commit/ce9b219577e88dd1b24bf744eb2aaa9518168d3c))
+* add Perplexity adapter (chat + search actions) ([#283](https://github.com/clawvisor/clawvisor/issues/283)) ([73d96ce](https://github.com/clawvisor/clawvisor/commit/73d96ce3e97f10356553ac2ccc769f745e79b572))
+* **gmail:** include resolved label names on list_messages and get_message ([#285](https://github.com/clawvisor/clawvisor/issues/285)) ([fdcd0cf](https://github.com/clawvisor/clawvisor/commit/fdcd0cf70fe0403755d7333785aef41f8f9f066e))
+* **granola:** add Granola adapter for meeting notes and transcripts ([#280](https://github.com/clawvisor/clawvisor/issues/280)) ([e25a472](https://github.com/clawvisor/clawvisor/commit/e25a472ece47627dd0adc51a86fb35d90266b918))
+
+
+### Bug Fixes
+
+* **dashboard:** always show error_msg in task activity row ([#282](https://github.com/clawvisor/clawvisor/issues/282)) ([d721165](https://github.com/clawvisor/clawvisor/commit/d72116506c523b864669e334fa3d14bf2c9ab119))
+
 ## [0.8.14](https://github.com/clawvisor/clawvisor/compare/v0.8.13...v0.8.14) (2026-04-17)
 
 
