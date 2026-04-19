@@ -178,6 +178,38 @@ type Store interface {
 	ConsumePluginPairCode(ctx context.Context, codeHash string) (*PluginPairCode, error)
 	DeleteExpiredPluginPairCodes(ctx context.Context) error
 
+	// Proxy instances (Clawvisor Proxy registered for a bridge; Stage 1+).
+	// Authenticated via cvisproxy_... bearer token, scoped to proxy-facing
+	// ingest + config endpoints. See docs/design-proxy-stage1.md §3.1.
+	CreateProxyInstance(ctx context.Context, p *ProxyInstance) error
+	GetProxyInstanceByHash(ctx context.Context, tokenHash string) (*ProxyInstance, error)
+	GetProxyInstanceByID(ctx context.Context, id string) (*ProxyInstance, error)
+	GetProxyInstanceForBridge(ctx context.Context, bridgeID string) (*ProxyInstance, error)
+	TouchProxyInstanceLastSeen(ctx context.Context, id string) error
+	RevokeProxyInstance(ctx context.Context, id string) error
+	SetBridgeProxyEnabled(ctx context.Context, bridgeID, userID string, enabled bool) error
+
+	// Proxy signing keys (one row per (proxy_instance, key_id)). Public keys
+	// only; the private key stays with the proxy. Used for ex-post
+	// signature verification of TurnEvents; at Stage 1 this is audit
+	// metadata, at Stage 2+ it becomes an ingest gate.
+	RegisterProxySigningKey(ctx context.Context, k *ProxySigningKey) error
+	GetProxySigningKey(ctx context.Context, proxyInstanceID, keyID string) (*ProxySigningKey, error)
+	ListProxySigningKeys(ctx context.Context, proxyInstanceID string) ([]*ProxySigningKey, error)
+
+	// Transcript events ingested by the proxy. Stage 1+ auto-approval
+	// prefers these over plugin-scavenger data for channels the proxy
+	// can see. See docs/design-proxy-stage1.md §4 + §5.1.
+	InsertTranscriptEvent(ctx context.Context, e *TranscriptEvent) error
+	GetTranscriptEventByID(ctx context.Context, eventID string) (*TranscriptEvent, error)
+	ListTranscriptEvents(ctx context.Context, filter TranscriptEventFilter) ([]*TranscriptEvent, error)
+	DeleteExpiredTranscriptEvents(ctx context.Context, olderThan time.Time) error
+
+	// Transcript cross-check anomalies (proxy vs plugin disagreement).
+	// See docs/design-proxy-stage1.md §5.4.
+	CreateTranscriptAnomaly(ctx context.Context, a *TranscriptAnomaly) error
+	ListTranscriptAnomalies(ctx context.Context, bridgeID string, limit int) ([]*TranscriptAnomaly, error)
+
 	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
 	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error
 	ListGeneratedAdapters(ctx context.Context, userID string) ([]*GeneratedAdapter, error)
@@ -484,6 +516,11 @@ type BridgeToken struct {
 	InstallFingerprint  string     `json:"install_fingerprint"`
 	Hostname            string     `json:"hostname"`
 	AutoApprovalEnabled bool       `json:"auto_approval_enabled"`
+	// ProxyEnabled is true when the user has opted this bridge into the
+	// Stage 1+ Clawvisor Proxy architecture. When true, the plugin's
+	// scavenger is gated off server-side and the proxy becomes the
+	// authoritative transcript source. See docs/design-proxy-stage1.md §6.
+	ProxyEnabled bool `json:"proxy_enabled"`
 	// LastSeq is the high-water mark of ingest events accepted from this
 	// bridge. Advanced atomically by AdvanceBridgeLastSeq so racing
 	// ingests can't skip or reorder seq.
@@ -558,6 +595,87 @@ type PluginPairCode struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
+}
+
+// ProxyInstance is a Clawvisor Proxy registered against a bridge. One per
+// paired proxy; identified by a cvisproxy_... bearer token stored hashed.
+// Created at pair-time along with the bridge; rotated when the user re-runs
+// the Installer. See docs/design-proxy-stage1.md §3.1.
+type ProxyInstance struct {
+	ID                  string     `json:"id"`
+	BridgeID            string     `json:"bridge_id"`
+	TokenHash           string     `json:"-"`
+	CACertFingerprint   string     `json:"ca_cert_fingerprint"`
+	ProxyVersion        string     `json:"proxy_version"`
+	LastSeenAt          *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
+}
+
+// ProxySigningKey is a public-key record for a proxy-side Ed25519 signing
+// key. Proxy registers the public key at startup and on rotation; the
+// server uses it to verify TurnEvent signatures as audit metadata (Stage
+// 1) or as an ingest gate (Stage 2+). The private key stays with the
+// proxy and is never transmitted.
+type ProxySigningKey struct {
+	ID              string     `json:"id"`
+	ProxyInstanceID string     `json:"proxy_instance_id"`
+	KeyID           string     `json:"key_id"` // proxy-supplied, unique per proxy
+	Alg             string     `json:"alg"`    // "ed25519"
+	PublicKey       string     `json:"public_key"` // base64
+	RegisteredAt    time.Time  `json:"registered_at"`
+	RetiredAt       *time.Time `json:"retired_at,omitempty"`
+}
+
+// TranscriptEvent is one wire-observed turn (user, assistant, tool, or
+// system) captured by the Clawvisor Proxy. See docs/proxy-api.md §8.1 for
+// the full schema; the store form below normalizes a few fields from JSON
+// to Go types.
+type TranscriptEvent struct {
+	EventID         string    `json:"event_id"`
+	BridgeID        string    `json:"bridge_id"`
+	Source          string    `json:"source"`          // "proxy" | "plugin"
+	SourceVersion   string    `json:"source_version"`
+	Stream          string    `json:"stream"`          // "llm" | "channel" | "action"
+	AgentTokenID    string    `json:"agent_token_id"`
+	ConversationID  string    `json:"conversation_id"`
+	Provider        string    `json:"provider"`
+	Direction       string    `json:"direction"`       // "inbound" | "outbound"
+	Role            string    `json:"role"`            // "user" | "assistant" | "tool" | "system"
+	Text            string    `json:"text"`
+	ToolCallsJSON   string    `json:"tool_calls,omitempty"`
+	ToolResultsJSON string    `json:"tool_results,omitempty"`
+	RawRefJSON      string    `json:"raw_ref,omitempty"`
+	SignatureJSON   string    `json:"signature,omitempty"`
+	SigStatus       string    `json:"sig_status"` // "valid" | "invalid" | "unsigned"
+	TS              time.Time `json:"ts"`
+	IngestedAt      time.Time `json:"ingested_at"`
+}
+
+// TranscriptEventFilter scopes a ListTranscriptEvents query. All fields
+// optional; zero-value means "don't filter on this."
+type TranscriptEventFilter struct {
+	BridgeID       string
+	ConversationID string
+	Source         string    // "" = any; "proxy" / "plugin" specifically
+	Stream         string    // "" = any; "channel" / "llm" / "action"
+	Since          time.Time // events with ts >= Since; zero = no floor
+	Until          time.Time // events with ts <= Until; zero = no ceiling
+	Limit          int       // 0 = default (100)
+	OrderDescending bool     // default false = ascending; DESC for dashboard "most recent first"
+}
+
+// TranscriptAnomaly records a cross-check disagreement between proxy-
+// sourced and plugin-sourced transcripts for the same conversation.
+type TranscriptAnomaly struct {
+	ID             string     `json:"id"`
+	BridgeID       string     `json:"bridge_id"`
+	ConversationID string     `json:"conversation_id"`
+	Kind           string     `json:"kind"`   // "plugin_only" | "proxy_only" | "content_mismatch"
+	DetailJSON     string     `json:"detail"`
+	DetectedAt     time.Time  `json:"detected_at"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+	ResolvedBy     string     `json:"resolved_by,omitempty"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).

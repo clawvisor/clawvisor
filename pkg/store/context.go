@@ -35,3 +35,21 @@ func BridgeFromContext(ctx context.Context) *BridgeToken {
 func WithBridge(ctx context.Context, bt *BridgeToken) context.Context {
 	return context.WithValue(ctx, BridgeContextKey{}, bt)
 }
+
+// ProxyContextKey is the context key for the authenticated Clawvisor
+// Proxy instance. Set by RequireProxy middleware. Distinct from
+// BridgeContextKey because the proxy has its own token type (cvisproxy_)
+// with narrower scope than bridge tokens.
+type ProxyContextKey struct{}
+
+// ProxyFromContext retrieves the authenticated proxy instance from a
+// request context. Returns nil if no proxy is set.
+func ProxyFromContext(ctx context.Context) *ProxyInstance {
+	p, _ := ctx.Value(ProxyContextKey{}).(*ProxyInstance)
+	return p
+}
+
+// WithProxy returns a new context with the given proxy instance set.
+func WithProxy(ctx context.Context, p *ProxyInstance) context.Context {
+	return context.WithValue(ctx, ProxyContextKey{}, p)
+}

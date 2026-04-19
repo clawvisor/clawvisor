@@ -1890,14 +1890,14 @@ func (s *Store) CreateBridgeToken(ctx context.Context, bt *store.BridgeToken) er
 
 func (s *Store) GetBridgeTokenByHash(ctx context.Context, tokenHash string) (*store.BridgeToken, error) {
 	return s.scanBridgeToken(ctx,
-		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, proxy_enabled, last_seq, created_at, last_used_at, revoked_at
 		 FROM bridge_tokens WHERE token_hash = $1`,
 		tokenHash)
 }
 
 func (s *Store) GetBridgeTokenByID(ctx context.Context, id string) (*store.BridgeToken, error) {
 	return s.scanBridgeToken(ctx,
-		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, proxy_enabled, last_seq, created_at, last_used_at, revoked_at
 		 FROM bridge_tokens WHERE id = $1`,
 		id)
 }
@@ -1907,7 +1907,7 @@ func (s *Store) scanBridgeToken(ctx context.Context, query, arg string) (*store.
 	var lastUsedAt, revokedAt *time.Time
 	err := s.pool.QueryRow(ctx, query, arg).Scan(
 		&bt.ID, &bt.UserID, &bt.TokenHash, &bt.InstallFingerprint, &bt.Hostname,
-		&bt.AutoApprovalEnabled, &bt.LastSeq, &bt.CreatedAt, &lastUsedAt, &revokedAt)
+		&bt.AutoApprovalEnabled, &bt.ProxyEnabled, &bt.LastSeq, &bt.CreatedAt, &lastUsedAt, &revokedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1921,14 +1921,14 @@ func (s *Store) scanBridgeToken(ctx context.Context, query, arg string) (*store.
 
 func (s *Store) ListBridgeTokens(ctx context.Context, userID string) ([]*store.BridgeToken, error) {
 	return s.queryBridgeTokens(ctx, `
-		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, proxy_enabled, last_seq, created_at, last_used_at, revoked_at
 		FROM bridge_tokens WHERE user_id = $1 ORDER BY created_at DESC
 	`, userID)
 }
 
 func (s *Store) ListActiveBridgesForUser(ctx context.Context, userID string) ([]*store.BridgeToken, error) {
 	return s.queryBridgeTokens(ctx, `
-		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, proxy_enabled, last_seq, created_at, last_used_at, revoked_at
 		FROM bridge_tokens WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC
 	`, userID)
 }
@@ -1944,7 +1944,7 @@ func (s *Store) queryBridgeTokens(ctx context.Context, query, arg string) ([]*st
 		bt := &store.BridgeToken{}
 		var lastUsedAt, revokedAt *time.Time
 		if err := rows.Scan(&bt.ID, &bt.UserID, &bt.TokenHash, &bt.InstallFingerprint, &bt.Hostname,
-			&bt.AutoApprovalEnabled, &bt.LastSeq, &bt.CreatedAt, &lastUsedAt, &revokedAt); err != nil {
+			&bt.AutoApprovalEnabled, &bt.ProxyEnabled, &bt.LastSeq, &bt.CreatedAt, &lastUsedAt, &revokedAt); err != nil {
 			return nil, err
 		}
 		bt.LastUsedAt = lastUsedAt

@@ -469,6 +469,7 @@ func (s *Server) routes() http.Handler {
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
 	requireBridge := middleware.RequireBridge(s.store)
+	requireProxy := middleware.RequireProxy(s.store)
 	logMiddleware := middleware.Logging(s.logger)
 	recoverMiddleware := middleware.Recover(s.logger)
 	securityMiddleware := middleware.Security(s.cfg.Server.IsLocal() && s.cfg.Server.PublicURL == "")
@@ -727,6 +728,15 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/plugin/bridges/{id}/buffer", user(pluginPairing.BufferForBridge))
 	mux.Handle("PATCH /api/plugin/bridges/{id}", user(pluginPairing.PatchBridge))
 	mux.Handle("DELETE /api/plugin/bridges/{id}", user(pluginPairing.RevokeBridge))
+
+	// Proxy-facing endpoints (Clawvisor Proxy; cvisproxy_... bearer token).
+	// See docs/proxy-api.md §5 for the wire contract. The proxy authenticates
+	// once and calls these to fetch config, ingest TurnEvents, and rotate
+	// signing keys. Never reached by agents or plugins.
+	proxyHandler := handlers.NewProxyHandler(s.store, s.logger)
+	mux.Handle("GET /api/proxy/config", requireProxy(e2e(http.HandlerFunc(proxyHandler.Config))))
+	mux.Handle("POST /api/proxy/turns", requireProxy(e2e(http.HandlerFunc(proxyHandler.Turns))))
+	mux.Handle("POST /api/proxy/signing-keys/rotate", requireProxy(e2e(http.HandlerFunc(proxyHandler.SigningKeyRotate))))
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
