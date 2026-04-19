@@ -5,13 +5,6 @@ import { api } from '../api/client'
 
 const DISMISS_KEY = 'clawvisor_onboarding_dismissed'
 
-interface Step {
-  label: string
-  description: string
-  to: string
-  done: boolean
-}
-
 export default function OnboardingBanner() {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1')
 
@@ -26,7 +19,6 @@ export default function OnboardingBanner() {
   })
 
   if (dismissed) return null
-  // Wait for data before deciding
   if (services === undefined || agents === undefined) return null
 
   const hasService = (services.services ?? []).some(
@@ -35,17 +27,12 @@ export default function OnboardingBanner() {
   )
   const hasAgent = (agents ?? []).length > 0
 
-  // All done — don't show
   if (hasService && hasAgent) return null
 
-  const steps: Step[] = [
-    { label: 'Connect a service', description: 'Link an API like Slack, Gmail, or GitHub so your agents can take actions on your behalf.', to: '/dashboard/services', done: hasService },
-    { label: 'Connect an agent', description: 'Create an agent token and plug it into Claude Code, OpenClaw, or your own bot.', to: '/dashboard/agents', done: hasAgent },
-  ]
-
-  const currentIdx = steps.findIndex(s => !s.done)
-  const current = steps[currentIdx]!
-  const completedCount = steps.filter(s => s.done).length
+  const missing: string[] = []
+  if (!hasService) missing.push('a service')
+  if (!hasAgent) missing.push('an agent')
+  const missingText = missing.join(' and ')
 
   function handleDismiss() {
     localStorage.setItem(DISMISS_KEY, '1')
@@ -56,35 +43,25 @@ export default function OnboardingBanner() {
     <div className="mx-4 mt-3 px-4 py-3.5 rounded-md bg-brand-muted border border-brand/30 text-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3 min-w-0">
-          {/* Progress dots */}
-          <div className="flex items-center gap-1.5 mt-1.5">
-            {steps.map((s, i) => (
-              <div
-                key={i}
-                className={`w-2 h-2 rounded-full ${
-                  s.done
-                    ? 'bg-brand'
-                    : i === currentIdx
-                      ? 'bg-brand animate-pulse'
-                      : 'bg-border-default'
-                }`}
-              />
-            ))}
+          <div className="shrink-0 w-8 h-8 rounded-full bg-brand/15 text-brand flex items-center justify-center mt-0.5">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+              <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+              <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+              <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+            </svg>
           </div>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-text-primary">Get started</span>
-              <span className="text-text-tertiary">
-                — step {completedCount + 1} of {steps.length}
-              </span>
-            </div>
-            <p className="text-text-secondary mt-0.5">{current.description}</p>
+            <div className="font-medium text-text-primary">Finish setting up Clawvisor</div>
+            <p className="text-text-secondary mt-0.5">
+              Connect {missingText} to unlock task approvals and personalized suggestions.
+            </p>
             <NavLink
-              to={current.to}
+              to="/dashboard/get-started"
               className="inline-flex items-center gap-1 text-brand font-medium hover:text-brand-strong transition-colors mt-1.5"
             >
-              {current.label}
+              Open Get Started
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M9 5l7 7-7 7" />
               </svg>
