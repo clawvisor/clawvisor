@@ -144,9 +144,11 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide whether to call the LLM.
+	// Decide whether to call the LLM. Vertex authenticates via GCP ADC rather
+	// than an API key, so an empty APIKey is only "unconfigured" for other
+	// providers.
 	cfg := h.llmHealth.LLMConfig()
-	if cfg.APIKey == "" {
+	if cfg.APIKey == "" && cfg.Provider != "vertex" {
 		resp.LLMStatus = "unconfigured"
 		writeJSON(w, http.StatusOK, resp)
 		return
