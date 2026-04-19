@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -110,8 +111,18 @@ func fillUsage(ctx context.Context, st store.Store, e *event, logger *slog.Logge
 		return
 	}
 	e.Agents = bucket(counts.Agents)
-	e.ServiceUsage = make(map[string]string, len(counts.RequestsByService))
+	// Strip connection aliases (e.g. "google.gmail:personal" → "google.gmail")
+	// and aggregate counts per service before bucketing, so telemetry never
+	// reveals per-account identifiers.
+	aggregated := make(map[string]int, len(counts.RequestsByService))
 	for svc, n := range counts.RequestsByService {
+		if idx := strings.IndexByte(svc, ':'); idx >= 0 {
+			svc = svc[:idx]
+		}
+		aggregated[svc] += n
+	}
+	e.ServiceUsage = make(map[string]string, len(aggregated))
+	for svc, n := range aggregated {
 		e.ServiceUsage[svc] = bucket(n)
 	}
 }
