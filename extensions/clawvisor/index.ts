@@ -278,19 +278,45 @@ export default definePluginEntry({
       // Flip on message forwarding — hooks reference these via closure
       // and will start actually forwarding immediately.
       bridgeToken = secrets.bridgeToken;
+      const bridgeClient = new BridgeClient(config.url!, secrets.bridgeToken!);
       bridge = new MessageBridge({
-        client: new BridgeClient(config.url!, secrets.bridgeToken!),
+        client: bridgeClient,
         groupChatId: config.groupChatId ?? "openclaw-default",
         logger: api.logger,
       });
-      // Build the outbound scavenger. Default agent id = first configured
-      // agent (usually "main") for the case when ctx.agentId isn't
-      // populated on the message_received hook.
-      scavenge = createScavenger({
-        bridge,
-        logger: api.logger,
-        defaultAgentId: agentIds[0] ?? "main",
-      });
+
+      // Ask the server whether the Clawvisor Proxy is active for this
+      // bridge. If it is, the proxy is the authoritative transcript
+      // source and we skip the scavenger entirely (its JSONL output is
+      // agent-tamperable; redundant when the proxy is in the path).
+      // Default to "scavenger on" if the fetch fails — Stage 0 safe fallback.
+      let scavengerEnabled = true;
+      try {
+        const runtimeConfig = await bridgeClient.fetchSelfConfig();
+        scavengerEnabled = runtimeConfig.scavenger_enabled;
+        api.logger.info(
+          `clawvisor: runtime config — proxy_enabled=${runtimeConfig.proxy_enabled} scavenger_enabled=${runtimeConfig.scavenger_enabled}`,
+        );
+      } catch (err) {
+        api.logger.warn(
+          `clawvisor: could not fetch runtime config, defaulting scavenger_enabled=true (${(err as Error).message})`,
+        );
+      }
+
+      if (scavengerEnabled) {
+        // Build the outbound scavenger. Default agent id = first configured
+        // agent (usually "main") for the case when ctx.agentId isn't
+        // populated on the message_received hook.
+        scavenge = createScavenger({
+          bridge,
+          logger: api.logger,
+          defaultAgentId: agentIds[0] ?? "main",
+        });
+      } else {
+        api.logger.info(
+          "clawvisor: scavenger disabled — Clawvisor Proxy is authoritative for transcripts on this bridge",
+        );
+      }
 
       api.logger.info(
         `clawvisor plugin ready: ${clients.size} agent(s) connected to ${config.url}`,

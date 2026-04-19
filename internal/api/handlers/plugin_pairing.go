@@ -856,6 +856,35 @@ func (h *PluginPairingHandler) renderInstallArtifact(ctx context.Context, bridge
 	return art, nil
 }
 
+// ── Plugin runtime config (read by plugin at startup) ──────────────────────
+
+type bridgeRuntimeConfigResponse struct {
+	BridgeID         string `json:"bridge_id"`
+	ProxyEnabled     bool   `json:"proxy_enabled"`
+	// ScavengerEnabled tells the plugin whether to run its JSONL-scavenger
+	// code path. Always the inverse of ProxyEnabled: when the proxy is
+	// authoritative for transcripts we don't want a second tamperable
+	// source. Plugin reads this at startup and on a periodic poll.
+	ScavengerEnabled bool `json:"scavenger_enabled"`
+}
+
+// BridgeSelfConfig handles GET /api/plugin/bridges/self/config.
+// Authenticated by the bridge token itself (not user JWT). Returns the
+// runtime flags the plugin reads at startup + heartbeat. Scoped tight —
+// no user data, just flags the plugin needs to decide how to behave.
+func (h *PluginPairingHandler) BridgeSelfConfig(w http.ResponseWriter, r *http.Request) {
+	bridge := middleware.BridgeFromContext(r.Context())
+	if bridge == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	writeJSON(w, http.StatusOK, bridgeRuntimeConfigResponse{
+		BridgeID:         bridge.ID,
+		ProxyEnabled:     bridge.ProxyEnabled,
+		ScavengerEnabled: !bridge.ProxyEnabled,
+	})
+}
+
 // InstallArtifact handles GET /api/plugin/bridges/{id}/install-artifact.
 // Returns the current artifact for an already-enabled bridge. Does NOT
 // return the proxy token (that's shown only once on enable). Useful for

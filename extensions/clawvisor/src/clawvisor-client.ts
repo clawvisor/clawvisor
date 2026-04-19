@@ -195,6 +195,21 @@ export class BridgeClient {
       LONG_POLL_TIMEOUT_MS,
     );
   }
+
+  /**
+   * Fetch the plugin runtime config: whether the Clawvisor Proxy is
+   * enabled for this bridge (in which case the scavenger goes dormant
+   * and the proxy becomes the authoritative transcript source).
+   */
+  async fetchSelfConfig(): Promise<{ bridge_id: string; proxy_enabled: boolean; scavenger_enabled: boolean }> {
+    const raw = await httpRequest(
+      this.baseUrl,
+      "GET",
+      "/api/plugin/bridges/self/config",
+      this.bridgeToken,
+    );
+    return raw as { bridge_id: string; proxy_enabled: boolean; scavenger_enabled: boolean };
+  }
 }
 
 /**

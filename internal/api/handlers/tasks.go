@@ -21,6 +21,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
+	"github.com/clawvisor/clawvisor/internal/transcript"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/notify"
@@ -390,6 +391,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	approvalSource := ""
 	autoApprovalEnabled := false
 	autoApprovalNotify := true // on by default
+	// attestingBridge is the bridge that authorized this group-chat auto-
+	// approval path (OpenClaw-plugin case only; Telegram polling leaves it
+	// nil). When the bridge has ProxyEnabled=true we prefer proxy-sourced
+	// transcripts (tamper-proof) over plugin-sourced buffer entries.
+	var attestingBridge *store.BridgeToken
 	if h.agentPairer != nil {
 		groupChatID, _ = h.agentPairer.AgentGroupChatID(ctx, agent.ID)
 	}
@@ -404,6 +410,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			groupChatID = gid
 			approvalSource = "openclaw_plugin"
 			autoApprovalEnabled = true
+			attestingBridge = bridge
 		}
 	}
 	if autoApprovalEnabled && groupChatID != "" && h.msgBuffer != nil && h.llmHealth != nil &&
@@ -417,7 +424,16 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !hasHardcoded {
-			messages := h.msgBuffer.Messages(groupchat.UserScopedKey(agent.UserID, groupChatID))
+			// Source-ranked read: proxy > plugin when proxy is enabled for
+			// this bridge. See internal/transcript/transcript.go.
+			bridgeID := ""
+			proxyEnabled := false
+			if attestingBridge != nil {
+				bridgeID = attestingBridge.ID
+				proxyEnabled = attestingBridge.ProxyEnabled
+			}
+			messages, _ := transcript.Recent(ctx, h.st, h.msgBuffer,
+				bridgeID, agent.UserID, groupChatID, proxyEnabled, time.Time{}, 0)
 			if len(messages) > 0 {
 				var actionStrs []string
 				for _, a := range req.AuthorizedActions {

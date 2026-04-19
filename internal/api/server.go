@@ -30,6 +30,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
+	"github.com/clawvisor/clawvisor/internal/transcript"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -745,6 +746,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/plugin/bridges/{id}/enable-proxy", user(pluginPairing.EnableProxy))
 	mux.Handle("POST /api/plugin/bridges/{id}/disable-proxy", user(pluginPairing.DisableProxy))
 	mux.Handle("GET /api/plugin/bridges/{id}/install-artifact", user(pluginPairing.InstallArtifact))
+	// Plugin-read runtime config (authed by bridge token, not user JWT).
+	// Plugin hits this on startup + periodic heartbeat to decide whether
+	// to run its scavenger code path.
+	mux.Handle("GET /api/plugin/bridges/self/config", requireBridge(e2e(http.HandlerFunc(pluginPairing.BridgeSelfConfig))))
 
 	// Proxy-facing endpoints (Clawvisor Proxy; cvisproxy_... bearer token).
 	// See docs/proxy-api.md §5 for the wire contract. The proxy authenticates
@@ -1174,6 +1179,24 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.msgBuffer != nil {
 		go s.msgBuffer.RunCleanup(ctx)
 	}
+
+	// Start transcript cross-check anomaly detector (Stage 1 §5.4).
+	// Runs every 5 minutes, looks back 15 minutes, records disagreements
+	// between proxy- and plugin-sourced transcripts. Lightweight; non-
+	// blocking on bridge failures; only considers proxy-enabled bridges.
+	go func() {
+		cc := transcript.NewCrossChecker(s.store, s.msgBuffer, s.logger)
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cc.RunOnce(ctx, 15*time.Minute)
+			}
+		}
+	}()
 	if bo, ok := s.notifier.(interface {
 		BootstrapGroupObservation(context.Context)
 	}); ok {
