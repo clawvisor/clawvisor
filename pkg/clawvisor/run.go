@@ -124,6 +124,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.VerdictCache != nil {
 		apiOpts = append(apiOpts, api.WithVerdictCache(opts.VerdictCache))
 	}
+	if opts.ExtractionTracker != nil {
+		apiOpts = append(apiOpts, api.WithExtractionTracker(opts.ExtractionTracker))
+	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))
 	}

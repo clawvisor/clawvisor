@@ -96,6 +96,7 @@ type Server struct {
 	pairingCodeStore   handlers.PairingCodeStore
 	dedupCache         handlers.DedupCache
 	verdictCache       intent.VerdictCacher
+	extractionTracker  handlers.ExtractionTracker
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -281,6 +282,12 @@ func WithVerdictCache(vc intent.VerdictCacher) ServerOption {
 	return func(s *Server) { s.verdictCache = vc }
 }
 
+// WithExtractionTracker overrides the default in-memory extraction tracker.
+// Use the Redis-backed tracker in multi-instance deployments.
+func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
+	return func(s *Server) { s.extractionTracker = t }
+}
+
 // New creates a Server and registers all routes.
 // magicStore may be nil when magic link auth is not enabled.
 func New(
@@ -415,6 +422,9 @@ func (s *Server) routes() http.Handler {
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	if s.extractionTracker != nil {
+		gatewayHandler.SetExtractionTracker(s.extractionTracker)
+	}
 	if s.gatewayHooks != nil {
 		gatewayHandler.SetGatewayHooks(&handlers.GatewayHooks{
 			BeforeAuthorize: s.gatewayHooks.BeforeAuthorize,

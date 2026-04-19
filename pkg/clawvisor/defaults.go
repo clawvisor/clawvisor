@@ -322,6 +322,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var pairingCodeStore handlers.PairingCodeStore
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
+	var extractionTracker handlers.ExtractionTracker
 	if cfg.Redis.URL != "" {
 		rdb, err := intredis.Connect(ctx, cfg.Redis.URL)
 		if err != nil {
@@ -350,6 +351,10 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			verdictTTL = 60 * time.Second
 		}
 		verdictCache = intent.NewRedisVerdictCache(rdb, verdictTTL)
+
+		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
+		// so a crashed instance doesn't orphan entries.
+		extractionTracker = handlers.NewRedisExtractionTracker(rdb, 60*time.Second)
 
 		// Redis-backed group chat buffer.
 		msgBuffer = groupchat.NewRedisMessageBuffer(rdb, 20, 15*time.Minute)
@@ -393,6 +398,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		PairingCodeStore:   pairingCodeStore,
 		DedupCache:         dedupCache,
 		VerdictCache:       verdictCache,
+		ExtractionTracker:  extractionTracker,
 	}
 
 	// Wire relay client when configured.

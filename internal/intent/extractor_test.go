@@ -1,8 +1,11 @@
 package intent
 
 import (
+	"fmt"
 	"log/slog"
 	"testing"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 func TestParseExtractionResponse_NewFormat(t *testing.T) {
@@ -193,5 +196,197 @@ func TestRunExtractionPatterns_CapsAtMaxMatches(t *testing.T) {
 	matches := runExtractionPatterns(patterns, string(sb), slog.Default(), "test")
 	if len(matches) > maxRegexMatches {
 		t.Errorf("expected at most %d matches, got %d", maxRegexMatches, len(matches))
+	}
+}
+
+// --- mergeExtractionResults: post-LLM merge logic ---
+
+// factValues collects fact_values for a given fact_type from a ChainFact slice.
+func factValues(facts []*store.ChainFact, factType string) []string {
+	var out []string
+	for _, f := range facts {
+		if f.FactType == factType {
+			out = append(out, f.FactValue)
+		}
+	}
+	return out
+}
+
+func makeMergeReq(result string) ExtractRequest {
+	return ExtractRequest{
+		TaskID:    "task-1",
+		SessionID: "sess-1",
+		AuditID:   "audit-1",
+		Service:   "google.gmail",
+		Action:    "list_messages",
+		Result:    result,
+	}
+}
+
+func TestMergeExtractionResults_DirectFactsOnly(t *testing.T) {
+	// No patterns → only direct facts land. Substring validation against
+	// the full result gates entry.
+	result := `{"messages":[{"id":"aabbccddee112233"},{"id":"ffee112233445566"}]}`
+	direct := []extractedFact{
+		{FactType: "message_id", FactValue: "aabbccddee112233"},
+		{FactType: "message_id", FactValue: "ffee112233445566"},
+	}
+
+	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	if dropped != 0 {
+		t.Errorf("expected 0 dropped, got %d", dropped)
+	}
+	got := factValues(facts, "message_id")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 message_ids, got %d: %v", len(got), got)
+	}
+}
+
+func TestMergeExtractionResults_RegexFillsInMissedIDs(t *testing.T) {
+	// This is the core fix: the LLM returned only 2 of 3 message_ids in its
+	// direct facts, and the result is NOT truncated. Previously regex would
+	// be skipped; now it runs and fills in the missing ID.
+	result := `{"messages":[` +
+		`{"id":"aabbccddee112233"},` +
+		`{"id":"ffee112233445566"},` +
+		`{"id":"112233445566778a"}` +
+		`]}`
+	direct := []extractedFact{
+		{FactType: "message_id", FactValue: "aabbccddee112233"},
+		{FactType: "message_id", FactValue: "ffee112233445566"},
+		// "112233445566778a" was silently omitted by the LLM.
+	}
+	patterns := []extractionPattern{
+		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
+	}
+
+	facts, _ := mergeExtractionResults(direct, patterns, makeMergeReq(result), slog.Default())
+	got := factValues(facts, "message_id")
+	if len(got) != 3 {
+		t.Fatalf("expected all 3 message_ids after regex fill-in, got %d: %v", len(got), got)
+	}
+	// Verify the missed ID is there.
+	found := false
+	for _, v := range got {
+		if v == "112233445566778a" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected missed ID 112233445566778a to be rescued by regex, got %v", got)
+	}
+}
+
+func TestMergeExtractionResults_DedupOverlap(t *testing.T) {
+	// LLM direct facts and regex matches overlap on the same IDs. Dedup
+	// keeps exactly one of each — no double-count.
+	result := `{"messages":[{"id":"aabbccddee112233"},{"id":"ffee112233445566"}]}`
+	direct := []extractedFact{
+		{FactType: "message_id", FactValue: "aabbccddee112233"},
+		{FactType: "message_id", FactValue: "ffee112233445566"},
+	}
+	patterns := []extractionPattern{
+		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
+	}
+
+	facts, _ := mergeExtractionResults(direct, patterns, makeMergeReq(result), slog.Default())
+	got := factValues(facts, "message_id")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 unique message_ids after dedup, got %d: %v", len(got), got)
+	}
+}
+
+func TestMergeExtractionResults_SubstringValidationDrops(t *testing.T) {
+	// LLM hallucinated a value that doesn't appear in the raw result —
+	// drop it. This is a security property: we never record facts the LLM
+	// invented from thin air.
+	result := `{"messages":[{"id":"aabbccddee112233"}]}`
+	direct := []extractedFact{
+		{FactType: "message_id", FactValue: "aabbccddee112233"},  // legit
+		{FactType: "message_id", FactValue: "deadbeefdeadbeef"},  // hallucinated
+	}
+
+	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	if dropped != 1 {
+		t.Errorf("expected 1 dropped (hallucinated value), got %d", dropped)
+	}
+	got := factValues(facts, "message_id")
+	if len(got) != 1 || got[0] != "aabbccddee112233" {
+		t.Errorf("expected only the legit ID, got %v", got)
+	}
+}
+
+func TestMergeExtractionResults_CapsAtMaxExtractedFacts(t *testing.T) {
+	// Generate a result with 60 distinct message IDs — more than the 50
+	// fact cap. The final list is truncated to maxExtractedFacts.
+	var result []byte
+	result = append(result, []byte(`{"messages":[`)...)
+	for i := 0; i < 60; i++ {
+		if i > 0 {
+			result = append(result, ',')
+		}
+		// 16-hex-char IDs, distinct.
+		result = append(result, []byte(fmt.Sprintf(`{"id":"%016x"}`, 0xaabbcc000000+i))...)
+	}
+	result = append(result, []byte(`]}`)...)
+
+	patterns := []extractionPattern{
+		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
+	}
+
+	facts, _ := mergeExtractionResults(nil, patterns, makeMergeReq(string(result)), slog.Default())
+	if len(facts) > maxExtractedFacts {
+		t.Errorf("expected at most %d facts, got %d", maxExtractedFacts, len(facts))
+	}
+	if len(facts) != maxExtractedFacts {
+		t.Errorf("expected exactly %d facts at the cap, got %d", maxExtractedFacts, len(facts))
+	}
+}
+
+func TestMergeExtractionResults_SkipsEmptyFields(t *testing.T) {
+	// Direct facts with empty type or value are dropped rather than stored.
+	direct := []extractedFact{
+		{FactType: "", FactValue: "something"},
+		{FactType: "message_id", FactValue: ""},
+		{FactType: "message_id", FactValue: "aabbccddee112233"},
+	}
+	result := `{"id":"aabbccddee112233"}`
+
+	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	if dropped != 2 {
+		t.Errorf("expected 2 dropped (empty fields), got %d", dropped)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 surviving fact, got %d", len(facts))
+	}
+}
+
+func TestMergeExtractionResults_PatternsOnly(t *testing.T) {
+	// No direct facts (LLM failed or returned nothing), patterns run
+	// against full result.
+	result := `{"messages":[{"id":"aabbccddee112233"},{"id":"ffee112233445566"}]}`
+	patterns := []extractionPattern{
+		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
+	}
+
+	facts, dropped := mergeExtractionResults(nil, patterns, makeMergeReq(result), slog.Default())
+	if dropped != 0 {
+		t.Errorf("expected 0 dropped, got %d", dropped)
+	}
+	got := factValues(facts, "message_id")
+	if len(got) != 2 {
+		t.Errorf("expected 2 message_ids from patterns, got %v", got)
+	}
+}
+
+func TestMergeExtractionResults_NoPatternsNoDirect(t *testing.T) {
+	// Empty inputs → empty output, no panic.
+	facts, dropped := mergeExtractionResults(nil, nil, makeMergeReq("irrelevant"), slog.Default())
+	if dropped != 0 {
+		t.Errorf("expected 0 dropped, got %d", dropped)
+	}
+	if len(facts) != 0 {
+		t.Errorf("expected 0 facts, got %d", len(facts))
 	}
 }

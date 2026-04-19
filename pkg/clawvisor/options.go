@@ -131,6 +131,7 @@ type ServerOptions struct {
 	PairingCodeStore  handlers.PairingCodeStore
 	DedupCache        handlers.DedupCache
 	VerdictCache      intent.VerdictCacher
+	ExtractionTracker handlers.ExtractionTracker
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

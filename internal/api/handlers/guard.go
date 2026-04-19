@@ -154,7 +154,7 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 
 		// Chain context fallback: same as gateway handler.
 		if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
-			verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+			verdict = chainContextFallback(ctx, h.store, nil, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
 		}
 		if verdict != nil && !verdict.Allow {
 			respond("deny", verdict.Explanation, taskID, verdict)

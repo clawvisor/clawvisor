@@ -130,62 +130,7 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 		}
 	}
 
-	// Validate direct facts via substring match against the full result.
-	seen := make(map[string]bool)
-	var facts []*store.ChainFact
-	var dropped int
-	for _, ef := range directFacts {
-		if ef.FactType == "" || ef.FactValue == "" {
-			dropped++
-			continue
-		}
-		if !substringMatch(req.Result, ef.FactValue, ef.FactType) {
-			dropped++
-			continue
-		}
-		key := ef.FactType + "|" + ef.FactValue
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		facts = append(facts, &store.ChainFact{
-			ID:        uuid.New().String(),
-			TaskID:    req.TaskID,
-			SessionID: req.SessionID,
-			AuditID:   req.AuditID,
-			Service:   req.Service,
-			Action:    req.Action,
-			FactType:  ef.FactType,
-			FactValue: ef.FactValue,
-		})
-	}
-
-	// Run regex patterns against the FULL result to capture entities beyond
-	// the 4KB window the LLM saw, or to provide extraction when the LLM is unavailable.
-	if len(patterns) > 0 && (truncated || llmFailed || len(directFacts) == 0) {
-		regexFacts := runExtractionPatterns(patterns, req.Result, e.logger, req.TaskID)
-		for _, rf := range regexFacts {
-			key := rf.factType + "|" + rf.factValue
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			facts = append(facts, &store.ChainFact{
-				ID:        uuid.New().String(),
-				TaskID:    req.TaskID,
-				SessionID: req.SessionID,
-				AuditID:   req.AuditID,
-				Service:   req.Service,
-				Action:    req.Action,
-				FactType:  rf.factType,
-				FactValue: rf.factValue,
-			})
-		}
-	}
-
-	if len(facts) > maxExtractedFacts {
-		facts = facts[:maxExtractedFacts]
-	}
+	facts, dropped := mergeExtractionResults(directFacts, patterns, req, e.logger)
 
 	e.logger.Debug("chain context extraction complete",
 		"task_id", req.TaskID,
@@ -198,6 +143,66 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 	)
 
 	return facts, nil
+}
+
+// mergeExtractionResults validates direct facts against the full result and
+// augments them with regex-pattern matches, deduped by (fact_type, fact_value).
+//
+// Regex always runs when patterns exist. An earlier version gated regex on
+// "truncated || llm_failed || no direct facts", but that caused silent
+// misses on small list responses: the LLM's 20-direct-fact soft cap could
+// omit an ID the response contained, and regex — the only mechanism that
+// would have caught it — was skipped because nothing looked wrong. Facts
+// are deduped and capped, so there's no double-counting or overflow cost.
+func mergeExtractionResults(
+	directFacts []extractedFact,
+	patterns []extractionPattern,
+	req ExtractRequest,
+	logger *slog.Logger,
+) (facts []*store.ChainFact, dropped int) {
+	seen := make(map[string]bool)
+
+	appendFact := func(factType, factValue string) {
+		key := factType + "|" + factValue
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		facts = append(facts, &store.ChainFact{
+			ID:        uuid.New().String(),
+			TaskID:    req.TaskID,
+			SessionID: req.SessionID,
+			AuditID:   req.AuditID,
+			Service:   req.Service,
+			Action:    req.Action,
+			FactType:  factType,
+			FactValue: factValue,
+		})
+	}
+
+	for _, ef := range directFacts {
+		if ef.FactType == "" || ef.FactValue == "" {
+			dropped++
+			continue
+		}
+		if !substringMatch(req.Result, ef.FactValue, ef.FactType) {
+			dropped++
+			continue
+		}
+		appendFact(ef.FactType, ef.FactValue)
+	}
+
+	if len(patterns) > 0 {
+		regexFacts := runExtractionPatterns(patterns, req.Result, logger, req.TaskID)
+		for _, rf := range regexFacts {
+			appendFact(rf.factType, rf.factValue)
+		}
+	}
+
+	if len(facts) > maxExtractedFacts {
+		facts = facts[:maxExtractedFacts]
+	}
+	return facts, dropped
 }
 
 type extractedFact struct {

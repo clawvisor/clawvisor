@@ -74,6 +74,7 @@ type GatewayHandler struct {
 	notifier     notify.Notifier // may be nil if Telegram not configured
 	verifier     intent.Verifier
 	extractor    intent.Extractor
+	extractTrack ExtractionTracker // tracks in-flight async extractions; never nil
 	cfg          config.Config
 	logger       *slog.Logger
 	baseURL      string
@@ -98,8 +99,18 @@ func NewGatewayHandler(
 	return &GatewayHandler{
 		store: st, vault: v, adapterReg: adapterReg,
 		notifier: notifier, verifier: verifier, extractor: extractor,
+		extractTrack: NewMemoryExtractionTracker(60 * time.Second),
 		cfg: cfg, logger: logger, baseURL: baseURL,
 		eventHub: eventHub,
+	}
+}
+
+// SetExtractionTracker overrides the default in-memory tracker. Use the
+// Redis-backed tracker in multi-instance deployments so that a request
+// arriving on server B can see that server A is still extracting.
+func (h *GatewayHandler) SetExtractionTracker(t ExtractionTracker) {
+	if t != nil {
+		h.extractTrack = t
 	}
 }
 
@@ -585,7 +596,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
 				}
 				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
-					verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+					verdict = chainContextFallback(ctx, h.store, h.extractTrack, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
 				}
 				if verdict != nil && !verdict.Allow {
 					dur := int(time.Since(start).Milliseconds())
@@ -654,7 +665,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				// check programmatically — the LLM may have missed it in a long
 				// table, or it may exist beyond the loaded fact limit.
 				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
-					verdict = chainContextFallback(ctx, h.store, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
+					verdict = chainContextFallback(ctx, h.store, h.extractTrack, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
 				}
 				if verdict != nil && !verdict.Allow {
 					dur := int(time.Since(start).Milliseconds())
@@ -818,7 +829,18 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			if chainSessionID != "" && verdict != nil && verdict.ExtractContext {
 				resultJSON, _ := json.Marshal(result)
+				// Mark synchronously (before returning to the agent) so a
+				// follow-up request sees the pending flag even if it arrives
+				// before the goroutine is scheduled.
+				markCtx, markCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				h.extractTrack.MarkPending(markCtx, req.TaskID, chainSessionID, auditID)
+				markCancel()
 				go func() {
+					defer func() {
+						doneCtx, doneCancel := context.WithTimeout(context.Background(), 2*time.Second)
+						h.extractTrack.MarkDone(doneCtx, req.TaskID, chainSessionID, auditID)
+						doneCancel()
+					}()
 					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer extractCancel()
 					facts, err := h.extractor.Extract(extractCtx, intent.ExtractRequest{
@@ -1456,21 +1478,38 @@ func valueInChainFacts(v any, facts []store.ChainFact) bool {
 	return false
 }
 
+// extractionPollInterval and extractionPollMaxWait bound how long a
+// chain-context rejection is delayed while waiting for an in-flight
+// extraction on another instance to write its facts.
+const (
+	extractionPollInterval = 250 * time.Millisecond
+	extractionPollMaxWait  = 1500 * time.Millisecond
+)
+
 // chainContextFallback handles chain context violations by checking whether
-// the missing values actually exist in the chain facts. Two outcomes:
+// the missing values actually exist in the chain facts. Three outcomes:
 //
 //  1. All missing values found (in loaded slice or DB) → override to allow.
-//  2. Any missing value not found → genuine violation, keep reject.
+//  2. Missing values not found but an extraction for this session is still
+//     in flight (possibly on another instance) → poll the DB briefly and
+//     re-check; allow if the facts land before the poll window elapses.
+//  3. Missing values not found and no pending extraction → genuine
+//     violation, keep reject.
 //
-// Historically there was a third branch that allowed when *any* chain facts
+// Historically there was a branch that allowed when *any* chain facts
 // existed for the session on the theory that extraction is lossy (4KB
 // truncation / 50-fact cap). That blanket allow was too permissive — an
 // agent could run a `list_*` call to populate chain facts and then make
 // out-of-scope writes. The specific missing value must be found; the
 // presence of unrelated facts is not a substitute.
+//
+// tracker may be nil (e.g. the guard handler, which does not trigger
+// extractions). When nil, step 2 is skipped and behavior matches the
+// pre-tracker code path.
 func chainContextFallback(
 	ctx context.Context,
 	st store.Store,
+	tracker ExtractionTracker,
 	logger *slog.Logger,
 	verdict *intent.VerificationVerdict,
 	loadedFacts []store.ChainFact,
@@ -1483,27 +1522,36 @@ func chainContextFallback(
 		chainSessionID = taskID
 	}
 
-	allFound := true
-	for _, value := range verdict.MissingChainValues {
-		if value == "" {
-			continue
+	allFound, dbErr := checkMissingValues(ctx, st, verdict.MissingChainValues, loadedFacts, taskID, chainSessionID, logger)
+
+	// Poll while an extraction for this session is still in flight. Only
+	// enter the loop if the initial check failed (not DB error — a DB
+	// problem isn't fixed by waiting), a session is set, and the tracker
+	// reports pending work.
+	if !allFound && dbErr == nil && chainSessionID != "" && tracker != nil && tracker.HasPending(ctx, taskID, chainSessionID) {
+		deadline := time.Now().Add(extractionPollMaxWait)
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return verdict
+			case <-time.After(extractionPollInterval):
+			}
+			allFound, dbErr = checkMissingValues(ctx, st, verdict.MissingChainValues, loadedFacts, taskID, chainSessionID, logger)
+			if allFound || dbErr != nil {
+				break
+			}
+			if !tracker.HasPending(ctx, taskID, chainSessionID) {
+				// No in-flight extraction remains — one more check, then stop.
+				allFound, dbErr = checkMissingValues(ctx, st, verdict.MissingChainValues, loadedFacts, taskID, chainSessionID, logger)
+				break
+			}
 		}
-		if chainFactInSlice(value, loadedFacts) {
-			continue
-		}
-		if chainSessionID == "" {
-			allFound = false
-			break
-		}
-		found, err := st.ChainFactValueExists(ctx, taskID, chainSessionID, value)
-		if err != nil {
-			logger.Warn("chain fact fallback DB query failed", "err", err, "task_id", taskID)
-			allFound = false
-			break
-		}
-		if !found {
-			allFound = false
-			break
+		if allFound {
+			logger.Info("chain context fallback: values landed after waiting for in-flight extraction",
+				"task_id", taskID,
+				"session_id", chainSessionID,
+				"missing_values", verdict.MissingChainValues,
+			)
 		}
 	}
 
@@ -1529,6 +1577,39 @@ func chainContextFallback(
 		)
 	}
 	return verdict
+}
+
+// checkMissingValues reports whether every missing value is present either
+// in the loaded slice or the DB. Returns a DB error if one occurred so the
+// caller can decide not to retry.
+func checkMissingValues(
+	ctx context.Context,
+	st store.Store,
+	missing []string,
+	loadedFacts []store.ChainFact,
+	taskID, chainSessionID string,
+	logger *slog.Logger,
+) (bool, error) {
+	for _, value := range missing {
+		if value == "" {
+			continue
+		}
+		if chainFactInSlice(value, loadedFacts) {
+			continue
+		}
+		if chainSessionID == "" {
+			return false, nil
+		}
+		found, err := st.ChainFactValueExists(ctx, taskID, chainSessionID, value)
+		if err != nil {
+			logger.Warn("chain fact fallback DB query failed", "err", err, "task_id", taskID)
+			return false, err
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // chainFactInSlice checks if a value exists in the loaded chain facts slice.
