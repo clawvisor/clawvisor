@@ -1158,10 +1158,16 @@ function InstallArtifactViewer({ artifact, onClose }: { artifact: import('../api
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent text-accent' : 'border-transparent text-text-tertiary hover:text-text-primary'}`}
           >
-            {t === 'compose' ? 'docker-compose.yml' : t === 'script' ? 'install.sh (native)' : 'plugin secrets'}
+            {t === 'compose' ? 'clawvisor-proxy.yml (compose override)' : t === 'script' ? 'install.sh (native)' : 'plugin secrets'}
           </button>
         ))}
       </div>
+      {tab === 'compose' && (
+        <div className="text-[11px] text-text-tertiary px-1">
+          Compose <em>override</em> — save next to your existing <code>docker-compose.yml</code> and run:
+          <code className="block bg-surface-1 p-2 mt-1 rounded font-mono">docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d</code>
+        </div>
+      )}
 
       <pre className="bg-surface-1 p-3 rounded text-[11px] font-mono overflow-x-auto max-h-64 text-text-primary">
         {tab === 'compose'

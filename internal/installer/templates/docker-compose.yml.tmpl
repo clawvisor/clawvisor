@@ -2,16 +2,23 @@
 # Clawvisor Proxy + OpenClaw integration (Stage 1, self-hosted).
 # Generated at {{ .GeneratedAt }} for bridge {{ .BridgeID }}.
 #
-# This file is the canonical setup for Posture A (proxy by convention).
-# For Posture B (egress-enforced: agent CANNOT bypass the proxy), uncomment
-# the iptables init-container section at the bottom AND run docker-compose
-# with the --privileged capability for that container.
+# This file is a Compose *override*. It does NOT fully define your
+# OpenClaw gateway; it adds the Clawvisor proxy + bootstrap services
+# alongside, and adds env + volume mounts to your existing OpenClaw
+# service. Run with:
 #
-# You can regenerate this file at any time from the Clawvisor dashboard.
-# Tokens embedded here are sensitive — treat this file like an API key.
+#   docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d
+#
+# If your OpenClaw service is named something other than
+# `openclaw-gateway`, edit that key below to match your compose file.
+#
+# Regenerate this file from the Clawvisor dashboard any time. Tokens
+# embedded here are sensitive — treat this file like an API key.
 #
 
 services:
+  # --- New services added by the Clawvisor integration -------------------
+
   clawvisor-proxy:
     image: clawvisor/proxy:latest
     container_name: clawvisor-proxy
@@ -24,6 +31,7 @@ services:
     environment:
       CLAWVISOR_SERVER_URL: "{{ .ServerURL }}"
       CLAWVISOR_PROXY_TOKEN: "{{ .ProxyToken }}"
+      CLAWVISOR_BRIDGE_ID: "{{ .BridgeID }}"
     volumes:
       - clawvisor-proxy-data:/data
       - clawvisor-shared:/etc/clawvisor
@@ -34,35 +42,12 @@ services:
       - --port=8880
       - --admin-port=9091
       - --data-dir=/data
+      - --clawvisor-config=/etc/clawvisor/proxy/config.yaml
 
-  # Your existing OpenClaw gateway, with additions to route egress through
-  # the proxy + trust the proxy's CA. If you're already running OpenClaw
-  # from a different compose file, merge only the `environment:`, `volumes:`
-  # (the `clawvisor-shared` mount) and `depends_on:` entries below.
-  openclaw-gateway:
-    image: openclaw/gateway:latest
-    container_name: openclaw-openclaw-gateway-1
-    restart: unless-stopped
-    networks:
-      - clawvisor-net
-    depends_on:
-      - clawvisor-proxy
-    environment:
-      HTTP_PROXY:  "http://clawvisor-proxy:8880"
-      HTTPS_PROXY: "http://clawvisor-proxy:8880"
-      NO_PROXY:    "localhost,127.0.0.1,clawvisor-proxy,clawvisor-server"
-      # Node-specific. Covers the tool clients OpenClaw bootstraps on start.
-      NODE_EXTRA_CA_CERTS: "/etc/clawvisor/ca.pem"
-      # OpenSSL / curl fallback.
-      SSL_CERT_FILE:       "/etc/clawvisor/ca.pem"
-    volumes:
-      - openclaw-data:/home/node/.openclaw
-      - clawvisor-shared:/etc/clawvisor:ro
-
-  # Plugin secrets bootstrap: writes the Clawvisor plugin's secrets file to
-  # the shared volume. Runs once at compose-up and exits. The plugin reads
-  # the file on startup.
   clawvisor-bootstrap:
+    # Runs once at compose-up; writes the proxy config + plugin secrets
+    # into the shared volume, then exits. Plugin + proxy read their
+    # configs from here on startup.
     image: alpine:3
     container_name: clawvisor-bootstrap
     restart: "no"
@@ -73,27 +58,56 @@ services:
       - -c
       - |
         set -e
-        mkdir -p /etc/clawvisor/plugin
+        mkdir -p /etc/clawvisor/plugin /etc/clawvisor/proxy
         cat > /etc/clawvisor/plugin/secrets.json <<'PLUGIN_SECRETS_EOF'
         {{ .PluginSecretsJSON }}
         PLUGIN_SECRETS_EOF
         chmod 0600 /etc/clawvisor/plugin/secrets.json
-        echo "Clawvisor plugin secrets written."
+        cat > /etc/clawvisor/proxy/config.yaml <<'PROXY_CONFIG_EOF'
+        server_url: "{{ .ServerURL }}"
+        proxy_token: "{{ .ProxyToken }}"
+        bridge_id: "{{ .BridgeID }}"
+        PROXY_CONFIG_EOF
+        chmod 0600 /etc/clawvisor/proxy/config.yaml
+        echo "Clawvisor plugin + proxy secrets written."
+
+  # --- Override applied to your existing OpenClaw service --------------
+
+  # The service key below must match the name in your primary
+  # docker-compose.yml. If your OpenClaw service is called something
+  # other than `openclaw-gateway`, rename this key accordingly.
+  #
+  # Compose merges these fields INTO your existing definition: we add
+  # env vars, a volume mount, a dependency, and the Clawvisor network.
+  # Image, command, and other fields stay as you had them.
+  openclaw-gateway:
+    networks:
+      - clawvisor-net
+    depends_on:
+      - clawvisor-proxy
+      - clawvisor-bootstrap
+    environment:
+      HTTP_PROXY:  "http://clawvisor-proxy:8880"
+      HTTPS_PROXY: "http://clawvisor-proxy:8880"
+      NO_PROXY:    "localhost,127.0.0.1,clawvisor-proxy"
+      # Node-specific; covers OpenClaw's tool clients.
+      NODE_EXTRA_CA_CERTS: "/etc/clawvisor/ca.pem"
+      # OpenSSL / curl fallback.
+      SSL_CERT_FILE:       "/etc/clawvisor/ca.pem"
+    volumes:
+      - clawvisor-shared:/etc/clawvisor:ro
 
 volumes:
   clawvisor-proxy-data:   # proxy-only state: CA keypair, traffic log, signing keys
-  clawvisor-shared:       # shared: ca.pem (pub), plugin secrets (readable only by plugin inside openclaw-gateway)
-  openclaw-data:          # your existing OpenClaw data volume; rename if you were using another name
+  clawvisor-shared:       # shared: ca.pem (pub) + plugin secrets + proxy config
 
 networks:
   clawvisor-net:
     driver: bridge
 
 # -------------------------------------------------------------------------
-# Optional: egress enforcement (Posture B) — uncomment to make bypass
-# structurally impossible. Requires iptables; runs as --privileged once.
+# Optional: egress enforcement (Posture B) — makes proxy bypass
+# structurally impossible. Requires iptables on the host; Docker Compose
+# doesn't expose an ergonomic hook. See docs/SETUP_PROXY.md for the
+# supported paths (host-level iptables rules or K8s NetworkPolicy).
 # -------------------------------------------------------------------------
-# (Docker Compose v2 doesn't have an ergonomic iptables init hook; for
-# Posture B we recommend either (a) `clawvisor proxy harden` as a separate
-# host-level step, or (b) using a K8s NetworkPolicy if you're on that
-# runtime. See docs/SETUP_PROXY.md for both paths.)

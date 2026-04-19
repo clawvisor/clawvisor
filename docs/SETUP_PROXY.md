@@ -44,19 +44,24 @@ The dashboard will display a one-time bundle:
 
 ### 2. Apply the artifact
 
-Drop the generated `docker-compose.yml` next to your existing OpenClaw compose file (or merge the `clawvisor-proxy` + `clawvisor-bootstrap` services into yours) and run:
+The generated file is a **Compose override**. Save it alongside your existing OpenClaw `docker-compose.yml` (e.g. as `clawvisor-proxy.yml`) and run both together:
 
 ```bash
-docker compose up -d clawvisor-proxy clawvisor-bootstrap
-docker compose restart openclaw-gateway     # or whatever you named your OpenClaw container
+docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d
 ```
+
+Compose merges the two: it adds the `clawvisor-proxy` + `clawvisor-bootstrap` services, and injects the new env vars + shared volume + `depends_on` into your existing OpenClaw service definition. Your `image:`, `command:`, and other primary-file fields stay unchanged.
+
+> **If your OpenClaw service is named something other than `openclaw-gateway`**, edit the key under `services:` in the override file to match. Compose merges by service name.
 
 What happens:
 
 - `clawvisor-proxy` starts, loads your `cvisproxy_` token, generates its own CA keypair in its data volume, and registers its signing key with the Clawvisor server.
-- `clawvisor-bootstrap` writes `/etc/clawvisor/plugin/secrets.json` into the shared volume, then exits.
+- `clawvisor-bootstrap` writes `/etc/clawvisor/plugin/secrets.json` + `/etc/clawvisor/proxy/config.yaml` into the shared volume, then exits.
 - OpenClaw restarts with `HTTP_PROXY=http://clawvisor-proxy:8880` and `NODE_EXTRA_CA_CERTS=/etc/clawvisor/ca.pem` in its environment.
 - The plugin, on its next startup, reads `/etc/clawvisor/plugin/secrets.json`, calls `GET /api/plugin/bridges/self/config`, sees `scavenger_enabled=false`, and disables its JSONL scavenger.
+
+> For every subsequent `docker compose` command that touches OpenClaw, pass BOTH files (`-f docker-compose.yml -f clawvisor-proxy.yml`) or the Clawvisor additions won't take effect.
 
 ### 3. Verify
 
