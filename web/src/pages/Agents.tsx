@@ -987,6 +987,7 @@ function PluginPairCard({ request: pr }: { request: PluginPairRequest }) {
 function BridgeRow({ bridge }: { bridge: BridgeToken }) {
   const qc = useQueryClient()
   const [autoApproval, setAutoApproval] = useState(bridge.auto_approval_enabled)
+  const [installArtifact, setInstallArtifact] = useState<import('../api/client').ProxyEnableResponse | null>(null)
 
   const patchMut = useMutation({
     mutationFn: (enabled: boolean) => api.plugin.patchBridge(bridge.id, { auto_approval_enabled: enabled }),
@@ -1006,42 +1007,179 @@ function BridgeRow({ bridge }: { bridge: BridgeToken }) {
     },
   })
 
+  const enableProxyMut = useMutation({
+    mutationFn: () => api.plugin.enableProxy(bridge.id),
+    onSuccess: (artifact) => {
+      setInstallArtifact(artifact)
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+    },
+  })
+
+  const disableProxyMut = useMutation({
+    mutationFn: () => api.plugin.disableProxy(bridge.id),
+    onSuccess: () => {
+      setInstallArtifact(null)
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+    },
+  })
+
   return (
-    <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="font-medium text-text-primary truncate">
-          {bridge.hostname || bridge.install_fingerprint || bridge.id}
+    <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex flex-col gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-text-primary truncate flex items-center gap-2">
+            {bridge.hostname || bridge.install_fingerprint || bridge.id}
+            {bridge.proxy_enabled && (
+              <span className="text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-success/10 text-success border border-success/20">
+                Proxy
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            Paired {formatDistanceToNow(new Date(bridge.created_at), { addSuffix: true })}
+            {bridge.last_used_at && (
+              <> · Last forward {formatDistanceToNow(new Date(bridge.last_used_at), { addSuffix: true })}</>
+            )}
+          </p>
         </div>
-        <p className="text-xs text-text-tertiary mt-0.5">
-          Paired {formatDistanceToNow(new Date(bridge.created_at), { addSuffix: true })}
-          {bridge.last_used_at && (
-            <> · Last forward {formatDistanceToNow(new Date(bridge.last_used_at), { addSuffix: true })}</>
-          )}
-        </p>
-      </div>
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoApproval}
-            onChange={e => {
-              setAutoApproval(e.target.checked)
-              patchMut.mutate(e.target.checked)
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoApproval}
+              onChange={e => {
+                setAutoApproval(e.target.checked)
+                patchMut.mutate(e.target.checked)
+              }}
+              disabled={patchMut.isPending}
+            />
+            <span>Auto-approve</span>
+          </label>
+          <button
+            onClick={() => {
+              if (confirm(`Revoke bridge "${bridge.hostname || bridge.install_fingerprint}"? The plugin will stop forwarding messages and need to re-pair.`)) {
+                revokeMut.mutate()
+              }
             }}
-            disabled={patchMut.isPending}
-          />
-          <span>Auto-approve</span>
-        </label>
+            disabled={revokeMut.isPending}
+            className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+          >
+            Revoke
+          </button>
+        </div>
+      </div>
+
+      {/* Network Proxy section (Stage 1) — opt-in per bridge. */}
+      <div className="pt-3 border-t border-border-default">
+        {bridge.proxy_enabled ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-text-primary">Network Proxy enabled</div>
+                <div className="text-xs text-text-tertiary mt-0.5">
+                  Transcripts captured at the wire; plugin scavenger is dormant for this bridge.
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm('Disable the Network Proxy for this bridge? The plugin scavenger will resume and the proxy container (if still running) will need to be torn down manually.')) {
+                    disableProxyMut.mutate()
+                  }
+                }}
+                disabled={disableProxyMut.isPending}
+                className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2 disabled:opacity-50"
+              >
+                Disable Proxy
+              </button>
+            </div>
+            {installArtifact && (
+              <InstallArtifactViewer artifact={installArtifact} onClose={() => setInstallArtifact(null)} />
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Network Proxy (Beta)</div>
+              <div className="text-xs text-text-tertiary mt-0.5">
+                Opt into tamper-proof transcripts captured at the wire via the Clawvisor Proxy. Requires a Docker setup step. <a className="underline" href="https://github.com/clawvisor/clawvisor/blob/main/docs/design-proxy-stage1.md" target="_blank" rel="noopener noreferrer">Learn more</a>.
+              </div>
+            </div>
+            <button
+              onClick={() => enableProxyMut.mutate()}
+              disabled={enableProxyMut.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-50 whitespace-nowrap"
+            >
+              {enableProxyMut.isPending ? 'Enabling…' : 'Enable Network Proxy'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// InstallArtifactViewer renders the one-time install artifact returned
+// by EnableProxy: the cvisproxy_ token (shown ONCE) plus the docker-
+// compose / install-script templates with copy-to-clipboard buttons.
+function InstallArtifactViewer({ artifact, onClose }: { artifact: import('../api/client').ProxyEnableResponse; onClose: () => void }) {
+  const [tab, setTab] = useState<'compose' | 'script' | 'plugin'>('compose')
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => { /* clipboard denied; user can select + copy manually */ })
+  }
+  return (
+    <div className="mt-2 border border-accent/30 rounded-md bg-surface-2 p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-sm font-semibold text-text-primary">Proxy install artifact</div>
+          <div className="text-xs text-text-tertiary mt-0.5">
+            Generated {formatDistanceToNow(new Date(artifact.generated_at), { addSuffix: true })}. Apply this on the host running your OpenClaw container.
+          </div>
+        </div>
+        <button onClick={onClose} className="text-xs text-text-tertiary hover:text-text-primary">✕</button>
+      </div>
+
+      {artifact.proxy_token && (
+        <div className="rounded bg-warning/10 border border-warning/30 p-3 text-xs">
+          <div className="font-semibold text-warning mb-1">Save this proxy token now — it won't be shown again</div>
+          <code className="block bg-surface-1 p-2 rounded font-mono text-[11px] break-all">{artifact.proxy_token}</code>
+          <button
+            onClick={() => artifact.proxy_token && copy(artifact.proxy_token)}
+            className="mt-2 text-[11px] px-2 py-1 rounded border border-border-default hover:bg-surface-2"
+          >
+            Copy token
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-1 border-b border-border-default text-xs">
+        {(['compose', 'script', 'plugin'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent text-accent' : 'border-transparent text-text-tertiary hover:text-text-primary'}`}
+          >
+            {t === 'compose' ? 'docker-compose.yml' : t === 'script' ? 'install.sh (native)' : 'plugin secrets'}
+          </button>
+        ))}
+      </div>
+
+      <pre className="bg-surface-1 p-3 rounded text-[11px] font-mono overflow-x-auto max-h-64 text-text-primary">
+        {tab === 'compose'
+          ? artifact.docker_compose_yaml
+          : tab === 'script'
+            ? artifact.install_script
+            : artifact.plugin_secrets_json}
+      </pre>
+      <div className="flex gap-2">
         <button
-          onClick={() => {
-            if (confirm(`Revoke bridge "${bridge.hostname || bridge.install_fingerprint}"? The plugin will stop forwarding messages and need to re-pair.`)) {
-              revokeMut.mutate()
-            }
-          }}
-          disabled={revokeMut.isPending}
-          className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+          onClick={() => copy(
+            tab === 'compose' ? artifact.docker_compose_yaml :
+            tab === 'script' ? artifact.install_script :
+            artifact.plugin_secrets_json
+          )}
+          className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2"
         >
-          Revoke
+          Copy to clipboard
         </button>
       </div>
     </div>

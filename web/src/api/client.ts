@@ -269,9 +269,24 @@ export interface BridgeToken {
   install_fingerprint: string
   hostname: string
   auto_approval_enabled: boolean
+  proxy_enabled: boolean
   created_at: string
   last_used_at?: string | null
   revoked_at?: string | null
+}
+
+// ProxyEnableResponse — the install artifact plus (on first enable only)
+// the raw cvisproxy_... token. Shown once to the user; subsequent
+// fetches via installArtifact() omit proxy_token.
+export interface ProxyEnableResponse {
+  bridge_id: string
+  proxy_instance_id?: string
+  proxy_token?: string
+  generated_at: string
+  docker_compose_yaml: string
+  install_script: string
+  proxy_config_yaml: string
+  plugin_secrets_json: string
 }
 
 export interface PluginPairRequest {
@@ -927,6 +942,13 @@ export const api = {
       patch<{ ok: boolean }>(`/api/plugin/bridges/${id}`, body),
     revokeBridge: (id: string) =>
       del<{ ok: boolean }>(`/api/plugin/bridges/${id}`),
+    // Stage 1 proxy enablement. EnableProxy returns the one-time proxy token + install artifact.
+    enableProxy: (id: string) =>
+      post<ProxyEnableResponse>(`/api/plugin/bridges/${id}/enable-proxy`, {}),
+    disableProxy: (id: string) =>
+      post<{ ok: boolean }>(`/api/plugin/bridges/${id}/disable-proxy`, {}),
+    installArtifact: (id: string) =>
+      get<ProxyEnableResponse>(`/api/plugin/bridges/${id}/install-artifact`),
   },
   services: {
     list: async () => {
