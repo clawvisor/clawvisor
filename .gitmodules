@@ -1,0 +1,3 @@
+[submodule "third_party/proxy"]
+	path = third_party/proxy
+	url = https://github.com/clawvisor/proxy.git

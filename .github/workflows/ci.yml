@@ -7,6 +7,29 @@ on:
     branches: [main]
 
 jobs:
+  proxy-boundary:
+    name: Proxy boundary (no code deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # don't fetch the submodule; we want to guard against this repo
+          # importing proxy packages, not build anything from the submodule
+          submodules: false
+
+      - name: Forbid imports from clawvisor/proxy
+        run: |
+          set -euo pipefail
+          # The proxy is intentionally a separate repo with no Go code
+          # dependency from this one. Any import of github.com/clawvisor/proxy/*
+          # would cross that boundary and make the submodule a hard dep
+          # rather than a dev-ergonomics convenience. Fail CI if any such
+          # import appears.
+          if grep -R --include='*.go' -n 'github.com/clawvisor/proxy' . ; then
+            echo "::error::Go file imports github.com/clawvisor/proxy/* — this repo must not depend on the proxy repo at the code level. See docs/proxy-api.md §3.4."
+            exit 1
+          fi
+
   go:
     name: Go
     runs-on: ubuntu-latest
