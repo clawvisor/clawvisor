@@ -55,7 +55,7 @@ export default function OnboardingBanner() {
           <div className="min-w-0">
             <div className="font-medium text-text-primary">Finish setting up Clawvisor</div>
             <p className="text-text-secondary mt-0.5">
-              Connect {missingText} to unlock task approvals and personalized suggestions.
+              Connect {missingText} to get task approvals and personalized suggestions.
             </p>
             <NavLink
               to="/dashboard/get-started"
