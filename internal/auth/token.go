@@ -50,6 +50,20 @@ func GeneratePluginPairCode() (string, error) {
 	return "cvpc_" + hex.EncodeToString(b), nil
 }
 
+// GenerateProxyToken creates a cryptographically secure proxy bearer token
+// with the "cvisproxy_" prefix. A proxy token authenticates a Clawvisor
+// Proxy instance to the Clawvisor server — scoped to the proxy-facing
+// config / ingest / signing-key endpoints only. Distinct from bridge and
+// agent tokens so a stolen bridge or agent token cannot ingest forged
+// TurnEvents. The raw value is shown once in the install artifact.
+func GenerateProxyToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "cvisproxy_" + hex.EncodeToString(b), nil
+}
+
 // GenerateCallbackSecret returns a "cbsec_"-prefixed 32-byte hex secret
 // used for HMAC-signing callback payloads.
 func GenerateCallbackSecret() (string, error) {

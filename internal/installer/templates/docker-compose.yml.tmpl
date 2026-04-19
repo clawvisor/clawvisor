@@ -1,0 +1,99 @@
+#
+# Clawvisor Proxy + OpenClaw integration (Stage 1, self-hosted).
+# Generated at {{ .GeneratedAt }} for bridge {{ .BridgeID }}.
+#
+# This file is the canonical setup for Posture A (proxy by convention).
+# For Posture B (egress-enforced: agent CANNOT bypass the proxy), uncomment
+# the iptables init-container section at the bottom AND run docker-compose
+# with the --privileged capability for that container.
+#
+# You can regenerate this file at any time from the Clawvisor dashboard.
+# Tokens embedded here are sensitive — treat this file like an API key.
+#
+
+services:
+  clawvisor-proxy:
+    image: clawvisor/proxy:latest
+    container_name: clawvisor-proxy
+    restart: unless-stopped
+    networks:
+      - clawvisor-net
+    ports:
+      - "127.0.0.1:8880:8880"    # proxy listener (localhost only)
+      - "127.0.0.1:9091:9091"    # proxy admin (for ca.pem + healthz)
+    environment:
+      CLAWVISOR_SERVER_URL: "{{ .ServerURL }}"
+      CLAWVISOR_PROXY_TOKEN: "{{ .ProxyToken }}"
+    volumes:
+      - clawvisor-proxy-data:/data
+      - clawvisor-shared:/etc/clawvisor
+    command:
+      - serve
+      - --mode=observe
+      - --host=0.0.0.0
+      - --port=8880
+      - --admin-port=9091
+      - --data-dir=/data
+
+  # Your existing OpenClaw gateway, with additions to route egress through
+  # the proxy + trust the proxy's CA. If you're already running OpenClaw
+  # from a different compose file, merge only the `environment:`, `volumes:`
+  # (the `clawvisor-shared` mount) and `depends_on:` entries below.
+  openclaw-gateway:
+    image: openclaw/gateway:latest
+    container_name: openclaw-openclaw-gateway-1
+    restart: unless-stopped
+    networks:
+      - clawvisor-net
+    depends_on:
+      - clawvisor-proxy
+    environment:
+      HTTP_PROXY:  "http://clawvisor-proxy:8880"
+      HTTPS_PROXY: "http://clawvisor-proxy:8880"
+      NO_PROXY:    "localhost,127.0.0.1,clawvisor-proxy,clawvisor-server"
+      # Node-specific. Covers the tool clients OpenClaw bootstraps on start.
+      NODE_EXTRA_CA_CERTS: "/etc/clawvisor/ca.pem"
+      # OpenSSL / curl fallback.
+      SSL_CERT_FILE:       "/etc/clawvisor/ca.pem"
+    volumes:
+      - openclaw-data:/home/node/.openclaw
+      - clawvisor-shared:/etc/clawvisor:ro
+
+  # Plugin secrets bootstrap: writes the Clawvisor plugin's secrets file to
+  # the shared volume. Runs once at compose-up and exits. The plugin reads
+  # the file on startup.
+  clawvisor-bootstrap:
+    image: alpine:3
+    container_name: clawvisor-bootstrap
+    restart: "no"
+    volumes:
+      - clawvisor-shared:/etc/clawvisor
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /etc/clawvisor/plugin
+        cat > /etc/clawvisor/plugin/secrets.json <<'PLUGIN_SECRETS_EOF'
+        {{ .PluginSecretsJSON }}
+        PLUGIN_SECRETS_EOF
+        chmod 0600 /etc/clawvisor/plugin/secrets.json
+        echo "Clawvisor plugin secrets written."
+
+volumes:
+  clawvisor-proxy-data:   # proxy-only state: CA keypair, traffic log, signing keys
+  clawvisor-shared:       # shared: ca.pem (pub), plugin secrets (readable only by plugin inside openclaw-gateway)
+  openclaw-data:          # your existing OpenClaw data volume; rename if you were using another name
+
+networks:
+  clawvisor-net:
+    driver: bridge
+
+# -------------------------------------------------------------------------
+# Optional: egress enforcement (Posture B) — uncomment to make bypass
+# structurally impossible. Requires iptables; runs as --privileged once.
+# -------------------------------------------------------------------------
+# (Docker Compose v2 doesn't have an ergonomic iptables init hook; for
+# Posture B we recommend either (a) `clawvisor proxy harden` as a separate
+# host-level step, or (b) using a K8s NetworkPolicy if you're on that
+# runtime. See docs/SETUP_PROXY.md for both paths.)

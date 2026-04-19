@@ -714,6 +714,18 @@ func (s *Server) routes() http.Handler {
 	// the request + poll endpoints are unauthenticated (like agent connect).
 	pluginPairing := handlers.NewPluginPairingHandler(s.store, s.eventHub, s.logger)
 	pluginPairing.SetServerVersion(version.Version)
+	// Tell the pair handler how the proxy container should reach the server
+	// from inside its docker network. For the default self-hosted
+	// deployment, the proxy container lives alongside the server and
+	// reaches it via `host.docker.internal` (the same path the OpenClaw
+	// container already uses at Stage 0). An operator running a bespoke
+	// compose setup can override via CLAWVISOR_SERVER_URL_FOR_PROXY in the
+	// install artifact's docker-compose template.
+	proxyServerURL := s.cfg.Server.PublicURL
+	if proxyServerURL == "" {
+		proxyServerURL = "http://host.docker.internal:25297"
+	}
+	pluginPairing.SetServerURL(proxyServerURL)
 	if s.msgBuffer != nil {
 		pluginPairing.SetBuffer(s.msgBuffer)
 	}
@@ -728,6 +740,11 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/plugin/bridges/{id}/buffer", user(pluginPairing.BufferForBridge))
 	mux.Handle("PATCH /api/plugin/bridges/{id}", user(pluginPairing.PatchBridge))
 	mux.Handle("DELETE /api/plugin/bridges/{id}", user(pluginPairing.RevokeBridge))
+	// Stage 1 proxy enablement: dashboard-driven opt-in + install artifact.
+	// See docs/design-proxy-stage1.md §3.2 + §8.3.
+	mux.Handle("POST /api/plugin/bridges/{id}/enable-proxy", user(pluginPairing.EnableProxy))
+	mux.Handle("POST /api/plugin/bridges/{id}/disable-proxy", user(pluginPairing.DisableProxy))
+	mux.Handle("GET /api/plugin/bridges/{id}/install-artifact", user(pluginPairing.InstallArtifact))
 
 	// Proxy-facing endpoints (Clawvisor Proxy; cvisproxy_... bearer token).
 	// See docs/proxy-api.md §5 for the wire contract. The proxy authenticates

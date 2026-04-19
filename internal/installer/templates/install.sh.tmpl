@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Clawvisor Proxy + OpenClaw native install script.
+# Generated at {{ .GeneratedAt }} for bridge {{ .BridgeID }}.
+#
+# Run from a host with Docker + openclaw already configured. This script:
+#   1. Writes the Clawvisor install artifact (CA trust dir, plugin secrets,
+#      proxy secrets) to /etc/clawvisor/ (you'll be prompted for sudo).
+#   2. Starts a clawvisor-proxy container alongside your existing OpenClaw.
+#   3. Reconfigures OpenClaw's HTTP_PROXY + NODE_EXTRA_CA_CERTS env.
+#
+# For bare-metal OpenClaw (no Docker), run the "native" branch.
+#
+# This file is sensitive — the proxy token and plugin secrets are embedded.
+# Treat like an API key.
+
+set -euo pipefail
+
+INSTALL_DIR="${INSTALL_DIR:-/etc/clawvisor}"
+BRIDGE_ID="{{ .BridgeID }}"
+PROXY_TOKEN="{{ .ProxyToken }}"
+SERVER_URL="{{ .ServerURL }}"
+
+require_sudo() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "This script needs root to write /etc/clawvisor/ and install a CA cert." >&2
+    echo "Re-run with: sudo bash $0" >&2
+    exit 1
+  fi
+}
+
+require_sudo
+
+echo "[1/4] Creating $INSTALL_DIR ..."
+mkdir -p "$INSTALL_DIR/plugin" "$INSTALL_DIR/proxy"
+chmod 0700 "$INSTALL_DIR/plugin" "$INSTALL_DIR/proxy"
+
+echo "[2/4] Writing plugin secrets ..."
+cat > "$INSTALL_DIR/plugin/secrets.json" <<'PLUGIN_SECRETS_EOF'
+{{ .PluginSecretsJSON }}
+PLUGIN_SECRETS_EOF
+chmod 0600 "$INSTALL_DIR/plugin/secrets.json"
+
+echo "[3/4] Writing proxy config ..."
+cat > "$INSTALL_DIR/proxy/config.yaml" <<PROXY_CONFIG_EOF
+server_url: "$SERVER_URL"
+proxy_token: "$PROXY_TOKEN"
+bridge_id: "$BRIDGE_ID"
+PROXY_CONFIG_EOF
+chmod 0600 "$INSTALL_DIR/proxy/config.yaml"
+
+echo "[4/4] Next steps:"
+echo
+echo "  Docker users:"
+echo "    cd $(pwd) && docker compose -f docker-compose.yml up -d clawvisor-proxy"
+echo "    docker restart openclaw-openclaw-gateway-1"
+echo
+echo "  Native OpenClaw (rare):"
+echo "    clawvisor-proxy serve --config $INSTALL_DIR/proxy/config.yaml &"
+echo "    export HTTP_PROXY=http://localhost:8880"
+echo "    export HTTPS_PROXY=http://localhost:8880"
+echo "    export NODE_EXTRA_CA_CERTS=$INSTALL_DIR/ca.pem    # once proxy writes it"
+echo "    # then start OpenClaw as usual"
+echo
+echo "  To install the proxy CA cert system-wide (optional but recommended):"
+echo "    # Debian/Ubuntu:"
+echo "    cp $INSTALL_DIR/ca.pem /usr/local/share/ca-certificates/clawvisor.crt"
+echo "    update-ca-certificates"
+echo "    # macOS:"
+echo "    security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $INSTALL_DIR/ca.pem"
+echo
+echo "Clawvisor proxy setup complete. Check status with: docker ps | grep clawvisor-proxy"

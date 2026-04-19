@@ -14,6 +14,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
+	"github.com/clawvisor/clawvisor/internal/installer"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -51,11 +52,12 @@ type pairTokenBundle struct {
 // token + agent tokens in one step), and the long-poll returns the raw
 // tokens to the waiting plugin.
 type PluginPairingHandler struct {
-	st            store.Store
-	eventHub      events.EventHub
-	logger        *slog.Logger
-	serverVersion string // for logging plugin/server version drift at pair time
-	buffer        groupchat.Buffer // for the GET /bridges/{id}/buffer dump endpoint
+	st                  store.Store
+	eventHub            events.EventHub
+	logger              *slog.Logger
+	serverVersion       string // for logging plugin/server version drift at pair time
+	buffer              groupchat.Buffer // for the GET /bridges/{id}/buffer dump endpoint
+	serverURLForInstall string // URL the proxy uses to reach this server (embedded into install artifact)
 
 	// bundles caches token bundles by pair request ID for the approval
 	// window. Raw tokens are never persisted, only delivered via the
@@ -687,4 +689,218 @@ func (h *PluginPairingHandler) loadBundle(pairID string) (pairTokenBundle, bool)
 		return pairTokenBundle{}, false
 	}
 	return b, true
+}
+
+// ── Proxy enablement + install artifact (Stage 1) ────────────────────────────
+
+// SetServerURL tells the handler how to populate the `server_url` field of
+// the install artifact — this is how the proxy (running in Docker) will
+// reach the Clawvisor server. Typically "http://clawvisor-server:25297"
+// for compose deployments or "http://host.docker.internal:25297" for
+// proxy-in-docker / server-on-host setups. Set from server setup.
+func (h *PluginPairingHandler) SetServerURL(u string) { h.serverURLForInstall = u }
+
+// enableProxyResponse is returned from POST /enable-proxy. Includes the
+// install artifact directly so the dashboard can offer a one-click
+// "Download docker-compose.yml / install.sh" flow.
+type enableProxyResponse struct {
+	BridgeID          string `json:"bridge_id"`
+	ProxyInstanceID   string `json:"proxy_instance_id"`
+	ProxyToken        string `json:"proxy_token,omitempty"` // returned ONCE; user re-enables to rotate
+	GeneratedAt       string `json:"generated_at"`
+	DockerComposeYAML string `json:"docker_compose_yaml"`
+	InstallScript     string `json:"install_script"`
+	ProxyConfigYAML   string `json:"proxy_config_yaml"`
+	PluginSecretsJSON string `json:"plugin_secrets_json"`
+}
+
+// EnableProxy handles POST /api/plugin/bridges/{id}/enable-proxy.
+// Requires user JWT. Flips bridge_tokens.proxy_enabled = true, mints a
+// fresh cvisproxy_... token, creates a proxy_instance row, and returns
+// the rendered install artifact. The cvisproxy_ token is shown ONCE.
+// Re-run this endpoint to rotate.
+func (h *PluginPairingHandler) EnableProxy(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	id := r.PathValue("id")
+
+	bt, err := h.st.GetBridgeTokenByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "bridge not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load bridge")
+		}
+		return
+	}
+	if bt.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your bridge")
+		return
+	}
+	if bt.RevokedAt != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "bridge has been revoked")
+		return
+	}
+
+	// If a previous proxy_instance exists, revoke it (one active proxy per
+	// bridge at a time; users rotate by re-running enable-proxy).
+	if existing, err := h.st.GetProxyInstanceForBridge(r.Context(), id); err == nil && existing != nil {
+		_ = h.st.RevokeProxyInstance(r.Context(), existing.ID)
+	}
+
+	rawToken, err := auth.GenerateProxyToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "token generation failed")
+		return
+	}
+	proxyInstance := &store.ProxyInstance{
+		BridgeID:  id,
+		TokenHash: auth.HashToken(rawToken),
+	}
+	if err := h.st.CreateProxyInstance(r.Context(), proxyInstance); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "proxy instance creation failed")
+		return
+	}
+
+	if err := h.st.SetBridgeProxyEnabled(r.Context(), id, user.ID, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not enable proxy")
+		return
+	}
+
+	artifact, err := h.renderInstallArtifact(r.Context(), id, rawToken)
+	if err != nil {
+		h.logger.Error("render install artifact", "err", err, "bridge_id", id)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not render install artifact")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, enableProxyResponse{
+		BridgeID:          id,
+		ProxyInstanceID:   proxyInstance.ID,
+		ProxyToken:        rawToken,
+		GeneratedAt:       artifact.GeneratedAt,
+		DockerComposeYAML: artifact.DockerComposeYAML,
+		InstallScript:     artifact.InstallScript,
+		ProxyConfigYAML:   artifact.ProxyConfigYAML,
+		PluginSecretsJSON: artifact.PluginSecretsJSON,
+	})
+}
+
+// DisableProxy handles POST /api/plugin/bridges/{id}/disable-proxy.
+// Flips proxy_enabled off, revokes the active proxy instance. User is
+// responsible for tearing down their local proxy container.
+func (h *PluginPairingHandler) DisableProxy(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	id := r.PathValue("id")
+
+	bt, err := h.st.GetBridgeTokenByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "bridge not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load bridge")
+		}
+		return
+	}
+	if bt.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your bridge")
+		return
+	}
+
+	if existing, err := h.st.GetProxyInstanceForBridge(r.Context(), id); err == nil && existing != nil {
+		_ = h.st.RevokeProxyInstance(r.Context(), existing.ID)
+	}
+	if err := h.st.SetBridgeProxyEnabled(r.Context(), id, user.ID, false); err != nil && !errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not disable proxy")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// renderInstallArtifact produces the per-bridge docker-compose / install
+// script with concrete tokens embedded. Called by EnableProxy (with the
+// freshly-minted raw proxy token) and InstallArtifact (with a
+// rotate-required placeholder).
+func (h *PluginPairingHandler) renderInstallArtifact(ctx context.Context, bridgeID, rawProxyToken string) (*installer.Artifact, error) {
+	// The install artifact also embeds the plugin's secrets so the
+	// compose bootstrap writes them into the shared volume. We DON'T have
+	// the raw bridge/agent tokens at this point (they were handed back
+	// only during the original pair flow) — for now we emit placeholders
+	// and require the user to paste them in. Better UX: extend this later
+	// to deliver tokens via a user-side re-auth step. Stage 1 accepts the
+	// paste-step and documents it.
+	//
+	// Plugin secrets placeholders instruct the user to fill them in; the
+	// installer won't start OpenClaw with empty secrets.
+	input := installer.Input{
+		BridgeID:    bridgeID,
+		ServerURL:   h.serverURLForInstall,
+		ProxyToken:  rawProxyToken,
+		BridgeToken: "<PASTE_YOUR_BRIDGE_TOKEN_HERE>",
+		AgentTokens: map[string]string{"main": "<PASTE_YOUR_AGENT_TOKEN_HERE>"},
+	}
+	if input.ServerURL == "" {
+		input.ServerURL = "http://clawvisor-server:25297"
+	}
+	art, err := installer.Render(input)
+	if err != nil {
+		return nil, err
+	}
+	return art, nil
+}
+
+// InstallArtifact handles GET /api/plugin/bridges/{id}/install-artifact.
+// Returns the current artifact for an already-enabled bridge. Does NOT
+// return the proxy token (that's shown only once on enable). Useful for
+// re-downloading compose/install files after the initial enable response.
+func (h *PluginPairingHandler) InstallArtifact(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	id := r.PathValue("id")
+
+	bt, err := h.st.GetBridgeTokenByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "bridge not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load bridge")
+		}
+		return
+	}
+	if bt.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your bridge")
+		return
+	}
+	if !bt.ProxyEnabled {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "proxy is not enabled for this bridge")
+		return
+	}
+
+	// Re-render without the raw proxy token. Docker-compose still has the
+	// placeholder but operators who already ran enable-proxy once will
+	// have saved it; this endpoint is for re-downloading the templates.
+	artifact, err := h.renderInstallArtifact(r.Context(), id, "<ROTATE-TO-GET-NEW-TOKEN>")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not render install artifact")
+		return
+	}
+	writeJSON(w, http.StatusOK, enableProxyResponse{
+		BridgeID:          id,
+		GeneratedAt:       artifact.GeneratedAt,
+		DockerComposeYAML: artifact.DockerComposeYAML,
+		InstallScript:     artifact.InstallScript,
+		ProxyConfigYAML:   artifact.ProxyConfigYAML,
+		PluginSecretsJSON: artifact.PluginSecretsJSON,
+		// ProxyToken intentionally omitted on re-fetch.
+	})
 }
