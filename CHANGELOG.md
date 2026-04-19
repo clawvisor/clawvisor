@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.16](https://github.com/clawvisor/clawvisor/compare/v0.8.15...v0.8.16) (2026-04-19)
+
+
+### Features
+
+* **welcome:** Vertex-aware gating, get-started CTA, rocket nav icon ([#289](https://github.com/clawvisor/clawvisor/issues/289)) ([3ddc37f](https://github.com/clawvisor/clawvisor/commit/3ddc37f1a9c25e9754a11c0c9c95bc58560f9cb6))
+
+
+### Bug Fixes
+
+* **gateway:** prevent spurious chain rejects from cross-instance extraction race ([#287](https://github.com/clawvisor/clawvisor/issues/287)) ([7038117](https://github.com/clawvisor/clawvisor/commit/703811733dd8da001de1cfc2cb84548308279d5c))
+* **telemetry:** strip connection aliases from service usage counts ([#290](https://github.com/clawvisor/clawvisor/issues/290)) ([8bc0802](https://github.com/clawvisor/clawvisor/commit/8bc08024810edc8903324d521ea65f04cb39b242))
+
 ## [0.8.15](https://github.com/clawvisor/clawvisor/compare/v0.8.14...v0.8.15) (2026-04-18)
 
 
