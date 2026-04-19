@@ -98,3 +98,33 @@ func (b *RedisMessageBuffer) Messages(groupChatID string) []BufferedMessage {
 
 // RunCleanup is a no-op — Redis TTL and ZREMRANGEBYSCORE handle expiry.
 func (b *RedisMessageBuffer) RunCleanup(ctx context.Context) {}
+
+// MessagesForKeyPrefix scans Redis for all buffer keys starting with
+// `prefix` (logical prefix, not including our redisBufferPrefix), then
+// returns a copy of the non-stale entries per key.
+func (b *RedisMessageBuffer) MessagesForKeyPrefix(prefix string) map[string][]BufferedMessage {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	match := redisBufferPrefix + prefix + "*"
+	out := make(map[string][]BufferedMessage)
+	var cursor uint64
+	for {
+		keys, next, err := b.rdb.Scan(ctx, cursor, match, 100).Result()
+		if err != nil {
+			return out
+		}
+		for _, k := range keys {
+			logical := k[len(redisBufferPrefix):]
+			msgs := b.Messages(logical)
+			if len(msgs) > 0 {
+				out[logical] = msgs
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return out
+}

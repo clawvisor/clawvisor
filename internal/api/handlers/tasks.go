@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
@@ -107,7 +108,23 @@ type createTaskRequest struct {
 	ExpiresInSeconds  int                 `json:"expires_in_seconds"`
 	CallbackURL       string              `json:"callback_url"`
 	Lifetime          string              `json:"lifetime"` // "session" (default) or "standing"
+	// GroupChatID identifies the conversation the agent is operating in, so
+	// the server can consult messages forwarded by the user's OpenClaw plugin
+	// for auto-approval context. IGNORED unless the request also carries a
+	// valid `X-Clawvisor-Bridge-Attestation` header — the schema on the
+	// agent-facing tool hides this field, but a well-formed HTTP body from a
+	// compromised agent could still include it. Bridge attestation is the
+	// actual trust boundary: a token held only by the plugin runtime,
+	// attached by the plugin when it proxies the task create on the agent's
+	// behalf. Without attestation, this field is dropped.
+	GroupChatID string `json:"group_chat_id,omitempty"`
 }
+
+// bridgeAttestationHeader is the HTTP header the plugin adds when it
+// proxies a task create on behalf of an agent, vouching for the
+// accompanying group_chat_id. Format: "Bearer cvisbr_...". Optional on
+// the request; absent attestation means group_chat_id is ignored.
+const bridgeAttestationHeader = "X-Clawvisor-Bridge-Attestation"
 
 // Create declares a new task scope.
 //
@@ -357,18 +374,36 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Check for group chat approval via LLM analysis of recent messages.
 	// Only auto-approve session tasks with low/medium risk and no hardcoded approval actions.
 	// Standing tasks always require explicit user approval.
-	// The agent must be paired to a group chat and the user must have opted in.
+	//
+	// Source-of-authority gate:
+	//   - Telegram pairing (authenticated senders via Telegram user IDs):
+	//     gated on the user flipping AutoApprovalEnabled on the group row.
+	//   - OpenClaw plugin (bridge attestation header + req.GroupChatID):
+	//     gated on the SPECIFIC bridge named by the attestation header having
+	//     auto_approval_enabled=true and belonging to the same user as the
+	//     agent. The TS tool schema hides group_chat_id from the agent, but
+	//     the trust boundary is the attestation — a crafted HTTP body from a
+	//     compromised agent cannot forge it because it lacks the bridge
+	//     token. Without attestation, req.GroupChatID is dropped.
 	preApproved := false
 	groupChatID := ""
+	approvalSource := ""
+	autoApprovalEnabled := false
+	autoApprovalNotify := true // on by default
 	if h.agentPairer != nil {
 		groupChatID, _ = h.agentPairer.AgentGroupChatID(ctx, agent.ID)
 	}
-	autoApprovalEnabled := false
-	autoApprovalNotify := true // on by default
 	if groupChatID != "" {
+		approvalSource = "telegram_group"
 		if tg, err := h.st.GetTelegramGroup(ctx, agent.UserID, groupChatID); err == nil {
 			autoApprovalEnabled = tg.AutoApprovalEnabled
 			autoApprovalNotify = tg.AutoApprovalNotify
+		}
+	} else if gid := strings.TrimSpace(req.GroupChatID); gid != "" {
+		if bridge := h.resolveAttestingBridge(ctx, r, agent.UserID); bridge != nil && bridge.AutoApprovalEnabled {
+			groupChatID = gid
+			approvalSource = "openclaw_plugin"
+			autoApprovalEnabled = true
 		}
 	}
 	if autoApprovalEnabled && groupChatID != "" && h.msgBuffer != nil && h.llmHealth != nil &&
@@ -382,7 +417,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !hasHardcoded {
-			messages := h.msgBuffer.Messages(groupChatID)
+			messages := h.msgBuffer.Messages(groupchat.UserScopedKey(agent.UserID, groupChatID))
 			if len(messages) > 0 {
 				var actionStrs []string
 				for _, a := range req.AuthorizedActions {
@@ -403,7 +438,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 					task.ApprovedAt = &now
 					expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 					task.ExpiresAt = &expiresAt
-					task.ApprovalSource = "telegram_group"
+					task.ApprovalSource = approvalSource
 					rationale, _ := json.Marshal(map[string]any{
 						"explanation": result.Explanation,
 						"confidence":  result.Confidence,
@@ -427,11 +462,19 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if preApproved {
+		// Human-facing label for notifications and the create response.
+		// Falls back to a generic phrasing if approvalSource is an unknown
+		// value (shouldn't happen today, but keeps the copy safe).
+		sourceLabel := "Telegram group observation"
+		if approvalSource == "openclaw_plugin" {
+			sourceLabel = "OpenClaw conversation observation"
+		}
+
 		// Send confirmation DM (if notifications enabled).
 		if h.notifier != nil && autoApprovalNotify {
-			text := fmt.Sprintf("✅ <b>Task auto-approved</b> (group chat observation)\n\n"+
+			text := fmt.Sprintf("✅ <b>Task auto-approved</b> (%s)\n\n"+
 				"<b>Agent:</b> %s\n<b>Purpose:</b> %s",
-				agent.Name, req.Purpose)
+				sourceLabel, agent.Name, req.Purpose)
 			if task.RiskLevel != "" {
 				text += fmt.Sprintf("\n<b>Risk:</b> %s", task.RiskLevel)
 			}
@@ -455,8 +498,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{
 			"task_id":         task.ID,
 			"status":          "active",
-			"message":         "Task auto-approved via Telegram group pre-approval.",
-			"approval_source": "telegram_group_observation",
+			"message":         fmt.Sprintf("Task auto-approved via %s.", sourceLabel),
+			"approval_source": approvalSource,
 		}
 		if task.ExpiresAt != nil {
 			resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
@@ -1300,6 +1343,43 @@ func (h *TasksHandler) updateNotificationMsg(ctx context.Context, targetType, ta
 }
 
 // publishTasksAndQueue publishes SSE events for tasks and queue changes.
+// resolveAttestingBridge parses the X-Clawvisor-Bridge-Attestation header,
+// validates the referenced bridge token, and returns it only when the bridge
+// belongs to the calling agent's user. Absent or invalid attestation → nil
+// (caller ignores req.GroupChatID in that case).
+//
+// Binding this to a specific bridge — rather than "does the user have any
+// bridge with auto_approval_enabled?" — is what prevents an agent from
+// repurposing one paired install's opt-in to vouch for a conversation that
+// another paired install never observed with auto-approval.
+func (h *TasksHandler) resolveAttestingBridge(ctx context.Context, r *http.Request, userID string) *store.BridgeToken {
+	hdr := r.Header.Get(bridgeAttestationHeader)
+	if hdr == "" {
+		return nil
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(hdr, prefix) {
+		return nil
+	}
+	token := strings.TrimSpace(hdr[len(prefix):])
+	if !strings.HasPrefix(token, "cvisbr_") {
+		return nil
+	}
+	bt, err := h.st.GetBridgeTokenByHash(ctx, auth.HashToken(token))
+	if err != nil {
+		// Don't leak why (missing vs. DB error) — any failure means no attestation.
+		return nil
+	}
+	if bt.RevokedAt != nil {
+		return nil
+	}
+	if bt.UserID != userID {
+		// Cross-user attestation attempt — treat as absent.
+		return nil
+	}
+	return bt
+}
+
 func (h *TasksHandler) publishTasksAndQueue(userID string) {
 	if h.eventHub == nil {
 		return

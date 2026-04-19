@@ -269,7 +269,9 @@ func (n *Notifier) handleChatMemberUpdate(ctx context.Context, ps *pollingSessio
 
 // handleGroupMessage buffers a message from a monitored group chat.
 // All messages are stored (including from agents/bots) so the LLM has
-// full conversational context for approval detection.
+// full conversational context for approval detection — but Role is set
+// explicitly so only genuine human messages are treated as approval
+// candidates downstream.
 func (n *Notifier) handleGroupMessage(_ context.Context, ps *pollingSession, msg *telegramMsg, groupChatID string) {
 	// Only process messages from the configured group chat.
 	if fmt.Sprintf("%d", msg.Chat.ID) != groupChatID {
@@ -279,14 +281,26 @@ func (n *Notifier) handleGroupMessage(_ context.Context, ps *pollingSession, msg
 		return
 	}
 	if n.msgBuffer != nil {
-		n.msgBuffer.Append(groupChatID, groupchat.BufferedMessage{
+		// Telegram tells us IsBot on every user. Bots (including Clawvisor's
+		// own agents) are "assistant" from the LLM verifier's POV, not
+		// "user" — that guard is what keeps a bot saying "approved" from
+		// being read as human approval.
+		role := "user"
+		if msg.From.IsBot {
+			role = "assistant"
+		}
+		n.msgBuffer.Append(groupchat.UserScopedKey(ps.userID, groupChatID), groupchat.BufferedMessage{
 			Text:       msg.Text,
 			SenderID:   fmt.Sprintf("%d", msg.From.ID),
 			SenderName: senderDisplayName(msg.From),
 			Timestamp:  time.Unix(msg.Date, 0),
+			Channel:    "telegram",
+			ThreadID:   groupChatID,
+			MessageID:  fmt.Sprintf("%d", msg.MessageID),
+			Role:       role,
 		})
 		slog.Default().Debug("telegram group message buffered",
-			"user_id", ps.userID, "group_chat_id", groupChatID)
+			"user_id", ps.userID, "group_chat_id", groupChatID, "role", role)
 	}
 }
 

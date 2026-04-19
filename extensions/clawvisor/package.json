@@ -1,0 +1,17 @@
+{
+  "name": "@clawvisor/openclaw-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenClaw plugin that connects to a cloud Clawvisor instance for authorized access to external services",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings --import ./tests/register.mjs --test tests/*.test.ts",
+    "bundle": "node scripts/bundle.mjs"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.49"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

@@ -263,6 +263,29 @@ export interface ConnectionRequest {
   expires_at: string
 }
 
+export interface BridgeToken {
+  id: string
+  user_id: string
+  install_fingerprint: string
+  hostname: string
+  auto_approval_enabled: boolean
+  created_at: string
+  last_used_at?: string | null
+  revoked_at?: string | null
+}
+
+export interface PluginPairRequest {
+  id: string
+  user_id: string
+  install_fingerprint: string
+  hostname: string
+  agent_ids: string[]
+  status: string // pending | approved | denied | expired
+  bridge_token_id?: string // set at creation for agent-add requests; set on approve for initial pair
+  created_at: string
+  expires_at: string
+}
+
 export interface ServiceActionInfo {
   id: string
   display_name: string
@@ -888,6 +911,22 @@ export const api = {
       post<{ status: string; agent_id: string }>(`/api/agents/connect/${id}/approve`, {}),
     deny: (id: string) =>
       post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
+  },
+  plugin: {
+    listPairs: () => get<PluginPairRequest[]>('/api/plugin/pair/pending'),
+    mintPairCode: () =>
+      post<{ code: string; expires_at: string }>('/api/plugin/pair-codes', {}),
+    approvePair: (id: string, autoApprovalEnabled: boolean) =>
+      post<{ status: string; bridge_token_id: string }>(`/api/plugin/pair/${id}/approve`, {
+        auto_approval_enabled: autoApprovalEnabled,
+      }),
+    denyPair: (id: string) =>
+      post<{ status: string }>(`/api/plugin/pair/${id}/deny`, {}),
+    listBridges: () => get<BridgeToken[]>('/api/plugin/bridges'),
+    patchBridge: (id: string, body: { auto_approval_enabled?: boolean }) =>
+      patch<{ ok: boolean }>(`/api/plugin/bridges/${id}`, body),
+    revokeBridge: (id: string) =>
+      del<{ ok: boolean }>(`/api/plugin/bridges/${id}`),
   },
   services: {
     list: async () => {

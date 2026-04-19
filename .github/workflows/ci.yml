@@ -21,16 +21,50 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            extensions/clawvisor/package-lock.json
 
       - name: Build frontend
         run: cd web && npm ci && npm run build
+
+      # Build the OpenClaw plugin tarball BEFORE go test/vet/build — the
+      # server binary go:embeds it, and a missing file would compile
+      # against the NOTE.md sentinel and serve 503 to cloud users. The
+      # canonical distribution for the cloud deployment is
+      # `GET /skill/openclaw-plugin.tgz`, so every build must carry a
+      # real, current plugin bundle.
+      - name: Bundle OpenClaw plugin
+        run: cd extensions/clawvisor && npm ci && npm run bundle
 
       - name: Vet
         run: go vet ./...
 
       - name: Test
         run: go test ./...
+
+  plugin:
+    name: OpenClaw Plugin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/clawvisor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extensions/clawvisor/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Bundle
+        run: npm run bundle
 
   frontend:
     name: Frontend

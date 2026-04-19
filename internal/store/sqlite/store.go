@@ -2077,6 +2077,491 @@ func (s *Store) GetAgentLastNPSTime(ctx context.Context, agentID string) (*time.
 	return &t, nil
 }
 
+// ── Bridge Tokens ────────────────────────────────────────────────────────────
+
+func (s *Store) CreateBridgeToken(ctx context.Context, bt *store.BridgeToken) error {
+	if bt.ID == "" {
+		bt.ID = uuid.New().String()
+	}
+	autoApproval := 0
+	if bt.AutoApprovalEnabled {
+		autoApproval = 1
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO bridge_tokens (id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, bt.ID, bt.UserID, bt.TokenHash, bt.InstallFingerprint, bt.Hostname, autoApproval)
+	return err
+}
+
+func (s *Store) GetBridgeTokenByHash(ctx context.Context, tokenHash string) (*store.BridgeToken, error) {
+	return s.scanBridgeToken(ctx,
+		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		 FROM bridge_tokens WHERE token_hash = ?`,
+		tokenHash)
+}
+
+func (s *Store) GetBridgeTokenByID(ctx context.Context, id string) (*store.BridgeToken, error) {
+	return s.scanBridgeToken(ctx,
+		`SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		 FROM bridge_tokens WHERE id = ?`,
+		id)
+}
+
+func (s *Store) scanBridgeToken(ctx context.Context, query string, arg string) (*store.BridgeToken, error) {
+	bt := &store.BridgeToken{}
+	var autoApproval int
+	var createdAt string
+	var lastUsedAt, revokedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, query, arg).Scan(
+		&bt.ID, &bt.UserID, &bt.TokenHash, &bt.InstallFingerprint, &bt.Hostname,
+		&autoApproval, &bt.LastSeq, &createdAt, &lastUsedAt, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	bt.AutoApprovalEnabled = autoApproval != 0
+	bt.CreatedAt = parseTime(createdAt)
+	if lastUsedAt.Valid {
+		t := parseTime(lastUsedAt.String)
+		bt.LastUsedAt = &t
+	}
+	if revokedAt.Valid {
+		t := parseTime(revokedAt.String)
+		bt.RevokedAt = &t
+	}
+	return bt, nil
+}
+
+func (s *Store) ListBridgeTokens(ctx context.Context, userID string) ([]*store.BridgeToken, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		FROM bridge_tokens WHERE user_id = ? ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBridgeTokenRows(rows)
+}
+
+func (s *Store) ListActiveBridgesForUser(ctx context.Context, userID string) ([]*store.BridgeToken, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled, last_seq, created_at, last_used_at, revoked_at
+		FROM bridge_tokens WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBridgeTokenRows(rows)
+}
+
+func scanBridgeTokenRows(rows *sql.Rows) ([]*store.BridgeToken, error) {
+	var out []*store.BridgeToken
+	for rows.Next() {
+		bt := &store.BridgeToken{}
+		var autoApproval int
+		var createdAt string
+		var lastUsedAt, revokedAt sql.NullString
+		if err := rows.Scan(&bt.ID, &bt.UserID, &bt.TokenHash, &bt.InstallFingerprint, &bt.Hostname,
+			&autoApproval, &bt.LastSeq, &createdAt, &lastUsedAt, &revokedAt); err != nil {
+			return nil, err
+		}
+		bt.AutoApprovalEnabled = autoApproval != 0
+		bt.CreatedAt = parseTime(createdAt)
+		if lastUsedAt.Valid {
+			t := parseTime(lastUsedAt.String)
+			bt.LastUsedAt = &t
+		}
+		if revokedAt.Valid {
+			t := parseTime(revokedAt.String)
+			bt.RevokedAt = &t
+		}
+		out = append(out, bt)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateBridgeTokenAutoApproval(ctx context.Context, id, userID string, enabled bool) error {
+	flag := 0
+	if enabled {
+		flag = 1
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE bridge_tokens SET auto_approval_enabled = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
+		flag, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) RevokeBridgeToken(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE bridge_tokens SET revoked_at = datetime('now') WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
+		id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchBridgeTokenLastUsed(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE bridge_tokens SET last_used_at = datetime('now') WHERE id = ?`, id)
+	return err
+}
+
+// AdvanceBridgeLastSeq is the atomic ingest-ordering gate. Advances
+// last_seq to newSeq iff the stored value is strictly less. Returns
+// (true, nil) on advance, (false, nil) on regression/duplicate — no error.
+func (s *Store) AdvanceBridgeLastSeq(ctx context.Context, id string, newSeq int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE bridge_tokens SET last_seq = ? WHERE id = ? AND last_seq < ?`,
+		newSeq, id, newSeq)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ── Plugin Pair Requests ──────────────────────────────────────────────────────
+
+func (s *Store) CreatePluginPairRequest(ctx context.Context, req *store.PluginPairRequest) error {
+	if req.ID == "" {
+		req.ID = uuid.New().String()
+	}
+	agentIDs, err := json.Marshal(req.AgentIDs)
+	if err != nil {
+		return err
+	}
+	var bridgeTokenID, idempotencyKey sql.NullString
+	if req.BridgeTokenID != "" {
+		bridgeTokenID = sql.NullString{String: req.BridgeTokenID, Valid: true}
+	}
+	if req.IdempotencyKey != "" {
+		idempotencyKey = sql.NullString{String: req.IdempotencyKey, Valid: true}
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO plugin_pair_requests (id, user_id, install_fingerprint, hostname, agent_ids, status, bridge_token_id, idempotency_key, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.ID, req.UserID, req.InstallFingerprint, req.Hostname, string(agentIDs), req.Status,
+		bridgeTokenID, idempotencyKey, req.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) GetPluginPairRequestByIdempotencyKey(ctx context.Context, userID, idempotencyKey string) (*store.PluginPairRequest, error) {
+	req := &store.PluginPairRequest{}
+	var agentIDsJSON, createdAt, expiresAt string
+	var bridgeTokenID, idemKey sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, install_fingerprint, hostname, agent_ids, status, bridge_token_id, idempotency_key, created_at, expires_at
+		FROM plugin_pair_requests
+		WHERE user_id = ? AND idempotency_key = ?
+	`, userID, idempotencyKey).Scan(
+		&req.ID, &req.UserID, &req.InstallFingerprint, &req.Hostname, &agentIDsJSON,
+		&req.Status, &bridgeTokenID, &idemKey, &createdAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(agentIDsJSON), &req.AgentIDs); err != nil {
+		return nil, err
+	}
+	if bridgeTokenID.Valid {
+		req.BridgeTokenID = bridgeTokenID.String
+	}
+	if idemKey.Valid {
+		req.IdempotencyKey = idemKey.String
+	}
+	req.CreatedAt = parseTime(createdAt)
+	req.ExpiresAt = parseTime(expiresAt)
+	return req, nil
+}
+
+func (s *Store) GetPluginPairRequest(ctx context.Context, id string) (*store.PluginPairRequest, error) {
+	return s.scanPluginPairRequest(ctx,
+		`SELECT id, user_id, install_fingerprint, hostname, agent_ids, status, bridge_token_id, idempotency_key, created_at, expires_at
+		 FROM plugin_pair_requests WHERE id = ?`, id)
+}
+
+func (s *Store) scanPluginPairRequest(ctx context.Context, query, arg string) (*store.PluginPairRequest, error) {
+	req := &store.PluginPairRequest{}
+	var agentIDsJSON, createdAt, expiresAt string
+	var bridgeTokenID, idemKey sql.NullString
+	err := s.db.QueryRowContext(ctx, query, arg).Scan(
+		&req.ID, &req.UserID, &req.InstallFingerprint, &req.Hostname, &agentIDsJSON,
+		&req.Status, &bridgeTokenID, &idemKey, &createdAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(agentIDsJSON), &req.AgentIDs); err != nil {
+		return nil, err
+	}
+	if bridgeTokenID.Valid {
+		req.BridgeTokenID = bridgeTokenID.String
+	}
+	if idemKey.Valid {
+		req.IdempotencyKey = idemKey.String
+	}
+	req.CreatedAt = parseTime(createdAt)
+	req.ExpiresAt = parseTime(expiresAt)
+	return req, nil
+}
+
+func (s *Store) ListPendingPluginPairRequests(ctx context.Context, userID string) ([]*store.PluginPairRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, install_fingerprint, hostname, agent_ids, status, bridge_token_id, idempotency_key, created_at, expires_at
+		FROM plugin_pair_requests WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*store.PluginPairRequest
+	for rows.Next() {
+		req := &store.PluginPairRequest{}
+		var agentIDsJSON, createdAt, expiresAt string
+		var bridgeTokenID, idemKey sql.NullString
+		if err := rows.Scan(&req.ID, &req.UserID, &req.InstallFingerprint, &req.Hostname,
+			&agentIDsJSON, &req.Status, &bridgeTokenID, &idemKey, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(agentIDsJSON), &req.AgentIDs); err != nil {
+			return nil, err
+		}
+		if bridgeTokenID.Valid {
+			req.BridgeTokenID = bridgeTokenID.String
+		}
+		if idemKey.Valid {
+			req.IdempotencyKey = idemKey.String
+		}
+		req.CreatedAt = parseTime(createdAt)
+		req.ExpiresAt = parseTime(expiresAt)
+		out = append(out, req)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdatePluginPairRequestStatus(ctx context.Context, id, status, bridgeTokenID string) error {
+	var res sql.Result
+	var err error
+	if bridgeTokenID != "" {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE plugin_pair_requests SET status = ?, bridge_token_id = ? WHERE id = ?`,
+			status, bridgeTokenID, id)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE plugin_pair_requests SET status = ? WHERE id = ?`,
+			status, id)
+	}
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteExpiredPluginPairRequests(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM plugin_pair_requests WHERE status = 'pending' AND expires_at < datetime('now')`)
+	return err
+}
+
+// ApprovePluginPair atomically mints bridge + agent tokens and flips the
+// pair request to "approved". Either everything commits or nothing does;
+// partial failure cannot leave orphan tokens (previous non-transactional
+// version could mint a bridge + agents and then fail to mark the pair
+// approved, leaving credentials live with a pending card).
+func (s *Store) ApprovePluginPair(ctx context.Context, input store.ApprovePluginPairInput) (*store.ApprovePluginPairOutput, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Re-verify state inside the tx so a concurrent approve/deny can't
+	// sneak in between the handler's read and our write.
+	var status, existingBridgeID sql.NullString
+	var expiresAt string
+	var pairUserID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT user_id, status, bridge_token_id, expires_at
+		FROM plugin_pair_requests WHERE id = ?
+	`, input.PairRequestID).Scan(&pairUserID, &status, &existingBridgeID, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pairUserID != input.UserID {
+		return nil, errors.New("pair request does not belong to user")
+	}
+	if !status.Valid || status.String != "pending" {
+		return nil, errors.New("pair request is not pending")
+	}
+	if t := parseTime(expiresAt); !t.IsZero() && time.Now().After(t) {
+		return nil, errors.New("pair request has expired")
+	}
+
+	// Bridge: mint new row, unless the pair request was pre-attached to
+	// one (agent-add flow). Reusing keeps the existing bridge identity.
+	var bridgeTokenID string
+	if existingBridgeID.Valid && existingBridgeID.String != "" {
+		bridgeTokenID = existingBridgeID.String
+	} else {
+		if input.NewBridge == nil {
+			return nil, errors.New("initial pair requires a new bridge token; input.NewBridge is nil")
+		}
+		bridgeTokenID = uuid.New().String()
+		autoApproval := 0
+		if input.NewBridge.AutoApprovalEnabled {
+			autoApproval = 1
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO bridge_tokens (id, user_id, token_hash, install_fingerprint, hostname, auto_approval_enabled)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, bridgeTokenID, input.UserID, input.NewBridge.TokenHash, input.NewBridge.InstallFingerprint, input.NewBridge.Hostname, autoApproval); err != nil {
+			return nil, fmt.Errorf("insert bridge_token: %w", err)
+		}
+	}
+
+	// Agents: one row per request entry. Uses the same column shape as
+	// CreateAgent; we don't call it directly because we need the tx.
+	agentIDs := make(map[string]string, len(input.Agents))
+	for _, a := range input.Agents {
+		id := uuid.New().String()
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO agents (id, user_id, name, token_hash)
+			VALUES (?, ?, ?, ?)
+		`, id, input.UserID, a.Name, a.TokenHash); err != nil {
+			return nil, fmt.Errorf("insert agent %q: %w", a.Name, err)
+		}
+		agentIDs[a.Name] = id
+	}
+
+	// Flip the pair request last — everything above is prerequisite.
+	res, err := tx.ExecContext(ctx, `
+		UPDATE plugin_pair_requests SET status = 'approved', bridge_token_id = ?
+		WHERE id = ? AND status = 'pending'
+	`, bridgeTokenID, input.PairRequestID)
+	if err != nil {
+		return nil, fmt.Errorf("update pair request: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Lost the race with another approve/deny mid-tx. Rollback.
+		return nil, errors.New("pair request is no longer pending")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return &store.ApprovePluginPairOutput{BridgeTokenID: bridgeTokenID, AgentIDs: agentIDs}, nil
+}
+
+// ── Plugin Pair Codes ────────────────────────────────────────────────────────
+
+func (s *Store) CreatePluginPairCode(ctx context.Context, pc *store.PluginPairCode) error {
+	if pc.ID == "" {
+		pc.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO plugin_pair_codes (id, user_id, code_hash, expires_at)
+		VALUES (?, ?, ?, ?)
+	`, pc.ID, pc.UserID, pc.CodeHash, pc.ExpiresAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+// GetPluginPairCodeByHash reads the row without consuming it. Used by the
+// pair request handler to pre-check for idempotent retries: the original
+// consume happened on the first attempt, and on retry we want to look up
+// the existing pair_request by (user_id, idempotency_key) before failing
+// the "already consumed" check.
+func (s *Store) GetPluginPairCodeByHash(ctx context.Context, codeHash string) (*store.PluginPairCode, error) {
+	pc := &store.PluginPairCode{}
+	var createdAt, expiresAt string
+	var consumedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, code_hash, created_at, expires_at, consumed_at
+		FROM plugin_pair_codes WHERE code_hash = ?
+	`, codeHash).Scan(&pc.ID, &pc.UserID, &pc.CodeHash, &createdAt, &expiresAt, &consumedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	pc.CreatedAt = parseTime(createdAt)
+	pc.ExpiresAt = parseTime(expiresAt)
+	if consumedAt.Valid {
+		t := parseTime(consumedAt.String)
+		pc.ConsumedAt = &t
+	}
+	return pc, nil
+}
+
+// ConsumePluginPairCode atomically transitions a pair code from "unused" to
+// "consumed" and returns the row. Returns ErrNotFound if the code does not
+// exist, has already been consumed, or is past its expiry — single error
+// path so an attacker can't probe for which condition failed.
+//
+// Note on the expires_at comparison: expires_at is stored as an RFC3339
+// string and datetime('now') returns "YYYY-MM-DD HH:MM:SS". Comparing
+// those directly as strings mis-orders because "T" > " " at char 10.
+// Wrapping both in datetime(...) normalizes both to the same representation.
+func (s *Store) ConsumePluginPairCode(ctx context.Context, codeHash string) (*store.PluginPairCode, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE plugin_pair_codes
+		SET consumed_at = datetime('now')
+		WHERE code_hash = ?
+		  AND consumed_at IS NULL
+		  AND datetime(expires_at) > datetime('now')
+	`, codeHash)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, store.ErrNotFound
+	}
+	return s.GetPluginPairCodeByHash(ctx, codeHash)
+}
+
+func (s *Store) DeleteExpiredPluginPairCodes(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM plugin_pair_codes WHERE datetime(expires_at) < datetime('now') OR consumed_at IS NOT NULL`)
+	return err
+}
+
 // Ensure Store implements store.Store at compile time.
 var _ store.Store = (*Store)(nil)
 

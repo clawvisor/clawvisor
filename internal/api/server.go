@@ -468,6 +468,7 @@ func (s *Server) routes() http.Handler {
 	// Middleware
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
+	requireBridge := middleware.RequireBridge(s.store)
 	logMiddleware := middleware.Logging(s.logger)
 	recoverMiddleware := middleware.Recover(s.logger)
 	securityMiddleware := middleware.Security(s.cfg.Server.IsLocal() && s.cfg.Server.PublicURL == "")
@@ -695,6 +696,38 @@ func (s *Server) routes() http.Handler {
 	// Callback secret registration (agent token)
 	mux.Handle("POST /api/callbacks/register", requireAgent(e2e(http.HandlerFunc(gatewayHandler.RegisterCallback))))
 
+	// Buffer ingest (bridge token) — lets a paired OpenClaw plugin forward
+	// conversation messages so auto-approval has the full chat context even
+	// when Clawvisor does not own messaging I/O. Authenticated via a bridge
+	// token (cvisbr_...) — never an agent token — so the agent (which is
+	// untrusted LLM output) can't plant approval messages.
+	if s.msgBuffer != nil {
+		bufferHandler := handlers.NewBufferHandler(s.msgBuffer, s.store, s.logger)
+		mux.Handle("POST /api/buffer/ingest", requireBridge(e2e(http.HandlerFunc(bufferHandler.Ingest))))
+	}
+
+	// Plugin pairing (OpenClaw). The plugin calls POST /api/plugin/pair with
+	// a user-id embedded from /skill/setup-openclaw, polls for approval,
+	// and receives a bridge token plus per-agent tokens on success. Only
+	// user-JWT endpoints (approve/deny/list/patch/revoke) require auth;
+	// the request + poll endpoints are unauthenticated (like agent connect).
+	pluginPairing := handlers.NewPluginPairingHandler(s.store, s.eventHub, s.logger)
+	pluginPairing.SetServerVersion(version.Version)
+	if s.msgBuffer != nil {
+		pluginPairing.SetBuffer(s.msgBuffer)
+	}
+	mux.HandleFunc("POST /api/plugin/pair", pluginPairing.RequestPair)
+	mux.HandleFunc("GET /api/plugin/pair/{id}", pluginPairing.PollPair)
+	mux.Handle("POST /api/plugin/pair/{id}/approve", user(pluginPairing.ApprovePair))
+	mux.Handle("POST /api/plugin/pair/{id}/deny", user(pluginPairing.DenyPair))
+	mux.Handle("GET /api/plugin/pair/pending", user(pluginPairing.ListPendingPairs))
+	mux.Handle("POST /api/plugin/pair-codes", user(pluginPairing.MintPairCode))
+	mux.Handle("POST /api/plugin/agents", requireBridge(e2e(http.HandlerFunc(pluginPairing.RequestAgentAdd))))
+	mux.Handle("GET /api/plugin/bridges", user(pluginPairing.ListBridges))
+	mux.Handle("GET /api/plugin/bridges/{id}/buffer", user(pluginPairing.BufferForBridge))
+	mux.Handle("PATCH /api/plugin/bridges/{id}", user(pluginPairing.PatchBridge))
+	mux.Handle("DELETE /api/plugin/bridges/{id}", user(pluginPairing.RevokeBridge))
+
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
@@ -771,8 +804,22 @@ func (s *Server) routes() http.Handler {
 	{
 		relayHost := relayHostFromCfg(s.cfg.Relay.URL)
 		onboardingHandler := handlers.NewOnboardingHandler(relayHost, s.daemonID, s.cfg.Server.IsLocal())
-		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup)
+		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup) // legacy alias → Hermes flow
+		mux.HandleFunc("GET /skill/setup-hermes", onboardingHandler.SetupHermes)
+		mux.HandleFunc("GET /skill/setup-openclaw", onboardingHandler.SetupOpenClaw)
 		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
+
+		// OpenClaw plugin tarball — served so setup-openclaw can point OpenClaw
+		// at a plugin that's matched to this server's protocol version. Bytes
+		// embedded at build time from extensions/clawvisor/ (see `make
+		// plugin-bundle`). Users who want a version-pinned URL can read
+		// /skill/openclaw-plugin.version first and include that in their
+		// reference — we don't register a versioned route because it would
+		// collide with the /skill/ file-server catch-all below.
+		pluginBundleHandler := handlers.NewPluginBundleHandler(s.logger)
+		mux.HandleFunc("GET /skill/openclaw-plugin.tgz", pluginBundleHandler.ServeTarball)
+		mux.HandleFunc("GET /skill/openclaw-plugin.sha256", pluginBundleHandler.ServeSHA256)
+		mux.HandleFunc("GET /skill/openclaw-plugin.version", pluginBundleHandler.ServeVersion)
 	}
 	// skillRenderOpts builds RenderOptions based on whether the request
 	// arrived directly (local) or via the relay (cloud).

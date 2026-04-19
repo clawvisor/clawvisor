@@ -19,6 +19,18 @@ if [ ! -d "web/dist" ]; then
   exit 1
 fi
 
+# The server binary go:embeds the OpenClaw plugin tarball, which is the
+# canonical distribution channel for cloud users (`GET /skill/openclaw-plugin.tgz`).
+# Missing → binaries ship with a sentinel instead of a real plugin, and
+# cloud users get 503 on install. CI bundles before calling this script;
+# local callers should run `make plugin-bundle` first.
+if [ ! -f "internal/pluginbundle/embed/openclaw-plugin.tgz" ]; then
+  echo "Error: OpenClaw plugin bundle missing. Run:" >&2
+  echo "  make plugin-bundle" >&2
+  echo "(or in CI, the 'Bundle OpenClaw plugin' workflow step)" >&2
+  exit 1
+fi
+
 MODULE="github.com/clawvisor/clawvisor/pkg/version"
 BUILD_DATE=$(date -u +%Y-%m-%d)
 LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"

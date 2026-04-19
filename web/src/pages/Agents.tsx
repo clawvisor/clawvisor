@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { ConnectionRequest } from '../api/client'
+import type { BridgeToken, ConnectionRequest, PluginPairRequest } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
@@ -24,6 +24,18 @@ export default function Agents() {
   const { data: connections } = useQuery({
     queryKey: ['connections'],
     queryFn: () => api.connections.list(),
+    enabled: !orgId,
+  })
+
+  const { data: pluginPairs } = useQuery({
+    queryKey: ['plugin-pairs'],
+    queryFn: () => api.plugin.listPairs(),
+    enabled: !orgId,
+  })
+
+  const { data: bridges } = useQuery({
+    queryKey: ['bridges'],
+    queryFn: () => api.plugin.listBridges(),
     enabled: !orgId,
   })
 
@@ -77,6 +89,42 @@ export default function Agents() {
           <div className="space-y-3">
             {pending.map(cr => (
               <ConnectionCard key={cr.id} request={cr} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Pending plugin pair requests (personal context only) */}
+      {!orgId && pluginPairs && pluginPairs.length > 0 && (
+        <section>
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="text-lg font-semibold text-text-primary">Pending Plugin Pairings</h2>
+            <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2.5 py-0.5 font-mono">
+              {pluginPairs.length}
+            </span>
+          </div>
+          <div className="space-y-3">
+            {pluginPairs.map(p => (
+              <PluginPairCard key={p.id} request={p} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Active bridges (personal context only) */}
+      {!orgId && bridges && bridges.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-text-primary">OpenClaw Bridges</h2>
+          </div>
+          <p className="text-sm text-text-tertiary mb-3">
+            One row per paired OpenClaw install. The auto-approval toggle lets Clawvisor infer
+            approval from the conversations the plugin forwards — turn it off to require manual
+            task approval for every agent call.
+          </p>
+          <div className="space-y-2">
+            {bridges.filter(b => !b.revoked_at).map(b => (
+              <BridgeRow key={b.id} bridge={b} />
             ))}
           </div>
         </section>
@@ -201,9 +249,9 @@ export default function Agents() {
 
 // ── Connect an Agent guide ───────────────────────────────────────────────────
 
-type AgentTab = 'openclaw' | 'claude-code' | 'claude-desktop' | 'other'
+type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'claude-desktop' | 'other'
 
-const AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
+const AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'claude-desktop', 'other']
 
 function ConnectAgentGuide() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -239,9 +287,15 @@ function ConnectAgentGuide() {
 
   const userIdParam = user?.id ? `?user_id=${encodeURIComponent(user.id)}` : ''
 
-  const setupURL = hasRelay
-    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}/skill/setup${userIdParam}`
-    : `${window.location.origin}/skill/setup${userIdParam}`
+  const baseSkillURL = hasRelay
+    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
+    : window.location.origin
+  const setupHermesURL = `${baseSkillURL}/skill/setup-hermes${userIdParam}`
+  // OpenClaw setup URL is built from a minted pair_code inside OpenClawGuide —
+  // not pre-computed here, because the code is single-use and we don't want
+  // to mint one until the user actually opens the OpenClaw tab.
+  // Legacy — still referenced by the "Other Agents" tab until we split it too.
+  const setupURL = `${baseSkillURL}/skill/setup${userIdParam}`
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -250,7 +304,8 @@ function ConnectAgentGuide() {
   }
 
   const tabs: { id: AgentTab; label: string }[] = [
-    { id: 'openclaw', label: 'OpenClaw / Hermes' },
+    { id: 'openclaw', label: 'OpenClaw' },
+    { id: 'hermes', label: 'Hermes' },
     { id: 'claude-code', label: 'Claude Code' },
     { id: 'claude-desktop', label: 'Claude Desktop' },
     { id: 'other', label: 'Other Agents' },
@@ -283,7 +338,8 @@ function ConnectAgentGuide() {
       </div>
 
       <div className="p-5">
-        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
+        {tab === 'openclaw' && <OpenClawGuide baseSkillURL={baseSkillURL} copied={copied} onCopy={copyText} />}
+        {tab === 'hermes' && <HermesGuide setupURL={setupHermesURL} copied={copied} onCopy={copyText} />}
         {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
         {tab === 'claude-desktop' && <ClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
         {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
@@ -450,7 +506,119 @@ function ClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (te
   )
 }
 
-function OpenClawGuide({ setupURL, copied, onCopy }: {
+function OpenClawGuide({ baseSkillURL, copied, onCopy }: {
+  baseSkillURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const mintMut = useMutation({
+    mutationFn: () => api.plugin.mintPairCode(),
+  })
+
+  const setupURL = mintMut.data
+    ? `${baseSkillURL}/skill/setup-openclaw?pair_code=${encodeURIComponent(mintMut.data.code)}`
+    : null
+  const prompt = setupURL
+    ? `I'd like to set up the Clawvisor plugin in this OpenClaw install. Please follow the instructions at:\n${setupURL}`
+    : null
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        For OpenClaw installs with the Clawvisor plugin. The plugin pairs itself — in one dashboard
+        approval, you mint a <strong>bridge token</strong> (held only by the plugin, never exposed
+        to agents) plus one agent token per agent configured in OpenClaw.
+      </p>
+
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Generate a one-time setup link</p>
+            {!prompt && (
+              <>
+                <button
+                  onClick={() => mintMut.mutate()}
+                  disabled={mintMut.isPending}
+                  className="text-sm px-4 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                >
+                  {mintMut.isPending ? 'Generating…' : 'Generate setup link'}
+                </button>
+                {mintMut.isError && (
+                  <p className="text-xs text-danger">Failed to mint pair code: {(mintMut.error as Error).message}</p>
+                )}
+                <p className="text-xs text-text-tertiary">
+                  Mints a one-time pair code bound to your account. The link embeds the code —
+                  valid for 10 minutes, single use. Regenerate as needed.
+                </p>
+              </>
+            )}
+            {prompt && (
+              <>
+                <div className="relative group bg-surface-0 border border-brand/20 rounded overflow-hidden">
+                  <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+                    {prompt}
+                  </pre>
+                  <button
+                    onClick={() => onCopy(prompt)}
+                    className="hidden sm:block absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                  >
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                  <div className="sm:hidden border-t border-brand/20 px-3 py-1.5 flex justify-end">
+                    <button
+                      onClick={() => onCopy(prompt)}
+                      className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+                    >
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  Paste this into an agent running under OpenClaw. The agent deposits the one-time
+                  pair code into the Clawvisor plugin config. It does <em>not</em> call
+                  <code className="px-1">/api/agents/connect</code> — the plugin handles pairing itself.
+                  Code expires in ~10 min; if it does,
+                  {' '}
+                  <button onClick={() => mintMut.mutate()} className="text-brand hover:underline">
+                    generate a new one
+                  </button>
+                  .
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Reload the Clawvisor plugin</p>
+            <p className="text-xs text-text-tertiary">
+              In OpenClaw, reload the Clawvisor plugin (or restart OpenClaw). The plugin redeems the
+              code and sends a pair request.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={3} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the plugin pairing</p>
+            <p className="text-xs text-text-tertiary">
+              A <strong>Plugin pairing</strong> card will appear in the <strong>Pending Pairings</strong> section
+              below. Review the install fingerprint, hostname, and agents list, then choose whether to let
+              the plugin drive auto-approval from observed conversations — click <strong>Approve</strong> to
+              mint tokens. The plugin receives them silently; agent tool calls start working immediately.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HermesGuide({ setupURL, copied, onCopy }: {
   setupURL: string
   copied: boolean
   onCopy: (text: string) => void
@@ -460,7 +628,8 @@ function OpenClawGuide({ setupURL, copied, onCopy }: {
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
-        Connect your agent to Clawvisor. Paste the setup prompt below into your agent — it will self-register and wait for your approval.
+        For Hermes agents (or any agent that talks to Clawvisor directly). Paste the setup prompt
+        below — the agent self-registers and waits for your approval.
       </p>
 
       <div className="space-y-4">
@@ -700,6 +869,179 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
           className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
         >
           {approveMut.isPending ? 'Approving...' : 'Approve'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Plugin pairing approval card ─────────────────────────────────────────────
+
+function PluginPairCard({ request: pr }: { request: PluginPairRequest }) {
+  const qc = useQueryClient()
+  const [autoApproval, setAutoApproval] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  const isAgentAdd = !!pr.bridge_token_id
+
+  const approveMut = useMutation({
+    mutationFn: () => api.plugin.approvePair(pr.id, isAgentAdd ? false : autoApproval),
+    onSuccess: () => {
+      setResult('Approved')
+      qc.invalidateQueries({ queryKey: ['plugin-pairs'] })
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (err: Error) => setResult(`Failed: ${err.message}`),
+  })
+
+  const denyMut = useMutation({
+    mutationFn: () => api.plugin.denyPair(pr.id),
+    onSuccess: () => {
+      setResult('Denied')
+      qc.invalidateQueries({ queryKey: ['plugin-pairs'] })
+    },
+    onError: (err: Error) => setResult(`Failed: ${err.message}`),
+  })
+
+  const isPending = approveMut.isPending || denyMut.isPending
+
+  if (result) {
+    return (
+      <div className="border border-border-default rounded-md bg-surface-1 px-5 py-4">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-text-primary">
+            {isAgentAdd ? 'Agent add' : 'Plugin pairing'}: {pr.hostname || pr.install_fingerprint}
+          </span>
+          <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+            result === 'Approved' ? 'bg-success/10 text-success' :
+            result === 'Denied' ? 'bg-danger/10 text-danger' :
+            'bg-surface-2 text-text-tertiary'
+          }`}>
+            {result}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-brand overflow-hidden">
+      <div className="px-5 pt-5 pb-4">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-text-primary">
+            {isAgentAdd ? 'Agent add request' : 'Plugin pairing'}
+          </span>
+          <CountdownTimer expiresAt={pr.expires_at} />
+        </div>
+        <div className="mt-2 space-y-1 text-xs text-text-tertiary">
+          {pr.hostname && <div>Host: <code className="font-mono">{pr.hostname}</code></div>}
+          <div>Fingerprint: <code className="font-mono">{pr.install_fingerprint || '—'}</code></div>
+          {pr.agent_ids.length > 0 && (
+            <div>
+              {isAgentAdd ? 'New agent: ' : 'Agents: '}
+              <code className="font-mono">{pr.agent_ids.join(', ')}</code>
+            </div>
+          )}
+          <div>Requested {formatDistanceToNow(new Date(pr.created_at), { addSuffix: true })}</div>
+        </div>
+        {!isAgentAdd && (
+          <label className="flex items-start gap-2 mt-4 text-sm text-text-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoApproval}
+              onChange={e => setAutoApproval(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Allow this plugin to drive <strong>auto-approval</strong> from observed conversations.
+              You can toggle this later without re-pairing.
+            </span>
+          </label>
+        )}
+      </div>
+
+      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+        <button
+          onClick={() => denyMut.mutate()}
+          disabled={isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+        >
+          Deny
+        </button>
+        <button
+          onClick={() => approveMut.mutate()}
+          disabled={isPending}
+          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+        >
+          {approveMut.isPending ? 'Approving...' : 'Approve'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Active bridge row (toggle auto-approval / revoke) ────────────────────────
+
+function BridgeRow({ bridge }: { bridge: BridgeToken }) {
+  const qc = useQueryClient()
+  const [autoApproval, setAutoApproval] = useState(bridge.auto_approval_enabled)
+
+  const patchMut = useMutation({
+    mutationFn: (enabled: boolean) => api.plugin.patchBridge(bridge.id, { auto_approval_enabled: enabled }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+    },
+    onError: () => {
+      // Revert optimistic state on failure.
+      setAutoApproval(bridge.auto_approval_enabled)
+    },
+  })
+
+  const revokeMut = useMutation({
+    mutationFn: () => api.plugin.revokeBridge(bridge.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+    },
+  })
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">
+          {bridge.hostname || bridge.install_fingerprint || bridge.id}
+        </div>
+        <p className="text-xs text-text-tertiary mt-0.5">
+          Paired {formatDistanceToNow(new Date(bridge.created_at), { addSuffix: true })}
+          {bridge.last_used_at && (
+            <> · Last forward {formatDistanceToNow(new Date(bridge.last_used_at), { addSuffix: true })}</>
+          )}
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoApproval}
+            onChange={e => {
+              setAutoApproval(e.target.checked)
+              patchMut.mutate(e.target.checked)
+            }}
+            disabled={patchMut.isPending}
+          />
+          <span>Auto-approve</span>
+        </label>
+        <button
+          onClick={() => {
+            if (confirm(`Revoke bridge "${bridge.hostname || bridge.install_fingerprint}"? The plugin will stop forwarding messages and need to re-pair.`)) {
+              revokeMut.mutate()
+            }
+          }}
+          disabled={revokeMut.isPending}
+          className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+        >
+          Revoke
         </button>
       </div>
     </div>

@@ -1,0 +1,40 @@
+{
+  "id": "clawvisor",
+  "name": "Clawvisor",
+  "description": "Connect to a Clawvisor authorization gateway. The plugin pairs itself once (receiving a bridge token) and mints per-agent tokens through a single dashboard approval.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Set to false to disable the plugin without removing config."
+      },
+      "url": {
+        "type": "string",
+        "description": "Clawvisor instance URL (cloud or self-hosted). Example: https://clawvisor.com"
+      },
+      "pairCode": {
+        "type": "string",
+        "description": "One-time pair code generated from the Clawvisor dashboard (Agents → Connect OpenClaw). Deposited by the agent during /skill/setup-openclaw. Consumed on first boot; unused thereafter."
+      },
+      "groupChatId": {
+        "type": "string",
+        "description": "Fallback buffer/context ID used when no channel/conversation ID is available."
+      },
+      "agents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "OpenClaw agent IDs to mint Clawvisor agent tokens for on pair."
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable Clawvisor" },
+    "url": { "label": "Clawvisor URL", "placeholder": "https://clawvisor.com" },
+    "pairCode": { "label": "Pair Code (one-time)", "placeholder": "set via /skill/setup-openclaw" },
+    "groupChatId": { "label": "Default Buffer/Context ID", "advanced": true, "placeholder": "openclaw-default" },
+    "agents": { "label": "Agent IDs" }
+  }
+}

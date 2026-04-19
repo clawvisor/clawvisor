@@ -45,10 +45,11 @@ type telegramUpdate struct {
 }
 
 type telegramMsg struct {
-	Text string       `json:"text"`
-	Chat telegramChat `json:"chat"`
-	From telegramUser `json:"from"`
-	Date int64        `json:"date"` // Unix timestamp
+	MessageID int64        `json:"message_id"`
+	Text      string       `json:"text"`
+	Chat      telegramChat `json:"chat"`
+	From      telegramUser `json:"from"`
+	Date      int64        `json:"date"` // Unix timestamp
 }
 
 type telegramChat struct {
@@ -82,6 +83,10 @@ type telegramUser struct {
 	ID        int64  `json:"id"`
 	FirstName string `json:"first_name,omitempty"`
 	Username  string `json:"username,omitempty"`
+	// IsBot is supplied by the Telegram API on every user object. We use
+	// it to set BufferedMessage.Role correctly so bot chatter can't be
+	// mistaken for human approval by the LLM verifier.
+	IsBot bool `json:"is_bot,omitempty"`
 }
 
 type callbackMessage struct {

@@ -1,0 +1,1 @@
+ALTER TABLE bridge_tokens ADD COLUMN last_seq BIGINT NOT NULL DEFAULT 0;

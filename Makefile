@@ -1,4 +1,4 @@
-.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
+.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci plugin-bundle
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
@@ -7,8 +7,19 @@ LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 
-build: web/dist
+build: web/dist plugin-bundle
 	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
+
+# OpenClaw plugin tarball — regenerated whenever the plugin source changes
+# so the embedded bytes in the Go binary always match. CI runs this step
+# before `go test` / `go build` (see .github/workflows/ci.yml and
+# release-binaries.yml). Important because the canonical distribution
+# channel for the cloud deployment is `GET /skill/openclaw-plugin.tgz`
+# served directly by this binary — a stale tarball means cloud users
+# download a plugin that doesn't match the server they just paired with.
+plugin-bundle:
+	cd extensions/clawvisor && npm ci --prefer-offline --no-audit --no-fund
+	CLAWVISOR_VERSION=$(VERSION) npm --prefix extensions/clawvisor run bundle
 
 IMESSAGE_HELPER_APP := Clawvisor iMessage Helper.app
 
@@ -18,7 +29,7 @@ build-imessage-helper:
 	cp bin/clawvisor-imessage-helper "bin/$(IMESSAGE_HELPER_APP)/Contents/MacOS/clawvisor-imessage-helper"
 	cp cmd/imessage-helper/Info.plist "bin/$(IMESSAGE_HELPER_APP)/Contents/Info.plist"
 
-build-local:
+build-local: plugin-bundle
 	go build $(LDFLAGS) -o bin/clawvisor-local ./cmd/clawvisor-local
 
 install-local: build-local
@@ -30,7 +41,7 @@ install-local: build-local
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
 
-build-server: web/dist
+build-server: web/dist plugin-bundle
 	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server
 
 web/dist: $(shell find web/src -type f)

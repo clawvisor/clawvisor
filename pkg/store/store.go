@@ -142,6 +142,42 @@ type Store interface {
 	DeleteExpiredConnectionRequests(ctx context.Context) error
 	CountPendingConnectionRequests(ctx context.Context) (int, error)
 
+	// Bridge tokens (OpenClaw plugin identity — writes to buffer, never to tools)
+	CreateBridgeToken(ctx context.Context, bt *BridgeToken) error
+	GetBridgeTokenByHash(ctx context.Context, tokenHash string) (*BridgeToken, error)
+	GetBridgeTokenByID(ctx context.Context, id string) (*BridgeToken, error)
+	ListBridgeTokens(ctx context.Context, userID string) ([]*BridgeToken, error)
+	ListActiveBridgesForUser(ctx context.Context, userID string) ([]*BridgeToken, error)
+	UpdateBridgeTokenAutoApproval(ctx context.Context, id, userID string, enabled bool) error
+	RevokeBridgeToken(ctx context.Context, id, userID string) error
+	TouchBridgeTokenLastUsed(ctx context.Context, id string) error
+	// AdvanceBridgeLastSeq atomically bumps the bridge's last_seq to
+	// newSeq iff last_seq < newSeq. Returns true when advanced; false when
+	// newSeq ≤ current last_seq (the caller must reject the ingest as a
+	// regression or duplicate-seq-with-different-event).
+	AdvanceBridgeLastSeq(ctx context.Context, id string, newSeq int64) (bool, error)
+
+	// Plugin pair requests (long-poll pairing lifecycle for OpenClaw plugin)
+	CreatePluginPairRequest(ctx context.Context, req *PluginPairRequest) error
+	GetPluginPairRequest(ctx context.Context, id string) (*PluginPairRequest, error)
+	GetPluginPairRequestByIdempotencyKey(ctx context.Context, userID, idempotencyKey string) (*PluginPairRequest, error)
+	ListPendingPluginPairRequests(ctx context.Context, userID string) ([]*PluginPairRequest, error)
+	UpdatePluginPairRequestStatus(ctx context.Context, id, status, bridgeTokenID string) error
+	DeleteExpiredPluginPairRequests(ctx context.Context) error
+	// ApprovePluginPair performs the "approve" side of pairing as a single
+	// DB transaction: mints the bridge_token row (if not already attached),
+	// mints one agent row per entry in Agents, and flips the pair request
+	// to "approved" — atomically. Prior non-atomic implementation could
+	// leave orphan tokens if the final status update failed.
+	ApprovePluginPair(ctx context.Context, input ApprovePluginPairInput) (*ApprovePluginPairOutput, error)
+
+	// Plugin pair codes (one-time capabilities minted by the dashboard and
+	// redeemed by the plugin to initiate its pair flow)
+	CreatePluginPairCode(ctx context.Context, pc *PluginPairCode) error
+	GetPluginPairCodeByHash(ctx context.Context, codeHash string) (*PluginPairCode, error)
+	ConsumePluginPairCode(ctx context.Context, codeHash string) (*PluginPairCode, error)
+	DeleteExpiredPluginPairCodes(ctx context.Context) error
+
 	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
 	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error
 	ListGeneratedAdapters(ctx context.Context, userID string) ([]*GeneratedAdapter, error)
@@ -434,6 +470,94 @@ type ConnectionRequest struct {
 	IPAddress   string    `json:"ip_address"`
 	CreatedAt   time.Time `json:"created_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// BridgeToken is a long-lived bearer token minted for an OpenClaw plugin
+// install. It is scoped to /api/buffer/ingest and a small set of plugin-
+// management endpoints — distinct from the agent tokens used for task and
+// gateway calls, so the agent (potentially running untrusted LLM output)
+// cannot forge or observe it.
+type BridgeToken struct {
+	ID                  string     `json:"id"`
+	UserID              string     `json:"user_id"`
+	TokenHash           string     `json:"-"`
+	InstallFingerprint  string     `json:"install_fingerprint"`
+	Hostname            string     `json:"hostname"`
+	AutoApprovalEnabled bool       `json:"auto_approval_enabled"`
+	// LastSeq is the high-water mark of ingest events accepted from this
+	// bridge. Advanced atomically by AdvanceBridgeLastSeq so racing
+	// ingests can't skip or reorder seq.
+	LastSeq    int64      `json:"-"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+// PluginPairRequest is the long-poll record for an OpenClaw plugin pairing
+// lifecycle. On approve, a BridgeToken row is minted (id stored here) and
+// one Agent row per entry in AgentIDs.
+type PluginPairRequest struct {
+	ID                 string    `json:"id"`
+	UserID             string    `json:"user_id"`
+	InstallFingerprint string    `json:"install_fingerprint"`
+	Hostname           string    `json:"hostname"`
+	AgentIDs           []string  `json:"agent_ids"`
+	Status             string    `json:"status"` // pending | approved | denied | expired
+	BridgeTokenID      string    `json:"bridge_token_id,omitempty"`
+	IdempotencyKey     string    `json:"-"` // not exposed externally; used to collapse retries
+	CreatedAt          time.Time `json:"created_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
+}
+
+// ApprovePluginPairInput bundles everything the store needs to commit a
+// plugin-pair approval in a single transaction. The handler generates raw
+// tokens (bridge + per-agent), hashes them, and packages hashes here;
+// raw values never touch the DB layer.
+type ApprovePluginPairInput struct {
+	PairRequestID string
+	UserID        string // must match pair_request.user_id
+	// NewBridge is non-nil for initial pairs (no bridge_token_id yet on
+	// the pair request). Nil for agent-add requests that reuse an
+	// existing bridge — the transaction will flip the pair request to
+	// approved and mint only the agent rows.
+	NewBridge *NewBridgeInput
+	// Agents is the set of per-agent records to create in this
+	// transaction, keyed by the caller-supplied agent name.
+	Agents []AgentMintInput
+}
+
+// NewBridgeInput is the bridge_token payload minted during initial pair.
+type NewBridgeInput struct {
+	TokenHash           string
+	InstallFingerprint  string
+	Hostname            string
+	AutoApprovalEnabled bool
+}
+
+// AgentMintInput is a single agent row to create during pair approval.
+type AgentMintInput struct {
+	Name      string // human-facing agent name (e.g. "main", "researcher")
+	TokenHash string
+}
+
+// ApprovePluginPairOutput is returned to the handler after a successful
+// transactional approve. The handler uses BridgeTokenID to populate the
+// token bundle cache; AgentIDs is the name→uuid mapping for diagnostics.
+type ApprovePluginPairOutput struct {
+	BridgeTokenID string
+	AgentIDs      map[string]string // agent name → agent uuid
+}
+
+// PluginPairCode is a one-time capability minted by the dashboard and
+// redeemed by the OpenClaw plugin to initiate its pair flow. Short-lived,
+// single-use, SHA-256-hashed at rest.
+type PluginPairCode struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	CodeHash   string     `json:"-"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).

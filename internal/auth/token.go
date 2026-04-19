@@ -24,6 +24,32 @@ func HashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// GenerateBridgeToken creates a cryptographically secure bridge bearer token
+// with the "cvisbr_" prefix. A bridge token authenticates an OpenClaw plugin
+// install to Clawvisor — it is intentionally distinct from an agent token so
+// the agent (untrusted LLM) cannot forge or observe it. The raw token is
+// shown once during pairing; only its SHA-256 hash is stored.
+func GenerateBridgeToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "cvisbr_" + hex.EncodeToString(b), nil
+}
+
+// GeneratePluginPairCode creates a one-time capability token used by the
+// OpenClaw plugin to initiate a pair request. Shorter than a bearer token
+// (18 hex chars = 72 bits) because its risk window is bounded by a short
+// expiry (10 min) and single-use consumption. Only the hash is stored
+// server-side; the raw value is shown once in the dashboard.
+func GeneratePluginPairCode() (string, error) {
+	b := make([]byte, 9)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "cvpc_" + hex.EncodeToString(b), nil
+}
+
 // GenerateCallbackSecret returns a "cbsec_"-prefixed 32-byte hex secret
 // used for HMAC-signing callback payloads.
 func GenerateCallbackSecret() (string, error) {

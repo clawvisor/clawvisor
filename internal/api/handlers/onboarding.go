@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/internal/pluginbundle"
 	"github.com/clawvisor/clawvisor/internal/relay"
 )
 
@@ -24,8 +25,17 @@ func NewOnboardingHandler(relayHost, daemonID string, isLocal bool) *OnboardingH
 	return &OnboardingHandler{relayHost: relayHost, daemonID: daemonID, isLocal: isLocal}
 }
 
-// Setup serves the onboarding markdown document.
+// Setup is the legacy setup handler. It delegates to SetupHermes for
+// backwards compatibility with existing dashboard links and pasted setup
+// URLs — old callers expected a single all-purpose agent-pairing flow, which
+// is what the Hermes handler still implements.
 func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
+	h.SetupHermes(w, r)
+}
+
+// SetupHermes serves the onboarding markdown for the Hermes flow (agent
+// calls POST /api/agents/connect directly; no separate plugin pairing step).
+func (h *OnboardingHandler) SetupHermes(w http.ResponseWriter, r *http.Request) {
 	clawvisorURL := h.resolveURL(r)
 	viaRelay := relay.ViaRelay(r.Context())
 
@@ -306,6 +316,144 @@ func (h *OnboardingHandler) ClaudeCodeSetup(w http.ResponseWriter, r *http.Reque
 	b.WriteString("rm ~/.claude/commands/clawvisor-setup.md\n")
 	b.WriteString("```\n\n")
 	b.WriteString("If they decline, remind them they can delete it later with the same command.\n")
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write([]byte(b.String()))
+}
+
+// validPairCode matches the `cvpc_` token format (prefix + 18 hex chars).
+// Tight regex because the code ends up in a YAML config the agent edits —
+// we don't want to encourage pasting shell-special characters into it.
+var validPairCode = regexp.MustCompile(`^cvpc_[a-f0-9]{18}$`)
+
+// setupOpenClawPluginInstallStep renders the install step that fetches
+// the embedded OpenClaw plugin tarball from this very Clawvisor instance.
+// Running a Clawvisor build that matches a specific plugin version is
+// what guarantees the pair / ingest / task-create protocol alignment;
+// pulling from npm-latest or a public registry would re-introduce the
+// version-skew problem we're specifically avoiding.
+func setupOpenClawPluginInstallStep(b *strings.Builder, clawvisorURL, pluginVersion, pluginSHA256 string) {
+	b.WriteString("## 1. Install the Clawvisor plugin into OpenClaw\n\n")
+	if pluginVersion == "" {
+		b.WriteString("_(This Clawvisor build does not embed a plugin bundle. The operator of this instance needs to rebuild with `make plugin-bundle`.)_\n\n")
+		return
+	}
+	fmt.Fprintf(b, "This Clawvisor instance serves a plugin tarball matched to its own protocol version: **%s** (sha256 `%s`).\n\n", pluginVersion, pluginSHA256)
+	b.WriteString("> **Note for agents:** some agent runtimes block `web_fetch` on private/loopback hostnames (e.g. `localhost`, `host.docker.internal`). If `web_fetch` errors on the URLs below, use `curl` via shell exec instead — it doesn't have the same restriction.\n\n")
+	b.WriteString("Install via OpenClaw's plugin installer. The `--dangerously-force-unsafe-install` flag is required because the plugin uses env vars + network (a static analyzer flag the operator is opting past explicitly here):\n\n")
+	b.WriteString("```bash\n")
+	fmt.Fprintf(b, "curl -fsSL -o /tmp/clawvisor.tgz %s/skill/openclaw-plugin.tgz\n", clawvisorURL)
+	b.WriteString("openclaw plugins install /tmp/clawvisor.tgz --dangerously-force-unsafe-install --force\n")
+	b.WriteString("```\n\n")
+	b.WriteString("If `openclaw plugins install` isn't available in your environment (non-standard OpenClaw packaging), fall back to manual extraction — the tarball unpacks to a `clawvisor/` directory:\n\n")
+	b.WriteString("```bash\n")
+	fmt.Fprintf(b, "curl -fsSL %s/skill/openclaw-plugin.tgz | tar xz -C ~/.openclaw/plugins\n", clawvisorURL)
+	b.WriteString("```\n\n")
+	b.WriteString("Verify the download matches the advertised hash:\n\n")
+	b.WriteString("```bash\n")
+	fmt.Fprintf(b, "curl -fsSL %s/skill/openclaw-plugin.sha256\n", clawvisorURL)
+	b.WriteString("```\n\n")
+	b.WriteString("The tarball contains a pre-bundled `index.js` (all Node dependencies inlined), `openclaw.plugin.json`, `package.json` (with the `openclaw.extensions` field set), and a `VERSION` file. No `npm install` needed inside the plugin dir.\n\n")
+}
+
+// SetupOpenClaw serves the onboarding markdown for the OpenClaw flow, which
+// is structurally different from Hermes: the agent does NOT call
+// /api/agents/connect directly. Instead, the OpenClaw-side Clawvisor plugin
+// runtime (trusted; not driven by LLM output) pairs itself and receives
+// both a bridge token and per-agent tokens in a single dashboard approval.
+//
+// The agent's only job is to deposit a one-time pair code where the plugin
+// can find it, then nudge the user to approve the resulting pairing card.
+// user_id never appears in plugin config — the server derives it by
+// consuming the code, so even an exposed user_id can't be used by a third
+// party to initiate a pair attempt.
+func (h *OnboardingHandler) SetupOpenClaw(w http.ResponseWriter, r *http.Request) {
+	clawvisorURL := h.resolveURL(r)
+
+	pairCode := r.URL.Query().Get("pair_code")
+	if pairCode != "" && !validPairCode.MatchString(pairCode) {
+		pairCode = ""
+	}
+
+	var b strings.Builder
+	b.WriteString("# Clawvisor OpenClaw Plugin Setup\n\n")
+	b.WriteString("You are running under OpenClaw with the Clawvisor plugin installed. ")
+	b.WriteString("Setup here is a handoff between you, the plugin runtime, and the user. ")
+	b.WriteString("Unlike a direct agent connection, **you do not call `/api/agents/connect`** — ")
+	b.WriteString("the plugin pairs itself on your behalf and receives tokens directly.\n\n")
+
+	b.WriteString("## How this works\n\n")
+	b.WriteString("The Clawvisor plugin is a trusted Node module loaded by OpenClaw. It:\n\n")
+	b.WriteString("1. Is installed into OpenClaw's plugin directory from a tarball served by this Clawvisor instance (guarantees a version match with this server).\n")
+	b.WriteString("2. Reads a one-time `pairCode` from the OpenClaw plugin config.\n")
+	b.WriteString("3. Calls `POST /api/plugin/pair?wait=true` with that code plus a fingerprint for this install, the hostname, and the list of agent IDs configured in OpenClaw.\n")
+	b.WriteString("4. The user sees a pairing approval card in the Clawvisor dashboard (same place they approve tasks).\n")
+	b.WriteString("5. On approve, the server mints a **bridge token** (held only by the plugin — never exposed to you, the agent) and one **agent token per agent** configured in OpenClaw.\n")
+	b.WriteString("6. The plugin stores these in a plugin-owned 0600 secrets file and the `clawvisor_*` tools become available to you.\n\n")
+	b.WriteString("Your job is two steps: install the plugin, then deposit the pair code.\n\n")
+
+	// Step 1: install the plugin from this instance.
+	pluginVersion := pluginbundle.Version()
+	pluginSHA := ""
+	if shaBytes, err := pluginbundle.SHA256(); err == nil {
+		// The sha256 file format is "<hex>  filename" — take just the hex.
+		fields := strings.Fields(string(shaBytes))
+		if len(fields) > 0 {
+			pluginSHA = fields[0]
+		}
+	}
+	setupOpenClawPluginInstallStep(&b, clawvisorURL, pluginVersion, pluginSHA)
+
+	b.WriteString("## 2. Configure the plugin in OpenClaw's config\n\n")
+	if pairCode != "" {
+		fmt.Fprintf(&b, "Your one-time pair code is embedded in this setup link:\n\n```\n%s\n```\n\n", pairCode)
+		b.WriteString("Open the OpenClaw config (typically `~/.openclaw/config.yaml`, or JSON/TOML equivalent — ask the user if unsure) and add the Clawvisor plugin entry under `plugins.entries.clawvisor`. Note that user-supplied fields (`url`, `pairCode`, `agents`) live **under `.config`**, not directly on the entry — OpenClaw's schema validator rejects unknown keys at the top level of a plugin entry.\n\n")
+		b.WriteString("YAML form:\n\n")
+		b.WriteString("```yaml\n")
+		b.WriteString("plugins:\n")
+		b.WriteString("  entries:\n")
+		b.WriteString("    clawvisor:\n")
+		b.WriteString("      enabled: true\n")
+		b.WriteString("      config:\n")
+		fmt.Fprintf(&b, "        url: %s\n", clawvisorURL)
+		fmt.Fprintf(&b, "        pairCode: %s\n", pairCode)
+		b.WriteString("        agents: [\"main\"]   # list the OpenClaw agent ids to mint tokens for\n")
+		b.WriteString("```\n\n")
+		b.WriteString("JSON form (for configs that use JSON):\n\n")
+		b.WriteString("```json\n")
+		b.WriteString("\"plugins\": {\n")
+		b.WriteString("  \"entries\": {\n")
+		b.WriteString("    \"clawvisor\": {\n")
+		b.WriteString("      \"enabled\": true,\n")
+		b.WriteString("      \"config\": {\n")
+		fmt.Fprintf(&b, "        \"url\": \"%s\",\n", clawvisorURL)
+		fmt.Fprintf(&b, "        \"pairCode\": \"%s\",\n", pairCode)
+		b.WriteString("        \"agents\": [\"main\"]\n")
+		b.WriteString("      }\n")
+		b.WriteString("    }\n")
+		b.WriteString("  }\n")
+		b.WriteString("}\n")
+		b.WriteString("```\n\n")
+		b.WriteString("**Important:** set `agents` in the same edit as `pairCode` — not afterwards. The pair code is single-use, and the server mints exactly the agent tokens listed in `agents` at pair time. If `agents` is empty or missing on first load, the pair succeeds but produces zero agent tokens and the code is burned; recovery requires minting a fresh code, deleting `~/.openclaw/plugins/clawvisor/secrets.json`, and reloading. (The plugin now detects this state and logs a warning telling the user to re-pair, but avoiding it in the first place is simpler.)\n\n")
+		b.WriteString("The pair code expires in ~10 minutes, so don't delay.\n\n")
+	} else {
+		b.WriteString("This setup link is missing (or has a malformed) `pair_code` query parameter. Ask the user to regenerate the link from the Clawvisor dashboard (Agents page → Connect OpenClaw). Codes expire after 10 minutes; regenerating always works.\n\n")
+	}
+
+	b.WriteString("## 3. Ask the user to reload the Clawvisor plugin\n\n")
+	b.WriteString("Once the config is updated, the plugin needs to pick up the new `pairCode`. Ask the user to either:\n\n")
+	b.WriteString("- **Reload the Clawvisor plugin** from OpenClaw's plugin management UI, *or*\n")
+	b.WriteString("- **Restart OpenClaw**.\n\n")
+	b.WriteString("The plugin will redeem the code and a pairing request will appear in the Clawvisor dashboard.\n\n")
+
+	b.WriteString("## 4. Ask the user to approve the pairing\n\n")
+	fmt.Fprintf(&b, "The user should open the Clawvisor dashboard at `%s/dashboard/agents` and approve the pending plugin pairing. ", clawvisorURL)
+	b.WriteString("The approval card shows the install fingerprint, hostname, and list of agents that will receive tokens. A checkbox on the card controls whether the plugin is allowed to drive auto-approval from observed conversations — encourage the user to read that option before checking it.\n\n")
+	b.WriteString("Once they approve, the plugin receives tokens silently — you'll know it worked when the `clawvisor_*` tools start appearing in your tool list (may require a tool-list refresh depending on your runtime).\n\n")
+
+	b.WriteString("## 5. Verify\n\n")
+	b.WriteString("Once the `clawvisor_*` tools are visible, call `clawvisor_fetch_catalog` with no arguments. A successful JSON catalog confirms the bridge + agent tokens are wired up.\n\n")
+	b.WriteString("Tell the user setup is complete.\n")
 
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Write([]byte(b.String()))

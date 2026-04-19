@@ -40,10 +40,21 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            extensions/clawvisor/package-lock.json
 
       - name: Build frontend
         run: cd web && npm ci && npm run build
+
+      # Regenerate the OpenClaw plugin tarball for this release. The server
+      # binary embeds it via `//go:embed`; the canonical distribution for
+      # cloud is `GET /skill/openclaw-plugin.tgz`. Every release must ship
+      # a fresh plugin matched to the binary's protocol version.
+      - name: Bundle OpenClaw plugin
+        env:
+          CLAWVISOR_VERSION: ${{ needs.release-please.outputs.tag_name }}
+        run: cd extensions/clawvisor && npm ci && npm run bundle
 
       - name: Build binaries and checksums
         run: scripts/build-release.sh "${{ needs.release-please.outputs.tag_name }}"
