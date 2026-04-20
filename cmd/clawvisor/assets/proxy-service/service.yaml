@@ -1,0 +1,23 @@
+name: Clawvisor Network Proxy
+id: clawvisor.network-proxy
+description: TLS MITM proxy for observing AI-agent traffic, injecting vault credentials, and enforcing policies.
+icon: shield
+platform: {{PLATFORM}}
+type: server
+startup: eager
+start: ./run.sh
+startup_timeout: 15
+# Admin endpoint serves /health on the Unix socket provided by
+# clawvisor-local via $CLAWVISOR_SOCKET. The TCP listener on
+# 127.0.0.1:{{LISTEN_PORT}} handles real proxy traffic separately.
+health_check: /health
+
+# Server-mode services require at least one action. "status" is a
+# trivial passthrough so the daemon can surface proxy health in the
+# toolbar without users having to do anything else.
+actions:
+  - id: status
+    name: Proxy status
+    description: Check whether the proxy is running and connected to the Clawvisor server.
+    method: GET
+    path: /healthz
