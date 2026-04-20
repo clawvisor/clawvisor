@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -96,11 +98,22 @@ func (h *CredentialHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ACL check: if UsableByAgents is non-empty, the caller's agent
-	// token must be listed. Empty = any agent of the bridge can use.
+	// must be listed. Empty = any agent of the bridge can use.
+	//
+	// UsableByAgents stores agent UUIDs (how the dashboard identifies
+	// agents) while the proxy sends req.AgentTokenID = raw cvis_ token
+	// (from Proxy-Authorization). Resolve the raw token to an agent here
+	// so the dashboard's ACL entries match.
 	if len(cred.UsableByAgents) > 0 {
+		agent, aerr := h.resolveAgentFromRequest(r.Context(), bt.UserID, req.AgentTokenID)
+		if aerr != nil || agent == nil {
+			h.logUsage(r.Context(), &req, "denied_acl")
+			writeError(w, http.StatusForbidden, "CREDENTIAL_NOT_AUTHORIZED", "agent not in ACL for this credential")
+			return
+		}
 		ok := false
 		for _, allowed := range cred.UsableByAgents {
-			if allowed == req.AgentTokenID {
+			if allowed == agent.ID || allowed == req.AgentTokenID {
 				ok = true
 				break
 			}
@@ -135,6 +148,39 @@ func (h *CredentialHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds:   300,
 		CacheKey:     cacheKey,
 	})
+}
+
+// resolveAgentFromRequest interprets req.AgentTokenID as either a raw
+// cvis_ token (proxy usually sends this) or an agent UUID (test harness
+// may send this). Returns (nil, nil) on empty input, error for a DB
+// failure, or (nil, ErrNotFound) for an unknown token.
+func (h *CredentialHandler) resolveAgentFromRequest(ctx context.Context, userID, tokenOrID string) (*store.Agent, error) {
+	tokenOrID = strings.TrimSpace(tokenOrID)
+	if tokenOrID == "" {
+		return nil, nil
+	}
+	// Try raw-token → hash → agent lookup first.
+	if hash := auth.HashToken(tokenOrID); hash != "" {
+		if a, err := h.st.GetAgentByToken(ctx, hash); err == nil {
+			if a.UserID != userID {
+				return nil, store.ErrNotFound
+			}
+			return a, nil
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+	}
+	// Fallback: UUID was sent directly.
+	agents, err := h.st.ListAgents(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range agents {
+		if a.ID == tokenOrID {
+			return a, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }
 
 func (h *CredentialHandler) logUsage(ctx context.Context, req *credentialLookupRequest, decision string) {

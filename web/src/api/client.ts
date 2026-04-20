@@ -827,6 +827,29 @@ export interface CustomMCPServer {
   created_at: string
 }
 
+// Stage 2 M2: vault-encrypted credential that the proxy can inject into
+// outbound LLM / API calls. Metadata only — plaintext value is never
+// returned after upsert.
+export interface InjectableCredential {
+  id: string
+  credential_ref: string
+  usable_by_agents: string[]
+  created_at: string
+  rotated_at: string | null
+  revoked_at: string | null
+}
+
+export interface CredentialUsageRecord {
+  id: string
+  agent_token_id: string
+  credential_ref: string
+  destination_host: string
+  destination_path: string
+  decision: 'granted' | 'denied_acl' | 'denied_revoked' | 'not_found'
+  request_id: string
+  ts: string
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -949,6 +972,18 @@ export const api = {
       post<{ ok: boolean }>(`/api/plugin/bridges/${id}/disable-proxy`, {}),
     installArtifact: (id: string) =>
       get<ProxyEnableResponse>(`/api/plugin/bridges/${id}/install-artifact`),
+  },
+  vault: {
+    credentials: {
+      list: () =>
+        get<{ credentials: InjectableCredential[] }>('/api/vault/injectable-credentials'),
+      upsert: (body: { credential_ref: string; credential: string; usable_by_agents?: string[] }) =>
+        post<{ ok: boolean; credential_ref: string; id: string }>('/api/vault/injectable-credentials', body),
+      revoke: (credentialRef: string) =>
+        del<{ ok: boolean }>(`/api/vault/injectable-credentials/${encodeURIComponent(credentialRef)}`),
+      usage: () =>
+        get<{ records: CredentialUsageRecord[] }>('/api/vault/injectable-credentials/usage'),
+    },
   },
   services: {
     list: async () => {

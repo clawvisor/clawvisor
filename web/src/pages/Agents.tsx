@@ -6,6 +6,7 @@ import type { BridgeToken, ConnectionRequest, PluginPairRequest } from '../api/c
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
+import VaultCredentials from '../components/VaultCredentials'
 
 export default function Agents() {
   const { currentOrg } = useAuth()
@@ -128,6 +129,12 @@ export default function Agents() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Vault credentials — shown only when at least one bridge has a proxy enabled,
+          since credentials are only useful to the proxy. */}
+      {!orgId && bridges && bridges.some(b => !b.revoked_at && b.proxy_enabled) && (
+        <VaultCredentials agents={agents} />
       )}
 
       {/* New token display */}
