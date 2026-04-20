@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Routes, Route, Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
@@ -318,6 +318,9 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
             outside Docker. The proxy is supervised by clawvisor-local — auto-restart on
             crash, status in your menu bar.
           </p>
+
+          <DaemonOneClickEnable artifact={artifact} />
+
           <CodeBlock onCopy={() => copy(daemonInstallSnippet)}>{daemonInstallSnippet}</CodeBlock>
           <p className="text-[11px] text-text-tertiary">
             Don't have clawvisor-local? Install it first via the Settings → Install daemon flow.
@@ -406,6 +409,123 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
         >
           Copy
         </button>
+      )}
+    </div>
+  )
+}
+
+// DaemonOneClickEnable probes for clawvisor-local on the user's
+// machine. If reachable, it offers a one-click install path that
+// POSTs the freshly-minted proxy_token + bridge_id to the daemon's
+// /api/proxy/configure endpoint. CORS is gated by the daemon's
+// AllowedCloudOrigins config — typically includes app.clawvisor.com
+// + localhost dev origins, so the dashboard can call across.
+//
+// The user still needs to know the local proxy binary's path, which
+// we ask them for since the daemon enforces a binary_path check
+// (avoiding "where's the binary on your machine?" being a server-
+// side guess).
+const DAEMON_BASE = 'http://127.0.0.1:25299'
+
+function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
+  const [reachable, setReachable] = useState<'probing' | 'yes' | 'no'>('probing')
+  const [binaryPath, setBinaryPath] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${DAEMON_BASE}/api/proxy/status`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(s => {
+        if (cancelled) return
+        setReachable('yes')
+        // If the daemon already remembers a binary path, prefill it so
+        // re-config / token-rotation is one click.
+        if (s?.binary_path) setBinaryPath(s.binary_path)
+      })
+      .catch(() => { if (!cancelled) setReachable('no') })
+    return () => { cancelled = true }
+  }, [])
+
+  if (reachable === 'probing') {
+    return (
+      <div className="text-[11px] text-text-tertiary italic">Looking for a local clawvisor daemon…</div>
+    )
+  }
+  if (reachable === 'no') {
+    return null // silently fall back to the copy-paste snippet below
+  }
+
+  const handleEnable = async () => {
+    if (!binaryPath.trim()) {
+      setResult({ ok: false, msg: 'Enter the proxy binary path first.' })
+      return
+    }
+    setSubmitting(true)
+    setResult(null)
+    try {
+      const r = await fetch(`${DAEMON_BASE}/api/proxy/configure`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          binary_path: binaryPath.trim(),
+          server_url: window.location.origin,
+          proxy_token: artifact.proxy_token,
+          bridge_id: artifact.bridge_id,
+          listen_host: '127.0.0.1',
+          listen_port: 25298,
+          mode: 'observe',
+          auto_enable: true,
+        }),
+      })
+      const body = await r.json()
+      if (!r.ok) {
+        setResult({ ok: false, msg: body?.error || `daemon returned ${r.status}` })
+      } else if (body?.enable_error) {
+        setResult({ ok: false, msg: 'Configured, but enable failed: ' + body.enable_error })
+      } else if (body?.restart_error) {
+        setResult({ ok: false, msg: 'Configured, but restart failed: ' + body.restart_error })
+      } else {
+        setResult({ ok: true, msg: 'Proxy is configured and running. Run "clawvisor proxy trust-ca" in a terminal next.' })
+      }
+    } catch (err) {
+      setResult({ ok: false, msg: 'Network error talking to daemon: ' + (err as Error).message })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="bg-success/5 border border-success/30 rounded-md p-3 space-y-2 mb-2">
+      <div className="flex items-center gap-2">
+        <span className="text-success text-xs">●</span>
+        <div className="text-xs font-medium text-text-primary">Local daemon detected</div>
+      </div>
+      <p className="text-[11px] text-text-tertiary">
+        clawvisor-local is running on this machine. We can configure it directly — no terminal command needed.
+      </p>
+      <div>
+        <label className="block text-[11px] text-text-tertiary mb-1">Proxy binary path on this machine</label>
+        <input
+          value={binaryPath}
+          onChange={e => setBinaryPath(e.target.value)}
+          placeholder="/usr/local/bin/clawvisor-proxy"
+          className="w-full text-xs font-mono rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1"
+        />
+      </div>
+      <button
+        onClick={handleEnable}
+        disabled={submitting || !binaryPath.trim()}
+        className="text-xs px-3 py-1.5 rounded bg-success text-surface-0 hover:bg-success/90 disabled:opacity-50"
+      >
+        {submitting ? 'Configuring…' : 'Enable on this device'}
+      </button>
+      {result && (
+        <div className={`text-[11px] ${result.ok ? 'text-success' : 'text-danger'}`}>
+          {result.msg}
+        </div>
       )}
     </div>
   )

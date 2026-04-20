@@ -144,7 +144,208 @@ func init() {
 	proxyCmd.AddCommand(proxySetModeCmd)
 	proxyCmd.AddCommand(proxyRunCmd)
 	proxyCmd.AddCommand(proxyTrustCACmd)
+	proxyCmd.AddCommand(proxyUpdateBinaryCmd)
 	rootCmd.AddCommand(proxyCmd)
+}
+
+// -- update-binary -------------------------------------------------------
+
+var (
+	updateRepo  string
+	updateTag   string
+	updateForce bool
+)
+
+var proxyUpdateBinaryCmd = &cobra.Command{
+	Use:   "update-binary",
+	Short: "Download the latest proxy binary from a GitHub release and restart in place",
+	Long: `Pulls the platform-specific clawvisor-proxy asset from a GitHub release
+(default: clawvisor/clawvisor-proxy@latest), installs it to
+~/.clawvisor/proxy/bin/clawvisor-proxy, and reconfigures the daemon
+to point at it. The daemon's Configure auto-restarts the running
+process so the new binary takes effect immediately.
+
+Requires GH_TOKEN in the environment for private repos; works
+unauthenticated against public ones.`,
+	SilenceUsage: true,
+	RunE:         runProxyUpdateBinary,
+}
+
+func init() {
+	proxyUpdateBinaryCmd.Flags().StringVar(&updateRepo, "repo", "clawvisor/clawvisor-proxy",
+		"GitHub repo (owner/name) to pull releases from.")
+	proxyUpdateBinaryCmd.Flags().StringVar(&updateTag, "tag", "latest",
+		"Release tag to install ('latest' for the most recent published release).")
+	proxyUpdateBinaryCmd.Flags().BoolVar(&updateForce, "force", false,
+		"Force download + reinstall even if the current binary's mtime matches.")
+}
+
+type ghAsset struct {
+	Name        string `json:"name"`
+	DownloadURL string `json:"browser_download_url"`
+	Size        int64  `json:"size"`
+}
+
+type ghRelease struct {
+	TagName string    `json:"tag_name"`
+	Assets  []ghAsset `json:"assets"`
+}
+
+func runProxyUpdateBinary(cmd *cobra.Command, args []string) error {
+	// Pick the asset name matching this OS+arch. Convention: the proxy
+	// release publishes one asset per platform named like
+	// "clawvisor-proxy-darwin-arm64", "clawvisor-proxy-linux-amd64", etc.
+	// If your release uses a different naming scheme, override the
+	// auto-pick by passing --repo to a fork that matches.
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	wantAsset := "clawvisor-proxy-" + platform
+
+	rel, err := fetchRelease(updateRepo, updateTag)
+	if err != nil {
+		return fmt.Errorf("fetch release: %w", err)
+	}
+	var pick *ghAsset
+	for i := range rel.Assets {
+		if rel.Assets[i].Name == wantAsset || rel.Assets[i].Name == wantAsset+".gz" || rel.Assets[i].Name == wantAsset+".tar.gz" {
+			pick = &rel.Assets[i]
+			break
+		}
+	}
+	if pick == nil {
+		names := make([]string, len(rel.Assets))
+		for i, a := range rel.Assets {
+			names[i] = a.Name
+		}
+		return fmt.Errorf("no asset matching %s in release %s. Available: %v", wantAsset, rel.TagName, names)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(home, ".clawvisor", "proxy", "bin")
+	if err := os.MkdirAll(binDir, 0700); err != nil {
+		return fmt.Errorf("create bin dir: %w", err)
+	}
+	binPath := filepath.Join(binDir, "clawvisor-proxy")
+
+	fmt.Printf("Downloading %s (%s, %d bytes)…\n", pick.Name, rel.TagName, pick.Size)
+	if err := downloadAsset(pick.DownloadURL, binPath); err != nil {
+		return fmt.Errorf("download asset: %w", err)
+	}
+	if err := os.Chmod(binPath, 0755); err != nil {
+		return fmt.Errorf("chmod binary: %w", err)
+	}
+	fmt.Printf("Installed to %s\n", binPath)
+
+	// Reconfigure the daemon to point at the new binary. Configure
+	// auto-restarts the running proxy; if it wasn't running we still
+	// update the recorded path for next start.
+	cur, err := fetchProxyStatusForUpdate()
+	if err != nil {
+		fmt.Printf("Note: daemon not reachable; binary installed but configure skipped. Re-run 'clawvisor proxy install' next.\n")
+		return nil
+	}
+	body := map[string]any{
+		"binary_path":  binPath,
+		"server_url":   cur.ServerURL,
+		"proxy_token":  "", // re-use the stored one
+		"bridge_id":    cur.BridgeID,
+		"listen_host":  cur.ListenHost,
+		"listen_port":  cur.ListenPort,
+		"mode":         cur.Mode,
+		"auto_enable":  cur.Enabled,
+	}
+	return daemonPOST("/api/proxy/configure", body)
+}
+
+func fetchRelease(repo, tag string) (*ghRelease, error) {
+	url := "https://api.github.com/repos/" + repo + "/releases/" + tag
+	if tag == "" || tag == "latest" {
+		url = "https://api.github.com/repos/" + repo + "/releases/latest"
+	}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := os.Getenv("GH_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("github %d: %s", resp.StatusCode, string(raw))
+	}
+	var rel ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+func downloadAsset(url, dst string) error {
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Accept", "application/octet-stream")
+	if tok := os.Getenv("GH_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download %d", resp.StatusCode)
+	}
+	tmp := dst + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
+
+// fetchProxyStatusForUpdate returns the daemon's current view, used so
+// update-binary can preserve the rest of the config (server_url,
+// bridge_id, mode) when reconfiguring.
+type proxyStatusUpdate struct {
+	State      string `json:"state"`
+	Enabled    bool   `json:"enabled"`
+	ListenHost string `json:"listen_host"`
+	ListenPort int    `json:"listen_port"`
+	BridgeID   string `json:"bridge_id"`
+	ServerURL  string `json:"server_url"`
+	Mode       string `json:"mode"`
+}
+
+func fetchProxyStatusForUpdate() (*proxyStatusUpdate, error) {
+	resp, err := http.Get(daemonBaseURL() + "/api/proxy/status")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("daemon %d", resp.StatusCode)
+	}
+	var s proxyStatusUpdate
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return nil, err
+	}
+	if s.BridgeID == "" {
+		return nil, errors.New("no proxy configured yet — run 'clawvisor proxy install' first")
+	}
+	return &s, nil
 }
 
 // -- install -------------------------------------------------------------

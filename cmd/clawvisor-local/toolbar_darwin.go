@@ -14,6 +14,7 @@ import (
 	"time"
 
 	localdaemon "github.com/clawvisor/clawvisor/internal/local/daemon"
+	localproxy "github.com/clawvisor/clawvisor/internal/local/proxy"
 	"github.com/clawvisor/clawvisor/pkg/version"
 	"github.com/getlantern/systray"
 	"github.com/spf13/cobra"
@@ -63,6 +64,19 @@ func runToolbar(d *localdaemon.Daemon) error {
 
 		serviceItem := systray.AddMenuItem("Services: 0", "")
 		serviceItem.Disable()
+
+		// Network Proxy lifecycle (Stage 2 M4 polish). The proxy is a
+		// first-class daemon subsystem; this surfaces its state in the
+		// menu bar and lets the user enable/disable/restart it without
+		// dropping to the CLI. Hidden on first run until configured.
+		proxyItem := systray.AddMenuItem("Network Proxy: not configured", "")
+		proxyItem.Disable()
+		proxyEnableItem := systray.AddMenuItem("Enable Proxy", "Start the configured Network Proxy")
+		proxyEnableItem.Hide()
+		proxyDisableItem := systray.AddMenuItem("Disable Proxy", "Stop the Network Proxy (keeps config)")
+		proxyDisableItem.Hide()
+		proxyRestartItem := systray.AddMenuItem("Restart Proxy", "Stop + restart the Network Proxy in place")
+		proxyRestartItem.Hide()
 
 		updateStatusItem := systray.AddMenuItem(toolbarUpdateStatusText(version.Check()), "")
 		updateStatusItem.Disable()
@@ -296,6 +310,29 @@ func runToolbar(d *localdaemon.Daemon) error {
 				statusItem.SetTitle(toolbarStatusText(summary))
 				connectionItem.SetTitle(toolbarConnectionText(summary))
 				serviceItem.SetTitle(fmt.Sprintf("Services: %d loaded, %d excluded", summary.ServiceCount, summary.ExcludedCount))
+
+				// Proxy menu state — derived from the daemon's lifecycle
+				// manager. Hidden actions when nothing's configured;
+				// enable/disable visibility flips with state.
+				if mgr := d.Proxy(); mgr != nil {
+					s := mgr.Status()
+					proxyItem.SetTitle(toolbarProxyText(s))
+					configured := s.BridgeID != ""
+					switch {
+					case !configured:
+						proxyEnableItem.Hide()
+						proxyDisableItem.Hide()
+						proxyRestartItem.Hide()
+					case s.Enabled && (s.State == "running" || s.State == "starting"):
+						proxyEnableItem.Hide()
+						proxyDisableItem.Show()
+						proxyRestartItem.Show()
+					default:
+						proxyEnableItem.Show()
+						proxyDisableItem.Hide()
+						proxyRestartItem.Hide()
+					}
+				}
 			}
 
 			update()
@@ -322,6 +359,27 @@ func runToolbar(d *localdaemon.Daemon) error {
 				case <-reloadItem.ClickedCh:
 					d.ReloadServices()
 					refreshServicesMenu()
+					update()
+				case <-proxyEnableItem.ClickedCh:
+					if mgr := d.Proxy(); mgr != nil {
+						if err := mgr.Enable(); err != nil {
+							updateStatusItem.SetTitle("Proxy enable: " + err.Error())
+						}
+					}
+					update()
+				case <-proxyDisableItem.ClickedCh:
+					if mgr := d.Proxy(); mgr != nil {
+						if err := mgr.Disable(); err != nil {
+							updateStatusItem.SetTitle("Proxy disable: " + err.Error())
+						}
+					}
+					update()
+				case <-proxyRestartItem.ClickedCh:
+					if mgr := d.Proxy(); mgr != nil {
+						if err := mgr.Restart(); err != nil {
+							updateStatusItem.SetTitle("Proxy restart: " + err.Error())
+						}
+					}
 					update()
 				case <-checkUpdatesItem.ClickedCh:
 					startUpdateCheck("Manual")
@@ -439,6 +497,30 @@ func toolbarConnectionText(summary localdaemon.StatusSummary) string {
 		return "Paired, waiting to reconnect"
 	default:
 		return "Not paired yet"
+	}
+}
+
+// toolbarProxyText is the menu-bar one-liner for the Network Proxy
+// state. Compact: "Network Proxy: <state> on :<port>" when running,
+// "<state>" otherwise. Compatible with proxy.Status's State enum.
+func toolbarProxyText(s localproxy.Status) string {
+	if s.BridgeID == "" {
+		return "Network Proxy: not configured"
+	}
+	switch s.State {
+	case "running":
+		return fmt.Sprintf("Network Proxy: ● running on :%d (%s)", s.ListenPort, s.Mode)
+	case "starting":
+		return "Network Proxy: ◌ starting…"
+	case "stopped", "disabled":
+		return "Network Proxy: ○ disabled"
+	case "failed":
+		if s.LastError != "" {
+			return fmt.Sprintf("Network Proxy: ✕ failed (%s)", s.LastError)
+		}
+		return "Network Proxy: ✕ failed"
+	default:
+		return "Network Proxy: " + string(s.State)
 	}
 }
 

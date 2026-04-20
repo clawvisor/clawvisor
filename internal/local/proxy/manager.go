@@ -87,12 +87,61 @@ func (m *Manager) tokenPath() string { return filepath.Join(m.stateDir, "proxy-t
 // configPath is the persisted config JSON.
 func (m *Manager) configPath() string { return filepath.Join(m.stateDir, "config.json") }
 
+// migrateLegacyDataDir moves data from the pre-refactor location
+// (~/.clawvisor/proxy-data/) into the daemon-owned dir (m.dataDir,
+// typically ~/.clawvisor/local/proxy-data/). Idempotent — if the new
+// dir already has a CA, the legacy dir is left alone (last-write-wins
+// would be wrong since the keychain may already trust the new CA).
+//
+// This survives the install path drift from an earlier UX iteration
+// where the proxy ran out of ~/.clawvisor/proxy-data/ before being
+// adopted by the daemon.
+func (m *Manager) migrateLegacyDataDir() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	legacy := filepath.Join(home, ".clawvisor", "proxy-data")
+	legacyCA := filepath.Join(legacy, "ca.pem")
+	if _, err := os.Stat(legacyCA); err != nil {
+		return nil // nothing to migrate
+	}
+	newCA := filepath.Join(m.dataDir, "ca.pem")
+	if _, err := os.Stat(newCA); err == nil {
+		return nil // new path already has a CA — don't overwrite
+	}
+	if err := os.MkdirAll(m.dataDir, 0700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(legacy)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		src := filepath.Join(legacy, e.Name())
+		dst := filepath.Join(m.dataDir, e.Name())
+		if err := os.Rename(src, dst); err != nil {
+			// Best-effort — keep going. A partial migration is
+			// recoverable; a hard failure here would block the daemon.
+			m.logger.Warn("proxy: migrate file", "src", src, "err", err)
+		}
+	}
+	_ = os.Remove(legacy) // leaves it if non-empty
+	return nil
+}
+
 // -- Config persistence --------------------------------------------------
 
 // LoadConfig rehydrates cfg + token from disk. Safe to call on a
 // fresh machine — returns nil and leaves Defaults() in place if no
-// config exists yet.
+// config exists yet. Also migrates the legacy data dir if found.
 func (m *Manager) LoadConfig() error {
+	if err := m.migrateLegacyDataDir(); err != nil {
+		// Non-fatal — log via the logger field once we have it.
+		// Falling through means a fresh CA gets generated, which is
+		// recoverable but forces re-trust.
+		m.logger.Warn("proxy: legacy data dir migration failed", "err", err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	raw, err := os.ReadFile(m.configPath())
