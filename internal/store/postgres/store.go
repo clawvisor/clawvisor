@@ -877,11 +877,33 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
-func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time) error {
+func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time, authorizedActions []store.TaskAction) error {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE tasks SET status = 'active', approved_at = NOW(), expires_at = $1
-		WHERE id = $2
-	`, expiresAt, id)
+		UPDATE tasks SET status = 'active', approved_at = NOW(), expires_at = $1,
+			authorized_actions = $2
+		WHERE id = $3
+	`, expiresAt, actionsJSON, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
+	actionsJSON, err := json.Marshal(actions)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET authorized_actions = $1 WHERE id = $2
+	`, actionsJSON, id)
 	if err != nil {
 		return err
 	}

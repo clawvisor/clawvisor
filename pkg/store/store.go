@@ -95,7 +95,8 @@ type Store interface {
 	GetTask(ctx context.Context, id string) (*Task, error)
 	ListTasks(ctx context.Context, userID string, filter TaskFilter) ([]*Task, int, error)
 	UpdateTaskStatus(ctx context.Context, id, status string) error
-	UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time) error
+	UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time, authorizedActions []TaskAction) error
+	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
 	SetTaskPendingExpansion(ctx context.Context, id string, action *TaskAction, reason string) error
@@ -300,11 +301,13 @@ type AuditEntry struct {
 // TaskAction represents a single authorized action within a task scope.
 type TaskAction struct {
 	Service            string          `json:"service"`
-	Action             string          `json:"action"`          // specific action or "*"
+	Action             string          `json:"action"` // specific action or "*"
 	AutoExecute        bool            `json:"auto_execute"`
 	ResponseFilters    json.RawMessage `json:"response_filters,omitempty"`
 	ExpectedUse        string          `json:"expected_use,omitempty"`
 	ExpansionRationale string          `json:"expansion_rationale,omitempty"` // set from PendingReason when scope expansion is approved
+	// Verification controls intent verification for this scope: "strict" (default), "lenient", "off".
+	Verification string `json:"verification,omitempty"`
 }
 
 // PlannedCall is a concrete or templated API call that an agent declares at task

@@ -400,6 +400,14 @@ export interface TaskAction {
   action: string
   auto_execute: boolean
   expected_use?: string
+  verification?: 'strict' | 'lenient' | 'off'
+}
+
+export interface ScopeOverride {
+  service: string
+  action: string
+  verification?: 'strict' | 'lenient' | 'off'
+  auto_execute?: boolean
 }
 
 export interface PlannedCall {
@@ -1178,8 +1186,13 @@ export const api = {
       const qs = q.toString()
       return get<{ tasks: Task[]; total: number }>(`/api/tasks${qs ? `?${qs}` : ''}`)
     },
-    approve: (id: string) =>
-      post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/approve`, {}),
+    approve: (id: string, opts?: { scopes?: ScopeOverride[] }) => {
+      const body: Record<string, unknown> = {}
+      if (opts?.scopes && opts.scopes.length > 0) body.scopes = opts.scopes
+      return post<{ task_id: string; status: string; expires_at: string }>(`/api/tasks/${id}/approve`, body)
+    },
+    updateScope: (id: string, scopes: ScopeOverride[]) =>
+      patch<{ task_id: string; scopes: TaskAction[] }>(`/api/tasks/${id}/scope`, { scopes }),
     deny: (id: string) =>
       post<{ task_id: string; status: string }>(`/api/tasks/${id}/deny`, {}),
     expandApprove: (id: string) =>

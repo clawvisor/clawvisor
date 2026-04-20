@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type PlannedCall, type AuditEntry, type RiskAssessment, type ApprovalRationale } from '../api/client'
+import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
-import RiskBadge from './RiskBadge'
 import VerificationIcon from './VerificationIcon'
+import ScopePill, { type ScopePillValue } from './ScopePill'
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -58,10 +58,14 @@ export default function TaskCard({
 }) {
   const qc = useQueryClient()
   const [result, setResult] = useState<string | null>(null)
-  const [scopesOpen, setScopesOpen] = useState(false)
-  const [activityOpen, setActivityOpen] = useState(false)
-  const [riskOpen, setRiskOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [activeTab, setActiveTab] = useState<'activity' | 'scopes'>(
+    task.request_count === 0 ? 'scopes' : 'activity'
+  )
+  const [scopesOpenInExpansion, setScopesOpenInExpansion] = useState(false)
   const [confirmApprove, setConfirmApprove] = useState(false)
+  const [openPillKey, setOpenPillKey] = useState<string | null>(null)
+  const [scopeOverrides, setScopeOverrides] = useState<Record<string, ScopeOverride>>({})
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -69,9 +73,15 @@ export default function TaskCard({
     qc.invalidateQueries({ queryKey: ['queue'] })
   }
 
+  const overrideList = Object.values(scopeOverrides)
+
   const approveMut = useMutation({
-    mutationFn: () => api.tasks.approve(task.id),
+    mutationFn: () => api.tasks.approve(task.id, { scopes: overrideList }),
     onSuccess: () => { setResult('Approved'); invalidate() },
+  })
+  const updateScopeMut = useMutation({
+    mutationFn: (scopes: ScopeOverride[]) => api.tasks.updateScope(task.id, scopes),
+    onSuccess: () => { invalidate() },
   })
   const denyMut = useMutation({
     mutationFn: () => api.tasks.deny(task.id),
@@ -90,24 +100,66 @@ export default function TaskCard({
     onSuccess: () => { setResult('Revoked'); invalidate() },
   })
 
-  const { data: auditData, isLoading: auditLoading } = useQuery({
-    queryKey: ['audit', { task_id: task.id }],
-    queryFn: () => api.audit.list({ task_id: task.id, limit: 50 }),
-    enabled: activityOpen,
-    refetchInterval: (query) =>
-      activityOpen && task.request_count !== (query.state.data?.entries?.length ?? 0) ? 1_000 : false,
-  })
-
   const isPending = approveMut.isPending || denyMut.isPending || expandApproveMut.isPending || expandDenyMut.isPending || revokeMut.isPending
   const needsApproval = task.status === 'pending_approval'
   const needsExpansion = task.status === 'pending_scope_expansion'
   const isActive = task.status === 'active'
   const isStanding = task.lifetime === 'standing'
   const isActionable = needsApproval || needsExpansion
+  const activityVisible = !isActionable && expanded && activeTab === 'activity'
 
-  const autoActions = task.authorized_actions.filter(a => a.auto_execute)
-  const manualActions = task.authorized_actions.filter(a => !a.auto_execute)
-  const totalScopes = task.authorized_actions.length
+  const { data: auditData, isLoading: auditLoading } = useQuery({
+    queryKey: ['audit', { task_id: task.id }],
+    queryFn: () => api.audit.list({ task_id: task.id, limit: 50 }),
+    enabled: activityVisible,
+    refetchInterval: (query) =>
+      activityVisible && task.request_count !== (query.state.data?.entries?.length ?? 0) ? 1_000 : false,
+  })
+
+  const effectiveValue = (a: TaskAction): ScopePillValue => {
+    const key = `${a.service}|${a.action}`
+    const o = scopeOverrides[key]
+    return {
+      auto: o?.auto_execute ?? a.auto_execute,
+      verification: (o?.verification ?? a.verification ?? 'strict') as 'strict' | 'lenient' | 'off',
+    }
+  }
+
+  const effectiveAuto = (a: TaskAction) => effectiveValue(a).auto
+  const autoActions = task.authorized_actions.filter(effectiveAuto)
+  const manualActions = task.authorized_actions.filter(a => !effectiveAuto(a))
+
+  const groupedByService = useMemo(() => {
+    const groups = new Map<string, { service: string; actions: TaskAction[] }>()
+    for (const a of task.authorized_actions) {
+      const g = groups.get(a.service) ?? { service: a.service, actions: [] }
+      g.actions.push(a)
+      groups.set(a.service, g)
+    }
+    return [...groups.values()]
+  }, [task.authorized_actions])
+
+  const handleScopeChange = (a: TaskAction, next: ScopePillValue) => {
+    const key = `${a.service}|${a.action}`
+    const patch: ScopeOverride = { service: a.service, action: a.action }
+    if (next.auto !== a.auto_execute) patch.auto_execute = next.auto
+    if (next.verification !== (a.verification ?? 'strict')) patch.verification = next.verification
+    const nextMap = { ...scopeOverrides }
+    if (!patch.auto_execute && patch.verification === undefined) {
+      delete nextMap[key]
+    } else {
+      nextMap[key] = patch
+    }
+    setScopeOverrides(nextMap)
+    if (isActive) {
+      updateScopeMut.mutate([{
+        service: a.service,
+        action: a.action,
+        verification: next.verification,
+        auto_execute: next.auto,
+      }])
+    }
+  }
 
   const auditEntries = auditData?.entries ?? []
   const badge = STATUS_BADGE[task.status] ?? { bg: 'bg-surface-2', text: 'text-text-tertiary', label: task.status }
@@ -116,85 +168,120 @@ export default function TaskCard({
   const riskDetails = task.risk_details
   const hasRisk = riskLevel !== '' && riskLevel !== 'unknown'
   const isHighRisk = riskLevel === 'high' || riskLevel === 'critical'
-  const riskPanelExpanded = !isActive && riskLevel !== 'low' && riskLevel !== ''
-  // Critical pending tasks shift the left border to danger red.
   const leftBorder = (isActionable && riskLevel === 'critical')
     ? 'border-l-danger'
     : (LEFT_BORDER[task.status] ?? 'border-l-transparent')
 
+  const showRisk = riskDetails && hasRisk
+  const showRationale = task.approval_source === 'telegram_group' && task.approval_rationale
+
   return (
     <div className={`bg-surface-1 border border-border-default rounded-md border-l-[3px] ${leftBorder} overflow-hidden`}>
-      {/* Header */}
-      <div className="px-5 pt-5 pb-4">
-        <p className="text-lg font-semibold text-text-primary leading-snug">{task.purpose}</p>
-        <div className="flex items-center gap-2 mt-2">
-          <span className={`inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded ${badge.bg} ${badge.text}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-            {badge.label}
-          </span>
-          {riskLevel && <RiskBadge level={riskLevel} />}
-          <span className="text-xs font-mono text-text-secondary">{agentName}</span>
-          <span className="text-xs text-text-tertiary">&middot;</span>
-          <span className="text-xs font-mono text-text-tertiary">
-            {isStanding ? 'ongoing' : 'session'}
-            {isActive && !isStanding && task.expires_at && <> &middot; <CountdownTimer expiresAt={task.expires_at} /></>}
-            {!isActive && task.expires_in_seconds > 0 && ` · ${Math.round(task.expires_in_seconds / 60)}m`}
-          </span>
-        </div>
-      </div>
 
-      {/* Result message */}
-      {result && (
+      {/* ── Compact row for non-actionable cards ── */}
+      {!isActionable && (
+        <div
+          className="px-5 py-3.5 flex items-center gap-3 cursor-pointer hover:bg-white/[0.015] select-none"
+          onClick={() => setExpanded(e => !e)}
+        >
+          <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+          <span className={`text-text-primary text-sm flex-1 ${expanded ? '' : 'truncate'}`}>{task.purpose}</span>
+          <span className="font-mono text-[11px] text-text-tertiary shrink-0">{agentName}</span>
+          <span className="text-text-tertiary text-[11px]">&middot;</span>
+          <span className="font-mono text-[11px] text-text-tertiary shrink-0">
+            {isActive
+              ? (isStanding
+                  ? 'ongoing'
+                  : (task.expires_at ? <CountdownTimer expiresAt={task.expires_at} /> : 'session'))
+              : badge.label}
+          </span>
+          <svg className={`w-3.5 h-3.5 text-text-tertiary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+        </div>
+      )}
+
+      {/* ── Full header for actionable cards ── */}
+      {isActionable && (
+        <div className="px-5 pt-5 pb-4">
+          <p className="text-lg font-semibold text-text-primary leading-snug">{task.purpose}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <span className={`inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded ${badge.bg} ${badge.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+              {badge.label}
+            </span>
+            <span className="text-xs font-mono text-text-secondary">{agentName}</span>
+            <span className="text-xs text-text-tertiary">&middot;</span>
+            <span className="text-xs font-mono text-text-tertiary">
+              {isStanding ? 'ongoing' : 'session'}
+              {!isStanding && task.expires_in_seconds > 0 && ` · ${Math.round(task.expires_in_seconds / 60)}m`}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Result banner (actionable cards only — non-actionable hides body when collapsed) ── */}
+      {result && isActionable && (
         <div className="px-5 pb-3">
           <div className="p-2 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
         </div>
       )}
 
-      {/* Risk assessment panel (auto-expanded for high/critical pending, collapsible otherwise) */}
-      {riskDetails && hasRisk && (
-        riskPanelExpanded ? (
-          <RiskPanel risk={riskDetails} level={riskLevel} />
-        ) : (
-          <>
-            <div className="px-5 pb-3">
-              <button
-                onClick={() => setRiskOpen(o => !o)}
-                className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
-              >
-                <svg className={`w-3 h-3 transition-transform ${riskOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
-                <span className="font-medium">Risk assessment</span>
-              </button>
-            </div>
-            {riskOpen && <RiskPanel risk={riskDetails} level={riskLevel} />}
-          </>
-        )
-      )}
-
-      {/* Auto-approval rationale */}
-      {task.approval_source === 'telegram_group' && task.approval_rationale && (
-        <AutoApprovalPanel rationale={task.approval_rationale} />
-      )}
-
-      {/* Scope expansion: collapsed approved scopes + new scope */}
-      {needsExpansion && !result ? (
+      {/* ── Pending approval body ── */}
+      {needsApproval && !result && (
         <>
-          <div className="px-5 pb-3 flex items-center justify-between">
+          {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
+          {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
+          <div className="px-4 pb-3">
+            <GroupedScopes
+              groups={groupedByService}
+              effectiveValue={effectiveValue}
+              openPillKey={openPillKey}
+              setOpenPillKey={setOpenPillKey}
+              onChange={handleScopeChange}
+              disabled={isPending}
+            />
+          </div>
+          <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+            <button onClick={() => denyMut.mutate()} disabled={isPending}
+              className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
+              Deny
+            </button>
+            {isHighRisk && !confirmApprove ? (
+              <button onClick={() => setConfirmApprove(true)} disabled={isPending}
+                className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
+                Approve Task
+              </button>
+            ) : (
+              <button onClick={() => approveMut.mutate()} disabled={isPending}
+                className={`font-medium rounded px-5 py-1.5 text-sm disabled:opacity-50 ${
+                  confirmApprove
+                    ? 'bg-danger text-surface-0 hover:bg-danger/80'
+                    : 'bg-brand text-surface-0 hover:bg-brand-strong'
+                }`}>
+                {approveMut.isPending ? 'Approving...' : confirmApprove ? 'Confirm Approve' : 'Approve Task'}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Pending scope expansion body ── */}
+      {needsExpansion && !result && (
+        <>
+          {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
+          <div className="px-5 pb-3">
             <button
-              onClick={() => setScopesOpen(o => !o)}
+              onClick={() => setScopesOpenInExpansion(o => !o)}
               className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
             >
-              <svg className={`w-3 h-3 transition-transform ${scopesOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+              <svg className={`w-3 h-3 transition-transform ${scopesOpenInExpansion ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
               <span className="font-medium">Approved scopes</span>
             </button>
-            <span className="text-xs font-mono text-text-tertiary">{totalScopes} scopes &middot; {autoActions.length} auto &middot; {manualActions.length} approval</span>
           </div>
-
-          {scopesOpen && (
+          {scopesOpenInExpansion && (
             <div className="px-4 pb-2">
               <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
             </div>
           )}
-
           {task.pending_action && (
             <div className="px-4 pb-3">
               <div className="bg-surface-0 border rounded overflow-hidden" style={{ borderColor: 'var(--color-warning-border-light)' }}>
@@ -219,127 +306,156 @@ export default function TaskCard({
               </div>
             </div>
           )}
-        </>
-      ) : isActionable && !result ? (
-        /* New task: show grouped scope tables + planned calls */
-        <div className="px-4 space-y-2 pb-3">
-          <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
-          {task.planned_calls && task.planned_calls.length > 0 && (
-            <PlannedCallsTable calls={task.planned_calls} />
-          )}
-        </div>
-      ) : (
-        /* Active / completed / other: collapsible scopes */
-        <div className="px-5 pb-3 flex items-center justify-between">
-          <button
-            onClick={() => setScopesOpen(o => !o)}
-            className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary"
-          >
-            <svg className={`w-3 h-3 transition-transform ${scopesOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
-            <span className="font-medium">Scopes</span>
-          </button>
-          <span className="text-xs font-mono text-text-tertiary">{totalScopes} scopes &middot; {autoActions.length} auto &middot; {manualActions.length} approval</span>
-        </div>
-      )}
-
-      {/* Expanded scopes for non-actionable states */}
-      {scopesOpen && !isActionable && (
-        <div className="px-4 pb-3 space-y-2">
-          <ScopeGroupTables autoActions={autoActions} manualActions={manualActions} />
-          {task.planned_calls && task.planned_calls.length > 0 && (
-            <PlannedCallsTable calls={task.planned_calls} />
-          )}
-        </div>
-      )}
-
-      {/* Action buttons */}
-      {!result && needsApproval && (
-        <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-between">
-          <span className="text-xs font-mono text-text-tertiary">{totalScopes} scopes &middot; {autoActions.length} auto &middot; {manualActions.length} approval</span>
-          <div className="flex items-center gap-2">
-            <button onClick={() => denyMut.mutate()} disabled={isPending}
+          <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+            <button onClick={() => expandDenyMut.mutate()} disabled={isPending}
               className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
               Deny
             </button>
-            {isHighRisk && !confirmApprove ? (
-              <button onClick={() => setConfirmApprove(true)} disabled={isPending}
-                className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
-                Approve Task
-              </button>
-            ) : (
-              <button onClick={() => approveMut.mutate()} disabled={isPending}
-                className={`font-medium rounded px-5 py-1.5 text-sm disabled:opacity-50 ${
-                  confirmApprove
-                    ? 'bg-danger text-surface-0 hover:bg-danger/80'
-                    : 'bg-brand text-surface-0 hover:bg-brand-strong'
-                }`}>
-                {approveMut.isPending ? 'Approving...' : confirmApprove ? 'Confirm Approve' : 'Approve Task'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!result && needsExpansion && (
-        <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
-          <button onClick={() => expandDenyMut.mutate()} disabled={isPending}
-            className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50">
-            Deny
-          </button>
-          <button onClick={() => expandApproveMut.mutate()} disabled={isPending}
-            className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
-            {expandApproveMut.isPending ? 'Approving...' : 'Approve Scope'}
-          </button>
-        </div>
-      )}
-
-      {/* Activity section */}
-      {(isActive || task.request_count > 0) && (
-        <>
-          <div className="px-5 py-2 border-t border-border-subtle flex items-center justify-between">
-            <button
-              onClick={() => setActivityOpen(o => !o)}
-              className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
-            >
-              <svg className={`w-3 h-3 transition-transform ${activityOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d={activityOpen ? 'M19 9l-7 7-7-7' : 'M9 5l7 7-7 7'}/></svg>
-              <span className="font-medium">Activity</span>
+            <button onClick={() => expandApproveMut.mutate()} disabled={isPending}
+              className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50">
+              {expandApproveMut.isPending ? 'Approving...' : 'Approve Scope'}
             </button>
-            <span className="text-xs font-mono text-text-tertiary">
-              {task.request_count} request{task.request_count !== 1 ? 's' : ''}
-            </span>
+          </div>
+        </>
+      )}
+
+      {/* ── Non-actionable expanded body (animated open via grid-rows) ── */}
+      {!isActionable && (
+      <div className={`grid transition-[grid-template-rows] duration-300 ease-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+      <div className="overflow-hidden min-h-0">
+        <>
+          {result && (
+            <div className="px-5 pb-3">
+              <div className="p-2 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
+            </div>
+          )}
+
+          <div className="border-t border-border-subtle flex items-stretch px-2">
+            <button
+              onClick={() => setActiveTab('activity')}
+              className={`px-3 py-2.5 text-[12.5px] border-b-2 -mb-px transition-colors ${
+                activeTab === 'activity'
+                  ? 'text-text-primary border-brand'
+                  : 'text-text-tertiary border-transparent hover:text-text-secondary'
+              }`}
+            >
+              Activity
+            </button>
+            <button
+              onClick={() => setActiveTab('scopes')}
+              className={`px-3 py-2.5 text-[12.5px] border-b-2 -mb-px transition-colors ${
+                activeTab === 'scopes'
+                  ? 'text-text-primary border-brand'
+                  : 'text-text-tertiary border-transparent hover:text-text-secondary'
+              }`}
+            >
+              Scopes
+            </button>
           </div>
 
-          {activityOpen && (
+          {activeTab === 'activity' && (
             <div className="divide-y divide-border-subtle text-sm">
               {auditLoading && <div className="px-4 py-2 text-xs text-text-tertiary">Loading...</div>}
               {!auditLoading && auditEntries.length === 0 && (
                 <div className="px-4 py-2 text-xs text-text-tertiary">No actions recorded yet.</div>
               )}
-              {auditEntries.map(e => (
-                <ActivityRow key={e.id} entry={e} />
-              ))}
+              {auditEntries.map(e => <ActivityRow key={e.id} entry={e} />)}
+            </div>
+          )}
+
+          {activeTab === 'scopes' && (
+            <div className="pt-3">
+              {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
+              {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
+              <div className="px-4 pb-3">
+                <GroupedScopes
+                  groups={groupedByService}
+                  effectiveValue={effectiveValue}
+                  openPillKey={openPillKey}
+                  setOpenPillKey={setOpenPillKey}
+                  onChange={handleScopeChange}
+                  disabled={!isActive || isPending}
+                />
+              </div>
+            </div>
+          )}
+
+          {!result && isActive && (
+            <div className="px-4 py-2.5 border-t border-border-subtle flex items-center justify-end">
+              <button
+                onClick={() => revokeMut.mutate()}
+                disabled={revokeMut.isPending}
+                className="rounded px-3 py-1 text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-2 hover:text-text-primary disabled:opacity-50"
+              >
+                {revokeMut.isPending ? 'Revoking...' : 'Revoke Task'}
+              </button>
             </div>
           )}
         </>
-      )}
-
-      {/* Revoke */}
-      {!result && isActive && (
-        <div className="px-4 py-2.5 border-t border-border-subtle flex items-center justify-end">
-          <button
-            onClick={() => revokeMut.mutate()}
-            disabled={revokeMut.isPending}
-            className="rounded px-3 py-1 text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-2 hover:text-text-primary disabled:opacity-50"
-          >
-            {revokeMut.isPending ? 'Revoking...' : 'Revoke Task'}
-          </button>
-        </div>
+      </div>
+      </div>
       )}
     </div>
   )
 }
 
-// ── Scope group tables ───────────────────────────────────────────────────────
+// ── Grouped scopes with inline ScopePill ─────────────────────────────────────
+
+function GroupedScopes({
+  groups,
+  effectiveValue,
+  openPillKey,
+  setOpenPillKey,
+  onChange,
+  disabled,
+}: {
+  groups: { service: string; actions: TaskAction[] }[]
+  effectiveValue: (a: TaskAction) => ScopePillValue
+  openPillKey: string | null
+  setOpenPillKey: (k: string | null) => void
+  onChange: (a: TaskAction, v: ScopePillValue) => void
+  disabled: boolean
+}) {
+  return (
+    <div className="space-y-4">
+      {groups.map(g => (
+        <div key={g.service}>
+          <div className="pb-2 flex items-baseline gap-2">
+            <span className="text-[15px] font-medium tracking-tight text-text-primary">{serviceName(g.service)}</span>
+          </div>
+          <div className="border-y border-border-subtle">
+            {g.actions.map((a, i) => {
+              const key = `${a.service}|${a.action}`
+              return (
+                <div
+                  key={key}
+                  className={`py-2 pl-4 pr-1 flex items-center justify-between gap-3 ${i > 0 ? 'border-t border-border-subtle' : ''}`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-mono text-[12px] text-text-primary">{actionName(a.action, a.service)}</div>
+                    {a.expected_use && (
+                      <div className="text-[12px] text-text-secondary mt-0.5">{a.expected_use}</div>
+                    )}
+                  </div>
+                  <ScopePill
+                    value={effectiveValue(a)}
+                    expanded={openPillKey === key}
+                    onExpand={() => setOpenPillKey(key)}
+                    onCollapse={() => setOpenPillKey(null)}
+                    onChange={(v) => onChange(a, v)}
+                    disabled={disabled}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Scope group tables (used only for needsExpansion approved-scopes view) ───
 
 function ScopeGroupTables({ autoActions, manualActions }: {
   autoActions: { service: string; action: string; expected_use?: string }[]
@@ -387,38 +503,6 @@ function ScopeGroupTables({ autoActions, manualActions }: {
   )
 }
 
-// ── Planned calls table ──────────────────────────────────────────────────────
-
-function PlannedCallsTable({ calls }: { calls: PlannedCall[] }) {
-  return (
-    <div className="bg-surface-0 border border-border-subtle rounded overflow-hidden mt-2">
-      <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5" style={{ background: 'var(--color-brand-tint, rgba(59,130,246,0.05))' }}>
-        <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-        <span className="text-[10px] font-medium text-brand uppercase tracking-wider">Planned calls</span>
-      </div>
-      <table className="w-full text-sm">
-        <tbody>
-          {calls.map((pc, i) => (
-            <tr key={`${pc.service}|${pc.action}|${i}`} className={i < calls.length - 1 ? 'border-b border-border-subtle' : ''}>
-              <td className="px-3 py-2 font-mono text-text-primary w-40">{serviceName(pc.service)} · {actionName(pc.action)}</td>
-              <td className="px-3 py-2 text-sm text-text-secondary">
-                {pc.reason}
-                {pc.params && Object.keys(pc.params).length > 0 && (
-                  <span className="ml-2 text-xs font-mono text-text-tertiary">
-                    ({Object.entries(pc.params).map(([k, v]) =>
-                      v === '$chain' ? `${k}=\u27e8from prior call\u27e9` : `${k}=${JSON.stringify(v)}`
-                    ).join(', ')})
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 // ── Auto-approval rationale panel ─────────────────────────────────────────────
 
 function AutoApprovalPanel({ rationale }: { rationale: ApprovalRationale }) {
@@ -455,7 +539,6 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
   const colors = RISK_PANEL_COLORS[level] ?? RISK_PANEL_COLORS.medium
   const hasConflicts = risk.conflicts && risk.conflicts.length > 0
   const hasFactors = risk.factors && risk.factors.length > 0
-  const headerLabel = level === 'critical' ? 'Risk Assessment \u2014 Critical' : 'Risk Assessment'
 
   return (
     <div className="px-4 pb-3">
@@ -465,12 +548,11 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             ? <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
             : <svg className="w-3 h-3" style={{ color: colors.color }} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
           }
-          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: colors.color }}>{headerLabel}</span>
+          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: colors.color }}>Risk assessment &middot; {level}</span>
         </div>
         <div className="px-3 py-2.5 space-y-2">
           <p className="text-sm text-text-secondary">{risk.explanation}</p>
 
-          {/* Conflicts (shown before factors for critical, after for others) */}
           {hasConflicts && level === 'critical' && (
             <div className="space-y-1.5">
               {risk.conflicts.map((c, i) => (
@@ -482,7 +564,6 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             </div>
           )}
 
-          {/* Factors */}
           {hasFactors && (
             <div className="space-y-1" style={hasConflicts && level === 'critical' ? { borderTop: `1px solid ${colors.conflictBorder}`, paddingTop: '0.25rem' } : undefined}>
               {risk.factors.map((f, i) => (
@@ -494,7 +575,6 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             </div>
           )}
 
-          {/* Conflicts (after factors for non-critical) */}
           {hasConflicts && level !== 'critical' && (
             <div className="mt-1 pt-2 space-y-1.5" style={{ borderTop: `1px solid ${colors.conflictBorder}` }}>
               {risk.conflicts.map((c, i) => (
@@ -506,7 +586,6 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             </div>
           )}
 
-          {/* Model & latency metadata */}
           <div className="text-[10px] font-mono text-text-tertiary pt-1">{risk.model} &middot; {risk.latency_ms}ms</div>
         </div>
       </div>

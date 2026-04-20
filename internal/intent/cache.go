@@ -81,14 +81,18 @@ func buildCacheKey(req VerifyRequest) cacheKey {
 	if req.ChainContextOptOut {
 		optOut = "1"
 	}
+	mode := "s"
+	if req.Lenient {
+		mode = "l"
+	}
 
 	if len(req.ChainFacts) > 0 {
 		factsBytes, _ := json.Marshal(req.ChainFacts)
 		factsHash := sha256.Sum256(factsBytes)
-		return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%x|%s",
-			req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut))
+		return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%x|%s|%s",
+			req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], factsHash[:8], optOut, mode))
 	}
 
-	return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%s",
-		req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut))
+	return cacheKey(fmt.Sprintf("%s|%s|%s|%x|%x|%s|%s",
+		req.TaskID, req.Service, req.Action, paramsHash[:8], reasonHash[:8], optOut, mode))
 }
