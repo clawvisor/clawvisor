@@ -88,7 +88,6 @@ services:
       - clawvisor-net
     depends_on:
       - clawvisor-proxy
-      - clawvisor-bootstrap
     environment:
       HTTP_PROXY:  "http://clawvisor-proxy:8880"
       HTTPS_PROXY: "http://clawvisor-proxy:8880"
@@ -98,7 +97,9 @@ services:
       # OpenSSL / curl fallback.
       SSL_CERT_FILE:       "/etc/clawvisor/ca.pem"
     volumes:
-      - clawvisor-shared:/etc/clawvisor:ro
+      # Mount the proxy's data dir read-only so OpenClaw can read ca.pem
+      # (the proxy writes it to /data/ca.pem on first run).
+      - clawvisor-proxy-data:/etc/clawvisor:ro
 
 volumes:
   clawvisor-proxy-data:   # proxy-only state: CA keypair, traffic log, signing keys
