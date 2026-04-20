@@ -57,6 +57,27 @@ type TasksHandler struct {
 	llmHealth        *llm.Health              // may be nil; needed for approval check LLM calls
 	agentPairer      notify.AgentGroupPairer  // may be nil; set via SetGroupApproval
 	localSvcProvider LocalServiceProvider     // may be nil; set via SetLocalServiceProvider
+	// judgeAuditor optionally receives auto-approval decisions so the
+	// unified judge_decisions audit log captures both proxy-mediated
+	// flag-rule decisions and server-local auto-approval decisions.
+	// Stage 3 M7. Nil-safe: no-op if unset.
+	judgeAuditor judgeAuditor
+}
+
+// judgeAuditor is the minimal interface TasksHandler uses to log a
+// server-local auto-approval to the unified judge_decisions table.
+// Matches internal/judge.Judge's method; decoupled so the handlers
+// package doesn't force-import the judge package.
+type judgeAuditor interface {
+	LogLocalAutoApproval(ctx context.Context, bridgeID, agentID, ruleName, decision, reason string, latencyMs int)
+}
+
+// SetJudgeAuditor wires the Stage 3 M7 audit hook. Safe to leave unset
+// when the judge package isn't available; no auto-approvals will be
+// mirrored to judge_decisions in that case, but the primary behavior
+// (setting preApproved + recording on the task row) is unchanged.
+func (h *TasksHandler) SetJudgeAuditor(a judgeAuditor) {
+	h.judgeAuditor = a
 }
 
 // SetLocalServiceProvider configures the local daemon service provider for
@@ -447,25 +468,43 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				})
 				if err != nil {
 					h.logger.Warn("group chat approval check failed", "err", err, "user_id", agent.UserID)
-				} else if result != nil && result.Approved {
-					preApproved = true
-					task.Status = "active"
-					now := time.Now().UTC()
-					task.ApprovedAt = &now
-					expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
-					task.ExpiresAt = &expiresAt
-					task.ApprovalSource = approvalSource
-					rationale, _ := json.Marshal(map[string]any{
-						"explanation": result.Explanation,
-						"confidence":  result.Confidence,
-						"model":       result.Model,
-						"latency_ms":  result.LatencyMS,
-					})
-					task.ApprovalRationale = rationale
-					h.logger.Info("task auto-approved via group chat LLM check",
-						"task_id", task.ID, "confidence", result.Confidence,
-						"explanation", result.Explanation, "model", result.Model,
-						"latency_ms", result.LatencyMS)
+				} else if result != nil {
+					// Stage 3 M7: mirror every auto-approval judgement to the
+					// unified judge_decisions audit log — decision_path=
+					// server_local_auto_approval distinguishes from the
+					// proxy_flag_rule path.
+					if h.judgeAuditor != nil {
+						dec := "block"
+						if result.Approved {
+							dec = "allow"
+						}
+						bridgeID := ""
+						if attestingBridge != nil {
+							bridgeID = attestingBridge.ID
+						}
+						h.judgeAuditor.LogLocalAutoApproval(ctx, bridgeID, agent.ID,
+							"auto_approval:"+approvalSource, dec, result.Explanation, result.LatencyMS)
+					}
+					if result.Approved {
+						preApproved = true
+						task.Status = "active"
+						now := time.Now().UTC()
+						task.ApprovedAt = &now
+						expiresAt := now.Add(time.Duration(task.ExpiresInSeconds) * time.Second)
+						task.ExpiresAt = &expiresAt
+						task.ApprovalSource = approvalSource
+						rationale, _ := json.Marshal(map[string]any{
+							"explanation": result.Explanation,
+							"confidence":  result.Confidence,
+							"model":       result.Model,
+							"latency_ms":  result.LatencyMS,
+						})
+						task.ApprovalRationale = rationale
+						h.logger.Info("task auto-approved via group chat LLM check",
+							"task_id", task.ID, "confidence", result.Confidence,
+							"explanation", result.Explanation, "model", result.Model,
+							"latency_ms", result.LatencyMS)
+					}
 				}
 			}
 		}

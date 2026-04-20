@@ -458,6 +458,8 @@ func (s *Server) routes() http.Handler {
 	if s.msgBuffer != nil {
 		tasksHandler.SetGroupApproval(s.msgBuffer, s.llmHealth, agentPairer)
 	}
+	// Stage 3 M7: mirror server-local auto-approvals into judge_decisions.
+	tasksHandler.SetJudgeAuditor(judge.New(s.llmHealth, s.store, s.logger))
 	if s.localServiceProvider != nil {
 		tasksHandler.SetLocalServiceProvider(s.localServiceProvider)
 	}

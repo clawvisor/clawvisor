@@ -199,23 +199,27 @@ func (s *Store) LiftAgentBan(ctx context.Context, bridgeID, agentTokenID, ruleNa
 }
 
 func (s *Store) InsertJudgeDecision(ctx context.Context, d *store.JudgeDecision) error {
+	path := d.DecisionPath
+	if path == "" {
+		path = "proxy_flag_rule"
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO judge_decisions
-			(bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, d.BridgeID, d.AgentTokenID, d.RuleName, d.CacheKey, d.Decision, d.Reason, d.Model, d.LatencyMs, d.PromptTokens, d.CompletionTokens)
+			(bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens, decision_path)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, d.BridgeID, d.AgentTokenID, d.RuleName, d.CacheKey, d.Decision, d.Reason, d.Model, d.LatencyMs, d.PromptTokens, d.CompletionTokens, path)
 	return err
 }
 
 func (s *Store) GetJudgeDecisionByCacheKey(ctx context.Context, cacheKey string, since time.Time) (*store.JudgeDecision, error) {
 	d := &store.JudgeDecision{}
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, ts, bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens
+		SELECT id, ts, bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens, decision_path
 		FROM judge_decisions
 		WHERE cache_key = $1 AND ts >= $2
 		ORDER BY ts DESC LIMIT 1
 	`, cacheKey, since).Scan(&d.ID, &d.TS, &d.BridgeID, &d.AgentTokenID, &d.RuleName, &d.CacheKey,
-		&d.Decision, &d.Reason, &d.Model, &d.LatencyMs, &d.PromptTokens, &d.CompletionTokens)
+		&d.Decision, &d.Reason, &d.Model, &d.LatencyMs, &d.PromptTokens, &d.CompletionTokens, &d.DecisionPath)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

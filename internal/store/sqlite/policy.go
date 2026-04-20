@@ -238,11 +238,15 @@ func (s *Store) LiftAgentBan(ctx context.Context, bridgeID, agentTokenID, ruleNa
 }
 
 func (s *Store) InsertJudgeDecision(ctx context.Context, d *store.JudgeDecision) error {
+	path := d.DecisionPath
+	if path == "" {
+		path = "proxy_flag_rule"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO judge_decisions
-			(bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, d.BridgeID, d.AgentTokenID, d.RuleName, d.CacheKey, d.Decision, d.Reason, d.Model, d.LatencyMs, d.PromptTokens, d.CompletionTokens)
+			(bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens, decision_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, d.BridgeID, d.AgentTokenID, d.RuleName, d.CacheKey, d.Decision, d.Reason, d.Model, d.LatencyMs, d.PromptTokens, d.CompletionTokens, path)
 	return err
 }
 
@@ -250,12 +254,12 @@ func (s *Store) GetJudgeDecisionByCacheKey(ctx context.Context, cacheKey string,
 	d := &store.JudgeDecision{}
 	var ts string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, ts, bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens
+		SELECT id, ts, bridge_id, agent_token_id, rule_name, cache_key, decision, reason, model, latency_ms, prompt_tokens, completion_tokens, decision_path
 		FROM judge_decisions
 		WHERE cache_key = ? AND ts >= ?
 		ORDER BY ts DESC LIMIT 1
 	`, cacheKey, since.UTC().Format(time.RFC3339)).Scan(&d.ID, &ts, &d.BridgeID, &d.AgentTokenID, &d.RuleName, &d.CacheKey,
-		&d.Decision, &d.Reason, &d.Model, &d.LatencyMs, &d.PromptTokens, &d.CompletionTokens)
+		&d.Decision, &d.Reason, &d.Model, &d.LatencyMs, &d.PromptTokens, &d.CompletionTokens, &d.DecisionPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

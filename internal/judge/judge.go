@@ -182,6 +182,7 @@ func (j *Judge) Decide(ctx context.Context, req Request) (Verdict, error) {
 		Reason:       reason,
 		Model:        cfg.Model,
 		LatencyMs:    verdict.LatencyMs,
+		DecisionPath: "proxy_flag_rule",
 	})
 
 	return verdict, nil
@@ -312,6 +313,33 @@ func (v Verdict) MarshalResponse() PolicyDecisionResponse {
 		Model:     v.Model,
 		LatencyMs: v.LatencyMs,
 		CacheHit:  v.CacheHit,
+	}
+}
+
+// LogLocalAutoApproval audits a Stage 0 server-local auto-approval
+// decision (the intent.CheckApproval path used by tasks.go for plugin/
+// Telegram-mediated bridges) to the same judge_decisions table the
+// proxy uses. Stage 3 M7 — decision_path distinguishes the two paths
+// so dashboards can correlate them.
+//
+// best-effort; failure is logged but does not propagate.
+func (j *Judge) LogLocalAutoApproval(ctx context.Context, bridgeID, agentID, ruleName, decision, reason string, latencyMs int) {
+	if j == nil || j.store == nil {
+		return
+	}
+	cacheKey := fmt.Sprintf("local:%s:%s:%s:%d", bridgeID, agentID, ruleName, time.Now().UnixNano())
+	err := j.store.InsertJudgeDecision(ctx, &store.JudgeDecision{
+		BridgeID:     bridgeID,
+		AgentTokenID: agentID,
+		RuleName:     ruleName,
+		CacheKey:     cacheKey,
+		Decision:     decision,
+		Reason:       reason,
+		LatencyMs:    latencyMs,
+		DecisionPath: "server_local_auto_approval",
+	})
+	if err != nil && j.logger != nil {
+		j.logger.Warn("local auto-approval audit failed", "err", err, "bridge_id", bridgeID)
 	}
 }
 

@@ -827,6 +827,10 @@ type JudgeDecision struct {
 	LatencyMs        int       `json:"latency_ms,omitempty"`
 	PromptTokens     int       `json:"prompt_tokens,omitempty"`
 	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	// DecisionPath differentiates the proxy flag-rule path from the
+	// server-local task-auto-approval path (Stage 3 M7). Values:
+	// "proxy_flag_rule" (default) | "server_local_auto_approval".
+	DecisionPath string `json:"decision_path,omitempty"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).
