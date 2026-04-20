@@ -769,6 +769,9 @@ func (s *Server) routes() http.Handler {
 	// See docs/design-proxy-stage2.md §2.
 	credHandler := handlers.NewCredentialHandler(s.store, s.vault, s.logger)
 	mux.Handle("POST /api/proxy/credential-lookup", requireProxy(e2e(http.HandlerFunc(credHandler.Lookup))))
+	// Stage 2 M6: SSE invalidation feed — proxies subscribe to evict
+	// cached credentials within seconds of revoke/rotate.
+	mux.Handle("GET /api/proxy/invalidations", requireProxy(http.HandlerFunc(credHandler.Invalidations)))
 	mux.Handle("POST /api/vault/injectable-credentials", user(credHandler.UpsertCredential))
 	mux.Handle("GET /api/vault/injectable-credentials", user(credHandler.ListCredentials))
 	mux.Handle("GET /api/vault/injectable-credentials/usage", user(credHandler.UsageLog))

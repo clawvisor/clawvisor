@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -21,10 +24,47 @@ type CredentialHandler struct {
 	st     store.Store
 	vault  vault.Vault
 	logger *slog.Logger
+	// invalidations is a per-bridge SSE hub. When a credential is
+	// rotated or revoked we publish on this hub so any proxy subscribed
+	// via GET /api/proxy/invalidations can evict its cache entry
+	// without waiting for its 5-minute TTL. Stage 2 M6.
+	invalidations events.EventHub
 }
 
 func NewCredentialHandler(st store.Store, v vault.Vault, logger *slog.Logger) *CredentialHandler {
-	return &CredentialHandler{st: st, vault: v, logger: logger}
+	return &CredentialHandler{
+		st:            st,
+		vault:         v,
+		logger:        logger,
+		invalidations: events.NewHub(),
+	}
+}
+
+// publishInvalidation notifies subscribed proxies that a credential's
+// cached value is stale. We fan out across *every* bridge belonging to
+// the credential's user, because any of that user's proxies may have
+// cached the value.
+func (h *CredentialHandler) publishInvalidation(ctx context.Context, userID, credentialRef, credentialID string) {
+	if h.invalidations == nil {
+		return
+	}
+	cacheKey := credentialRef + "#" + credentialID
+	bridges, err := h.st.ListActiveBridgesForUser(ctx, userID)
+	if err != nil {
+		h.logger.Warn("invalidation: list bridges failed", "err", err, "user_id", userID)
+		return
+	}
+	evt := events.Event{
+		Type: "credential.invalidate",
+		ID:   credentialRef,
+		Data: map[string]string{"cache_key": cacheKey, "credential_ref": credentialRef},
+	}
+	for _, b := range bridges {
+		if !b.ProxyEnabled {
+			continue
+		}
+		h.invalidations.Publish(b.ID, evt)
+	}
 }
 
 // vaultServicePrefix namespaces the credential-injection secrets inside
@@ -238,6 +278,9 @@ func (h *CredentialHandler) UpsertCredential(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "metadata write failed")
 		return
 	}
+	// Rotated (or new) credential: push invalidations so live proxies
+	// drop any stale cached copy within seconds instead of minutes.
+	h.publishInvalidation(r.Context(), user.ID, req.CredentialRef, c.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"credential_ref": req.CredentialRef,
@@ -285,6 +328,8 @@ func (h *CredentialHandler) RevokeCredential(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "credential_ref path value required")
 		return
 	}
+	// Load before revoke so we know the credential_id for invalidation.
+	cred, gerr := h.st.GetInjectableCredential(r.Context(), user.ID, ref)
 	if err := h.st.RevokeInjectableCredential(r.Context(), user.ID, ref); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "credential not found")
@@ -292,6 +337,9 @@ func (h *CredentialHandler) RevokeCredential(w http.ResponseWriter, r *http.Requ
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "revoke failed")
 		return
+	}
+	if gerr == nil && cred != nil {
+		h.publishInvalidation(r.Context(), user.ID, ref, cred.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -311,6 +359,64 @@ func (h *CredentialHandler) UsageLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"records": records})
+}
+
+// Invalidations serves GET /api/proxy/invalidations. Authenticated via
+// RequireProxy middleware (cvisproxy_ token). Streams Server-Sent
+// Events for this bridge's credential invalidations — proxies subscribe
+// on startup and call injector.Invalidate(cache_key) on each event.
+// Stage 2 M6. Keeps a keepalive every 25s so corporate proxies don't
+// idle-close the connection.
+func (h *CredentialHandler) Invalidations(w http.ResponseWriter, r *http.Request) {
+	p := middleware.ProxyFromContext(r.Context())
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.invalidations == nil {
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "invalidation hub not configured")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // bypass nginx buffering
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch, unsub := h.invalidations.Subscribe(p.BridgeID)
+	defer unsub()
+
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprintf(w, ":keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case evt, open := <-ch:
+			if !open {
+				return
+			}
+			data, _ := json.Marshal(evt)
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // -- Built-in injection rules ---------------------------------------------

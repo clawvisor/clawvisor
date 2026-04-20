@@ -2,10 +2,15 @@ package events
 
 import "sync"
 
-// Event represents an SSE notification sent to dashboard clients.
+// Event represents an SSE notification sent to dashboard clients or
+// the Clawvisor Proxy. For dashboard events Type is "queue"/"tasks"/
+// "audit" with an optional ID. For proxy-facing events (see
+// CredentialHandler.Invalidations), Type is "credential.invalidate"
+// and Data carries {cache_key, credential_ref}.
 type Event struct {
-	Type string `json:"type"` // "queue", "tasks", "audit"
-	ID   string `json:"id"`   // optional: task_id or audit_id
+	Type string            `json:"type"`
+	ID   string            `json:"id,omitempty"`
+	Data map[string]string `json:"data,omitempty"`
 }
 
 // EventHub is the interface for event fan-out to SSE connections and long-poll waiters.
