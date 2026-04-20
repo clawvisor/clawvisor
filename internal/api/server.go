@@ -756,6 +756,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/plugin/bridges/{id}/policy", user(policyHandler.GetPolicy))
 	mux.Handle("PUT /api/plugin/bridges/{id}/policy", user(policyHandler.UpsertPolicy))
 	mux.Handle("POST /api/plugin/bridges/{id}/policy/validate", user(policyHandler.ValidatePolicy))
+	mux.Handle("POST /api/plugin/bridges/{id}/policy/test", user(policyHandler.TestPolicy))
+	mux.Handle("POST /api/plugin/bridges/{id}/policy/generate", user(policyHandler.GeneratePolicy))
 	mux.Handle("GET /api/plugin/bridges/{id}/violations", user(policyHandler.ListViolations))
 	mux.Handle("GET /api/plugin/bridges/{id}/bans", user(policyHandler.ListBans))
 	mux.Handle("DELETE /api/plugin/bridges/{id}/bans/{agent}/{rule}", user(policyHandler.LiftBan))

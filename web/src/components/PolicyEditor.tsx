@@ -27,6 +27,14 @@ export default function PolicyEditor({ bridgeId }: { bridgeId: string }) {
     mutationFn: (y: string) => api.plugin.validatePolicy(bridgeId, y),
     onSuccess: (v) => setValidation(v),
   })
+  const generateMut = useMutation({
+    mutationFn: () => api.plugin.generatePolicy(bridgeId),
+    onSuccess: (res) => {
+      setYaml(res.yaml)
+      setDirty(true)
+      setValidation(null)
+    },
+  })
   const saveMut = useMutation({
     mutationFn: () => api.plugin.upsertPolicy(bridgeId, yaml, enabled),
     onSuccess: () => {
@@ -101,6 +109,17 @@ export default function PolicyEditor({ bridgeId }: { bridgeId: string }) {
             className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
           >
             {saveMut.isPending ? 'Saving…' : dirty ? 'Save policy' : 'Saved'}
+          </button>
+          <button
+            onClick={() => {
+              if (!yaml || confirm('Replace the current YAML with a suggested starter based on observed traffic?')) {
+                generateMut.mutate()
+              }
+            }}
+            disabled={generateMut.isPending}
+            className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2 disabled:opacity-50"
+          >
+            {generateMut.isPending ? 'Suggesting…' : 'Suggest from traffic'}
           </button>
           {saveMut.error && (
             <span className="text-xs text-danger">{(saveMut.error as Error).message}</span>

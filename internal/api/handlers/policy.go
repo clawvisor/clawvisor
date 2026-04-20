@@ -361,6 +361,210 @@ func (h *PolicyHandler) LiftBan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// -- POST .../policy/test --------------------------------------------------
+//
+// Replay a YAML policy against a set of (host, method, path, agent)
+// tuples — lets authors verify a draft before deploying. Stage 3 M4.
+
+type policyTestRequest struct {
+	YAML  string           `json:"yaml"`
+	Cases []policyTestCase `json:"cases"`
+}
+
+type policyTestCase struct {
+	Name         string `json:"name,omitempty"`
+	Method       string `json:"method"`
+	URL          string `json:"url"`
+	AgentTokenID string `json:"agent_token_id,omitempty"`
+}
+
+type policyTestResponse struct {
+	OK     bool                   `json:"ok"`
+	Error  string                 `json:"error,omitempty"`
+	Cases  []policyTestCaseResult `json:"cases,omitempty"`
+}
+
+type policyTestCaseResult struct {
+	Name   string `json:"name,omitempty"`
+	Action string `json:"action"`
+	Rule   string `json:"rule,omitempty"`
+}
+
+func (h *PolicyHandler) TestPolicy(w http.ResponseWriter, r *http.Request) {
+	bt := h.requireOwnedBridge(w, r)
+	if bt == nil {
+		return
+	}
+	var req policyTestRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	parsed, err := policy.Parse([]byte(req.YAML))
+	if err != nil {
+		writeJSON(w, http.StatusOK, policyTestResponse{OK: false, Error: err.Error()})
+		return
+	}
+	compiled, err := policy.Compile(parsed)
+	if err != nil {
+		writeJSON(w, http.StatusOK, policyTestResponse{OK: false, Error: err.Error()})
+		return
+	}
+	results := make([]policyTestCaseResult, 0, len(req.Cases))
+	for _, c := range req.Cases {
+		httpReq, rerr := http.NewRequest(c.Method, c.URL, nil)
+		if rerr != nil {
+			results = append(results, policyTestCaseResult{Name: c.Name, Action: "error"})
+			continue
+		}
+		d := policy.Evaluate(compiled, policy.NewMatchContext(httpReq, c.AgentTokenID))
+		res := policyTestCaseResult{Name: c.Name, Action: string(d.Action)}
+		if d.Rule != nil {
+			res.Rule = d.Rule.Name
+		}
+		results = append(results, res)
+	}
+	writeJSON(w, http.StatusOK, policyTestResponse{OK: true, Cases: results})
+}
+
+// -- POST .../policy/generate ---------------------------------------------
+//
+// Stage 3 M4 (lite). Suggest a starter policy based on the providers
+// the bridge has observed in transcript_events. This is intentionally a
+// narrow heuristic — full auto-generation from traffic requires a
+// request-level telemetry pipeline we don't have yet (Stage 3 M4 full).
+
+type generatePolicyResponse struct {
+	YAML      string   `json:"yaml"`
+	Reasoning []string `json:"reasoning,omitempty"`
+}
+
+func (h *PolicyHandler) GeneratePolicy(w http.ResponseWriter, r *http.Request) {
+	bt := h.requireOwnedBridge(w, r)
+	if bt == nil {
+		return
+	}
+	// Recent transcript volume → provider set. The provider list informs
+	// which host allow-rules we prepend to the template.
+	since := time.Now().Add(-14 * 24 * time.Hour)
+	events, err := h.st.ListTranscriptEvents(r.Context(), store.TranscriptEventFilter{
+		BridgeID: bt.ID,
+		Since:    since,
+		Limit:    500,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "transcript read failed")
+		return
+	}
+	providers := map[string]int{}
+	for _, e := range events {
+		if e.Provider == "" || e.Stream != "llm" {
+			continue
+		}
+		providers[e.Provider]++
+	}
+	yaml := suggestPolicyFromProviders(providers)
+	reasons := []string{
+		"Starter template — adjust rules before enabling.",
+	}
+	if len(providers) > 0 {
+		reasons = append(reasons,
+			fmt.Sprintf("Observed %d provider(s) in the last 14 days: %s", len(providers), sortedKeyList(providers)))
+	} else {
+		reasons = append(reasons, "No recent LLM traffic seen — generated template is generic.")
+	}
+	writeJSON(w, http.StatusOK, generatePolicyResponse{YAML: yaml, Reasoning: reasons})
+}
+
+// suggestPolicyFromProviders returns a starter YAML pre-populated with
+// allow rules for the provider hosts the bridge has used. Conservative
+// default: explicit allows + default flag so unknown destinations are
+// reviewable rather than silently blocked.
+func suggestPolicyFromProviders(providers map[string]int) string {
+	known := map[string][]string{
+		"anthropic": {"api.anthropic.com"},
+		"openai":    {"api.openai.com"},
+		"telegram":  {"api.telegram.org"},
+	}
+	var rules []string
+	seen := map[string]bool{}
+	for p := range providers {
+		hosts, ok := known[p]
+		if !ok {
+			continue
+		}
+		for _, h := range hosts {
+			if seen[h] {
+				continue
+			}
+			seen[h] = true
+			rules = append(rules, fmt.Sprintf(`    - name: allow_%s
+      action: allow
+      match:
+        hosts: [%q]`, p, h))
+		}
+	}
+	rulesBlock := ""
+	if len(rules) > 0 {
+		rulesBlock = "\n" + joinLines(rules)
+	}
+	return fmt.Sprintf(`# Suggested starter policy — review each rule before enabling.
+version: 1
+name: suggested
+
+rules:
+  fast:%s
+    - name: block_repo_delete_on_github
+      action: block
+      match:
+        hosts: [api.github.com]
+        methods: [DELETE]
+        paths: ["/repos/*/*"]
+      message: "Repository deletion is not allowed without review."
+  judge:
+    enabled: false
+  default: flag
+
+ban:
+  enabled: true
+  max_violations: 3
+  window: 1h
+  ban_duration: 30m
+  scope: per_rule
+`, rulesBlock)
+}
+
+func joinLines(ss []string) string {
+	out := ""
+	for i, s := range ss {
+		if i > 0 {
+			out += "\n"
+		}
+		out += s
+	}
+	return out
+}
+
+func sortedKeyList(m map[string]int) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	// Insertion-sort is fine at this size.
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
+			keys[j-1], keys[j] = keys[j], keys[j-1]
+		}
+	}
+	out := ""
+	for i, k := range keys {
+		if i > 0 {
+			out += ", "
+		}
+		out += k
+	}
+	return out
+}
+
 // defaultPolicyTemplate returns a starter YAML users edit on a fresh
 // bridge. Keep it minimal — just enough shape that the dashboard form
 // has something to show without blocking save.

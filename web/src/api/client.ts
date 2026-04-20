@@ -1024,6 +1024,11 @@ export const api = {
       put<PolicyDocument>(`/api/plugin/bridges/${id}/policy`, { yaml, enabled, ...(comment ? { comment } : {}) }),
     validatePolicy: (id: string, yaml: string) =>
       post<PolicyValidation>(`/api/plugin/bridges/${id}/policy/validate`, { yaml, enabled: false }),
+    testPolicy: (id: string, yaml: string, cases: Array<{ name?: string; method: string; url: string; agent_token_id?: string }>) =>
+      post<{ ok: boolean; error?: string; cases?: Array<{ name?: string; action: string; rule?: string }> }>(
+        `/api/plugin/bridges/${id}/policy/test`, { yaml, cases }),
+    generatePolicy: (id: string) =>
+      post<{ yaml: string; reasoning?: string[] }>(`/api/plugin/bridges/${id}/policy/generate`, {}),
     listViolations: (id: string) =>
       get<{ violations: PolicyViolation[] }>(`/api/plugin/bridges/${id}/violations`),
     listBans: (id: string) =>
