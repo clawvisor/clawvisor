@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -691,14 +693,17 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	// Optionally parse per-scope overrides from the request body. Each override
 	// targets one authorized_action by (service, action) and may set verification
 	// and/or auto_execute. Missing fields leave the scope's current value intact.
+	// An empty body is allowed (no overrides); a malformed body is a client error.
 	var overrides []scopeOverride
-	if r.Body != nil && r.ContentLength > 0 {
+	if r.Body != nil {
 		var body struct {
 			Scopes []scopeOverride `json:"scopes"`
 		}
-		if decErr := json.NewDecoder(r.Body).Decode(&body); decErr == nil {
-			overrides = body.Scopes
+		if decErr := json.NewDecoder(r.Body).Decode(&body); decErr != nil && !errors.Is(decErr, io.EOF) {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", "could not parse body")
+			return
 		}
+		overrides = body.Scopes
 	}
 	validModes := map[string]bool{"strict": true, "lenient": true, "off": true}
 	for _, o := range overrides {

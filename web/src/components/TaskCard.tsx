@@ -145,7 +145,7 @@ export default function TaskCard({
     if (next.auto !== a.auto_execute) patch.auto_execute = next.auto
     if (next.verification !== (a.verification ?? 'strict')) patch.verification = next.verification
     const nextMap = { ...scopeOverrides }
-    if (!patch.auto_execute && patch.verification === undefined) {
+    if (patch.auto_execute === undefined && patch.verification === undefined) {
       delete nextMap[key]
     } else {
       nextMap[key] = patch
