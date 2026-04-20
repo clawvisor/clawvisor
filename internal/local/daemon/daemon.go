@@ -14,6 +14,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/local/config"
 	"github.com/clawvisor/clawvisor/internal/local/executor"
 	"github.com/clawvisor/clawvisor/internal/local/pairing"
+	"github.com/clawvisor/clawvisor/internal/local/proxy"
 	"github.com/clawvisor/clawvisor/internal/local/services"
 	"github.com/clawvisor/clawvisor/internal/local/state"
 	"github.com/clawvisor/clawvisor/internal/local/tunnel"
@@ -28,8 +29,11 @@ type Daemon struct {
 	serverMgr  *executor.ServerManager
 	dispatcher *executor.Dispatcher
 	pairServer *pairing.Server
-	logger     *slog.Logger
-	startTime  time.Time
+	// proxy is the first-class Clawvisor Network Proxy lifecycle.
+	// Nil until Run() constructs it; always non-nil thereafter.
+	proxy     *proxy.Manager
+	logger    *slog.Logger
+	startTime time.Time
 
 	cfgMu sync.RWMutex
 
@@ -38,6 +42,10 @@ type Daemon struct {
 	state        *state.State
 	tunnelClient *tunnel.Client
 }
+
+// Proxy returns the proxy lifecycle manager. Callers can check for nil
+// before Run() is called; after Run() returns it is guaranteed non-nil.
+func (d *Daemon) Proxy() *proxy.Manager { return d.proxy }
 
 // StatusSummary is a compact view of daemon state for local UI surfaces.
 type StatusSummary struct {
@@ -123,6 +131,20 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 		return fmt.Errorf("initializing server manager: %w", err)
 	}
 
+	// Bring up the Clawvisor Network Proxy lifecycle. Config is loaded
+	// from ~/.clawvisor/proxy/config.json; if missing or enabled=false,
+	// the manager stays idle. cmd_proxy.go drives configuration +
+	// enable/disable via the pairing server's /api/proxy/* routes.
+	d.proxy = proxy.New(d.baseDir, d.logger.With("component", "proxy"))
+	if err := d.proxy.LoadConfig(); err != nil {
+		d.logger.Warn("proxy: load config failed", "err", err)
+	}
+	if d.proxy.Status().Enabled {
+		if err := d.proxy.Enable(); err != nil {
+			d.logger.Warn("proxy: auto-enable on boot failed", "err", err)
+		}
+	}
+
 	// Discover and load services.
 	d.reloadServices()
 
@@ -144,6 +166,7 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 		OnPairComplete: d.handlePairComplete,
 		StatusHandler:  d.handleStatus,
 		ReloadHandler:  d.handleReload,
+		ProxyHandlers:  d.proxyEndpoints(),
 	})
 
 	if err := d.pairServer.Start(); err != nil {
@@ -184,6 +207,11 @@ func (d *Daemon) RunContext(ctx context.Context) error {
 
 	// Stop server processes.
 	d.serverMgr.StopAll()
+
+	// Stop proxy (preserves Enabled=true so it comes back on next boot).
+	if d.proxy != nil {
+		d.proxy.Stop()
+	}
 
 	// Stop pairing server.
 	d.pairServer.Stop()

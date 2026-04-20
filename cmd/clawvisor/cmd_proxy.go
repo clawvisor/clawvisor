@@ -2,216 +2,217 @@ package main
 
 import (
 	"bytes"
-	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
-// Proxy subcommands — "clawvisor proxy …" — own the end-user flow for
-// the Network Proxy: install as a clawvisor-local supervised service,
-// scope a single command's HTTP traffic through it ("run"), and
-// install the TLS CA cert into the system trust store ("trust-ca").
-//
-// See docs/design-proxy-stage2.md §M4 and the follow-on UX work.
+// Proxy subcommands — "clawvisor proxy …" — drive the first-class
+// Clawvisor Network Proxy lifecycle on the user's machine. The proxy
+// is a dedicated daemon subsystem (internal/local/proxy), not a
+// pluggable service; these commands are thin clients over the daemon's
+// /api/proxy/* HTTP API on 127.0.0.1:25299.
 
-//go:embed assets/proxy-service/*
-var proxyServiceAssets embed.FS
+// daemonHost is the host/port the local daemon listens on for its
+// pairing + proxy API. 25299 is the default; override via
+// $CLAWVISOR_LOCAL_PORT for dev where the daemon's on a non-default port.
+func daemonBaseURL() string {
+	port := os.Getenv("CLAWVISOR_LOCAL_PORT")
+	if port == "" {
+		port = "25299"
+	}
+	return "http://127.0.0.1:" + port
+}
 
 var proxyCmd = &cobra.Command{
 	Use:   "proxy",
 	Short: "Manage the Clawvisor Network Proxy (observation + credential injection)",
-	Long: `Install, configure, and launch agents through the Clawvisor Network Proxy.
+	Long: `Configure, launch, and wrap agents for the Clawvisor Network Proxy.
 
-The proxy MITM-intercepts TLS so Clawvisor can observe LLM API traffic,
-inject vault credentials, and enforce policies. It runs as a supervised
-service under clawvisor-local, so it restarts on crash and appears in
-the toolbar. Scoped per-agent: "clawvisor proxy run <cmd>" routes only
-that one command's traffic through the proxy.`,
+The proxy is managed by clawvisor-local (the local daemon) — it
+supervises the process, restarts on crash, and stays alive across
+reboots. These subcommands talk to that daemon on 127.0.0.1:25299.
+
+Scoped per-agent: "clawvisor proxy run <cmd>" routes only that one
+command's traffic through the proxy. Your browser, git, brew, and
+everything else stay direct.`,
 }
+
+var (
+	cfgBinaryPath  string
+	cfgServerURL   string
+	cfgProxyToken  string
+	cfgBridgeID    string
+	cfgListenHost  string
+	cfgListenPort  int
+	cfgMode        string
+	cfgAutoEnable  bool
+)
 
 var proxyInstallCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install the proxy as a clawvisor-local supervised service",
-	Long: `Writes a service manifest into ~/.clawvisor/local/services/clawvisor.network-proxy/
-so the local daemon starts, health-checks, and restarts the proxy. Also
-copies in the proxy binary and writes the Clawvisor integration config
-(server_url, proxy_token, bridge_id).
+	Short: "Configure the proxy and enable it under the local daemon",
+	Long: `Points the daemon at a proxy binary + Clawvisor server + bridge, then
+starts the proxy under daemon supervision. Idempotent — rerun with
+different args to reconfigure.
 
-Run 'clawvisor proxy install --help' to see the required flags.`,
+Required:
+  --binary       path to the clawvisor-proxy (kumo) executable
+  --proxy-token  cvisproxy_… from the dashboard's "Enable Proxy" flow
+  --bridge-id    the bridge UUID this proxy serves`,
 	SilenceUsage: true,
 	RunE:         runProxyInstall,
 }
 
-var (
-	installBinaryPath string
-	installServerURL  string
-	installProxyToken string
-	installBridgeID   string
-	installListenPort string
-)
+var proxyStatusCmd = &cobra.Command{
+	Use:          "status",
+	Short:        "Show the daemon-reported proxy state",
+	SilenceUsage: true,
+	RunE:         runProxyStatus,
+}
+
+var proxyEnableCmd = &cobra.Command{
+	Use:          "enable",
+	Short:        "Start the currently-configured proxy",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return daemonPOST("/api/proxy/enable", nil)
+	},
+}
+
+var proxyDisableCmd = &cobra.Command{
+	Use:          "disable",
+	Short:        "Stop the proxy (stays stopped across daemon restart)",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return daemonPOST("/api/proxy/disable", nil)
+	},
+}
+
+var proxyRestartCmd = &cobra.Command{
+	Use:          "restart",
+	Short:        "Restart the proxy in place (picks up a new binary)",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return daemonPOST("/api/proxy/restart", nil)
+	},
+}
+
+var proxySetModeCmd = &cobra.Command{
+	Use:          "set-mode <observe|enforce>",
+	Short:        "Switch between observe (log only) and enforce (block) modes",
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return daemonPOST("/api/proxy/set-mode", map[string]string{"mode": args[0]})
+	},
+}
 
 func init() {
-	proxyInstallCmd.Flags().StringVar(&installBinaryPath, "binary", "",
-		"Path to the proxy binary (the 'kumo' / clawvisor-proxy executable). Required.")
-	proxyInstallCmd.Flags().StringVar(&installServerURL, "server-url", "http://127.0.0.1:25297",
+	proxyInstallCmd.Flags().StringVar(&cfgBinaryPath, "binary", "",
+		"Path to the proxy binary (clawvisor-proxy / kumo). Required.")
+	proxyInstallCmd.Flags().StringVar(&cfgServerURL, "server-url", "http://127.0.0.1:25297",
 		"Clawvisor server URL the proxy should register with.")
-	proxyInstallCmd.Flags().StringVar(&installProxyToken, "proxy-token", "",
-		"cvisproxy_... token minted from the dashboard's 'Enable Proxy' flow. Required.")
-	proxyInstallCmd.Flags().StringVar(&installBridgeID, "bridge-id", "",
+	proxyInstallCmd.Flags().StringVar(&cfgProxyToken, "proxy-token", "",
+		"cvisproxy_… token minted from the dashboard's 'Enable Proxy' flow. Required.")
+	proxyInstallCmd.Flags().StringVar(&cfgBridgeID, "bridge-id", "",
 		"Bridge UUID this proxy serves. Required.")
-	// Default port sits in the Clawvisor service family (25297 = server,
-	// 25298 = proxy, 25299 = local daemon pairing). Far enough from the
-	// usual 8080/8443/9000 minefield that conflicts are rare; contiguous
-	// with the other daemons so users can remember the range.
-	proxyInstallCmd.Flags().StringVar(&installListenPort, "listen-port", "25298",
-		"TCP port the proxy should listen on (127.0.0.1).")
+	proxyInstallCmd.Flags().StringVar(&cfgListenHost, "listen-host", "127.0.0.1",
+		"Host the proxy should bind to.")
+	proxyInstallCmd.Flags().IntVar(&cfgListenPort, "listen-port", 25298,
+		"TCP port the proxy should listen on.")
+	proxyInstallCmd.Flags().StringVar(&cfgMode, "mode", "observe",
+		"observe | enforce. Observe logs decisions; enforce blocks.")
+	proxyInstallCmd.Flags().BoolVar(&cfgAutoEnable, "no-start", false,
+		"Configure only; don't auto-start the proxy (invert: --no-start=true).")
 
 	proxyCmd.AddCommand(proxyInstallCmd)
+	proxyCmd.AddCommand(proxyStatusCmd)
+	proxyCmd.AddCommand(proxyEnableCmd)
+	proxyCmd.AddCommand(proxyDisableCmd)
+	proxyCmd.AddCommand(proxyRestartCmd)
+	proxyCmd.AddCommand(proxySetModeCmd)
 	proxyCmd.AddCommand(proxyRunCmd)
 	proxyCmd.AddCommand(proxyTrustCACmd)
-	proxyCmd.AddCommand(proxyUninstallCmd)
 	rootCmd.AddCommand(proxyCmd)
 }
 
-// proxyServiceDir returns ~/.clawvisor/local/services/clawvisor.network-proxy.
-func proxyServiceDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".clawvisor", "local", "services", "clawvisor.network-proxy"), nil
-}
-
-// proxyDataDir returns the proxy's persistent state directory
-// (CA cert, signing keys, traffic log).
-func proxyDataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".clawvisor", "proxy-data"), nil
-}
+// -- install -------------------------------------------------------------
 
 func runProxyInstall(cmd *cobra.Command, args []string) error {
-	if installBinaryPath == "" {
+	if cfgBinaryPath == "" {
 		return errors.New("--binary is required (path to the proxy executable)")
 	}
-	if installProxyToken == "" || installBridgeID == "" {
+	if cfgProxyToken == "" || cfgBridgeID == "" {
 		return errors.New("--proxy-token and --bridge-id are required (copy from the dashboard's Enable Proxy flow)")
 	}
-
-	srcBin, err := filepath.Abs(installBinaryPath)
+	abs, err := filepath.Abs(cfgBinaryPath)
 	if err != nil {
 		return fmt.Errorf("resolve --binary: %w", err)
 	}
-	if _, err := os.Stat(srcBin); err != nil {
-		return fmt.Errorf("--binary %s: %w", srcBin, err)
+	if _, err := os.Stat(abs); err != nil {
+		return fmt.Errorf("--binary %s: %w", abs, err)
 	}
-
 	// Pre-flight: is something already bound to the proxy port? If yes,
-	// the supervised proxy will crash-loop — better to fail fast here
-	// with a clear error than to leave the user staring at an unhealthy
-	// service in the toolbar.
-	if owner := portOwner("127.0.0.1:" + installListenPort); owner != "" {
-		return fmt.Errorf("port %s is already in use (%s). Stop that process or rerun with --listen-port <other>",
-			installListenPort, owner)
+	// the daemon's health-probe will fail and the user will stare at a
+	// failed status. Catch it here with a clearer error.
+	if owner := portOwner(fmt.Sprintf("127.0.0.1:%d", cfgListenPort)); owner != "" {
+		return fmt.Errorf("port %d is already in use (%s). Stop that process or rerun with --listen-port <other>",
+			cfgListenPort, owner)
 	}
 
-	dir, err := proxyServiceDir()
+	// Migration: the previous "proxy as a service" install wrote a
+	// service manifest that clawvisor-local's ServerManager will try to
+	// start. Remove it so the daemon-owned lifecycle is the only path.
+	// Safe no-op if it doesn't exist.
+	home, _ := os.UserHomeDir()
+	legacyDir := filepath.Join(home, ".clawvisor", "local", "services", "clawvisor.network-proxy")
+	if _, err := os.Stat(legacyDir); err == nil {
+		if err := os.RemoveAll(legacyDir); err != nil {
+			return fmt.Errorf("remove legacy service dir %s: %w", legacyDir, err)
+		}
+		fmt.Printf("Removed legacy service manifest at %s\n", legacyDir)
+	}
+
+	body := map[string]any{
+		"binary_path":  abs,
+		"server_url":   cfgServerURL,
+		"proxy_token":  cfgProxyToken,
+		"bridge_id":    cfgBridgeID,
+		"listen_host":  cfgListenHost,
+		"listen_port":  cfgListenPort,
+		"mode":         cfgMode,
+		"auto_enable":  !cfgAutoEnable, // --no-start inverts default-true
+	}
+	return daemonPOST("/api/proxy/configure", body)
+}
+
+// -- status --------------------------------------------------------------
+
+func runProxyStatus(cmd *cobra.Command, args []string) error {
+	resp, err := http.Get(daemonBaseURL() + "/api/proxy/status")
 	if err != nil {
-		return err
+		return fmt.Errorf("call daemon: %w", err)
 	}
-	dataDir, err := proxyDataDir()
-	if err != nil {
-		return err
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("daemon returned %d: %s", resp.StatusCode, string(raw))
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create service dir: %w", err)
-	}
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return fmt.Errorf("create data dir: %w", err)
-	}
-
-	dstBin := filepath.Join(dir, "clawvisor-proxy")
-	if err := copyFile(srcBin, dstBin, 0755); err != nil {
-		return fmt.Errorf("copy binary: %w", err)
-	}
-
-	// Integration config — identical shape to docs/proxy-api.md.
-	cfg := fmt.Sprintf("server_url: %q\nproxy_token: %q\nbridge_id: %q\n",
-		installServerURL, installProxyToken, installBridgeID)
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0600); err != nil {
-		return fmt.Errorf("write config.yaml: %w", err)
-	}
-
-	// Unpack embedded templates (service.yaml, run.sh) — the run.sh
-	// interpolates paths so the service survives moves of the user's
-	// home directory.
-	if err := writeEmbeddedAsset("assets/proxy-service/service.yaml", filepath.Join(dir, "service.yaml"), 0644, map[string]string{
-		"PLATFORM":    runtime.GOOS,
-		"LISTEN_PORT": installListenPort,
-	}); err != nil {
-		return err
-	}
-	if err := writeEmbeddedAsset("assets/proxy-service/run.sh", filepath.Join(dir, "run.sh"), 0755, map[string]string{
-		"DATA_DIR":    dataDir,
-		"LISTEN_PORT": installListenPort,
-	}); err != nil {
-		return err
-	}
-
-	fmt.Printf("Installed proxy service at %s\n", dir)
-	fmt.Printf("Proxy data dir: %s\n", dataDir)
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Tell clawvisor-local to pick up the new service:")
-	fmt.Println("       curl -sX POST http://127.0.0.1:25299/api/services/reload")
-	fmt.Println("     (or quit and relaunch the toolbar app.)")
-	fmt.Println("  2. Install the TLS CA cert so agents trust it:")
-	fmt.Println("       clawvisor proxy trust-ca")
-	fmt.Println("  3. Run an agent through the proxy:")
-	fmt.Println("       clawvisor proxy run --agent-token cvis_XXX -- claude-code")
+	var pretty bytes.Buffer
+	_ = json.Indent(&pretty, raw, "", "  ")
+	fmt.Println(pretty.String())
 	return nil
-}
-
-// writeEmbeddedAsset unpacks one of the embedded templates, substituting
-// {{VAR}} placeholders from vars. Kept minimal — text/template would be
-// overkill for <1KB files.
-func writeEmbeddedAsset(embedPath, dst string, mode os.FileMode, vars map[string]string) error {
-	raw, err := proxyServiceAssets.ReadFile(embedPath)
-	if err != nil {
-		return fmt.Errorf("embed %s: %w", embedPath, err)
-	}
-	body := string(raw)
-	for k, v := range vars {
-		body = strings.ReplaceAll(body, "{{"+k+"}}", v)
-	}
-	return os.WriteFile(dst, []byte(body), mode)
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	sf, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sf.Close()
-	df, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	defer df.Close()
-	_, err = io.Copy(df, sf)
-	return err
 }
 
 // -- clawvisor proxy run --------------------------------------------------
@@ -240,7 +241,7 @@ Your browser, git, brew, etc. are unaffected.`,
 
 func init() {
 	proxyRunCmd.Flags().StringVar(&runAgentToken, "agent-token", "",
-		"cvis_... token to authenticate as. Defaults to $CLAWVISOR_AGENT_TOKEN.")
+		"cvis_… token to authenticate as. Defaults to $CLAWVISOR_AGENT_TOKEN.")
 	proxyRunCmd.Flags().StringVar(&runListenHost, "host", "127.0.0.1",
 		"Proxy host the child process should target.")
 	proxyRunCmd.Flags().StringVar(&runListenPort, "port", "25298",
@@ -259,13 +260,14 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		return errors.New("no agent token — pass --agent-token or set CLAWVISOR_AGENT_TOKEN")
 	}
 
-	dataDir, err := proxyDataDir()
+	// Discover the CA cert path from the daemon's status so users don't
+	// have to know the filesystem layout.
+	caPath, err := discoverCACertPath()
 	if err != nil {
 		return err
 	}
-	caPath := filepath.Join(dataDir, "ca.pem")
 	if _, err := os.Stat(caPath); err != nil {
-		return fmt.Errorf("CA cert not found at %s (run the proxy once so it generates, then try 'clawvisor proxy trust-ca'): %w", caPath, err)
+		return fmt.Errorf("CA cert not found at %s — is the proxy running? Try 'clawvisor proxy status': %w", caPath, err)
 	}
 
 	proxyURL := fmt.Sprintf("http://%s@%s:%s", token, runListenHost, runListenPort)
@@ -287,7 +289,6 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {
-		// Preserve the child's exit code if possible.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.ExitCode())
@@ -297,29 +298,42 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// -- clawvisor proxy trust-ca --------------------------------------------
+func discoverCACertPath() (string, error) {
+	resp, err := http.Get(daemonBaseURL() + "/api/proxy/status")
+	if err == nil && resp.StatusCode == 200 {
+		defer resp.Body.Close()
+		var s struct {
+			CACertPath string `json:"ca_cert_path"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&s); err == nil && s.CACertPath != "" {
+			return s.CACertPath, nil
+		}
+	}
+	// Fallback: the conventional path.
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".clawvisor", "proxy-data", "ca.pem"), nil
+}
+
+// -- clawvisor proxy trust-ca -------------------------------------------
 
 var proxyTrustCACmd = &cobra.Command{
 	Use:   "trust-ca",
 	Short: "Install the proxy's TLS CA cert into the system trust store",
-	Long: `macOS: adds the cert to the user login keychain (you'll get a password
-prompt). Linux: copies to /usr/local/share/ca-certificates/ and runs
-update-ca-certificates (needs sudo).
+	Long: `macOS: adds the cert to the user login keychain. Linux: copies to
+/usr/local/share/ca-certificates/ and runs update-ca-certificates.
 
-After this, tools that use the system trust store (curl, Python requests,
-Go net/http, etc.) will trust the proxy's MITM certificates. Node fetch()
-still needs NODE_EXTRA_CA_CERTS — 'clawvisor proxy run' sets that for
-child processes automatically.`,
+After this, tools that use the system trust store trust the proxy's
+MITM certs. Node fetch() still needs NODE_EXTRA_CA_CERTS — 'clawvisor
+proxy run' sets that for child processes automatically.`,
 	SilenceUsage: true,
 	RunE:         runProxyTrustCA,
 }
 
 func runProxyTrustCA(cmd *cobra.Command, args []string) error {
-	dataDir, err := proxyDataDir()
+	caPath, err := discoverCACertPath()
 	if err != nil {
 		return err
 	}
-	caPath := filepath.Join(dataDir, "ca.pem")
 	if _, err := os.Stat(caPath); err != nil {
 		return fmt.Errorf("CA cert not found at %s (make sure the proxy has run at least once): %w", caPath, err)
 	}
@@ -328,9 +342,6 @@ func runProxyTrustCA(cmd *cobra.Command, args []string) error {
 	case "darwin":
 		home, _ := os.UserHomeDir()
 		keychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
-		// -r trustRoot marks it as trusted for SSL; keychain-scoped to the
-		// user so this doesn't require sudo. macOS will prompt the user
-		// with a GUI password dialog.
 		c := exec.Command("security", "add-trusted-cert",
 			"-r", "trustRoot",
 			"-k", keychain,
@@ -343,7 +354,6 @@ func runProxyTrustCA(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("security add-trusted-cert failed: %w", err)
 		}
 		fmt.Println("Added Clawvisor Proxy CA to your login keychain.")
-		fmt.Println("To remove later: security remove-trusted-cert ~/.clawvisor/proxy-data/ca.pem")
 		return nil
 
 	case "linux":
@@ -361,76 +371,88 @@ func runProxyTrustCA(cmd *cobra.Command, args []string) error {
 	}
 }
 
-// -- clawvisor proxy uninstall -------------------------------------------
+// -- daemon HTTP helpers ------------------------------------------------
 
-var proxyUninstallCmd = &cobra.Command{
-	Use:   "uninstall",
-	Short: "Remove the supervised proxy service",
-	Long:  "Stops the clawvisor-local-supervised proxy, removes its service manifest, and preserves the data dir (CA, logs) so reinstall keeps the same CA.",
-	SilenceUsage: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := proxyServiceDir()
-		if err != nil {
+func daemonPOST(path string, body interface{}) error {
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
 			return err
 		}
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			fmt.Println("No proxy service installed.")
-			return nil
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("remove %s: %w", dir, err)
-		}
-		fmt.Printf("Removed %s\n", dir)
-		fmt.Println("Run: curl -sX POST http://127.0.0.1:25299/api/services/reload")
-		fmt.Println("(data dir ~/.clawvisor/proxy-data preserved; delete manually to reset CA)")
-		return nil
-	},
+	}
+	resp, err := http.Post(daemonBaseURL()+path, "application/json", &buf)
+	if err != nil {
+		return fmt.Errorf("call daemon: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("daemon returned %d: %s", resp.StatusCode, string(raw))
+	}
+	var pretty bytes.Buffer
+	_ = json.Indent(&pretty, raw, "", "  ")
+	if pretty.Len() > 0 {
+		fmt.Println(pretty.String())
+	}
+	return nil
 }
-
-// -- helpers -------------------------------------------------------------
-
-// envvarBlock is a debug aid — prints the env vars "run" would set.
-// Not wired as a public subcommand yet; callers use the bytes.Buffer API.
-func envvarBlock(token, host, port, caPath string) string {
-	var b bytes.Buffer
-	fmt.Fprintf(&b, "export HTTP_PROXY=http://%s@%s:%s\n", token, host, port)
-	fmt.Fprintf(&b, "export HTTPS_PROXY=\"$HTTP_PROXY\"\n")
-	fmt.Fprintf(&b, "export NODE_EXTRA_CA_CERTS=%q\n", caPath)
-	fmt.Fprintf(&b, "export SSL_CERT_FILE=%q\n", caPath)
-	return b.String()
-}
-
-var _ = envvarBlock // reserved for future 'clawvisor proxy env' subcommand
 
 // portOwner returns a short description of what's listening on addr,
-// or "" if nothing is. Non-blocking best-effort — uses a short-timeout
-// dial + an lsof fallback for the human-readable process name.
+// or "" if nothing is. Uses a short dial + lsof to name the owner.
 func portOwner(addr string) string {
 	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 	if err != nil {
 		return ""
 	}
 	_ = conn.Close()
-	// Try to name the owning process via lsof; if unavailable, fall
-	// back to "an existing process".
-	parts := strings.Split(addr, ":")
+	parts := splitColon(addr)
 	port := parts[len(parts)-1]
 	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN").Output()
 	if err == nil {
-		for i, line := range strings.Split(string(out), "\n") {
+		for i, line := range splitLines(string(out)) {
 			if i == 0 || line == "" {
 				continue
 			}
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				return fields[0] + " (PID " + func() string {
-					if len(fields) > 1 {
-						return fields[1]
-					}
-					return "?"
-				}() + ")"
+			fields := splitFields(line)
+			if len(fields) > 1 {
+				return fields[0] + " (PID " + fields[1] + ")"
 			}
 		}
 	}
 	return "an existing process"
+}
+
+func splitColon(s string) []string { return splitOn(s, ':') }
+func splitLines(s string) []string { return splitOn(s, '\n') }
+
+func splitOn(s string, sep byte) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, s[start:])
+	return out
+}
+
+// splitFields collapses runs of whitespace into single separators.
+func splitFields(s string) []string {
+	var out []string
+	start := -1
+	for i := 0; i <= len(s); i++ {
+		atEnd := i == len(s)
+		isSep := !atEnd && (s[i] == ' ' || s[i] == '\t')
+		if atEnd || isSep {
+			if start >= 0 {
+				out = append(out, s[start:i])
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	return out
 }

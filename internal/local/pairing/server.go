@@ -10,29 +10,56 @@ import (
 	"time"
 )
 
+// ProxyController is the interface the pairing server uses to drive
+// the Clawvisor Network Proxy lifecycle (see internal/local/proxy).
+// Injected by the daemon so this package doesn't import proxy directly.
+type ProxyController interface {
+	Configure(cfg interface{}, token string) error
+	Enable() error
+	Disable() error
+	Restart() error
+	Status() interface{}
+}
+
 // Server is the localhost HTTP server for pairing and status.
 type Server struct {
-	port            int
-	daemonID        string
-	daemonName      string
-	allowedOrigins  []string
-	codeMgr         *CodeManager
-	onPairComplete  func(token, origin string) error
-	statusHandler   func() interface{}
-	reloadHandler   func() interface{}
-	mux             *http.ServeMux
-	server          *http.Server
+	port           int
+	daemonID       string
+	daemonName     string
+	allowedOrigins []string
+	codeMgr        *CodeManager
+	onPairComplete func(token, origin string) error
+	statusHandler  func() interface{}
+	reloadHandler  func() interface{}
+	proxyHandlers  ProxyEndpoints
+	mux            *http.ServeMux
+	server         *http.Server
+}
+
+// ProxyEndpoints bundles the HTTP-level proxy handlers so the daemon
+// can keep proxy-specific JSON decoding inside its own package and
+// just hand this struct over to pairing.Server.
+type ProxyEndpoints struct {
+	Status    func(w http.ResponseWriter, r *http.Request)
+	Configure func(w http.ResponseWriter, r *http.Request)
+	Enable    func(w http.ResponseWriter, r *http.Request)
+	Disable   func(w http.ResponseWriter, r *http.Request)
+	Restart   func(w http.ResponseWriter, r *http.Request)
+	SetMode   func(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerConfig holds configuration for the pairing server.
 type ServerConfig struct {
-	Port            int
-	DaemonID        string
-	DaemonName      string
-	AllowedOrigins  []string
-	OnPairComplete  func(token, origin string) error
-	StatusHandler   func() interface{}
-	ReloadHandler   func() interface{}
+	Port           int
+	DaemonID       string
+	DaemonName     string
+	AllowedOrigins []string
+	OnPairComplete func(token, origin string) error
+	StatusHandler  func() interface{}
+	ReloadHandler  func() interface{}
+	// ProxyHandlers exposes /api/proxy/* endpoints. All fields optional;
+	// unset handlers return 404 so older daemon builds stay compatible.
+	ProxyHandlers ProxyEndpoints
 }
 
 // NewServer creates a new pairing HTTP server.
@@ -46,6 +73,7 @@ func NewServer(cfg ServerConfig) *Server {
 		onPairComplete: cfg.OnPairComplete,
 		statusHandler:  cfg.StatusHandler,
 		reloadHandler:  cfg.ReloadHandler,
+		proxyHandlers:  cfg.ProxyHandlers,
 		mux:            http.NewServeMux(),
 	}
 
@@ -54,7 +82,28 @@ func NewServer(cfg ServerConfig) *Server {
 	s.mux.HandleFunc("/api/status", s.handleCORS(s.handleStatus))
 	s.mux.HandleFunc("/api/services/reload", s.handleCORS(s.handleReload))
 
+	// Proxy lifecycle endpoints — first-class, not a service-bundle hack.
+	// Each handler is optional; unset paths return 404 via handleOpt404.
+	s.mux.HandleFunc("/api/proxy/status", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Status)))
+	s.mux.HandleFunc("/api/proxy/configure", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Configure)))
+	s.mux.HandleFunc("/api/proxy/enable", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Enable)))
+	s.mux.HandleFunc("/api/proxy/disable", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Disable)))
+	s.mux.HandleFunc("/api/proxy/restart", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Restart)))
+	s.mux.HandleFunc("/api/proxy/set-mode", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.SetMode)))
+
 	return s
+}
+
+// handleOpt404 wraps an optional handler. Returns a 404 handler when
+// the underlying handler is nil so older daemon builds — or features
+// not yet implemented — don't panic.
+func (s *Server) handleOpt404(h func(w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
+	if h != nil {
+		return h
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not implemented", http.StatusNotFound)
+	}
 }
 
 // Start begins listening on localhost.
