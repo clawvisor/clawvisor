@@ -270,6 +270,7 @@ export interface BridgeToken {
   hostname: string
   auto_approval_enabled: boolean
   proxy_enabled: boolean
+  is_proxy_only?: boolean
   created_at: string
   last_used_at?: string | null
   revoked_at?: string | null
@@ -972,6 +973,9 @@ export const api = {
       post<{ ok: boolean }>(`/api/plugin/bridges/${id}/disable-proxy`, {}),
     installArtifact: (id: string) =>
       get<ProxyEnableResponse>(`/api/plugin/bridges/${id}/install-artifact`),
+    // Stage 2 M4: create a standalone proxy-only bridge (no OpenClaw plugin).
+    createProxyOnlyBridge: (hostname?: string) =>
+      post<ProxyEnableResponse>('/api/plugin/bridges/proxy-only', hostname ? { hostname } : {}),
   },
   vault: {
     credentials: {

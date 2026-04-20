@@ -24,14 +24,24 @@ var dockerComposeTmpl string
 //go:embed templates/install.sh.tmpl
 var installScriptTmpl string
 
+//go:embed templates/docker-compose-proxy-only.yml.tmpl
+var dockerComposeProxyOnlyTmpl string
+
+//go:embed templates/install-proxy-only.sh.tmpl
+var installScriptProxyOnlyTmpl string
+
 // Input bundles everything the templates need to render a concrete
 // artifact for a specific bridge.
 type Input struct {
-	BridgeID      string
-	ServerURL     string // how the proxy reaches Clawvisor server (usually http://clawvisor-server:25297 in compose)
-	ProxyToken    string // cvisproxy_...
-	BridgeToken   string // cvisbr_... (plugin secrets)
-	AgentTokens   map[string]string // agent name → cvis_... (plugin secrets)
+	BridgeID    string
+	ServerURL   string            // how the proxy reaches Clawvisor server (usually http://clawvisor-server:25297 in compose)
+	ProxyToken  string            // cvisproxy_...
+	BridgeToken string            // cvisbr_... (plugin secrets); empty for ProxyOnly mode
+	AgentTokens map[string]string // agent name → cvis_... (plugin secrets); empty for ProxyOnly mode
+	// ProxyOnly selects the standalone-proxy templates (no OpenClaw
+	// dependency; no plugin secrets). Used by the framework-agnostic
+	// install flow. See docs/design-proxy-stage2.md §M4.
+	ProxyOnly bool
 }
 
 // Artifact is the rendered bundle. Fields are the file contents the
@@ -97,12 +107,26 @@ func Render(in Input) (*Artifact, error) {
 		PluginSecretsJSON: string(pluginJSON),
 	}
 
+	composeBody := dockerComposeTmpl
+	installBody := installScriptTmpl
+	if in.ProxyOnly {
+		composeBody = dockerComposeProxyOnlyTmpl
+		installBody = installScriptProxyOnlyTmpl
+	}
+
 	var composeBuf, installBuf bytes.Buffer
-	if err := mustTemplate("docker-compose", dockerComposeTmpl).Execute(&composeBuf, tmplVars); err != nil {
+	if err := mustTemplate("docker-compose", composeBody).Execute(&composeBuf, tmplVars); err != nil {
 		return nil, fmt.Errorf("installer: render docker-compose: %w", err)
 	}
-	if err := mustTemplate("install-sh", installScriptTmpl).Execute(&installBuf, tmplVars); err != nil {
+	if err := mustTemplate("install-sh", installBody).Execute(&installBuf, tmplVars); err != nil {
 		return nil, fmt.Errorf("installer: render install.sh: %w", err)
+	}
+
+	// Proxy-only installs have no plugin — omit the plugin-secrets blob
+	// from the artifact so callers don't surface a meaningless file.
+	secretsOut := string(pluginJSON)
+	if in.ProxyOnly {
+		secretsOut = ""
 	}
 
 	return &Artifact{
@@ -110,7 +134,7 @@ func Render(in Input) (*Artifact, error) {
 		GeneratedAt:       tmplVars.GeneratedAt,
 		DockerComposeYAML: composeBuf.String(),
 		InstallScript:     installBuf.String(),
-		PluginSecretsJSON: string(pluginJSON),
+		PluginSecretsJSON: secretsOut,
 		ProxyConfigYAML:   proxyConfigYAML,
 	}, nil
 }

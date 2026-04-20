@@ -829,6 +829,10 @@ func (h *PluginPairingHandler) DisableProxy(w http.ResponseWriter, r *http.Reque
 // freshly-minted raw proxy token) and InstallArtifact (with a
 // rotate-required placeholder).
 func (h *PluginPairingHandler) renderInstallArtifact(ctx context.Context, bridgeID, rawProxyToken string) (*installer.Artifact, error) {
+	bt, err := h.st.GetBridgeTokenByID(ctx, bridgeID)
+	if err != nil {
+		return nil, err
+	}
 	// The install artifact also embeds the plugin's secrets so the
 	// compose bootstrap writes them into the shared volume. We DON'T have
 	// the raw bridge/agent tokens at this point (they were handed back
@@ -840,11 +844,14 @@ func (h *PluginPairingHandler) renderInstallArtifact(ctx context.Context, bridge
 	// Plugin secrets placeholders instruct the user to fill them in; the
 	// installer won't start OpenClaw with empty secrets.
 	input := installer.Input{
-		BridgeID:    bridgeID,
-		ServerURL:   h.serverURLForInstall,
-		ProxyToken:  rawProxyToken,
-		BridgeToken: "<PASTE_YOUR_BRIDGE_TOKEN_HERE>",
-		AgentTokens: map[string]string{"main": "<PASTE_YOUR_AGENT_TOKEN_HERE>"},
+		BridgeID:   bridgeID,
+		ServerURL:  h.serverURLForInstall,
+		ProxyToken: rawProxyToken,
+		ProxyOnly:  bt.IsProxyOnly,
+	}
+	if !bt.IsProxyOnly {
+		input.BridgeToken = "<PASTE_YOUR_BRIDGE_TOKEN_HERE>"
+		input.AgentTokens = map[string]string{"main": "<PASTE_YOUR_AGENT_TOKEN_HERE>"}
 	}
 	if input.ServerURL == "" {
 		input.ServerURL = "http://clawvisor-server:25297"
@@ -854,6 +861,95 @@ func (h *PluginPairingHandler) renderInstallArtifact(ctx context.Context, bridge
 		return nil, err
 	}
 	return art, nil
+}
+
+// CreateProxyOnlyBridge handles POST /api/plugin/bridges/proxy-only.
+// Mints a brand-new "proxy-only" bridge (no OpenClaw plugin pair),
+// enables the proxy on it, and returns the install artifact including
+// the one-time cvisproxy_ token. Intended for Claude Code / Cursor
+// users who want the Network Proxy + credential injection without
+// running the plugin. Stage 2 M4.
+func (h *PluginPairingHandler) CreateProxyOnlyBridge(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	// Optional user-provided label, just for the dashboard. No token is
+	// issued for the bridge (no plugin will authenticate as it), so we
+	// store a placeholder hash keyed to the fresh bridge id.
+	var req struct {
+		Hostname string `json:"hostname,omitempty"`
+	}
+	// Best-effort body decode; empty body is fine for this endpoint.
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	hostname := strings.TrimSpace(req.Hostname)
+	if hostname == "" {
+		hostname = "proxy-only"
+	}
+
+	// The token_hash column is NOT NULL UNIQUE — proxy-only bridges have
+	// no plugin token, so we synthesize a per-bridge sentinel hash using
+	// a short random suffix. Raw proxy token is generated separately.
+	randomSuffix, err := auth.GenerateBridgeToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate bridge id")
+		return
+	}
+	syntheticHash := "proxy-only:" + auth.HashToken(randomSuffix)
+
+	bt := &store.BridgeToken{
+		UserID:              user.ID,
+		TokenHash:           syntheticHash,
+		InstallFingerprint:  "proxy-only",
+		Hostname:            hostname,
+		AutoApprovalEnabled: false,
+		IsProxyOnly:         true,
+	}
+	if err := h.st.CreateBridgeToken(r.Context(), bt); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create bridge")
+		return
+	}
+	bridgeID := bt.ID
+
+	rawToken, err := auth.GenerateProxyToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "token generation failed")
+		return
+	}
+	proxyInstance := &store.ProxyInstance{
+		BridgeID:  bridgeID,
+		TokenHash: auth.HashToken(rawToken),
+	}
+	if err := h.st.CreateProxyInstance(r.Context(), proxyInstance); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "proxy instance creation failed")
+		return
+	}
+	if err := h.st.SetBridgeProxyEnabled(r.Context(), bridgeID, user.ID, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not enable proxy")
+		return
+	}
+
+	artifact, err := h.renderInstallArtifact(r.Context(), bridgeID, rawToken)
+	if err != nil {
+		h.logger.Error("render install artifact (proxy-only)", "err", err, "bridge_id", bridgeID)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not render install artifact")
+		return
+	}
+	writeJSON(w, http.StatusOK, enableProxyResponse{
+		BridgeID:          bridgeID,
+		ProxyInstanceID:   proxyInstance.ID,
+		ProxyToken:        rawToken,
+		GeneratedAt:       artifact.GeneratedAt,
+		DockerComposeYAML: artifact.DockerComposeYAML,
+		InstallScript:     artifact.InstallScript,
+		ProxyConfigYAML:   artifact.ProxyConfigYAML,
+		PluginSecretsJSON: artifact.PluginSecretsJSON,
+	})
 }
 
 // ── Plugin runtime config (read by plugin at startup) ──────────────────────

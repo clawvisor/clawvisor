@@ -131,6 +131,9 @@ export default function Agents() {
         </section>
       )}
 
+      {/* Standalone Network Proxy (no plugin) — personal context only */}
+      {!orgId && <ProxyOnlyInstallCard />}
+
       {/* Vault credentials — shown only when at least one bridge has a proxy enabled,
           since credentials are only useful to the proxy. */}
       {!orgId && bridges && bridges.some(b => !b.revoked_at && b.proxy_enabled) && (
@@ -1122,6 +1125,95 @@ function BridgeRow({ bridge }: { bridge: BridgeToken }) {
         )}
       </div>
     </div>
+  )
+}
+
+// Standalone proxy-only install card (Stage 2 M4). Lets a user spin up
+// the Clawvisor Network Proxy without pairing an OpenClaw plugin — for
+// Claude Code, Cursor, and other coding agents that don't run in the
+// OpenClaw container.
+function ProxyOnlyInstallCard() {
+  const qc = useQueryClient()
+  const [artifact, setArtifact] = useState<import('../api/client').ProxyEnableResponse | null>(null)
+  const [hostname, setHostname] = useState('')
+  const [expanded, setExpanded] = useState(false)
+
+  const createMut = useMutation({
+    mutationFn: () => api.plugin.createProxyOnlyBridge(hostname.trim() || undefined),
+    onSuccess: (res) => {
+      setArtifact(res)
+      qc.invalidateQueries({ queryKey: ['bridges'] })
+    },
+  })
+
+  return (
+    <section className="bg-surface-1 border border-border-default rounded-md px-5 py-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-text-primary">
+            Network Proxy without OpenClaw (Beta)
+          </h2>
+          <p className="text-sm text-text-tertiary mt-0.5">
+            Run the Clawvisor Proxy standalone — for Claude Code, Cursor, or any agent that
+            doesn't use the OpenClaw plugin. The proxy captures transcripts at the wire and can
+            inject vault credentials into outbound API calls.
+          </p>
+        </div>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="text-sm px-3 py-1.5 rounded border border-border-default hover:bg-surface-2"
+        >
+          {expanded ? 'Collapse' : 'Set up'}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-4 pt-3 border-t border-border-default space-y-3">
+          {!artifact && (
+            <>
+              <div>
+                <label className="block text-xs text-text-tertiary mb-1">
+                  Label for this proxy (optional)
+                </label>
+                <input
+                  value={hostname}
+                  onChange={e => setHostname(e.target.value)}
+                  placeholder="laptop, ci, etc."
+                  className="w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5"
+                />
+              </div>
+              <button
+                onClick={() => createMut.mutate()}
+                disabled={createMut.isPending}
+                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+              >
+                {createMut.isPending ? 'Creating…' : 'Generate install artifact'}
+              </button>
+              {createMut.error && (
+                <div className="text-xs text-danger">{(createMut.error as Error).message}</div>
+              )}
+            </>
+          )}
+          {artifact && (
+            <>
+              <div className="text-xs text-text-tertiary">
+                Bridge created. Save the proxy token below — it won't be shown again.
+              </div>
+              <InstallArtifactViewer artifact={artifact} onClose={() => {
+                setArtifact(null)
+                setExpanded(false)
+              }} />
+              <p className="text-xs text-text-tertiary pt-2">
+                After <code>docker compose up</code>, create an agent (below) and copy its
+                <code> cvis_… </code>token into <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code>
+                as <code>http://cvis_TOKEN@127.0.0.1:8880</code>. See the install.sh output
+                for the full set of env vars.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 

@@ -1,0 +1,55 @@
+#!/bin/sh
+# Clawvisor Proxy standalone install.
+# Generated at {{ .GeneratedAt }} for bridge {{ .BridgeID }}.
+#
+# This script brings up the Clawvisor Network Proxy, extracts the TLS
+# CA cert, and prints the environment variables your agent needs.
+# Run from the directory containing clawvisor-proxy.yml.
+
+set -eu
+
+COMPOSE_FILE="${COMPOSE_FILE:-clawvisor-proxy.yml}"
+
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "error: $COMPOSE_FILE not found — save the compose file first."
+  exit 1
+fi
+
+echo "==> Starting Clawvisor Proxy (compose: $COMPOSE_FILE)"
+docker compose -f "$COMPOSE_FILE" up -d
+
+# Wait briefly for the proxy to write /data/ca.pem.
+tries=0
+while [ $tries -lt 30 ]; do
+  if docker exec clawvisor-proxy test -f /data/ca.pem 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+  tries=$((tries + 1))
+done
+
+echo "==> Extracting CA cert"
+docker cp clawvisor-proxy:/data/ca.pem ./clawvisor-ca.pem
+chmod 0644 ./clawvisor-ca.pem
+
+CA_ABS="$(pwd)/clawvisor-ca.pem"
+echo ""
+echo "==> Clawvisor Proxy ready."
+echo ""
+echo "Point your agent at the proxy by setting:"
+echo ""
+echo "  export HTTP_PROXY='http://cvis_YOUR_AGENT_TOKEN@127.0.0.1:8880'"
+echo "  export HTTPS_PROXY=\"\$HTTP_PROXY\""
+echo "  export NODE_EXTRA_CA_CERTS='$CA_ABS'"
+echo "  export SSL_CERT_FILE='$CA_ABS'"
+echo ""
+echo "Replace cvis_YOUR_AGENT_TOKEN with the agent token from the"
+echo "Clawvisor dashboard. Then run your coding agent from that shell."
+echo ""
+echo "System-wide trust-store install (optional; avoids NODE_EXTRA_CA_CERTS):"
+echo ""
+echo "  # Debian / Ubuntu"
+echo "  sudo cp $CA_ABS /usr/local/share/ca-certificates/clawvisor.crt && sudo update-ca-certificates"
+echo ""
+echo "  # macOS (user trust)"
+echo "  security add-trusted-cert -k ~/Library/Keychains/login.keychain-db $CA_ABS"

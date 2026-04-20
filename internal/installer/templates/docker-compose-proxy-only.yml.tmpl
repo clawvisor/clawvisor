@@ -1,0 +1,47 @@
+#
+# Clawvisor Proxy (standalone / framework-agnostic install).
+# Generated at {{ .GeneratedAt }} for bridge {{ .BridgeID }}.
+#
+# This file runs the Clawvisor Network Proxy by itself — without an
+# OpenClaw gateway. It is intended for Claude Code, Cursor, and other
+# coding agents that want transcripts captured + credential injection
+# at the wire without installing the OpenClaw plugin.
+#
+# After `docker compose -f clawvisor-proxy.yml up -d`:
+#
+#   1. Extract the CA cert from the clawvisor-proxy-data volume:
+#      docker cp clawvisor-proxy:/data/ca.pem ./clawvisor-ca.pem
+#
+#   2. Install the CA cert into your system trust store (see SETUP
+#      for OS-specific commands).
+#
+#   3. Point your agent at the proxy by setting:
+#      HTTP_PROXY=http://cvis_YOUR_AGENT_TOKEN@127.0.0.1:8880
+#      HTTPS_PROXY=http://cvis_YOUR_AGENT_TOKEN@127.0.0.1:8880
+#      NODE_EXTRA_CA_CERTS=$(pwd)/clawvisor-ca.pem
+#
+
+services:
+  clawvisor-proxy:
+    image: clawvisor/proxy:latest
+    container_name: clawvisor-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8880:8880"    # proxy listener (localhost only)
+      - "127.0.0.1:9091:9091"    # proxy admin (for ca.pem + healthz)
+    environment:
+      CLAWVISOR_SERVER_URL: "{{ .ServerURL }}"
+      CLAWVISOR_PROXY_TOKEN: "{{ .ProxyToken }}"
+      CLAWVISOR_BRIDGE_ID: "{{ .BridgeID }}"
+    volumes:
+      - clawvisor-proxy-data:/data
+    command:
+      - serve
+      - --mode=observe
+      - --host=0.0.0.0
+      - --port=8880
+      - --admin-port=9091
+      - --data-dir=/data
+
+volumes:
+  clawvisor-proxy-data:   # proxy-only state: CA keypair, traffic log, signing keys

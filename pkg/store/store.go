@@ -532,6 +532,12 @@ type BridgeToken struct {
 	// scavenger is gated off server-side and the proxy becomes the
 	// authoritative transcript source. See docs/design-proxy-stage1.md §6.
 	ProxyEnabled bool `json:"proxy_enabled"`
+	// IsProxyOnly is true for bridges created via the framework-agnostic
+	// install path (Claude Code / Cursor / etc.). These bridges never had
+	// an OpenClaw plugin pair — no bridge/plugin token is issued, and the
+	// scavenger / channel integrations are unavailable. See
+	// docs/design-proxy-stage2.md §M4.
+	IsProxyOnly bool `json:"is_proxy_only"`
 	// LastSeq is the high-water mark of ingest events accepted from this
 	// bridge. Advanced atomically by AdvanceBridgeLastSeq so racing
 	// ingests can't skip or reorder seq.

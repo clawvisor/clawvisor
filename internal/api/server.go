@@ -746,6 +746,10 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/plugin/bridges/{id}/enable-proxy", user(pluginPairing.EnableProxy))
 	mux.Handle("POST /api/plugin/bridges/{id}/disable-proxy", user(pluginPairing.DisableProxy))
 	mux.Handle("GET /api/plugin/bridges/{id}/install-artifact", user(pluginPairing.InstallArtifact))
+	// Stage 2 M4: framework-agnostic install — create a standalone
+	// proxy-only bridge (no plugin pair) and return the install artifact.
+	// See docs/design-proxy-stage2.md §M4.
+	mux.Handle("POST /api/plugin/bridges/proxy-only", user(pluginPairing.CreateProxyOnlyBridge))
 	// Plugin-read runtime config (authed by bridge token, not user JWT).
 	// Plugin hits this on startup + periodic heartbeat to decide whether
 	// to run its scavenger code path.
