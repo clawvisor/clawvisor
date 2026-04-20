@@ -878,6 +878,9 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("GET /skill/setup", onboardingHandler.Setup) // legacy alias → Hermes flow
 		mux.HandleFunc("GET /skill/setup-hermes", onboardingHandler.SetupHermes)
 		mux.HandleFunc("GET /skill/setup-openclaw", onboardingHandler.SetupOpenClaw)
+		// Stage 2 M4 follow-up: agent-driven Network Proxy install. Walks
+		// the agent through clawvisor-local supervised setup + scoped run.
+		mux.HandleFunc("GET /skill/setup-clawvisor-proxy", onboardingHandler.SetupProxy)
 		mux.HandleFunc("GET /skill/clawvisor-setup.md", onboardingHandler.ClaudeCodeSetup)
 
 		// OpenClaw plugin tarball — served so setup-openclaw can point OpenClaw

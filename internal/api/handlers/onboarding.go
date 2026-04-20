@@ -33,6 +33,122 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	h.SetupHermes(w, r)
 }
 
+// SetupProxy serves the onboarding markdown for the Clawvisor Network
+// Proxy. The agent reads this and walks the user through installing
+// the proxy via clawvisor-local, trusting the CA cert, and then
+// re-launching itself wrapped by `clawvisor proxy run`.
+//
+// Query params:
+//   bridge_id     — pre-fills the bridge UUID this proxy will serve
+//   proxy_token   — pre-fills the cvisproxy_ token (one-time, sensitive)
+//   agent_token   — pre-fills the cvis_ agent token to launch under
+//   server_url    — overrides the default Clawvisor server URL
+//
+// All optional. Without them, the doc tells the agent to ask the user
+// to grab the values from the dashboard's Proxies → Enable Proxy flow.
+func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
+	clawvisorURL := h.resolveURL(r)
+	bridgeID := strings.TrimSpace(r.URL.Query().Get("bridge_id"))
+	proxyToken := strings.TrimSpace(r.URL.Query().Get("proxy_token"))
+	agentToken := strings.TrimSpace(r.URL.Query().Get("agent_token"))
+	serverURL := strings.TrimSpace(r.URL.Query().Get("server_url"))
+	if serverURL == "" {
+		serverURL = clawvisorURL
+	}
+
+	var b strings.Builder
+	b.WriteString("# Clawvisor Network Proxy Setup\n\n")
+	b.WriteString("You're being asked to wire your network traffic through the Clawvisor Network Proxy. ")
+	b.WriteString("This gives Clawvisor tamper-proof transcripts of your LLM calls, lets it inject vault credentials so you never see raw API keys, and (when policies are enabled) enforces what hosts you can call.\n\n")
+	b.WriteString("**This is per-process scoped.** Only commands you explicitly launch through `clawvisor proxy run` are observed. The user's browser, package manager, git, etc. stay direct.\n\n")
+
+	b.WriteString("## What you'll do\n\n")
+	b.WriteString("Five steps, all run from a terminal on the user's machine. Ask permission before each `Bash` invocation that mutates state — particularly the keychain trust step.\n\n")
+	b.WriteString("1. Confirm `clawvisor-local` is installed (the local supervisor daemon).\n")
+	b.WriteString("2. Confirm a `clawvisor-proxy` (kumo) binary is available.\n")
+	b.WriteString("3. Configure + start the proxy under daemon supervision.\n")
+	b.WriteString("4. Trust the proxy's TLS CA cert in the user's keychain.\n")
+	b.WriteString("5. Re-launch yourself wrapped by `clawvisor proxy run`.\n\n")
+
+	b.WriteString("## 1. Confirm the daemon is running\n\n")
+	b.WriteString("```bash\ncurl -s http://127.0.0.1:25299/api/proxy/status\n```\n\n")
+	b.WriteString("- 200 with JSON: daemon is up. Continue.\n")
+	b.WriteString("- Connection refused: tell the user to install/launch `clawvisor-local`. The dashboard's Settings page has the install command. Wait for the user, then retry.\n\n")
+
+	b.WriteString("## 2. Locate the proxy binary\n\n")
+	b.WriteString("```bash\nwhich clawvisor-proxy || which kumo\n```\n\n")
+	b.WriteString("If neither exists, ask the user where they have it (or to download it from the Clawvisor releases page). Note the absolute path; you'll pass it to install.\n\n")
+
+	b.WriteString("## 3. Get the credentials\n\n")
+	if bridgeID != "" && proxyToken != "" {
+		b.WriteString("This setup link came pre-populated with credentials:\n\n")
+		fmt.Fprintf(&b, "- Bridge ID: `%s`\n", bridgeID)
+		fmt.Fprintf(&b, "- Proxy token: `%s`\n", proxyToken)
+		if agentToken != "" {
+			fmt.Fprintf(&b, "- Agent token: `%s`\n", agentToken)
+		}
+		fmt.Fprintf(&b, "- Server URL: `%s`\n\n", serverURL)
+		b.WriteString("**Treat the proxy token as a secret.** It's shown only once. If the user closed the dashboard before saving it, they need to rotate it from the Proxies tab.\n\n")
+	} else {
+		fmt.Fprintf(&b, "Ask the user to open `%s/dashboard/proxies`, click their bridge (or **Add proxy** for a fresh standalone one), then click **Enable Proxy** to mint a one-time `cvisproxy_…` token.\n\n", clawvisorURL)
+		b.WriteString("Have them paste back to you:\n")
+		b.WriteString("- The bridge ID (UUID at the top of the proxy detail page).\n")
+		b.WriteString("- The `cvisproxy_…` token from the orange box.\n\n")
+		b.WriteString("Also ask which agent token (`cvis_…`) you should launch under — that determines who Clawvisor attributes the traffic to. They can mint one in the Agents tab if needed.\n\n")
+	}
+
+	b.WriteString("## 4. Configure + start the proxy\n\n")
+	b.WriteString("Run with the user's permission:\n\n")
+	b.WriteString("```bash\nclawvisor proxy install \\\n")
+	b.WriteString("  --binary <ABSOLUTE_PATH_FROM_STEP_2> \\\n")
+	if serverURL != "" {
+		fmt.Fprintf(&b, "  --server-url %s \\\n", serverURL)
+	} else {
+		b.WriteString("  --server-url http://127.0.0.1:25297 \\\n")
+	}
+	if proxyToken != "" {
+		fmt.Fprintf(&b, "  --proxy-token %s \\\n", proxyToken)
+	} else {
+		b.WriteString("  --proxy-token cvisproxy_<FROM_STEP_3> \\\n")
+	}
+	if bridgeID != "" {
+		fmt.Fprintf(&b, "  --bridge-id %s\n", bridgeID)
+	} else {
+		b.WriteString("  --bridge-id <UUID_FROM_STEP_3>\n")
+	}
+	b.WriteString("```\n\n")
+	b.WriteString("This persists the config under `~/.clawvisor/proxy/`, hands the daemon a managed lifecycle for the binary, and starts the process. Verify:\n\n")
+	b.WriteString("```bash\nclawvisor proxy status\n```\n\n")
+	b.WriteString("Look for `state: running`. If it's `failed`, the JSON's `last_error` field tells you why — most commonly a port conflict or a stale CA cert from a previous install.\n\n")
+
+	b.WriteString("## 5. Trust the CA cert\n\n")
+	b.WriteString("The proxy MITM-intercepts TLS using its own cert authority. The user's system needs to trust it.\n\n")
+	b.WriteString("```bash\nclawvisor proxy trust-ca\n```\n\n")
+	b.WriteString("**This will prompt the user for their keychain password** (macOS) or sudo (Linux). Tell them what's about to happen before invoking it. The cert is added to the user-scoped keychain only — no system-wide install — and `clawvisor proxy uninstall` cleans it up.\n\n")
+
+	b.WriteString("## 6. Re-launch yourself under the proxy\n\n")
+	b.WriteString("Each command you launch through `clawvisor proxy run` is scoped — only that process tree gets the env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`). Nothing else on the system is affected.\n\n")
+	b.WriteString("If you have a way to ask your runtime to relaunch, do so:\n\n")
+	b.WriteString("```bash\n")
+	if agentToken != "" {
+		fmt.Fprintf(&b, "clawvisor proxy run --agent-token %s -- <YOUR_LAUNCH_COMMAND>\n", agentToken)
+	} else {
+		b.WriteString("clawvisor proxy run --agent-token cvis_<AGENT_TOKEN> -- <YOUR_LAUNCH_COMMAND>\n")
+	}
+	b.WriteString("```\n\n")
+	b.WriteString("If you can't self-relaunch, tell the user: \"Quit me, then re-run me from a shell with this prefix.\" Show them the exact command.\n\n")
+	b.WriteString("Once relaunched, your subsequent LLM calls flow through the proxy. Verify:\n\n")
+	b.WriteString("```bash\ncurl -sv https://api.anthropic.com/ -o /dev/null -w \"%{http_code}\\n\" 2>&1 | grep -E \"Connected to clawvisor|^[0-9]\"\n```\n\n")
+	b.WriteString("You should see `Connected to clawvisor-proxy …` followed by an Anthropic status code. If you connect directly to `api.anthropic.com` instead, the env vars didn't propagate to the new process — the most common cause is the runtime forking differently than expected. Tell the user.\n\n")
+
+	b.WriteString("## What to tell the user when you're done\n\n")
+	b.WriteString("\"You're proxied. Open the Proxies tab in the Clawvisor dashboard to see live traffic, set policies, or rotate the token.\"\n\n")
+	b.WriteString("If you'd like to scope a credential to vault-injection (so the user's API key stops living on disk in the agent's config), point them at the **Vault Credentials** card on the Agents tab. Once they move the key in, you can remove it from your environment and the proxy will inject it on every matching request.\n")
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write([]byte(b.String()))
+}
+
 // SetupHermes serves the onboarding markdown for the Hermes flow (agent
 // calls POST /api/agents/connect directly; no separate plugin pairing step).
 func (h *OnboardingHandler) SetupHermes(w http.ResponseWriter, r *http.Request) {

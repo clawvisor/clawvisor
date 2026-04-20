@@ -322,6 +322,24 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
           <p className="text-[11px] text-text-tertiary">
             Don't have clawvisor-local? Install it first via the Settings → Install daemon flow.
           </p>
+
+          {artifact.proxy_token && (
+            <div className="mt-3 pt-3 border-t border-border-subtle">
+              <div className="text-xs font-medium text-text-primary mb-1">
+                Or have an agent walk the user through it
+              </div>
+              <p className="text-[11px] text-text-tertiary mb-2">
+                Paste the URL below into your agent — it'll fetch the markdown, ask
+                permission for each step, and run the install commands. Works for
+                any agent that respects skills (Claude Code, Cursor, OpenClaw).
+              </p>
+              <CodeBlock
+                onCopy={() => copy(buildSkillURL(artifact))}
+              >
+                {`# In your agent:\nFetch ${buildSkillURL(artifact)} and follow the steps.`}
+              </CodeBlock>
+            </div>
+          )}
         </div>
       )}
 
@@ -391,6 +409,18 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
       )}
     </div>
   )
+}
+
+// buildSkillURL renders a URL the agent can fetch to get
+// /skill/setup-clawvisor-proxy with the bridge + proxy token already
+// pre-filled. Uses the dashboard's own origin since that's where the
+// Clawvisor server lives.
+function buildSkillURL(artifact: ProxyEnableResponse): string {
+  const origin = window.location.origin
+  const params = new URLSearchParams()
+  params.set('bridge_id', artifact.bridge_id)
+  if (artifact.proxy_token) params.set('proxy_token', artifact.proxy_token)
+  return `${origin}/skill/setup-clawvisor-proxy?${params.toString()}`
 }
 
 function buildStandaloneDockerSnippet(artifact: ProxyEnableResponse): string {
