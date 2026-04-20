@@ -678,6 +678,10 @@ func (s *Server) routes() http.Handler {
 		e2e(http.HandlerFunc(gatewayHandler.HandleGet)))))
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
+	// Batch endpoint: N sub-requests in one round-trip. Rate-limited like the
+	// single-request endpoint (each batch consumes one token).
+	mux.Handle("POST /api/gateway/batch", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
+		e2e(http.HandlerFunc(gatewayHandler.HandleBatch)))))
 
 	// Adapter generation (user JWT for dashboard, agent token for MCP)
 	if s.llmCfg.AdapterGen.Enabled && s.adapterGenFactory != nil {

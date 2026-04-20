@@ -118,13 +118,17 @@ func (s *localTestStore) ListServiceMetas(_ context.Context, _ string) ([]*store
 
 // mockVerifier allows tests to control intent verification outcomes.
 type mockVerifier struct {
-	verdict *intent.VerificationVerdict
-	err     error
-	called  bool
+	verdict   *intent.VerificationVerdict
+	err       error
+	called    bool
+	panicWith string // if non-empty, Verify panics with this value (for recovery tests)
 }
 
 func (m *mockVerifier) Verify(_ context.Context, _ intent.VerifyRequest) (*intent.VerificationVerdict, error) {
 	m.called = true
+	if m.panicWith != "" {
+		panic(m.panicWith)
+	}
 	return m.verdict, m.err
 }
 

@@ -134,6 +134,38 @@ func toolDefs() []Tool {
 			}`),
 		},
 		{
+			Name:        "gateway_batch",
+			Description: "Execute multiple gateway requests in a single round-trip. Each sub-request runs through the same pipeline as gateway_request (auth, task scope, intent verification, audit) and carries its own status/code — a failure in one sub-request does not abort the others. Sub-requests run concurrently. Results are returned in the same order as the input. Useful for fan-out reads across accounts/services (e.g. list unread mail + check calendar + list Slack mentions in one call). Maximum 20 sub-requests per batch.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"requests": {
+						"type": "array",
+						"minItems": 1,
+						"maxItems": 20,
+						"items": {
+							"type": "object",
+							"properties": {
+								"service": {"type": "string"},
+								"action": {"type": "string"},
+								"params": {"type": "object"},
+								"reason": {"type": "string"},
+								"request_id": {"type": "string"},
+								"task_id": {"type": "string"},
+								"context": {"type": "object"},
+								"session_id": {"type": "string"}
+							},
+							"required": ["service", "action", "params", "reason", "request_id", "task_id"]
+						},
+						"description": "Array of gateway sub-requests. Each sub-request has the same schema as gateway_request."
+					},
+					"wait": {"type": "boolean", "description": "If true, each sub-request long-polls for approval before returning (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds applied to each sub-request (default 120, max 120)"}
+				},
+				"required": ["requests"]
+			}`),
+		},
+		{
 			Name:        "execute_request",
 			Description: "Execute a previously approved gateway request and return the result. Use this when a gateway_request returned status=pending and has since been approved. Supports wait=true to block until approved.",
 			InputSchema: json.RawMessage(`{

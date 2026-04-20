@@ -292,6 +292,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				"status":     "blocked",
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
+				"code":       gateway.CodeRestricted,
 				"reason":     err.Error(),
 			}
 			h.maybeInjectNPS(ctx, resp, agent.ID)
@@ -323,6 +324,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			"status":     "blocked",
 			"request_id": req.RequestID,
 			"audit_id":   auditID,
+			"code":       gateway.CodeRestricted,
 			"reason":     reason,
 		}
 		h.maybeInjectNPS(ctx, resp, agent.ID)
@@ -532,6 +534,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
 			resp := map[string]any{
 				"status":     "pending_scope_expansion",
+				"code":       gateway.CodeScopeMismatch,
 				"task_id":    req.TaskID,
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
@@ -569,7 +572,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						"request_id": req.RequestID,
 						"audit_id":   auditID,
 						"error":      errMsg,
-						"code":       "LOCAL_SERVICE_UNAVAILABLE",
+						"code":       gateway.CodeLocalServiceUnavailable,
 					})
 					return
 				}
@@ -620,6 +623,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 					resp := map[string]any{
 						"status":       "restricted",
+						"code":         verdictErrorCode(verdict),
 						"request_id":   req.RequestID,
 						"audit_id":     auditID,
 						"reason":       verdict.Explanation,
@@ -690,6 +694,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 					resp := map[string]any{
 						"status":       "restricted",
+						"code":         verdictErrorCode(verdict),
 						"request_id":   req.RequestID,
 						"audit_id":     auditID,
 						"reason":       verdict.Explanation,
@@ -802,7 +807,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					"request_id": req.RequestID,
 					"audit_id":   auditID,
 					"error":      errMsg,
-					"code":       "EXECUTION_ERROR",
+					"code":       gateway.CodeAdapterError,
 				}
 				h.maybeInjectNPS(ctx, resp, agent.ID)
 				writeJSON(w, http.StatusOK, resp)
@@ -918,7 +923,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				"request_id": req.RequestID,
 				"audit_id":   auditID,
 				"error":      fmt.Sprintf("unknown service %q: not a supported service", serviceType),
-				"code":       "UNKNOWN_SERVICE",
+				"code":       gateway.CodeUnknownService,
 			})
 			return
 		}
@@ -1228,6 +1233,24 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 	}
 
 	h.executeAndRespond(w, r.Context(), pa, agent.ID)
+}
+
+// verdictErrorCode maps an intent verifier verdict that denied a request to
+// the canonical error code clients should switch on. Reason-coherence failures
+// take precedence over param-scope ones: if the agent can't even explain why
+// it wants to do something, that's the more actionable signal.
+func verdictErrorCode(v *intent.VerificationVerdict) string {
+	if v == nil {
+		return gateway.CodeRestricted
+	}
+	switch v.ReasonCoherence {
+	case "incoherent", "insufficient":
+		return gateway.CodeReasonTooVague
+	}
+	if v.ParamScope == "violation" {
+		return gateway.CodeParamViolation
+	}
+	return gateway.CodeRestricted
 }
 
 // maybeInjectNPS probabilistically adds an NPS survey prompt to a gateway response.
