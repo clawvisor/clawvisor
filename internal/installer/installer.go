@@ -69,7 +69,11 @@ func Render(in Input) (*Artifact, error) {
 		"agentTokens":  agentTokens,
 		"proxyEnabled": true,
 	}
-	pluginJSON, err := json.MarshalIndent(pluginSecrets, "", "  ")
+	// Compact (single-line) JSON — the template interpolates this inside
+	// a YAML block scalar + bash heredoc, and multi-line JSON breaks the
+	// YAML indentation contract. Readers parse JSON fine whether indented
+	// or not.
+	pluginJSON, err := json.Marshal(pluginSecrets)
 	if err != nil {
 		return nil, fmt.Errorf("installer: marshal plugin secrets: %w", err)
 	}
