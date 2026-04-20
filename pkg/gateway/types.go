@@ -18,3 +18,20 @@ type RequestContext struct {
 	DataOrigin  *string `json:"data_origin"`
 	CallbackURL string  `json:"callback_url"`
 }
+
+// BatchRequest is the payload sent by an agent to POST /api/gateway/batch.
+// Each sub-request is handled by the same single-request pipeline (auth,
+// task scope, intent verification, audit), and results are returned in the
+// same order. A sub-request failure never fails the whole batch — each
+// sub-result carries its own status/code.
+type BatchRequest struct {
+	Requests []Request `json:"requests"`
+}
+
+// BatchResponse is the aggregated response from POST /api/gateway/batch.
+// Each entry mirrors the shape of a single-request response (status,
+// request_id, result/error, code, etc.), preserved as-is so clients can
+// reuse the same parser for both endpoints.
+type BatchResponse struct {
+	Results []map[string]any `json:"results"`
+}
