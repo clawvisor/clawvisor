@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,16 +50,19 @@ func (m *mockLocalExecutor) Execute(_ context.Context, _, service, action string
 }
 
 // localTestStore is a minimal store for local service handler tests.
+// The batch handler invokes store methods concurrently, so shared state
+// is guarded by mu.
 type localTestStore struct {
 	store.Store // embed nil interface; only override needed methods
 
-	tasks          map[string]*store.Task
-	restrictions   map[string]*store.Restriction
-	auditEntries   []*store.AuditEntry
-	gatewayLogs    []*store.GatewayRequestLog
-	serviceMetas   []*store.ServiceMeta
-	chainFacts     []*store.ChainFact
-	requestCounts  map[string]int
+	mu            sync.Mutex
+	tasks         map[string]*store.Task
+	restrictions  map[string]*store.Restriction
+	auditEntries  []*store.AuditEntry
+	gatewayLogs   []*store.GatewayRequestLog
+	serviceMetas  []*store.ServiceMeta
+	chainFacts    []*store.ChainFact
+	requestCounts map[string]int
 }
 
 func newLocalTestStore() *localTestStore {
@@ -70,6 +74,8 @@ func newLocalTestStore() *localTestStore {
 }
 
 func (s *localTestStore) GetTask(_ context.Context, id string) (*store.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, ok := s.tasks[id]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -82,16 +88,22 @@ func (s *localTestStore) MatchRestriction(_ context.Context, _, _, _ string) (*s
 }
 
 func (s *localTestStore) LogAudit(_ context.Context, entry *store.AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.auditEntries = append(s.auditEntries, entry)
 	return nil
 }
 
 func (s *localTestStore) LogGatewayRequest(_ context.Context, entry *store.GatewayRequestLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.gatewayLogs = append(s.gatewayLogs, entry)
 	return nil
 }
 
 func (s *localTestStore) IncrementTaskRequestCount(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.requestCounts[id]++
 	return nil
 }
@@ -101,6 +113,8 @@ func (s *localTestStore) GetAuditEntryByRequestID(_ context.Context, _, _ string
 }
 
 func (s *localTestStore) ListChainFacts(_ context.Context, _, _ string, _ int) ([]*store.ChainFact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.chainFacts, nil
 }
 
@@ -113,6 +127,8 @@ func (s *localTestStore) ChainFactValueExists(_ context.Context, _, _, _ string)
 }
 
 func (s *localTestStore) ListServiceMetas(_ context.Context, _ string) ([]*store.ServiceMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.serviceMetas, nil
 }
 
