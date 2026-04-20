@@ -760,6 +760,18 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/proxy/turns", requireProxy(e2e(http.HandlerFunc(proxyHandler.Turns))))
 	mux.Handle("POST /api/proxy/signing-keys/rotate", requireProxy(e2e(http.HandlerFunc(proxyHandler.SigningKeyRotate))))
 
+	// Stage 2: credential injection lookup (proxy-scoped) +
+	// user-facing vault UX for injectable credentials.
+	// See docs/design-proxy-stage2.md §2.
+	credHandler := handlers.NewCredentialHandler(s.store, s.vault, s.logger)
+	mux.Handle("POST /api/proxy/credential-lookup", requireProxy(e2e(http.HandlerFunc(credHandler.Lookup))))
+	mux.Handle("POST /api/vault/injectable-credentials", user(credHandler.UpsertCredential))
+	mux.Handle("GET /api/vault/injectable-credentials", user(credHandler.ListCredentials))
+	mux.Handle("GET /api/vault/injectable-credentials/usage", user(credHandler.UsageLog))
+	mux.Handle("DELETE /api/vault/injectable-credentials/{ref}", user(credHandler.RevokeCredential))
+	// Seed built-in injection rules on every boot (idempotent).
+	go handlers.SeedBuiltInInjectionRules(context.Background(), s.store, s.logger)
+
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}

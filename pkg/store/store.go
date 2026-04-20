@@ -210,6 +210,17 @@ type Store interface {
 	CreateTranscriptAnomaly(ctx context.Context, a *TranscriptAnomaly) error
 	ListTranscriptAnomalies(ctx context.Context, bridgeID string, limit int) ([]*TranscriptAnomaly, error)
 
+	// Injectable credentials + injection rules + usage log (Stage 2 M1).
+	// See docs/design-proxy-stage2.md §2.
+	UpsertInjectableCredential(ctx context.Context, c *InjectableCredential) error
+	GetInjectableCredential(ctx context.Context, userID, credentialRef string) (*InjectableCredential, error)
+	ListInjectableCredentials(ctx context.Context, userID string) ([]*InjectableCredential, error)
+	RevokeInjectableCredential(ctx context.Context, userID, credentialRef string) error
+	CreateInjectionRule(ctx context.Context, r *InjectionRule) error
+	ListInjectionRules(ctx context.Context, userID string) ([]*InjectionRule, error)
+	LogCredentialUsage(ctx context.Context, u *CredentialUsageRecord) error
+	ListCredentialUsage(ctx context.Context, userID string, since time.Time, limit int) ([]*CredentialUsageRecord, error)
+
 	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
 	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error
 	ListGeneratedAdapters(ctx context.Context, userID string) ([]*GeneratedAdapter, error)
@@ -676,6 +687,53 @@ type TranscriptAnomaly struct {
 	DetectedAt     time.Time  `json:"detected_at"`
 	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
 	ResolvedBy     string     `json:"resolved_by,omitempty"`
+}
+
+// InjectableCredential is metadata about a vault secret the proxy may
+// inject into outbound HTTP traffic. The actual secret lives in the
+// existing vault keyed by VaultKey; this row holds the credential_ref
+// (the identifier injection rules match against) + the per-credential
+// ACL + lifecycle timestamps. Stage 2 §2.
+type InjectableCredential struct {
+	ID             string     `json:"id"`
+	UserID         string     `json:"user_id"`
+	CredentialRef  string     `json:"credential_ref"` // e.g., "vault:anthropic"
+	VaultKey       string     `json:"-"`              // internal; not exposed
+	UsableByAgents []string   `json:"usable_by_agents,omitempty"` // empty = any agent of bridge
+	CreatedAt      time.Time  `json:"created_at"`
+	RotatedAt      *time.Time `json:"rotated_at,omitempty"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+}
+
+// InjectionRule binds a destination (host + path + method) to a
+// credential_ref. When a request matches, the proxy looks up the
+// credential and injects it per InjectStyle.
+type InjectionRule struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id,omitempty"` // empty for built-in rules
+	HostPattern    string    `json:"host_pattern"`
+	PathPattern    string    `json:"path_pattern"`
+	Method         string    `json:"method"`
+	InjectStyle    string    `json:"inject_style"`   // "header" | "path" | "query"
+	InjectTarget   string    `json:"inject_target"`  // header name / query key / path placeholder
+	InjectTemplate string    `json:"inject_template"`// default "{{credential}}"
+	CredentialRef  string    `json:"credential_ref"`
+	Priority       int       `json:"priority"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CredentialUsageRecord is one audit entry for a credential-lookup call.
+// Credential VALUES are never logged — only the metadata.
+type CredentialUsageRecord struct {
+	ID              int64     `json:"id"`
+	TS              time.Time `json:"ts"`
+	AgentTokenID    string    `json:"agent_token_id"`
+	CredentialRef   string    `json:"credential_ref"`
+	DestinationHost string    `json:"destination_host"`
+	DestinationPath string    `json:"destination_path"`
+	Decision        string    `json:"decision"` // "granted" | "denied_acl" | "denied_revoked" | "not_found"
+	RequestID       string    `json:"request_id,omitempty"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).
