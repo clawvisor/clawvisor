@@ -750,6 +750,15 @@ func (s *Server) routes() http.Handler {
 	// proxy-only bridge (no plugin pair) and return the install artifact.
 	// See docs/design-proxy-stage2.md §M4.
 	mux.Handle("POST /api/plugin/bridges/proxy-only", user(pluginPairing.CreateProxyOnlyBridge))
+
+	// Stage 3 M3: policy authoring + violation/ban UX.
+	policyHandler := handlers.NewPolicyHandler(s.store, s.logger)
+	mux.Handle("GET /api/plugin/bridges/{id}/policy", user(policyHandler.GetPolicy))
+	mux.Handle("PUT /api/plugin/bridges/{id}/policy", user(policyHandler.UpsertPolicy))
+	mux.Handle("POST /api/plugin/bridges/{id}/policy/validate", user(policyHandler.ValidatePolicy))
+	mux.Handle("GET /api/plugin/bridges/{id}/violations", user(policyHandler.ListViolations))
+	mux.Handle("GET /api/plugin/bridges/{id}/bans", user(policyHandler.ListBans))
+	mux.Handle("DELETE /api/plugin/bridges/{id}/bans/{agent}/{rule}", user(policyHandler.LiftBan))
 	// Plugin-read runtime config (authed by bridge token, not user JWT).
 	// Plugin hits this on startup + periodic heartbeat to decide whether
 	// to run its scavenger code path.

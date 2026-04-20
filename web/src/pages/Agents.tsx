@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
 import VaultCredentials from '../components/VaultCredentials'
+import PolicyEditor from '../components/PolicyEditor'
 
 export default function Agents() {
   const { currentOrg } = useAuth()
@@ -1105,6 +1106,8 @@ function BridgeRow({ bridge }: { bridge: BridgeToken }) {
             {installArtifact && (
               <InstallArtifactViewer artifact={installArtifact} onClose={() => setInstallArtifact(null)} />
             )}
+            {/* Stage 3 M3: per-bridge policy editor + violations/bans. */}
+            <PolicyEditor bridgeId={bridge.id} />
           </div>
         ) : (
           <div className="flex items-center justify-between gap-3">

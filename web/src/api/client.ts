@@ -851,6 +851,47 @@ export interface CredentialUsageRecord {
   ts: string
 }
 
+// Stage 3 M3: policy authoring.
+export interface PolicyDocument {
+  bridge_id: string
+  version: number
+  yaml: string
+  enabled: boolean
+  updated_at?: string
+}
+
+export interface PolicyValidation {
+  ok: boolean
+  error?: string
+  rule_count?: number
+  default_action?: 'allow' | 'block' | 'flag'
+  judge_enabled?: boolean
+  ban_enabled?: boolean
+  warnings?: string[]
+  rules?: Array<{ name: string; action: 'allow' | 'block' | 'flag'; host_count: number; path_count: number }>
+}
+
+export interface PolicyViolation {
+  id: number
+  ts: string
+  agent_token_id: string
+  rule_name: string
+  action: 'block' | 'flag'
+  destination_host: string
+  destination_path: string
+  method: string
+  message?: string
+}
+
+export interface PolicyBan {
+  id: string
+  agent_token_id: string
+  rule_name: string
+  banned_at: string
+  expires_at: string
+  violation_count: number
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
@@ -976,6 +1017,19 @@ export const api = {
     // Stage 2 M4: create a standalone proxy-only bridge (no OpenClaw plugin).
     createProxyOnlyBridge: (hostname?: string) =>
       post<ProxyEnableResponse>('/api/plugin/bridges/proxy-only', hostname ? { hostname } : {}),
+    // Stage 3 M3: per-bridge policy authoring.
+    getPolicy: (id: string) =>
+      get<PolicyDocument>(`/api/plugin/bridges/${id}/policy`),
+    upsertPolicy: (id: string, yaml: string, enabled: boolean, comment?: string) =>
+      put<PolicyDocument>(`/api/plugin/bridges/${id}/policy`, { yaml, enabled, ...(comment ? { comment } : {}) }),
+    validatePolicy: (id: string, yaml: string) =>
+      post<PolicyValidation>(`/api/plugin/bridges/${id}/policy/validate`, { yaml, enabled: false }),
+    listViolations: (id: string) =>
+      get<{ violations: PolicyViolation[] }>(`/api/plugin/bridges/${id}/violations`),
+    listBans: (id: string) =>
+      get<{ bans: PolicyBan[] }>(`/api/plugin/bridges/${id}/bans`),
+    liftBan: (id: string, agent: string, rule: string) =>
+      del<{ ok: boolean }>(`/api/plugin/bridges/${id}/bans/${encodeURIComponent(agent)}/${encodeURIComponent(rule || '*')}`),
   },
   vault: {
     credentials: {
