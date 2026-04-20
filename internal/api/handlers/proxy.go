@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/judge"
 	"github.com/clawvisor/clawvisor/internal/policy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -26,11 +27,16 @@ import (
 type ProxyHandler struct {
 	st     store.Store
 	logger *slog.Logger
+	judge  *judge.Judge // Stage 3 M5; optional (nil when LLM not configured)
 }
 
 func NewProxyHandler(st store.Store, logger *slog.Logger) *ProxyHandler {
 	return &ProxyHandler{st: st, logger: logger}
 }
+
+// SetJudge wires the Stage 3 LLM judge. When nil, /api/proxy/policy-
+// decision returns flag_for_human_review as a safe fallback.
+func (h *ProxyHandler) SetJudge(j *judge.Judge) { h.judge = j }
 
 // -- GET /api/proxy/config ----------------------------------------------------
 
@@ -132,6 +138,60 @@ func (h *ProxyHandler) Config(w http.ResponseWriter, r *http.Request) {
 		Policy:           compiled,
 		Bans:             activeBans,
 	})
+}
+
+// -- POST /api/proxy/policy-decision --------------------------------------
+//
+// Stage 3 M5. Proxy invokes this when a flag-rule matches. Server runs
+// the LLM judge (with cache) and returns allow/block/flag_for_human_review.
+
+func (h *ProxyHandler) PolicyDecision(w http.ResponseWriter, r *http.Request) {
+	p := middleware.ProxyFromContext(r.Context())
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	var req judge.PolicyDecisionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// Enforce: bridge_id always comes from the auth context, never body.
+	req.BridgeID = p.BridgeID
+
+	// If no judge is configured, fall back to flag_for_human_review.
+	// The proxy's on_error setting determines whether it forwards or
+	// blocks — this response just hands the decision back honestly.
+	if h.judge == nil {
+		writeJSON(w, http.StatusOK, judge.PolicyDecisionResponse{
+			Decision: string(judge.DecisionFlagForHumanReview),
+			Reason:   "LLM judge not configured on server",
+		})
+		return
+	}
+	verdict, err := h.judge.Decide(r.Context(), judge.Request{
+		BridgeID:          req.BridgeID,
+		AgentTokenID:      req.AgentTokenID,
+		RuleName:          req.RuleName,
+		RuleMessage:       req.RuleMessage,
+		Method:            req.Method,
+		DestinationURL:    req.DestinationURL,
+		DestinationHost:   req.DestinationHost,
+		DestinationPath:   req.DestinationPath,
+		RequestBody:       req.RequestBody,
+		ConversationID:    req.ConversationID,
+		TranscriptSnippet: req.TranscriptSnippet,
+	})
+	if err != nil {
+		h.logger.Warn("judge call failed", "err", err, "bridge_id", p.BridgeID, "rule", req.RuleName)
+		// On error, return flag_for_human_review so the proxy can apply
+		// on_error semantics (block|allow|fallback_rule) consistently.
+		writeJSON(w, http.StatusOK, judge.PolicyDecisionResponse{
+			Decision: string(judge.DecisionFlagForHumanReview),
+			Reason:   "judge error: " + err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, verdict.MarshalResponse())
 }
 
 // -- POST /api/proxy/policy-violations ---------------------------------------

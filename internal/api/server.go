@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/feedback"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/judge"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/mcp"
 	mcpoauth "github.com/clawvisor/clawvisor/internal/mcp/oauth"
@@ -777,6 +778,9 @@ func (s *Server) routes() http.Handler {
 	// Stage 3 M2: policy violation log. Proxy posts after every block/flag;
 	// server records in policy_violations + may trigger a ban.
 	mux.Handle("POST /api/proxy/policy-violations", requireProxy(e2e(http.HandlerFunc(proxyHandler.PolicyViolations))))
+	// Stage 3 M5: LLM judge for flag-rule decisions.
+	proxyHandler.SetJudge(judge.New(s.llmHealth, s.store, s.logger))
+	mux.Handle("POST /api/proxy/policy-decision", requireProxy(e2e(http.HandlerFunc(proxyHandler.PolicyDecision))))
 
 	// Stage 2: credential injection lookup (proxy-scoped) +
 	// user-facing vault UX for injectable credentials.
