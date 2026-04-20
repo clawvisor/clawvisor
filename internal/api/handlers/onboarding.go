@@ -141,6 +141,37 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("```bash\ncurl -sv https://api.anthropic.com/ -o /dev/null -w \"%{http_code}\\n\" 2>&1 | grep -E \"Connected to clawvisor|^[0-9]\"\n```\n\n")
 	b.WriteString("You should see `Connected to clawvisor-proxy …` followed by an Anthropic status code. If you connect directly to `api.anthropic.com` instead, the env vars didn't propagate to the new process — the most common cause is the runtime forking differently than expected. Tell the user.\n\n")
 
+	b.WriteString("## Alternative: Docker sibling container\n\n")
+	b.WriteString("If the user prefers Docker (e.g. they're already running their agent in a container, or they don't want to install the daemon on the host), skip steps 1–4 above and run instead:\n\n")
+	b.WriteString("```bash\n")
+	if proxyToken != "" && bridgeID != "" {
+		fmt.Fprintf(&b, `docker run -d --name clawvisor-proxy \
+  -p 127.0.0.1:25298:8880 \
+  -v clawvisor-proxy-data:/data \
+  -e CLAWVISOR_SERVER_URL=%s \
+  -e CLAWVISOR_PROXY_TOKEN=%s \
+  -e CLAWVISOR_BRIDGE_ID=%s \
+  clawvisor/proxy:latest
+
+# Extract the CA cert for the agent container:
+docker cp clawvisor-proxy:/data/ca.pem ./clawvisor-ca.pem
+`, serverURL, proxyToken, bridgeID)
+	} else {
+		fmt.Fprintf(&b, `docker run -d --name clawvisor-proxy \
+  -p 127.0.0.1:25298:8880 \
+  -v clawvisor-proxy-data:/data \
+  -e CLAWVISOR_SERVER_URL=%s \
+  -e CLAWVISOR_PROXY_TOKEN=cvisproxy_<FROM_DASHBOARD> \
+  -e CLAWVISOR_BRIDGE_ID=<UUID_FROM_DASHBOARD> \
+  clawvisor/proxy:latest
+
+# Extract the CA cert for the agent container:
+docker cp clawvisor-proxy:/data/ca.pem ./clawvisor-ca.pem
+`, serverURL)
+	}
+	b.WriteString("```\n\n")
+	b.WriteString("Then have the user point their agent container at `http://host.docker.internal:25298` via `HTTP_PROXY` and mount `clawvisor-ca.pem` so the container trusts it. Same MITM model, no host-level trust-store install needed.\n\n")
+
 	b.WriteString("## What to tell the user when you're done\n\n")
 	b.WriteString("\"You're proxied. Open the Proxies tab in the Clawvisor dashboard to see live traffic, set policies, or rotate the token.\"\n\n")
 	b.WriteString("If you'd like to scope a credential to vault-injection (so the user's API key stops living on disk in the agent's config), point them at the **Vault Credentials** card on the Agents tab. Once they move the key in, you can remove it from your environment and the proxy will inject it on every matching request.\n")
