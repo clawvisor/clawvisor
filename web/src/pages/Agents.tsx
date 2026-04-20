@@ -7,7 +7,6 @@ import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
 import VaultCredentials from '../components/VaultCredentials'
-import PolicyEditor from '../components/PolicyEditor'
 
 export default function Agents() {
   const { currentOrg } = useAuth()
@@ -113,16 +112,21 @@ export default function Agents() {
         </section>
       )}
 
-      {/* Active bridges (personal context only) */}
+      {/* Active bridges (personal context only) — auto-approval toggle
+          + revoke. Proxy enable/policy/violations live on the Proxies tab. */}
       {!orgId && bridges && bridges.length > 0 && (
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold text-text-primary">OpenClaw Bridges</h2>
+            <a href="/dashboard/proxies" className="text-xs text-brand hover:underline">
+              Manage proxies →
+            </a>
           </div>
           <p className="text-sm text-text-tertiary mb-3">
             One row per paired OpenClaw install. The auto-approval toggle lets Clawvisor infer
             approval from the conversations the plugin forwards — turn it off to require manual
-            task approval for every agent call.
+            task approval for every agent call. Network Proxy setup, policy, and violations
+            live on the <strong>Proxies</strong> tab.
           </p>
           <div className="space-y-2">
             {bridges.filter(b => !b.revoked_at).map(b => (
@@ -131,9 +135,6 @@ export default function Agents() {
           </div>
         </section>
       )}
-
-      {/* Standalone Network Proxy (no plugin) — personal context only */}
-      {!orgId && <ProxyOnlyInstallCard />}
 
       {/* Vault credentials — shown only when at least one bridge has a proxy enabled,
           since credentials are only useful to the proxy. */}
@@ -998,40 +999,16 @@ function PluginPairCard({ request: pr }: { request: PluginPairRequest }) {
 function BridgeRow({ bridge }: { bridge: BridgeToken }) {
   const qc = useQueryClient()
   const [autoApproval, setAutoApproval] = useState(bridge.auto_approval_enabled)
-  const [installArtifact, setInstallArtifact] = useState<import('../api/client').ProxyEnableResponse | null>(null)
 
   const patchMut = useMutation({
     mutationFn: (enabled: boolean) => api.plugin.patchBridge(bridge.id, { auto_approval_enabled: enabled }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['bridges'] })
-    },
-    onError: () => {
-      // Revert optimistic state on failure.
-      setAutoApproval(bridge.auto_approval_enabled)
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['bridges'] }),
+    onError: () => setAutoApproval(bridge.auto_approval_enabled),
   })
 
   const revokeMut = useMutation({
     mutationFn: () => api.plugin.revokeBridge(bridge.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['bridges'] })
-    },
-  })
-
-  const enableProxyMut = useMutation({
-    mutationFn: () => api.plugin.enableProxy(bridge.id),
-    onSuccess: (artifact) => {
-      setInstallArtifact(artifact)
-      qc.invalidateQueries({ queryKey: ['bridges'] })
-    },
-  })
-
-  const disableProxyMut = useMutation({
-    mutationFn: () => api.plugin.disableProxy(bridge.id),
-    onSuccess: () => {
-      setInstallArtifact(null)
-      qc.invalidateQueries({ queryKey: ['bridges'] })
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['bridges'] }),
   })
 
   return (
@@ -1066,6 +1043,12 @@ function BridgeRow({ bridge }: { bridge: BridgeToken }) {
             />
             <span>Auto-approve</span>
           </label>
+          <a
+            href={`/dashboard/proxies/${bridge.id}`}
+            className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2"
+          >
+            Proxy →
+          </a>
           <button
             onClick={() => {
               if (confirm(`Revoke bridge "${bridge.hostname || bridge.install_fingerprint}"? The plugin will stop forwarding messages and need to re-pair.`)) {
@@ -1079,218 +1062,6 @@ function BridgeRow({ bridge }: { bridge: BridgeToken }) {
           </button>
         </div>
       </div>
-
-      {/* Network Proxy section (Stage 1) — opt-in per bridge. */}
-      <div className="pt-3 border-t border-border-default">
-        {bridge.proxy_enabled ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium text-text-primary">Network Proxy enabled</div>
-                <div className="text-xs text-text-tertiary mt-0.5">
-                  Transcripts captured at the wire; plugin scavenger is dormant for this bridge.
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  if (confirm('Disable the Network Proxy for this bridge? The plugin scavenger will resume and the proxy container (if still running) will need to be torn down manually.')) {
-                    disableProxyMut.mutate()
-                  }
-                }}
-                disabled={disableProxyMut.isPending}
-                className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2 disabled:opacity-50"
-              >
-                Disable Proxy
-              </button>
-            </div>
-            {installArtifact && (
-              <InstallArtifactViewer artifact={installArtifact} onClose={() => setInstallArtifact(null)} />
-            )}
-            {/* Stage 3 M3: per-bridge policy editor + violations/bans. */}
-            <PolicyEditor bridgeId={bridge.id} />
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-text-primary">Network Proxy (Beta)</div>
-              <div className="text-xs text-text-tertiary mt-0.5">
-                Opt into tamper-proof transcripts captured at the wire via the Clawvisor Proxy. Requires a Docker setup step. <a className="underline" href="https://github.com/clawvisor/clawvisor/blob/main/docs/design-proxy-stage1.md" target="_blank" rel="noopener noreferrer">Learn more</a>.
-              </div>
-            </div>
-            <button
-              onClick={() => enableProxyMut.mutate()}
-              disabled={enableProxyMut.isPending}
-              className="text-xs px-3 py-1.5 rounded bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-50 whitespace-nowrap"
-            >
-              {enableProxyMut.isPending ? 'Enabling…' : 'Enable Network Proxy'}
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
-
-// Standalone proxy-only install card (Stage 2 M4). Lets a user spin up
-// the Clawvisor Network Proxy without pairing an OpenClaw plugin — for
-// Claude Code, Cursor, and other coding agents that don't run in the
-// OpenClaw container.
-function ProxyOnlyInstallCard() {
-  const qc = useQueryClient()
-  const [artifact, setArtifact] = useState<import('../api/client').ProxyEnableResponse | null>(null)
-  const [hostname, setHostname] = useState('')
-  const [expanded, setExpanded] = useState(false)
-
-  const createMut = useMutation({
-    mutationFn: () => api.plugin.createProxyOnlyBridge(hostname.trim() || undefined),
-    onSuccess: (res) => {
-      setArtifact(res)
-      qc.invalidateQueries({ queryKey: ['bridges'] })
-    },
-  })
-
-  return (
-    <section className="bg-surface-1 border border-border-default rounded-md px-5 py-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-text-primary">
-            Network Proxy without OpenClaw (Beta)
-          </h2>
-          <p className="text-sm text-text-tertiary mt-0.5">
-            Run the Clawvisor Proxy standalone — for Claude Code, Cursor, or any agent that
-            doesn't use the OpenClaw plugin. The proxy captures transcripts at the wire and can
-            inject vault credentials into outbound API calls.
-          </p>
-        </div>
-        <button
-          onClick={() => setExpanded(v => !v)}
-          className="text-sm px-3 py-1.5 rounded border border-border-default hover:bg-surface-2"
-        >
-          {expanded ? 'Collapse' : 'Set up'}
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="mt-4 pt-3 border-t border-border-default space-y-3">
-          {!artifact && (
-            <>
-              <div>
-                <label className="block text-xs text-text-tertiary mb-1">
-                  Label for this proxy (optional)
-                </label>
-                <input
-                  value={hostname}
-                  onChange={e => setHostname(e.target.value)}
-                  placeholder="laptop, ci, etc."
-                  className="w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5"
-                />
-              </div>
-              <button
-                onClick={() => createMut.mutate()}
-                disabled={createMut.isPending}
-                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-              >
-                {createMut.isPending ? 'Creating…' : 'Generate install artifact'}
-              </button>
-              {createMut.error && (
-                <div className="text-xs text-danger">{(createMut.error as Error).message}</div>
-              )}
-            </>
-          )}
-          {artifact && (
-            <>
-              <div className="text-xs text-text-tertiary">
-                Bridge created. Save the proxy token below — it won't be shown again.
-              </div>
-              <InstallArtifactViewer artifact={artifact} onClose={() => {
-                setArtifact(null)
-                setExpanded(false)
-              }} />
-              <p className="text-xs text-text-tertiary pt-2">
-                After <code>docker compose up</code>, create an agent (below) and copy its
-                <code> cvis_… </code>token into <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code>
-                as <code>http://cvis_TOKEN@127.0.0.1:8880</code>. See the install.sh output
-                for the full set of env vars.
-              </p>
-            </>
-          )}
-        </div>
-      )}
-    </section>
-  )
-}
-
-// InstallArtifactViewer renders the one-time install artifact returned
-// by EnableProxy: the cvisproxy_ token (shown ONCE) plus the docker-
-// compose / install-script templates with copy-to-clipboard buttons.
-function InstallArtifactViewer({ artifact, onClose }: { artifact: import('../api/client').ProxyEnableResponse; onClose: () => void }) {
-  const [tab, setTab] = useState<'compose' | 'script' | 'plugin'>('compose')
-  const copy = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => { /* clipboard denied; user can select + copy manually */ })
-  }
-  return (
-    <div className="mt-2 border border-accent/30 rounded-md bg-surface-2 p-4 flex flex-col gap-3">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-sm font-semibold text-text-primary">Proxy install artifact</div>
-          <div className="text-xs text-text-tertiary mt-0.5">
-            Generated {formatDistanceToNow(new Date(artifact.generated_at), { addSuffix: true })}. Apply this on the host running your OpenClaw container.
-          </div>
-        </div>
-        <button onClick={onClose} className="text-xs text-text-tertiary hover:text-text-primary">✕</button>
-      </div>
-
-      {artifact.proxy_token && (
-        <div className="rounded bg-warning/10 border border-warning/30 p-3 text-xs">
-          <div className="font-semibold text-warning mb-1">Save this proxy token now — it won't be shown again</div>
-          <code className="block bg-surface-1 p-2 rounded font-mono text-[11px] break-all">{artifact.proxy_token}</code>
-          <button
-            onClick={() => artifact.proxy_token && copy(artifact.proxy_token)}
-            className="mt-2 text-[11px] px-2 py-1 rounded border border-border-default hover:bg-surface-2"
-          >
-            Copy token
-          </button>
-        </div>
-      )}
-
-      <div className="flex gap-1 border-b border-border-default text-xs">
-        {(['compose', 'script', 'plugin'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent text-accent' : 'border-transparent text-text-tertiary hover:text-text-primary'}`}
-          >
-            {t === 'compose' ? 'clawvisor-proxy.yml (compose override)' : t === 'script' ? 'install.sh (native)' : 'plugin secrets'}
-          </button>
-        ))}
-      </div>
-      {tab === 'compose' && (
-        <div className="text-[11px] text-text-tertiary px-1">
-          Compose <em>override</em> — save next to your existing <code>docker-compose.yml</code> and run:
-          <code className="block bg-surface-1 p-2 mt-1 rounded font-mono">docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d</code>
-        </div>
-      )}
-
-      <pre className="bg-surface-1 p-3 rounded text-[11px] font-mono overflow-x-auto max-h-64 text-text-primary">
-        {tab === 'compose'
-          ? artifact.docker_compose_yaml
-          : tab === 'script'
-            ? artifact.install_script
-            : artifact.plugin_secrets_json}
-      </pre>
-      <div className="flex gap-2">
-        <button
-          onClick={() => copy(
-            tab === 'compose' ? artifact.docker_compose_yaml :
-            tab === 'script' ? artifact.install_script :
-            artifact.plugin_secrets_json
-          )}
-          className="text-xs px-3 py-1.5 rounded border border-border-default hover:bg-surface-2"
-        >
-          Copy to clipboard
-        </button>
-      </div>
-    </div>
-  )
-}
-
