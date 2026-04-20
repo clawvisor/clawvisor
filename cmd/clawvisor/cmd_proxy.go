@@ -163,12 +163,15 @@ func runProxyInstall(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(abs); err != nil {
 		return fmt.Errorf("--binary %s: %w", abs, err)
 	}
-	// Pre-flight: is something already bound to the proxy port? If yes,
-	// the daemon's health-probe will fail and the user will stare at a
-	// failed status. Catch it here with a clearer error.
-	if owner := portOwner(fmt.Sprintf("127.0.0.1:%d", cfgListenPort)); owner != "" {
-		return fmt.Errorf("port %d is already in use (%s). Stop that process or rerun with --listen-port <other>",
-			cfgListenPort, owner)
+	// Pre-flight: is something already bound to the proxy port? Skip
+	// the warning when the daemon's own supervised proxy owns it on
+	// the same port — that's the normal "reconfigure live proxy" path
+	// and the daemon will Restart it cleanly after persistence.
+	if !daemonOwnsPort(cfgListenPort) {
+		if owner := portOwner(fmt.Sprintf("127.0.0.1:%d", cfgListenPort)); owner != "" {
+			return fmt.Errorf("port %d is already in use (%s). Stop that process or rerun with --listen-port <other>",
+				cfgListenPort, owner)
+		}
 	}
 
 	// Migration: the previous "proxy as a service" install wrote a
@@ -395,6 +398,29 @@ func daemonPOST(path string, body interface{}) error {
 		fmt.Println(pretty.String())
 	}
 	return nil
+}
+
+// daemonOwnsPort checks whether the local daemon's supervised proxy
+// is bound to the given port. Used to skip the conflict pre-flight
+// when the user is reconfiguring a live proxy on the same port — the
+// daemon's Restart will release-and-rebind cleanly.
+func daemonOwnsPort(port int) bool {
+	resp, err := http.Get(daemonBaseURL() + "/api/proxy/status")
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return false
+	}
+	defer resp.Body.Close()
+	var s struct {
+		State      string `json:"state"`
+		ListenPort int    `json:"listen_port"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return false
+	}
+	return s.State == "running" && s.ListenPort == port
 }
 
 // portOwner returns a short description of what's listening on addr,

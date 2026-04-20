@@ -71,11 +71,29 @@ func (d *Daemon) handleProxyConfigure(w http.ResponseWriter, r *http.Request) {
 		ListenPort: req.ListenPort,
 		Mode:       req.Mode,
 	}
+	// Capture pre-configure state so we know whether to auto-restart
+	// after persistence. Without this, reconfiguring a live proxy
+	// (token rotation, mode change, server-url move) would silently
+	// keep the old config in the running process.
+	wasRunning := d.proxy.Status().State == proxy.StateRunning
+
 	if err := d.proxy.Configure(cfg, req.ProxyToken); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.AutoEnable {
+
+	switch {
+	case req.AutoEnable && wasRunning:
+		// Already running with old config — restart to pick up the new one.
+		if err := d.proxy.Restart(); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":            true,
+				"restart_error": err.Error(),
+				"status":        d.proxy.Status(),
+			})
+			return
+		}
+	case req.AutoEnable:
 		if err := d.proxy.Enable(); err != nil {
 			// Configure succeeded; surface the Enable error separately
 			// so the caller can diagnose start-time issues (missing
