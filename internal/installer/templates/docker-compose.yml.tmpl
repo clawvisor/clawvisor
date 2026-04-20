@@ -42,7 +42,10 @@ services:
       - --port=8880
       - --admin-port=9091
       - --data-dir=/data
-      - --clawvisor-config=/etc/clawvisor/proxy/config.yaml
+      # Config comes from CLAWVISOR_* env vars above; no file needed.
+      # If you later want to add custom settings via YAML, create
+      # /etc/clawvisor/proxy/config.yaml inside the clawvisor-proxy-data
+      # volume and add --clawvisor-config=/data/proxy/config.yaml here.
 
   clawvisor-bootstrap:
     # Runs once at compose-up; writes the proxy config + plugin secrets
