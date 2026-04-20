@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -67,7 +69,11 @@ func init() {
 		"cvisproxy_... token minted from the dashboard's 'Enable Proxy' flow. Required.")
 	proxyInstallCmd.Flags().StringVar(&installBridgeID, "bridge-id", "",
 		"Bridge UUID this proxy serves. Required.")
-	proxyInstallCmd.Flags().StringVar(&installListenPort, "listen-port", "8880",
+	// Default port sits in the Clawvisor service family (25297 = server,
+	// 25298 = proxy, 25299 = local daemon pairing). Far enough from the
+	// usual 8080/8443/9000 minefield that conflicts are rare; contiguous
+	// with the other daemons so users can remember the range.
+	proxyInstallCmd.Flags().StringVar(&installListenPort, "listen-port", "25298",
 		"TCP port the proxy should listen on (127.0.0.1).")
 
 	proxyCmd.AddCommand(proxyInstallCmd)
@@ -110,6 +116,15 @@ func runProxyInstall(cmd *cobra.Command, args []string) error {
 	}
 	if _, err := os.Stat(srcBin); err != nil {
 		return fmt.Errorf("--binary %s: %w", srcBin, err)
+	}
+
+	// Pre-flight: is something already bound to the proxy port? If yes,
+	// the supervised proxy will crash-loop — better to fail fast here
+	// with a clear error than to leave the user staring at an unhealthy
+	// service in the toolbar.
+	if owner := portOwner("127.0.0.1:" + installListenPort); owner != "" {
+		return fmt.Errorf("port %s is already in use (%s). Stop that process or rerun with --listen-port <other>",
+			installListenPort, owner)
 	}
 
 	dir, err := proxyServiceDir()
@@ -228,8 +243,8 @@ func init() {
 		"cvis_... token to authenticate as. Defaults to $CLAWVISOR_AGENT_TOKEN.")
 	proxyRunCmd.Flags().StringVar(&runListenHost, "host", "127.0.0.1",
 		"Proxy host the child process should target.")
-	proxyRunCmd.Flags().StringVar(&runListenPort, "port", "8880",
-		"Proxy port the child process should target.")
+	proxyRunCmd.Flags().StringVar(&runListenPort, "port", "25298",
+		"Proxy port the child process should target. Default matches 'clawvisor proxy install'.")
 }
 
 func runProxyRun(cmd *cobra.Command, args []string) error {
@@ -386,3 +401,36 @@ func envvarBlock(token, host, port, caPath string) string {
 }
 
 var _ = envvarBlock // reserved for future 'clawvisor proxy env' subcommand
+
+// portOwner returns a short description of what's listening on addr,
+// or "" if nothing is. Non-blocking best-effort — uses a short-timeout
+// dial + an lsof fallback for the human-readable process name.
+func portOwner(addr string) string {
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if err != nil {
+		return ""
+	}
+	_ = conn.Close()
+	// Try to name the owning process via lsof; if unavailable, fall
+	// back to "an existing process".
+	parts := strings.Split(addr, ":")
+	port := parts[len(parts)-1]
+	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN").Output()
+	if err == nil {
+		for i, line := range strings.Split(string(out), "\n") {
+			if i == 0 || line == "" {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				return fields[0] + " (PID " + func() string {
+					if len(fields) > 1 {
+						return fields[1]
+					}
+					return "?"
+				}() + ")"
+			}
+		}
+	}
+	return "an existing process"
+}
