@@ -221,6 +221,19 @@ type Store interface {
 	LogCredentialUsage(ctx context.Context, u *CredentialUsageRecord) error
 	ListCredentialUsage(ctx context.Context, userID string, since time.Time, limit int) ([]*CredentialUsageRecord, error)
 
+	// Policy engine (Stage 3 M1+).
+	UpsertPolicy(ctx context.Context, p *Policy) error
+	GetPolicyByBridge(ctx context.Context, bridgeID string) (*Policy, error)
+	ListPolicyHistory(ctx context.Context, policyID string, limit int) ([]*PolicyHistoryEntry, error)
+	InsertPolicyViolation(ctx context.Context, v *PolicyViolation) error
+	ListPolicyViolations(ctx context.Context, bridgeID string, since time.Time, limit int) ([]*PolicyViolation, error)
+	CountPolicyViolationsForAgent(ctx context.Context, bridgeID, agentTokenID, ruleName string, since time.Time) (int, error)
+	UpsertAgentBan(ctx context.Context, b *AgentBan) error
+	ListActiveBans(ctx context.Context, bridgeID string) ([]*AgentBan, error)
+	LiftAgentBan(ctx context.Context, bridgeID, agentTokenID, ruleName, liftedBy string) error
+	InsertJudgeDecision(ctx context.Context, d *JudgeDecision) error
+	GetJudgeDecisionByCacheKey(ctx context.Context, cacheKey string, since time.Time) (*JudgeDecision, error)
+
 	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
 	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error
 	ListGeneratedAdapters(ctx context.Context, userID string) ([]*GeneratedAdapter, error)
@@ -740,6 +753,80 @@ type CredentialUsageRecord struct {
 	DestinationPath string    `json:"destination_path"`
 	Decision        string    `json:"decision"` // "granted" | "denied_acl" | "denied_revoked" | "not_found"
 	RequestID       string    `json:"request_id,omitempty"`
+}
+
+// Policy is the current (versioned) policy document for a bridge. Only
+// one row per bridge — rotating a policy bumps Version and inserts an
+// immutable row in policy_history.
+type Policy struct {
+	ID            string    `json:"id"`
+	BridgeID      string    `json:"bridge_id"`
+	Version       int       `json:"version"`
+	YAML          string    `json:"yaml"`
+	CompiledJSON  string    `json:"compiled_json,omitempty"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	AuthorUserID  string    `json:"author_user_id,omitempty"`
+	Comment       string    `json:"comment,omitempty"`
+}
+
+// PolicyHistoryEntry is one versioned snapshot of a policy YAML.
+type PolicyHistoryEntry struct {
+	ID           int64     `json:"id"`
+	PolicyID     string    `json:"policy_id"`
+	BridgeID     string    `json:"bridge_id"`
+	Version      int       `json:"version"`
+	YAML         string    `json:"yaml"`
+	AuthorUserID string    `json:"author_user_id,omitempty"`
+	Comment      string    `json:"comment,omitempty"`
+	ChangedAt    time.Time `json:"changed_at"`
+}
+
+// PolicyViolation is one request that matched a block- or flag-rule.
+// Used both as an audit feed and as the source of truth for ban
+// evaluation (see CountPolicyViolationsForAgent).
+type PolicyViolation struct {
+	ID              int64     `json:"id"`
+	TS              time.Time `json:"ts"`
+	BridgeID        string    `json:"bridge_id"`
+	AgentTokenID    string    `json:"agent_token_id"`
+	RuleName        string    `json:"rule_name"`
+	Action          string    `json:"action"` // "block" | "flag"
+	RequestID       string    `json:"request_id,omitempty"`
+	DestinationHost string    `json:"destination_host,omitempty"`
+	DestinationPath string    `json:"destination_path,omitempty"`
+	Method          string    `json:"method,omitempty"`
+	Message         string    `json:"message,omitempty"`
+}
+
+// AgentBan is a single active or historical ban row.
+type AgentBan struct {
+	ID             string     `json:"id"`
+	BridgeID       string     `json:"bridge_id"`
+	AgentTokenID   string     `json:"agent_token_id"`
+	RuleName       string     `json:"rule_name,omitempty"` // empty for bridge-wide ban
+	BannedAt       time.Time  `json:"banned_at"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	ViolationCount int        `json:"violation_count"`
+	LiftedAt       *time.Time `json:"lifted_at,omitempty"`
+	LiftedBy       string     `json:"lifted_by,omitempty"`
+}
+
+// JudgeDecision is one LLM-judge call's audit + cache row.
+type JudgeDecision struct {
+	ID               int64     `json:"id"`
+	TS               time.Time `json:"ts"`
+	BridgeID         string    `json:"bridge_id"`
+	AgentTokenID     string    `json:"agent_token_id,omitempty"`
+	RuleName         string    `json:"rule_name"`
+	CacheKey         string    `json:"cache_key"`
+	Decision         string    `json:"decision"` // "allow" | "block" | "flag_for_human_review"
+	Reason           string    `json:"reason,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	LatencyMs        int       `json:"latency_ms,omitempty"`
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
 }
 
 // OAuthClient is a dynamically registered OAuth 2.1 client (RFC 7591).
