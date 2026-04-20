@@ -763,6 +763,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/proxy/config", requireProxy(e2e(http.HandlerFunc(proxyHandler.Config))))
 	mux.Handle("POST /api/proxy/turns", requireProxy(e2e(http.HandlerFunc(proxyHandler.Turns))))
 	mux.Handle("POST /api/proxy/signing-keys/rotate", requireProxy(e2e(http.HandlerFunc(proxyHandler.SigningKeyRotate))))
+	// Stage 3 M2: policy violation log. Proxy posts after every block/flag;
+	// server records in policy_violations + may trigger a ban.
+	mux.Handle("POST /api/proxy/policy-violations", requireProxy(e2e(http.HandlerFunc(proxyHandler.PolicyViolations))))
 
 	// Stage 2: credential injection lookup (proxy-scoped) +
 	// user-facing vault UX for injectable credentials.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/policy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -39,13 +40,22 @@ type proxyConfigAgent struct {
 }
 
 type proxyConfigResponse struct {
-	ContractVersion  string             `json:"contract_version"`
-	ProxyInstanceID  string             `json:"proxy_instance_id"`
-	BridgeID         string             `json:"bridge_id"`
-	Agents           []proxyConfigAgent `json:"agents"`
-	ProviderParsers  []string           `json:"provider_parsers"`
-	ServerTime       string             `json:"server_time"`
-	ConfigTTLSeconds int                `json:"config_ttl_seconds"`
+	ContractVersion  string                  `json:"contract_version"`
+	ProxyInstanceID  string                  `json:"proxy_instance_id"`
+	BridgeID         string                  `json:"bridge_id"`
+	Agents           []proxyConfigAgent      `json:"agents"`
+	ProviderParsers  []string                `json:"provider_parsers"`
+	ServerTime       string                  `json:"server_time"`
+	ConfigTTLSeconds int                     `json:"config_ttl_seconds"`
+	// Stage 3 M2: policy engine.
+	Policy *policy.CompiledPolicy `json:"policy,omitempty"`
+	Bans   []proxyConfigBan       `json:"bans,omitempty"`
+}
+
+type proxyConfigBan struct {
+	AgentTokenID string `json:"agent_token_id"`
+	RuleName     string `json:"rule_name,omitempty"`
+	ExpiresAt    string `json:"expires_at"`
 }
 
 // Config handles GET /api/proxy/config. Returns runtime config the proxy
@@ -88,15 +98,129 @@ func (h *ProxyHandler) Config(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Stage 3 M2: deliver the compiled policy + active bans on every
+	// config refresh. Enforcement + ban check happen client-side at the
+	// proxy — the server just publishes the authoritative state.
+	var compiled *policy.CompiledPolicy
+	if pol, err := h.st.GetPolicyByBridge(r.Context(), p.BridgeID); err == nil && pol != nil && pol.Enabled && pol.CompiledJSON != "" {
+		cp := &policy.CompiledPolicy{}
+		if uerr := json.Unmarshal([]byte(pol.CompiledJSON), cp); uerr == nil {
+			compiled = cp
+		} else {
+			h.logger.Warn("proxy/config: bad compiled_json", "bridge_id", p.BridgeID, "err", uerr)
+		}
+	}
+	var activeBans []proxyConfigBan
+	if bans, err := h.st.ListActiveBans(r.Context(), p.BridgeID); err == nil {
+		for _, b := range bans {
+			activeBans = append(activeBans, proxyConfigBan{
+				AgentTokenID: b.AgentTokenID,
+				RuleName:     b.RuleName,
+				ExpiresAt:    b.ExpiresAt.UTC().Format(time.RFC3339),
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusOK, proxyConfigResponse{
 		ContractVersion:  "v1-draft",
 		ProxyInstanceID:  p.ID,
 		BridgeID:         p.BridgeID,
 		Agents:           configAgents,
-		ProviderParsers:  []string{"anthropic", "telegram"},
+		ProviderParsers:  []string{"anthropic", "openai", "telegram"},
 		ServerTime:       time.Now().UTC().Format(time.RFC3339Nano),
 		ConfigTTLSeconds: 60,
+		Policy:           compiled,
+		Bans:             activeBans,
 	})
+}
+
+// -- POST /api/proxy/policy-violations ---------------------------------------
+//
+// Stage 3 M2. Proxy calls this after it applies a block or flag decision
+// so the server can build the violation feed + evaluate bans.
+
+type policyViolationRequest struct {
+	AgentTokenID    string `json:"agent_token_id"`
+	RuleName        string `json:"rule_name"`
+	Action          string `json:"action"` // "block" | "flag"
+	RequestID       string `json:"request_id,omitempty"`
+	DestinationHost string `json:"destination_host,omitempty"`
+	DestinationPath string `json:"destination_path,omitempty"`
+	Method          string `json:"method,omitempty"`
+	Message         string `json:"message,omitempty"`
+}
+
+type policyViolationResponse struct {
+	Recorded bool `json:"recorded"`
+	// If the violation pushed the agent over the ban threshold, Ban is
+	// populated. Proxy can reject the agent immediately instead of
+	// waiting for the next config refresh.
+	Ban *proxyConfigBan `json:"ban,omitempty"`
+}
+
+// PolicyViolations handles POST /api/proxy/policy-violations.
+func (h *ProxyHandler) PolicyViolations(w http.ResponseWriter, r *http.Request) {
+	p := middleware.ProxyFromContext(r.Context())
+	if p == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	var req policyViolationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.RuleName == "" || req.Action == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "rule_name and action are required")
+		return
+	}
+	if req.Action != "block" && req.Action != "flag" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "action must be block or flag")
+		return
+	}
+	v := &store.PolicyViolation{
+		BridgeID:        p.BridgeID,
+		AgentTokenID:    req.AgentTokenID,
+		RuleName:        req.RuleName,
+		Action:          req.Action,
+		RequestID:       req.RequestID,
+		DestinationHost: req.DestinationHost,
+		DestinationPath: req.DestinationPath,
+		Method:          req.Method,
+		Message:         req.Message,
+	}
+	if err := h.st.InsertPolicyViolation(r.Context(), v); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not record violation")
+		return
+	}
+
+	// Ban evaluation: only block violations count; flag is observational.
+	resp := policyViolationResponse{Recorded: true}
+	if req.Action == "block" && req.AgentTokenID != "" {
+		if pol, err := h.st.GetPolicyByBridge(r.Context(), p.BridgeID); err == nil && pol != nil && pol.Enabled && pol.CompiledJSON != "" {
+			cp := &policy.CompiledPolicy{}
+			if uerr := json.Unmarshal([]byte(pol.CompiledJSON), cp); uerr == nil && cp.Ban.Enabled && cp.Ban.MaxViolations > 0 && cp.Ban.Window > 0 {
+				since := time.Now().Add(-cp.Ban.Window)
+				n, cerr := h.st.CountPolicyViolationsForAgent(r.Context(), p.BridgeID, req.AgentTokenID, req.RuleName, since)
+				if cerr == nil && n >= cp.Ban.MaxViolations {
+					ban := &store.AgentBan{
+						BridgeID:       p.BridgeID,
+						AgentTokenID:   req.AgentTokenID,
+						RuleName:       req.RuleName,
+						ExpiresAt:      time.Now().Add(cp.Ban.Duration),
+						ViolationCount: n,
+					}
+					if berr := h.st.UpsertAgentBan(r.Context(), ban); berr == nil {
+						resp.Ban = &proxyConfigBan{
+							AgentTokenID: ban.AgentTokenID,
+							RuleName:     ban.RuleName,
+							ExpiresAt:    ban.ExpiresAt.UTC().Format(time.RFC3339),
+						}
+					}
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // -- POST /api/proxy/turns ----------------------------------------------------
