@@ -382,6 +382,7 @@ func (h *CredentialHandler) Invalidations(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "streaming not supported")
 		return
 	}
+	rc := http.NewResponseController(w)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -402,6 +403,10 @@ func (h *CredentialHandler) Invalidations(w http.ResponseWriter, r *http.Request
 		case <-ctx.Done():
 			return
 		case <-keepalive.C:
+			// Extend the write deadline each tick so the server's global
+			// WriteTimeout doesn't guillotine a long-lived SSE connection.
+			// Matches the pattern in events.go §Stream.
+			_ = rc.SetWriteDeadline(time.Now().Add(60 * time.Second))
 			if _, err := fmt.Fprintf(w, ":keepalive\n\n"); err != nil {
 				return
 			}
@@ -410,6 +415,7 @@ func (h *CredentialHandler) Invalidations(w http.ResponseWriter, r *http.Request
 			if !open {
 				return
 			}
+			_ = rc.SetWriteDeadline(time.Now().Add(60 * time.Second))
 			data, _ := json.Marshal(evt)
 			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data); err != nil {
 				return
