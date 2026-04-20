@@ -6,13 +6,14 @@ This plugin provides MCP tools for interacting with Clawvisor and commands for c
 
 ## MCP Tools
 
-The `clawvisor-local` MCP server provides six tools:
+The `clawvisor-local` MCP server provides these tools:
 - `fetch_catalog` — See available services, actions, and restrictions
 - `create_task` — Declare your purpose and the actions you need
 - `get_task` — Check task status (supports long-polling with `wait: true`)
 - `complete_task` — Mark a task as completed
 - `expand_task` — Add new actions to an existing task scope
-- `gateway_request` — Execute service actions under an approved task
+- `gateway_request` — Execute a single service action under an approved task
+- `gateway_batch` — Execute up to 20 gateway requests in a single round-trip (fan-out reads across services/accounts)
 
 ## Commands
 
