@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -152,22 +155,32 @@ func init() {
 // -- update-binary -------------------------------------------------------
 
 var (
-	updateRepo  string
-	updateTag   string
-	updateForce bool
+	updateRepo       string
+	updateTag        string
+	updateForce      bool
+	updateFromServer bool
+	updateServerURL  string
 )
 
 var proxyUpdateBinaryCmd = &cobra.Command{
 	Use:   "update-binary",
-	Short: "Download the latest proxy binary from a GitHub release and restart in place",
-	Long: `Pulls the platform-specific clawvisor-proxy asset from a GitHub release
-(default: clawvisor/proxy@latest), installs it to
-~/.clawvisor/proxy/bin/clawvisor-proxy, and reconfigures the daemon
-to point at it. The daemon's Configure auto-restarts the running
-process so the new binary takes effect immediately.
+	Short: "Download the latest proxy binary and restart in place",
+	Long: `Downloads a platform-specific clawvisor-proxy binary, installs it
+to ~/.clawvisor/proxy/bin/clawvisor-proxy, and reconfigures the
+daemon to point at it. The daemon's Configure auto-restarts the
+running process so the new binary takes effect immediately.
 
-Requires GH_TOKEN in the environment for private repos; works
-unauthenticated against public ones.`,
+Sources, in priority order:
+  --from-server          Pull from your Clawvisor server's
+                         GET /api/proxy/download endpoint. Use during
+                         development against a local server that has
+                         CLAWVISOR_PROXY_BINARY_DIR set, or against a
+                         self-hosted deployment that's serving the
+                         binary itself.
+  --repo / --tag         GitHub release path. Public repos work
+                         unauthenticated; private repos need GH_TOKEN.
+
+When --from-server is set, --repo / --tag are ignored.`,
 	SilenceUsage: true,
 	RunE:         runProxyUpdateBinary,
 }
@@ -179,6 +192,13 @@ func init() {
 		"Release tag to install ('latest' for the most recent published release).")
 	proxyUpdateBinaryCmd.Flags().BoolVar(&updateForce, "force", false,
 		"Force download + reinstall even if the current binary's mtime matches.")
+	proxyUpdateBinaryCmd.Flags().BoolVar(&updateFromServer, "from-server", false,
+		"Pull the binary from the Clawvisor server's /api/proxy/download endpoint "+
+			"instead of GitHub. Server URL is taken from --server-url, then "+
+			"$CLAWVISOR_SERVER_URL, then the daemon's currently-configured server.")
+	proxyUpdateBinaryCmd.Flags().StringVar(&updateServerURL, "server-url", "",
+		"Server URL to pull from when --from-server is set. Defaults to "+
+			"$CLAWVISOR_SERVER_URL or the daemon's configured server.")
 }
 
 type ghAsset struct {
@@ -193,33 +213,7 @@ type ghRelease struct {
 }
 
 func runProxyUpdateBinary(cmd *cobra.Command, args []string) error {
-	// Pick the asset name matching this OS+arch. Convention: the proxy
-	// release publishes one asset per platform named like
-	// "clawvisor-proxy-darwin-arm64", "clawvisor-proxy-linux-amd64", etc.
-	// If your release uses a different naming scheme, override the
-	// auto-pick by passing --repo to a fork that matches.
 	platform := runtime.GOOS + "-" + runtime.GOARCH
-	wantAsset := "clawvisor-proxy-" + platform
-
-	rel, err := fetchRelease(updateRepo, updateTag)
-	if err != nil {
-		return fmt.Errorf("fetch release: %w", err)
-	}
-	var pick *ghAsset
-	for i := range rel.Assets {
-		if rel.Assets[i].Name == wantAsset || rel.Assets[i].Name == wantAsset+".gz" || rel.Assets[i].Name == wantAsset+".tar.gz" {
-			pick = &rel.Assets[i]
-			break
-		}
-	}
-	if pick == nil {
-		names := make([]string, len(rel.Assets))
-		for i, a := range rel.Assets {
-			names[i] = a.Name
-		}
-		return fmt.Errorf("no asset matching %s in release %s. Available: %v", wantAsset, rel.TagName, names)
-	}
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -230,10 +224,44 @@ func runProxyUpdateBinary(cmd *cobra.Command, args []string) error {
 	}
 	binPath := filepath.Join(binDir, "clawvisor-proxy")
 
-	fmt.Printf("Downloading %s (%s, %d bytes)…\n", pick.Name, rel.TagName, pick.Size)
-	if err := downloadAsset(pick.DownloadURL, binPath); err != nil {
-		return fmt.Errorf("download asset: %w", err)
+	if updateFromServer {
+		serverURL, err := resolveUpdateServerURL()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Downloading clawvisor-proxy (%s) from %s…\n", platform, serverURL)
+		if err := downloadFromServer(serverURL, platform, binPath); err != nil {
+			return fmt.Errorf("download from server: %w", err)
+		}
+	} else {
+		// Convention: the proxy release publishes one asset per platform
+		// named like "clawvisor-proxy-darwin-arm64",
+		// "clawvisor-proxy-linux-amd64", etc.
+		wantAsset := "clawvisor-proxy-" + platform
+		rel, err := fetchRelease(updateRepo, updateTag)
+		if err != nil {
+			return fmt.Errorf("fetch release: %w", err)
+		}
+		var pick *ghAsset
+		for i := range rel.Assets {
+			if rel.Assets[i].Name == wantAsset || rel.Assets[i].Name == wantAsset+".gz" || rel.Assets[i].Name == wantAsset+".tar.gz" {
+				pick = &rel.Assets[i]
+				break
+			}
+		}
+		if pick == nil {
+			names := make([]string, len(rel.Assets))
+			for i, a := range rel.Assets {
+				names[i] = a.Name
+			}
+			return fmt.Errorf("no asset matching %s in release %s. Available: %v", wantAsset, rel.TagName, names)
+		}
+		fmt.Printf("Downloading %s (%s, %d bytes)…\n", pick.Name, rel.TagName, pick.Size)
+		if err := downloadAsset(pick.DownloadURL, binPath); err != nil {
+			return fmt.Errorf("download asset: %w", err)
+		}
 	}
+
 	if err := os.Chmod(binPath, 0755); err != nil {
 		return fmt.Errorf("chmod binary: %w", err)
 	}
@@ -284,6 +312,64 @@ func fetchRelease(repo, tag string) (*ghRelease, error) {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+// resolveUpdateServerURL picks the server URL for --from-server.
+// Priority: --server-url flag, $CLAWVISOR_SERVER_URL, daemon's
+// configured server. Errors when none are available so the user knows
+// to point us at one explicitly.
+func resolveUpdateServerURL() (string, error) {
+	if updateServerURL != "" {
+		return strings.TrimRight(updateServerURL, "/"), nil
+	}
+	if v := os.Getenv("CLAWVISOR_SERVER_URL"); v != "" {
+		return strings.TrimRight(v, "/"), nil
+	}
+	if cur, err := fetchProxyStatusForUpdate(); err == nil && cur.ServerURL != "" {
+		return strings.TrimRight(cur.ServerURL, "/"), nil
+	}
+	return "", errors.New("no server URL — pass --server-url, set $CLAWVISOR_SERVER_URL, or run 'clawvisor proxy install' first")
+}
+
+// downloadFromServer GETs /api/proxy/download from the configured
+// Clawvisor server, verifies the X-Clawvisor-Proxy-Sha256 header
+// against the bytes we received, and writes them to dst atomically.
+func downloadFromServer(serverURL, platform, dst string) error {
+	url := serverURL + "/api/proxy/download?platform=" + platform
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Accept", "application/octet-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server %d: %s", resp.StatusCode, string(raw))
+	}
+	wantSum := resp.Header.Get("X-Clawvisor-Proxy-Sha256")
+
+	tmp := dst + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(f, hasher), resp.Body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	gotSum := hex.EncodeToString(hasher.Sum(nil))
+	if wantSum != "" && gotSum != wantSum {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sha256 mismatch: server announced %s, got %s", wantSum, gotSum)
+	}
+	return os.Rename(tmp, dst)
 }
 
 func downloadAsset(url, dst string) error {

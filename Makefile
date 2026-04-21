@@ -1,4 +1,4 @@
-.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci plugin-bundle
+.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci plugin-bundle build-proxy serve-proxy-binary
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
@@ -40,6 +40,25 @@ install-local: build-local
 
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
+
+# Build the clawvisor-proxy binary from the third_party submodule.
+# Lands at third_party/proxy/dist/clawvisor-proxy. Pair with
+# `serve-proxy-binary` to run a server that hands this out via
+# GET /api/proxy/download — lets `clawvisor proxy update-binary
+# --from-server` iterate without GitHub releases.
+build-proxy:
+	$(MAKE) -C third_party/proxy build
+
+# Convenience: print the env var the server needs so its
+# /api/proxy/download endpoint serves the freshly built binary.
+serve-proxy-binary: build-proxy
+	@echo "Built $$(pwd)/third_party/proxy/dist/clawvisor-proxy"
+	@echo
+	@echo "Run the server with:"
+	@echo "  CLAWVISOR_PROXY_BINARY_DIR=$$(pwd)/third_party/proxy/dist make run"
+	@echo
+	@echo "Then on a client machine:"
+	@echo "  clawvisor proxy update-binary --from-server --server-url http://127.0.0.1:25297"
 
 build-server: web/dist plugin-bundle
 	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server

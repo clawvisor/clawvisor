@@ -789,6 +789,13 @@ func (s *Server) routes() http.Handler {
 	// See docs/design-proxy-stage2.md §2.
 	credHandler := handlers.NewCredentialHandler(s.store, s.vault, s.logger)
 	mux.Handle("POST /api/proxy/credential-lookup", requireProxy(e2e(http.HandlerFunc(credHandler.Lookup))))
+
+	// Public binary download — operator opt-in via $CLAWVISOR_PROXY_BINARY_DIR.
+	// When the env var is unset, the handler 404s and CLIs fall back to
+	// the GitHub-release path. When set, it serves the latest local
+	// build so dev iteration doesn't need release tagging.
+	proxyBinaryHandler := handlers.NewProxyBinaryHandler(os.Getenv("CLAWVISOR_PROXY_BINARY_DIR"), s.logger)
+	mux.Handle("GET /api/proxy/download", http.HandlerFunc(proxyBinaryHandler.Download))
 	// Stage 2 M6: SSE invalidation feed — proxies subscribe to evict
 	// cached credentials within seconds of revoke/rotate.
 	mux.Handle("GET /api/proxy/invalidations", requireProxy(http.HandlerFunc(credHandler.Invalidations)))
