@@ -1,0 +1,20 @@
+root = "."
+tmp_dir = "bin/.air"
+
+[build]
+  cmd = "go build -o ./bin/.air/clawvisor-dev ./cmd/clawvisor"
+  bin = "./bin/.air/clawvisor-dev"
+  full_bin = "./bin/.air/clawvisor-dev start --foreground"
+  include_ext = ["go"]
+  exclude_dir = ["bin", "web", "dist", "node_modules", "terraform", "landing", "archive", ".git", "security", "tmp"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 500
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = 2000
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true
