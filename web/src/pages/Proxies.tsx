@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Routes, Route, Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { Routes, Route, Link, useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import { api } from '../api/client'
@@ -119,6 +119,7 @@ function ProxyDetail() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
   const setupHint = searchParams.get('setup') // e.g. ?setup=claude-code
 
   const { data: bridges, isLoading } = useQuery({
@@ -127,7 +128,27 @@ function ProxyDetail() {
   })
   const bridge = bridges?.find(b => b.id === id)
 
-  const [installArtifact, setInstallArtifact] = useState<ProxyEnableResponse | null>(null)
+  // Initial install-artifact state: prefer the artifact handed to us
+  // via navigation state (from "Add proxy" flow — preserves the
+  // one-time token without a rotate). Falls back to null; the
+  // install-artifact-without-token path below provides a viewer-only
+  // fallback for users who arrive here later without a fresh token.
+  const navArtifact = (location.state as { artifact?: ProxyEnableResponse } | null)?.artifact ?? null
+  const [installArtifact, setInstallArtifact] = useState<ProxyEnableResponse | null>(navArtifact)
+
+  // For proxies that are already enabled but where we don't have a
+  // fresh token in state (user navigated here from elsewhere, or
+  // refreshed the page), fetch the token-less install artifact so we
+  // can still surface install instructions. The proxy_token field on
+  // the response will be empty in that case — the UI handles it.
+  useEffect(() => {
+    if (installArtifact || !bridge?.proxy_enabled) return
+    let cancelled = false
+    api.plugin.installArtifact(id)
+      .then(art => { if (!cancelled) setInstallArtifact(art) })
+      .catch(() => { /* not fatal — user can click Rotate to get a fresh one */ })
+    return () => { cancelled = true }
+  }, [bridge?.proxy_enabled, id, installArtifact])
 
   const enableProxyMut = useMutation({
     mutationFn: () => api.plugin.enableProxy(id),
@@ -656,8 +677,13 @@ function CreateProxyOnlyCard() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['bridges'] })
       // Drop the user straight into the new proxy's detail page with
-      // the install artifact open.
-      navigate(`/dashboard/proxies/${res.bridge_id}?setup=standalone`)
+      // the install artifact open. Pass the artifact via navigation
+      // state so the detail page surfaces install instructions
+      // immediately — without forcing the user to click "Rotate token"
+      // (which would burn the one-time proxy_token they just got).
+      navigate(`/dashboard/proxies/${res.bridge_id}?setup=standalone`, {
+        state: { artifact: res },
+      })
     },
   })
 
