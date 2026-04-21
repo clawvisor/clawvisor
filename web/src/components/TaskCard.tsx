@@ -1,11 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride } from '../api/client'
+import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
 import VerificationIcon from './VerificationIcon'
 import ScopePill, { type ScopePillValue } from './ScopePill'
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// Backend's matchPlannedCall matches by base service type, ignoring the alias
+// after ":". Mirror that here so planned markers appear on aliased scopes too.
+const baseService = (s: string) => {
+  const i = s.indexOf(':')
+  return i >= 0 ? s.slice(0, i) : s
+}
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -139,11 +148,30 @@ export default function TaskCard({
     return [...groups.values()]
   }, [task.authorized_actions])
 
+  const plannedByKey = useMemo(() => {
+    const m = new Map<string, PlannedCall[]>()
+    for (const p of task.planned_calls ?? []) {
+      const k = `${baseService(p.service)}|${p.action}`
+      const list = m.get(k) ?? []
+      list.push(p)
+      m.set(k, list)
+    }
+    return m
+  }, [task.planned_calls])
+  const totalPlanned = task.planned_calls?.length ?? 0
+
+  const [showPlannedCalls, setShowPlannedCalls] = useState(() => {
+    if (totalPlanned === 0) return false
+    const rank: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 }
+    return (rank[task.risk_level ?? 'low'] ?? 0) >= rank.medium
+  })
+
   const handleScopeChange = (a: TaskAction, next: ScopePillValue) => {
     const key = `${a.service}|${a.action}`
     const patch: ScopeOverride = { service: a.service, action: a.action }
     if (next.auto !== a.auto_execute) patch.auto_execute = next.auto
     if (next.verification !== (a.verification ?? 'strict')) patch.verification = next.verification
+    const prev = scopeOverrides[key]
     const nextMap = { ...scopeOverrides }
     if (patch.auto_execute === undefined && patch.verification === undefined) {
       delete nextMap[key]
@@ -152,12 +180,27 @@ export default function TaskCard({
     }
     setScopeOverrides(nextMap)
     if (isActive) {
-      updateScopeMut.mutate([{
-        service: a.service,
-        action: a.action,
-        verification: next.verification,
-        auto_execute: next.auto,
-      }])
+      updateScopeMut.mutate(
+        [{
+          service: a.service,
+          action: a.action,
+          verification: next.verification,
+          auto_execute: next.auto,
+        }],
+        {
+          onError: () => {
+            setScopeOverrides(s => {
+              const reverted = { ...s }
+              if (prev === undefined) {
+                delete reverted[key]
+              } else {
+                reverted[key] = prev
+              }
+              return reverted
+            })
+          },
+        },
+      )
     }
   }
 
@@ -181,21 +224,29 @@ export default function TaskCard({
       {/* ── Compact row for non-actionable cards ── */}
       {!isActionable && (
         <div
-          className="px-5 py-3.5 flex items-center gap-3 cursor-pointer hover:bg-white/[0.015] select-none"
+          className="px-5 py-3 cursor-pointer hover:bg-white/[0.015] select-none"
           onClick={() => setExpanded(e => !e)}
         >
-          <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-          <span className={`text-text-primary text-sm flex-1 ${expanded ? '' : 'truncate'}`}>{task.purpose}</span>
-          <span className="font-mono text-[11px] text-text-tertiary shrink-0">{agentName}</span>
-          <span className="text-text-tertiary text-[11px]">&middot;</span>
-          <span className="font-mono text-[11px] text-text-tertiary shrink-0">
-            {isActive
-              ? (isStanding
-                  ? 'ongoing'
-                  : (task.expires_at ? <CountdownTimer expiresAt={task.expires_at} /> : 'session'))
-              : badge.label}
-          </span>
-          <svg className={`w-3.5 h-3.5 text-text-tertiary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+          <div className="flex items-center gap-3">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+            <span className={`text-text-primary text-sm flex-1 ${expanded ? '' : 'truncate'}`}>{task.purpose}</span>
+            <svg className={`w-3.5 h-3.5 text-text-tertiary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+          </div>
+          <div className="mt-1 pl-[20px] flex items-center gap-2 font-mono text-[11px] text-text-tertiary">
+            <span>{agentName}</span>
+            <span>&middot;</span>
+            <span>
+              {isActive
+                ? (isStanding ? 'ongoing' : (task.expires_at ? <CountdownTimer expiresAt={task.expires_at} /> : 'session'))
+                : badge.label}
+            </span>
+            {task.request_count > 0 && (
+              <>
+                <span>&middot;</span>
+                <RequestCounter count={task.request_count} active={isActive} />
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -231,6 +282,15 @@ export default function TaskCard({
           {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
           {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
           <div className="px-4 pb-3">
+            {totalPlanned > 0 && (
+              <div className="flex items-center justify-end pb-2">
+                <PlannedToggle
+                  on={showPlannedCalls}
+                  count={totalPlanned}
+                  onToggle={() => setShowPlannedCalls(s => !s)}
+                />
+              </div>
+            )}
             <GroupedScopes
               groups={groupedByService}
               effectiveValue={effectiveValue}
@@ -238,6 +298,9 @@ export default function TaskCard({
               setOpenPillKey={setOpenPillKey}
               onChange={handleScopeChange}
               disabled={isPending}
+              plannedByKey={plannedByKey}
+              showPlanned={showPlannedCalls}
+              onMarkerClick={() => setShowPlannedCalls(s => !s)}
             />
           </div>
           <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
@@ -408,6 +471,9 @@ function GroupedScopes({
   setOpenPillKey,
   onChange,
   disabled,
+  plannedByKey,
+  showPlanned,
+  onMarkerClick,
 }: {
   groups: { service: string; actions: TaskAction[] }[]
   effectiveValue: (a: TaskAction) => ScopePillValue
@@ -415,6 +481,9 @@ function GroupedScopes({
   setOpenPillKey: (k: string | null) => void
   onChange: (a: TaskAction, v: ScopePillValue) => void
   disabled: boolean
+  plannedByKey?: Map<string, PlannedCall[]>
+  showPlanned?: boolean
+  onMarkerClick?: () => void
 }) {
   return (
     <div className="space-y-4">
@@ -426,25 +495,62 @@ function GroupedScopes({
           <div className="border-y border-border-subtle">
             {g.actions.map((a, i) => {
               const key = `${a.service}|${a.action}`
+              const planned = plannedByKey?.get(`${baseService(a.service)}|${a.action}`) ?? []
               return (
-                <div
-                  key={key}
-                  className={`py-2 pl-4 pr-1 flex items-center justify-between gap-3 ${i > 0 ? 'border-t border-border-subtle' : ''}`}
-                >
-                  <div className="min-w-0">
-                    <div className="font-mono text-[12px] text-text-primary">{actionName(a.action, a.service)}</div>
-                    {a.expected_use && (
-                      <div className="text-[12px] text-text-secondary mt-0.5">{a.expected_use}</div>
-                    )}
+                <div key={key} className={i > 0 ? 'border-t border-border-subtle' : ''}>
+                  <div className="py-2 pl-4 pr-1 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-mono text-[12px] text-text-primary flex items-center gap-1.5">
+                        {actionName(a.action, a.service)}
+                        {planned.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onMarkerClick?.() }}
+                            className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-border-subtle text-[10px] text-text-tertiary hover:text-brand hover:border-brand/40 hover:bg-brand/[0.08] transition-colors"
+                          >
+                            <span className="w-1 h-1 rounded-full bg-current opacity-65" />
+                            {planned.length} planned
+                          </button>
+                        )}
+                      </div>
+                      {a.expected_use && (
+                        <div className="text-[12px] text-text-secondary mt-0.5">{a.expected_use}</div>
+                      )}
+                    </div>
+                    <ScopePill
+                      value={effectiveValue(a)}
+                      expanded={openPillKey === key}
+                      onExpand={() => setOpenPillKey(key)}
+                      onCollapse={() => setOpenPillKey(null)}
+                      onChange={(v) => onChange(a, v)}
+                      disabled={disabled}
+                    />
                   </div>
-                  <ScopePill
-                    value={effectiveValue(a)}
-                    expanded={openPillKey === key}
-                    onExpand={() => setOpenPillKey(key)}
-                    onCollapse={() => setOpenPillKey(null)}
-                    onChange={(v) => onChange(a, v)}
-                    disabled={disabled}
-                  />
+                  {planned.length > 0 && (
+                    <div
+                      className={`grid transition-[grid-template-rows] duration-[280ms] ease-out ${
+                        showPlanned ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                      }`}
+                    >
+                      <div className="overflow-hidden min-h-0">
+                        <div
+                          className="py-1.5 pb-2.5 pl-7 pr-3 border-t border-dashed border-border-subtle space-y-2"
+                          style={{ background: 'rgba(129,140,248,0.03)' }}
+                        >
+                          {planned.map((p, j) => (
+                            <div key={j} className={j > 0 ? 'pt-2 border-t border-dashed border-border-subtle' : ''}>
+                              <div className="text-[11.5px] text-text-secondary">— {p.reason}</div>
+                              {p.params && Object.keys(p.params).length > 0 && (
+                                <div className="font-mono text-[11px] text-text-tertiary break-all mt-0.5">
+                                  <PlannedParams params={p.params} />
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -453,6 +559,82 @@ function GroupedScopes({
       ))}
     </div>
   )
+}
+
+function RequestCounter({ count, active }: { count: number; active: boolean }) {
+  const prevRef = useRef(count)
+  const [flash, setFlash] = useState(false)
+  useEffect(() => {
+    if (count > prevRef.current) {
+      setFlash(true)
+      const t = setTimeout(() => setFlash(false), 700)
+      prevRef.current = count
+      return () => clearTimeout(t)
+    }
+    prevRef.current = count
+  }, [count])
+  return (
+    <span className={`inline-flex items-center gap-1 transition-colors duration-500 ${flash ? 'text-brand' : ''}`}>
+      {active && (
+        <span className={`w-1 h-1 rounded-full bg-current ${flash ? 'opacity-100 animate-ping' : 'opacity-40'}`} />
+      )}
+      <span>{count} req</span>
+    </span>
+  )
+}
+
+function PlannedToggle({ on, count, onToggle }: { on: boolean; count: number; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`inline-flex items-center gap-[7px] py-[3px] pl-[6px] pr-[9px] rounded-full border text-[11px] transition-colors select-none ${
+        on
+          ? 'bg-brand/10 border-brand/40 text-brand'
+          : 'bg-white/[0.02] border-border-subtle text-text-tertiary hover:bg-white/[0.05] hover:text-text-secondary'
+      }`}
+    >
+      <span
+        className={`inline-flex items-center justify-center w-3 h-3 rounded-[3px] border-[1.5px] transition-colors ${
+          on ? 'bg-brand border-brand' : 'border-text-tertiary'
+        }`}
+      >
+        {on && (
+          <svg className="w-[9px] h-[9px] text-surface-0" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2.5 6.5l2.5 2.5 5-5.5" />
+          </svg>
+        )}
+      </span>
+      <span>Show pre-registered calls <span className={on ? 'text-brand/70' : 'text-text-tertiary'}>({count})</span></span>
+    </button>
+  )
+}
+
+function PlannedParams({ params }: { params: Record<string, unknown> }) {
+  const entries = Object.entries(params)
+  return (
+    <>
+      {'{'}
+      {entries.map(([k, v], i) => (
+        <span key={k}>
+          "{k}": <PlannedValue value={v} />{i < entries.length - 1 ? ', ' : ''}
+        </span>
+      ))}
+      {'}'}
+    </>
+  )
+}
+
+function PlannedValue({ value }: { value: unknown }) {
+  if (typeof value === 'string' && value === '$chain') {
+    return (
+      <span className="inline-flex items-center gap-[3px] px-[5px] py-px rounded-[3px] bg-brand/[0.14] text-brand text-[10.5px] font-mono">
+        <span className="w-1 h-1 rounded-full bg-current opacity-70" />
+        $chain
+      </span>
+    )
+  }
+  return <>{JSON.stringify(value)}</>
 }
 
 // ── Scope group tables (used only for needsExpansion approved-scopes view) ───
