@@ -2,6 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 type Verify = 'strict' | 'lenient' | 'off'
 
+const VERIFICATION_TOOLTIPS: Record<Verify, string> = {
+  strict: 'Full intent check — each request is verified against the task\u2019s purpose',
+  lenient: 'Relaxed check — allows routine variation, still blocks clear violations',
+  off: 'No intent check — only the scope itself gates requests',
+}
+
 export type ScopePillValue = { auto: boolean; verification: Verify }
 
 export default function ScopePill({
@@ -62,12 +68,38 @@ export default function ScopePill({
   ].filter(Boolean).join(' ')
 
   return (
-    <div
-      ref={ref}
-      className={pillClass}
-      style={targetWidth !== undefined ? { width: targetWidth } : undefined}
-      onClick={handleCompactClick}
-    >
+    <>
+      <div className="md:hidden flex flex-col items-end gap-1 shrink-0">
+        <select
+          value={value.auto ? 'auto' : 'approve'}
+          onChange={(e) => onChange({ ...value, auto: e.target.value === 'auto' })}
+          disabled={disabled}
+          title={value.auto
+            ? 'Run matching requests immediately without asking you first'
+            : 'Require your approval before each matching request runs'}
+          className="text-[11px] rounded border border-border-default bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50"
+        >
+          <option value="auto">auto</option>
+          <option value="approve">approve</option>
+        </select>
+        <select
+          value={value.verification}
+          onChange={(e) => onChange({ ...value, verification: e.target.value as Verify })}
+          disabled={disabled}
+          title={VERIFICATION_TOOLTIPS[value.verification]}
+          className={`text-[11px] rounded border bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50 ${dangerous ? 'border-danger/60' : 'border-border-default'}`}
+        >
+          <option value="strict">strict</option>
+          <option value="lenient">lenient</option>
+          <option value="off">off</option>
+        </select>
+      </div>
+      <div
+        ref={ref}
+        className={`hidden md:inline-block ${pillClass}`}
+        style={targetWidth !== undefined ? { width: targetWidth } : undefined}
+        onClick={handleCompactClick}
+      >
       <span ref={compactRef} className="scope-pill__compact">
         <span className="scope-pill__dot" />
         <span>{label}</span>
@@ -78,11 +110,13 @@ export default function ScopePill({
             type="button"
             onClick={(e) => { e.stopPropagation(); onChange({ ...value, auto: true }) }}
             className={value.auto ? 'is-active' : ''}
+            title="Run matching requests immediately without asking you first"
           >auto</button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onChange({ ...value, auto: false }) }}
             className={!value.auto ? 'is-active' : ''}
+            title="Require your approval before each matching request runs"
           >approve</button>
         </span>
         <span className="scope-pill__divider" />
@@ -93,6 +127,7 @@ export default function ScopePill({
               key={mode}
               onClick={(e) => { e.stopPropagation(); onChange({ ...value, verification: mode }) }}
               className={value.verification === mode ? 'is-active' : ''}
+              title={VERIFICATION_TOOLTIPS[mode]}
             >{mode}</button>
           ))}
         </span>
@@ -107,6 +142,7 @@ export default function ScopePill({
           </svg>
         </button>
       </span>
-    </div>
+      </div>
+    </>
   )
 }
