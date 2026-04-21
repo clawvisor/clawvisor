@@ -67,7 +67,7 @@ starts the proxy under daemon supervision. Idempotent — rerun with
 different args to reconfigure.
 
 Required:
-  --binary       path to the clawvisor-proxy (kumo) executable
+  --binary       path to the clawvisor-proxy executable
   --proxy-token  cvisproxy_… from the dashboard's "Enable Proxy" flow
   --bridge-id    the bridge UUID this proxy serves`,
 	SilenceUsage: true,
@@ -120,7 +120,7 @@ var proxySetModeCmd = &cobra.Command{
 
 func init() {
 	proxyInstallCmd.Flags().StringVar(&cfgBinaryPath, "binary", "",
-		"Path to the proxy binary (clawvisor-proxy / kumo). Required.")
+		"Path to the proxy binary (clawvisor-proxy). Required.")
 	proxyInstallCmd.Flags().StringVar(&cfgServerURL, "server-url", "http://127.0.0.1:25297",
 		"Clawvisor server URL the proxy should register with.")
 	proxyInstallCmd.Flags().StringVar(&cfgProxyToken, "proxy-token", "",

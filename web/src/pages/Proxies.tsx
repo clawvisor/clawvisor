@@ -568,7 +568,7 @@ function DaemonPrerequisites() {
   const proxyBuildFromSource = `# Build the proxy binary from source (until we publish a release):
 git clone https://github.com/clawvisor/clawvisor-proxy.git
 cd clawvisor-proxy && make build
-# Binary lands at ./dist/kumo — pass that path to 'clawvisor proxy install --binary <path>'`
+# Binary lands at ./dist/clawvisor-proxy — pass that path to 'clawvisor proxy install --binary <path>'`
 
   return (
     <div className="bg-warning/5 border border-warning/30 rounded-md p-3 space-y-3">

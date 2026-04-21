@@ -65,7 +65,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("## What you'll do\n\n")
 	b.WriteString("Five steps, all run from a terminal on the user's machine. Ask permission before each `Bash` invocation that mutates state — particularly the keychain trust step.\n\n")
 	b.WriteString("1. Confirm `clawvisor-local` is installed (the local supervisor daemon).\n")
-	b.WriteString("2. Confirm a `clawvisor-proxy` (kumo) binary is available.\n")
+	b.WriteString("2. Confirm a `clawvisor-proxy` binary is available.\n")
 	b.WriteString("3. Configure + start the proxy under daemon supervision.\n")
 	b.WriteString("4. Trust the proxy's TLS CA cert in the user's keychain.\n")
 	b.WriteString("5. Re-launch yourself wrapped by `clawvisor proxy run`.\n\n")
@@ -76,7 +76,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("- Connection refused: tell the user to install/launch `clawvisor-local`. The dashboard's Settings page has the install command. Wait for the user, then retry.\n\n")
 
 	b.WriteString("## 2. Locate the proxy binary\n\n")
-	b.WriteString("```bash\nwhich clawvisor-proxy || which kumo\n```\n\n")
+	b.WriteString("```bash\nwhich clawvisor-proxy\n```\n\n")
 	b.WriteString("If neither exists, ask the user where they have it (or to download it from the Clawvisor releases page). Note the absolute path; you'll pass it to install.\n\n")
 
 	b.WriteString("## 3. Get the credentials\n\n")

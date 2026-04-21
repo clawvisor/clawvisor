@@ -30,7 +30,7 @@ import (
 type Manager struct {
 	logger *slog.Logger
 
-	// dataDir holds CA cert, signing keys, traffic log (kumo's --data-dir).
+	// dataDir holds CA cert, signing keys, traffic log (the proxy's --data-dir).
 	dataDir string
 	// stateDir holds config.json + proxy_token file + admin socket.
 	stateDir string
@@ -528,7 +528,7 @@ func (m *Manager) waitForHealthy(ctx context.Context, sock string, done <-chan s
 	return fmt.Errorf("proxy health check timed out after %s", timeout)
 }
 
-// pipeLog scans lines from r and forwards each to logger. The kumo
+// pipeLog scans lines from r and forwards each to logger. The clawvisor-proxy
 // binary writes both log-format lines and plain status banners; we
 // don't try to parse, just line-by-line copy.
 func pipeLog(logger *slog.Logger, r io.ReadCloser) {
@@ -547,14 +547,14 @@ func pipeLog(logger *slog.Logger, r io.ReadCloser) {
 				}
 				line := chunk[:idx]
 				if len(line) > 0 {
-					logger.Info("kumo", "line", string(line))
+					logger.Info("clawvisor-proxy", "line", string(line))
 				}
 				chunk = chunk[idx+1:]
 			}
 		}
 		if err != nil {
 			if len(partial) > 0 {
-				logger.Info("kumo", "line", string(partial))
+				logger.Info("clawvisor-proxy", "line", string(partial))
 			}
 			return
 		}
