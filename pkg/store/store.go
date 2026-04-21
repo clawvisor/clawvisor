@@ -668,6 +668,11 @@ type TranscriptEvent struct {
 	SourceVersion   string    `json:"source_version"`
 	Stream          string    `json:"stream"`          // "llm" | "channel" | "action"
 	AgentTokenID    string    `json:"agent_token_id"`
+	// AgentAttribution is the trust tier for AgentTokenID. One of
+	// "verified", "labeled", "anonymous", or "" (events ingested before
+	// the field was introduced). The dashboard renders a badge from
+	// this; per-agent bans only enforce against "verified" traffic.
+	AgentAttribution string    `json:"agent_attribution,omitempty"`
 	ConversationID  string    `json:"conversation_id"`
 	Provider        string    `json:"provider"`
 	Direction       string    `json:"direction"`       // "inbound" | "outbound"

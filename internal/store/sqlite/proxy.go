@@ -176,12 +176,12 @@ func (s *Store) InsertTranscriptEvent(ctx context.Context, e *store.TranscriptEv
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO transcript_events (
 			event_id, bridge_id, source, source_version, stream,
-			agent_token_id, conversation_id, provider, direction, role,
+			agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 			text, tool_calls, tool_results, raw_ref, signature, sig_status, ts
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		e.EventID, e.BridgeID, e.Source, e.SourceVersion, e.Stream,
-		e.AgentTokenID, e.ConversationID, e.Provider, e.Direction, e.Role,
+		e.AgentTokenID, e.AgentAttribution, e.ConversationID, e.Provider, e.Direction, e.Role,
 		e.Text, e.ToolCallsJSON, e.ToolResultsJSON, e.RawRefJSON, e.SignatureJSON, e.SigStatus,
 		ts.UTC().Format(time.RFC3339Nano))
 	if err != nil {
@@ -198,12 +198,12 @@ func (s *Store) GetTranscriptEventByID(ctx context.Context, eventID string) (*st
 	var ts, ingestedAt string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT event_id, bridge_id, source, source_version, stream,
-		       agent_token_id, conversation_id, provider, direction, role,
+		       agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 		       text, tool_calls, tool_results, raw_ref, signature, sig_status, ts, ingested_at
 		FROM transcript_events WHERE event_id = ?
 	`, eventID).Scan(
 		&e.EventID, &e.BridgeID, &e.Source, &e.SourceVersion, &e.Stream,
-		&e.AgentTokenID, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
+		&e.AgentTokenID, &e.AgentAttribution, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
 		&e.Text, &e.ToolCallsJSON, &e.ToolResultsJSON, &e.RawRefJSON, &e.SignatureJSON, &e.SigStatus,
 		&ts, &ingestedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -263,7 +263,7 @@ func (s *Store) ListTranscriptEvents(ctx context.Context, f store.TranscriptEven
 
 	query := fmt.Sprintf(`
 		SELECT event_id, bridge_id, source, source_version, stream,
-		       agent_token_id, conversation_id, provider, direction, role,
+		       agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 		       text, tool_calls, tool_results, raw_ref, signature, sig_status, ts, ingested_at
 		FROM transcript_events
 		%s
@@ -283,7 +283,7 @@ func (s *Store) ListTranscriptEvents(ctx context.Context, f store.TranscriptEven
 		var ts, ingestedAt string
 		if err := rows.Scan(
 			&e.EventID, &e.BridgeID, &e.Source, &e.SourceVersion, &e.Stream,
-			&e.AgentTokenID, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
+			&e.AgentTokenID, &e.AgentAttribution, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
 			&e.Text, &e.ToolCallsJSON, &e.ToolResultsJSON, &e.RawRefJSON, &e.SignatureJSON, &e.SigStatus,
 			&ts, &ingestedAt); err != nil {
 			return nil, err

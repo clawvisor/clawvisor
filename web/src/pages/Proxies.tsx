@@ -300,7 +300,10 @@ clawvisor proxy install \\
 clawvisor proxy trust-ca
 
 # 3. Run any agent through it (scoped — only this command's traffic):
-clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
+clawvisor proxy run -- claude
+
+# Optional: tag traffic with a label (e.g. when running multiple agents):
+#   clawvisor proxy run --agent-label claude-code -- claude
 `
 
   return (
@@ -566,7 +569,7 @@ function DaemonPrerequisites() {
   const copy = (s: string) => { navigator.clipboard.writeText(s).catch(() => { /* noop */ }) }
   const daemonInstall = 'curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh'
   const proxyBuildFromSource = `# Build the proxy binary from source (until we publish a release):
-git clone https://github.com/clawvisor/clawvisor-proxy.git
+git clone https://github.com/clawvisor/proxy.git clawvisor-proxy
 cd clawvisor-proxy && make build
 # Binary lands at ./dist/clawvisor-proxy — pass that path to 'clawvisor proxy install --binary <path>'`
 

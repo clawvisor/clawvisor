@@ -16,9 +16,17 @@
 #      for OS-specific commands).
 #
 #   3. Point your agent at the proxy by setting:
-#      HTTP_PROXY=http://cvis_YOUR_AGENT_TOKEN@127.0.0.1:8880
-#      HTTPS_PROXY=http://cvis_YOUR_AGENT_TOKEN@127.0.0.1:8880
+#      HTTP_PROXY=http://127.0.0.1:8880
+#      HTTPS_PROXY=http://127.0.0.1:8880
 #      NODE_EXTRA_CA_CERTS=$(pwd)/clawvisor-ca.pem
+#
+#   For multi-agent attribution, prefix with a label (not a secret):
+#      HTTP_PROXY=http://claude-code@127.0.0.1:8880
+#
+#   For verified-tier enforcement (per-agent bans + policy), generate a
+#   cvis_ token from the dashboard ("Mint enforcement token" on the
+#   bridge) and pass it as the basic-auth password:
+#      HTTP_PROXY=http://claude-code:cvis_xxx@127.0.0.1:8880
 #
 
 services:

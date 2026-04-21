@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,7 +161,7 @@ var proxyUpdateBinaryCmd = &cobra.Command{
 	Use:   "update-binary",
 	Short: "Download the latest proxy binary from a GitHub release and restart in place",
 	Long: `Pulls the platform-specific clawvisor-proxy asset from a GitHub release
-(default: clawvisor/clawvisor-proxy@latest), installs it to
+(default: clawvisor/proxy@latest), installs it to
 ~/.clawvisor/proxy/bin/clawvisor-proxy, and reconfigures the daemon
 to point at it. The daemon's Configure auto-restarts the running
 process so the new binary takes effect immediately.
@@ -172,7 +173,7 @@ unauthenticated against public ones.`,
 }
 
 func init() {
-	proxyUpdateBinaryCmd.Flags().StringVar(&updateRepo, "repo", "clawvisor/clawvisor-proxy",
+	proxyUpdateBinaryCmd.Flags().StringVar(&updateRepo, "repo", "clawvisor/proxy",
 		"GitHub repo (owner/name) to pull releases from.")
 	proxyUpdateBinaryCmd.Flags().StringVar(&updateTag, "tag", "latest",
 		"Release tag to install ('latest' for the most recent published release).")
@@ -423,6 +424,7 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 
 var (
 	runAgentToken string
+	runAgentLabel string
 	runListenHost string
 	runListenPort string
 )
@@ -433,9 +435,16 @@ var proxyRunCmd = &cobra.Command{
 	Long: `Sets HTTP_PROXY, HTTPS_PROXY, and NODE_EXTRA_CA_CERTS only for the
 child process, so the rest of your shell is untouched.
 
-Example:
+Examples:
+  # Default: traffic flows anonymously (attributed as "default" in the dashboard).
+  clawvisor proxy run -- claude-code
+
+  # Tag traffic with a non-secret label (multi-agent attribution).
+  clawvisor proxy run --agent-label claude-code -- claude-code
+
+  # Verified-tier enforcement (per-agent bans + policy actually fire).
+  # Mint a cvis_ token from the dashboard's Proxies tab first.
   clawvisor proxy run --agent-token cvis_abc -- claude-code
-  clawvisor proxy run --agent-token cvis_abc -- curl https://api.anthropic.com/...
 
 Only the invoked command (and its descendants) flow through the proxy.
 Your browser, git, brew, etc. are unaffected.`,
@@ -445,7 +454,11 @@ Your browser, git, brew, etc. are unaffected.`,
 
 func init() {
 	proxyRunCmd.Flags().StringVar(&runAgentToken, "agent-token", "",
-		"cvis_… token to authenticate as. Defaults to $CLAWVISOR_AGENT_TOKEN.")
+		"cvis_… enforcement token. Optional — falls back to $CLAWVISOR_AGENT_TOKEN. "+
+			"Required only for verified-tier enforcement (per-agent bans).")
+	proxyRunCmd.Flags().StringVar(&runAgentLabel, "agent-label", "",
+		"Non-secret label used to attribute traffic in the dashboard "+
+			"(e.g. 'claude-code', 'cursor'). Defaults to $CLAWVISOR_AGENT_LABEL.")
 	proxyRunCmd.Flags().StringVar(&runListenHost, "host", "127.0.0.1",
 		"Proxy host the child process should target.")
 	proxyRunCmd.Flags().StringVar(&runListenPort, "port", "25298",
@@ -460,8 +473,9 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	if token == "" {
 		token = os.Getenv("CLAWVISOR_AGENT_TOKEN")
 	}
-	if token == "" {
-		return errors.New("no agent token — pass --agent-token or set CLAWVISOR_AGENT_TOKEN")
+	label := runAgentLabel
+	if label == "" {
+		label = os.Getenv("CLAWVISOR_AGENT_LABEL")
 	}
 
 	// Discover the CA cert path from the daemon's status so users don't
@@ -474,7 +488,13 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("CA cert not found at %s — is the proxy running? Try 'clawvisor proxy status': %w", caPath, err)
 	}
 
-	proxyURL := fmt.Sprintf("http://%s@%s:%s", token, runListenHost, runListenPort)
+	// Compose Proxy-Authorization basic auth from the label/token pair.
+	// The proxy parses (label, token) and derives the attribution tier:
+	//   token only       → verified (validated against known agents)
+	//   label only       → labeled (advisory; no ban enforcement)
+	//   neither          → anonymous (attributed as "default")
+	//   label + token    → verified, with a friendlier display label
+	proxyURL := buildProxyURL(label, token, runListenHost, runListenPort)
 
 	c := exec.Command(args[0], args[1:]...) //nolint:gosec
 	c.Env = append(os.Environ(),
@@ -500,6 +520,24 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// buildProxyURL composes the HTTP_PROXY URL the wrapped child sees.
+// Both label and token are optional — see the proxy's
+// extractProxyAuthPair for the parsing rules on the receiving side.
+func buildProxyURL(label, token, host, port string) string {
+	switch {
+	case token != "" && label != "":
+		return fmt.Sprintf("http://%s:%s@%s:%s", url.QueryEscape(label), url.QueryEscape(token), host, port)
+	case token != "":
+		// Backcompat shape so older proxies still extract the token from
+		// the userinfo when the new pair-aware parser isn't deployed.
+		return fmt.Sprintf("http://%s@%s:%s", url.QueryEscape(token), host, port)
+	case label != "":
+		return fmt.Sprintf("http://%s@%s:%s", url.QueryEscape(label), host, port)
+	default:
+		return fmt.Sprintf("http://%s:%s", host, port)
+	}
 }
 
 func discoverCACertPath() (string, error) {

@@ -1,0 +1,13 @@
+-- Adds agent_attribution to transcript_events. The proxy now reports
+-- one of three trust tiers for the agent identity it captured:
+--   'verified'  — Proxy-Authorization included a cvis_ token that
+--                 validated against the server's known-agents list.
+--   'labeled'   — Only a non-secret label was presented (or the token
+--                 wasn't recognized). Spoofable on the local machine;
+--                 per-agent bans are NOT enforced for this tier.
+--   'anonymous' — No Proxy-Authorization at all; AgentTokenID = 'default'.
+--
+-- Existing rows have empty attribution and the dashboard treats that as
+-- "unknown" — they predate this column and shouldn't be retroactively
+-- labeled.
+ALTER TABLE transcript_events ADD COLUMN agent_attribution TEXT NOT NULL DEFAULT '';

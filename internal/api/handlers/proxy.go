@@ -287,20 +287,21 @@ func (h *ProxyHandler) PolicyViolations(w http.ResponseWriter, r *http.Request) 
 
 // turnEventRequest mirrors the TurnEvent schema on the wire (docs/proxy-api.md §8.1).
 type turnEventRequest struct {
-	EventID        string          `json:"event_id"`
-	TS             string          `json:"ts"`
-	Source         string          `json:"source"`
-	SourceVersion  string          `json:"source_version"`
-	Stream         string          `json:"stream"`
-	AgentTokenID   string          `json:"agent_token_id"`
-	BridgeID       string          `json:"bridge_id"`
-	ConversationID string          `json:"conversation_id"`
-	Provider       string          `json:"provider"`
-	Direction      string          `json:"direction"`
-	Role           string          `json:"role"`
-	Turn           turnPayload     `json:"turn"`
-	RawRef         json.RawMessage `json:"raw_ref,omitempty"`
-	Signature      json.RawMessage `json:"signature,omitempty"`
+	EventID          string          `json:"event_id"`
+	TS               string          `json:"ts"`
+	Source           string          `json:"source"`
+	SourceVersion    string          `json:"source_version"`
+	Stream           string          `json:"stream"`
+	AgentTokenID     string          `json:"agent_token_id"`
+	AgentAttribution string          `json:"agent_attribution,omitempty"`
+	BridgeID         string          `json:"bridge_id"`
+	ConversationID   string          `json:"conversation_id"`
+	Provider         string          `json:"provider"`
+	Direction        string          `json:"direction"`
+	Role             string          `json:"role"`
+	Turn             turnPayload     `json:"turn"`
+	RawRef           json.RawMessage `json:"raw_ref,omitempty"`
+	Signature        json.RawMessage `json:"signature,omitempty"`
 }
 
 type turnPayload struct {
@@ -418,25 +419,35 @@ func (h *ProxyHandler) processTurnEvent(ctx context.Context, p *store.ProxyInsta
 		return nil, &turnWarning{EventID: ev.EventID, Code: "DUPLICATE_EVENT", Error: "event_id already ingested"}
 	}
 
+	// Validate attribution if supplied. Anything outside the known set
+	// is treated as "" (unknown) rather than rejected — Stage 1 is
+	// permissive to keep older proxies working post-upgrade.
+	attribution := ""
+	switch ev.AgentAttribution {
+	case "verified", "labeled", "anonymous":
+		attribution = ev.AgentAttribution
+	}
+
 	// Persist.
 	te := &store.TranscriptEvent{
-		EventID:         ev.EventID,
-		BridgeID:        p.BridgeID,
-		Source:          ev.Source,
-		SourceVersion:   ev.SourceVersion,
-		Stream:          ev.Stream,
-		AgentTokenID:    ev.AgentTokenID,
-		ConversationID:  ev.ConversationID,
-		Provider:        ev.Provider,
-		Direction:       ev.Direction,
-		Role:            ev.Role,
-		Text:            ev.Turn.Text,
-		ToolCallsJSON:   jsonOrEmpty(ev.Turn.ToolCalls),
-		ToolResultsJSON: jsonOrEmpty(ev.Turn.ToolResults),
-		RawRefJSON:      jsonOrEmpty(ev.RawRef),
-		SignatureJSON:   jsonOrEmpty(ev.Signature),
-		SigStatus:       sigStatus,
-		TS:              ts,
+		EventID:          ev.EventID,
+		BridgeID:         p.BridgeID,
+		Source:           ev.Source,
+		SourceVersion:    ev.SourceVersion,
+		Stream:           ev.Stream,
+		AgentTokenID:     ev.AgentTokenID,
+		AgentAttribution: attribution,
+		ConversationID:   ev.ConversationID,
+		Provider:         ev.Provider,
+		Direction:        ev.Direction,
+		Role:             ev.Role,
+		Text:             ev.Turn.Text,
+		ToolCallsJSON:    jsonOrEmpty(ev.Turn.ToolCalls),
+		ToolResultsJSON:  jsonOrEmpty(ev.Turn.ToolResults),
+		RawRefJSON:       jsonOrEmpty(ev.RawRef),
+		SignatureJSON:    jsonOrEmpty(ev.Signature),
+		SigStatus:        sigStatus,
+		TS:               ts,
 	}
 	if err := h.st.InsertTranscriptEvent(ctx, te); err != nil {
 		if errors.Is(err, store.ErrConflict) {

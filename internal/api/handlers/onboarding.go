@@ -94,7 +94,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 		b.WriteString("Have them paste back to you:\n")
 		b.WriteString("- The bridge ID (UUID at the top of the proxy detail page).\n")
 		b.WriteString("- The `cvisproxy_…` token from the orange box.\n\n")
-		b.WriteString("Also ask which agent token (`cvis_…`) you should launch under — that determines who Clawvisor attributes the traffic to. They can mint one in the Agents tab if needed.\n\n")
+		b.WriteString("(No agent token needed for the default install — traffic is attributed by an unsecured label. If the user wants per-agent ban enforcement, they can mint a `cvis_…` enforcement token from the dashboard later.)\n\n")
 	}
 
 	b.WriteString("## 4. Configure + start the proxy\n\n")
@@ -131,11 +131,19 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("If you have a way to ask your runtime to relaunch, do so:\n\n")
 	b.WriteString("```bash\n")
 	if agentToken != "" {
+		// User minted an enforcement token — wire it in for verified-tier
+		// attribution (per-agent bans + policy actually enforce).
 		fmt.Fprintf(&b, "clawvisor proxy run --agent-token %s -- <YOUR_LAUNCH_COMMAND>\n", agentToken)
 	} else {
-		b.WriteString("clawvisor proxy run --agent-token cvis_<AGENT_TOKEN> -- <YOUR_LAUNCH_COMMAND>\n")
+		// Default: no agent token. Traffic gets attributed via the basic-
+		// auth label only. The proxy treats this as the "labeled" tier.
+		b.WriteString("clawvisor proxy run -- <YOUR_LAUNCH_COMMAND>\n")
 	}
 	b.WriteString("```\n\n")
+	if agentToken == "" {
+		b.WriteString("If you want to tag traffic with a label (when the user runs multiple agents and wants the dashboard to distinguish them), pass `--agent-label`:\n\n")
+		b.WriteString("```bash\nclawvisor proxy run --agent-label claude-code -- <YOUR_LAUNCH_COMMAND>\n```\n\n")
+	}
 	b.WriteString("If you can't self-relaunch, tell the user: \"Quit me, then re-run me from a shell with this prefix.\" Show them the exact command.\n\n")
 	b.WriteString("Once relaunched, your subsequent LLM calls flow through the proxy. Verify:\n\n")
 	b.WriteString("```bash\ncurl -sv https://api.anthropic.com/ -o /dev/null -w \"%{http_code}\\n\" 2>&1 | grep -E \"Connected to clawvisor|^[0-9]\"\n```\n\n")

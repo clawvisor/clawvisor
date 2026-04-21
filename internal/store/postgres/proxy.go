@@ -162,12 +162,12 @@ func (s *Store) InsertTranscriptEvent(ctx context.Context, e *store.TranscriptEv
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO transcript_events (
 			event_id, bridge_id, source, source_version, stream,
-			agent_token_id, conversation_id, provider, direction, role,
+			agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 			text, tool_calls, tool_results, raw_ref, signature, sig_status, ts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`,
 		e.EventID, e.BridgeID, e.Source, e.SourceVersion, e.Stream,
-		e.AgentTokenID, e.ConversationID, e.Provider, e.Direction, e.Role,
+		e.AgentTokenID, e.AgentAttribution, e.ConversationID, e.Provider, e.Direction, e.Role,
 		e.Text, nullJSONB(e.ToolCallsJSON), nullJSONB(e.ToolResultsJSON),
 		nullJSONB(e.RawRefJSON), nullJSONB(e.SignatureJSON), e.SigStatus, ts)
 	if err != nil {
@@ -184,13 +184,13 @@ func (s *Store) GetTranscriptEventByID(ctx context.Context, eventID string) (*st
 	var toolCalls, toolResults, rawRef, signature *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT event_id, bridge_id, source, source_version, stream,
-		       agent_token_id, conversation_id, provider, direction, role,
+		       agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 		       text, tool_calls::text, tool_results::text, raw_ref::text, signature::text,
 		       sig_status, ts, ingested_at
 		FROM transcript_events WHERE event_id = $1
 	`, eventID).Scan(
 		&e.EventID, &e.BridgeID, &e.Source, &e.SourceVersion, &e.Stream,
-		&e.AgentTokenID, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
+		&e.AgentTokenID, &e.AgentAttribution, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
 		&e.Text, &toolCalls, &toolResults, &rawRef, &signature, &e.SigStatus,
 		&e.TS, &e.IngestedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -261,7 +261,7 @@ func (s *Store) ListTranscriptEvents(ctx context.Context, f store.TranscriptEven
 
 	query := fmt.Sprintf(`
 		SELECT event_id, bridge_id, source, source_version, stream,
-		       agent_token_id, conversation_id, provider, direction, role,
+		       agent_token_id, agent_attribution, conversation_id, provider, direction, role,
 		       text, tool_calls::text, tool_results::text, raw_ref::text, signature::text,
 		       sig_status, ts, ingested_at
 		FROM transcript_events
@@ -282,7 +282,7 @@ func (s *Store) ListTranscriptEvents(ctx context.Context, f store.TranscriptEven
 		var toolCalls, toolResults, rawRef, signature *string
 		if err := rows.Scan(
 			&e.EventID, &e.BridgeID, &e.Source, &e.SourceVersion, &e.Stream,
-			&e.AgentTokenID, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
+			&e.AgentTokenID, &e.AgentAttribution, &e.ConversationID, &e.Provider, &e.Direction, &e.Role,
 			&e.Text, &toolCalls, &toolResults, &rawRef, &signature, &e.SigStatus,
 			&e.TS, &e.IngestedAt); err != nil {
 			return nil, err
