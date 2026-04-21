@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../hooks/useAuth'
 import { Routes, Route, Link, useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
@@ -267,15 +268,23 @@ function ProxyDetail() {
 }
 
 // ProxyArtifactPanel renders the one-time install artifact returned by
-// EnableProxy. Differs from the legacy InstallArtifactViewer by adding
-// the new daemon-driven path as the recommended option, with the
-// docker-compose flow secondary.
+// EnableProxy. The default tab adapts to the user's persona: cloud
+// users with laptop-style Clawvisor get the daemon path; self-hosters
+// (multi_tenant=false on this server) get Docker by default since
+// they're already managing infrastructure via containers.
 function ProxyArtifactPanel({ artifact, setupHint, onClose }: {
   artifact: ProxyEnableResponse
   setupHint: string | null
   onClose: () => void
 }) {
-  const [tab, setTab] = useState<'daemon' | 'compose' | 'standalone-docker'>('daemon')
+  const { features } = useAuth()
+  // multi_tenant=true → cloud Clawvisor → user is probably on a laptop
+  //                     using clawvisor-local. Default: daemon path.
+  // multi_tenant=false → self-hosted server → Docker is more natural.
+  const isSelfHosted = features?.multi_tenant === false
+  const [tab, setTab] = useState<'daemon' | 'compose' | 'standalone-docker'>(
+    isSelfHosted ? 'standalone-docker' : 'daemon'
+  )
   const copy = (s: string) => { navigator.clipboard.writeText(s).catch(() => { /* noop */ }) }
 
   // Copy-pasteable one-liner for the daemon path. We don't have the
@@ -307,6 +316,11 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
         <button onClick={onClose} className="text-xs text-text-tertiary hover:text-text-primary">✕</button>
       </div>
 
+      {/* What is this — concise, factual, sets expectations before
+          the user picks a tab. Short enough to read; honest about the
+          trust + scope model. */}
+      <ProxyExplainer />
+
       {artifact.proxy_token && (
         <div className="rounded bg-warning/10 border border-warning/30 p-3 text-xs">
           <div className="font-semibold text-warning mb-1">Save this proxy token now — it won't be shown again</div>
@@ -320,25 +334,33 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
         </div>
       )}
 
-      <div className="flex gap-1 border-b border-border-default text-xs">
+      <div className="flex flex-wrap gap-1 border-b border-border-default text-xs">
         <TabButton active={tab === 'daemon'} onClick={() => setTab('daemon')}>
-          macOS / Linux (recommended)
+          Personal Mac / Linux laptop{!isSelfHosted && <span className="text-text-tertiary"> · suggested</span>}
         </TabButton>
         <TabButton active={tab === 'standalone-docker'} onClick={() => setTab('standalone-docker')}>
-          Docker (standalone)
+          Docker server{isSelfHosted && <span className="text-text-tertiary"> · suggested</span>}
         </TabButton>
         <TabButton active={tab === 'compose'} onClick={() => setTab('compose')}>
-          Docker (compose override)
+          Existing OpenClaw compose
         </TabButton>
       </div>
 
       {tab === 'daemon' && (
         <div className="space-y-2">
-          <p className="text-xs text-text-tertiary">
-            For laptops + servers running coding agents (Claude Code, Cursor, OpenClaw)
-            outside Docker. The proxy is supervised by clawvisor-local — auto-restart on
-            crash, status in your menu bar.
-          </p>
+          <div className="text-xs text-text-secondary space-y-1.5">
+            <p>
+              <strong>For:</strong> A personal coding machine where the agent runs
+              alongside the rest of your work (Claude Code in your terminal, Cursor as
+              an app, OpenClaw on your laptop). Best when you want a menu-bar status
+              icon and per-command scoping.
+            </p>
+            <p>
+              <strong>What runs:</strong> Two processes managed by <code>clawvisor-local</code> —
+              the daemon itself (HTTP API on :25299) and the proxy (TCP on :25298). Both
+              auto-start at login and restart on crash via launchd / systemd.
+            </p>
+          </div>
 
           <DaemonPrerequisites />
 
@@ -368,26 +390,44 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
 
       {tab === 'standalone-docker' && (
         <div className="space-y-2">
-          <p className="text-xs text-text-tertiary">
-            For self-hosters running their own agent containers. Two commands —
-            no compose YAML required.
-          </p>
+          <div className="text-xs text-text-secondary space-y-1.5">
+            <p>
+              <strong>For:</strong> A self-hosted server running Clawvisor + agents
+              alongside other infrastructure. Best when your stack is already
+              container-native — uniform with <code>docker ps</code>, <code>docker logs</code>,
+              version-pinned images, no GUI needed.
+            </p>
+            <p>
+              <strong>What runs:</strong> A single <code>clawvisor-proxy</code> container
+              listening on <code>127.0.0.1:25298</code>. Restart policy + log retention
+              come from Docker, same as your other services.
+            </p>
+            <p>
+              <strong>How agents reach it:</strong> Set <code>HTTP_PROXY=http://host.docker.internal:25298</code>
+              in your agent's container env, with the agent's <code>cvis_…</code> token as the user
+              part of the URL.
+            </p>
+          </div>
           <CodeBlock onCopy={() => copy(buildStandaloneDockerSnippet(artifact))}>
             {buildStandaloneDockerSnippet(artifact)}
           </CodeBlock>
-          <p className="text-[11px] text-text-tertiary">
-            After this, point your agent container at <code>http://host.docker.internal:25298</code>
-            with the agent's <code>cvis_…</code> token in <code>HTTP_PROXY</code>.
-          </p>
         </div>
       )}
 
       {tab === 'compose' && (
         <div className="space-y-2">
-          <p className="text-xs text-text-tertiary">
-            Compose <em>override</em> for existing OpenClaw deployments. Save next to
-            your existing <code>docker-compose.yml</code> and run together:
-          </p>
+          <div className="text-xs text-text-secondary space-y-1.5">
+            <p>
+              <strong>For:</strong> Existing OpenClaw deployments already managed by a
+              <code> docker-compose.yml</code>. Best when you want the proxy to come up
+              and down with the rest of your stack via a single <code>docker compose up</code>.
+            </p>
+            <p>
+              <strong>What runs:</strong> Compose merges this <em>override</em> with your
+              existing file — adds the proxy service plus env vars + a CA-cert volume mount
+              on your existing OpenClaw service. Image, command, and other fields stay as you have them.
+            </p>
+          </div>
           <CodeBlock onCopy={() => copy(`docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d`)}>
             {`# Save the YAML below as clawvisor-proxy.yml, then:
 docker compose -f docker-compose.yml -f clawvisor-proxy.yml up -d`}
@@ -429,6 +469,70 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
         >
           Copy
         </button>
+      )}
+    </div>
+  )
+}
+
+// ProxyExplainer is the "what is this" intro card on the install
+// panel. Three short paragraphs: what the proxy IS, what it WILL do
+// when you wrap an agent through it, and what it WON'T do (touch
+// anything you don't explicitly opt in). Honest about TLS-MITM
+// implications + trust-store install. Reduces the "wait, what am I
+// agreeing to here" hesitation and the support questions that
+// follow when there's no plain-English framing.
+function ProxyExplainer() {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="rounded bg-surface-1 border border-border-default p-3 text-xs space-y-2">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-text-primary font-medium hover:text-brand transition-colors"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>What you're about to install</span>
+      </button>
+      {open && (
+        <div className="text-text-secondary space-y-2 pl-4">
+          <p>
+            <strong>What it is.</strong> A small TLS-intercepting forward proxy that runs
+            on your machine. When an agent makes an HTTPS call, the proxy decrypts it
+            (using a CA cert you trust during setup), passes the cleartext through
+            Clawvisor's policy + injection logic, then re-encrypts to the real upstream.
+            This is how it can capture transcripts and inject vault credentials.
+          </p>
+          <p>
+            <strong>What it WILL do</strong> — only for processes you explicitly wrap:
+          </p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            <li>Capture LLM API calls (Anthropic, OpenAI) as transcripts you can audit.</li>
+            <li>Inject vault credentials so agents never see raw API keys.</li>
+            <li>Enforce policies: block, flag, or send a request to the LLM judge.</li>
+            <li>Log decisions to an audit trail you control.</li>
+          </ul>
+          <p>
+            <strong>What it WON'T do</strong> — the scope is per-process, not system-wide:
+          </p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            <li>Touch your browser, Slack, mail client, or anything else on the machine.</li>
+            <li>Set system-level network proxy settings (no <code>networksetup -setwebproxy</code> calls).</li>
+            <li>Send anything to Clawvisor's cloud beyond what an agent you wrapped did.</li>
+            <li>Persist outside its own data dir (<code>~/.clawvisor/local/proxy-data/</code>) — uninstall is clean.</li>
+          </ul>
+          <p>
+            <strong>How scoping works.</strong> You launch agents with
+            <code> clawvisor proxy run -- &lt;cmd&gt;</code> (or set <code>HTTP_PROXY</code> on
+            an agent container). Only that process tree gets routed through the proxy. There
+            is no "proxy everything" mode by design.
+          </p>
+          <p>
+            <strong>Trust caveat.</strong> The CA cert that lets the proxy MITM your traffic
+            sits in your user keychain (macOS) or trust store (Linux). A sophisticated process
+            running as your user could in theory abuse it — same threat model as any corporate
+            DLP / dev-tool MITM (mitmproxy, Charles, Fiddler). <code>clawvisor proxy uninstall</code>
+            removes the cert.
+          </p>
+        </div>
       )}
     </div>
   )
