@@ -42,22 +42,11 @@ func main() {
 
 	rootCmd.AddCommand(
 		statusCmd(),
-		servicesCmd(),
-		listRemoteCmd(),
-		inspectCmd(),
-		installCmd(),
-		upgradeCmd(),
-		uninstallCmd(),
 		unpairCmd(),
 		reloadCmd(),
-		validateCmd(),
-		runCmd(),
 		toolbarCmd(),
-		installServiceCmd(),
-		uninstallServiceCmd(),
-		startServiceCmd(),
-		stopServiceCmd(),
-		restartServiceCmd(),
+		servicesParentCmd(),
+		daemonParentCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -229,9 +218,9 @@ func httpGet(url string) (string, error) {
 	return string(body), nil
 }
 
-func servicesCmd() *cobra.Command {
+func servicesListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "services",
+		Use:   "list",
 		Short: "List discovered services and their actions",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := baseDir()
@@ -456,8 +445,8 @@ func runCmd() *cobra.Command {
 
 func installServiceCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "install-service",
-		Short: "Install as launchd (macOS) or systemd (Linux) service",
+		Use:   "install",
+		Short: "Install clawvisor-local as a launchd (macOS) / systemd (Linux) service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch runtime.GOOS {
 			case "darwin":
@@ -473,8 +462,8 @@ func installServiceCmd() *cobra.Command {
 
 func uninstallServiceCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "uninstall-service",
-		Short: "Remove the system service",
+		Use:   "uninstall",
+		Short: "Remove the launchd / systemd service for clawvisor-local",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch runtime.GOOS {
 			case "darwin":
@@ -626,7 +615,7 @@ func localPlistPath() string {
 func startServiceCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
-		Short: "Start the installed system service",
+		Short: "Start the installed clawvisor-local service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch runtime.GOOS {
 			case "darwin":
@@ -653,7 +642,7 @@ func startServiceCmd() *cobra.Command {
 func stopServiceCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the running system service",
+		Short: "Stop the running clawvisor-local service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch runtime.GOOS {
 			case "darwin":
@@ -680,7 +669,7 @@ func stopServiceCmd() *cobra.Command {
 func restartServiceCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "restart",
-		Short: "Restart the system service",
+		Short: "Restart the clawvisor-local service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch runtime.GOOS {
 			case "darwin":

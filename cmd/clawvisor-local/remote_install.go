@@ -68,8 +68,8 @@ func installCmd() *cobra.Command {
 
 func listRemoteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list REPO",
-		Short: "List installable remote-managed local services",
+		Use:   "list-remote REPO",
+		Short: "List installable remote-managed local services from a GitHub repo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manager := remoteinstall.NewManager(baseDir())
