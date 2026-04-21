@@ -75,8 +75,8 @@ export default function ScopePill({
           onChange={(e) => onChange({ ...value, auto: e.target.value === 'auto' })}
           disabled={disabled}
           title={value.auto
-            ? 'Run matching requests immediately without asking you first'
-            : 'Require your approval before each matching request runs'}
+            ? 'Run this action immediately without asking you first'
+            : 'Require your approval before each run of this action'}
           className="text-[11px] rounded border border-border-default bg-surface-0 text-text-primary px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand disabled:opacity-50"
         >
           <option value="auto">auto</option>
@@ -110,13 +110,13 @@ export default function ScopePill({
             type="button"
             onClick={(e) => { e.stopPropagation(); onChange({ ...value, auto: true }) }}
             className={value.auto ? 'is-active' : ''}
-            title="Run matching requests immediately without asking you first"
+            title="Run this action immediately without asking you first"
           >auto</button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onChange({ ...value, auto: false }) }}
             className={!value.auto ? 'is-active' : ''}
-            title="Require your approval before each matching request runs"
+            title="Require your approval before each run of this action"
           >approve</button>
         </span>
         <span className="scope-pill__divider" />
