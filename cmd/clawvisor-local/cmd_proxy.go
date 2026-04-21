@@ -568,6 +568,17 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	if label == "" {
 		label = os.Getenv("CLAWVISOR_AGENT_LABEL")
 	}
+	// When the user didn't supply a label or a token, derive a label
+	// from the command being wrapped (basename of args[0]). Free
+	// attribution: `clawvisor-local proxy run -- claude` lands as
+	// "claude" in the dashboard instead of "default", and multiple
+	// wrapped agents self-distinguish without any flag. Runtime-style
+	// invocations (`python script.py`, `node agent.js`) get labeled
+	// with the runtime, which is why --agent-label exists as an
+	// override.
+	if label == "" && token == "" {
+		label = filepath.Base(args[0])
+	}
 
 	// Discover the CA cert path from the daemon's status so users don't
 	// have to know the filesystem layout.
@@ -587,19 +598,46 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	//   label + token    → verified, with a friendlier display label
 	proxyURL := buildProxyURL(label, token, runListenHost, runListenPort)
 
-	c := exec.Command(args[0], args[1:]...) //nolint:gosec
-	c.Env = append(os.Environ(),
-		"HTTP_PROXY="+proxyURL,
-		"HTTPS_PROXY="+proxyURL,
-		"http_proxy="+proxyURL,
+	// Sweep env vars covering as many HTTP clients + trust stores as
+	// reasonable. Each line is a different runtime/tool's flavor of the
+	// same idea — there's no "standard" beyond HTTP_PROXY and the rest
+	// is empirical. Setting all of them costs nothing for clients that
+	// ignore them; missing one means that client silently bypasses the
+	// proxy.
+	env := append(os.Environ(),
+		// --- proxy URL: every flavor we know of ---
+		"HTTP_PROXY="+proxyURL,            // libcurl, requests, Go net/http, Bun
+		"HTTPS_PROXY="+proxyURL,           // same
+		"http_proxy="+proxyURL,            // lowercase variants — Linux convention
 		"https_proxy="+proxyURL,
+		"ALL_PROXY="+proxyURL,             // curl + a number of HTTP libraries
+		"all_proxy="+proxyURL,
 		"NO_PROXY=localhost,127.0.0.1,::1",
 		"no_proxy=localhost,127.0.0.1,::1",
-		"NODE_EXTRA_CA_CERTS="+caPath,
-		"SSL_CERT_FILE="+caPath,
-		"REQUESTS_CA_BUNDLE="+caPath,
+
+		// --- npm + yarn read these explicitly even when HTTP_PROXY is set ---
+		"npm_config_proxy="+proxyURL,
+		"npm_config_https_proxy="+proxyURL,
+		"NPM_CONFIG_PROXY="+proxyURL,
+		"NPM_CONFIG_HTTPS_PROXY="+proxyURL,
+
+		// --- CA trust: every store/library has its own knob ---
+		"NODE_EXTRA_CA_CERTS="+caPath,     // Node's built-in https / Bun (also reads this)
+		"SSL_CERT_FILE="+caPath,           // OpenSSL (Python urllib, ruby, many others)
+		"REQUESTS_CA_BUNDLE="+caPath,      // Python requests
+		"CURL_CA_BUNDLE="+caPath,          // curl
+		"GIT_SSL_CAINFO="+caPath,          // git
+		"AWS_CA_BUNDLE="+caPath,           // AWS SDKs
+		"DENO_CERT="+caPath,               // Deno
+		"npm_config_cafile="+caPath,       // npm registry TLS verification
+		"NPM_CONFIG_CAFILE="+caPath,
+
+		// --- our own marker so child processes can detect they're wrapped ---
 		"CLAWVISOR_PROXY="+proxyURL,
+		"CLAWVISOR_PROXY_CA="+caPath,
 	)
+	c := exec.Command(args[0], args[1:]...) //nolint:gosec
+	c.Env = env
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
