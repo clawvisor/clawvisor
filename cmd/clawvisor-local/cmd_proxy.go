@@ -531,15 +531,19 @@ var proxyRunCmd = &cobra.Command{
 child process, so the rest of your shell is untouched.
 
 Examples:
-  # Default: traffic flows anonymously (attributed as "default" in the dashboard).
+  # Default: label inferred from the command basename, anonymous attribution.
   clawvisor-local proxy run -- claude-code
 
-  # Tag traffic with a non-secret label (multi-agent attribution).
-  clawvisor-local proxy run --agent-label claude-code -- claude-code
+  # Tag traffic with an explicit label (multi-agent attribution).
+  clawvisor-local proxy run --agent-label researcher -- claude-code
 
   # Verified-tier enforcement (per-agent bans + policy actually fire).
   # Mint a cvis_ token from the dashboard's Proxies tab first.
   clawvisor-local proxy run --agent-token cvis_abc -- claude-code
+
+  # macOS GUI app (Electron / Chromium). Quit the app first or the
+  # proxy flag won't apply.
+  clawvisor-local proxy run -- /Applications/Claude.app
 
 Only the invoked command (and its descendants) flow through the proxy.
 Your browser, git, brew, etc. are unaffected.`,
@@ -581,7 +585,10 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	// with the runtime, which is why --agent-label exists as an
 	// override.
 	if label == "" && token == "" {
-		label = filepath.Base(args[0])
+		base := filepath.Base(args[0])
+		// Strip the .app suffix so attribution shows up as "Claude"
+		// rather than "Claude.app".
+		label = strings.TrimSuffix(base, ".app")
 	}
 
 	// Discover the CA cert path from the daemon's status so users don't
@@ -592,6 +599,15 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 	}
 	if _, err := os.Stat(caPath); err != nil {
 		return fmt.Errorf("CA cert not found at %s — is the proxy running? Try 'clawvisor-local proxy status': %w", caPath, err)
+	}
+
+	// macOS .app bundles are GUI apps that LaunchServices opens via
+	// `open`. They don't inherit the env we set on a normal exec call.
+	// Dispatch them through a Chromium-flag path that works for
+	// Electron apps (Claude Desktop, VS Code, Cursor) — the most
+	// common GUI agent shape.
+	if runtime.GOOS == "darwin" && strings.HasSuffix(strings.TrimRight(args[0], "/"), ".app") {
+		return runProxyRunMacApp(args, runListenHost, runListenPort)
 	}
 
 	// Compose Proxy-Authorization basic auth from the label/token pair.
@@ -667,6 +683,63 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+	return nil
+}
+
+// runProxyRunMacApp handles the .app dispatch on macOS. Uses
+// `open -a` with --args to pass Chromium flags to the wrapped
+// Electron app. Quirks worth knowing:
+//
+//   1. If the app is already running, `open --args` does NOT pass new
+//      args to the existing process — they're silently ignored. The
+//      caller has to quit the app first. We surface this as a hint.
+//
+//   2. We can't set Proxy-Authorization basic auth via Chromium's
+//      --proxy-server flag — credentials in the URL get stripped.
+//      So GUI apps land as anonymous-tier traffic until we wire a
+//      separate identity vector (header injection, etc.).
+//
+//   3. CA trust comes from the macOS keychain, which Chromium reads
+//      by default. The user must have run `clawvisor-local proxy
+//      trust-ca` once. We don't pass --ignore-certificate-errors;
+//      that would disable all TLS verification and silently mask
+//      legitimate failures.
+//
+// Only Electron / Chromium apps benefit. Native macOS apps (Cocoa,
+// AppKit) ignore the Chromium flags and continue to make direct
+// connections — there's no general-purpose env-var path for them.
+func runProxyRunMacApp(args []string, host, port string) error {
+	appPath := args[0]
+	info, err := os.Stat(appPath)
+	if err != nil {
+		return fmt.Errorf("app not found: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not an .app bundle", appPath)
+	}
+
+	proxyURL := fmt.Sprintf("http://%s:%s", host, port)
+
+	// `open -n` would force a new instance; we DON'T pass it because
+	// most users want the single-instance Electron behavior. The
+	// downside is the if-already-running quirk — surface it.
+	openArgs := []string{"-a", appPath, "--args", "--proxy-server=" + proxyURL}
+	openArgs = append(openArgs, args[1:]...) // any extra args after the app path
+
+	c := exec.Command("open", openArgs...) //nolint:gosec
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("open %s: %w", appPath, err)
+	}
+
+	fmt.Fprintf(os.Stderr,
+		"Launched %s with --proxy-server=%s.\n"+
+			"NOTE: if the app was already running, the proxy flag was ignored.\n"+
+			"      Quit it (Cmd-Q) and re-run this command.\n"+
+			"NOTE: GUI apps land in the dashboard as anonymous-tier — Chromium\n"+
+			"      strips basic-auth credentials from --proxy-server URLs.\n",
+		filepath.Base(appPath), proxyURL)
 	return nil
 }
 
