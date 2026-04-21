@@ -1039,13 +1039,36 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
-func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time) error {
+func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time, authorizedActions []store.TaskAction) error {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	exp := expiresAt.UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'active', approved_at = ?, expires_at = ?
+		UPDATE tasks SET status = 'active', approved_at = ?, expires_at = ?,
+			authorized_actions = ?
 		WHERE id = ?
-	`, now, exp, id)
+	`, now, exp, string(actionsJSON), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
+	actionsJSON, err := json.Marshal(actions)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET authorized_actions = ? WHERE id = ?
+	`, string(actionsJSON), id)
 	if err != nil {
 		return err
 	}

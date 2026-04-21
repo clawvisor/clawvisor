@@ -42,6 +42,7 @@ type VerifyRequest struct {
 	ChainFacts           []store.ChainFact
 	ChainContextOptOut   bool // standing task without session_id — agent bypassed chain context
 	ChainContextEnabled  bool // chain context tracking is enabled in config
+	Lenient              bool // use lenient verification prompt (give agent benefit of the doubt)
 }
 
 // Verifier checks whether a gateway request is consistent with the approved task.
@@ -101,8 +102,12 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 
 	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildVerificationUserMessage(req)
+	systemPrompt := verificationSystemPrompt
+	if req.Lenient {
+		systemPrompt = verificationSystemPrompt + lenientAddendum
+	}
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: verificationSystemPrompt},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userMsg},
 	}
 

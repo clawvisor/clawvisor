@@ -759,6 +759,7 @@ func (s *Server) routes() http.Handler {
 	// Tasks (user JWT)
 	mux.Handle("GET /api/tasks", user(tasksHandler.List))
 	mux.Handle("POST /api/tasks/{id}/approve", user(tasksHandler.Approve))
+	mux.Handle("PATCH /api/tasks/{id}/scope", user(tasksHandler.UpdateScope))
 	mux.Handle("POST /api/tasks/{id}/deny", user(tasksHandler.Deny))
 	mux.Handle("POST /api/tasks/{id}/revoke", user(tasksHandler.Revoke))
 	mux.Handle("POST /api/tasks/{id}/expand/approve", user(tasksHandler.ExpandApprove))

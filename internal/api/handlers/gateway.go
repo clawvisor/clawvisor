@@ -581,6 +581,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				chainFacts := h.loadChainFacts(ctx, task, req)
 
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
+				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
@@ -595,8 +596,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						ExtractContext:  true,
 						Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
 					}
+				} else if vMode == "off" {
+					verdict = &intent.VerificationVerdict{
+						Allow:           true,
+						ParamScope:      "n/a",
+						ReasonCoherence: "n/a",
+						ExtractContext:  true,
+						Explanation:     "Skipped: verification mode is off for this action category",
+					}
 				} else {
-					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
+					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
 					verdict = chainContextFallback(ctx, h.store, h.extractTrack, h.logger, verdict, chainFacts, req.TaskID, task, req.SessionID)
@@ -648,6 +657,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				// was evaluated during task risk assessment and approved by the user.
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 
+				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
@@ -662,8 +672,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						ExtractContext:  true,
 						Explanation:     "Matched pre-registered planned call: " + matchedPlannedCall.Reason,
 					}
+				} else if vMode == "off" {
+					verdict = &intent.VerificationVerdict{
+						Allow:           true,
+						ParamScope:      "n/a",
+						ReasonCoherence: "n/a",
+						ExtractContext:  true,
+						Explanation:     "Skipped: verification mode is off for this action category",
+					}
 				} else {
-					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts)
+					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				// Chain context fallback: if the LLM flagged a missing entity,
 				// check programmatically — the LLM may have missed it in a long
@@ -898,8 +916,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// In scope + (!auto_execute || hardcoded) → falls through to per-request approval below.
 		// Run advisory verification so the human sees warnings in the approval UI.
+		// Always use strict for advisory — the human will see the verdict and can decide.
 		advisoryFacts := h.loadChainFacts(ctx, task, req)
-		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, advisoryFacts)
+		advisoryVerdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, advisoryFacts, false)
 	}
 
 	// ── Step 5: Per-request approval ─────────────────────────────────────────
@@ -1394,6 +1413,7 @@ func (h *GatewayHandler) runVerification(
 	serviceType string,
 	userID string,
 	chainFacts []store.ChainFact,
+	lenient bool,
 ) *intent.VerificationVerdict {
 	var expectedUse, expansionRationale string
 	if matchedAction != nil {
@@ -1419,8 +1439,20 @@ func (h *GatewayHandler) runVerification(
 		ChainFacts:          chainFacts,
 		ChainContextOptOut:  false, // standing tasks without session_id are now rejected earlier
 		ChainContextEnabled: h.cfg.LLM.ChainContext.Enabled,
+		Lenient:             lenient,
 	})
 	return verdict
+}
+
+// verificationModeFor returns the verification mode ("strict", "lenient", "off")
+// for the matched authorized action. Falls back to "strict" when the matched
+// action has no override set. Callers should pass the alias-aware match from
+// CheckTaskScope so that scope-specific overrides are honored.
+func verificationModeFor(matched *store.TaskAction) string {
+	if matched != nil && matched.Verification != "" {
+		return matched.Verification
+	}
+	return "strict"
 }
 
 // ── Planned call matching ─────────────────────────────────────────────────────

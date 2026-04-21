@@ -104,3 +104,108 @@
     @apply bg-surface-0 text-text-primary antialiased;
   }
 }
+
+@layer components {
+  .scope-pill {
+    position: relative;
+    display: inline-block;
+    height: 22px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border-subtle);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgb(var(--color-text-tertiary));
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 10.5px;
+    line-height: 1;
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      width .28s cubic-bezier(.2, .7, .2, 1),
+      background .22s ease,
+      border-color .22s ease,
+      box-shadow .22s ease,
+      color .22s ease;
+    will-change: width;
+    vertical-align: middle;
+  }
+  .scope-pill:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgb(var(--color-text-secondary));
+  }
+  .scope-pill--danger {
+    background: rgb(var(--color-warning) / 0.12);
+    color: rgb(var(--color-warning));
+    border-color: rgb(var(--color-warning) / 0.35);
+  }
+  .scope-pill--expanded {
+    background: rgb(var(--color-surface-2));
+    border-color: rgba(129, 140, 248, 0.35);
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.08);
+    cursor: default;
+  }
+  .scope-pill--disabled {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .scope-pill__compact,
+  .scope-pill__expanded-inner {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    transition: opacity .18s ease;
+  }
+  .scope-pill__compact { padding: 0 10px; gap: 6px; }
+  .scope-pill__expanded-inner { padding: 0 6px; gap: 6px; }
+  .scope-pill .scope-pill__compact { opacity: 1; }
+  .scope-pill .scope-pill__expanded-inner { opacity: 0; pointer-events: none; }
+  .scope-pill--expanded .scope-pill__compact { opacity: 0; pointer-events: none; }
+  .scope-pill--expanded .scope-pill__expanded-inner { opacity: 1; pointer-events: auto; }
+  .scope-pill__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.7;
+  }
+  .scope-pill__seg {
+    display: inline-flex;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 999px;
+    padding: 2px;
+  }
+  .scope-pill__seg button {
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: rgb(var(--color-text-tertiary));
+    font-size: 10.5px;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .scope-pill__seg button:hover { color: rgb(var(--color-text-secondary)); }
+  .scope-pill__seg button.is-active {
+    background: rgba(129, 140, 248, 0.18);
+    color: rgb(var(--color-brand));
+  }
+  .scope-pill__divider {
+    width: 1px;
+    height: 14px;
+    background: var(--color-border-subtle);
+  }
+  .scope-pill__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    color: rgb(var(--color-text-tertiary));
+  }
+  .scope-pill__close:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgb(var(--color-text-primary));
+  }
+}

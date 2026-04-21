@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -231,6 +233,17 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				Hint:  "Some actions (like sending iMessages) always require individual approval for safety. Set auto_execute to false for this action.",
 				Example: map[string]any{
 					"service": a.Service, "action": a.Action, "auto_execute": false,
+				},
+			})
+			return
+		}
+		if a.Verification != "" && a.Verification != "strict" && a.Verification != "lenient" && a.Verification != "off" {
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: fmt.Sprintf("authorized_actions[%d].verification %q is invalid", i, a.Verification),
+				Code:  "INVALID_VERIFICATION_MODE",
+				Hint:  "verification must be one of: strict, lenient, off (or omitted, which defaults to strict).",
+				Example: map[string]any{
+					"service": a.Service, "action": a.Action, "verification": "strict",
 				},
 			})
 			return
@@ -688,6 +701,33 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optionally parse per-scope overrides from the request body. Each override
+	// targets one authorized_action by (service, action) and may set verification
+	// and/or auto_execute. Missing fields leave the scope's current value intact.
+	// An empty body is allowed (no overrides); a malformed body is a client error.
+	var overrides []scopeOverride
+	if r.Body != nil {
+		var body struct {
+			Scopes []scopeOverride `json:"scopes"`
+		}
+		if decErr := json.NewDecoder(r.Body).Decode(&body); decErr != nil && !errors.Is(decErr, io.EOF) {
+			writeError(w, http.StatusBadRequest, "INVALID_BODY", "could not parse body")
+			return
+		}
+		overrides = body.Scopes
+	}
+	validModes := map[string]bool{"strict": true, "lenient": true, "off": true}
+	for _, o := range overrides {
+		if o.Verification != "" && !validModes[o.Verification] {
+			writeError(w, http.StatusBadRequest, "INVALID_VERIFICATION_MODE",
+				"verification must be one of: strict, lenient, off")
+			return
+		}
+	}
+
+	// Apply overrides to the task's authorized actions.
+	actions := applyScopeOverrides(task.AuthorizedActions, overrides)
+
 	// Standing tasks have no expiry; session tasks expire after ExpiresInSeconds.
 	var expiresAt time.Time
 	if task.Lifetime == "standing" {
@@ -697,7 +737,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
 
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt); err != nil {
+	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, actions); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
 		return
 	}
@@ -724,6 +764,101 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		resp["expires_at"] = expiresAt.Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// scopeOverride targets one authorized_action by (service, action) and
+// optionally sets verification and/or auto_execute.
+type scopeOverride struct {
+	Service      string `json:"service"`
+	Action       string `json:"action"`
+	Verification string `json:"verification,omitempty"`
+	AutoExecute  *bool  `json:"auto_execute,omitempty"`
+}
+
+// applyScopeOverrides returns a copy of actions with verification and
+// auto_execute applied from any override whose (service, action) matches.
+// Non-matching overrides are ignored.
+func applyScopeOverrides(actions []store.TaskAction, overrides []scopeOverride) []store.TaskAction {
+	if len(overrides) == 0 {
+		return actions
+	}
+	out := make([]store.TaskAction, len(actions))
+	copy(out, actions)
+	for i := range out {
+		for _, o := range overrides {
+			if o.Service != out[i].Service || o.Action != out[i].Action {
+				continue
+			}
+			if o.Verification != "" {
+				out[i].Verification = o.Verification
+			}
+			if o.AutoExecute != nil {
+				out[i].AutoExecute = *o.AutoExecute
+			}
+		}
+	}
+	return out
+}
+
+// ── UpdateScope ───────────────────────────────────────────────────────────────
+
+// UpdateScope applies per-scope overrides (verification and/or auto_execute)
+// to an active task after approval. This is the post-approval editing path.
+//
+// PATCH /api/tasks/{id}/scope
+// Body: {"scopes": [{"service":"gmail","action":"send","verification":"lenient","auto_execute":false}]}
+// Auth: user JWT
+func (h *TasksHandler) UpdateScope(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user := middleware.UserFromContext(ctx)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	taskID := r.PathValue("id")
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+	if task.Status != "active" {
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not active")
+		return
+	}
+
+	var body struct {
+		Scopes []scopeOverride `json:"scopes"`
+	}
+	if decErr := json.NewDecoder(r.Body).Decode(&body); decErr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_BODY", "could not parse body")
+		return
+	}
+	validModes := map[string]bool{"strict": true, "lenient": true, "off": true}
+	for _, o := range body.Scopes {
+		if o.Verification != "" && !validModes[o.Verification] {
+			writeError(w, http.StatusBadRequest, "INVALID_VERIFICATION_MODE",
+				"verification must be one of: strict, lenient, off")
+			return
+		}
+	}
+
+	actions := applyScopeOverrides(task.AuthorizedActions, body.Scopes)
+	if err := h.st.UpdateTaskAuthorizedActions(ctx, taskID, actions); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update scope")
+		return
+	}
+
+	h.publishTasksAndQueue(user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "scopes": actions})
 }
 
 // ── Deny ──────────────────────────────────────────────────────────────────────
@@ -1133,7 +1268,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	} else {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt); err != nil {
+	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, task.AuthorizedActions); err != nil {
 		return err
 	}
 
