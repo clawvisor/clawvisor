@@ -1,0 +1,28 @@
+name: Autosana E2E Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Register with Autosana
+        uses: autosana/autosana-ci@main
+        with:
+          api-key: ${{ secrets.AUTOSANA_KEY }}
+          platform: web
+          app-id: clawvisor-staging
+          url: https://app.staging.clawvisor.com
+          name: Clawvisor
+          environment: staging
+          # Uncomment to auto-run suites after registration:
+          # suite-ids: <suite-id-1>,<suite-id-2>
