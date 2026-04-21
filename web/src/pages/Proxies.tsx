@@ -319,12 +319,11 @@ clawvisor proxy run --agent-token cvis_YOUR_AGENT_TOKEN -- claude
             crash, status in your menu bar.
           </p>
 
+          <DaemonPrerequisites />
+
           <DaemonOneClickEnable artifact={artifact} />
 
           <CodeBlock onCopy={() => copy(daemonInstallSnippet)}>{daemonInstallSnippet}</CodeBlock>
-          <p className="text-[11px] text-text-tertiary">
-            Don't have clawvisor-local? Install it first via the Settings → Install daemon flow.
-          </p>
 
           {artifact.proxy_token && (
             <div className="mt-3 pt-3 border-t border-border-subtle">
@@ -409,6 +408,89 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
         >
           Copy
         </button>
+      )}
+    </div>
+  )
+}
+
+// DaemonPrerequisites surfaces the two install steps a fresh user
+// needs before the rest of the panel works: (1) install clawvisor-local
+// itself, (2) install the proxy binary. Hidden when both are detected;
+// otherwise renders a clearly-labeled prerequisites card with copy-
+// pasteable commands so users don't have to dig into Settings.
+function DaemonPrerequisites() {
+  const [daemonStatus, setDaemonStatus] = useState<'probing' | 'present' | 'absent'>('probing')
+  const [binaryPresent, setBinaryPresent] = useState<'unknown' | 'present' | 'absent'>('unknown')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${DAEMON_BASE}/api/proxy/status`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(s => {
+        if (cancelled) return
+        setDaemonStatus('present')
+        // If the daemon already has a binary_path recorded, it's been
+        // installed before. Otherwise the user still needs the proxy.
+        setBinaryPresent(s?.binary_path ? 'present' : 'absent')
+      })
+      .catch(() => { if (!cancelled) setDaemonStatus('absent') })
+    return () => { cancelled = true }
+  }, [])
+
+  // Both prereqs satisfied → don't clutter the panel.
+  if (daemonStatus === 'present' && binaryPresent === 'present') return null
+  if (daemonStatus === 'probing') return null
+
+  const copy = (s: string) => { navigator.clipboard.writeText(s).catch(() => { /* noop */ }) }
+  const daemonInstall = 'curl -fsSL https://raw.githubusercontent.com/clawvisor/clawvisor/main/scripts/install-local.sh | sh'
+  const proxyBuildFromSource = `# Build the proxy binary from source (until we publish a release):
+git clone https://github.com/clawvisor/clawvisor-proxy.git
+cd clawvisor-proxy && make build
+# Binary lands at ./dist/kumo — pass that path to 'clawvisor proxy install --binary <path>'`
+
+  return (
+    <div className="bg-warning/5 border border-warning/30 rounded-md p-3 space-y-3">
+      <div className="text-xs font-medium text-text-primary">Prerequisites</div>
+
+      {daemonStatus === 'absent' && (
+        <div className="space-y-1">
+          <div className="text-[11px] text-warning">⚠ clawvisor-local daemon not detected on this machine.</div>
+          <p className="text-[11px] text-text-tertiary">
+            Install the local daemon. It supervises the proxy, surfaces it in your menu bar,
+            and pairs with the cloud over a tunnel.
+          </p>
+          <div className="relative group">
+            <pre className="bg-surface-0 border border-border-subtle rounded p-2 text-[11px] font-mono overflow-x-auto">{daemonInstall}</pre>
+            <button
+              onClick={() => copy(daemonInstall)}
+              className="absolute top-1 right-1 text-[10px] px-2 py-0.5 rounded border border-border-subtle text-text-tertiary hover:bg-surface-1 opacity-0 group-hover:opacity-100"
+            >
+              Copy
+            </button>
+          </div>
+          <p className="text-[11px] text-text-tertiary">
+            After install, complete pairing in <Link to="/dashboard/settings" className="underline">Settings → Local Daemon</Link>, then come back here.
+          </p>
+        </div>
+      )}
+
+      {binaryPresent === 'absent' && (
+        <div className="space-y-1">
+          <div className="text-[11px] text-warning">⚠ Proxy binary not yet on this machine.</div>
+          <p className="text-[11px] text-text-tertiary">
+            We don't publish a pre-built proxy binary yet — for beta, build it from source. A future
+            release will let you run <code>clawvisor proxy update-binary</code> to fetch automatically.
+          </p>
+          <div className="relative group">
+            <pre className="bg-surface-0 border border-border-subtle rounded p-2 text-[11px] font-mono overflow-x-auto whitespace-pre">{proxyBuildFromSource}</pre>
+            <button
+              onClick={() => copy(proxyBuildFromSource)}
+              className="absolute top-1 right-1 text-[10px] px-2 py-0.5 rounded border border-border-subtle text-text-tertiary hover:bg-surface-1 opacity-0 group-hover:opacity-100"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
