@@ -21,11 +21,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Proxy subcommands — "clawvisor proxy …" — drive the first-class
-// Clawvisor Network Proxy lifecycle on the user's machine. The proxy
-// is a dedicated daemon subsystem (internal/local/proxy), not a
-// pluggable service; these commands are thin clients over the daemon's
-// /api/proxy/* HTTP API on 127.0.0.1:25299.
+// Proxy subcommands — "clawvisor-local proxy …" — drive the
+// first-class Clawvisor Network Proxy lifecycle on the user's machine.
+// The proxy is a dedicated daemon subsystem (internal/local/proxy),
+// not a pluggable service; these commands are thin clients over the
+// daemon's /api/proxy/* HTTP API on 127.0.0.1:25299.
+//
+// They live on clawvisor-local (not clawvisor) because the daemon is
+// the binary cloud users install — they have no reason to install the
+// server-side `clawvisor` CLI.
 
 // daemonHost is the host/port the local daemon listens on for its
 // pairing + proxy API. 25299 is the default; override via
@@ -43,13 +47,13 @@ var proxyCmd = &cobra.Command{
 	Short: "Manage the Clawvisor Network Proxy (observation + credential injection)",
 	Long: `Configure, launch, and wrap agents for the Clawvisor Network Proxy.
 
-The proxy is managed by clawvisor-local (the local daemon) — it
-supervises the process, restarts on crash, and stays alive across
-reboots. These subcommands talk to that daemon on 127.0.0.1:25299.
+The proxy is supervised by this daemon — it restarts on crash and
+stays alive across reboots. These subcommands talk to the daemon's
+local API on 127.0.0.1:25299.
 
-Scoped per-agent: "clawvisor proxy run <cmd>" routes only that one
-command's traffic through the proxy. Your browser, git, brew, and
-everything else stay direct.`,
+Scoped per-agent: "clawvisor-local proxy run <cmd>" routes only that
+one command's traffic through the proxy. Your browser, git, brew,
+and everything else stay direct.`,
 }
 
 var (
@@ -149,7 +153,8 @@ func init() {
 	proxyCmd.AddCommand(proxyRunCmd)
 	proxyCmd.AddCommand(proxyTrustCACmd)
 	proxyCmd.AddCommand(proxyUpdateBinaryCmd)
-	rootCmd.AddCommand(proxyCmd)
+	// Registration with the root command happens in main.go — clawvisor-local
+	// constructs its rootCmd locally instead of as a package var.
 }
 
 // -- update-binary -------------------------------------------------------
@@ -272,7 +277,7 @@ func runProxyUpdateBinary(cmd *cobra.Command, args []string) error {
 	// update the recorded path for next start.
 	cur, err := fetchProxyStatusForUpdate()
 	if err != nil {
-		fmt.Printf("Note: daemon not reachable; binary installed but configure skipped. Re-run 'clawvisor proxy install' next.\n")
+		fmt.Printf("Note: daemon not reachable; binary installed but configure skipped. Re-run 'clawvisor-local proxy install' next.\n")
 		return nil
 	}
 	body := map[string]any{
@@ -328,7 +333,7 @@ func resolveUpdateServerURL() (string, error) {
 	if cur, err := fetchProxyStatusForUpdate(); err == nil && cur.ServerURL != "" {
 		return strings.TrimRight(cur.ServerURL, "/"), nil
 	}
-	return "", errors.New("no server URL — pass --server-url, set $CLAWVISOR_SERVER_URL, or run 'clawvisor proxy install' first")
+	return "", errors.New("no server URL — pass --server-url, set $CLAWVISOR_SERVER_URL, or run 'clawvisor-local proxy install' first")
 }
 
 // downloadFromServer GETs /api/proxy/download from the configured
@@ -430,7 +435,7 @@ func fetchProxyStatusForUpdate() (*proxyStatusUpdate, error) {
 		return nil, err
 	}
 	if s.BridgeID == "" {
-		return nil, errors.New("no proxy configured yet — run 'clawvisor proxy install' first")
+		return nil, errors.New("no proxy configured yet — run 'clawvisor-local proxy install' first")
 	}
 	return &s, nil
 }
@@ -506,7 +511,7 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// -- clawvisor proxy run --------------------------------------------------
+// -- clawvisor-local proxy run --------------------------------------------------
 
 var (
 	runAgentToken string
@@ -523,14 +528,14 @@ child process, so the rest of your shell is untouched.
 
 Examples:
   # Default: traffic flows anonymously (attributed as "default" in the dashboard).
-  clawvisor proxy run -- claude-code
+  clawvisor-local proxy run -- claude-code
 
   # Tag traffic with a non-secret label (multi-agent attribution).
-  clawvisor proxy run --agent-label claude-code -- claude-code
+  clawvisor-local proxy run --agent-label claude-code -- claude-code
 
   # Verified-tier enforcement (per-agent bans + policy actually fire).
   # Mint a cvis_ token from the dashboard's Proxies tab first.
-  clawvisor proxy run --agent-token cvis_abc -- claude-code
+  clawvisor-local proxy run --agent-token cvis_abc -- claude-code
 
 Only the invoked command (and its descendants) flow through the proxy.
 Your browser, git, brew, etc. are unaffected.`,
@@ -548,12 +553,12 @@ func init() {
 	proxyRunCmd.Flags().StringVar(&runListenHost, "host", "127.0.0.1",
 		"Proxy host the child process should target.")
 	proxyRunCmd.Flags().StringVar(&runListenPort, "port", "25298",
-		"Proxy port the child process should target. Default matches 'clawvisor proxy install'.")
+		"Proxy port the child process should target. Default matches 'clawvisor-local proxy install'.")
 }
 
 func runProxyRun(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		return errors.New("missing command. Example: clawvisor proxy run -- claude-code")
+		return errors.New("missing command. Example: clawvisor-local proxy run -- claude-code")
 	}
 	token := runAgentToken
 	if token == "" {
@@ -571,7 +576,7 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if _, err := os.Stat(caPath); err != nil {
-		return fmt.Errorf("CA cert not found at %s — is the proxy running? Try 'clawvisor proxy status': %w", caPath, err)
+		return fmt.Errorf("CA cert not found at %s — is the proxy running? Try 'clawvisor-local proxy status': %w", caPath, err)
 	}
 
 	// Compose Proxy-Authorization basic auth from the label/token pair.
@@ -642,7 +647,7 @@ func discoverCACertPath() (string, error) {
 	return filepath.Join(home, ".clawvisor", "proxy-data", "ca.pem"), nil
 }
 
-// -- clawvisor proxy trust-ca -------------------------------------------
+// -- clawvisor-local proxy trust-ca -------------------------------------------
 
 var proxyTrustCACmd = &cobra.Command{
 	Use:   "trust-ca",

@@ -36,7 +36,7 @@ func (h *OnboardingHandler) Setup(w http.ResponseWriter, r *http.Request) {
 // SetupProxy serves the onboarding markdown for the Clawvisor Network
 // Proxy. The agent reads this and walks the user through installing
 // the proxy via clawvisor-local, trusting the CA cert, and then
-// re-launching itself wrapped by `clawvisor proxy run`.
+// re-launching itself wrapped by `clawvisor-local proxy run`.
 //
 // Query params:
 //   bridge_id     — pre-fills the bridge UUID this proxy will serve
@@ -60,7 +60,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("# Clawvisor Network Proxy Setup\n\n")
 	b.WriteString("You're being asked to wire your network traffic through the Clawvisor Network Proxy. ")
 	b.WriteString("This gives Clawvisor tamper-proof transcripts of your LLM calls, lets it inject vault credentials so you never see raw API keys, and (when policies are enabled) enforces what hosts you can call.\n\n")
-	b.WriteString("**This is per-process scoped.** Only commands you explicitly launch through `clawvisor proxy run` are observed. The user's browser, package manager, git, etc. stay direct.\n\n")
+	b.WriteString("**This is per-process scoped.** Only commands you explicitly launch through `clawvisor-local proxy run` are observed. The user's browser, package manager, git, etc. stay direct.\n\n")
 
 	b.WriteString("## What you'll do\n\n")
 	b.WriteString("Five steps, all run from a terminal on the user's machine. Ask permission before each `Bash` invocation that mutates state — particularly the keychain trust step.\n\n")
@@ -68,7 +68,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("2. Confirm a `clawvisor-proxy` binary is available.\n")
 	b.WriteString("3. Configure + start the proxy under daemon supervision.\n")
 	b.WriteString("4. Trust the proxy's TLS CA cert in the user's keychain.\n")
-	b.WriteString("5. Re-launch yourself wrapped by `clawvisor proxy run`.\n\n")
+	b.WriteString("5. Re-launch yourself wrapped by `clawvisor-local proxy run`.\n\n")
 
 	b.WriteString("## 1. Confirm the daemon is running\n\n")
 	b.WriteString("```bash\ncurl -s http://127.0.0.1:25299/api/proxy/status\n```\n\n")
@@ -99,7 +99,7 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 
 	b.WriteString("## 4. Configure + start the proxy\n\n")
 	b.WriteString("Run with the user's permission:\n\n")
-	b.WriteString("```bash\nclawvisor proxy install \\\n")
+	b.WriteString("```bash\nclawvisor-local proxy install \\\n")
 	b.WriteString("  --binary <ABSOLUTE_PATH_FROM_STEP_2> \\\n")
 	if serverURL != "" {
 		fmt.Fprintf(&b, "  --server-url %s \\\n", serverURL)
@@ -118,31 +118,31 @@ func (h *OnboardingHandler) SetupProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	b.WriteString("```\n\n")
 	b.WriteString("This persists the config under `~/.clawvisor/proxy/`, hands the daemon a managed lifecycle for the binary, and starts the process. Verify:\n\n")
-	b.WriteString("```bash\nclawvisor proxy status\n```\n\n")
+	b.WriteString("```bash\nclawvisor-local proxy status\n```\n\n")
 	b.WriteString("Look for `state: running`. If it's `failed`, the JSON's `last_error` field tells you why — most commonly a port conflict or a stale CA cert from a previous install.\n\n")
 
 	b.WriteString("## 5. Trust the CA cert\n\n")
 	b.WriteString("The proxy MITM-intercepts TLS using its own cert authority. The user's system needs to trust it.\n\n")
-	b.WriteString("```bash\nclawvisor proxy trust-ca\n```\n\n")
-	b.WriteString("**This will prompt the user for their keychain password** (macOS) or sudo (Linux). Tell them what's about to happen before invoking it. The cert is added to the user-scoped keychain only — no system-wide install — and `clawvisor proxy uninstall` cleans it up.\n\n")
+	b.WriteString("```bash\nclawvisor-local proxy trust-ca\n```\n\n")
+	b.WriteString("**This will prompt the user for their keychain password** (macOS) or sudo (Linux). Tell them what's about to happen before invoking it. The cert is added to the user-scoped keychain only (no system-wide install).\n\n")
 
 	b.WriteString("## 6. Re-launch yourself under the proxy\n\n")
-	b.WriteString("Each command you launch through `clawvisor proxy run` is scoped — only that process tree gets the env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`). Nothing else on the system is affected.\n\n")
+	b.WriteString("Each command you launch through `clawvisor-local proxy run` is scoped — only that process tree gets the env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`). Nothing else on the system is affected.\n\n")
 	b.WriteString("If you have a way to ask your runtime to relaunch, do so:\n\n")
 	b.WriteString("```bash\n")
 	if agentToken != "" {
 		// User minted an enforcement token — wire it in for verified-tier
 		// attribution (per-agent bans + policy actually enforce).
-		fmt.Fprintf(&b, "clawvisor proxy run --agent-token %s -- <YOUR_LAUNCH_COMMAND>\n", agentToken)
+		fmt.Fprintf(&b, "clawvisor-local proxy run --agent-token %s -- <YOUR_LAUNCH_COMMAND>\n", agentToken)
 	} else {
 		// Default: no agent token. Traffic gets attributed via the basic-
 		// auth label only. The proxy treats this as the "labeled" tier.
-		b.WriteString("clawvisor proxy run -- <YOUR_LAUNCH_COMMAND>\n")
+		b.WriteString("clawvisor-local proxy run -- <YOUR_LAUNCH_COMMAND>\n")
 	}
 	b.WriteString("```\n\n")
 	if agentToken == "" {
 		b.WriteString("If you want to tag traffic with a label (when the user runs multiple agents and wants the dashboard to distinguish them), pass `--agent-label`:\n\n")
-		b.WriteString("```bash\nclawvisor proxy run --agent-label claude-code -- <YOUR_LAUNCH_COMMAND>\n```\n\n")
+		b.WriteString("```bash\nclawvisor-local proxy run --agent-label claude-code -- <YOUR_LAUNCH_COMMAND>\n```\n\n")
 	}
 	b.WriteString("If you can't self-relaunch, tell the user: \"Quit me, then re-run me from a shell with this prefix.\" Show them the exact command.\n\n")
 	b.WriteString("Once relaunched, your subsequent LLM calls flow through the proxy. Verify:\n\n")

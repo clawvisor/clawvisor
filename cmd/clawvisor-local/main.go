@@ -47,6 +47,7 @@ func main() {
 		toolbarCmd(),
 		servicesParentCmd(),
 		daemonParentCmd(),
+		proxyCmd,
 	)
 
 	if err := rootCmd.Execute(); err != nil {

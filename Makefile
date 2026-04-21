@@ -44,7 +44,7 @@ build-staging: web/dist
 # Build the clawvisor-proxy binary from the third_party submodule.
 # Lands at third_party/proxy/dist/clawvisor-proxy. Pair with
 # `serve-proxy-binary` to run a server that hands this out via
-# GET /api/proxy/download — lets `clawvisor proxy update-binary
+# GET /api/proxy/download — lets `clawvisor-local proxy update-binary
 # --from-server` iterate without GitHub releases.
 build-proxy:
 	$(MAKE) -C third_party/proxy build
@@ -58,7 +58,7 @@ serve-proxy-binary: build-proxy
 	@echo "  CLAWVISOR_PROXY_BINARY_DIR=$$(pwd)/third_party/proxy/dist make run"
 	@echo
 	@echo "Then on a client machine:"
-	@echo "  clawvisor proxy update-binary --from-server --server-url http://127.0.0.1:25297"
+	@echo "  clawvisor-local proxy update-binary --from-server --server-url http://127.0.0.1:25297"
 
 build-server: web/dist plugin-bundle
 	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server

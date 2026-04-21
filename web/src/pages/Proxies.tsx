@@ -291,19 +291,19 @@ function ProxyArtifactPanel({ artifact, setupHint, onClose }: {
   // user's exact binary location yet (they'll build/download), so this
   // is a template they fill in.
   const daemonInstallSnippet = `# 1. Install clawvisor-local + the proxy binary, then:
-clawvisor proxy install \\
+clawvisor-local proxy install \\
   --binary $(which clawvisor-proxy) \\
   --proxy-token ${artifact.proxy_token || '<COPY-FROM-ABOVE>'} \\
   --bridge-id ${artifact.bridge_id}
 
 # 2. Trust the proxy's CA cert (one-time):
-clawvisor proxy trust-ca
+clawvisor-local proxy trust-ca
 
 # 3. Run any agent through it (scoped — only this command's traffic):
-clawvisor proxy run -- claude
+clawvisor-local proxy run -- claude
 
 # Optional: tag traffic with a label (e.g. when running multiple agents):
-#   clawvisor proxy run --agent-label claude-code -- claude
+#   clawvisor-local proxy run --agent-label claude-code -- claude
 `
 
   return (
@@ -362,7 +362,7 @@ clawvisor proxy run -- claude
             <p>
               <strong>What you get:</strong> a menu-bar icon showing the proxy's
               status, automatic restart if it crashes, and one command to wrap any
-              agent (<code>clawvisor proxy run -- claude</code>) so only that
+              agent (<code>clawvisor-local proxy run -- claude</code>) so only that
               specific agent goes through Clawvisor.
             </p>
           </div>
@@ -573,7 +573,7 @@ function DaemonPrerequisites() {
   const proxyBuildFromSource = `# Build the proxy binary from source (until we publish a release):
 git clone https://github.com/clawvisor/proxy.git clawvisor-proxy
 cd clawvisor-proxy && make build
-# Binary lands at ./dist/clawvisor-proxy — pass that path to 'clawvisor proxy install --binary <path>'`
+# Binary lands at ./dist/clawvisor-proxy — pass that path to 'clawvisor-local proxy install --binary <path>'`
 
   return (
     <div className="bg-warning/5 border border-warning/30 rounded-md p-3 space-y-3">
@@ -606,7 +606,7 @@ cd clawvisor-proxy && make build
           <div className="text-[11px] text-warning">⚠ Proxy binary not yet on this machine.</div>
           <p className="text-[11px] text-text-tertiary">
             We don't publish a pre-built proxy binary yet — for beta, build it from source. A future
-            release will let you run <code>clawvisor proxy update-binary</code> to fetch automatically.
+            release will let you run <code>clawvisor-local proxy update-binary</code> to fetch automatically.
           </p>
           <div className="relative group">
             <pre className="bg-surface-0 border border-border-subtle rounded p-2 text-[11px] font-mono overflow-x-auto whitespace-pre">{proxyBuildFromSource}</pre>
@@ -808,7 +808,7 @@ function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
       } else if (body?.restart_error) {
         setResult({ ok: false, msg: 'Configured, but restart failed: ' + body.restart_error })
       } else {
-        setResult({ ok: true, msg: 'Proxy is configured and running. Run "clawvisor proxy trust-ca" in a terminal next.' })
+        setResult({ ok: true, msg: 'Proxy is configured and running. Run "clawvisor-local proxy trust-ca" in a terminal next.' })
       }
     } catch (err) {
       setResult({ ok: false, msg: 'Network error talking to daemon: ' + (err as Error).message })

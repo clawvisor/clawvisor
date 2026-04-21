@@ -21,7 +21,7 @@ import (
 //
 // This is the dev-iteration path: rebuild proxy with `make build`
 // inside third_party/proxy, set CLAWVISOR_PROXY_BINARY_DIR to that
-// dist/, and `clawvisor proxy update-binary --from-server` picks it
+// dist/, and `clawvisor-local proxy update-binary --from-server` picks it
 // up. Avoids the GitHub-tag-and-release dance during development.
 type ProxyBinaryHandler struct {
 	binaryDir string
