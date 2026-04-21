@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,9 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed shim/clawvisor-proxy-shim.js
+var nodeProxyShim []byte
 
 // Proxy subcommands — "clawvisor-local proxy …" — drive the
 // first-class Clawvisor Network Proxy lifecycle on the user's machine.
@@ -636,6 +640,21 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		"CLAWVISOR_PROXY="+proxyURL,
 		"CLAWVISOR_PROXY_CA="+caPath,
 	)
+
+	// Node's built-in fetch() uses undici, which ignores HTTP_PROXY.
+	// The shim is preloaded via --require and calls
+	// setGlobalDispatcher(new ProxyAgent(...)) so fetch() actually
+	// routes through the proxy. Falls through silently in projects
+	// where undici can't be resolved (older Node, projects without it
+	// as a dep). Doesn't help — and doesn't hurt — non-Node children.
+	if shimPath, err := materializeNodeProxyShim(); err == nil {
+		env = append(env, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
+	} else {
+		// Materialize failed (disk full, permissions). Carry on without
+		// the shim rather than blocking the child.
+		fmt.Fprintf(os.Stderr, "warning: could not install Node fetch shim: %v\n", err)
+	}
+
 	c := exec.Command(args[0], args[1:]...) //nolint:gosec
 	c.Env = env
 	c.Stdin = os.Stdin
@@ -649,6 +668,44 @@ func runProxyRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// materializeNodeProxyShim writes the embedded Node fetch-routing
+// shim to ~/.clawvisor/local/clawvisor-proxy-shim.js and returns the
+// absolute path. Idempotent — only writes when the on-disk content
+// differs from the embedded bytes (after binary upgrades).
+func materializeNodeProxyShim() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".clawvisor", "local")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, "clawvisor-proxy-shim.js")
+	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, nodeProxyShim) {
+		return dst, nil
+	}
+	if err := os.WriteFile(dst, nodeProxyShim, 0644); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
+// mergeNodeOptions appends one or more Node CLI options to whatever
+// the user already had in NODE_OPTIONS. Preserves user options like
+// --inspect, --max-old-space-size, etc.
+func mergeNodeOptions(existing, addition string) string {
+	existing = strings.TrimSpace(existing)
+	addition = strings.TrimSpace(addition)
+	if existing == "" {
+		return addition
+	}
+	if addition == "" {
+		return existing
+	}
+	return existing + " " + addition
 }
 
 // buildProxyURL composes the HTTP_PROXY URL the wrapped child sees.
