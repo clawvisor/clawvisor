@@ -188,6 +188,19 @@ export default function TaskCard({
           auto_execute: next.auto,
         }],
         {
+          onSuccess: () => {
+            // Drop our local override so the refetched server state becomes
+            // the source of truth. Skip if a newer click replaced our patch —
+            // that newer mutation will clean up its own override on success.
+            setScopeOverrides(s => {
+              const current = s[key]
+              if (!current) return s
+              if (current.auto_execute !== patch.auto_execute) return s
+              if (current.verification !== patch.verification) return s
+              const { [key]: _, ...rest } = s
+              return rest
+            })
+          },
           onError: () => {
             setScopeOverrides(s => {
               const reverted = { ...s }
@@ -431,6 +444,15 @@ export default function TaskCard({
               {showRisk && <RiskPanel risk={riskDetails} level={riskLevel} />}
               {showRationale && <AutoApprovalPanel rationale={task.approval_rationale!} />}
               <div className="px-4 pb-3">
+                {totalPlanned > 0 && (
+                  <div className="flex items-center justify-end pb-2">
+                    <PlannedToggle
+                      on={showPlannedCalls}
+                      count={totalPlanned}
+                      onToggle={() => setShowPlannedCalls(s => !s)}
+                    />
+                  </div>
+                )}
                 <GroupedScopes
                   groups={groupedByService}
                   effectiveValue={effectiveValue}
@@ -438,6 +460,9 @@ export default function TaskCard({
                   setOpenPillKey={setOpenPillKey}
                   onChange={handleScopeChange}
                   disabled={!isActive || isPending}
+                  plannedByKey={plannedByKey}
+                  showPlanned={showPlannedCalls}
+                  onMarkerClick={() => setShowPlannedCalls(s => !s)}
                 />
               </div>
             </div>
