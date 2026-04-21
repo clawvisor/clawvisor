@@ -337,6 +337,8 @@ clawvisor proxy run -- claude
         </div>
       )}
 
+      <EnforcementTokenSection bridgeId={artifact.bridge_id} />
+
       <div className="flex flex-wrap gap-1 border-b border-border-default text-xs">
         <TabButton active={tab === 'daemon'} onClick={() => setTab('daemon')}>
           Personal Mac / Linux laptop{!isSelfHosted && <span className="text-text-tertiary"> · suggested</span>}
@@ -633,6 +635,117 @@ cd clawvisor-proxy && make build
 // (avoiding "where's the binary on your machine?" being a server-
 // side guess).
 const DAEMON_BASE = 'http://127.0.0.1:25299'
+
+// EnforcementTokenSection lets the user opt into verified-tier
+// attribution: the proxy validates the supplied cvis_ token against the
+// known-agents list and enforces per-agent bans. Without this, traffic
+// is attributed by an unsecured label and bans don't fire.
+//
+// The default install (no token) works fine for most users; this is for
+// teams that want their dashboard policies to actually stop bad agents
+// rather than just record violations.
+function EnforcementTokenSection({ bridgeId }: { bridgeId: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [label, setLabel] = useState('claude-code')
+  const [submitting, setSubmitting] = useState(false)
+  const [token, setToken] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const copy = (s: string) => { navigator.clipboard.writeText(s).catch(() => { /* noop */ }) }
+
+  const mint = async () => {
+    setSubmitting(true)
+    setError(null)
+    try {
+      const trimmed = label.trim() || 'agent'
+      const name = `Proxy enforcement: ${trimmed} (${bridgeId.slice(0, 8)})`
+      const agent = await api.agents.create(name)
+      if (!agent.token) throw new Error('server did not return a token')
+      setToken(agent.token)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'mint failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!expanded && !token) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="text-[11px] text-text-tertiary hover:text-text-primary text-left"
+      >
+        Optional: mint an enforcement token (verified-tier attribution) →
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1/50 p-3 text-xs space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-medium text-text-primary">Enforcement token (optional)</div>
+          <p className="text-[11px] text-text-tertiary mt-0.5">
+            Without this, the proxy attributes traffic by an unsecured label —
+            policies record violations but bans don't enforce. With it, the
+            proxy validates the token against this user's known agents and
+            stops a banned process at the wire.
+          </p>
+        </div>
+        {!token && (
+          <button onClick={() => setExpanded(false)} className="text-text-tertiary hover:text-text-primary">✕</button>
+        )}
+      </div>
+
+      {!token && (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 min-w-0 flex-1">
+            <span className="text-[11px] text-text-tertiary">Display label (no spaces)</span>
+            <input
+              value={label}
+              onChange={e => setLabel(e.target.value.replace(/\s+/g, '-'))}
+              className="bg-surface-2 border border-border-default rounded px-2 py-1 font-mono text-[11px]"
+              placeholder="claude-code"
+            />
+          </label>
+          <button
+            onClick={mint}
+            disabled={submitting}
+            className="text-[11px] px-3 py-1 rounded border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-50"
+          >
+            {submitting ? 'Minting…' : 'Generate token'}
+          </button>
+        </div>
+      )}
+
+      {error && <div className="text-[11px] text-error">{error}</div>}
+
+      {token && (
+        <div className="space-y-2">
+          <div className="text-[11px] text-warning font-medium">Save this now — it won't be shown again.</div>
+          <code className="block bg-surface-1 p-2 rounded font-mono text-[11px] break-all">{token}</code>
+          <div className="flex gap-2">
+            <button
+              onClick={() => copy(token)}
+              className="text-[11px] px-2 py-1 rounded border border-border-default hover:bg-surface-2"
+            >
+              Copy token
+            </button>
+            <button
+              onClick={() => copy(`http://${label || 'agent'}:${token}@127.0.0.1:8880`)}
+              className="text-[11px] px-2 py-1 rounded border border-border-default hover:bg-surface-2"
+            >
+              Copy as HTTP_PROXY URL
+            </button>
+          </div>
+          <p className="text-[11px] text-text-tertiary">
+            Pass this as the basic-auth password to the proxy:
+            {' '}<code className="font-mono">HTTP_PROXY=http://{label || 'agent'}:{token.slice(0, 12)}…@127.0.0.1:8880</code>
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
   const [reachable, setReachable] = useState<'probing' | 'yes' | 'no'>('probing')
