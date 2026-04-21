@@ -237,6 +237,17 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if a.Verification != "" && a.Verification != "strict" && a.Verification != "lenient" && a.Verification != "off" {
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: fmt.Sprintf("authorized_actions[%d].verification %q is invalid", i, a.Verification),
+				Code:  "INVALID_VERIFICATION_MODE",
+				Hint:  "verification must be one of: strict, lenient, off (or omitted, which defaults to strict).",
+				Example: map[string]any{
+					"service": a.Service, "action": a.Action, "verification": "strict",
+				},
+			})
+			return
+		}
 	}
 
 	// Validate planned calls: each must reference a service:action covered by authorized_actions.

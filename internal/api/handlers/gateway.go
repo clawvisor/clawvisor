@@ -581,7 +581,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				chainFacts := h.loadChainFacts(ctx, task, req)
 
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
-				vMode := h.verificationModeFor(ctx, task, serviceType, req.Action, agent.UserID)
+				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
@@ -657,7 +657,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				// was evaluated during task risk assessment and approved by the user.
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 
-				vMode := h.verificationModeFor(ctx, task, serviceType, req.Action, agent.UserID)
+				vMode := verificationModeFor(match.MatchedAction)
 				if matchedPlannedCall != nil {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
@@ -1445,30 +1445,12 @@ func (h *GatewayHandler) runVerification(
 }
 
 // verificationModeFor returns the verification mode ("strict", "lenient", "off")
-// for the given action by looking up the matching authorized_action on the task.
-// Falls back to "strict" when no match is found or no override is set.
-func (h *GatewayHandler) verificationModeFor(ctx context.Context, task *store.Task, serviceType, action, userID string) string {
-	_ = ctx
-	_ = userID
-	reqServiceType, _ := parseServiceAlias(serviceType)
-	var wildcard string
-	for _, a := range task.AuthorizedActions {
-		aServiceType, _ := parseServiceAlias(a.Service)
-		if aServiceType != reqServiceType {
-			continue
-		}
-		if a.Action == action {
-			if a.Verification != "" {
-				return a.Verification
-			}
-			return "strict"
-		}
-		if a.Action == "*" && wildcard == "" {
-			wildcard = a.Verification
-		}
-	}
-	if wildcard != "" {
-		return wildcard
+// for the matched authorized action. Falls back to "strict" when the matched
+// action has no override set. Callers should pass the alias-aware match from
+// CheckTaskScope so that scope-specific overrides are honored.
+func verificationModeFor(matched *store.TaskAction) string {
+	if matched != nil && matched.Verification != "" {
+		return matched.Verification
 	}
 	return "strict"
 }
