@@ -14,15 +14,31 @@ import (
 )
 
 // ProxyBinaryHandler serves clawvisor-proxy binaries from an
-// operator-configured directory. Public (no auth) — the binary is
-// open-source and the operator decides who can reach the server. For
-// multi-tenant cloud, leave BinaryDir empty to disable the endpoint
-// and rely on GitHub releases.
+// operator-configured directory.
 //
-// This is the dev-iteration path: rebuild proxy with `make build`
-// inside third_party/proxy, set CLAWVISOR_PROXY_BINARY_DIR to that
-// dist/, and `clawvisor-local proxy update-binary --from-server` picks it
-// up. Avoids the GitHub-tag-and-release dance during development.
+// ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+// ┃ DEV-ONLY, TEMPORARY — REMOVE WHEN CI PUBLISHES PROXY RELEASES.   ┃
+// ┃ This endpoint exists solely so developers can iterate on the     ┃
+// ┃ proxy against `make run` without cutting a GitHub release for    ┃
+// ┃ every change. It is NOT the production distribution path.        ┃
+// ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+//
+// Public (no auth) — the binary is open-source and the operator
+// decides who can reach the server. For multi-tenant cloud, leave
+// BinaryDir empty to disable the endpoint entirely and rely on the
+// GitHub-release path the CLI already falls back to.
+//
+// Dev workflow:
+//   cd third_party/proxy && make build
+//   export CLAWVISOR_PROXY_BINARY_DIR=$(pwd)/third_party/proxy/dist
+//   make run
+//   # on a client machine:
+//   clawvisor-local proxy update-binary --from-server --server-url http://127.0.0.1:25297
+//
+// Replacement plan: once CI produces platform-tagged release assets
+// (clawvisor-proxy-darwin-arm64, -linux-amd64, etc.) on every merge,
+// this endpoint + its CLI flag are redundant — `update-binary` will
+// pull from releases by default and this file can be deleted.
 type ProxyBinaryHandler struct {
 	binaryDir string
 	logger    *slog.Logger
@@ -115,9 +131,23 @@ func (h *ProxyBinaryHandler) Download(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveBinary picks the on-disk file for a platform. Tries the
-// platform-suffixed name first, falls back to the unsuffixed binary
-// (dev convenience: when you `make build` for your own machine, the
-// file lands at dist/clawvisor-proxy with no suffix).
+// platform-suffixed name first, falls back to the unsuffixed binary.
+//
+// The unsuffixed fallback is intentional for the dev case: `make
+// build` inside third_party/proxy produces `dist/clawvisor-proxy`
+// (no platform suffix, because the dev is building for their own
+// machine and doesn't cross-compile). A client requesting
+// darwin-arm64 and hitting a server whose dist/ only has that single
+// build will get served correctly — the dev's host IS the requested
+// platform.
+//
+// KNOWN LIMITATION (acceptable in dev, unacceptable in prod): if a
+// server has a single unsuffixed binary for platform X and a client
+// requests platform Y, we serve the X binary anyway. That's a bug
+// for any multi-platform dev setup, but this endpoint is dev-only
+// (see the handler doc) and a real CI pipeline produces per-platform
+// files that skip this fallback. The planned replacement drops this
+// fallback entirely.
 func (h *ProxyBinaryHandler) resolveBinary(platform string) (string, error) {
 	suffixed := filepath.Join(h.binaryDir, "clawvisor-proxy-"+platform)
 	if _, err := os.Stat(suffixed); err == nil {
