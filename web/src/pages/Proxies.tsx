@@ -747,11 +747,35 @@ function EnforcementTokenSection({ bridgeId }: { bridgeId: string }) {
   )
 }
 
+// DaemonOneClickEnable orchestrates the full personal-laptop connect
+// flow against the local clawvisor-local daemon. One click walks
+// through: download the proxy binary from this server → configure +
+// start the proxy → prompt the user to trust the CA cert → show the
+// "run agents through it" guidance. The flow is resumable — each step
+// tracks its own status and can be retried without restarting the
+// others.
+//
+// Fails gracefully when the daemon is unreachable — renders nothing so
+// the page falls back to the copy-paste install snippet below.
+type connectStatus = 'idle' | 'running' | 'ok' | 'error'
+type connectStep = {
+  id: 'binary' | 'configure' | 'trust-ca'
+  label: string
+  status: connectStatus
+  detail?: string
+}
+
 function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
   const [reachable, setReachable] = useState<'probing' | 'yes' | 'no'>('probing')
   const [binaryPath, setBinaryPath] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [steps, setSteps] = useState<connectStep[]>([
+    { id: 'binary',    label: 'Download proxy binary',       status: 'idle' },
+    { id: 'configure', label: 'Configure + start the proxy', status: 'idle' },
+    { id: 'trust-ca',  label: 'Trust the TLS CA certificate', status: 'idle' },
+  ])
+  const [running, setRunning] = useState(false)
+  const [done, setDone] = useState(false)
+  const copy = (s: string) => { navigator.clipboard.writeText(s).catch(() => { /* noop */ }) }
 
   useEffect(() => {
     let cancelled = false
@@ -760,37 +784,67 @@ function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
       .then(s => {
         if (cancelled) return
         setReachable('yes')
-        // If the daemon already remembers a binary path, prefill it so
-        // re-config / token-rotation is one click.
-        if (s?.binary_path) setBinaryPath(s.binary_path)
+        if (s?.binary_path) {
+          setBinaryPath(s.binary_path)
+          setSteps(prev => prev.map(st => st.id === 'binary' ? { ...st, status: 'ok', detail: 'Already installed' } : st))
+        }
       })
       .catch(() => { if (!cancelled) setReachable('no') })
     return () => { cancelled = true }
   }, [])
 
   if (reachable === 'probing') {
-    return (
-      <div className="text-[11px] text-text-tertiary italic">Looking for a local clawvisor daemon…</div>
-    )
+    return <div className="text-[11px] text-text-tertiary italic">Looking for a local clawvisor daemon…</div>
   }
   if (reachable === 'no') {
     return null // silently fall back to the copy-paste snippet below
   }
 
-  const handleEnable = async () => {
-    if (!binaryPath.trim()) {
-      setResult({ ok: false, msg: 'Enter the proxy binary path first.' })
-      return
+  const setStep = (id: connectStep['id'], patch: Partial<connectStep>) => {
+    setSteps(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s))
+  }
+
+  const runConnect = async () => {
+    if (running) return
+    setRunning(true)
+    setDone(false)
+
+    // --- Step 1: download binary (skip if already installed) ---
+    let resolvedBinaryPath = binaryPath
+    if (!resolvedBinaryPath) {
+      setStep('binary', { status: 'running', detail: undefined })
+      try {
+        const r = await fetch(`${DAEMON_BASE}/api/proxy/install-binary`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ server_url: window.location.origin }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          setStep('binary', { status: 'error', detail: body?.error || `daemon returned ${r.status}` })
+          setRunning(false)
+          return
+        }
+        resolvedBinaryPath = body?.binary_path || ''
+        setStep('binary', { status: 'ok', detail: resolvedBinaryPath })
+        setBinaryPath(resolvedBinaryPath)
+      } catch (err) {
+        setStep('binary', { status: 'error', detail: (err as Error).message })
+        setRunning(false)
+        return
+      }
     }
-    setSubmitting(true)
-    setResult(null)
+
+    // --- Step 2: configure + start ---
+    setStep('configure', { status: 'running', detail: undefined })
     try {
       const r = await fetch(`${DAEMON_BASE}/api/proxy/configure`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          binary_path: binaryPath.trim(),
+          binary_path: resolvedBinaryPath,
           server_url: window.location.origin,
           proxy_token: artifact.proxy_token,
           bridge_id: artifact.bridge_id,
@@ -800,55 +854,110 @@ function DaemonOneClickEnable({ artifact }: { artifact: ProxyEnableResponse }) {
           auto_enable: true,
         }),
       })
-      const body = await r.json()
+      const body = await r.json().catch(() => ({}))
       if (!r.ok) {
-        setResult({ ok: false, msg: body?.error || `daemon returned ${r.status}` })
-      } else if (body?.enable_error) {
-        setResult({ ok: false, msg: 'Configured, but enable failed: ' + body.enable_error })
-      } else if (body?.restart_error) {
-        setResult({ ok: false, msg: 'Configured, but restart failed: ' + body.restart_error })
-      } else {
-        setResult({ ok: true, msg: 'Proxy is configured and running. Run "clawvisor-local proxy trust-ca" in a terminal next.' })
+        setStep('configure', { status: 'error', detail: body?.error || `daemon returned ${r.status}` })
+        setRunning(false)
+        return
       }
+      if (body?.enable_error) {
+        setStep('configure', { status: 'error', detail: 'Started failed: ' + body.enable_error })
+        setRunning(false)
+        return
+      }
+      setStep('configure', { status: 'ok', detail: 'Proxy running on 127.0.0.1:25298' })
     } catch (err) {
-      setResult({ ok: false, msg: 'Network error talking to daemon: ' + (err as Error).message })
-    } finally {
-      setSubmitting(false)
+      setStep('configure', { status: 'error', detail: (err as Error).message })
+      setRunning(false)
+      return
     }
+
+    // --- Step 3: trust CA (the OS will prompt the user) ---
+    setStep('trust-ca', { status: 'running', detail: 'Approve the keychain prompt when it appears.' })
+    try {
+      const r = await fetch(`${DAEMON_BASE}/api/proxy/trust-ca`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setStep('trust-ca', { status: 'error', detail: body?.error || `daemon returned ${r.status}` })
+        setRunning(false)
+        return
+      }
+      setStep('trust-ca', { status: 'ok', detail: 'Added to the login keychain.' })
+    } catch (err) {
+      setStep('trust-ca', { status: 'error', detail: (err as Error).message })
+      setRunning(false)
+      return
+    }
+
+    setRunning(false)
+    setDone(true)
   }
 
+  const runAgentCmd = 'clawvisor-local proxy run -- <your-agent-command>'
+  const anyInProgress = steps.some(s => s.status === 'running')
+  const anyError = steps.some(s => s.status === 'error')
+  const allOK = steps.every(s => s.status === 'ok')
+
   return (
-    <div className="bg-success/5 border border-success/30 rounded-md p-3 space-y-2 mb-2">
+    <div className="bg-success/5 border border-success/30 rounded-md p-3 space-y-3 mb-2">
       <div className="flex items-center gap-2">
         <span className="text-success text-xs">●</span>
         <div className="text-xs font-medium text-text-primary">Local daemon detected</div>
       </div>
       <p className="text-[11px] text-text-tertiary">
-        clawvisor-local is running on this machine. We can configure it directly — no terminal command needed.
+        clawvisor-local is running on this machine. One click runs the full install — download, configure, and trust the CA cert.
       </p>
-      <div>
-        <label className="block text-[11px] text-text-tertiary mb-1">Proxy binary path on this machine</label>
-        <input
-          value={binaryPath}
-          onChange={e => setBinaryPath(e.target.value)}
-          placeholder="/usr/local/bin/clawvisor-proxy"
-          className="w-full text-xs font-mono rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1"
-        />
-      </div>
-      <button
-        onClick={handleEnable}
-        disabled={submitting || !binaryPath.trim()}
-        className="text-xs px-3 py-1.5 rounded bg-success text-surface-0 hover:bg-success/90 disabled:opacity-50"
-      >
-        {submitting ? 'Configuring…' : 'Enable on this device'}
-      </button>
-      {result && (
-        <div className={`text-[11px] ${result.ok ? 'text-success' : 'text-danger'}`}>
-          {result.msg}
+
+      <ol className="space-y-1.5">
+        {steps.map((s, i) => (
+          <li key={s.id} className="flex items-start gap-2 text-[11px]">
+            <StepIcon status={s.status} index={i + 1} />
+            <div className="min-w-0 flex-1">
+              <div className="text-text-primary">{s.label}</div>
+              {s.detail && (
+                <div className={`text-[10px] mt-0.5 ${s.status === 'error' ? 'text-danger' : 'text-text-tertiary'}`}>
+                  {s.detail}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      {!done && !anyInProgress && (
+        <button
+          onClick={runConnect}
+          disabled={running}
+          className="text-xs px-3 py-1.5 rounded bg-success text-surface-0 hover:bg-success/90 disabled:opacity-50"
+        >
+          {allOK ? 'Reconnect' : anyError ? 'Retry' : 'Connect proxy'}
+        </button>
+      )}
+
+      {done && (
+        <div className="border-t border-success/20 pt-2 space-y-2">
+          <div className="text-xs font-medium text-text-primary">You're connected. Wrap any agent with:</div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 bg-surface-1 px-2 py-1 rounded font-mono text-[11px] text-text-primary">{runAgentCmd}</code>
+            <button onClick={() => copy(runAgentCmd)} className="text-[10px] px-2 py-1 rounded border border-border-default hover:bg-surface-2">Copy</button>
+          </div>
+          <p className="text-[10px] text-text-tertiary">
+            Only the wrapped command and its subprocesses flow through the proxy. Your browser, git, and other tools stay direct.
+          </p>
         </div>
       )}
     </div>
   )
+}
+
+function StepIcon({ status, index }: { status: connectStatus; index: number }) {
+  if (status === 'ok') return <span className="text-success mt-0.5">✓</span>
+  if (status === 'running') return <span className="text-accent mt-0.5 animate-pulse">●</span>
+  if (status === 'error') return <span className="text-danger mt-0.5">✗</span>
+  return <span className="text-text-tertiary mt-0.5">{index}.</span>
 }
 
 // buildSkillURL renders a URL the agent can fetch to get
