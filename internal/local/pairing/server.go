@@ -40,12 +40,14 @@ type Server struct {
 // can keep proxy-specific JSON decoding inside its own package and
 // just hand this struct over to pairing.Server.
 type ProxyEndpoints struct {
-	Status    func(w http.ResponseWriter, r *http.Request)
-	Configure func(w http.ResponseWriter, r *http.Request)
-	Enable    func(w http.ResponseWriter, r *http.Request)
-	Disable   func(w http.ResponseWriter, r *http.Request)
-	Restart   func(w http.ResponseWriter, r *http.Request)
-	SetMode   func(w http.ResponseWriter, r *http.Request)
+	Status         func(w http.ResponseWriter, r *http.Request)
+	Configure      func(w http.ResponseWriter, r *http.Request)
+	Enable         func(w http.ResponseWriter, r *http.Request)
+	Disable        func(w http.ResponseWriter, r *http.Request)
+	Restart        func(w http.ResponseWriter, r *http.Request)
+	SetMode        func(w http.ResponseWriter, r *http.Request)
+	TrustCA        func(w http.ResponseWriter, r *http.Request)
+	InstallBinary  func(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerConfig holds configuration for the pairing server.
@@ -90,6 +92,8 @@ func NewServer(cfg ServerConfig) *Server {
 	s.mux.HandleFunc("/api/proxy/disable", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Disable)))
 	s.mux.HandleFunc("/api/proxy/restart", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.Restart)))
 	s.mux.HandleFunc("/api/proxy/set-mode", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.SetMode)))
+	s.mux.HandleFunc("/api/proxy/trust-ca", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.TrustCA)))
+	s.mux.HandleFunc("/api/proxy/install-binary", s.handleCORS(s.handleOpt404(cfg.ProxyHandlers.InstallBinary)))
 
 	return s
 }

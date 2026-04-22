@@ -21,14 +21,28 @@ import (
 //	POST /api/proxy/disable    body: (empty)
 //	POST /api/proxy/restart    body: (empty)
 //	POST /api/proxy/set-mode   body: {"mode": "observe" | "enforce"}
+//	POST /api/proxy/trust-ca   body: (empty). Invokes the OS trust-store
+//	                           installer on the CA cert the daemon wrote
+//	                           during its first proxy start. On macOS the
+//	                           keychain-password modal pops system-wide.
+//	POST /api/proxy/install-binary body: {"server_url": "..."} (optional;
+//	                           defaults to the daemon's configured
+//	                           server_url). Pulls the platform-appropriate
+//	                           binary from the server's /api/proxy/download
+//	                           endpoint and writes it to the conventional
+//	                           install path. Leaves lifecycle untouched —
+//	                           follow with a Configure call if you want
+//	                           the daemon to pick up the new binary.
 func (d *Daemon) proxyEndpoints() pairing.ProxyEndpoints {
 	return pairing.ProxyEndpoints{
-		Status:    d.handleProxyStatus,
-		Configure: d.handleProxyConfigure,
-		Enable:    d.handleProxyEnable,
-		Disable:   d.handleProxyDisable,
-		Restart:   d.handleProxyRestart,
-		SetMode:   d.handleProxySetMode,
+		Status:        d.handleProxyStatus,
+		Configure:     d.handleProxyConfigure,
+		Enable:        d.handleProxyEnable,
+		Disable:       d.handleProxyDisable,
+		Restart:       d.handleProxyRestart,
+		SetMode:       d.handleProxySetMode,
+		TrustCA:       d.handleProxyTrustCA,
+		InstallBinary: d.handleProxyInstallBinary,
 	}
 }
 
@@ -184,6 +198,73 @@ func (d *Daemon) handleProxySetMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": d.proxy.Status()})
+}
+
+// handleProxyTrustCA invokes the OS trust-store installer on the proxy's
+// CA cert. On macOS this pops the keychain-password modal from the
+// daemon's process — because launchd child processes share the user's
+// graphical session, the prompt appears system-wide. On Linux this
+// shells out to sudo and is only viable from a terminal-attached
+// daemon (not the typical dashboard-driven flow).
+//
+// Returns quickly on the happy path. A non-2xx response means either
+// (a) the CA cert is missing (proxy has never run) or (b) the user
+// cancelled the prompt / sudo failed.
+func (d *Daemon) handleProxyTrustCA(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	caPath := d.proxy.CACertPath()
+	if err := proxy.TrustCA(caPath); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ca_cert_path": caPath})
+}
+
+type proxyInstallBinaryRequest struct {
+	// ServerURL overrides the daemon's persisted server_url. Empty
+	// falls back to whatever /api/proxy/configure last received (or
+	// the currently-enabled proxy's config).
+	ServerURL string `json:"server_url,omitempty"`
+}
+
+// handleProxyInstallBinary pulls the platform-appropriate proxy binary
+// from the configured Clawvisor server's /api/proxy/download endpoint
+// and writes it to the conventional install path. Does NOT touch the
+// running proxy — the caller issues a Configure (or Restart) next if
+// they want the daemon to pick up the new binary.
+//
+// The dashboard one-click flow uses this during initial connect so
+// users don't have to manually `brew install` or build from source.
+func (d *Daemon) handleProxyInstallBinary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req proxyInstallBinaryRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	serverURL := req.ServerURL
+	if serverURL == "" {
+		serverURL = d.proxy.Status().ServerURL
+	}
+	if serverURL == "" {
+		writeErr(w, http.StatusBadRequest,
+			"no server_url — pass one in the body or run Configure first")
+		return
+	}
+	dst := proxy.DefaultBinaryPath()
+	if err := proxy.DownloadBinaryFromServer(serverURL, dst); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "binary_path": dst})
 }
 
 // -- helpers -----------------------------------------------------------
