@@ -170,11 +170,12 @@ func TestGetTask_LongPoll_TimesOut(t *testing.T) {
 	if str(t, body, "status") != "pending_approval" {
 		t.Errorf("expected status=pending_approval after timeout, got %v", body["status"])
 	}
+	// Server waits client_timeout + longPollGrace (10s) before timing out.
 	if elapsed < 900*time.Millisecond {
-		t.Errorf("expected ~1s wait, but returned in %s", elapsed)
+		t.Errorf("expected at least ~1s wait, but returned in %s", elapsed)
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("expected ~1s wait, took %s", elapsed)
+	if elapsed > 13*time.Second {
+		t.Errorf("expected ~11s wait (1s + grace), took %s", elapsed)
 	}
 }
 
@@ -194,8 +195,8 @@ func TestGetTask_LongPoll_TimeoutCapped(t *testing.T) {
 	body := mustStatus(t, resp, http.StatusCreated)
 	taskID := str(t, body, "task_id")
 
-	// Request a huge timeout — should be capped at 130s.
-	// We won't actually wait 130s; approve quickly to unblock.
+	// Request a huge timeout — should be capped at 120s.
+	// We won't actually wait 120s; approve quickly to unblock.
 	var (
 		wg       sync.WaitGroup
 		pollBody map[string]any

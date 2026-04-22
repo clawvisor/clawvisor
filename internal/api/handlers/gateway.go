@@ -1005,8 +1005,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	// If wait=true, long-poll for approval then execute inline.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, time.Duration(timeout)*time.Second)
+		pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, longPollDeadline(r))
 		if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
 			h.executeAndRespond(w, r.Context(), pa, agent.ID)
 			return
@@ -1041,7 +1040,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 // Query params:
 //
 //	wait=true    – long-poll until the request leaves the "pending" state (or timeout)
-//	timeout=N    – wait timeout in seconds (default 130, max 130)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
 //
 // Auth: agent bearer token
 func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
@@ -1064,8 +1063,7 @@ func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	// Long-poll: if wait=true and request is still pending, block until it
 	// transitions or the timeout elapses.
 	if r.URL.Query().Get("wait") == "true" && entry.Outcome == "pending" && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, longPollDeadline(r))
 		if r.Context().Err() != nil {
 			return
 		}
@@ -1089,22 +1087,31 @@ func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID
 	)
 }
 
-// parseLongPollTimeout extracts the timeout query param, clamped to [1, 130].
-// The cap sits ~10s above the typical 120s client-side HTTP timeout so the
-// server outlasts the client and writes complete cleanly when resolution
-// happens, while context-cancellation guards at the call sites suppress the
-// write when the client has already gone away.
+// parseLongPollTimeout extracts the client-requested timeout in seconds,
+// clamped to [1, 120]. This is the contract advertised to clients.
 func parseLongPollTimeout(r *http.Request) int {
-	timeout := 130
+	timeout := 120
 	if v := r.URL.Query().Get("timeout"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeout = n
 		}
 	}
-	if timeout > 130 {
-		timeout = 130
+	if timeout > 120 {
+		timeout = 120
 	}
 	return timeout
+}
+
+// longPollGrace is added to the client-requested timeout to derive the
+// server-side wait deadline. The server outlasts the typical client HTTP
+// timeout by this much; context-cancellation guards at each call site
+// suppress the write if the client has already disconnected.
+const longPollGrace = 10 * time.Second
+
+// longPollDeadline returns the server-side wait duration for a long-poll
+// request — the client-requested timeout plus longPollGrace.
+func longPollDeadline(r *http.Request) time.Duration {
+	return time.Duration(parseLongPollTimeout(r))*time.Second + longPollGrace
 }
 
 // waitForApprovalDecision long-polls until the pending approval leaves the
@@ -1199,7 +1206,7 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 // Query params:
 //
 //	wait=true    – long-poll until the request is approved, then execute (or timeout)
-//	timeout=N    – wait timeout in seconds (default 130, max 130)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
 //
 // POST /api/gateway/request/{request_id}/execute
 // Auth: agent bearer token
@@ -1228,8 +1235,7 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 
 	// If still pending and wait=true, long-poll until approval decision.
 	if pa.Status == "pending" && r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		pa = h.waitForApprovalDecision(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+		pa = h.waitForApprovalDecision(r.Context(), requestID, agent.UserID, longPollDeadline(r))
 		if pa == nil {
 			// Row deleted (denied/expired) — check the audit entry for the real outcome.
 			if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), requestID, agent.UserID); err == nil && entry.Outcome != "pending" {
