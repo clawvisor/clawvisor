@@ -233,14 +233,21 @@ func (m *Manager) Enable() error {
 		m.mu.Unlock()
 		return errors.New("proxy not configured — call Configure first")
 	}
+	// Reconcile Enabled=true to disk regardless of whether the process
+	// is already running. Without this, an Enable call after the daemon
+	// adopted a running-but-marked-disabled process (e.g. across a
+	// daemon restart) was a silent no-op and the persisted flag stayed
+	// false — so the next daemon boot wouldn't bring the proxy back.
+	if !m.cfg.Enabled {
+		m.cfg.Enabled = true
+		if err := m.persistEnabledLocked(); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+	}
 	if m.state == StateRunning || m.state == StateStarting {
 		m.mu.Unlock()
 		return nil
-	}
-	m.cfg.Enabled = true
-	if err := m.persistEnabledLocked(); err != nil {
-		m.mu.Unlock()
-		return err
 	}
 	m.mu.Unlock()
 	return m.startLocked(false)

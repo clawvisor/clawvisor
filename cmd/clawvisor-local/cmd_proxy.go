@@ -784,16 +784,27 @@ func mergeNodeOptions(existing, addition string) string {
 // buildProxyURL composes the HTTP_PROXY URL the wrapped child sees.
 // Both label and token are optional — see the proxy's
 // extractProxyAuthPair for the parsing rules on the receiving side.
+//
+// Bun's ProxyAgent rejects any proxy URL where either userinfo half is
+// empty:
+//   - `http://user@host`   (no colon)          → ConnectionRefused
+//   - `http://user:@host`  (empty password)    → ConnectionRefused
+//   - `http://:pass@host`  (empty username)    → likely the same
+// We work around this by always emitting non-empty strings on both
+// sides. For label-only we repeat the label (harmless; the proxy's
+// parser extracts user=label, tries it as a token, fails, and the
+// handler downgrades to labeled attribution with agentName=label).
+// For token-only we use a generic "agent" username; the real token is
+// still the password.
 func buildProxyURL(label, token, host, port string) string {
 	switch {
 	case token != "" && label != "":
 		return fmt.Sprintf("http://%s:%s@%s:%s", url.QueryEscape(label), url.QueryEscape(token), host, port)
 	case token != "":
-		// Backcompat shape so older proxies still extract the token from
-		// the userinfo when the new pair-aware parser isn't deployed.
-		return fmt.Sprintf("http://%s@%s:%s", url.QueryEscape(token), host, port)
+		return fmt.Sprintf("http://agent:%s@%s:%s", url.QueryEscape(token), host, port)
 	case label != "":
-		return fmt.Sprintf("http://%s@%s:%s", url.QueryEscape(label), host, port)
+		esc := url.QueryEscape(label)
+		return fmt.Sprintf("http://%s:%s@%s:%s", esc, esc, host, port)
 	default:
 		return fmt.Sprintf("http://%s:%s", host, port)
 	}
