@@ -371,14 +371,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		// Off until CI publishes proxy release artifacts and the dev
 		// loop is polished. Dev / staging flip via env var.
 		NetworkProxy: os.Getenv("CLAWVISOR_NETWORK_PROXY") == "1",
-		// The local-daemon pairing UI in Settings lights up when this
-		// is on. The cloud build sets it directly via WithFeatures;
-		// the open-source build falls back to this env var so a local
-		// dev can pair their clawvisor-local to `make run` without
-		// building the cloud image. Implicitly on when NetworkProxy is
-		// set, since the proxy's one-click Connect UX only works when
-		// the daemon has been paired.
-		LocalDaemon: os.Getenv("CLAWVISOR_LOCAL_DAEMON") == "1" || os.Getenv("CLAWVISOR_NETWORK_PROXY") == "1",
+		// LocalDaemon stays off in the open-source build — the
+		// Settings-page pairing UI it gates calls cloud-only endpoints
+		// (/api/daemon/pair, /api/daemon/services/enabled) that only
+		// the cloud build registers. The proxy's one-click Connect
+		// flow doesn't need this flag; it uses the daemon's permissive
+		// loopback CORS (see internal/local/pairing/server.go).
 	}
 
 	opts := &ServerOptions{

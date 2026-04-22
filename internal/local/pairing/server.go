@@ -257,8 +257,33 @@ func (s *Server) isAllowedOrigin(origin string) bool {
 	if origin == "" {
 		return false
 	}
+	// Loopback origins are always allowed. The daemon binds to
+	// 127.0.0.1 so anything making a browser request to it must
+	// already be running on this machine; restricting further would
+	// block the legitimate "make run" + dashboard developer path
+	// without denying anything a local attacker couldn't already do.
+	if isLoopbackOrigin(origin) {
+		return true
+	}
 	for _, allowed := range s.allowedOrigins {
 		if strings.EqualFold(origin, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLoopbackOrigin returns true for http(s)://127.0.0.1[:port],
+// http(s)://[::1][:port], and http(s)://localhost[:port]. Case
+// insensitive.
+func isLoopbackOrigin(origin string) bool {
+	lower := strings.ToLower(origin)
+	for _, prefix := range []string{
+		"http://127.0.0.1", "https://127.0.0.1",
+		"http://localhost", "https://localhost",
+		"http://[::1]", "https://[::1]",
+	} {
+		if lower == prefix || strings.HasPrefix(lower, prefix+":") || strings.HasPrefix(lower, prefix+"/") {
 			return true
 		}
 	}
