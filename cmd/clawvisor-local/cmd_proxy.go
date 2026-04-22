@@ -821,9 +821,13 @@ func discoverCACertPath() (string, error) {
 			return s.CACertPath, nil
 		}
 	}
-	// Fallback: the conventional path.
+	// Fallback: the daemon-owned proxy data dir
+	// (internal/local/proxy/manager.go nests proxy-data under the
+	// clawvisor-local base dir). Used when /api/proxy/status is
+	// unreachable mid-restart — still yields the correct path on a
+	// healthy install.
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".clawvisor", "proxy-data", "ca.pem"), nil
+	return filepath.Join(home, ".clawvisor", "local", "proxy-data", "ca.pem"), nil
 }
 
 // -- clawvisor-local proxy trust-ca -------------------------------------------
