@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	localproxy "github.com/clawvisor/clawvisor/internal/local/proxy"
 )
 
 //go:embed shim/clawvisor-proxy-shim.js
@@ -850,41 +852,11 @@ func runProxyTrustCA(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(caPath); err != nil {
-		return fmt.Errorf("CA cert not found at %s (make sure the proxy has run at least once): %w", caPath, err)
+	if err := localproxy.TrustCA(caPath); err != nil {
+		return err
 	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		home, _ := os.UserHomeDir()
-		keychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
-		c := exec.Command("security", "add-trusted-cert",
-			"-r", "trustRoot",
-			"-k", keychain,
-			caPath,
-		)
-		c.Stdin = os.Stdin
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			return fmt.Errorf("security add-trusted-cert failed: %w", err)
-		}
-		fmt.Println("Added Clawvisor Proxy CA to your login keychain.")
-		return nil
-
-	case "linux":
-		dst := "/usr/local/share/ca-certificates/clawvisor-proxy.crt"
-		fmt.Printf("Installing CA to %s (will prompt for sudo)\n", dst)
-		c := exec.Command("sudo", "sh", "-c",
-			fmt.Sprintf("cp %q %q && update-ca-certificates", caPath, dst))
-		c.Stdin = os.Stdin
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		return c.Run()
-
-	default:
-		return fmt.Errorf("trust-ca is not yet implemented for %s — install %s manually", runtime.GOOS, caPath)
-	}
+	fmt.Printf("Added Clawvisor Proxy CA to your trust store (%s).\n", caPath)
+	return nil
 }
 
 // -- daemon HTTP helpers ------------------------------------------------
