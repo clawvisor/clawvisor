@@ -166,6 +166,9 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		resolved := h.waitForConnectionResolution(r.Context(), req.ID, owner.ID, time.Duration(timeout)*time.Second)
+		if r.Context().Err() != nil {
+			return
+		}
 		resp := map[string]any{
 			"connection_id": req.ID,
 			"status":        resolved.Status,

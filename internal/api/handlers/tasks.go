@@ -512,6 +512,9 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		resolved := h.waitForTaskResolution(ctx, task.ID, agent.UserID, time.Duration(timeout)*time.Second)
+		if r.Context().Err() != nil {
+			return
+		}
 		sanitizeTaskForResponse(resolved)
 		writeJSON(w, http.StatusCreated, resolved)
 		return
@@ -536,7 +539,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Query params:
 //
 //	wait=true    – long-poll until the task leaves a pending state (or timeout)
-//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//	timeout=N    – wait timeout in seconds (default 130, max 130)
 func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	agent := middleware.AgentFromContext(ctx)
@@ -565,6 +568,9 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("wait") == "true" && isTaskPending(task.Status) && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+		if r.Context().Err() != nil {
+			return
+		}
 	}
 
 	sanitizeTaskForResponse(task)
@@ -1097,6 +1103,9 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		resolved := h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+		if r.Context().Err() != nil {
+			return
+		}
 		sanitizeTaskForResponse(resolved)
 		writeJSON(w, http.StatusOK, resolved)
 		return

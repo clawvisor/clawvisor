@@ -194,8 +194,8 @@ func TestGetTask_LongPoll_TimeoutCapped(t *testing.T) {
 	body := mustStatus(t, resp, http.StatusCreated)
 	taskID := str(t, body, "task_id")
 
-	// Request a huge timeout — should be capped at 120s.
-	// We won't actually wait 120s; approve quickly to unblock.
+	// Request a huge timeout — should be capped at 130s.
+	// We won't actually wait 130s; approve quickly to unblock.
 	var (
 		wg       sync.WaitGroup
 		pollBody map[string]any

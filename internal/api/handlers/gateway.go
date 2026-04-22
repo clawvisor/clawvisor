@@ -1041,7 +1041,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 // Query params:
 //
 //	wait=true    – long-poll until the request leaves the "pending" state (or timeout)
-//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//	timeout=N    – wait timeout in seconds (default 130, max 130)
 //
 // Auth: agent bearer token
 func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
@@ -1066,6 +1066,9 @@ func (h *GatewayHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("wait") == "true" && entry.Outcome == "pending" && h.eventHub != nil {
 		timeout := parseLongPollTimeout(r)
 		entry = h.waitForRequestResolution(r.Context(), requestID, agent.UserID, time.Duration(timeout)*time.Second)
+		if r.Context().Err() != nil {
+			return
+		}
 	}
 
 	writeGatewayStatusResponse(w, entry)
@@ -1086,16 +1089,20 @@ func (h *GatewayHandler) waitForRequestResolution(ctx context.Context, requestID
 	)
 }
 
-// parseLongPollTimeout extracts the timeout query param, clamped to [1, 120].
+// parseLongPollTimeout extracts the timeout query param, clamped to [1, 130].
+// The cap sits ~10s above the typical 120s client-side HTTP timeout so the
+// server outlasts the client and writes complete cleanly when resolution
+// happens, while context-cancellation guards at the call sites suppress the
+// write when the client has already gone away.
 func parseLongPollTimeout(r *http.Request) int {
-	timeout := 120
+	timeout := 130
 	if v := r.URL.Query().Get("timeout"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeout = n
 		}
 	}
-	if timeout > 120 {
-		timeout = 120
+	if timeout > 130 {
+		timeout = 130
 	}
 	return timeout
 }
@@ -1192,7 +1199,7 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 // Query params:
 //
 //	wait=true    – long-poll until the request is approved, then execute (or timeout)
-//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//	timeout=N    – wait timeout in seconds (default 130, max 130)
 //
 // POST /api/gateway/request/{request_id}/execute
 // Auth: agent bearer token
