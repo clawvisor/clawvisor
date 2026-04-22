@@ -31,13 +31,21 @@ const navItems = [
   { to: '/dashboard/services', label: 'Services', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
   { to: '/dashboard/restrictions', label: 'Restrictions', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
   { to: '/dashboard/agents', label: 'Agents', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg> },
-  { to: '/dashboard/proxies', label: 'Proxies', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg> },
-  { to: '/dashboard/vault', label: 'Vault', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> },
 { to: '/dashboard/audit', label: 'Gateway Log', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
   { to: '/dashboard/settings', label: 'Settings', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg> },
 ]
 
 const billingNavItem = { to: '/dashboard/billing', label: 'Billing', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><path d="M1 10h22"/></svg> }
+
+// Hidden behind the network_proxy feature flag — sidebar entries appear
+// only when the backend advertises the capability. Wired into the nav
+// array at render time, mirroring the billing pattern.
+//
+// Vault goes under the same gate: the only UX on that page is
+// managing injectable credentials for the proxy to consume. Without
+// the proxy, the vault is orphaned.
+const proxiesNavItem = { to: '/dashboard/proxies', label: 'Proxies', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg> }
+const vaultNavItem = { to: '/dashboard/vault', label: 'Vault', end: undefined as boolean | undefined, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> }
 
 const orgNavItems = [
   { to: '/dashboard/org', label: 'Organization', end: true, icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
@@ -137,7 +145,11 @@ export default function Dashboard() {
           </span>
         </div>
         <ul className="flex-1 py-2 overflow-y-auto">
-          {[...navItems, ...(features?.billing ? [billingNavItem] : [])].map(({ to, label, end, icon }) => (
+          {[
+            ...navItems,
+            ...(features?.network_proxy ? [proxiesNavItem, vaultNavItem] : []),
+            ...(features?.billing ? [billingNavItem] : []),
+          ].map(({ to, label, end, icon }) => (
             <li key={to}>
               <NavLink
                 to={to}
@@ -325,8 +337,12 @@ export default function Dashboard() {
           {features?.adapter_gen && <Route path="adapter-gen" element={<AdapterGen />} />}
           <Route path="audit" element={<Audit />} />
           <Route path="agents" element={<Agents />} />
-          <Route path="proxies/*" element={<Proxies />} />
-          <Route path="vault" element={<Vault />} />
+          {features?.network_proxy && (
+            <>
+              <Route path="proxies/*" element={<Proxies />} />
+              <Route path="vault" element={<Vault />} />
+            </>
+          )}
           <Route path="settings" element={<Settings />} />
           {features?.billing && <Route path="billing" element={<Billing />} />}
           {features?.teams && (

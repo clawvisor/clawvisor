@@ -28,6 +28,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		PasswordAuth:      opts.Features.PasswordAuth,
 		Billing:           opts.Features.Billing,
 		LocalDaemon:       opts.Features.LocalDaemon,
+		NetworkProxy:      opts.Features.NetworkProxy,
 	}))
 
 	if opts.ExtraRoutes != nil {

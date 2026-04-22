@@ -193,4 +193,8 @@ type FeatureSet struct {
 	PasswordAuth      bool `json:"password_auth"`
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
+	// NetworkProxy gates the Clawvisor Network Proxy dashboard UX.
+	// Off by default; flip via $CLAWVISOR_NETWORK_PROXY=1 in dev /
+	// staging until CI publishes proxy release artifacts.
+	NetworkProxy bool `json:"network_proxy"`
 }

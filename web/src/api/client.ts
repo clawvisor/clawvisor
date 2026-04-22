@@ -505,6 +505,10 @@ export interface FeatureSet {
   billing: boolean
   local_daemon: boolean
   mobile_pairing: boolean
+  // Gates the Clawvisor Network Proxy UX — Proxies tab, install
+  // flows, mint-enforcement-token UI. Off by default until CI
+  // publishes proxy release artifacts.
+  network_proxy: boolean
 }
 
 export interface VersionInfo {

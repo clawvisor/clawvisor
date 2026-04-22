@@ -127,6 +127,13 @@ type FeatureSet struct {
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
 	MobilePairing     bool `json:"mobile_pairing"`
+	// NetworkProxy gates the Clawvisor Network Proxy UX — the Proxies
+	// tab, install flows, mint-enforcement-token UI, and anything that
+	// assumes a paired agent's traffic runs through a local MITM proxy.
+	// Defaults to false until the dev loop is polished and CI publishes
+	// proxy release artifacts. Dev / staging flip via
+	// $CLAWVISOR_NETWORK_PROXY=1.
+	NetworkProxy bool `json:"network_proxy"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional

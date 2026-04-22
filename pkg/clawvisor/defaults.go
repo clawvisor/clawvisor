@@ -368,6 +368,9 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	features := FeatureSet{
 		PasswordAuth: cfg.Server.AuthMode == "password",
+		// Off until CI publishes proxy release artifacts and the dev
+		// loop is polished. Dev / staging flip via env var.
+		NetworkProxy: os.Getenv("CLAWVISOR_NETWORK_PROXY") == "1",
 	}
 
 	opts := &ServerOptions{
