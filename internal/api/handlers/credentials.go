@@ -40,6 +40,17 @@ func NewCredentialHandler(st store.Store, v vault.Vault, logger *slog.Logger) *C
 	}
 }
 
+// Close terminates the invalidations SSE hub so any long-lived
+// /api/proxy/invalidations handlers (subscribed by local proxies)
+// return promptly during server shutdown. Without this, http.Shutdown
+// waits the full grace period for those handlers to drain and exits
+// with "context deadline exceeded".
+func (h *CredentialHandler) Close() {
+	if h.invalidations != nil {
+		h.invalidations.Close()
+	}
+}
+
 // publishInvalidation notifies subscribed proxies that a credential's
 // cached value is stale. We fan out across *every* bridge belonging to
 // the credential's user, because any of that user's proxies may have

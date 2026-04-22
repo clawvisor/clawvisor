@@ -77,6 +77,7 @@ type Server struct {
 	tasksHandler       *handlers.TasksHandler
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
+	credHandler        *handlers.CredentialHandler // referenced during shutdown to close the invalidations hub
 
 	pushNotifier         *push.Notifier                 // concrete push notifier; may be nil
 	msgBuffer            groupchat.Buffer               // group chat message buffer; may be nil
@@ -795,6 +796,7 @@ func (s *Server) routes() http.Handler {
 	// user-facing vault UX for injectable credentials.
 	// See docs/design-proxy-stage2.md §2.
 	credHandler := handlers.NewCredentialHandler(s.store, s.vault, s.logger)
+	s.credHandler = credHandler
 	mux.Handle("POST /api/proxy/credential-lookup", requireProxy(e2e(http.HandlerFunc(credHandler.Lookup))))
 
 	// Public binary download — operator opt-in via $CLAWVISOR_PROXY_BINARY_DIR.
@@ -1279,7 +1281,14 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logger.Info("shutting down server")
 		}
 		// Close SSE connections first so handlers return before Shutdown waits on them.
+		// This includes the dashboard event hub AND the credential
+		// invalidations hub — the latter holds long-lived /api/proxy/invalidations
+		// streams from local proxies that would otherwise keep http.Shutdown
+		// blocked for the full grace period.
 		s.eventHub.Close()
+		if s.credHandler != nil {
+			s.credHandler.Close()
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
