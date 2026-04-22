@@ -1484,10 +1484,10 @@ func (s *Store) DeleteExpiredConnectionRequests(ctx context.Context) error {
 	return err
 }
 
-func (s *Store) CountPendingConnectionRequests(ctx context.Context) (int, error) {
+func (s *Store) CountPendingConnectionRequestsForUser(ctx context.Context, userID string) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connection_requests WHERE status = 'pending'`).Scan(&count)
+		`SELECT COUNT(*) FROM connection_requests WHERE status = 'pending' AND user_id = $1`, userID).Scan(&count)
 	return count, err
 }
 

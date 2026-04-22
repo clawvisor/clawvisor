@@ -141,7 +141,7 @@ type Store interface {
 	ListPendingConnectionRequests(ctx context.Context, userID string) ([]*ConnectionRequest, error)
 	UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error
 	DeleteExpiredConnectionRequests(ctx context.Context) error
-	CountPendingConnectionRequests(ctx context.Context) (int, error)
+	CountPendingConnectionRequestsForUser(ctx context.Context, userID string) (int, error)
 
 	// Generated adapters (cloud-safe persistence for LLM-generated YAML definitions)
 	SaveGeneratedAdapter(ctx context.Context, userID, serviceID, yamlContent string) error

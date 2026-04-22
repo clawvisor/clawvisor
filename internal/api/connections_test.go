@@ -283,16 +283,17 @@ func TestConnectionRequest_DeleteExpired(t *testing.T) {
 func TestConnectionRequest_CountPending(t *testing.T) {
 	env, _ := setupConnectionEnv(t)
 
-	count, err := env.Store.CountPendingConnectionRequests(context.Background())
+	owner, _ := env.Store.GetUserByEmail(context.Background(), "admin@local")
+
+	count, err := env.Store.CountPendingConnectionRequestsForUser(context.Background(), owner.ID)
 	if err != nil {
-		t.Fatalf("CountPendingConnectionRequests: %v", err)
+		t.Fatalf("CountPendingConnectionRequestsForUser: %v", err)
 	}
 	if count != 0 {
 		t.Errorf("expected 0 pending, got %d", count)
 	}
 
 	// Create one.
-	owner, _ := env.Store.GetUserByEmail(context.Background(), "admin@local")
 	_ = env.Store.CreateConnectionRequest(context.Background(), &store.ConnectionRequest{
 		UserID:    owner.ID,
 		Name:      "test",
@@ -300,9 +301,9 @@ func TestConnectionRequest_CountPending(t *testing.T) {
 		ExpiresAt: time.Now().Add(5 * time.Minute),
 	})
 
-	count, err = env.Store.CountPendingConnectionRequests(context.Background())
+	count, err = env.Store.CountPendingConnectionRequestsForUser(context.Background(), owner.ID)
 	if err != nil {
-		t.Fatalf("CountPendingConnectionRequests: %v", err)
+		t.Fatalf("CountPendingConnectionRequestsForUser: %v", err)
 	}
 	if count != 1 {
 		t.Errorf("expected 1 pending, got %d", count)

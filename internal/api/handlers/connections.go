@@ -94,21 +94,11 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check pending count.
-	count, err := h.st.CountPendingConnectionRequests(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check pending requests")
-		return
-	}
-	if count >= maxPendingRequests {
-		writeError(w, http.StatusTooManyRequests, "TOO_MANY_PENDING", "too many pending connection requests")
-		return
-	}
-
 	// Resolve the target user. In multi-tenant mode, user_id is required so
 	// the connection request is routed to the correct user. In single-tenant
 	// mode, fall back to admin@local for backward compatibility.
 	var owner *store.User
+	var err error
 	if body.UserID != "" {
 		owner, err = h.st.GetUserByID(r.Context(), body.UserID)
 		if err != nil {
@@ -124,6 +114,17 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve daemon owner")
 			return
 		}
+	}
+
+	// Check pending count for this user.
+	count, err := h.st.CountPendingConnectionRequestsForUser(r.Context(), owner.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not check pending requests")
+		return
+	}
+	if count >= maxPendingRequests {
+		writeError(w, http.StatusTooManyRequests, "TOO_MANY_PENDING", "too many pending connection requests")
+		return
 	}
 
 	req := &store.ConnectionRequest{
