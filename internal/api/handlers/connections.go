@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -25,11 +24,11 @@ var (
 )
 
 const (
-	connectionRequestExpiry       = 5 * time.Minute
-	connectionTokenWindow         = 5 * time.Minute
-	maxPendingRequests            = 10
-	pollTimeout                   = 30 * time.Second
-	maxConcurrentPolls      int64 = 50
+	connectionRequestExpiry   = 5 * time.Minute
+	connectionTokenWindow     = 5 * time.Minute
+	maxPendingRequests        = 10
+	pollTimeout               = 30 * time.Second
+	maxConcurrentPollsPerUser = 10
 )
 
 // ConnectionsHandler manages agent connection request lifecycle.
@@ -45,8 +44,9 @@ type ConnectionsHandler struct {
 	// or Redis, depending on server configuration.
 	tokenCache TokenCache
 
-	// Active long-poll count.
-	activePolls atomic.Int64
+	// Per-user concurrent poll tracking.
+	userPollsMu sync.Mutex
+	userPolls   map[string]int
 
 	// Per-IP concurrent poll tracking.
 	ipPollsMu sync.Mutex
@@ -68,6 +68,7 @@ func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
 		baseURL:     baseURL,
 		multiTenant: multiTenant,
 		tokenCache:  newMemoryTokenCache(connectionTokenWindow),
+		userPolls:   make(map[string]int),
 		ipPolls:     make(map[string]int),
 	}
 }
@@ -253,22 +254,31 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 		h.ipPollsMu.Unlock()
 	}()
 
-	// Global concurrent poll limit.
-	active := h.activePolls.Add(1)
-	defer h.activePolls.Add(-1)
-
-	if active > maxConcurrentPolls {
-		// Degrade: return current status immediately.
-		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
-		return
-	}
-
 	// Look up the connection request to get the owner's user ID for SSE subscription.
 	cr, err := h.st.GetConnectionRequest(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
 		return
 	}
+
+	// Per-user concurrent poll limit. Degrade to immediate "pending" if exceeded
+	// so a single user cannot saturate the instance.
+	h.userPollsMu.Lock()
+	if h.userPolls[cr.UserID] >= maxConcurrentPollsPerUser {
+		h.userPollsMu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+		return
+	}
+	h.userPolls[cr.UserID]++
+	h.userPollsMu.Unlock()
+	defer func() {
+		h.userPollsMu.Lock()
+		h.userPolls[cr.UserID]--
+		if h.userPolls[cr.UserID] <= 0 {
+			delete(h.userPolls, cr.UserID)
+		}
+		h.userPollsMu.Unlock()
+	}()
 
 	if h.eventHub == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
