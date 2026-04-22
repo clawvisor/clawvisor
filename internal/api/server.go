@@ -342,11 +342,14 @@ func New(
 	mux := s.routes()
 
 	s.http = &http.Server{
-		Addr:         cfg.Server.Addr(),
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:        cfg.Server.Addr(),
+		Handler:     mux,
+		ReadTimeout: 30 * time.Second,
+		// WriteTimeout and IdleTimeout must exceed the long-poll cap
+		// (parseLongPollTimeout) and MCP SSE idle gaps. Otherwise the
+		// connection is torn down mid-handler and Cloud Run reports a 503.
+		WriteTimeout: 180 * time.Second,
+		IdleTimeout:  180 * time.Second,
 	}
 
 	return s, nil

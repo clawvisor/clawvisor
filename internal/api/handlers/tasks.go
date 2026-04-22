@@ -510,8 +510,10 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// If wait=true, long-poll until the task is approved or denied.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		resolved := h.waitForTaskResolution(ctx, task.ID, agent.UserID, time.Duration(timeout)*time.Second)
+		resolved := h.waitForTaskResolution(ctx, task.ID, agent.UserID, longPollDeadline(r))
+		if r.Context().Err() != nil {
+			return
+		}
 		sanitizeTaskForResponse(resolved)
 		writeJSON(w, http.StatusCreated, resolved)
 		return
@@ -563,8 +565,10 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Long-poll: if wait=true and task is still pending, block until it
 	// transitions or the timeout elapses.
 	if r.URL.Query().Get("wait") == "true" && isTaskPending(task.Status) && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, longPollDeadline(r))
+		if r.Context().Err() != nil {
+			return
+		}
 	}
 
 	sanitizeTaskForResponse(task)
@@ -1095,8 +1099,10 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 
 	// If wait=true, long-poll until the expansion is approved or denied.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
-		timeout := parseLongPollTimeout(r)
-		resolved := h.waitForTaskResolution(ctx, taskID, agent.UserID, time.Duration(timeout)*time.Second)
+		resolved := h.waitForTaskResolution(ctx, taskID, agent.UserID, longPollDeadline(r))
+		if r.Context().Err() != nil {
+			return
+		}
 		sanitizeTaskForResponse(resolved)
 		writeJSON(w, http.StatusOK, resolved)
 		return

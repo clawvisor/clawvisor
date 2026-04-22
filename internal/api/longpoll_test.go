@@ -170,11 +170,12 @@ func TestGetTask_LongPoll_TimesOut(t *testing.T) {
 	if str(t, body, "status") != "pending_approval" {
 		t.Errorf("expected status=pending_approval after timeout, got %v", body["status"])
 	}
+	// Server waits client_timeout + longPollGrace (10s) before timing out.
 	if elapsed < 900*time.Millisecond {
-		t.Errorf("expected ~1s wait, but returned in %s", elapsed)
+		t.Errorf("expected at least ~1s wait, but returned in %s", elapsed)
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("expected ~1s wait, took %s", elapsed)
+	if elapsed > 13*time.Second {
+		t.Errorf("expected ~11s wait (1s + grace), took %s", elapsed)
 	}
 }
 
