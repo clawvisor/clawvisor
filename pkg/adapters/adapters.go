@@ -353,6 +353,18 @@ func (r *Registry) Replace(a Adapter) {
 	r.adapters[a.ServiceID()] = a
 }
 
+// ReplaceForUser stores (or replaces) a user-scoped adapter in the per-user
+// cache. Used for hot-reload of user-generated (per-tenant) adapters without
+// leaking them into the shared registry.
+func (r *Registry) ReplaceForUser(serviceID, userID string, a Adapter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.userAdapters[userID] == nil {
+		r.userAdapters[userID] = make(map[string]Adapter)
+	}
+	r.userAdapters[userID][serviceID] = a
+}
+
 // Remove deletes an adapter from the shared registry by service ID.
 func (r *Registry) Remove(serviceID string) {
 	r.mu.Lock()
