@@ -149,7 +149,7 @@ func readLocalSession() (*localSessionFile, error) {
 	return &sess, nil
 }
 
-// saveRefreshToken persists the refresh token to ~/.clawvisor/config.yaml
+// saveRefreshToken persists the refresh token to ~/.clawvisor/tui.yaml
 // so subsequent TUI launches can use it directly.
 func saveRefreshToken(serverURL, refreshToken string) {
 	cfgPath, err := tuiconfig.DefaultPath()

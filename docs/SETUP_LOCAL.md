@@ -103,7 +103,7 @@ This covers:
 - **iMessage** — macOS only, reads the local `chat.db`
 
 The wizard generates `config.yaml` in the repository root and writes
-`~/.clawvisor/config.yaml` with the server URL so the TUI knows where to
+`~/.clawvisor/tui.yaml` with the server URL so the TUI knows where to
 connect.
 
 **If the setup wizard cannot run** (e.g. no interactive terminal), skip to the
@@ -180,12 +180,12 @@ cd "$CLAWVISOR_REPO" && make tui
 
 The TUI auto-authenticates using `~/.clawvisor/.local-session` written by the
 server in Step 4. On first launch it exchanges the session token for a refresh
-token and saves it to `~/.clawvisor/config.yaml` for future use.
+token and saves it to `~/.clawvisor/tui.yaml` for future use.
 
 Verify it connects:
 
 ```bash
-ls ~/.clawvisor/config.yaml 2>/dev/null
+ls ~/.clawvisor/tui.yaml 2>/dev/null
 ```
 
 ---

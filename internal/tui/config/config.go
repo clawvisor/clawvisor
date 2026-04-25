@@ -14,7 +14,7 @@ type Profile struct {
 	Token     string `yaml:"token"`
 }
 
-// Config is the TUI configuration file (~/.clawvisor/config.yaml).
+// Config is the TUI configuration file (~/.clawvisor/tui.yaml).
 type Config struct {
 	Profiles      map[string]Profile `yaml:"profiles"`
 	ActiveProfile string             `yaml:"active_profile"`
@@ -30,13 +30,13 @@ func DefaultDir() (string, error) {
 	return filepath.Join(home, ".clawvisor"), nil
 }
 
-// DefaultPath returns ~/.clawvisor/config.yaml.
+// DefaultPath returns ~/.clawvisor/tui.yaml.
 func DefaultPath() (string, error) {
 	dir, err := DefaultDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "config.yaml"), nil
+	return filepath.Join(dir, "tui.yaml"), nil
 }
 
 // Load reads the config file at path. Returns an error if the file doesn't exist.
