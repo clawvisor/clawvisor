@@ -693,6 +693,127 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+// Start resolves a task into the active state and, when provided a runtime
+// session id, binds that runtime session to the task for subsequent proxy
+// attribution and biasing.
+//
+// POST /api/tasks/{id}/start
+// Auth: agent bearer token
+//
+// Query params:
+//
+//	wait=true    – long-poll until the task leaves a pending state (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//
+// Body:
+//
+//	{"session_id":"<runtime session id>"}
+func (h *TasksHandler) Start(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agent := middleware.AgentFromContext(ctx)
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	taskID := r.PathValue("id")
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != agent.UserID || task.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+	if r.URL.Query().Get("wait") == "true" && isTaskPending(task.Status) && h.eventHub != nil {
+		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, longPollDeadline(r))
+		if r.Context().Err() != nil {
+			return
+		}
+	}
+
+	var req struct {
+		SessionID        string `json:"session_id"`
+		RuntimeSessionID string `json:"runtime_session_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+
+	if task.Status != "active" {
+		sanitizeTaskForResponse(task)
+		writeJSON(w, http.StatusOK, task)
+		return
+	}
+
+	resp := map[string]any{
+		"task_id": task.ID,
+		"status":  task.Status,
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.RuntimeSessionID)
+	}
+	if sessionID == "" {
+		if task.ExpiresAt != nil {
+			resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	sess, err := h.st.GetRuntimeSession(ctx, sessionID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "runtime session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get runtime session")
+		return
+	}
+	if sess.UserID != agent.UserID || sess.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
+		return
+	}
+	if sess.RevokedAt != nil || !sess.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusGone, "RUNTIME_SESSION_EXPIRED", "runtime session is no longer active")
+		return
+	}
+	now := time.Now().UTC()
+	startedAt := now
+	if existing, err := h.st.GetActiveTaskSession(ctx, task.ID, sess.ID); err == nil && existing != nil {
+		startedAt = existing.StartedAt
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"source": "task_start",
+	})
+	if err := h.st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+		TaskID:       task.ID,
+		SessionID:    sess.ID,
+		UserID:       sess.UserID,
+		AgentID:      sess.AgentID,
+		Status:       "active",
+		MetadataJSON: metadata,
+		StartedAt:    startedAt,
+		LastSeenAt:   now,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not bind runtime session to task")
+		return
+	}
+	resp["session_id"] = sess.ID
+	if task.ExpiresAt != nil {
+		resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // isTaskPending returns true if the status represents a state that is
 // waiting on user action.
 func isTaskPending(status string) bool {
@@ -949,11 +1070,11 @@ func mergeRiskAssessments(primary, secondary *taskrisk.RiskAssessment) *taskrisk
 func highestRiskLevel(a, b string) string {
 	order := map[string]int{
 		"":         -1,
-		"low":      0,
-		"medium":   1,
-		"high":     2,
-		"critical": 3,
-		"unknown":  4,
+		"unknown":  0,
+		"low":      1,
+		"medium":   2,
+		"high":     3,
+		"critical": 4,
 	}
 	if order[b] > order[a] {
 		return b

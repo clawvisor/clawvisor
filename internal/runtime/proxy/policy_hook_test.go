@@ -116,6 +116,72 @@ func TestRuntimeProxyAllowsMatchedTaskAndConsumesOneOffApprovals(t *testing.T) {
 	}
 }
 
+func TestRuntimeProxyConsumesOneOffApprovalsAcrossSessionsForSameAgent(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-cross-session.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	firstSession := createRuntimeSession(t, st, "session-a", userID, agentID, false)
+	secondSession := createRuntimeSession(t, st, "session-b", userID, agentID, false)
+	srv := newStartedRuntimeProxy(t, st, cfg)
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL+"/blocked", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+firstSession.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("blocked proxy request: %v", err)
+	}
+	blockedBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected runtime approval block, got %d", resp.StatusCode)
+	}
+	var blocked map[string]any
+	if err := json.Unmarshal(blockedBody, &blocked); err != nil {
+		t.Fatalf("unmarshal blocked response: %v", err)
+	}
+	fingerprint := blocked["request_fingerprint"].(string)
+	approvalID := blocked["approval_id"].(string)
+
+	if err := st.CreateOneOffApproval(ctx, &store.OneOffApproval{
+		SessionID:          firstSession.id,
+		RequestFingerprint: fingerprint,
+		ApprovalID:         &approvalID,
+		ApprovedAt:         time.Now().UTC(),
+		ExpiresAt:          time.Now().UTC().Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateOneOffApproval: %v", err)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, upstream.URL+"/blocked", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+secondSession.secret)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("cross-session proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected cross-session one-off success, got %d %q", resp.StatusCode, string(body))
+	}
+}
+
 func TestRuntimeProxyObservationModeAllowsAndAudits(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-observe.db")
@@ -218,6 +284,89 @@ func TestRuntimeProxyAcceptsBasicProxyCredentials(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
 		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(body))
+	}
+}
+
+func TestRuntimeProxyPrefersActiveTaskSessionBinding(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-task-bias.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+	upstreamURL, _ := url.Parse(upstream.URL)
+
+	for _, taskID := range []string{"task-a", "task-b"} {
+		if err := st.CreateTask(ctx, &store.Task{
+			ID:            taskID,
+			UserID:        userID,
+			AgentID:       agentID,
+			Purpose:       "overlapping runtime task " + taskID,
+			Status:        "active",
+			Lifetime:      "session",
+			SchemaVersion: 2,
+			ExpectedEgress: mustJSON(t, []map[string]any{{
+				"host":   upstreamURL.Hostname(),
+				"method": "GET",
+				"path":   "/",
+				"why":    "Overlap for active-session bias test.",
+			}}),
+			ExpiresInSeconds: 3600,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", taskID, err)
+		}
+	}
+
+	session := createRuntimeSession(t, st, "session-bias", userID, agentID, false)
+	now := time.Now().UTC()
+	if err := st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+		TaskID:     "task-b",
+		SessionID:  session.id,
+		UserID:     userID,
+		AgentID:    agentID,
+		Status:     "active",
+		StartedAt:  now,
+		LastSeenAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertActiveTaskSession: %v", err)
+	}
+
+	srv := newStartedRuntimeProxy(t, st, cfg)
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(body))
+	}
+
+	entries, _, err := st.ListAuditEntries(ctx, userID, store.AuditFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected audit entry")
+	}
+	if entries[0].MatchedTaskID == nil || *entries[0].MatchedTaskID != "task-b" {
+		t.Fatalf("expected matched task to prefer active session binding, got %+v", entries[0].MatchedTaskID)
 	}
 }
 

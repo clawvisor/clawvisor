@@ -133,6 +133,7 @@ type Store interface {
 	// Runtime one-off approvals
 	CreateOneOffApproval(ctx context.Context, approval *OneOffApproval) error
 	ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*OneOffApproval, error)
+	ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*OneOffApproval, error)
 
 	// Runtime leases
 	CreateToolExecutionLease(ctx context.Context, lease *ToolExecutionLease) error

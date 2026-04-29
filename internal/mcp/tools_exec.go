@@ -150,10 +150,11 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		if err := validatePathParam(id, "task_id"); err != nil {
 			return internalRoute{}, nil, err
 		}
-		path := "/api/tasks/" + id
+		path := "/api/tasks/" + id + "/start"
 		path += buildWaitQuery(args, getString, true)
-		return internalRoute{"GET", path, "GET /api/tasks/{id}",
-			map[string]string{"id": id}}, nil, nil
+		body := stripKeys(args, "task_id", "wait", "timeout")
+		return internalRoute{"POST", path, "POST /api/tasks/{id}/start",
+			map[string]string{"id": id}}, body, nil
 
 	case "complete_task", "clawvisor_task_end":
 		id := getString("task_id")

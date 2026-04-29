@@ -1692,6 +1692,42 @@ func (s *Store) ConsumeOneOffApproval(ctx context.Context, sessionID, requestFin
 	return approval, nil
 }
 
+func (s *Store) ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT o.id, o.session_id, o.request_fingerprint, o.approval_id, o.approved_at, o.expires_at, o.used_at
+		FROM one_off_approvals o
+		JOIN runtime_sessions rs ON rs.id = o.session_id
+		WHERE rs.agent_id = ? AND o.request_fingerprint = ? AND o.used_at IS NULL AND o.expires_at > ?
+		ORDER BY o.approved_at ASC LIMIT 1
+	`, agentID, requestFingerprint, now.UTC().Format(time.RFC3339))
+	approval, err := scanSQLiteOneOffApproval(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE one_off_approvals SET used_at = ? WHERE id = ? AND used_at IS NULL`,
+		now.UTC().Format(time.RFC3339), approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
 func scanSQLiteOneOffApproval(scanner interface{ Scan(dest ...any) error }) (*store.OneOffApproval, error) {
 	approval := &store.OneOffApproval{}
 	var approvedAt, expiresAt string

@@ -49,16 +49,26 @@ func TestBuildInternalRequestCanonicalTaskAliases(t *testing.T) {
 	})
 
 	t.Run("start alias", func(t *testing.T) {
-		args := mustJSON(t, map[string]any{"task_id": "task-123"})
-		route, _, err := buildInternalRequest("clawvisor_task_start", args)
+		args := mustJSON(t, map[string]any{
+			"task_id":            "task-123",
+			"runtime_session_id": "session-abc",
+		})
+		route, body, err := buildInternalRequest("clawvisor_task_start", args)
 		if err != nil {
 			t.Fatalf("buildInternalRequest: %v", err)
 		}
-		if route.method != "GET" || route.pattern != "GET /api/tasks/{id}" {
+		if route.method != "POST" || route.pattern != "POST /api/tasks/{id}/start" {
 			t.Fatalf("unexpected route for start alias: %+v", route)
 		}
-		if route.path != "/api/tasks/task-123?wait=true" {
+		if route.path != "/api/tasks/task-123/start?wait=true" {
 			t.Fatalf("unexpected path for start alias: %q", route.path)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+		if payload["runtime_session_id"] != "session-abc" {
+			t.Fatalf("unexpected body payload: %+v", payload)
 		}
 	})
 

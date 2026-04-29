@@ -54,7 +54,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		req.ContentLength = int64(len(bodyBytes))
 
 		host := requestHost(req)
-		reqFingerprint := fingerprintRequest(st.Session.ID, req, bodyBytes)
+		reqFingerprint := fingerprintRequest(st.Session.AgentID, req, bodyBytes)
 		approvalRequestID := st.Session.ID + ":" + reqFingerprint
 
 		paramsSafe, _ := json.Marshal(map[string]any{
@@ -89,19 +89,14 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			}
 			candidateTasks = append(candidateTasks, task)
 		}
-		if match, err := runtimepolicy.MatchEgressRequest(candidateTasks, egressReq); err == nil && match != nil {
-			for _, task := range candidateTasks {
-				if task.ID == match.TaskID {
-					matchedTask = task
-					matchedWhy = match.Item.Why
-					break
-				}
-			}
+		if match, task, err := matchPreferredEgressTask(req.Context(), hooks.Store, st.Session.ID, candidateTasks, egressReq); err == nil && match != nil {
+			matchedTask = task
+			matchedWhy = match.Item.Why
 		} else if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid task egress matcher"}`)
 		}
 
-		if oneOff, err := hooks.Store.ConsumeOneOffApproval(req.Context(), st.Session.ID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
+		if oneOff, err := hooks.Store.ConsumeAgentOneOffApproval(req.Context(), st.Session.AgentID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
 			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, matchedTask, oneOff.ApprovalID, paramsSafe, req.Method, "allow", "approved", matchedWhy, false, false)
 			return req, nil
 		}
@@ -231,7 +226,11 @@ func (s *Server) recordTaskActivity(ctx context.Context, st store.Store, session
 	if session == nil || task == nil {
 		return
 	}
-	if _, err := st.GetActiveTaskSession(ctx, task.ID, session.ID); err == store.ErrNotFound {
+	now := time.Now().UTC()
+	activeStartedAt := now
+	if existing, err := st.GetActiveTaskSession(ctx, task.ID, session.ID); err == nil && existing != nil {
+		activeStartedAt = existing.StartedAt
+	} else if err == store.ErrNotFound {
 		inv := &store.TaskInvocation{
 			TaskID:         task.ID,
 			SessionID:      session.ID,
@@ -240,22 +239,23 @@ func (s *Server) recordTaskActivity(ctx context.Context, st store.Store, session
 			RequestID:      requestID,
 			InvocationType: "runtime_proxy",
 			Status:         "active",
-			CreatedAt:      time.Now().UTC(),
+			CreatedAt:      now,
 		}
 		if err := st.CreateTaskInvocation(ctx, inv); err == nil {
-			metadata, _ := json.Marshal(map[string]any{"invocation_id": inv.ID})
-			_ = st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
-				TaskID:       task.ID,
-				SessionID:    session.ID,
-				UserID:       session.UserID,
-				AgentID:      session.AgentID,
-				MetadataJSON: metadata,
-				StartedAt:    inv.CreatedAt,
-				LastSeenAt:   inv.CreatedAt,
-				Status:       "active",
-			})
+			activeStartedAt = inv.CreatedAt
 		}
 	}
+	metadata, _ := json.Marshal(map[string]any{"request_id": requestID})
+	_ = st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+		TaskID:       task.ID,
+		SessionID:    session.ID,
+		UserID:       session.UserID,
+		AgentID:      session.AgentID,
+		MetadataJSON: metadata,
+		StartedAt:    activeStartedAt,
+		LastSeenAt:   now,
+		Status:       "active",
+	})
 	_ = st.CreateTaskCall(ctx, &store.TaskCall{
 		TaskID:    task.ID,
 		RequestID: requestID,
@@ -263,7 +263,7 @@ func (s *Server) recordTaskActivity(ctx context.Context, st store.Store, session
 		Service:   "runtime.egress",
 		Action:    "http",
 		Outcome:   "allowed",
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: now,
 	})
 }
 
@@ -294,9 +294,49 @@ func requestHost(req *http.Request) string {
 	return strings.ToLower(req.Host)
 }
 
-func fingerprintRequest(sessionID string, req *http.Request, body []byte) string {
-	sum := sha256.Sum256([]byte(sessionID + "|" + req.Method + "|" + requestHost(req) + "|" + req.URL.Path + "|" + req.URL.RawQuery + "|" + hex.EncodeToString(body)))
+func fingerprintRequest(agentID string, req *http.Request, body []byte) string {
+	sum := sha256.Sum256([]byte(agentID + "|" + req.Method + "|" + requestHost(req) + "|" + req.URL.Path + "|" + req.URL.RawQuery + "|" + hex.EncodeToString(body)))
 	return hex.EncodeToString(sum[:])
+}
+
+func matchPreferredEgressTask(ctx context.Context, st store.Store, sessionID string, tasks []*store.Task, req runtimepolicy.EgressRequest) (*runtimepolicy.EgressMatch, *store.Task, error) {
+	if len(tasks) == 0 {
+		return nil, nil, nil
+	}
+	preferred, fallback := partitionTasksByActiveSession(ctx, st, sessionID, tasks)
+	if match, task, err := matchEgressTask(preferred, req); err != nil || match != nil {
+		return match, task, err
+	}
+	return matchEgressTask(fallback, req)
+}
+
+func partitionTasksByActiveSession(ctx context.Context, st store.Store, sessionID string, tasks []*store.Task) ([]*store.Task, []*store.Task) {
+	preferred := make([]*store.Task, 0, len(tasks))
+	fallback := make([]*store.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if _, err := st.GetActiveTaskSession(ctx, task.ID, sessionID); err == nil {
+			preferred = append(preferred, task)
+			continue
+		}
+		fallback = append(fallback, task)
+	}
+	return preferred, fallback
+}
+
+func matchEgressTask(tasks []*store.Task, req runtimepolicy.EgressRequest) (*runtimepolicy.EgressMatch, *store.Task, error) {
+	if len(tasks) == 0 {
+		return nil, nil, nil
+	}
+	match, err := runtimepolicy.MatchEgressRequest(tasks, req)
+	if err != nil || match == nil {
+		return match, nil, err
+	}
+	for _, task := range tasks {
+		if task.ID == match.TaskID {
+			return match, task, nil
+		}
+	}
+	return nil, nil, nil
 }
 
 func flattenHeaders(header http.Header) map[string]string {

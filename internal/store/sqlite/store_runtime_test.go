@@ -202,6 +202,17 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 		t.Fatalf("RevokeRuntimeSession: %v", err)
 	}
 
+	runtimeSession2 := &store.RuntimeSession{
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "secret-hash-2",
+		ExpiresAt:             now.Add(20 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, runtimeSession2); err != nil {
+		t.Fatalf("CreateRuntimeSession(second): %v", err)
+	}
+
 	oneOff := &store.OneOffApproval{
 		SessionID:          sessionID,
 		RequestFingerprint: "fp-1",
@@ -221,6 +232,27 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	}
 	if _, err := st.ConsumeOneOffApproval(ctx, sessionID, "fp-1", now.Add(2*time.Second)); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("second ConsumeOneOffApproval err=%v, want ErrNotFound", err)
+	}
+
+	agentScopedOneOff := &store.OneOffApproval{
+		SessionID:          runtimeSession2.ID,
+		RequestFingerprint: "fp-agent",
+		ApprovalID:         &approval.ID,
+		ApprovedAt:         now,
+		ExpiresAt:          now.Add(2 * time.Minute),
+	}
+	if err := st.CreateOneOffApproval(ctx, agentScopedOneOff); err != nil {
+		t.Fatalf("CreateOneOffApproval(agent-scoped): %v", err)
+	}
+	consumedByAgent, err := st.ConsumeAgentOneOffApproval(ctx, agent.ID, "fp-agent", now.Add(3*time.Second))
+	if err != nil {
+		t.Fatalf("ConsumeAgentOneOffApproval: %v", err)
+	}
+	if consumedByAgent.SessionID != runtimeSession2.ID {
+		t.Fatalf("ConsumeAgentOneOffApproval session=%q, want %q", consumedByAgent.SessionID, runtimeSession2.ID)
+	}
+	if _, err := st.ConsumeAgentOneOffApproval(ctx, agent.ID, "fp-agent", now.Add(4*time.Second)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second ConsumeAgentOneOffApproval err=%v, want ErrNotFound", err)
 	}
 
 	lease := &store.ToolExecutionLease{

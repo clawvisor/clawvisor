@@ -1553,6 +1553,42 @@ func (s *Store) ConsumeOneOffApproval(ctx context.Context, sessionID, requestFin
 	return approval, nil
 }
 
+func (s *Store) ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row := tx.QueryRow(ctx, `
+		SELECT o.id, o.session_id, o.request_fingerprint, o.approval_id, o.approved_at, o.expires_at, o.used_at
+		FROM one_off_approvals o
+		JOIN runtime_sessions rs ON rs.id = o.session_id
+		WHERE rs.agent_id = $1 AND o.request_fingerprint = $2 AND o.used_at IS NULL AND o.expires_at > $3
+		ORDER BY o.approved_at ASC LIMIT 1
+	`, agentID, requestFingerprint, now)
+	approval := &store.OneOffApproval{}
+	if err := row.Scan(&approval.ID, &approval.SessionID, &approval.RequestFingerprint, &approval.ApprovalID,
+		&approval.ApprovedAt, &approval.ExpiresAt, &approval.UsedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE one_off_approvals SET used_at = $1 WHERE id = $2 AND used_at IS NULL`, now, approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
 // ── Tool Execution Leases ────────────────────────────────────────────────────
 
 func (s *Store) CreateToolExecutionLease(ctx context.Context, lease *store.ToolExecutionLease) error {
