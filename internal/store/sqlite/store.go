@@ -1607,6 +1607,77 @@ func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt t
 	return nil
 }
 
+func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.New().String()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_events (
+			id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+			approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+			resolution_transport, decision, outcome, reason, metadata_json
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, event.ID, event.Timestamp.UTC().Format(time.RFC3339), event.SessionID, event.UserID, event.AgentID,
+		event.Provider, event.EventType, event.ActionKind, event.ApprovalID, event.TaskID, event.MatchedTaskID,
+		event.LeaseID, event.ToolUseID, event.RequestFingerprint, event.ResolutionTransport, event.Decision,
+		event.Outcome, event.Reason, rawJSONOrDefault(event.MetadataJSON, "{}"))
+	return err
+}
+
+func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter store.RuntimeEventFilter) ([]*store.RuntimeEvent, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	args := []any{userID}
+	query := `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE user_id = ?
+	`
+	if filter.SessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, filter.SessionID)
+	}
+	query += ` ORDER BY timestamp DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeEvent
+	for rows.Next() {
+		event, err := scanSQLiteRuntimeEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func scanSQLiteRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeEvent, error) {
+	event := &store.RuntimeEvent{}
+	var timestamp, metadataJSON string
+	if err := scanner.Scan(
+		&event.ID, &timestamp, &event.SessionID, &event.UserID, &event.AgentID, &event.Provider,
+		&event.EventType, &event.ActionKind, &event.ApprovalID, &event.TaskID, &event.MatchedTaskID,
+		&event.LeaseID, &event.ToolUseID, &event.RequestFingerprint, &event.ResolutionTransport,
+		&event.Decision, &event.Outcome, &event.Reason, &metadataJSON,
+	); err != nil {
+		return nil, err
+	}
+	event.Timestamp = parseTime(timestamp)
+	event.MetadataJSON = json.RawMessage(metadataJSON)
+	return event, nil
+}
+
 func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
 	rows, err := s.db.QueryContext(ctx, query, arg)
 	if err != nil {

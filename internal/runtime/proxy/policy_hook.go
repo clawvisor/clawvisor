@@ -116,6 +116,25 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				UsedActiveTaskContext: usedActiveTaskContext,
 				UsedLeaseBias:         usedLeaseBias,
 			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
+			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:          "runtime.egress.one_off_consumed",
+				ActionKind:         "egress",
+				ApprovalID:         oneOff.ApprovalID,
+				TaskID:             taskIDPtr(matchedTask),
+				MatchedTaskID:      taskIDPtr(matchedTask),
+				LeaseID:            leaseID,
+				RequestFingerprint: stringPtr(reqFingerprint),
+				Decision:           stringPtr("allow"),
+				Outcome:            stringPtr("approved"),
+				Reason:             stringPtr("one-off runtime approval consumed"),
+				Metadata: map[string]any{
+					"host":                     host,
+					"method":                   req.Method,
+					"path":                     req.URL.Path,
+					"used_active_task_context": usedActiveTaskContext,
+					"used_lease_bias":          usedLeaseBias,
+				},
+			})
 			return req, nil
 		}
 
@@ -128,6 +147,23 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				UsedActiveTaskContext: usedActiveTaskContext,
 				UsedLeaseBias:         usedLeaseBias,
 			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
+			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:     "runtime.egress.allowed",
+				ActionKind:    "egress",
+				TaskID:        &matchedTask.ID,
+				MatchedTaskID: &matchedTask.ID,
+				LeaseID:       leaseID,
+				Decision:      stringPtr("allow"),
+				Outcome:       stringPtr("approved"),
+				Reason:        stringPtr(matchedWhy),
+				Metadata: map[string]any{
+					"host":                     host,
+					"method":                   req.Method,
+					"path":                     req.URL.Path,
+					"used_active_task_context": usedActiveTaskContext,
+					"used_lease_bias":          usedLeaseBias,
+				},
+			})
 			return req, nil
 		}
 
@@ -154,6 +190,24 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				WouldBlock:  true,
 				WouldReview: true,
 			}, paramsSafe, req.Method, "allow", "observed", "observation mode: request would require runtime approval")
+			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:          "runtime.observe.would_review",
+				ActionKind:         "egress",
+				RequestFingerprint: stringPtr(reqFingerprint),
+				Decision:           stringPtr("allow"),
+				Outcome:            stringPtr("observed"),
+				Reason:             stringPtr("observation mode: request would require runtime approval"),
+				Metadata:           map[string]any{"host": host, "method": req.Method, "path": req.URL.Path},
+			})
+			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:          "runtime.observe.would_block",
+				ActionKind:         "egress",
+				RequestFingerprint: stringPtr(reqFingerprint),
+				Decision:           stringPtr("allow"),
+				Outcome:            stringPtr("observed"),
+				Reason:             stringPtr("observation mode: request would block pending review"),
+				Metadata:           map[string]any{"host": host, "method": req.Method, "path": req.URL.Path},
+			})
 			return req, nil
 		}
 
@@ -186,6 +240,17 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			WouldBlock:        false,
 			WouldPromptInline: false,
 		}, paramsSafe, req.Method, "review", "pending", "runtime egress request is outside the active task envelope")
+		emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+			EventType:           "runtime.egress.review_required",
+			ActionKind:          "egress",
+			ApprovalID:          &rec.ID,
+			RequestFingerprint:  stringPtr(reqFingerprint),
+			ResolutionTransport: stringPtr(rec.ResolutionTransport),
+			Decision:            stringPtr("review"),
+			Outcome:             stringPtr("pending"),
+			Reason:              stringPtr("runtime egress request is outside the active task envelope"),
+			Metadata:            map[string]any{"host": host, "method": req.Method, "path": req.URL.Path},
+		})
 		st.SkipAuditOutcomeUpdate = true
 
 		respBody, _ := json.Marshal(map[string]any{

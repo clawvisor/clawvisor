@@ -129,6 +129,8 @@ type Store interface {
 	GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*RuntimeSession, error)
 	ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*RuntimeSession, error)
 	RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error
+	CreateRuntimeEvent(ctx context.Context, event *RuntimeEvent) error
+	ListRuntimeEvents(ctx context.Context, userID string, filter RuntimeEventFilter) ([]*RuntimeEvent, error)
 
 	// Runtime credential placeholders
 	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
@@ -463,6 +465,29 @@ type RuntimeSession struct {
 	RevokedAt             *time.Time      `json:"revoked_at,omitempty"`
 }
 
+// RuntimeEvent is an append-only observability record for runtime decisions.
+type RuntimeEvent struct {
+	ID                  string          `json:"id"`
+	Timestamp           time.Time       `json:"timestamp"`
+	SessionID           string          `json:"session_id"`
+	UserID              string          `json:"user_id"`
+	AgentID             string          `json:"agent_id"`
+	Provider            string          `json:"provider,omitempty"`
+	EventType           string          `json:"event_type"`
+	ActionKind          string          `json:"action_kind,omitempty"`
+	ApprovalID          *string         `json:"approval_id,omitempty"`
+	TaskID              *string         `json:"task_id,omitempty"`
+	MatchedTaskID       *string         `json:"matched_task_id,omitempty"`
+	LeaseID             *string         `json:"lease_id,omitempty"`
+	ToolUseID           *string         `json:"tool_use_id,omitempty"`
+	RequestFingerprint  *string         `json:"request_fingerprint,omitempty"`
+	ResolutionTransport *string         `json:"resolution_transport,omitempty"`
+	Decision            *string         `json:"decision,omitempty"`
+	Outcome             *string         `json:"outcome,omitempty"`
+	Reason              *string         `json:"reason,omitempty"`
+	MetadataJSON        json.RawMessage `json:"metadata_json,omitempty"`
+}
+
 // RuntimePlaceholder is an agent-scoped placeholder that resolves to an
 // existing vault credential at proxy runtime.
 type RuntimePlaceholder struct {
@@ -542,6 +567,11 @@ type ActiveTaskSession struct {
 	StartedAt    time.Time       `json:"started_at"`
 	LastSeenAt   time.Time       `json:"last_seen_at"`
 	EndedAt      *time.Time      `json:"ended_at,omitempty"`
+}
+
+type RuntimeEventFilter struct {
+	SessionID string
+	Limit     int
 }
 
 // TaskFilter controls which tasks are returned by ListTasks.

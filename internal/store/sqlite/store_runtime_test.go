@@ -214,6 +214,26 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	if err := st.CreateRuntimeSession(ctx, runtimeSession2); err != nil {
 		t.Fatalf("CreateRuntimeSession(second): %v", err)
 	}
+	if err := st.CreateRuntimeEvent(ctx, &store.RuntimeEvent{
+		SessionID:    sessionID,
+		UserID:       user.ID,
+		AgentID:      agent.ID,
+		Provider:     "anthropic",
+		EventType:    "runtime.tool_use.held",
+		ActionKind:   "tool_use",
+		TaskID:       &task.ID,
+		Reason:       strPtr("runtime tool call is outside the active task envelope"),
+		MetadataJSON: []byte(`{"tool_name":"fetch_messages"}`),
+	}); err != nil {
+		t.Fatalf("CreateRuntimeEvent: %v", err)
+	}
+	events, err := st.ListRuntimeEvents(ctx, user.ID, store.RuntimeEventFilter{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != "runtime.tool_use.held" {
+		t.Fatalf("unexpected runtime events: %+v", events)
+	}
 
 	oneOff := &store.OneOffApproval{
 		SessionID:          sessionID,

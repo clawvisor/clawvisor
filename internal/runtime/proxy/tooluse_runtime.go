@@ -73,7 +73,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 
-		s.closeLeasesForToolResults(req.Context(), hooks, req, st.Session.ID, body)
+		s.closeLeasesForToolResults(req.Context(), hooks, req, st, body)
 
 		resolved, allowed, err := s.consumeDashboardResolvedHeldApproval(req.Context(), hooks, st.Session.ID)
 		if err != nil {
@@ -151,6 +151,17 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 		lease, err := hooks.Leases.Open(req.Context(), session.ID, held.TaskID, held.ToolUseID, held.ToolName, toolLeaseTTL(hooks.Config))
 		if err == nil && lease != nil {
 			leaseID = &lease.LeaseID
+			emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
+				EventType:  "runtime.lease.opened",
+				ActionKind: "tool_use",
+				TaskID:     stringPtr(held.TaskID),
+				LeaseID:    &lease.LeaseID,
+				ToolUseID:  stringPtr(held.ToolUseID),
+				Decision:   stringPtr("allow"),
+				Outcome:    stringPtr("opened"),
+				Reason:     stringPtr("runtime tool-use lease opened"),
+				Metadata:   map[string]any{"tool_name": held.ToolName},
+			})
 			if task, taskErr := hooks.Store.GetTask(req.Context(), held.TaskID); taskErr == nil {
 				usedActiveTaskContext = usedActiveTaskSelection(req.Context(), hooks.Store, session.ID, task)
 				s.recordToolActivity(req.Context(), hooks.Store, session, task, held.ToolUseID, held.ToolName, held.ApprovalRecordID, lease)
@@ -159,6 +170,35 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 	}
 
 	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false)
+	if allow {
+		emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
+			EventType:           "runtime.tool_use.released",
+			ActionKind:          "tool_use",
+			ApprovalID:          stringPtr(held.ApprovalRecordID),
+			TaskID:              stringPtr(held.TaskID),
+			MatchedTaskID:       stringPtr(held.TaskID),
+			LeaseID:             leaseID,
+			ToolUseID:           stringPtr(held.ToolUseID),
+			ResolutionTransport: stringPtr("release_held_tool_use"),
+			Decision:            stringPtr("allow"),
+			Outcome:             stringPtr("released"),
+			Reason:              stringPtr(reason),
+			Metadata:            map[string]any{"tool_name": held.ToolName},
+		})
+	} else {
+		emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
+			EventType:           "runtime.tool_use.denied",
+			ActionKind:          "tool_use",
+			ApprovalID:          stringPtr(held.ApprovalRecordID),
+			TaskID:              stringPtr(held.TaskID),
+			ToolUseID:           stringPtr(held.ToolUseID),
+			ResolutionTransport: stringPtr("release_held_tool_use"),
+			Decision:            stringPtr("deny"),
+			Outcome:             stringPtr("denied"),
+			Reason:              stringPtr(reason),
+			Metadata:            map[string]any{"tool_name": held.ToolName},
+		})
+	}
 
 	var bodyBytes []byte
 	contentType := "application/json"
@@ -314,6 +354,17 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					lease, err := hooks.Leases.Open(ctx.Req.Context(), st.Session.ID, state.Task.ID, decision.ToolUse.ID, decision.ToolUse.Name, toolLeaseTTL(hooks.Config))
 					if err == nil && lease != nil {
 						leaseID = &lease.LeaseID
+						emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+							EventType:  "runtime.lease.opened",
+							ActionKind: "tool_use",
+							TaskID:     &state.Task.ID,
+							LeaseID:    &lease.LeaseID,
+							ToolUseID:  stringPtr(decision.ToolUse.ID),
+							Decision:   stringPtr("allow"),
+							Outcome:    stringPtr("opened"),
+							Reason:     stringPtr("runtime tool-use lease opened"),
+							Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+						})
 						s.recordToolActivity(ctx.Req.Context(), hooks.Store, st.Session, state.Task, decision.ToolUse.ID, decision.ToolUse.Name, "", lease)
 					}
 				}
@@ -326,9 +377,61 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					}
 				}
 				s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.WouldReview, state.WouldReview, state.WouldPromptInline)
+				if state.WouldReview {
+					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+						EventType:  "runtime.observe.would_review",
+						ActionKind: "tool_use",
+						TaskID:     taskIDPtr(state.Task),
+						ToolUseID:  stringPtr(decision.ToolUse.ID),
+						Decision:   stringPtr("allow"),
+						Outcome:    stringPtr("observed"),
+						Reason:     stringPtr(reason),
+						Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+					})
+					if state.WouldPromptInline {
+						emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+							EventType:  "runtime.observe.would_prompt_inline",
+							ActionKind: "tool_use",
+							TaskID:     taskIDPtr(state.Task),
+							ToolUseID:  stringPtr(decision.ToolUse.ID),
+							Decision:   stringPtr("allow"),
+							Outcome:    stringPtr("observed"),
+							Reason:     stringPtr("observation mode: tool use would prompt inline"),
+							Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+						})
+					}
+				} else {
+					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+						EventType:     "runtime.tool_use.allowed",
+						ActionKind:    "tool_use",
+						TaskID:        taskIDPtr(state.Task),
+						MatchedTaskID: taskIDPtr(state.Task),
+						LeaseID:       leaseID,
+						ToolUseID:     stringPtr(decision.ToolUse.ID),
+						Decision:      stringPtr("allow"),
+						Outcome:       stringPtr(outcome),
+						Reason:        stringPtr(reason),
+						Metadata:      map[string]any{"tool_name": decision.ToolUse.Name},
+					})
+				}
 				continue
 			}
 			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, "review", "pending", "runtime tool call is outside the active task envelope", state.UsedActiveTaskContext, false, true, state.WouldPromptInline)
+			emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:           "runtime.tool_use.held",
+				ActionKind:          "tool_use",
+				ApprovalID:          state.ApprovalID,
+				TaskID:              taskIDPtr(state.Task),
+				ToolUseID:           stringPtr(decision.ToolUse.ID),
+				ResolutionTransport: stringPtr("release_held_tool_use"),
+				Decision:            stringPtr("review"),
+				Outcome:             stringPtr("pending"),
+				Reason:              stringPtr("runtime tool call is outside the active task envelope"),
+				Metadata: map[string]any{
+					"tool_name":           decision.ToolUse.Name,
+					"would_prompt_inline": state.WouldPromptInline,
+				},
+			})
 		}
 
 		resp.Body = io.NopCloser(bytes.NewReader(result.Body))
@@ -560,12 +663,18 @@ func extractAnthropicUserText(raw json.RawMessage) string {
 	return strings.Join(out, "\n")
 }
 
-func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHooks, req *http.Request, sessionID string, body []byte) {
+func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHooks, req *http.Request, reqState *RequestState, body []byte) {
+	if reqState == nil || reqState.Session == nil {
+		return
+	}
 	toolResultIDs := toolResultIDsForRequest(req, body)
+	if reqState.Runtime != nil && len(reqState.Runtime.ToolResultsSeen) > 0 {
+		toolResultIDs = reqState.Runtime.ToolResultsSeen
+	}
 	if len(toolResultIDs) == 0 {
 		return
 	}
-	leasesForSession, err := hooks.Store.ListOpenToolExecutionLeases(ctx, sessionID)
+	leasesForSession, err := hooks.Store.ListOpenToolExecutionLeases(ctx, reqState.Session.ID)
 	if err != nil {
 		return
 	}
@@ -573,6 +682,17 @@ func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHoo
 		for _, toolUseID := range toolResultIDs {
 			if lease.ToolUseID == toolUseID {
 				_ = hooks.Leases.Close(ctx, lease.LeaseID)
+				emitRuntimeEvent(ctx, hooks.Store, reqState.Session, reqState, runtimeEventOptions{
+					EventType:  "runtime.lease.closed",
+					ActionKind: "tool_use",
+					TaskID:     stringPtr(lease.TaskID),
+					LeaseID:    stringPtr(lease.LeaseID),
+					ToolUseID:  stringPtr(lease.ToolUseID),
+					Decision:   stringPtr("allow"),
+					Outcome:    stringPtr("closed"),
+					Reason:     stringPtr("runtime tool-use lease closed after tool result"),
+					Metadata:   map[string]any{"tool_name": lease.ToolName},
+				})
 				break
 			}
 		}

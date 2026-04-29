@@ -121,7 +121,7 @@ func TestEnsureHeldToolUseApprovalAndDashboardRelease(t *testing.T) {
 	  ]
 	}`)
 	toolResultReq, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
-	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, session.id, toolResultBody)
+	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, &RequestState{Session: runtimeSession}, toolResultBody)
 
 	openLeases, err = st.ListOpenToolExecutionLeases(ctx, session.id)
 	if err != nil {
@@ -443,7 +443,7 @@ func TestSyntheticHeldToolUseResponseOpenAIResponsesAndLeaseClose(t *testing.T) 
 	  ]
 	}`)
 	toolResultReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
-	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, session.id, toolResultBody)
+	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, &RequestState{Session: runtimeSession}, toolResultBody)
 
 	openLeases, err = st.ListOpenToolExecutionLeases(ctx, session.id)
 	if err != nil {
@@ -452,6 +452,11 @@ func TestSyntheticHeldToolUseResponseOpenAIResponsesAndLeaseClose(t *testing.T) 
 	if len(openLeases) != 0 {
 		t.Fatalf("expected lease to close after function_call_output, got %+v", openLeases)
 	}
+	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 20})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	assertRuntimeEventTypes(t, events, "runtime.lease.opened", "runtime.tool_use.released", "runtime.lease.closed")
 }
 
 func conversationToolUse(id, name string) conversation.ToolUse {
@@ -460,5 +465,18 @@ func conversationToolUse(id, name string) conversation.ToolUse {
 		ID:    id,
 		Name:  name,
 		Input: input,
+	}
+}
+
+func assertRuntimeEventTypes(t *testing.T, events []*store.RuntimeEvent, want ...string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, event := range events {
+		seen[event.EventType] = true
+	}
+	for _, eventType := range want {
+		if !seen[eventType] {
+			t.Fatalf("expected runtime event %q in %+v", eventType, events)
+		}
 	}
 }

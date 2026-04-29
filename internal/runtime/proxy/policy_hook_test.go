@@ -114,6 +114,11 @@ func TestRuntimeProxyAllowsMatchedTaskAndConsumesOneOffApprovals(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
 		t.Fatalf("expected one-off upstream success, got %d %q", resp.StatusCode, string(body))
 	}
+	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 20})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	assertRuntimeEventTypes(t, events, "runtime.egress.allowed", "runtime.egress.review_required", "runtime.egress.one_off_consumed")
 }
 
 func TestRuntimeProxyOneOffApprovalsRemainBoundToOriginatingSession(t *testing.T) {
@@ -526,6 +531,7 @@ func newStartedRuntimeProxy(t *testing.T, st store.Store, cfg *config.Config) *S
 		t.Fatalf("NewServer: %v", err)
 	}
 	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallRequestContextCarrier()
 	srv.InstallEgressPolicy(PolicyHooks{Store: st, Config: cfg})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)

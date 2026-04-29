@@ -212,6 +212,27 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *RuntimeHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	filter := store.RuntimeEventFilter{
+		SessionID: r.URL.Query().Get("session_id"),
+		Limit:     200,
+	}
+	events, err := h.st.ListRuntimeEvents(r.Context(), user.ID, filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": events,
+		"total":   len(events),
+	})
+}
+
 func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -258,6 +279,22 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create one-off approval")
 			return
 		}
+		metadataJSON, _ := json.Marshal(map[string]any{"host": payload.Host, "method": payload.Method, "path": payload.Path})
+		_ = h.st.CreateRuntimeEvent(r.Context(), &store.RuntimeEvent{
+			Timestamp:           time.Now().UTC(),
+			SessionID:           payload.SessionID,
+			UserID:              rec.UserID,
+			AgentID:             payload.AgentID,
+			EventType:           "runtime.egress.one_off_created",
+			ActionKind:          "egress",
+			ApprovalID:          &rec.ID,
+			RequestFingerprint:  nullableStr(payload.RequestFingerprint),
+			ResolutionTransport: nullableStr(rec.ResolutionTransport),
+			Decision:            nullableStr("allow"),
+			Outcome:             nullableStr("created"),
+			Reason:              nullableStr("runtime one-off retry authorization created"),
+			MetadataJSON:        metadataJSON,
+		})
 	}
 	status := "approved"
 	if req.Resolution == "deny" {

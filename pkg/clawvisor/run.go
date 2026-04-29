@@ -43,6 +43,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			return err
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
+		runtimeSrv.InstallRequestContextCarrier()
 		runtimeSrv.InstallPlaceholderSwap(runtimeproxy.PlaceholderHooks{
 			Store: opts.Store,
 			Vault: opts.Vault,
@@ -93,6 +94,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/status", user(http.HandlerFunc(runtimeHandler.Status)))
 			mux.Handle("GET /api/runtime/approvals", user(http.HandlerFunc(runtimeHandler.ListApprovals)))
 			mux.Handle("POST /api/runtime/approvals/{id}/resolve", user(http.HandlerFunc(runtimeHandler.ResolveApproval)))
+			mux.Handle("GET /api/runtime/events", user(http.HandlerFunc(runtimeHandler.ListEvents)))
 			mux.Handle("GET /api/runtime/leases", user(http.HandlerFunc(runtimeHandler.ListLeases)))
 		}
 		if opts.ExtraRoutes != nil {
