@@ -1254,6 +1254,92 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// End clears the runtime-session binding for a task without completing the task.
+//
+// POST /api/tasks/{id}/end
+// Auth: agent bearer token
+//
+// Body:
+//
+//	{"session_id":"<runtime session id>"}
+func (h *TasksHandler) End(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agent := middleware.AgentFromContext(ctx)
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	taskID := r.PathValue("id")
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != agent.UserID || task.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+
+	var req struct {
+		SessionID        string `json:"session_id"`
+		RuntimeSessionID string `json:"runtime_session_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.RuntimeSessionID)
+	}
+	if sessionID == "" {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         "missing required field: runtime_session_id",
+			Code:          "INVALID_REQUEST",
+			MissingFields: []string{"runtime_session_id"},
+			Hint:          "Provide the runtime session id to clear the task binding without completing the task.",
+		})
+		return
+	}
+
+	sess, err := h.st.GetRuntimeSession(ctx, sessionID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "runtime session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get runtime session")
+		return
+	}
+	if sess.UserID != agent.UserID || sess.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
+		return
+	}
+
+	if err := h.st.EndActiveTaskSession(ctx, task.ID, sess.ID, time.Now().UTC(), "ended"); err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "active task session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not end runtime task binding")
+		return
+	}
+
+	h.publishTasksAndQueue(agent.UserID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"task_id":    task.ID,
+		"status":     task.Status,
+		"session_id": sess.ID,
+		"binding":    "ended",
+	})
+}
+
 // ── Expand ────────────────────────────────────────────────────────────────────
 
 type expandTaskRequest struct {

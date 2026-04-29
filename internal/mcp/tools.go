@@ -235,11 +235,12 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "clawvisor_task_end",
-			Description: "Canonical alias for complete_task. Mark a task as completed when work under it has ended.",
+			Description: "Canonical task-context alias. End the current runtime-session binding for a task without completing the task globally.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"task_id": {"type": "string", "description": "The task ID to end"}
+					"task_id": {"type": "string", "description": "The task ID to end"},
+					"runtime_session_id": {"type": "string", "description": "The runtime session whose task binding should be cleared"}
 				},
 				"required": ["task_id"]
 			}`),

@@ -116,7 +116,7 @@ func TestRuntimeProxyAllowsMatchedTaskAndConsumesOneOffApprovals(t *testing.T) {
 	}
 }
 
-func TestRuntimeProxyConsumesOneOffApprovalsAcrossSessionsForSameAgent(t *testing.T) {
+func TestRuntimeProxyOneOffApprovalsRemainBoundToOriginatingSession(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-cross-session.db")
 	if err != nil {
@@ -177,8 +177,8 @@ func TestRuntimeProxyConsumesOneOffApprovalsAcrossSessionsForSameAgent(t *testin
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
-		t.Fatalf("expected cross-session one-off success, got %d %q", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected cross-session request to remain blocked, got %d %q", resp.StatusCode, string(body))
 	}
 }
 

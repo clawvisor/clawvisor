@@ -1762,7 +1762,8 @@ func (s *Store) UpsertActiveTaskSession(ctx context.Context, sess *store.ActiveT
 func (s *Store) GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*store.ActiveTaskSession, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
-		FROM active_task_sessions WHERE task_id = $1 AND session_id = $2
+		FROM active_task_sessions
+		WHERE task_id = $1 AND session_id = $2 AND status = 'active' AND ended_at IS NULL
 	`, taskID, sessionID)
 	if err != nil {
 		return nil, err

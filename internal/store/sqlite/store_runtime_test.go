@@ -333,6 +333,9 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	if err := st.EndActiveTaskSession(ctx, task.ID, sessionID, now.Add(3*time.Minute), "completed"); err != nil {
 		t.Fatalf("EndActiveTaskSession: %v", err)
 	}
+	if _, err := st.GetActiveTaskSession(ctx, task.ID, sessionID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetActiveTaskSession(after end) err=%v, want ErrNotFound", err)
+	}
 }
 
 func strPtr(v string) *string {

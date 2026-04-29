@@ -75,31 +75,35 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 
 		s.closeLeasesForToolResults(req.Context(), hooks, st.Session.ID, body)
 
-		held := hooks.ReviewCache.Get(st.Session.ID)
-		if held == nil {
-			return req, nil
-		}
-
-		rec, err := hooks.Store.GetApprovalRecord(req.Context(), held.ApprovalRecordID)
-		if err == store.ErrNotFound {
-			hooks.ReviewCache.Drop(st.Session.ID)
-			return req, nil
-		}
-		if err != nil {
-			return req, nil
-		}
-
-		switch rec.Status {
-		case "approved":
-			if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
-				return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, true, "approved via dashboard", body)
+		for {
+			held := hooks.ReviewCache.Get(st.Session.ID)
+			if held == nil {
+				break
 			}
-		case "denied":
-			if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
-				return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, false, "denied via dashboard", body)
+			rec, err := hooks.Store.GetApprovalRecord(req.Context(), held.ApprovalRecordID)
+			if err == store.ErrNotFound {
+				hooks.ReviewCache.Drop(st.Session.ID, held.ID)
+				continue
+			}
+			if err != nil {
+				return req, nil
+			}
+
+			switch rec.Status {
+			case "approved":
+				if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
+					return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, true, "approved via dashboard", body)
+				}
+			case "denied":
+				if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
+					return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, false, "denied via dashboard", body)
+				}
+			default:
+				goto inlineDecision
 			}
 		}
 
+	inlineDecision:
 		if hooks.Config == nil || !hooks.Config.RuntimePolicy.InlineApprovalEnabled {
 			return req, nil
 		}
@@ -108,6 +112,10 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 			return req, nil
 		}
 		if approvalID == "" {
+			held := hooks.ReviewCache.Get(st.Session.ID)
+			if held == nil {
+				return req, nil
+			}
 			approvalID = held.ID
 		}
 		resolved := hooks.ReviewCache.Resolve(st.Session.ID, approvalID)
@@ -333,7 +341,7 @@ func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHoo
 	if ok {
 		return rec, held, renderHeldToolUsePrompt(held, hooks.Config)
 	}
-	existing := hooks.ReviewCache.Get(session.ID)
+	existing := hooks.ReviewCache.GetByApprovalRecord(session.ID, rec.ID)
 	return rec, existing, renderExistingHeldPrompt(existing, hooks.Config)
 }
 

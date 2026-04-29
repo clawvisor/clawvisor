@@ -760,6 +760,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /api/tasks", requireAgent(e2e(http.HandlerFunc(tasksHandler.Create))))
 	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))
 	mux.Handle("POST /api/tasks/{id}/start", requireAgent(e2e(http.HandlerFunc(tasksHandler.Start))))
+	mux.Handle("POST /api/tasks/{id}/end", requireAgent(e2e(http.HandlerFunc(tasksHandler.End))))
 	mux.Handle("POST /api/tasks/{id}/complete", requireAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
 	mux.Handle("POST /api/tasks/{id}/expand", requireAgent(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
@@ -875,6 +876,7 @@ func (s *Server) routes() http.Handler {
 			"POST /api/tasks":                                http.HandlerFunc(tasksHandler.Create),
 			"GET /api/tasks/{id}":                            http.HandlerFunc(tasksHandler.Get),
 			"POST /api/tasks/{id}/start":                     http.HandlerFunc(tasksHandler.Start),
+			"POST /api/tasks/{id}/end":                       http.HandlerFunc(tasksHandler.End),
 			"POST /api/tasks/{id}/complete":                  http.HandlerFunc(tasksHandler.Complete),
 			"POST /api/tasks/{id}/expand":                    http.HandlerFunc(tasksHandler.Expand),
 			"POST /api/gateway/request":                      http.HandlerFunc(gatewayHandler.HandleRequest),

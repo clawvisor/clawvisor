@@ -156,13 +156,22 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"POST", path, "POST /api/tasks/{id}/start",
 			map[string]string{"id": id}}, body, nil
 
-	case "complete_task", "clawvisor_task_end":
+	case "complete_task":
 		id := getString("task_id")
 		if err := validatePathParam(id, "task_id"); err != nil {
 			return internalRoute{}, nil, err
 		}
 		return internalRoute{"POST", "/api/tasks/" + id + "/complete", "POST /api/tasks/{id}/complete",
 			map[string]string{"id": id}}, nil, nil
+
+	case "clawvisor_task_end":
+		id := getString("task_id")
+		if err := validatePathParam(id, "task_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		body := stripKeys(args, "task_id", "wait", "timeout")
+		return internalRoute{"POST", "/api/tasks/" + id + "/end", "POST /api/tasks/{id}/end",
+			map[string]string{"id": id}}, body, nil
 
 	case "expand_task":
 		id := getString("task_id")

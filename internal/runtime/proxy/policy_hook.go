@@ -107,7 +107,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid task egress matcher"}`)
 		}
 
-		if oneOff, err := hooks.Store.ConsumeAgentOneOffApproval(req.Context(), st.Session.AgentID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
+		if oneOff, err := hooks.Store.ConsumeOneOffApproval(req.Context(), st.Session.ID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
 			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
 				MatchedTask:           matchedTask,
 				ApprovalID:            oneOff.ApprovalID,
