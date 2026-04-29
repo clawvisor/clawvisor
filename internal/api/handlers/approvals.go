@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -125,6 +125,7 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 	if err := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved"); err != nil {
 		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
 	}
+	h.resolveCanonicalApproval(ctx, pa, "allow_once", "approved")
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
@@ -168,6 +169,7 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	var denyBlob pendingRequestBlob
 	_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
 
+	h.resolveCanonicalApproval(ctx, pa, "deny", "denied")
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
@@ -226,6 +228,7 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	var denyBlob pendingRequestBlob
 	_ = json.Unmarshal(pa.RequestBlob, &denyBlob)
 
+	h.resolveCanonicalApproval(r.Context(), pa, "deny", "denied")
 	if err := h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
@@ -342,6 +345,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		return
 	}
 	for _, pa := range expired {
+		h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
 		_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
 
 		// Update the Telegram message before deleting the pending approval.
@@ -387,6 +391,25 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		h.decrementNotifierPolling(task.UserID)
 		h.publishTasksAndQueue(task.UserID)
 		h.logger.Info("task expired", "task_id", task.ID)
+	}
+}
+
+func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *store.PendingApproval, resolution, status string) {
+	if pa == nil {
+		return
+	}
+	approvalID := pa.ApprovalRecordID
+	if approvalID == nil {
+		rec, err := h.st.GetApprovalRecordByRequestID(ctx, pa.RequestID)
+		if err == nil {
+			approvalID = &rec.ID
+		}
+	}
+	if approvalID == nil {
+		return
+	}
+	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.logger.Error("failed to resolve canonical approval", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
 	}
 }
 

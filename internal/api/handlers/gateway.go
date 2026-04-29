@@ -31,16 +31,16 @@ import (
 // pendingRequestBlob is stored in pending_approvals.request_blob.
 // It contains everything needed to re-execute the request on approval.
 type pendingRequestBlob struct {
-	Service     string         `json:"service"`
-	Action      string         `json:"action"`
-	Params      map[string]any `json:"params"`
-	UserID      string         `json:"user_id"`
-	AgentID     string         `json:"agent_id"`
-	AgentName   string         `json:"agent_name"`
-	RequestID   string         `json:"request_id"`
-	TaskID      string         `json:"task_id"`
-	Reason      string         `json:"reason"`
-	CallbackURL  string                    `json:"callback_url"`
+	Service      string                      `json:"service"`
+	Action       string                      `json:"action"`
+	Params       map[string]any              `json:"params"`
+	UserID       string                      `json:"user_id"`
+	AgentID      string                      `json:"agent_id"`
+	AgentName    string                      `json:"agent_name"`
+	RequestID    string                      `json:"request_id"`
+	TaskID       string                      `json:"task_id"`
+	Reason       string                      `json:"reason"`
+	CallbackURL  string                      `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
 }
 
@@ -68,20 +68,20 @@ func isLocalService(serviceType string) bool {
 
 // GatewayHandler handles POST /api/gateway/request.
 type GatewayHandler struct {
-	store        store.Store
-	vault        vault.Vault
-	adapterReg   *adapters.Registry
-	notifier     notify.Notifier // may be nil if Telegram not configured
-	verifier     intent.Verifier
-	extractor    intent.Extractor
-	extractTrack ExtractionTracker // tracks in-flight async extractions; never nil
-	cfg          config.Config
-	logger       *slog.Logger
-	baseURL      string
-	eventHub     events.EventHub
+	store            store.Store
+	vault            vault.Vault
+	adapterReg       *adapters.Registry
+	notifier         notify.Notifier // may be nil if Telegram not configured
+	verifier         intent.Verifier
+	extractor        intent.Extractor
+	extractTrack     ExtractionTracker // tracks in-flight async extractions; never nil
+	cfg              config.Config
+	logger           *slog.Logger
+	baseURL          string
+	eventHub         events.EventHub
 	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
-	localExec        LocalServiceExecutor  // cloud-injected local service executor; may be nil
-	localSvcProvider LocalServiceProvider  // cloud-injected local service catalog; may be nil
+	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
+	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
 }
 
 func NewGatewayHandler(
@@ -100,7 +100,7 @@ func NewGatewayHandler(
 		store: st, vault: v, adapterReg: adapterReg,
 		notifier: notifier, verifier: verifier, extractor: extractor,
 		extractTrack: NewMemoryExtractionTracker(60 * time.Second),
-		cfg: cfg, logger: logger, baseURL: baseURL,
+		cfg:          cfg, logger: logger, baseURL: baseURL,
 		eventHub: eventHub,
 	}
 }
@@ -1361,7 +1361,6 @@ func (h *GatewayHandler) RegisterCallback(w http.ResponseWriter, r *http.Request
 	})
 }
 
-
 // publishAuditAndQueue publishes SSE events for audit and queue changes.
 func (h *GatewayHandler) publishAuditAndQueue(userID, taskID string) {
 	if h.eventHub == nil {
@@ -1760,13 +1759,41 @@ func (h *GatewayHandler) routeToApproval(
 	verdict *intent.VerificationVerdict,
 ) error {
 	blobBytes, _ := json.Marshal(blob)
+	var taskID *string
+	if blob.TaskID != "" {
+		taskID = &blob.TaskID
+	}
+	summaryBytes, _ := json.Marshal(map[string]any{
+		"service":       blob.Service,
+		"action":        blob.Action,
+		"reason":        blob.Reason,
+		"policy_reason": policyReason,
+	})
+	approvalRecord := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                "request_once",
+		UserID:              userID,
+		AgentID:             &blob.AgentID,
+		RequestID:           &blob.RequestID,
+		TaskID:              taskID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		SummaryJSON:         json.RawMessage(summaryBytes),
+		PayloadJSON:         json.RawMessage(blobBytes),
+		ResolutionTransport: "execute_pending_request",
+		ExpiresAt:           &expiresAt,
+	}
+	if err := h.store.CreateApprovalRecord(ctx, approvalRecord); err != nil {
+		return fmt.Errorf("create approval record: %w", err)
+	}
 	pa := &store.PendingApproval{
-		ID:          uuid.New().String(),
-		UserID:      userID,
-		RequestID:   blob.RequestID,
-		AuditID:     auditID,
-		RequestBlob: json.RawMessage(blobBytes),
-		ExpiresAt:   expiresAt,
+		ID:               uuid.New().String(),
+		UserID:           userID,
+		RequestID:        blob.RequestID,
+		AuditID:          auditID,
+		ApprovalRecordID: &approvalRecord.ID,
+		RequestBlob:      json.RawMessage(blobBytes),
+		ExpiresAt:        expiresAt,
 	}
 	if callbackURL != "" {
 		pa.CallbackURL = &callbackURL
@@ -2084,4 +2111,3 @@ func cloneParams(m map[string]any) map[string]any {
 	}
 	return out
 }
-
