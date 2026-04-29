@@ -75,6 +75,10 @@ export default function TaskCard({
   const [confirmApprove, setConfirmApprove] = useState(false)
   const [openPillKey, setOpenPillKey] = useState<string | null>(null)
   const [scopeOverrides, setScopeOverrides] = useState<Record<string, ScopeOverride>>({})
+  const authorizedActions = Array.isArray(task.authorized_actions) ? task.authorized_actions : []
+  const plannedCalls = Array.isArray(task.planned_calls) ? task.planned_calls : []
+  const expectedTools = Array.isArray(task.expected_tools_json) ? task.expected_tools_json : []
+  const expectedEgress = Array.isArray(task.expected_egress_json) ? task.expected_egress_json : []
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -135,32 +139,30 @@ export default function TaskCard({
   }
 
   const effectiveAuto = (a: TaskAction) => effectiveValue(a).auto
-  const autoActions = task.authorized_actions.filter(effectiveAuto)
-  const manualActions = task.authorized_actions.filter(a => !effectiveAuto(a))
+  const autoActions = authorizedActions.filter(effectiveAuto)
+  const manualActions = authorizedActions.filter(a => !effectiveAuto(a))
 
   const groupedByService = useMemo(() => {
     const groups = new Map<string, { service: string; actions: TaskAction[] }>()
-    for (const a of task.authorized_actions) {
+    for (const a of authorizedActions) {
       const g = groups.get(a.service) ?? { service: a.service, actions: [] }
       g.actions.push(a)
       groups.set(a.service, g)
     }
     return [...groups.values()]
-  }, [task.authorized_actions])
+  }, [authorizedActions])
 
   const plannedByKey = useMemo(() => {
     const m = new Map<string, PlannedCall[]>()
-    for (const p of task.planned_calls ?? []) {
+    for (const p of plannedCalls) {
       const k = `${baseService(p.service)}|${p.action}`
       const list = m.get(k) ?? []
       list.push(p)
       m.set(k, list)
     }
     return m
-  }, [task.planned_calls])
-  const totalPlanned = task.planned_calls?.length ?? 0
-  const expectedTools = task.expected_tools_json ?? []
-  const expectedEgress = task.expected_egress_json ?? []
+  }, [plannedCalls])
+  const totalPlanned = plannedCalls.length
   const hasRuntimeEnvelope = expectedTools.length > 0 || expectedEgress.length > 0 || task.schema_version === 2 || !!task.expected_use || !!task.intent_verification_mode
 
   const [showPlannedCalls, setShowPlannedCalls] = useState(() => {
