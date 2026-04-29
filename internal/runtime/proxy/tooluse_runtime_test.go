@@ -297,6 +297,73 @@ func TestEnsureHeldToolUseApprovalAllowsMultiplePendingApprovalsPerSession(t *te
 	}
 }
 
+func TestConsumeDashboardResolvedHeldApprovalSkipsEarlierPendingHold(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-dashboard-order.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	task := &store.Task{
+		ID:               "task-dashboard-order",
+		UserID:           userID,
+		AgentID:          agentID,
+		Purpose:          "Release later held approval first",
+		Status:           "active",
+		Lifetime:         "session",
+		SchemaVersion:    2,
+		ExpiresInSeconds: 3600,
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	session := createRuntimeSession(t, st, "runtime-dashboard-order", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+
+	firstRec, firstHeld, _ := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, task, conversationToolUse("toolu_pending", "fetch_messages"), map[string]any{"max_results": 10})
+	secondRec, secondHeld, _ := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, task, conversationToolUse("toolu_ready", "fetch_thread"), map[string]any{"thread_id": "123"})
+	if firstRec == nil || secondRec == nil || firstHeld == nil || secondHeld == nil {
+		t.Fatalf("expected held approvals, got %v %v %v %v", firstRec, secondRec, firstHeld, secondHeld)
+	}
+	if err := st.ResolveApprovalRecord(ctx, secondRec.ID, "allow_once", "approved", time.Now().UTC()); err != nil {
+		t.Fatalf("ResolveApprovalRecord(second): %v", err)
+	}
+
+	resolved, allowed, err := srv.consumeDashboardResolvedHeldApproval(ctx, hooks, session.id)
+	if err != nil {
+		t.Fatalf("consumeDashboardResolvedHeldApproval: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected later dashboard-approved held approval to allow")
+	}
+	if resolved == nil || resolved.ID != secondHeld.ID {
+		t.Fatalf("resolved = %+v, want second held approval %+v", resolved, secondHeld)
+	}
+	if got := hooks.ReviewCache.Count(session.id); got != 1 {
+		t.Fatalf("held approval count after resolve = %d, want 1", got)
+	}
+	if got := hooks.ReviewCache.Get(session.id); got == nil || got.ID != firstHeld.ID {
+		t.Fatalf("expected earlier pending held approval to remain, got %+v", got)
+	}
+}
+
 func TestSyntheticHeldToolUseResponseOpenAIResponsesAndLeaseClose(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-openai.db")

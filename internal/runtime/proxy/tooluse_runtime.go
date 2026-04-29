@@ -75,35 +75,18 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 
 		s.closeLeasesForToolResults(req.Context(), hooks, req, st.Session.ID, body)
 
-		for {
-			held := hooks.ReviewCache.Get(st.Session.ID)
-			if held == nil {
-				break
+		resolved, allowed, err := s.consumeDashboardResolvedHeldApproval(req.Context(), hooks, st.Session.ID)
+		if err != nil {
+			return req, nil
+		}
+		if resolved != nil {
+			reason := "denied via dashboard"
+			if allowed {
+				reason = "approved via dashboard"
 			}
-			rec, err := hooks.Store.GetApprovalRecord(req.Context(), held.ApprovalRecordID)
-			if err == store.ErrNotFound {
-				hooks.ReviewCache.Drop(st.Session.ID, held.ID)
-				continue
-			}
-			if err != nil {
-				return req, nil
-			}
-
-			switch rec.Status {
-			case "approved":
-				if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
-					return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, true, "approved via dashboard", body)
-				}
-			case "denied":
-				if resolved := hooks.ReviewCache.Resolve(st.Session.ID, held.ID); resolved != nil {
-					return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, false, "denied via dashboard", body)
-				}
-			default:
-				goto inlineDecision
-			}
+			return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, allowed, reason, body)
 		}
 
-	inlineDecision:
 		if hooks.Config == nil || !hooks.Config.RuntimePolicy.InlineApprovalEnabled {
 			return req, nil
 		}
@@ -118,18 +101,42 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 			}
 			approvalID = held.ID
 		}
-		resolved := hooks.ReviewCache.Resolve(st.Session.ID, approvalID)
-		if resolved == nil {
+		inlineResolved := hooks.ReviewCache.Resolve(st.Session.ID, approvalID)
+		if inlineResolved == nil {
 			return req, nil
 		}
 		now := time.Now().UTC()
 		if verb == "approve" {
-			_ = hooks.Store.ResolveApprovalRecord(req.Context(), resolved.ApprovalRecordID, "allow_once", "approved", now)
-			return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, true, "approved inline by user", body)
+			_ = hooks.Store.ResolveApprovalRecord(req.Context(), inlineResolved.ApprovalRecordID, "allow_once", "approved", now)
+			return s.syntheticHeldToolUseResponse(req, st.Session, hooks, inlineResolved, true, "approved inline by user", body)
 		}
-		_ = hooks.Store.ResolveApprovalRecord(req.Context(), resolved.ApprovalRecordID, "deny", "denied", now)
-		return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, false, "denied inline by user", body)
+		_ = hooks.Store.ResolveApprovalRecord(req.Context(), inlineResolved.ApprovalRecordID, "deny", "denied", now)
+		return s.syntheticHeldToolUseResponse(req, st.Session, hooks, inlineResolved, false, "denied inline by user", body)
 	})
+}
+
+func (s *Server) consumeDashboardResolvedHeldApproval(ctx context.Context, hooks ToolUseHooks, sessionID string) (*review.HeldApproval, bool, error) {
+	for _, held := range hooks.ReviewCache.List(sessionID) {
+		rec, err := hooks.Store.GetApprovalRecord(ctx, held.ApprovalRecordID)
+		if err == store.ErrNotFound {
+			hooks.ReviewCache.Drop(sessionID, held.ID)
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		switch rec.Status {
+		case "approved":
+			if resolved := hooks.ReviewCache.Resolve(sessionID, held.ID); resolved != nil {
+				return resolved, true, nil
+			}
+		case "denied":
+			if resolved := hooks.ReviewCache.Resolve(sessionID, held.ID); resolved != nil {
+				return resolved, false, nil
+			}
+		}
+	}
+	return nil, false, nil
 }
 
 func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.RuntimeSession, hooks ToolUseHooks, held *review.HeldApproval, allow bool, reason string, requestBody []byte) (*http.Request, *http.Response) {
