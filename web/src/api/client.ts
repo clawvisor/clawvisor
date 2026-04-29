@@ -248,6 +248,18 @@ export interface Agent {
   token?: string // only present on creation
   active_task_count: number
   last_task_at?: string
+  runtime_settings?: AgentRuntimeSettings
+}
+
+export interface AgentRuntimeSettings {
+  agent_id: string
+  runtime_enabled: boolean
+  runtime_mode: 'observe' | 'enforce'
+  starter_profile: string
+  outbound_credential_mode: 'inherit' | 'observe' | 'strict'
+  inject_stored_bearer: boolean
+  created_at?: string
+  updated_at?: string
 }
 
 export interface ConnectionRequest {
@@ -572,7 +584,10 @@ export interface RuntimeStatus {
   inline_approval_enabled: boolean
   tool_lease_timeout_seconds: number
   one_off_ttl_seconds: number
+  autovault_mode?: string
+  inject_stored_bearer?: boolean
   ca_cert_pem: string
+  starter_profiles?: StarterProfile[]
 }
 
 export interface RuntimeSession {
@@ -585,6 +600,85 @@ export interface RuntimeSession {
   expires_at: string
   created_at: string
   revoked_at?: string
+}
+
+export interface RuntimeEvent {
+  id: string
+  timestamp: string
+  session_id: string
+  user_id: string
+  agent_id: string
+  provider?: string
+  event_type: string
+  action_kind?: string
+  approval_id?: string
+  task_id?: string
+  matched_task_id?: string
+  lease_id?: string
+  tool_use_id?: string
+  request_fingerprint?: string
+  resolution_transport?: string
+  decision?: string
+  outcome?: string
+  reason?: string
+  metadata_json?: Record<string, any>
+}
+
+export interface RuntimePolicyRule {
+  id: string
+  user_id: string
+  agent_id?: string
+  kind: 'egress' | 'tool'
+  action: 'allow' | 'deny' | 'review'
+  host?: string
+  method?: string
+  path?: string
+  path_regex?: string
+  headers_shape_json?: Record<string, any>
+  body_shape_json?: Record<string, any>
+  tool_name?: string
+  input_shape_json?: Record<string, any>
+  input_regex?: string
+  reason?: string
+  source: string
+  enabled: boolean
+  last_matched_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeRuleCandidate {
+  rule: RuntimePolicyRule
+  scope_default: 'agent' | 'global'
+}
+
+export interface RuntimePresetDecision {
+  id: string
+  user_id: string
+  command_key: string
+  profile: string
+  decision: 'applied' | 'skipped' | 'always_skip'
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StarterProfileRuleDraft {
+  kind: 'egress' | 'tool'
+  action: 'allow' | 'deny' | 'review'
+  host?: string
+  method?: string
+  path?: string
+  path_regex?: string
+  tool_name?: string
+  reason?: string
+}
+
+export interface StarterProfile {
+  id: string
+  display_name: string
+  description: string
+  command_keys: string[]
+  rules: StarterProfileRuleDraft[]
 }
 
 export interface ToolExecutionLease {
@@ -982,6 +1076,9 @@ export const api = {
     create: (name: string) =>
       post<Agent>('/api/agents', { name }),
     delete: (id: string) => del<{ revoked_tasks: number }>(`/api/agents/${id}`),
+    getRuntimeSettings: (id: string) => get<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`),
+    updateRuntimeSettings: (id: string, settings: AgentRuntimeSettings) =>
+      put<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`, settings),
   },
   connections: {
     list: () => get<ConnectionRequest[]>('/api/agents/connections'),
@@ -1064,8 +1161,8 @@ export const api = {
   runtime: {
     status: () => get<RuntimeStatus>('/api/runtime/status'),
     listApprovals: () => get<{ entries: ApprovalRecord[]; total: number }>('/api/runtime/approvals'),
-    resolveApproval: (approvalId: string, resolution: 'allow_once' | 'deny') =>
-      post<{ approval_id: string; status: string; resolution: string }>(
+    resolveApproval: (approvalId: string, resolution: 'allow_once' | 'allow_session' | 'allow_always' | 'deny') =>
+      post<{ approval_id: string; status: string; resolution: string; task_id?: string }>(
         `/api/runtime/approvals/${approvalId}/resolve`,
         { resolution },
       ),
@@ -1074,6 +1171,30 @@ export const api = {
       post<{ session_id: string; status: string }>(`/api/runtime/sessions/${sessionId}/revoke`, {}),
     listLeases: (sessionId: string) =>
       get<{ entries: ToolExecutionLease[]; total: number }>('/api/runtime/leases', { session_id: sessionId }),
+    listEvents: (params?: { session_id?: string }) =>
+      get<{ entries: RuntimeEvent[]; total: number }>('/api/runtime/events', params),
+    listRules: (params?: { kind?: string; agent_id?: string; enabled?: boolean }) =>
+      get<{ entries: RuntimePolicyRule[]; total: number }>('/api/runtime/rules', {
+        kind: params?.kind,
+        agent_id: params?.agent_id,
+        enabled: params?.enabled === undefined ? undefined : (params.enabled ? 'true' : 'false'),
+      }),
+    createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
+      post<RuntimePolicyRule>('/api/runtime/rules', rule),
+    updateRule: (id: string, rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
+      put<RuntimePolicyRule>(`/api/runtime/rules/${id}`, rule),
+    deleteRule: (id: string) => del<{ status: string }>(`/api/runtime/rules/${id}`),
+    listStarterProfiles: () => get<{ entries: StarterProfile[]; total: number }>('/api/runtime/starter-profiles'),
+    applyStarterProfile: (profileId: string, agentId?: string) =>
+      post<{ entries: RuntimePolicyRule[]; total: number }>(`/api/runtime/starter-profiles/${profileId}/apply`, agentId ? { agent_id: agentId } : {}),
+    getPresetDecision: (commandKey: string, profile: string) =>
+      get<{ decision: RuntimePresetDecision | null }>('/api/runtime/preset-decisions', { command_key: commandKey, profile }),
+    upsertPresetDecision: (decision: Pick<RuntimePresetDecision, 'command_key' | 'profile' | 'decision'>) =>
+      put<RuntimePresetDecision>('/api/runtime/preset-decisions', decision),
+    getRuleCandidate: (eventId: string, action: 'allow' | 'deny' | 'review') =>
+      get<RuntimeRuleCandidate>(`/api/runtime/events/${eventId}/rule-candidate`, { action }),
+    promoteEventToTask: (eventId: string, lifetime: 'session' | 'standing') =>
+      post<{ task_id: string }>(`/api/runtime/events/${eventId}/promote-task`, { lifetime }),
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),

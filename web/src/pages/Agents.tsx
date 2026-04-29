@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, type AgentRuntimeSettings } from '../api/client'
 import type { ConnectionRequest } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
@@ -189,12 +189,137 @@ export default function Agents() {
                 >
                   Revoke
                 </button>
+                {!orgId && (
+                  <div className="sm:basis-full">
+                    <AgentRuntimePanel agentId={agent.id} />
+                  </div>
+                )}
               </div>
             )
           })}
         </div>
       </section>
 
+    </div>
+  )
+}
+
+function AgentRuntimePanel({ agentId }: { agentId: string }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const { data: settings } = useQuery({
+    queryKey: ['agent-runtime-settings', agentId],
+    queryFn: () => api.agents.getRuntimeSettings(agentId),
+    enabled: open,
+  })
+  const [draft, setDraft] = useState<AgentRuntimeSettings | null>(null)
+
+  useEffect(() => {
+    if (settings && draft == null) {
+      setDraft(settings)
+    }
+  }, [settings, draft])
+
+  const saveMut = useMutation({
+    mutationFn: (next: AgentRuntimeSettings) => api.agents.updateRuntimeSettings(agentId, next),
+    onSuccess: (saved) => {
+      setDraft(saved)
+      qc.invalidateQueries({ queryKey: ['agent-runtime-settings', agentId] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['runtime-status'] })
+    },
+  })
+
+  const current = draft ?? settings
+
+  return (
+    <div className="mt-3 rounded border border-border-subtle bg-surface-0">
+      <button
+        onClick={() => {
+          setOpen(v => !v)
+          if (!open && settings && !draft) setDraft(settings)
+        }}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="text-sm font-medium text-text-primary">Runtime settings</div>
+          <div className="text-xs text-text-tertiary">
+            {current
+              ? `${current.runtime_enabled ? 'enabled' : 'disabled'} · ${current.runtime_mode} · ${current.starter_profile || 'none'}`
+              : 'Configure observe vs enforce defaults, starter profile, and outbound credential posture.'}
+          </div>
+        </div>
+        <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Edit'}</span>
+      </button>
+      {open && current && (
+        <div className="border-t border-border-subtle px-4 py-4 space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Runtime enabled</span>
+              <select
+                value={current.runtime_enabled ? 'true' : 'false'}
+                onChange={e => setDraft({ ...current, runtime_enabled: e.target.value === 'true' })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Runtime mode</span>
+              <select
+                value={current.runtime_mode}
+                onChange={e => setDraft({ ...current, runtime_mode: e.target.value as AgentRuntimeSettings['runtime_mode'] })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="observe">Observe</option>
+                <option value="enforce">Enforce</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Starter profile</span>
+              <select
+                value={current.starter_profile}
+                onChange={e => setDraft({ ...current, starter_profile: e.target.value })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="none">None</option>
+                <option value="claude_code">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Outbound credential mode</span>
+              <select
+                value={current.outbound_credential_mode}
+                onChange={e => setDraft({ ...current, outbound_credential_mode: e.target.value as AgentRuntimeSettings['outbound_credential_mode'] })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="inherit">Inherit</option>
+                <option value="observe">Observe</option>
+                <option value="strict">Strict</option>
+              </select>
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <input
+              type="checkbox"
+              checked={current.inject_stored_bearer}
+              onChange={e => setDraft({ ...current, inject_stored_bearer: e.target.checked })}
+            />
+            Inject stored bearer credentials
+          </label>
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveMut.mutate(current)}
+              disabled={saveMut.isPending}
+              className="rounded bg-brand px-4 py-2 text-sm font-medium text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saveMut.isPending ? 'Saving…' : 'Save runtime settings'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -705,4 +830,3 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
     </div>
   )
 }
-
