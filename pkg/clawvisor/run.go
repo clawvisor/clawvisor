@@ -12,7 +12,9 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	runtimeleases "github.com/clawvisor/clawvisor/internal/runtime/leases"
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
@@ -41,6 +43,15 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			return err
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store})
+		reviewCache := runtimereview.NewApprovalCache()
+		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{
+			Store:       opts.Store,
+			Config:      opts.Config,
+			ReviewCache: reviewCache,
+			Leases: runtimeleases.Service{
+				Store: opts.Store,
+			},
+		})
 		runtimeSrv.InstallEgressPolicy(runtimeproxy.PolicyHooks{
 			Store:  opts.Store,
 			Config: opts.Config,

@@ -81,6 +81,10 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 
 		var matchedTask *store.Task
 		var matchedWhy string
+		var leaseID *string
+		var leaseTaskID *string
+		var usedActiveTaskContext bool
+		var usedLeaseBias bool
 		tasks, _, err := hooks.Store.ListTasks(req.Context(), st.Session.UserID, store.TaskFilter{ActiveOnly: true})
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load tasks"}`)
@@ -92,21 +96,38 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			}
 			candidateTasks = append(candidateTasks, task)
 		}
-		if match, task, err := matchPreferredEgressTask(req.Context(), hooks.Store, st.Session.ID, candidateTasks, egressReq); err == nil && match != nil {
-			matchedTask = task
-			matchedWhy = match.Item.Why
+		if matchCtx, err := matchAttributedEgressTask(req.Context(), hooks.Store, st.Session.ID, candidateTasks, egressReq); err == nil && matchCtx != nil && matchCtx.Match != nil {
+			matchedTask = matchCtx.Task
+			matchedWhy = matchCtx.Match.Item.Why
+			leaseID = matchCtx.LeaseID
+			leaseTaskID = matchCtx.LeaseTaskID
+			usedActiveTaskContext = matchCtx.UsedActiveTaskContext
+			usedLeaseBias = matchCtx.UsedLeaseBias
 		} else if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid task egress matcher"}`)
 		}
 
 		if oneOff, err := hooks.Store.ConsumeAgentOneOffApproval(req.Context(), st.Session.AgentID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
-			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, matchedTask, oneOff.ApprovalID, paramsSafe, req.Method, "allow", "approved", matchedWhy, false, false)
+			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+				MatchedTask:           matchedTask,
+				ApprovalID:            oneOff.ApprovalID,
+				LeaseID:               leaseID,
+				LeaseTaskID:           leaseTaskID,
+				UsedActiveTaskContext: usedActiveTaskContext,
+				UsedLeaseBias:         usedLeaseBias,
+			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
 			return req, nil
 		}
 
 		if matchedTask != nil {
 			s.recordTaskActivity(req.Context(), hooks.Store, st.Session, matchedTask, st.RequestID)
-			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, matchedTask, nil, paramsSafe, req.Method, "allow", "approved", matchedWhy, false, false)
+			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+				MatchedTask:           matchedTask,
+				LeaseID:               leaseID,
+				LeaseTaskID:           leaseTaskID,
+				UsedActiveTaskContext: usedActiveTaskContext,
+				UsedLeaseBias:         usedLeaseBias,
+			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
 			return req, nil
 		}
 
@@ -129,7 +150,10 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		})
 
 		if st.Session.ObservationMode {
-			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, nil, nil, paramsSafe, req.Method, "allow", "observed", "observation mode: request would require runtime approval", true, true)
+			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+				WouldBlock:  true,
+				WouldReview: true,
+			}, paramsSafe, req.Method, "allow", "observed", "observation mode: request would require runtime approval")
 			return req, nil
 		}
 
@@ -156,7 +180,12 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			}
 		}
 
-		st.AuditID = s.logAudit(req.Context(), hooks.Store, st, nil, &rec.ID, paramsSafe, req.Method, "review", "pending", "runtime egress request is outside the active task envelope", false, true)
+		st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+			ApprovalID:        &rec.ID,
+			WouldReview:       true,
+			WouldBlock:        false,
+			WouldPromptInline: false,
+		}, paramsSafe, req.Method, "review", "pending", "runtime egress request is outside the active task envelope")
 		st.SkipAuditOutcomeUpdate = true
 
 		respBody, _ := json.Marshal(map[string]any{
@@ -189,13 +218,26 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 	})
 }
 
-func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *RequestState, task *store.Task, approvalID *string, paramsSafe json.RawMessage, method, decision, outcome, reason string, wouldBlock, wouldReview bool) string {
+type runtimeAuditOptions struct {
+	MatchedTask           *store.Task
+	ApprovalID            *string
+	LeaseID               *string
+	ToolUseID             *string
+	LeaseTaskID           *string
+	UsedActiveTaskContext bool
+	UsedLeaseBias         bool
+	WouldBlock            bool
+	WouldReview           bool
+	WouldPromptInline     bool
+}
+
+func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *RequestState, opts runtimeAuditOptions, paramsSafe json.RawMessage, method, decision, outcome, reason string) string {
 	auditID := uuid.NewString()
 	var taskID *string
 	var matchedTaskID *string
-	if task != nil {
-		taskID = &task.ID
-		matchedTaskID = &task.ID
+	if opts.MatchedTask != nil {
+		taskID = &opts.MatchedTask.ID
+		matchedTaskID = &opts.MatchedTask.ID
 	}
 	var reasonPtr *string
 	if reason != "" {
@@ -204,23 +246,29 @@ func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *Request
 	sessionID := reqState.Session.ID
 	agentID := reqState.Session.AgentID
 	_ = st.LogAudit(ctx, &store.AuditEntry{
-		ID:            auditID,
-		UserID:        reqState.Session.UserID,
-		AgentID:       &agentID,
-		RequestID:     reqState.RequestID,
-		TaskID:        taskID,
-		SessionID:     &sessionID,
-		ApprovalID:    approvalID,
-		MatchedTaskID: matchedTaskID,
-		Timestamp:     time.Now().UTC(),
-		Service:       "runtime.egress",
-		Action:        strings.ToLower(method),
-		ParamsSafe:    paramsSafe,
-		Decision:      decision,
-		Outcome:       outcome,
-		Reason:        reasonPtr,
-		WouldBlock:    wouldBlock,
-		WouldReview:   wouldReview,
+		ID:                    auditID,
+		UserID:                reqState.Session.UserID,
+		AgentID:               &agentID,
+		RequestID:             reqState.RequestID,
+		TaskID:                taskID,
+		SessionID:             &sessionID,
+		ApprovalID:            opts.ApprovalID,
+		LeaseID:               opts.LeaseID,
+		ToolUseID:             opts.ToolUseID,
+		MatchedTaskID:         matchedTaskID,
+		LeaseTaskID:           opts.LeaseTaskID,
+		Timestamp:             time.Now().UTC(),
+		Service:               "runtime.egress",
+		Action:                strings.ToLower(method),
+		ParamsSafe:            paramsSafe,
+		Decision:              decision,
+		Outcome:               outcome,
+		Reason:                reasonPtr,
+		UsedActiveTaskContext: opts.UsedActiveTaskContext,
+		UsedLeaseBias:         opts.UsedLeaseBias,
+		WouldBlock:            opts.WouldBlock,
+		WouldReview:           opts.WouldReview,
+		WouldPromptInline:     opts.WouldPromptInline,
 	})
 	return auditID
 }
@@ -339,15 +387,37 @@ func fingerprintRequest(agentID string, req *http.Request, body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func matchPreferredEgressTask(ctx context.Context, st store.Store, sessionID string, tasks []*store.Task, req runtimepolicy.EgressRequest) (*runtimepolicy.EgressMatch, *store.Task, error) {
+type attributedEgressMatch struct {
+	Match                 *runtimepolicy.EgressMatch
+	Task                  *store.Task
+	LeaseID               *string
+	LeaseTaskID           *string
+	UsedActiveTaskContext bool
+	UsedLeaseBias         bool
+}
+
+func matchAttributedEgressTask(ctx context.Context, st store.Store, sessionID string, tasks []*store.Task, req runtimepolicy.EgressRequest) (*attributedEgressMatch, error) {
 	if len(tasks) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
-	preferred, fallback := partitionTasksByActiveSession(ctx, st, sessionID, tasks)
-	if match, task, err := matchEgressTask(preferred, req); err != nil || match != nil {
-		return match, task, err
+	activePreferred, activeFallback := partitionTasksByActiveSession(ctx, st, sessionID, tasks)
+	ordered, leaseID, leaseTaskID, usedLease := reorderTasksByOpenLease(ctx, st, sessionID, activePreferred, activeFallback)
+	match, task, err := matchEgressTask(ordered, req)
+	if err != nil || match == nil {
+		return nil, err
 	}
-	return matchEgressTask(fallback, req)
+	usedActive := false
+	if task != nil {
+		usedActive = containsTask(activePreferred, task.ID)
+	}
+	return &attributedEgressMatch{
+		Match:                 match,
+		Task:                  task,
+		LeaseID:               leaseID,
+		LeaseTaskID:           leaseTaskID,
+		UsedActiveTaskContext: usedActive,
+		UsedLeaseBias:         usedLease && task != nil && leaseTaskID != nil && *leaseTaskID == task.ID,
+	}, nil
 }
 
 func partitionTasksByActiveSession(ctx context.Context, st store.Store, sessionID string, tasks []*store.Task) ([]*store.Task, []*store.Task) {
@@ -361,6 +431,51 @@ func partitionTasksByActiveSession(ctx context.Context, st store.Store, sessionI
 		fallback = append(fallback, task)
 	}
 	return preferred, fallback
+}
+
+func reorderTasksByOpenLease(ctx context.Context, st store.Store, sessionID string, preferred []*store.Task, fallback []*store.Task) ([]*store.Task, *string, *string, bool) {
+	leasesForSession, err := st.ListOpenToolExecutionLeases(ctx, sessionID)
+	if err != nil || len(leasesForSession) == 0 {
+		return append(append([]*store.Task{}, preferred...), fallback...), nil, nil, false
+	}
+	var leaseID *string
+	if leasesForSession[0] != nil {
+		leaseID = &leasesForSession[0].LeaseID
+	}
+	var leaseTaskID *string
+	if leasesForSession[0] != nil && leasesForSession[0].TaskID != "" {
+		leaseTaskID = &leasesForSession[0].TaskID
+	}
+	leaseTaskSet := map[string]struct{}{}
+	for _, lease := range leasesForSession {
+		if lease == nil || lease.TaskID == "" {
+			continue
+		}
+		leaseTaskSet[lease.TaskID] = struct{}{}
+	}
+	ordered := make([]*store.Task, 0, len(preferred)+len(fallback))
+	seen := map[string]struct{}{}
+	appendOrdered := func(tasks []*store.Task, preferLease bool) {
+		for _, task := range tasks {
+			if task == nil {
+				continue
+			}
+			_, leaseMatch := leaseTaskSet[task.ID]
+			if preferLease != leaseMatch {
+				continue
+			}
+			if _, ok := seen[task.ID]; ok {
+				continue
+			}
+			seen[task.ID] = struct{}{}
+			ordered = append(ordered, task)
+		}
+	}
+	appendOrdered(preferred, true)
+	appendOrdered(fallback, true)
+	appendOrdered(preferred, false)
+	appendOrdered(fallback, false)
+	return ordered, leaseID, leaseTaskID, true
 }
 
 func matchEgressTask(tasks []*store.Task, req runtimepolicy.EgressRequest) (*runtimepolicy.EgressMatch, *store.Task, error) {
@@ -377,6 +492,15 @@ func matchEgressTask(tasks []*store.Task, req runtimepolicy.EgressRequest) (*run
 		}
 	}
 	return nil, nil, nil
+}
+
+func containsTask(tasks []*store.Task, taskID string) bool {
+	for _, task := range tasks {
+		if task != nil && task.ID == taskID {
+			return true
+		}
+	}
+	return false
 }
 
 func flattenHeaders(header http.Header) map[string]string {

@@ -370,6 +370,111 @@ func TestRuntimeProxyPrefersActiveTaskSessionBinding(t *testing.T) {
 	}
 }
 
+func TestRuntimeProxyDeterministicMatchBeatsLeaseBias(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-lease-bias.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+	upstreamURL, _ := url.Parse(upstream.URL)
+
+	if err := st.CreateTask(ctx, &store.Task{
+		ID:            "task-lease",
+		UserID:        userID,
+		AgentID:       agentID,
+		Purpose:       "broad runtime task",
+		Status:        "active",
+		Lifetime:      "session",
+		SchemaVersion: 2,
+		ExpectedEgress: mustJSON(t, []map[string]any{{
+			"host":       upstreamURL.Hostname(),
+			"method":     "GET",
+			"path_regex": "^/v1/.*$",
+			"why":        "Broad runtime API access.",
+		}}),
+		ExpiresInSeconds: 3600,
+	}); err != nil {
+		t.Fatalf("CreateTask(task-lease): %v", err)
+	}
+	if err := st.CreateTask(ctx, &store.Task{
+		ID:            "task-specific",
+		UserID:        userID,
+		AgentID:       agentID,
+		Purpose:       "specific runtime task",
+		Status:        "active",
+		Lifetime:      "session",
+		SchemaVersion: 2,
+		ExpectedEgress: mustJSON(t, []map[string]any{{
+			"host":   upstreamURL.Hostname(),
+			"method": "GET",
+			"path":   "/v1/search",
+			"why":    "Specific runtime API search access.",
+		}}),
+		ExpiresInSeconds: 3600,
+	}); err != nil {
+		t.Fatalf("CreateTask(task-specific): %v", err)
+	}
+
+	session := createRuntimeSession(t, st, "session-lease-bias", userID, agentID, false)
+	if err := st.CreateToolExecutionLease(ctx, &store.ToolExecutionLease{
+		LeaseID:   "lease-1",
+		SessionID: session.id,
+		TaskID:    "task-lease",
+		ToolUseID: "toolu_lease",
+		ToolName:  "fetch_messages",
+		Status:    "open",
+		OpenedAt:  time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateToolExecutionLease: %v", err)
+	}
+
+	srv := newStartedRuntimeProxy(t, st, cfg)
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL+"/v1/search", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(body))
+	}
+
+	entries, _, err := st.ListAuditEntries(ctx, userID, store.AuditFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected audit entry")
+	}
+	if entries[0].MatchedTaskID == nil || *entries[0].MatchedTaskID != "task-specific" {
+		t.Fatalf("expected deterministic match to prefer task-specific, got %+v", entries[0].MatchedTaskID)
+	}
+	if entries[0].LeaseTaskID == nil || *entries[0].LeaseTaskID != "task-lease" {
+		t.Fatalf("expected lease attribution to record task-lease, got %+v", entries[0].LeaseTaskID)
+	}
+	if entries[0].UsedLeaseBias {
+		t.Fatalf("expected deterministic match to beat lease bias, got %+v", entries[0])
+	}
+}
+
 type runtimeTestSession struct {
 	id     string
 	secret string

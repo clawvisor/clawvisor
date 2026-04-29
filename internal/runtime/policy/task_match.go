@@ -29,6 +29,8 @@ type EgressMatch struct {
 }
 
 func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (*ToolMatch, error) {
+	var best *ToolMatch
+	bestScore := -1
 	for _, task := range tasks {
 		env, err := runtimetasks.EnvelopeFromTask(task)
 		if err != nil {
@@ -49,15 +51,21 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 			if !matchShape(item.InputShape, input) {
 				continue
 			}
-			return &ToolMatch{TaskID: task.ID, Item: item}, nil
+			score := toolMatchSpecificity(item)
+			if score > bestScore {
+				bestScore = score
+				best = &ToolMatch{TaskID: task.ID, Item: item}
+			}
 		}
 	}
-	return nil, nil
+	return best, nil
 }
 
 func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, error) {
 	host := strings.ToLower(req.Host)
 	method := strings.ToUpper(req.Method)
+	var best *EgressMatch
+	bestScore := -1
 	for _, task := range tasks {
 		env, err := runtimetasks.EnvelopeFromTask(task)
 		if err != nil {
@@ -88,10 +96,14 @@ func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, e
 			if !matchHeaders(item.Headers, req.Headers) {
 				continue
 			}
-			return &EgressMatch{TaskID: task.ID, Item: item}, nil
+			score := egressMatchSpecificity(item)
+			if score > bestScore {
+				bestScore = score
+				best = &EgressMatch{TaskID: task.ID, Item: item}
+			}
 		}
 	}
-	return nil, nil
+	return best, nil
 }
 
 func matchHeaders(shape map[string]any, headers map[string]string) bool {
@@ -157,4 +169,51 @@ func matchRegexMap(expr string, actual map[string]any) (bool, error) {
 		return false, err
 	}
 	return regexp.MatchString(expr, string(body))
+}
+
+func toolMatchSpecificity(item runtimetasks.ExpectedTool) int {
+	score := 1
+	if item.InputRegex != "" {
+		score += 4
+	}
+	score += shapeSpecificity(item.InputShape)
+	return score
+}
+
+func egressMatchSpecificity(item runtimetasks.ExpectedEgress) int {
+	score := 1
+	if item.Method != "" {
+		score++
+	}
+	if item.Path != "" {
+		score += 5
+	}
+	if item.PathRegex != "" {
+		score += 4
+	}
+	score += shapeSpecificity(item.QueryShape)
+	score += shapeSpecificity(item.BodyShape)
+	score += shapeSpecificity(item.Headers)
+	return score
+}
+
+func shapeSpecificity(shape map[string]any) int {
+	if len(shape) == 0 {
+		return 0
+	}
+	score := 0
+	score += listLen(shape["required_keys"]) * 2
+	score += listLen(shape["forbid_keys"]) * 2
+	return score + len(shape)
+}
+
+func listLen(v any) int {
+	switch typed := v.(type) {
+	case []string:
+		return len(typed)
+	case []any:
+		return len(typed)
+	default:
+		return 0
+	}
 }

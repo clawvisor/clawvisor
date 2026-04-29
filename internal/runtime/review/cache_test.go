@@ -13,11 +13,11 @@ func TestApprovalCacheHoldResolveAndExpire(t *testing.T) {
 	cache.nowFn = func() time.Time { return now }
 	cache.IdleTTL = time.Minute
 
-	held, ok := cache.Hold("sess", "tool-1", "fetch_messages", map[string]any{"max": 10}, "needs review")
+	held, ok := cache.Hold("sess", "approval-1", "task-1", "tool-1", "fetch_messages", map[string]any{"max": 10}, "needs review")
 	if !ok {
 		t.Fatal("Hold should succeed")
 	}
-	if _, ok := cache.Hold("sess", "tool-2", "other", nil, "blocked"); ok {
+	if _, ok := cache.Hold("sess", "approval-2", "task-2", "tool-2", "other", nil, "blocked"); ok {
 		t.Fatal("second Hold should fail while first is active")
 	}
 	if got := cache.Get("sess"); got == nil || got.ID != held.ID {
@@ -30,7 +30,7 @@ func TestApprovalCacheHoldResolveAndExpire(t *testing.T) {
 		t.Fatalf("expected cache empty after resolve, got %+v", got)
 	}
 
-	held, ok = cache.Hold("sess", "tool-3", "fetch_messages", nil, "again")
+	held, ok = cache.Hold("sess", "approval-3", "task-3", "tool-3", "fetch_messages", nil, "again")
 	if !ok {
 		t.Fatal("Hold should succeed after resolve")
 	}

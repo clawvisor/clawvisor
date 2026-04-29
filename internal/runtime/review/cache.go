@@ -11,12 +11,14 @@ import (
 // HeldApproval is one buffered tool_use awaiting a user verdict through an
 // inline approval surface.
 type HeldApproval struct {
-	ID        string
-	ToolUseID string
-	ToolName  string
-	ToolInput map[string]any
-	Reason    string
-	CreatedAt time.Time
+	ID               string
+	ApprovalRecordID string
+	TaskID           string
+	ToolUseID        string
+	ToolName         string
+	ToolInput        map[string]any
+	Reason           string
+	CreatedAt        time.Time
 }
 
 // ApprovalCache holds one active held approval per runtime session.
@@ -36,19 +38,21 @@ func NewApprovalCache() *ApprovalCache {
 	}
 }
 
-func (c *ApprovalCache) Hold(sessionID, toolUseID, toolName string, toolInput map[string]any, reason string) (*HeldApproval, bool) {
+func (c *ApprovalCache) Hold(sessionID, approvalRecordID, taskID, toolUseID, toolName string, toolInput map[string]any, reason string) (*HeldApproval, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if existing := c.activeLocked(sessionID); existing != nil {
 		return nil, false
 	}
 	h := &HeldApproval{
-		ID:        mintApprovalID(),
-		ToolUseID: toolUseID,
-		ToolName:  toolName,
-		ToolInput: toolInput,
-		Reason:    reason,
-		CreatedAt: c.nowFn(),
+		ID:               mintApprovalID(),
+		ApprovalRecordID: approvalRecordID,
+		TaskID:           taskID,
+		ToolUseID:        toolUseID,
+		ToolName:         toolName,
+		ToolInput:        toolInput,
+		Reason:           reason,
+		CreatedAt:        c.nowFn(),
 	}
 	c.sessions[sessionID] = h
 	return h, true

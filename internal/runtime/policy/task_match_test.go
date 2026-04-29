@@ -60,3 +60,61 @@ func TestMatchToolCallAndEgressRequest(t *testing.T) {
 		t.Fatalf("expected egress miss, got %+v", egressMiss)
 	}
 }
+
+func TestMatchToolCallPrefersMoreSpecificCandidate(t *testing.T) {
+	t.Parallel()
+
+	broad := &store.Task{
+		ID:            "task-broad",
+		SchemaVersion: 2,
+		ExpectedTools: []byte(`[
+			{"tool_name":"fetch_messages","why":"generic triage"}
+		]`),
+	}
+	specific := &store.Task{
+		ID:            "task-specific",
+		SchemaVersion: 2,
+		ExpectedTools: []byte(`[
+			{"tool_name":"fetch_messages","why":"narrow triage","input_shape":{"required_keys":["thread_id"]}}
+		]`),
+	}
+
+	match, err := MatchToolCall([]*store.Task{broad, specific}, "fetch_messages", map[string]any{"thread_id": "thr_123"})
+	if err != nil {
+		t.Fatalf("MatchToolCall: %v", err)
+	}
+	if match == nil || match.TaskID != "task-specific" {
+		t.Fatalf("expected specific task match, got %+v", match)
+	}
+}
+
+func TestMatchEgressRequestPrefersMoreSpecificCandidate(t *testing.T) {
+	t.Parallel()
+
+	broad := &store.Task{
+		ID:            "task-broad",
+		SchemaVersion: 2,
+		ExpectedEgress: []byte(`[
+			{"host":"api.example.com","why":"generic runtime access","method":"GET","path_regex":"^/v1/.*$"}
+		]`),
+	}
+	specific := &store.Task{
+		ID:            "task-specific",
+		SchemaVersion: 2,
+		ExpectedEgress: []byte(`[
+			{"host":"api.example.com","why":"read search endpoint","method":"GET","path":"/v1/search"}
+		]`),
+	}
+
+	match, err := MatchEgressRequest([]*store.Task{broad, specific}, EgressRequest{
+		Host:   "api.example.com",
+		Method: "GET",
+		Path:   "/v1/search",
+	})
+	if err != nil {
+		t.Fatalf("MatchEgressRequest: %v", err)
+	}
+	if match == nil || match.TaskID != "task-specific" {
+		t.Fatalf("expected specific task match, got %+v", match)
+	}
+}
