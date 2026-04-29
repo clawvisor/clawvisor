@@ -35,9 +35,9 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 
 func authRequiredResponse(req *http.Request, err error) *http.Response {
 	status := http.StatusProxyAuthRequired
-	body := "Proxy-Authorization required: provide a bearer token minted by Clawvisor.\n"
+	body := "Proxy-Authorization required: provide a Clawvisor runtime token or use an authenticated proxy URL.\n"
 	if errors.Is(err, ErrProxyAuthorizationRejected) {
-		body = "Proxy-Authorization rejected: token is missing, malformed, or expired.\n"
+		body = "Proxy-Authorization rejected: credentials are missing, malformed, or expired.\n"
 	}
 	return goproxy.NewResponse(req, "text/plain", status, body)
 }

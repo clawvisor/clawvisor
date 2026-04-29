@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -160,6 +161,63 @@ func TestRuntimeProxyObservationModeAllowsAndAudits(t *testing.T) {
 	}
 	if !entries[0].WouldBlock || !entries[0].WouldReview {
 		t.Fatalf("expected observation audit flags, got %+v", entries[0])
+	}
+}
+
+func TestRuntimeProxyAcceptsBasicProxyCredentials(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-basic.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+	upstreamURL, _ := url.Parse(upstream.URL)
+
+	if err := st.CreateTask(ctx, &store.Task{
+		ID:            "task-basic",
+		UserID:        userID,
+		AgentID:       agentID,
+		Purpose:       "read runtime API with authenticated proxy URL",
+		Status:        "active",
+		Lifetime:      "session",
+		SchemaVersion: 2,
+		ExpectedEgress: mustJSON(t, []map[string]any{{
+			"host":   upstreamURL.Hostname(),
+			"method": "GET",
+			"path":   "/",
+			"why":    "Read the downstream runtime API status.",
+		}}),
+		ExpiresInSeconds: 3600,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	session := createRuntimeSession(t, st, "session-basic", userID, agentID, false)
+	srv := newStartedRuntimeProxy(t, st, cfg)
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("clawvisor:"+session.secret)))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(body))
 	}
 }
 

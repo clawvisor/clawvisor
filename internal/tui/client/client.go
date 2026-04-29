@@ -32,7 +32,7 @@ func New(baseURL, refreshToken string) *Client {
 
 func (c *Client) SetAccessToken(t string)  { c.accessToken = t }
 func (c *Client) SetRefreshToken(t string) { c.refreshToken = t }
-func (c *Client) BaseURL() string           { return c.baseURL }
+func (c *Client) BaseURL() string          { return c.baseURL }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -101,6 +101,16 @@ func (c *Client) LoginMagic(token string) (*AuthResponse, error) {
 	}
 	c.accessToken = resp.AccessToken
 	c.refreshToken = resp.RefreshToken
+	return &resp, nil
+}
+
+// ── Runtime ────────────────────────────────────────────────────────────────
+
+func (c *Client) CreateRuntimeSession(req CreateRuntimeSessionRequest) (*CreateRuntimeSessionResponse, error) {
+	var resp CreateRuntimeSessionResponse
+	if err := c.post("/api/runtime/sessions", req, &resp); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 

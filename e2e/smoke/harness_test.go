@@ -83,29 +83,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		t.Skipf("skipping: ~/.clawvisor/config.yaml not found: %v", err)
 	}
 
-	// Resolve binary: use CLAWVISOR_BIN env, then ~/.clawvisor/bin/clawvisor,
-	// then fall back to go build.
-	binPath := os.Getenv("CLAWVISOR_BIN")
-	if binPath == "" {
-		installed := filepath.Join(clawDir, "bin", "clawvisor")
-		if _, err := os.Stat(installed); err == nil {
-			binPath = installed
-		}
-	}
-	if binPath == "" {
-		projectRoot, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
-			t.Fatalf("project root: %v", err)
-		}
-		binPath = filepath.Join(projectRoot, "bin", "clawvisor-e2e")
-		buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/clawvisor")
-		buildCmd.Dir = projectRoot
-		buildCmd.Stdout = os.Stderr
-		buildCmd.Stderr = os.Stderr
-		if err := buildCmd.Run(); err != nil {
-			t.Fatalf("go build: %v", err)
-		}
-	}
+	binPath := resolveOrBuildBinary(t)
 	t.Logf("using binary: %s", binPath)
 
 	// Create temp directory for this test run.

@@ -25,6 +25,33 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type RuntimeSession struct {
+	ID              string         `json:"id"`
+	UserID          string         `json:"user_id"`
+	AgentID         string         `json:"agent_id"`
+	Mode            string         `json:"mode"`
+	ObservationMode bool           `json:"observation_mode"`
+	MetadataJSON    map[string]any `json:"metadata_json,omitempty"`
+	ExpiresAt       time.Time      `json:"expires_at"`
+	CreatedAt       time.Time      `json:"created_at"`
+	RevokedAt       *time.Time     `json:"revoked_at,omitempty"`
+}
+
+type CreateRuntimeSessionRequest struct {
+	Mode            string         `json:"mode,omitempty"`
+	ObservationMode *bool          `json:"observation_mode,omitempty"`
+	TTLSeconds      int            `json:"ttl_seconds,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateRuntimeSessionResponse struct {
+	Session         RuntimeSession `json:"session"`
+	ProxyBearer     string         `json:"proxy_bearer_secret"`
+	ProxyURL        string         `json:"proxy_url"`
+	CACertPEM       string         `json:"ca_cert_pem,omitempty"`
+	ObservationMode bool           `json:"observation_mode"`
+}
+
 // ── Queue ───────────────────────────────────────────────────────────────────
 
 type QueueResponse struct {

@@ -1,0 +1,219 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+
+	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	"github.com/clawvisor/clawvisor/internal/tui/client"
+	"github.com/spf13/cobra"
+)
+
+var (
+	runtimeAgentToken string
+	runtimeServerURL  string
+	runtimeMode       string
+	runtimeTTLSeconds int
+	runtimeObserve    bool
+)
+
+var agentRuntimeEnvCmd = &cobra.Command{
+	Use:   "runtime-env",
+	Short: "Print proxy environment exports for a runtime-scoped agent run",
+	Long:  "Mint a short-lived runtime session for an agent token and print shell exports that route the child process through Clawvisor's embedded runtime proxy.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts, err := runtimeBootstrapOptionsFromFlags()
+		if err != nil {
+			return err
+		}
+		session, err := createRuntimeBootstrapSession(opts)
+		if err != nil {
+			return err
+		}
+		envPairs, err := buildRuntimeBootstrapEnv(opts.BaseURL, opts.AgentToken, session)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		for _, pair := range envPairs {
+			key, value, _ := strings.Cut(pair, "=")
+			fmt.Printf("export %s=%s\n", key, shellQuote(value))
+		}
+		return nil
+	},
+	SilenceUsage: true,
+}
+
+var agentRuntimeRunCmd = &cobra.Command{
+	Use:   "run -- <command> [args...]",
+	Short: "Run a command inside a runtime-scoped proxy session",
+	Long:  "Mint a short-lived runtime session for an agent token, inject the required proxy environment, and exec the given command under that session.",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		opts, err := runtimeBootstrapOptionsFromFlags()
+		if err != nil {
+			return err
+		}
+		session, err := createRuntimeBootstrapSession(opts)
+		if err != nil {
+			return err
+		}
+		envPairs, err := buildRuntimeBootstrapEnv(opts.BaseURL, opts.AgentToken, session)
+		if err != nil {
+			return err
+		}
+		child := exec.Command(args[0], args[1:]...)
+		child.Env = mergeEnvironment(os.Environ(), envPairs)
+		child.Stdin = os.Stdin
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		return child.Run()
+	},
+	SilenceUsage: true,
+}
+
+type runtimeBootstrapOptions struct {
+	BaseURL     string
+	AgentToken  string
+	Mode        string
+	TTLSeconds  int
+	Observation bool
+}
+
+func runtimeBootstrapOptionsFromFlags() (*runtimeBootstrapOptions, error) {
+	agentToken := strings.TrimSpace(runtimeAgentToken)
+	if agentToken == "" {
+		agentToken = strings.TrimSpace(os.Getenv("CLAWVISOR_AGENT_TOKEN"))
+	}
+	if agentToken == "" {
+		return nil, fmt.Errorf("agent token is required: pass --agent-token or set CLAWVISOR_AGENT_TOKEN")
+	}
+	baseURL := strings.TrimSpace(runtimeServerURL)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(os.Getenv("CLAWVISOR_URL"))
+	}
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:25297"
+	}
+	return &runtimeBootstrapOptions{
+		BaseURL:     baseURL,
+		AgentToken:  agentToken,
+		Mode:        runtimeMode,
+		TTLSeconds:  runtimeTTLSeconds,
+		Observation: runtimeObserve,
+	}, nil
+}
+
+func createRuntimeBootstrapSession(opts *runtimeBootstrapOptions) (*client.CreateRuntimeSessionResponse, error) {
+	cl := client.New(opts.BaseURL, "")
+	cl.SetAccessToken(opts.AgentToken)
+	observe := opts.Observation
+	return cl.CreateRuntimeSession(client.CreateRuntimeSessionRequest{
+		Mode:            opts.Mode,
+		ObservationMode: &observe,
+		TTLSeconds:      opts.TTLSeconds,
+		Metadata: map[string]any{
+			"launcher": "clawvisor-agent-run",
+		},
+	})
+}
+
+func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.CreateRuntimeSessionResponse) ([]string, error) {
+	if session == nil {
+		return nil, fmt.Errorf("runtime session response is required")
+	}
+	authenticatedProxyURL, err := runtimeproxy.ProxyURLWithSecret(session.ProxyURL, session.ProxyBearer)
+	if err != nil {
+		return nil, err
+	}
+	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"), "127.0.0.1", "localhost", "::1")
+	return []string{
+		"CLAWVISOR_URL=" + baseURL,
+		"CLAWVISOR_AGENT_TOKEN=" + agentToken,
+		"CLAWVISOR_RUNTIME_SESSION_ID=" + session.Session.ID,
+		"CLAWVISOR_RUNTIME_PROXY_URL=" + session.ProxyURL,
+		"CLAWVISOR_RUNTIME_OBSERVATION_MODE=" + fmt.Sprintf("%t", session.ObservationMode),
+		"HTTP_PROXY=" + authenticatedProxyURL,
+		"HTTPS_PROXY=" + authenticatedProxyURL,
+		"ALL_PROXY=" + authenticatedProxyURL,
+		"http_proxy=" + authenticatedProxyURL,
+		"https_proxy=" + authenticatedProxyURL,
+		"all_proxy=" + authenticatedProxyURL,
+		"NO_PROXY=" + noProxy,
+		"no_proxy=" + noProxy,
+	}, nil
+}
+
+func mergeNoProxy(existing string, defaults ...string) string {
+	seen := map[string]bool{}
+	var values []string
+	for _, raw := range strings.Split(existing, ",") {
+		value := strings.TrimSpace(raw)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	for _, value := range defaults {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	return strings.Join(values, ",")
+}
+
+func mergeEnvironment(base []string, overrides []string) []string {
+	byKey := make(map[string]string, len(base)+len(overrides))
+	order := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, exists := byKey[key]; !exists {
+			order = append(order, key)
+		}
+		byKey[key] = entry
+	}
+	for _, entry := range overrides {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, exists := byKey[key]; !exists {
+			order = append(order, key)
+		}
+		byKey[key] = entry
+	}
+	out := make([]string, 0, len(order))
+	for _, key := range order {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+func init() {
+	for _, subcmd := range []*cobra.Command{agentRuntimeEnvCmd, agentRuntimeRunCmd} {
+		subcmd.Flags().StringVar(&runtimeAgentToken, "agent-token", "", "Agent bearer token (defaults to CLAWVISOR_AGENT_TOKEN)")
+		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL (defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
+		subcmd.Flags().StringVar(&runtimeMode, "mode", "proxy", "Runtime session mode")
+		subcmd.Flags().IntVar(&runtimeTTLSeconds, "ttl-seconds", 0, "Runtime session TTL in seconds (default: server runtime_proxy.session_ttl_seconds)")
+		subcmd.Flags().BoolVar(&runtimeObserve, "observe", false, "Create the runtime session in observation mode")
+	}
+	agentCmd.AddCommand(agentRuntimeEnvCmd)
+	agentCmd.AddCommand(agentRuntimeRunCmd)
+}

@@ -3,9 +3,12 @@ package proxy
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,10 +29,25 @@ func ExtractBearerSecret(header http.Header) (string, error) {
 		return "", ErrProxyAuthorizationRequired
 	}
 	scheme, token, ok := strings.Cut(value, " ")
-	if !ok || !strings.EqualFold(strings.TrimSpace(scheme), "Bearer") || strings.TrimSpace(token) == "" {
+	if !ok || strings.TrimSpace(token) == "" {
 		return "", ErrProxyAuthorizationRejected
 	}
-	return strings.TrimSpace(token), nil
+	switch {
+	case strings.EqualFold(strings.TrimSpace(scheme), "Bearer"):
+		return strings.TrimSpace(token), nil
+	case strings.EqualFold(strings.TrimSpace(scheme), "Basic"):
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(token))
+		if err != nil {
+			return "", ErrProxyAuthorizationRejected
+		}
+		_, password, ok := strings.Cut(string(decoded), ":")
+		if !ok || strings.TrimSpace(password) == "" {
+			return "", ErrProxyAuthorizationRejected
+		}
+		return strings.TrimSpace(password), nil
+	default:
+		return "", ErrProxyAuthorizationRejected
+	}
 }
 
 type Authenticator struct {
@@ -49,4 +67,20 @@ func (a Authenticator) Authenticate(ctx context.Context, header http.Header) (*s
 		return nil, ErrProxyAuthorizationRejected
 	}
 	return session, nil
+}
+
+func ProxyURLWithSecret(proxyURL, secret string) (string, error) {
+	if strings.TrimSpace(proxyURL) == "" {
+		return "", fmt.Errorf("proxy URL is required")
+	}
+	req, err := http.NewRequest(http.MethodGet, proxyURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse proxy URL: %w", err)
+	}
+	u := req.URL
+	u.User = nil
+	if secret != "" {
+		u.User = url.UserPassword("clawvisor", secret)
+	}
+	return u.String(), nil
 }
