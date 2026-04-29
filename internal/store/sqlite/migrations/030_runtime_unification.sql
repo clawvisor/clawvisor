@@ -56,7 +56,7 @@ CREATE TABLE runtime_sessions (
 
 CREATE TABLE one_off_approvals (
     id                  TEXT PRIMARY KEY,
-    session_id          TEXT NOT NULL,
+    session_id          TEXT NOT NULL REFERENCES runtime_sessions(id) ON DELETE CASCADE,
     request_fingerprint TEXT NOT NULL,
     approval_id         TEXT,
     approved_at         TEXT NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE one_off_approvals (
 
 CREATE TABLE tool_execution_leases (
     lease_id       TEXT PRIMARY KEY,
-    session_id     TEXT NOT NULL,
+    session_id     TEXT NOT NULL REFERENCES runtime_sessions(id) ON DELETE CASCADE,
     task_id        TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     tool_use_id    TEXT NOT NULL,
     tool_name      TEXT NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE tool_execution_leases (
 CREATE TABLE task_invocations (
     id              TEXT PRIMARY KEY,
     task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    session_id      TEXT NOT NULL,
+    session_id      TEXT NOT NULL REFERENCES runtime_sessions(id) ON DELETE CASCADE,
     user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agent_id        TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     request_id      TEXT NOT NULL DEFAULT '',
@@ -109,7 +109,7 @@ CREATE TABLE task_calls (
 CREATE TABLE active_task_sessions (
     id            TEXT PRIMARY KEY,
     task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    session_id    TEXT NOT NULL,
+    session_id    TEXT NOT NULL REFERENCES runtime_sessions(id) ON DELETE CASCADE,
     user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agent_id      TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     status        TEXT NOT NULL,

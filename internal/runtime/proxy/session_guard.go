@@ -14,6 +14,7 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 			ctx.Resp = authRequiredResponse(ctx.Req, err)
 			return goproxy.RejectConnect, host
 		}
+		ctx.Req.Header.Del(internalBypassHeader)
 		st := EnsureState(ctx)
 		st.Session = sess
 		return goproxy.MitmConnect, host
@@ -21,11 +22,16 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 	s.goproxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		st := StateOf(ctx)
 		if st != nil && st.Session != nil && st.Session.ID != "" {
+			req.Header.Del(internalBypassHeader)
 			return req, nil
 		}
 		sess, err := auth.Authenticate(req.Context(), req.Header)
 		if err != nil {
 			return req, authRequiredResponse(req, err)
+		}
+		req.Header.Del(internalBypassHeader)
+		if ctx.Req != nil {
+			ctx.Req.Header.Del(internalBypassHeader)
 		}
 		st = EnsureState(ctx)
 		st.Session = sess

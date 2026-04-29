@@ -177,6 +177,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	}
 
 	runtimeSession := &store.RuntimeSession{
+		ID:                    sessionID,
 		UserID:                user.ID,
 		AgentID:               agent.ID,
 		Mode:                  "proxy",
@@ -203,6 +204,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	}
 
 	runtimeSession2 := &store.RuntimeSession{
+		ID:                    "sess-2",
 		UserID:                user.ID,
 		AgentID:               agent.ID,
 		Mode:                  "proxy",
