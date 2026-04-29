@@ -59,7 +59,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 			return req, nil
 		}
 		parser := registry.Match(req)
-		if parser == nil || parser.Name() != conversation.ProviderAnthropic {
+		if parser == nil || (parser.Name() != conversation.ProviderAnthropic && parser.Name() != conversation.ProviderOpenAI) {
 			return req, nil
 		}
 		st := StateOf(ctx)
@@ -73,7 +73,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 
-		s.closeLeasesForToolResults(req.Context(), hooks, st.Session.ID, body)
+		s.closeLeasesForToolResults(req.Context(), hooks, req, st.Session.ID, body)
 
 		for {
 			held := hooks.ReviewCache.Get(st.Session.ID)
@@ -107,7 +107,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 		if hooks.Config == nil || !hooks.Config.RuntimePolicy.InlineApprovalEnabled {
 			return req, nil
 		}
-		verb, approvalID := parseAnthropicApprovalReply(body)
+		verb, approvalID := parseApprovalReplyForProvider(parser.Name(), body)
 		if verb == "" {
 			return req, nil
 		}
@@ -153,24 +153,66 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 
 	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false)
 
-	stream := conversation.AnthropicRequestWantsStream(requestBody)
 	var bodyBytes []byte
 	contentType := "application/json"
-	if allow {
-		if stream {
-			contentType = "text/event-stream"
-			bodyBytes = conversation.SynthAnthropicToolUseSSE("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
+	switch {
+	case conversation.MatchProviderAnthropic(req):
+		stream := conversation.AnthropicRequestWantsStream(requestBody)
+		if allow {
+			if stream {
+				contentType = "text/event-stream"
+				bodyBytes = conversation.SynthAnthropicToolUseSSE("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
+			} else {
+				bodyBytes = conversation.SynthAnthropicToolUseJSON("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
+			}
 		} else {
-			bodyBytes = conversation.SynthAnthropicToolUseJSON("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
+			msg := "Approval denied. The requested tool call was not performed."
+			if stream {
+				contentType = "text/event-stream"
+				bodyBytes = conversation.SynthAnthropicTextSSE("", "", "assistant", msg)
+			} else {
+				bodyBytes = conversation.SynthAnthropicTextJSON("", "", "assistant", msg)
+			}
 		}
-	} else {
-		msg := "Approval denied. The requested tool call was not performed."
-		if stream {
-			contentType = "text/event-stream"
-			bodyBytes = conversation.SynthAnthropicTextSSE("", "", "assistant", msg)
+	case conversation.MatchProviderOpenAI(req):
+		stream := conversation.OpenAIRequestWantsStream(requestBody)
+		if conversation.IsOpenAIChatCompletionsEndpoint(req) {
+			if allow {
+				if stream {
+					contentType = "text/event-stream"
+					bodyBytes = conversation.SynthOpenAIChatToolCallSSE(held.ToolUseID, held.ToolName, held.ToolInput)
+				} else {
+					bodyBytes = conversation.SynthOpenAIChatToolCallJSON(held.ToolUseID, held.ToolName, held.ToolInput)
+				}
+			} else {
+				msg := "Approval denied. The requested tool call was not performed."
+				if stream {
+					contentType = "text/event-stream"
+					bodyBytes = conversation.SynthOpenAIChatTextSSE(msg)
+				} else {
+					bodyBytes = conversation.SynthOpenAIChatTextJSON(msg)
+				}
+			}
 		} else {
-			bodyBytes = conversation.SynthAnthropicTextJSON("", "", "assistant", msg)
+			if allow {
+				if stream {
+					contentType = "text/event-stream"
+					bodyBytes = conversation.SynthOpenAIResponsesFunctionCallSSE(held.ToolUseID, held.ToolName, held.ToolInput)
+				} else {
+					bodyBytes = conversation.SynthOpenAIResponsesFunctionCallJSON(held.ToolUseID, held.ToolName, held.ToolInput)
+				}
+			} else {
+				msg := "Approval denied. The requested tool call was not performed."
+				if stream {
+					contentType = "text/event-stream"
+					bodyBytes = conversation.SynthOpenAIResponsesTextSSE(msg)
+				} else {
+					bodyBytes = conversation.SynthOpenAIResponsesTextJSON(msg)
+				}
+			}
 		}
+	default:
+		return req, nil
 	}
 
 	return req, &http.Response{
@@ -469,6 +511,17 @@ func parseAnthropicApprovalReply(body []byte) (verb, id string) {
 	return "", ""
 }
 
+func parseApprovalReplyForProvider(provider conversation.Provider, body []byte) (verb, id string) {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return parseAnthropicApprovalReply(body)
+	case conversation.ProviderOpenAI:
+		return conversation.OpenAIApprovalReply(body)
+	default:
+		return "", ""
+	}
+}
+
 type anthropicApprovalRequest struct {
 	Messages []struct {
 		Role    string          `json:"role"`
@@ -500,8 +553,8 @@ func extractAnthropicUserText(raw json.RawMessage) string {
 	return strings.Join(out, "\n")
 }
 
-func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHooks, sessionID string, body []byte) {
-	toolResultIDs := conversation.AnthropicToolResultIDsFromRequest(body)
+func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHooks, req *http.Request, sessionID string, body []byte) {
+	toolResultIDs := toolResultIDsForRequest(req, body)
 	if len(toolResultIDs) == 0 {
 		return
 	}
@@ -516,6 +569,17 @@ func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHoo
 				break
 			}
 		}
+	}
+}
+
+func toolResultIDsForRequest(req *http.Request, body []byte) []string {
+	switch {
+	case conversation.MatchProviderAnthropic(req):
+		return conversation.AnthropicToolResultIDsFromRequest(body)
+	case conversation.MatchProviderOpenAI(req):
+		return conversation.OpenAIToolResultIDsFromRequest(req, body)
+	default:
+		return nil
 	}
 }
 

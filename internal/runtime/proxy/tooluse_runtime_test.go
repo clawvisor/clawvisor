@@ -120,7 +120,8 @@ func TestEnsureHeldToolUseApprovalAndDashboardRelease(t *testing.T) {
 	    {"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}
 	  ]
 	}`)
-	srv.closeLeasesForToolResults(ctx, hooks, session.id, toolResultBody)
+	toolResultReq, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, session.id, toolResultBody)
 
 	openLeases, err = st.ListOpenToolExecutionLeases(ctx, session.id)
 	if err != nil {
@@ -293,6 +294,96 @@ func TestEnsureHeldToolUseApprovalAllowsMultiplePendingApprovalsPerSession(t *te
 	}
 	if got := hooks.ReviewCache.Get(session.id); got == nil || got.ID != secondHeld.ID {
 		t.Fatalf("expected second held approval to remain after first resolve, got %+v", got)
+	}
+}
+
+func TestSyntheticHeldToolUseResponseOpenAIResponsesAndLeaseClose(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-openai.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	task := &store.Task{
+		ID:               "task-openai-review",
+		UserID:           userID,
+		AgentID:          agentID,
+		Purpose:          "Review OpenAI tool calls",
+		Status:           "active",
+		Lifetime:         "session",
+		SchemaVersion:    2,
+		ExpiresInSeconds: 3600,
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	session := createRuntimeSession(t, st, "runtime-openai-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+
+	rec, held, _ := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, task, conversationToolUse("call_1", "Bash"), map[string]any{"command": "ls /tmp"})
+	if rec == nil || held == nil {
+		t.Fatalf("expected approval record and held approval, got rec=%v held=%v", rec, held)
+	}
+	if err := st.ResolveApprovalRecord(ctx, rec.ID, "allow_once", "approved", time.Now().UTC()); err != nil {
+		t.Fatalf("ResolveApprovalRecord: %v", err)
+	}
+
+	reqBody := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}]}`)
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	_, resp := srv.syntheticHeldToolUseResponse(req, runtimeSession, hooks, held, true, "approved", reqBody)
+	if resp == nil {
+		t.Fatal("expected synthetic response")
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode synthetic response: %v", err)
+	}
+	output := body["output"].([]any)
+	block := output[0].(map[string]any)
+	if block["type"] != "function_call" || block["name"] != "Bash" || block["call_id"] != "call_1" {
+		t.Fatalf("unexpected synthetic function_call block: %+v", block)
+	}
+
+	openLeases, err := st.ListOpenToolExecutionLeases(ctx, session.id)
+	if err != nil {
+		t.Fatalf("ListOpenToolExecutionLeases: %v", err)
+	}
+	if len(openLeases) != 1 || openLeases[0].ToolUseID != "call_1" {
+		t.Fatalf("expected one open lease for call_1, got %+v", openLeases)
+	}
+
+	toolResultBody := []byte(`{
+	  "input":[
+	    {"type":"function_call_output","call_id":"call_1","output":"ok"}
+	  ]
+	}`)
+	toolResultReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	srv.closeLeasesForToolResults(ctx, hooks, toolResultReq, session.id, toolResultBody)
+
+	openLeases, err = st.ListOpenToolExecutionLeases(ctx, session.id)
+	if err != nil {
+		t.Fatalf("ListOpenToolExecutionLeases(after close): %v", err)
+	}
+	if len(openLeases) != 0 {
+		t.Fatalf("expected lease to close after function_call_output, got %+v", openLeases)
 	}
 }
 

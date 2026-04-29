@@ -70,3 +70,38 @@ func TestOpenAIParserParseRequest(t *testing.T) {
 		t.Fatalf("unexpected content: %q", turns[1].Content)
 	}
 }
+
+func TestOpenAIParserParseResponsesFunctionCallAndOutput(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", nil)
+	parser := DefaultRegistry().Match(req)
+	if parser == nil {
+		t.Fatal("expected OpenAI parser for Codex responses")
+	}
+
+	body := []byte(`{
+		"instructions":"Stay within the approved task.",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"List /tmp"}]},
+			{"type":"function_call","name":"Bash","arguments":"{\"command\":\"ls /tmp\"}","call_id":"call_X"},
+			{"type":"function_call_output","call_id":"call_X","output":"file-a\nfile-b"}
+		]
+	}`)
+	turns, err := parser.ParseRequest(body)
+	if err != nil {
+		t.Fatalf("ParseRequest: %v", err)
+	}
+	if len(turns) != 4 {
+		t.Fatalf("len(turns)=%d, want 4", len(turns))
+	}
+	if turns[0].Role != RoleSystem || turns[1].Role != RoleUser || turns[2].Role != RoleAssistant || turns[3].Role != RoleTool {
+		t.Fatalf("unexpected roles: %+v", turns)
+	}
+	if turns[2].ToolName != "Bash" || !strings.Contains(turns[2].Content, `<tool_use name=Bash input={"command":"ls /tmp"}>`) {
+		t.Fatalf("unexpected function call turn: %+v", turns[2])
+	}
+	if turns[3].Content != "file-a\nfile-b" {
+		t.Fatalf("unexpected tool output content: %q", turns[3].Content)
+	}
+}

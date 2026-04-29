@@ -54,6 +54,7 @@ type ResponseRegistry struct {
 func DefaultResponseRegistry() *ResponseRegistry {
 	return &ResponseRegistry{rewriters: []ResponseRewriter{
 		&AnthropicResponseRewriter{},
+		&OpenAIResponseRewriter{},
 	}}
 }
 
@@ -180,4 +181,8 @@ func matchAnthropicEndpoint(req *http.Request) bool {
 	}
 	host := strings.ToLower(hostFromRequest(req))
 	return host == "api.anthropic.com" && strings.HasPrefix(req.URL.Path, "/v1/messages")
+}
+
+func MatchProviderAnthropic(req *http.Request) bool {
+	return matchAnthropicEndpoint(req)
 }

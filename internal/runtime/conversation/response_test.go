@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -87,5 +88,123 @@ func TestAnthropicToolResultIDsFromRequest(t *testing.T) {
 	ids := AnthropicToolResultIDsFromRequest(body)
 	if len(ids) != 1 || ids[0] != "toolu_1" {
 		t.Fatalf("unexpected tool result ids: %v", ids)
+	}
+}
+
+func TestOpenAIResponseRewriterBlocksResponsesFunctionCallJSON(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(`{
+	  "id":"resp_1",
+	  "object":"response",
+	  "output":[
+	    {"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":"Bash","arguments":"{\"command\":\"rm -rf /\"}"}
+	  ]
+	}`)
+
+	result, err := rewriter.Rewrite(body, "application/json", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "requires approval",
+			SubstituteWith: "Reply `approve cv-test` to release this tool call.",
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten response")
+	}
+	var out map[string]any
+	if err := json.Unmarshal(result.Body, &out); err != nil {
+		t.Fatalf("unmarshal rewritten response: %v", err)
+	}
+	output := out["output"].([]any)
+	text := output[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "approve cv-test") {
+		t.Fatalf("expected inline approval prompt, got %q", text)
+	}
+}
+
+func TestOpenAIResponseRewriterBlocksChatToolCallsSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"rm\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		if tu.Name != "Bash" {
+			t.Fatalf("unexpected tool name %q", tu.Name)
+		}
+		return ToolUseVerdict{Allowed: false, Reason: "requires approval"}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE response")
+	}
+	out := string(result.Body)
+	if !strings.Contains(out, "Bash: requires approval") {
+		t.Fatalf("expected block text in SSE output, got %q", out)
+	}
+	if strings.Contains(out, `"tool_calls"`) {
+		t.Fatalf("blocked tool_calls should not leak into rewritten SSE: %q", out)
+	}
+}
+
+func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
+	t.Parallel()
+
+	responsesBody := []byte(`{
+	  "input":[
+	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdef123456"}]},
+	    {"type":"function_call_output","call_id":"call_123","output":"ok"}
+	  ]
+	}`)
+	responsesReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	verb, id := OpenAIApprovalReply(responsesBody)
+	if verb != "approve" || id != "cv-abcdef123456" {
+		t.Fatalf("unexpected responses approval reply: verb=%q id=%q", verb, id)
+	}
+	ids := OpenAIToolResultIDsFromRequest(responsesReq, responsesBody)
+	if len(ids) != 1 || ids[0] != "call_123" {
+		t.Fatalf("unexpected responses tool result ids: %v", ids)
+	}
+
+	chatBody := []byte(`{
+	  "messages":[
+	    {"role":"user","content":"deny"},
+	    {"role":"tool","tool_call_id":"call_456","content":"error"}
+	  ]
+	}`)
+	chatReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	verb, id = OpenAIApprovalReply(chatBody)
+	if verb != "deny" || id != "" {
+		t.Fatalf("unexpected chat approval reply: verb=%q id=%q", verb, id)
+	}
+	ids = OpenAIToolResultIDsFromRequest(chatReq, chatBody)
+	if len(ids) != 1 || ids[0] != "call_456" {
+		t.Fatalf("unexpected chat tool result ids: %v", ids)
 	}
 }
