@@ -641,20 +641,58 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		s := string(e.Verification)
 		verification = &s
 	}
+	var resolutionConfidence, intentVerdict *string
+	if e.ResolutionConfidence != nil {
+		resolutionConfidence = e.ResolutionConfidence
+	}
+	if e.IntentVerdict != nil {
+		intentVerdict = e.IntentVerdict
+	}
 	safetyFlagged := 0
 	if e.SafetyFlagged {
 		safetyFlagged = 1
 	}
+	usedActiveTaskContext := 0
+	if e.UsedActiveTaskContext {
+		usedActiveTaskContext = 1
+	}
+	usedLeaseBias := 0
+	if e.UsedLeaseBias {
+		usedLeaseBias = 1
+	}
+	usedConvJudgeResolution := 0
+	if e.UsedConvJudgeResolution {
+		usedConvJudgeResolution = 1
+	}
+	wouldBlock := 0
+	if e.WouldBlock {
+		wouldBlock = 1
+	}
+	wouldReview := 0
+	if e.WouldReview {
+		wouldReview = 1
+	}
+	wouldPromptInline := 0
+	if e.WouldPromptInline {
+		wouldPromptInline = 1
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (
-			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-			params_safe, decision, outcome, policy_id, rule_id,
+			id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+			tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+			params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp.UTC().Format(time.RFC3339),
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
+		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
-		e.PolicyID, e.RuleID, safetyFlagged, e.SafetyReason, e.Reason,
+		e.PolicyID, e.RuleID, resolutionConfidence, intentVerdict,
+		usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution,
+		wouldBlock, wouldReview, wouldPromptInline,
+		safetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, filtersApplied, verification, e.ErrorMsg)
 	return err
 }
@@ -673,18 +711,25 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var timestamp, paramsSafe string
-	var safetyFlagged int
+	var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 	var filtersApplied, verification *string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE id = ? AND user_id = ?
 	`, id, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+		&wouldBlock, &wouldReview, &wouldPromptInline,
+		&safetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -694,6 +739,12 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	}
 	e.Timestamp = parseTime(timestamp)
 	e.SafetyFlagged = safetyFlagged != 0
+	e.UsedActiveTaskContext = usedActiveTaskContext != 0
+	e.UsedLeaseBias = usedLeaseBias != 0
+	e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+	e.WouldBlock = wouldBlock != 0
+	e.WouldReview = wouldReview != 0
+	e.WouldPromptInline = wouldPromptInline != 0
 	e.ParamsSafe = json.RawMessage(paramsSafe)
 	if filtersApplied != nil {
 		e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -707,18 +758,25 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var timestamp, paramsSafe string
-	var safetyFlagged int
+	var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 	var filtersApplied, verification *string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE request_id = ? AND user_id = ?
 	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+		&wouldBlock, &wouldReview, &wouldPromptInline,
+		&safetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -728,6 +786,12 @@ func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID 
 	}
 	e.Timestamp = parseTime(timestamp)
 	e.SafetyFlagged = safetyFlagged != 0
+	e.UsedActiveTaskContext = usedActiveTaskContext != 0
+	e.UsedLeaseBias = usedLeaseBias != 0
+	e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+	e.WouldBlock = wouldBlock != 0
+	e.WouldReview = wouldReview != 0
+	e.WouldPromptInline = wouldPromptInline != 0
 	e.ParamsSafe = json.RawMessage(paramsSafe)
 	if filtersApplied != nil {
 		e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -771,8 +835,11 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 
 	dataArgs := append(args, limit, filter.Offset)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log `+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`, dataArgs...)
@@ -785,18 +852,28 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	for rows.Next() {
 		e := &store.AuditEntry{}
 		var timestamp, paramsSafe string
-		var safetyFlagged int
+		var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 		var filtersApplied, verification *string
 		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+			&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-			&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+			&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+			&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+			&wouldBlock, &wouldReview, &wouldPromptInline,
+			&safetyFlagged, &e.SafetyReason, &e.Reason,
 			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg,
 		); err != nil {
 			return nil, 0, err
 		}
 		e.Timestamp = parseTime(timestamp)
 		e.SafetyFlagged = safetyFlagged != 0
+		e.UsedActiveTaskContext = usedActiveTaskContext != 0
+		e.UsedLeaseBias = usedLeaseBias != 0
+		e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+		e.WouldBlock = wouldBlock != 0
+		e.WouldReview = wouldReview != 0
+		e.WouldPromptInline = wouldPromptInline != 0
 		e.ParamsSafe = json.RawMessage(paramsSafe)
 		if filtersApplied != nil {
 			e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -848,6 +925,9 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if task.Lifetime == "" {
 		task.Lifetime = "session"
 	}
+	if task.SchemaVersion == 0 {
+		task.SchemaVersion = 1
+	}
 	actionsJSON, err := json.Marshal(task.AuthorizedActions)
 	if err != nil {
 		return err
@@ -856,6 +936,8 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if err != nil {
 		return err
 	}
+	expectedToolsJSON := rawJSONOrDefault(task.ExpectedTools, "[]")
+	expectedEgressJSON := rawJSONOrDefault(task.ExpectedEgress, "[]")
 	var pendingActionJSON *string
 	if task.PendingAction != nil {
 		b, err := json.Marshal(task.PendingAction)
@@ -879,12 +961,14 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
-			risk_level, risk_details, approval_source, approval_rationale)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
+			expected_egress_json, intent_verification_mode, expected_use, schema_version)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
 		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
-		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale)
+		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale, expectedToolsJSON,
+		expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion)
 	return err
 }
 
@@ -892,17 +976,19 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
-	var riskDetailsStr, approvalRationaleStr string
+	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr)
+		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+		&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -939,6 +1025,12 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if approvalRationaleStr != "" {
 		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 	}
+	if expectedToolsStr != "" {
+		t.ExpectedTools = json.RawMessage(expectedToolsStr)
+	}
+	if expectedEgressStr != "" {
+		t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+	}
 	return t, nil
 }
 
@@ -965,7 +1057,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -984,11 +1077,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
 			return nil, 0, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -1020,6 +1114,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		}
 		if approvalRationaleStr != "" {
 			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		}
+		if expectedToolsStr != "" {
+			t.ExpectedTools = json.RawMessage(expectedToolsStr)
+		}
+		if expectedEgressStr != "" {
+			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -1159,7 +1259,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -1173,11 +1274,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -1210,6 +1312,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		if approvalRationaleStr != "" {
 			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 		}
+		if expectedToolsStr != "" {
+			t.ExpectedTools = json.RawMessage(expectedToolsStr)
+		}
+		if expectedEgressStr != "" {
+			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
@@ -1225,9 +1333,9 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 		pa.Status = "pending"
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at)
-		VALUES (?,?,?,?,?,?,?,?)
-	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, string(pa.RequestBlob),
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, string(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
 }
@@ -1236,10 +1344,10 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	pa := &store.PendingApproval{}
 	var requestBlob, expiresAt, createdAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE request_id = ?
 	`, requestID).Scan(
-		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 		&pa.CallbackURL, &pa.Status, &expiresAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1261,7 +1369,7 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) err
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE user_id = ? AND status = 'pending' AND expires_at > datetime('now') ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -1272,7 +1380,7 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE status = 'pending' AND expires_at < datetime('now')`)
 	if err != nil {
 		return nil, err
@@ -1287,7 +1395,7 @@ func scanSQLitePendingApprovals(rows *sql.Rows) ([]*store.PendingApproval, error
 		pa := &store.PendingApproval{}
 		var requestBlob, expiresAt, createdAt string
 		if err := rows.Scan(
-			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 			&pa.CallbackURL, &pa.Status, &expiresAt, &createdAt,
 		); err != nil {
 			return nil, err
@@ -1320,6 +1428,469 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ── Canonical Approval Records ───────────────────────────────────────────────
+
+func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRecord) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution)
+	return err
+}
+
+func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE id = ?
+	`, id)
+}
+
+func (s *Store) GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE request_id = ?
+	`, requestID)
+}
+
+func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) ([]*store.ApprovalRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records
+		WHERE user_id = ? AND status = 'pending'
+		ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ApprovalRecord
+	for rows.Next() {
+		rec, err := scanSQLiteApprovalRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_records
+		SET resolution = ?, status = ?, resolved_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, resolution, status, resolvedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) getApprovalRecord(ctx context.Context, query string, arg any) (*store.ApprovalRecord, error) {
+	rows, err := s.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteApprovalRecord(rows)
+}
+
+func scanSQLiteApprovalRecord(scanner interface{ Scan(dest ...any) error }) (*store.ApprovalRecord, error) {
+	rec := &store.ApprovalRecord{}
+	var summaryJSON, payloadJSON, createdAt, updatedAt string
+	var expiresAt, resolvedAt *string
+	if err := scanner.Scan(
+		&rec.ID, &rec.Kind, &rec.UserID, &rec.AgentID, &rec.RequestID, &rec.TaskID, &rec.SessionID,
+		&rec.Status, &rec.Surface, &summaryJSON, &payloadJSON, &rec.ResolutionTransport, &expiresAt, &resolvedAt,
+		&rec.Resolution, &createdAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	rec.SummaryJSON = json.RawMessage(summaryJSON)
+	rec.PayloadJSON = json.RawMessage(payloadJSON)
+	rec.CreatedAt = parseTime(createdAt)
+	rec.UpdatedAt = parseTime(updatedAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		rec.ExpiresAt = &t
+	}
+	if resolvedAt != nil {
+		t := parseTime(*resolvedAt)
+		rec.ResolvedAt = &t
+	}
+	return rec, nil
+}
+
+// ── Runtime Sessions ─────────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimeSession(ctx context.Context, sess *store.RuntimeSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_sessions (
+			id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode,
+			metadata_json, expires_at, revoked_at
+		) VALUES (?,?,?,?,?,?,?,?,?)
+	`, sess.ID, sess.UserID, sess.AgentID, sess.Mode, sess.ProxyBearerSecretHash,
+		boolToInt(sess.ObservationMode), rawJSONOrDefault(sess.MetadataJSON, "{}"),
+		sess.ExpiresAt.UTC().Format(time.RFC3339), formatNullableTime(sess.RevokedAt))
+	return err
+}
+
+func (s *Store) GetRuntimeSession(ctx context.Context, id string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE id = ?
+	`, id)
+}
+
+func (s *Store) GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE proxy_bearer_secret_hash = ?
+	`, secretHash)
+}
+
+func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE agent_id = ? ORDER BY created_at DESC
+	`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanSQLiteRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_sessions SET revoked_at = ? WHERE id = ?`,
+		revokedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimeSession(rows)
+}
+
+func scanSQLiteRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeSession, error) {
+	sess := &store.RuntimeSession{}
+	var metadataJSON, expiresAt, createdAt string
+	var observationMode int
+	var revokedAt *string
+	if err := scanner.Scan(&sess.ID, &sess.UserID, &sess.AgentID, &sess.Mode, &sess.ProxyBearerSecretHash,
+		&observationMode, &metadataJSON, &expiresAt, &createdAt, &revokedAt); err != nil {
+		return nil, err
+	}
+	sess.ObservationMode = observationMode != 0
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	sess.ExpiresAt = parseTime(expiresAt)
+	sess.CreatedAt = parseTime(createdAt)
+	if revokedAt != nil {
+		t := parseTime(*revokedAt)
+		sess.RevokedAt = &t
+	}
+	return sess, nil
+}
+
+// ── One-Off Approvals ────────────────────────────────────────────────────────
+
+func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {
+	if approval.ID == "" {
+		approval.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO one_off_approvals (id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at)
+		VALUES (?,?,?,?,?,?,?)
+	`, approval.ID, approval.SessionID, approval.RequestFingerprint, approval.ApprovalID,
+		approval.ApprovedAt.UTC().Format(time.RFC3339), approval.ExpiresAt.UTC().Format(time.RFC3339),
+		formatNullableTime(approval.UsedAt))
+	return err
+}
+
+func (s *Store) ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at
+		FROM one_off_approvals
+		WHERE session_id = ? AND request_fingerprint = ? AND used_at IS NULL AND expires_at > ?
+		ORDER BY approved_at ASC LIMIT 1
+	`, sessionID, requestFingerprint, now.UTC().Format(time.RFC3339))
+	approval, err := scanSQLiteOneOffApproval(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE one_off_approvals SET used_at = ? WHERE id = ? AND used_at IS NULL`,
+		now.UTC().Format(time.RFC3339), approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+func scanSQLiteOneOffApproval(scanner interface{ Scan(dest ...any) error }) (*store.OneOffApproval, error) {
+	approval := &store.OneOffApproval{}
+	var approvedAt, expiresAt string
+	var usedAt *string
+	if err := scanner.Scan(&approval.ID, &approval.SessionID, &approval.RequestFingerprint, &approval.ApprovalID,
+		&approvedAt, &expiresAt, &usedAt); err != nil {
+		return nil, err
+	}
+	approval.ApprovedAt = parseTime(approvedAt)
+	approval.ExpiresAt = parseTime(expiresAt)
+	if usedAt != nil {
+		t := parseTime(*usedAt)
+		approval.UsedAt = &t
+	}
+	return approval, nil
+}
+
+// ── Tool Execution Leases ────────────────────────────────────────────────────
+
+func (s *Store) CreateToolExecutionLease(ctx context.Context, lease *store.ToolExecutionLease) error {
+	if lease.LeaseID == "" {
+		lease.LeaseID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO tool_execution_leases (
+			lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?)
+	`, lease.LeaseID, lease.SessionID, lease.TaskID, lease.ToolUseID, lease.ToolName, lease.Status,
+		rawJSONOrDefault(lease.MetadataJSON, "{}"), lease.OpenedAt.UTC().Format(time.RFC3339),
+		lease.ExpiresAt.UTC().Format(time.RFC3339), formatNullableTime(lease.ClosedAt))
+	return err
+}
+
+func (s *Store) GetToolExecutionLease(ctx context.Context, leaseID string) (*store.ToolExecutionLease, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases WHERE lease_id = ?
+	`, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteToolExecutionLease(rows)
+}
+
+func (s *Store) ListOpenToolExecutionLeases(ctx context.Context, sessionID string) ([]*store.ToolExecutionLease, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases
+		WHERE session_id = ? AND closed_at IS NULL
+		ORDER BY opened_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ToolExecutionLease
+	for rows.Next() {
+		lease, err := scanSQLiteToolExecutionLease(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lease)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CloseToolExecutionLease(ctx context.Context, leaseID string, closedAt time.Time, status string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE tool_execution_leases SET closed_at = ?, status = ? WHERE lease_id = ?`,
+		closedAt.UTC().Format(time.RFC3339), status, leaseID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteToolExecutionLease(scanner interface{ Scan(dest ...any) error }) (*store.ToolExecutionLease, error) {
+	lease := &store.ToolExecutionLease{}
+	var metadataJSON, openedAt, expiresAt string
+	var closedAt *string
+	if err := scanner.Scan(&lease.LeaseID, &lease.SessionID, &lease.TaskID, &lease.ToolUseID, &lease.ToolName,
+		&lease.Status, &metadataJSON, &openedAt, &expiresAt, &closedAt); err != nil {
+		return nil, err
+	}
+	lease.MetadataJSON = json.RawMessage(metadataJSON)
+	lease.OpenedAt = parseTime(openedAt)
+	lease.ExpiresAt = parseTime(expiresAt)
+	if closedAt != nil {
+		t := parseTime(*closedAt)
+		lease.ClosedAt = &t
+	}
+	return lease, nil
+}
+
+// ── Task Invocations And Calls ───────────────────────────────────────────────
+
+func (s *Store) CreateTaskInvocation(ctx context.Context, inv *store.TaskInvocation) error {
+	if inv.ID == "" {
+		inv.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO task_invocations (
+			id, task_id, session_id, user_id, agent_id, request_id, invocation_type, status, metadata_json, created_at, completed_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, inv.ID, inv.TaskID, inv.SessionID, inv.UserID, inv.AgentID, inv.RequestID, inv.InvocationType,
+		inv.Status, rawJSONOrDefault(inv.MetadataJSON, "{}"), inv.CreatedAt.UTC().Format(time.RFC3339),
+		formatNullableTime(inv.CompletedAt))
+	return err
+}
+
+func (s *Store) CreateTaskCall(ctx context.Context, call *store.TaskCall) error {
+	if call.ID == "" {
+		call.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO task_calls (
+			id, task_id, invocation_id, request_id, session_id, service, action, outcome, approval_id, audit_id, metadata_json, created_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+	`, call.ID, call.TaskID, call.InvocationID, call.RequestID, call.SessionID, call.Service, call.Action,
+		call.Outcome, call.ApprovalID, call.AuditID, rawJSONOrDefault(call.MetadataJSON, "{}"),
+		call.CreatedAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) UpsertActiveTaskSession(ctx context.Context, sess *store.ActiveTaskSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO active_task_sessions (
+			id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(task_id, session_id) DO UPDATE SET
+			status = excluded.status,
+			metadata_json = excluded.metadata_json,
+			last_seen_at = excluded.last_seen_at,
+			ended_at = excluded.ended_at
+	`, sess.ID, sess.TaskID, sess.SessionID, sess.UserID, sess.AgentID, sess.Status,
+		rawJSONOrDefault(sess.MetadataJSON, "{}"), sess.StartedAt.UTC().Format(time.RFC3339),
+		sess.LastSeenAt.UTC().Format(time.RFC3339), formatNullableTime(sess.EndedAt))
+	return err
+}
+
+func (s *Store) GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*store.ActiveTaskSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		FROM active_task_sessions WHERE task_id = ? AND session_id = ?
+	`, taskID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteActiveTaskSession(rows)
+}
+
+func (s *Store) EndActiveTaskSession(ctx context.Context, taskID, sessionID string, endedAt time.Time, status string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE active_task_sessions SET ended_at = ?, status = ?, last_seen_at = ? WHERE task_id = ? AND session_id = ?
+	`, endedAt.UTC().Format(time.RFC3339), status, endedAt.UTC().Format(time.RFC3339), taskID, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteActiveTaskSession(scanner interface{ Scan(dest ...any) error }) (*store.ActiveTaskSession, error) {
+	sess := &store.ActiveTaskSession{}
+	var metadataJSON, startedAt, lastSeenAt string
+	var endedAt *string
+	if err := scanner.Scan(&sess.ID, &sess.TaskID, &sess.SessionID, &sess.UserID, &sess.AgentID,
+		&sess.Status, &metadataJSON, &startedAt, &lastSeenAt, &endedAt); err != nil {
+		return nil, err
+	}
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	sess.StartedAt = parseTime(startedAt)
+	sess.LastSeenAt = parseTime(lastSeenAt)
+	if endedAt != nil {
+		t := parseTime(*endedAt)
+		sess.EndedAt = &t
+	}
+	return sess, nil
 }
 
 // ── Notification Messages ──────────────────────────────────────────────────────
@@ -1751,6 +2322,27 @@ func isDuplicate(err error) bool {
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
 }
 
+func rawJSONOrDefault(msg json.RawMessage, fallback string) string {
+	if len(msg) == 0 {
+		return fallback
+	}
+	return string(msg)
+}
+
+func formatNullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // parseTime parses SQLite TEXT timestamps in multiple formats.
 func parseTime(s string) time.Time {
 	formats := []string{
@@ -1984,7 +2576,6 @@ func (s *Store) ListGeneratedAdapters(ctx context.Context, userID string) ([]*st
 	}
 	return out, rows.Err()
 }
-
 
 func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error {
 	_, err := s.db.ExecContext(ctx,
