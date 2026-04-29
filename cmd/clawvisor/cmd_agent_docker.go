@@ -155,24 +155,13 @@ type dockerComposeOverrideOptions struct {
 }
 
 func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
-	agentToken := strings.TrimSpace(runtimeAgentToken)
-	if agentToken == "" {
-		agentToken = strings.TrimSpace(os.Getenv("CLAWVISOR_AGENT_TOKEN"))
-	}
-	if agentToken == "" {
-		return nil, fmt.Errorf("agent token is required: pass --agent-token or set CLAWVISOR_AGENT_TOKEN")
-	}
-	baseURL := strings.TrimSpace(runtimeServerURL)
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("CLAWVISOR_URL"))
-	}
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:25297"
+	creds, err := resolveAgentCredentials(runtimeAgentName, runtimeAgentToken, runtimeServerURL)
+	if err != nil {
+		return nil, err
 	}
 	containerURL := strings.TrimSpace(dockerContainerURL)
 	if containerURL == "" {
-		var err error
-		containerURL, err = deriveContainerURL(baseURL, dockerProxyHost)
+		containerURL, err = deriveContainerURL(creds.BaseURL, dockerProxyHost)
 		if err != nil {
 			return nil, err
 		}
@@ -182,9 +171,9 @@ func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
 		caHost = defaultRuntimeProxyCAHostPath()
 	}
 	return &dockerProxyOptions{
-		BaseURL:      baseURL,
+		BaseURL:      creds.BaseURL,
 		ContainerURL: containerURL,
-		AgentToken:   agentToken,
+		AgentToken:   creds.AgentToken,
 		ProxyHost:    strings.TrimSpace(dockerProxyHost),
 		ProxyPort:    dockerProxyPort,
 		CAInside:     strings.TrimSpace(dockerCAInside),
@@ -469,13 +458,15 @@ func yamlQuote(s string) string {
 
 func init() {
 	for _, subcmd := range []*cobra.Command{agentDockerEnvCmd, agentDockerRunCmd, agentDockerComposeCmd} {
+		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor agent register`)")
 		subcmd.Flags().StringVar(&runtimeAgentToken, "agent-token", "", "Agent bearer token (defaults to CLAWVISOR_AGENT_TOKEN)")
-		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL the agent should use (defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
+		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL the agent should use (overrides the registered agent URL, otherwise defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
 		subcmd.Flags().StringVar(&dockerContainerURL, "container-url", "", "Clawvisor server URL as seen from inside the container (defaults to a container-safe rewrite of --url)")
 		subcmd.Flags().StringVar(&dockerProxyHost, "proxy-host", "host.docker.internal", "Hostname the container uses to reach the runtime proxy")
 		subcmd.Flags().IntVar(&dockerProxyPort, "proxy-port", 25290, "Port the runtime proxy listens on")
 		subcmd.Flags().StringVar(&dockerCAInside, "ca-path", "/clawvisor/ca.pem", "Path the runtime proxy CA will be mounted at inside the container")
 		subcmd.Flags().StringVar(&dockerCAHost, "ca-host-path", "", "Path to the runtime proxy CA on the host (default: ~/.clawvisor/runtime-proxy/ca.pem)")
+		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
 	agentDockerEnvCmd.Flags().StringVar(&dockerEnvFormat, "format", "env", "Output format: env, export, or docker-args")
 	agentDockerEnvCmd.Flags().BoolVar(&dockerEnvQuiet, "quiet", false, "Suppress the instructional header")

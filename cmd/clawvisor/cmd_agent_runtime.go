@@ -13,6 +13,7 @@ import (
 )
 
 var (
+	runtimeAgentName  string
 	runtimeAgentToken string
 	runtimeServerURL  string
 	runtimeMode       string
@@ -85,23 +86,13 @@ type runtimeBootstrapOptions struct {
 }
 
 func runtimeBootstrapOptionsFromFlags() (*runtimeBootstrapOptions, error) {
-	agentToken := strings.TrimSpace(runtimeAgentToken)
-	if agentToken == "" {
-		agentToken = strings.TrimSpace(os.Getenv("CLAWVISOR_AGENT_TOKEN"))
-	}
-	if agentToken == "" {
-		return nil, fmt.Errorf("agent token is required: pass --agent-token or set CLAWVISOR_AGENT_TOKEN")
-	}
-	baseURL := strings.TrimSpace(runtimeServerURL)
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("CLAWVISOR_URL"))
-	}
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:25297"
+	creds, err := resolveAgentCredentials(runtimeAgentName, runtimeAgentToken, runtimeServerURL)
+	if err != nil {
+		return nil, err
 	}
 	return &runtimeBootstrapOptions{
-		BaseURL:     baseURL,
-		AgentToken:  agentToken,
+		BaseURL:     creds.BaseURL,
+		AgentToken:  creds.AgentToken,
 		Mode:        runtimeMode,
 		TTLSeconds:  runtimeTTLSeconds,
 		Observation: runtimeObserve,
@@ -244,11 +235,13 @@ func shellQuote(value string) string {
 
 func init() {
 	for _, subcmd := range []*cobra.Command{agentRuntimeEnvCmd, agentRuntimeRunCmd} {
+		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor agent register`)")
 		subcmd.Flags().StringVar(&runtimeAgentToken, "agent-token", "", "Agent bearer token (defaults to CLAWVISOR_AGENT_TOKEN)")
-		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL (defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
+		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL (overrides the registered agent URL, otherwise defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
 		subcmd.Flags().StringVar(&runtimeMode, "mode", "proxy", "Runtime session mode")
 		subcmd.Flags().IntVar(&runtimeTTLSeconds, "ttl-seconds", 0, "Runtime session TTL in seconds (default: server runtime_proxy.session_ttl_seconds)")
 		subcmd.Flags().BoolVar(&runtimeObserve, "observe", false, "Create the runtime session in observation mode")
+		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
 	agentCmd.AddCommand(agentRuntimeEnvCmd)
 	agentCmd.AddCommand(agentRuntimeRunCmd)
