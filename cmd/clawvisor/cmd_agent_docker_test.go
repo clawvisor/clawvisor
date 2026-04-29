@@ -74,6 +74,12 @@ func TestBuildDockerAgentEnvVarsTemplated(t *testing.T) {
 	if got := values["HTTP_PROXY"]; !strings.Contains(got, "${CLAWVISOR_AGENT_TOKEN}") {
 		t.Fatalf("expected templated token in HTTP_PROXY, got %q", got)
 	}
+	if _, ok := values["CLAWVISOR_RUNTIME_SESSION_ID"]; ok {
+		t.Fatalf("durable docker env should not pre-mint runtime session ids, got %+v", values)
+	}
+	if strings.Contains(values["HTTP_PROXY"], "runtime-secret") {
+		t.Fatalf("durable docker env should not embed runtime session secrets, got %q", values["HTTP_PROXY"])
+	}
 }
 
 func TestBuildDockerRunInjection(t *testing.T) {
