@@ -292,7 +292,7 @@ func printDockerEnvAsArgs(w io.Writer, vars []dockerEnvVar) {
 		if i > 0 {
 			fmt.Fprint(w, " ")
 		}
-		fmt.Fprintf(w, "-e %s=%q", v.Key, v.Value)
+		fmt.Fprintf(w, "-e %s", shellQuote(v.Key+"="+v.Value))
 	}
 	fmt.Fprintln(w)
 }

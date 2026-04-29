@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -690,6 +691,31 @@ func proxyHTTPClient(t *testing.T, srv *Server) *http.Client {
 		Transport: &http.Transport{
 			Proxy: http.ProxyURL(proxyURL),
 		},
+	}
+}
+
+func TestReadJSONBodyAllowsValidNonObjectJSON(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodPost, "https://example.com/test", io.NopCloser(strings.NewReader(`["a", {"b":1}]`)))
+	req.Header.Set("Content-Type", "application/json")
+	body, shape, err := readJSONBody(req)
+	if err != nil {
+		t.Fatalf("readJSONBody(array): %v", err)
+	}
+	if string(body) != `["a", {"b":1}]` {
+		t.Fatalf("unexpected body %q", string(body))
+	}
+	if shape != nil {
+		t.Fatalf("expected nil shape for JSON array, got %+v", shape)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, "https://example.com/test", io.NopCloser(strings.NewReader(`"scalar"`)))
+	req.Header.Set("Content-Type", "application/json")
+	_, shape, err = readJSONBody(req)
+	if err != nil {
+		t.Fatalf("readJSONBody(scalar): %v", err)
+	}
+	if shape != nil {
+		t.Fatalf("expected nil shape for JSON scalar, got %+v", shape)
 	}
 }
 

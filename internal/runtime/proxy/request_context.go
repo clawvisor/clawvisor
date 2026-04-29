@@ -6,11 +6,18 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/elazarl/goproxy"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
+
+type cachedRuntimeRequestContext struct {
+	Context   *RuntimeRequestContext
+	ExpiresAt time.Time
+}
 
 func (s *Server) InstallRequestContextCarrier() {
 	registry := conversation.DefaultRegistry()
@@ -35,7 +42,11 @@ func (s *Server) InstallRequestContextCarrier() {
 		}
 		st.Runtime = built
 		if st.Session != nil && st.Runtime != nil {
-			s.latestRequestCtxBySession.Store(st.Session.ID, st.Runtime)
+			s.latestRequestCtxBySession.Store(st.Session.ID, cachedRuntimeRequestContext{
+				Context:   st.Runtime,
+				ExpiresAt: st.Session.ExpiresAt,
+			})
+			s.pruneLatestRuntimeRequestContexts()
 		}
 		return req, nil
 	})
@@ -73,6 +84,33 @@ func (s *Server) latestRuntimeRequestContext(sessionID string) *RuntimeRequestCo
 	if !ok {
 		return nil
 	}
-	ctx, _ := value.(*RuntimeRequestContext)
-	return ctx
+	switch cached := value.(type) {
+	case cachedRuntimeRequestContext:
+		if !cached.ExpiresAt.IsZero() && time.Now().After(cached.ExpiresAt) {
+			s.latestRequestCtxBySession.Delete(sessionID)
+			return nil
+		}
+		return cached.Context
+	case *RuntimeRequestContext:
+		return cached
+	default:
+		return nil
+	}
+}
+
+func (s *Server) pruneLatestRuntimeRequestContexts() {
+	if s == nil {
+		return
+	}
+	if atomic.AddUint64(&s.latestRequestCtxPruneTick, 1)%64 != 0 {
+		return
+	}
+	now := time.Now()
+	s.latestRequestCtxBySession.Range(func(key, value any) bool {
+		cached, ok := value.(cachedRuntimeRequestContext)
+		if ok && !cached.ExpiresAt.IsZero() && now.After(cached.ExpiresAt) {
+			s.latestRequestCtxBySession.Delete(key)
+		}
+		return true
+	})
 }

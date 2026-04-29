@@ -151,6 +151,33 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
+func TestWriteRuntimeCACertFileCleansOldPEMFiles(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := filepath.Join(os.TempDir(), "clawvisor-runtime-ca")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	oldPath := filepath.Join(dir, "old.pem")
+	if err := os.WriteFile(oldPath, []byte("old"), 0o600); err != nil {
+		t.Fatalf("WriteFile(old): %v", err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	newPath, err := writeRuntimeCACertFile("session-clean", "pem-data")
+	if err != nil {
+		t.Fatalf("writeRuntimeCACertFile: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old PEM file to be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("expected new PEM file to exist, stat err=%v", err)
+	}
+}
+
 func envMap(entries []string) map[string]string {
 	out := make(map[string]string, len(entries))
 	for _, entry := range entries {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
@@ -167,11 +168,33 @@ func writeRuntimeCACertFile(sessionID, pem string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create runtime CA dir: %w", err)
 	}
+	cleanupRuntimeCACertFiles(dir, 24*time.Hour)
 	path := filepath.Join(dir, sessionID+".pem")
 	if err := os.WriteFile(path, []byte(pem), 0o600); err != nil {
 		return "", fmt.Errorf("write runtime CA cert: %w", err)
 	}
 	return path, nil
+}
+
+func cleanupRuntimeCACertFiles(dir string, maxAge time.Duration) {
+	if strings.TrimSpace(dir) == "" || maxAge <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pem") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
 }
 
 func mergeNoProxy(existing string, defaults ...string) string {

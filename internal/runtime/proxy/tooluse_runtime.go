@@ -368,6 +368,13 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					Held:                    held,
 					UsedConvJudgeResolution: judgment.Kind != "",
 				}
+			} else {
+				decisionState[key] = toolDecisionState{
+					Task:                    reviewTask,
+					UsedConvJudgeResolution: judgment.Kind != "",
+					ApprovalCreateFailed:    true,
+					FailureReason:           substitute,
+				}
 			}
 			return conversation.ToolUseVerdict{
 				Allowed:        false,
@@ -454,7 +461,30 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				}
 				continue
 			}
-			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, "review", "pending", "runtime tool call is outside the active task envelope", state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, true, state.WouldPromptInline)
+			decisionWord := "review"
+			outcome := "pending"
+			reason := "runtime tool call is outside the active task envelope"
+			if state.ApprovalCreateFailed {
+				decisionWord = "deny"
+				outcome = "error"
+				reason = firstNonEmpty(state.FailureReason, "runtime approval could not be created for this tool call")
+			}
+			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
+			if state.ApprovalCreateFailed {
+				emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  "runtime.tool_use.review_failed",
+					ActionKind: "tool_use",
+					TaskID:     taskIDPtr(state.Task),
+					ToolUseID:  stringPtr(decision.ToolUse.ID),
+					Decision:   stringPtr("deny"),
+					Outcome:    stringPtr("error"),
+					Reason:     stringPtr(reason),
+					Metadata: map[string]any{
+						"tool_name": decision.ToolUse.Name,
+					},
+				})
+				continue
+			}
 			emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 				EventType:           "runtime.tool_use.held",
 				ActionKind:          "tool_use",
@@ -486,6 +516,8 @@ type toolDecisionState struct {
 	UsedConvJudgeResolution bool
 	WouldReview             bool
 	WouldPromptInline       bool
+	ApprovalCreateFailed    bool
+	FailureReason           string
 }
 
 func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any) (*store.ApprovalRecord, *review.HeldApproval, string) {

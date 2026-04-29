@@ -35,6 +35,7 @@ type Server struct {
 
 	connStates                sync.Map
 	latestRequestCtxBySession sync.Map
+	latestRequestCtxPruneTick uint64
 	secretValueCache          sync.Map
 	secretVerdictCache        sync.Map
 }

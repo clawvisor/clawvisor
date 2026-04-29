@@ -1637,6 +1637,9 @@ func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.C
 	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
 		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefaultBytes(auth.MetadataJSON, "{}"),
 		auth.ExpiresAt, auth.UsedAt, auth.LastMatchedAt)
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
 	return err
 }
 

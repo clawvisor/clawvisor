@@ -132,3 +132,15 @@ func TestEmitDockerComposeOverrideTemplated(t *testing.T) {
 		t.Fatalf("expected CA mount in compose override, got:\n%s", out)
 	}
 }
+
+func TestPrintDockerEnvAsArgsUsesShellQuoting(t *testing.T) {
+	var buf bytes.Buffer
+	printDockerEnvAsArgs(&buf, []dockerEnvVar{
+		{Key: "TOKEN", Value: `value with spaces $HOME ! backtick` + "`" + ` and 'quote'`},
+	})
+	got := strings.TrimSpace(buf.String())
+	want := "-e 'TOKEN=value with spaces $HOME ! backtick` and '\\''quote'\\'''"
+	if got != want {
+		t.Fatalf("unexpected docker args output:\n got: %s\nwant: %s", got, want)
+	}
+}

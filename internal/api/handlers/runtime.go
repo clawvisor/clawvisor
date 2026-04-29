@@ -372,7 +372,7 @@ func (h *RuntimeHandler) createCredentialAuthorization(ctx context.Context, rec 
 	}
 	if err := h.st.CreateCredentialAuthorization(ctx, auth); err != nil {
 		if !errors.Is(err, store.ErrConflict) {
-			// sqlite/postgres bubble unique errors as driver errors, so fall through to load
+			return fmt.Errorf("could not create runtime credential authorization")
 		}
 		existing, getErr := h.st.GetCredentialAuthorization(ctx, auth.ID)
 		if getErr != nil {

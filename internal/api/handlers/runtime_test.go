@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -565,5 +566,90 @@ func TestRuntimeHandlerResolveApprovalAllowAlwaysCreatesStandingCredentialAuthor
 	}
 	if !found {
 		t.Fatalf("expected runtime.autovault.authorization_created event, got %+v", events)
+	}
+}
+
+type failingCredentialAuthorizationStore struct {
+	store.Store
+	err error
+}
+
+func (s failingCredentialAuthorizationStore) CreateCredentialAuthorization(ctx context.Context, auth *store.CredentialAuthorization) error {
+	return s.err
+}
+
+func TestRuntimeHandlerResolveApprovalReturnsErrorWhenCredentialAuthorizationWriteFails(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-credential-write-fail.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	baseStore := sqlite.NewStore(db)
+
+	user, err := baseStore.CreateUser(ctx, "runtime-credential-write-fail@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := baseStore.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	session := &store.RuntimeSession{
+		ID:                    "runtime-credential-write-fail-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := baseStore.CreateRuntimeSession(ctx, session); err != nil {
+		t.Fatalf("CreateRuntimeSession: %v", err)
+	}
+	payload, _ := json.Marshal(runtimeproxy.RuntimeCredentialReviewPayload{
+		SessionID:     session.ID,
+		AgentID:       agent.ID,
+		CredentialRef: "sha256:cred-fail",
+		Service:       "github",
+		Host:          "api.github.com",
+		HeaderName:    "Authorization",
+		Scheme:        "bearer",
+		Detector:      "known_service",
+	})
+	approval := &store.ApprovalRecord{
+		ID:                  "approval-credential-write-fail",
+		Kind:                "credential_review",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		SessionID:           &session.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		PayloadJSON:         payload,
+		ResolutionTransport: "create_credential_authorization",
+	}
+	if err := baseStore.CreateApprovalRecord(ctx, approval); err != nil {
+		t.Fatalf("CreateApprovalRecord: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"resolution": "allow_once"})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/approvals/"+approval.ID+"/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", approval.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(failingCredentialAuthorizationStore{Store: baseStore, err: errors.New("boom")}, nil, nil, config.Default(), nil)
+	h.ResolveApproval(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("ResolveApproval status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	events, err := baseStore.ListRuntimeEvents(ctx, user.ID, store.RuntimeEventFilter{SessionID: session.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	for _, event := range events {
+		if event.EventType == "runtime.autovault.authorization_created" {
+			t.Fatalf("did not expect authorization_created event after write failure, got %+v", events)
+		}
 	}
 }

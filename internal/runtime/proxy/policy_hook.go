@@ -450,8 +450,12 @@ func readJSONBody(req *http.Request) ([]byte, map[string]any, error) {
 	}
 	var asMap map[string]any
 	if strings.Contains(strings.ToLower(req.Header.Get("Content-Type")), "application/json") {
-		if err := json.Unmarshal(body, &asMap); err != nil {
+		var parsed any
+		if err := json.Unmarshal(body, &parsed); err != nil {
 			return nil, nil, err
+		}
+		if m, ok := parsed.(map[string]any); ok {
+			asMap = m
 		}
 	}
 	return body, asMap, nil
