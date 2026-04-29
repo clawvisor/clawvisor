@@ -167,6 +167,37 @@ func TestRuntimeProxyGlobalEgressPolicyObserveEnforceScenarios(t *testing.T) {
 			if tt.wantApprovalRecord && len(records) != 1 {
 				t.Fatalf("expected one pending approval record, got %+v", records)
 			}
+			if tt.wantApprovalRecord {
+				rec := records[0]
+				if rec.Kind != "request_once" {
+					t.Fatalf("approval kind = %q, want request_once", rec.Kind)
+				}
+				if rec.ResolutionTransport != "consume_one_off_retry" {
+					t.Fatalf("approval resolution transport = %q, want consume_one_off_retry", rec.ResolutionTransport)
+				}
+				var payload RuntimeApprovalPayload
+				if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
+					t.Fatalf("unmarshal approval payload: %v", err)
+				}
+				if payload.SessionID != session.id {
+					t.Fatalf("approval payload session_id = %q, want %q", payload.SessionID, session.id)
+				}
+				if payload.AgentID != agentID {
+					t.Fatalf("approval payload agent_id = %q, want %q", payload.AgentID, agentID)
+				}
+				if payload.Method != http.MethodGet {
+					t.Fatalf("approval payload method = %q, want %q", payload.Method, http.MethodGet)
+				}
+				if payload.Host != upstreamURL.Hostname() {
+					t.Fatalf("approval payload host = %q, want %q", payload.Host, upstreamURL.Hostname())
+				}
+				if payload.Path != "/" {
+					t.Fatalf("approval payload path = %q, want /", payload.Path)
+				}
+				if payload.Classification != "request_once" {
+					t.Fatalf("approval payload classification = %q, want request_once", payload.Classification)
+				}
+			}
 			if !tt.wantApprovalRecord && len(records) != 0 {
 				t.Fatalf("expected no pending approval records, got %+v", records)
 			}

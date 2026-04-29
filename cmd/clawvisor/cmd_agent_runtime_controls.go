@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,6 +14,21 @@ import (
 
 var runtimeProfileOverride string
 
+type runtimeControlsClient interface {
+	GetRuntimePresetDecision(commandKey, profile string) (*client.RuntimePresetDecision, error)
+	GetAgentRuntimeSettings(agentID string) (*client.AgentRuntimeSettings, error)
+	ApplyRuntimeStarterProfile(profileID, agentID string) ([]client.RuntimePolicyRule, error)
+	UpdateAgentRuntimeSettings(agentID string, settings client.AgentRuntimeSettings) (*client.AgentRuntimeSettings, error)
+	UpsertRuntimePresetDecision(decision client.RuntimePresetDecision) (*client.RuntimePresetDecision, error)
+}
+
+var (
+	newRuntimeControlsClient = func() (runtimeControlsClient, error) { return daemon.NewAPIClient() }
+	runtimeControlsStdin     io.Reader                               = os.Stdin
+	runtimeControlsStderr    io.Writer                               = os.Stderr
+	runtimeControlsTTYCheck                                          = func() bool { return isInteractiveTTY(os.Stdin) }
+)
+
 func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []string) error {
 	if creds == nil || strings.TrimSpace(creds.AgentID) == "" {
 		return nil
@@ -21,10 +37,10 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	if profileID == "" || commandKey == "" {
 		return nil
 	}
-	if !isInteractiveTTY(os.Stdin) {
+	if !runtimeControlsTTYCheck() {
 		return nil
 	}
-	cl, err := daemon.NewAPIClient()
+	cl, err := newRuntimeControlsClient()
 	if err != nil {
 		return nil
 	}
@@ -32,6 +48,9 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	settings, err := cl.GetAgentRuntimeSettings(creds.AgentID)
 	if err != nil {
 		return nil
+	}
+	if settings == nil {
+		settings = &client.AgentRuntimeSettings{AgentID: creds.AgentID}
 	}
 	profile, ok := runtimepolicy.StarterProfileByID(profileID)
 	if !ok {
@@ -41,8 +60,8 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Apply recommended runtime rules for %s? [Y/n/a] ", profile.DisplayName)
-	choice, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	fmt.Fprintf(runtimeControlsStderr, "Apply recommended runtime rules for %s? [Y/n/a] ", profile.DisplayName)
+	choice, err := bufio.NewReader(runtimeControlsStdin).ReadString('\n')
 	if err != nil {
 		return nil
 	}
@@ -57,7 +76,7 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 				Profile:    profileID,
 				Decision:   "applied",
 			})
-			fmt.Fprintf(os.Stderr, "Applied %s starter profile.\n", profile.DisplayName)
+			fmt.Fprintf(runtimeControlsStderr, "Applied %s starter profile.\n", profile.DisplayName)
 		}
 	case "a", "always", "always-skip", "always_skip":
 		_, _ = cl.UpsertRuntimePresetDecision(client.RuntimePresetDecision{
