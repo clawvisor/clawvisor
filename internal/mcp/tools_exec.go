@@ -127,7 +127,7 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		}
 		return internalRoute{"GET", path, "GET /api/skill/catalog", nil}, nil, nil
 
-	case "create_task":
+	case "create_task", "clawvisor_task_create":
 		path := "/api/tasks"
 		path += buildWaitQuery(args, getString, true)
 		// Remove wait/timeout from body — they're query params, not task fields.
@@ -145,7 +145,17 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"GET", path, "GET /api/tasks/{id}",
 			map[string]string{"id": id}}, nil, nil
 
-	case "complete_task":
+	case "clawvisor_task_start":
+		id := getString("task_id")
+		if err := validatePathParam(id, "task_id"); err != nil {
+			return internalRoute{}, nil, err
+		}
+		path := "/api/tasks/" + id
+		path += buildWaitQuery(args, getString, true)
+		return internalRoute{"GET", path, "GET /api/tasks/{id}",
+			map[string]string{"id": id}}, nil, nil
+
+	case "complete_task", "clawvisor_task_end":
 		id := getString("task_id")
 		if err := validatePathParam(id, "task_id"); err != nil {
 			return internalRoute{}, nil, err

@@ -76,13 +76,13 @@ type Server struct {
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
 
-	pushNotifier         *push.Notifier                 // concrete push notifier; may be nil
-	msgBuffer            groupchat.Buffer               // group chat message buffer; may be nil
-	decisionBus          notify.DecisionBus             // cross-instance decision delivery; may be nil
-	gatewayHooks         *GatewayHooks                  // cloud-injected gateway authorization hooks; may be nil
-	feedbackHooks        *FeedbackHooks                 // cloud-injected feedback event hooks; may be nil
-	localServiceProvider handlers.LocalServiceProvider  // cloud-injected local daemon service provider; may be nil
-	localServiceExecutor handlers.LocalServiceExecutor  // cloud-injected local service executor; may be nil
+	pushNotifier         *push.Notifier                // concrete push notifier; may be nil
+	msgBuffer            groupchat.Buffer              // group chat message buffer; may be nil
+	decisionBus          notify.DecisionBus            // cross-instance decision delivery; may be nil
+	gatewayHooks         *GatewayHooks                 // cloud-injected gateway authorization hooks; may be nil
+	feedbackHooks        *FeedbackHooks                // cloud-injected feedback event hooks; may be nil
+	localServiceProvider handlers.LocalServiceProvider // cloud-injected local daemon service provider; may be nil
+	localServiceExecutor handlers.LocalServiceExecutor // cloud-injected local service executor; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
@@ -452,14 +452,13 @@ func (s *Server) routes() http.Handler {
 	if s.localServiceProvider != nil {
 		skillHandler.SetLocalServiceProvider(s.localServiceProvider)
 	}
-	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger, s.eventHub)
-	s.approvalsHandler = approvalsHandler
-
 	// Construct task risk assessor (noop if disabled).
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
 		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
+	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
+	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)

@@ -113,6 +113,89 @@ func toolDefs() []Tool {
 			}`),
 		},
 		{
+			Name:        "clawvisor_task_create",
+			Description: "Canonical alias for create_task. Create a new task for scoped authorization and optionally wait for approval.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"purpose": {"type": "string", "description": "Human-readable description of what this task will do"},
+					"authorized_actions": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"service": {"type": "string", "description": "Service ID (e.g. google.gmail, github)"},
+								"action": {"type": "string", "description": "Action name or * for all"},
+								"auto_execute": {"type": "boolean", "description": "Execute without per-request approval"},
+								"expected_use": {"type": "string", "description": "Optional explanation of intended use"}
+							},
+							"required": ["service", "action"]
+						},
+						"description": "Actions this task is authorized to perform"
+					},
+					"expected_tools_json": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"tool_name": {"type": "string", "description": "Exact tool name expected at runtime"},
+								"why": {"type": "string", "description": "Why this tool is expected to be used"},
+								"input_shape": {"type": "object", "description": "Optional required/forbidden key shape for tool input"},
+								"input_regex": {"type": "string", "description": "Optional regex compatibility escape hatch for matching serialized tool input"}
+							},
+							"required": ["tool_name", "why"]
+						},
+						"description": "Canonical v2 runtime tool expectations. Use this for proxy/runtime-backed tasks."
+					},
+					"expected_egress_json": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"host": {"type": "string", "description": "Expected egress host, optionally wildcarded as *.example.com"},
+								"why": {"type": "string", "description": "Why this egress target is needed"},
+								"method": {"type": "string", "description": "Optional HTTP method constraint"},
+								"path": {"type": "string", "description": "Optional exact path match"},
+								"path_regex": {"type": "string", "description": "Optional regex path match"},
+								"query_shape": {"type": "object", "description": "Optional required/forbidden key shape for query params"},
+								"body_shape": {"type": "object", "description": "Optional required/forbidden key shape for request body"},
+								"headers": {"type": "object", "description": "Optional required/forbidden key shape for headers"}
+							},
+							"required": ["host", "why"]
+						},
+						"description": "Canonical v2 runtime egress expectations. Use this for proxy/runtime-backed tasks."
+					},
+					"planned_calls": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"service": {"type": "string", "description": "Service ID"},
+								"action": {"type": "string", "description": "Action name"},
+								"params": {"type": "object", "description": "Expected params. Use exact values for known params. Use \"$chain\" as a value to match any value that appeared in a prior call's results (e.g. {\"thread_id\": \"$chain\"})."},
+								"reason": {"type": "string", "description": "Why this call will be made"}
+							},
+							"required": ["service", "action", "reason"]
+						},
+						"description": "Optional pre-registered calls. Calls matching a planned call skip per-request intent verification. Each must be covered by authorized_actions and must include params."
+					},
+					"intent_verification_mode": {"type": "string", "enum": ["strict", "lenient", "off"], "description": "Runtime intent verification strictness for v2 envelopes. Defaults to strict."},
+					"expected_use": {"type": "string", "description": "Top-level intended use summary for runtime-backed tasks"},
+					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use."},
+					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
+					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
+					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+				},
+				"required": ["purpose"],
+				"anyOf": [
+					{"required": ["authorized_actions"]},
+					{"required": ["expected_tools_json"]},
+					{"required": ["expected_egress_json"]}
+				]
+			}`),
+		},
+		{
 			Name:        "get_task",
 			Description: "Get the current status and details of a task. Use wait=true to long-poll until the task is approved or denied instead of returning immediately.",
 			InputSchema: json.RawMessage(`{
@@ -126,12 +209,36 @@ func toolDefs() []Tool {
 			}`),
 		},
 		{
+			Name:        "clawvisor_task_start",
+			Description: "Canonical alias for starting work under a task. Confirms task state and can wait until approval before work begins.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"task_id": {"type": "string", "description": "The task ID to start work under"},
+					"wait": {"type": "boolean", "description": "Long-poll until the task leaves pending state (default true)"},
+					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
+				},
+				"required": ["task_id"]
+			}`),
+		},
+		{
 			Name:        "complete_task",
 			Description: "Mark a task as completed when you are done with it.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"task_id": {"type": "string", "description": "The task ID to complete"}
+				},
+				"required": ["task_id"]
+			}`),
+		},
+		{
+			Name:        "clawvisor_task_end",
+			Description: "Canonical alias for complete_task. Mark a task as completed when work under it has ended.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"task_id": {"type": "string", "description": "The task ID to end"}
 				},
 				"required": ["task_id"]
 			}`),
