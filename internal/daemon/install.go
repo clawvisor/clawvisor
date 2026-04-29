@@ -420,47 +420,74 @@ func Start() error {
 	return nil
 }
 
-// Stop deactivates the running daemon service. It tries launchd/systemd first,
-// then falls back to signalling the PID from .daemon.pid if the server is still
-// responding to health checks.
+// Stop deactivates the running daemon service. It unloads the service manager
+// job first (so launchd's KeepAlive doesn't resurrect the process), then
+// escalates SIGTERM → SIGKILL against the PID from .daemon.pid until the
+// process is actually gone.
 func Stop() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
 	}
 
-	// Try the service manager first (best-effort, may not be installed).
+	dataDir := filepath.Join(home, ".clawvisor")
+	pidPath := filepath.Join(dataDir, ".daemon.pid")
+	pid := readPIDFile(pidPath)
+
+	// Unload the service first so launchd/systemd doesn't auto-restart the
+	// process after we signal it directly below.
 	switch runtime.GOOS {
 	case "darwin":
 		plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-		exec.Command("launchctl", "unload", plistPath).Run() //nolint:errcheck
-	case "linux":
-		exec.Command("systemctl", "--user", "stop", "clawvisor.service").Run() //nolint:errcheck
-	}
-
-	// Check if the daemon is still alive and signal it directly if so.
-	dataDir := filepath.Join(home, ".clawvisor")
-	pid := readPIDFile(filepath.Join(dataDir, ".daemon.pid"))
-	if pid > 0 {
-		proc, err := os.FindProcess(pid)
-		if err == nil {
-			// Check if process is actually alive (signal 0).
-			if proc.Signal(syscall.Signal(0)) == nil {
-				if err := proc.Signal(syscall.SIGTERM); err != nil {
-					return fmt.Errorf("signalling daemon (PID %d): %w", pid, err)
-				}
-				// Wait briefly for it to exit.
-				for i := 0; i < 30; i++ {
-					time.Sleep(100 * time.Millisecond)
-					if proc.Signal(syscall.Signal(0)) != nil {
-						break
-					}
-				}
+		if _, statErr := os.Stat(plistPath); statErr == nil {
+			if out, err := exec.Command("launchctl", "unload", plistPath).CombinedOutput(); err != nil {
+				fmt.Printf("  Warning: launchctl unload failed: %s\n", strings.TrimSpace(string(out)))
 			}
 		}
-		os.Remove(filepath.Join(dataDir, ".daemon.pid"))
+	case "linux":
+		unitPath := filepath.Join(home, ".config", "systemd", "user", "clawvisor.service")
+		if _, statErr := os.Stat(unitPath); statErr == nil {
+			if out, err := exec.Command("systemctl", "--user", "stop", "clawvisor.service").CombinedOutput(); err != nil {
+				fmt.Printf("  Warning: systemctl stop failed: %s\n", strings.TrimSpace(string(out)))
+			}
+		}
 	}
+
+	// If the service manager already killed the process, we're done. Otherwise
+	// escalate SIGTERM → SIGKILL until the PID no longer responds.
+	if pid > 0 && processAlive(pid) {
+		proc, _ := os.FindProcess(pid)
+		_ = proc.Signal(syscall.SIGTERM)
+		if !waitForProcessExit(pid, 3*time.Second) {
+			_ = proc.Signal(syscall.SIGKILL)
+			if !waitForProcessExit(pid, 2*time.Second) {
+				return fmt.Errorf("daemon (PID %d) did not exit after SIGKILL", pid)
+			}
+		}
+	}
+	os.Remove(pidPath)
 
 	fmt.Println("  Daemon stopped.")
 	return nil
+}
+
+// processAlive reports whether the given PID refers to a live process.
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// waitForProcessExit polls signal 0 until pid is dead or the timeout expires.
+func waitForProcessExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return !processAlive(pid)
 }
