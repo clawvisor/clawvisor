@@ -228,7 +228,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			preTask := existing.TaskID == nil // blocked/error before task scope
 			sameTask := req.TaskID != "" && existing.TaskID != nil && *existing.TaskID == req.TaskID
 			if preTask || sameTask {
-				writeGatewayStatusResponse(w, existing)
+				writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+					Deduped: true,
+					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+				})
 				return
 			}
 		}
@@ -1412,11 +1415,24 @@ func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.
-func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry) {
+type gatewayStatusResponseOptions struct {
+	Deduped bool
+	Message string
+}
+
+func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry, opts ...gatewayStatusResponseOptions) {
 	resp := map[string]any{
 		"status":     e.Outcome,
 		"request_id": e.RequestID,
 		"audit_id":   e.ID,
+	}
+	if len(opts) > 0 {
+		if opts[0].Deduped {
+			resp["deduped"] = true
+		}
+		if opts[0].Message != "" {
+			resp["message"] = opts[0].Message
+		}
 	}
 	if e.ErrorMsg != nil && *e.ErrorMsg != "" {
 		resp["error"] = *e.ErrorMsg

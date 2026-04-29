@@ -47,6 +47,12 @@ func TestGateway_Dedup_BlockedRequest(t *testing.T) {
 	if second["status"] != "blocked" {
 		t.Errorf("dedup: expected status=blocked (from cache), got %v", second["status"])
 	}
+	if second["deduped"] != true {
+		t.Errorf("dedup: expected deduped=true, got %v", second["deduped"])
+	}
+	if second["message"] == nil || second["message"] == "" {
+		t.Error("dedup: expected explanatory message on replayed response")
+	}
 	if second["request_id"] != reqID {
 		t.Errorf("dedup: request_id mismatch: got %v", second["request_id"])
 	}
@@ -87,6 +93,9 @@ func TestGateway_Dedup_PendingRequest(t *testing.T) {
 	if second["status"] != "pending" {
 		t.Errorf("dedup pending: expected status=pending, got %v", second["status"])
 	}
+	if second["deduped"] != true {
+		t.Errorf("dedup pending: expected deduped=true, got %v", second["deduped"])
+	}
 
 	// Exactly one entry in the approvals queue (not two).
 	resp := sc.session.do("GET", "/api/approvals", nil)
@@ -124,6 +133,9 @@ func TestGateway_Dedup_ExecutedRequest(t *testing.T) {
 	second := sc.gatewayRequestWithTask(env, reqID, "mock.dedup-exec", "run", taskID)
 	if second["status"] != "executed" {
 		t.Errorf("dedup executed: expected status=executed, got %v", second["status"])
+	}
+	if second["deduped"] != true {
+		t.Errorf("dedup executed: expected deduped=true, got %v", second["deduped"])
 	}
 	// The dedup path returns the same audit entry, so audit_id must match.
 	if second["audit_id"] != first["audit_id"] {
