@@ -53,10 +53,10 @@ type TasksHandler struct {
 	eventHub         events.EventHub
 	assessor         taskrisk.Assessor
 	contentDedup     DedupCache
-	msgBuffer        groupchat.Buffer         // may be nil; set via SetGroupApproval
-	llmHealth        *llm.Health              // may be nil; needed for approval check LLM calls
-	agentPairer      notify.AgentGroupPairer  // may be nil; set via SetGroupApproval
-	localSvcProvider LocalServiceProvider     // may be nil; set via SetLocalServiceProvider
+	msgBuffer        groupchat.Buffer        // may be nil; set via SetGroupApproval
+	llmHealth        *llm.Health             // may be nil; needed for approval check LLM calls
+	agentPairer      notify.AgentGroupPairer // may be nil; set via SetGroupApproval
+	localSvcProvider LocalServiceProvider    // may be nil; set via SetLocalServiceProvider
 }
 
 // SetLocalServiceProvider configures the local daemon service provider for
@@ -438,6 +438,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create task")
 		return
 	}
+	if !preApproved {
+		if err := h.createCanonicalTaskApproval(ctx, task, "task_create"); err != nil {
+			h.logger.Error("failed to create canonical task approval", "task_id", task.ID, "err", err)
+		}
+	}
 
 	if preApproved {
 		// Send confirmation DM (if notifications enabled).
@@ -745,6 +750,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -902,6 +908,7 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 	if err := h.st.DeleteChainFactsByTask(ctx, taskID); err != nil {
 		h.logger.Warn("chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
@@ -1073,6 +1080,12 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not request scope expansion")
 		return
 	}
+	task.PendingAction = pendingAction
+	task.PendingReason = req.Reason
+	task.Status = "pending_scope_expansion"
+	if err := h.createCanonicalTaskApproval(ctx, task, "task_expand"); err != nil {
+		h.logger.Error("failed to create canonical scope expansion approval", "task_id", taskID, "err", err)
+	}
 
 	// Send notification.
 	if h.notifier != nil {
@@ -1159,6 +1172,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not expand task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -1228,6 +1242,7 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny expansion")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 	// Restore proper status (UpdateTaskActions sets status to active).
 	if newStatus != "active" {
 		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
@@ -1277,6 +1292,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, task.AuthorizedActions); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
 	h.publishTasksAndQueue(userID)
@@ -1310,6 +1326,7 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Denied</b> — task rejected.")
 	h.decrementNotifierPolling(userID)
@@ -1352,6 +1369,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if err := h.st.UpdateTaskActions(ctx, taskID, newActions, expiresAt); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
 	h.publishTasksAndQueue(userID)
@@ -1394,6 +1412,7 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 	if err := h.st.UpdateTaskActions(ctx, taskID, task.AuthorizedActions, exp); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 	if newStatus != "active" {
 		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
 	}
@@ -1423,6 +1442,89 @@ func (h *TasksHandler) decrementNotifierPolling(userID string) {
 	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
 		pd.DecrementPolling(userID)
 	}
+}
+
+func canonicalTaskApprovalKind(task *store.Task) string {
+	if task.Status == "pending_scope_expansion" || task.PendingAction != nil {
+		return "task_expand"
+	}
+	return "task_create"
+}
+
+func taskApprovalResolution(task *store.Task) string {
+	if task.Lifetime == "standing" {
+		return "allow_always"
+	}
+	return "allow_session"
+}
+
+func (h *TasksHandler) createCanonicalTaskApproval(ctx context.Context, task *store.Task, kind string) error {
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+
+	summary := map[string]any{
+		"purpose":    task.Purpose,
+		"lifetime":   task.Lifetime,
+		"risk_level": task.RiskLevel,
+	}
+	if kind == "task_expand" && task.PendingAction != nil {
+		summary["service"] = task.PendingAction.Service
+		summary["action"] = task.PendingAction.Action
+		summary["reason"] = task.PendingReason
+	}
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+
+	rec := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                kind,
+		UserID:              task.UserID,
+		AgentID:             &task.AgentID,
+		TaskID:              &task.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		SummaryJSON:         json.RawMessage(summaryJSON),
+		PayloadJSON:         json.RawMessage(payload),
+		ResolutionTransport: "task_state_update",
+	}
+	return h.st.CreateApprovalRecord(ctx, rec)
+}
+
+func (h *TasksHandler) resolveCanonicalTaskApproval(ctx context.Context, task *store.Task, kind, resolution, status string) {
+	rec, err := h.findPendingTaskApprovalRecord(ctx, task.UserID, task.ID, kind)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			h.logger.Error("failed to load canonical task approval", "task_id", task.ID, "kind", kind, "err", err)
+		}
+		return
+	}
+	if err := h.st.ResolveApprovalRecord(ctx, rec.ID, resolution, status, time.Now().UTC()); err != nil {
+		h.logger.Error("failed to resolve canonical task approval", "task_id", task.ID, "approval_id", rec.ID, "err", err)
+	}
+}
+
+func (h *TasksHandler) findPendingTaskApprovalRecord(ctx context.Context, userID, taskID, kind string) (*store.ApprovalRecord, error) {
+	recs, err := h.st.ListPendingApprovalRecords(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var latest *store.ApprovalRecord
+	for _, rec := range recs {
+		if rec.Kind != kind || rec.TaskID == nil || *rec.TaskID != taskID {
+			continue
+		}
+		if latest == nil || rec.CreatedAt.After(latest.CreatedAt) {
+			latest = rec
+		}
+	}
+	if latest == nil {
+		return nil, store.ErrNotFound
+	}
+	return latest, nil
 }
 
 // updateNotificationMsg updates the Telegram message for a target
