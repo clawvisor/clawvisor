@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
@@ -130,7 +131,7 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		return nil, err
 	}
 	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"), "127.0.0.1", "localhost", "::1")
-	return []string{
+	envPairs := []string{
 		"CLAWVISOR_URL=" + baseURL,
 		"CLAWVISOR_AGENT_TOKEN=" + agentToken,
 		"CLAWVISOR_RUNTIME_SESSION_ID=" + session.Session.ID,
@@ -144,7 +145,42 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"all_proxy=" + authenticatedProxyURL,
 		"NO_PROXY=" + noProxy,
 		"no_proxy=" + noProxy,
-	}, nil
+	}
+	if strings.TrimSpace(session.CACertPEM) == "" {
+		return envPairs, nil
+	}
+	caPath, err := writeRuntimeCACertFile(session.Session.ID, session.CACertPEM)
+	if err != nil {
+		return nil, err
+	}
+	envPairs = append(envPairs,
+		"CLAWVISOR_RUNTIME_CA_CERT_FILE="+caPath,
+		"SSL_CERT_FILE="+caPath,
+		"CURL_CA_BUNDLE="+caPath,
+		"REQUESTS_CA_BUNDLE="+caPath,
+		"NODE_EXTRA_CA_CERTS="+caPath,
+		"GIT_SSL_CAINFO="+caPath,
+	)
+	return envPairs, nil
+}
+
+func writeRuntimeCACertFile(sessionID, pem string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", fmt.Errorf("runtime session id is required for CA cert export")
+	}
+	if strings.TrimSpace(pem) == "" {
+		return "", fmt.Errorf("runtime CA cert PEM is required")
+	}
+	dir := filepath.Join(os.TempDir(), "clawvisor-runtime-ca")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create runtime CA dir: %w", err)
+	}
+	path := filepath.Join(dir, sessionID+".pem")
+	if err := os.WriteFile(path, []byte(pem), 0o600); err != nil {
+		return "", fmt.Errorf("write runtime CA cert: %w", err)
+	}
+	return path, nil
 }
 
 func mergeNoProxy(existing string, defaults ...string) string {

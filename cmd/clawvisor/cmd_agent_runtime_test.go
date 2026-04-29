@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 )
 
 func TestBuildRuntimeBootstrapEnv(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("NO_PROXY", "metadata.internal,localhost")
 
 	session := &client.CreateRuntimeSessionResponse{
@@ -18,6 +21,7 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 		},
 		ProxyBearer:     "secret-token",
 		ProxyURL:        "http://127.0.0.1:4318",
+		CACertPEM:       "-----BEGIN CERTIFICATE-----\nunit-test\n-----END CERTIFICATE-----\n",
 		ObservationMode: true,
 	}
 
@@ -45,6 +49,35 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	if got := values["CLAWVISOR_AGENT_TOKEN"]; got != "agent-token" {
 		t.Fatalf("unexpected agent token %q", got)
 	}
+	caPath := values["CLAWVISOR_RUNTIME_CA_CERT_FILE"]
+	if caPath == "" {
+		t.Fatal("expected runtime CA cert path")
+	}
+	if got := values["SSL_CERT_FILE"]; got != caPath {
+		t.Fatalf("expected SSL_CERT_FILE to match runtime CA path, got %q", got)
+	}
+	if got := values["CURL_CA_BUNDLE"]; got != caPath {
+		t.Fatalf("expected CURL_CA_BUNDLE to match runtime CA path, got %q", got)
+	}
+	if got := values["REQUESTS_CA_BUNDLE"]; got != caPath {
+		t.Fatalf("expected REQUESTS_CA_BUNDLE to match runtime CA path, got %q", got)
+	}
+	if got := values["NODE_EXTRA_CA_CERTS"]; got != caPath {
+		t.Fatalf("expected NODE_EXTRA_CA_CERTS to match runtime CA path, got %q", got)
+	}
+	if got := values["GIT_SSL_CAINFO"]; got != caPath {
+		t.Fatalf("expected GIT_SSL_CAINFO to match runtime CA path, got %q", got)
+	}
+	data, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatalf("read runtime CA cert: %v", err)
+	}
+	if string(data) != session.CACertPEM {
+		t.Fatalf("unexpected runtime CA cert contents %q", string(data))
+	}
+	if filepath.Base(caPath) != "session-123.pem" {
+		t.Fatalf("unexpected runtime CA cert filename %q", filepath.Base(caPath))
+	}
 	if got := values["NO_PROXY"]; got != "metadata.internal,localhost,127.0.0.1,::1" {
 		t.Fatalf("unexpected NO_PROXY %q", got)
 	}
@@ -57,6 +90,30 @@ func TestMergeNoProxyPreservesOrderAndDeduplicates(t *testing.T) {
 	got := mergeNoProxy("localhost, example.com ,localhost", "127.0.0.1", "example.com", "::1")
 	if got != "localhost,example.com,127.0.0.1,::1" {
 		t.Fatalf("unexpected merged no_proxy %q", got)
+	}
+}
+
+func TestBuildRuntimeBootstrapEnvSkipsCAEnvWhenUnavailable(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	session := &client.CreateRuntimeSessionResponse{
+		Session: client.RuntimeSession{
+			ID: "session-123",
+		},
+		ProxyBearer: "secret-token",
+		ProxyURL:    "http://127.0.0.1:4318",
+	}
+
+	env, err := buildRuntimeBootstrapEnv("http://127.0.0.1:25297", "agent-token", session)
+	if err != nil {
+		t.Fatalf("buildRuntimeBootstrapEnv: %v", err)
+	}
+	values := envMap(env)
+	if values["CLAWVISOR_RUNTIME_CA_CERT_FILE"] != "" {
+		t.Fatalf("expected runtime CA env to be omitted, got %q", values["CLAWVISOR_RUNTIME_CA_CERT_FILE"])
+	}
+	if values["SSL_CERT_FILE"] != "" {
+		t.Fatalf("expected SSL_CERT_FILE to be omitted, got %q", values["SSL_CERT_FILE"])
 	}
 }
 
