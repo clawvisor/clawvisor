@@ -3,11 +3,16 @@ package clawvisor
 import (
 	"context"
 	"net/http"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
@@ -17,6 +22,37 @@ import (
 // service setup (where the server may need to be restarted).
 func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	var apiOpts []api.ServerOption
+	var runtimeSrv *runtimeproxy.Server
+	var runtimeMgr *runtimeproxy.Manager
+
+	if opts.Config != nil && opts.Config.RuntimeProxy.Enabled {
+		dataDir := opts.Config.RuntimeProxy.DataDir
+		if home, err := os.UserHomeDir(); err == nil && len(dataDir) > 1 && dataDir[:2] == "~/" {
+			dataDir = filepath.Join(home, dataDir[2:])
+		}
+		var err error
+		runtimeSrv, err = runtimeproxy.NewServer(runtimeproxy.Config{
+			DataDir:           dataDir,
+			Addr:              opts.Config.RuntimeProxy.ListenAddr,
+			TLS:               opts.Config.RuntimeProxy.TLS,
+			ListenerHostnames: opts.Config.RuntimeProxy.ListenerHostnames,
+		}, opts.Logger)
+		if err != nil {
+			return err
+		}
+		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store})
+		runtimeSrv.InstallEgressPolicy(runtimeproxy.PolicyHooks{
+			Store:  opts.Store,
+			Config: opts.Config,
+			Logger: opts.Logger,
+		})
+		runtimeMgr = &runtimeproxy.Manager{
+			Store:  opts.Store,
+			Config: opts.Config,
+			Logger: opts.Logger,
+			Proxy:  runtimeSrv,
+		}
+	}
 
 	apiOpts = append(apiOpts, api.WithFeatures(api.FeatureSet{
 		MultiTenant:       opts.Features.MultiTenant,
@@ -30,8 +66,20 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		LocalDaemon:       opts.Features.LocalDaemon,
 	}))
 
-	if opts.ExtraRoutes != nil {
-		apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
+	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
+		if runtimeMgr != nil {
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, runtimeMgr, opts.Config)
+			user := middleware.RequireUser(deps.JWTService, deps.Store)
+			agent := middleware.RequireAgent(deps.Store)
+			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))
+			mux.Handle("GET /api/runtime/sessions", user(http.HandlerFunc(runtimeHandler.ListSessions)))
+			mux.Handle("POST /api/runtime/sessions/{id}/revoke", user(http.HandlerFunc(runtimeHandler.RevokeSession)))
+			mux.Handle("GET /api/runtime/status", user(http.HandlerFunc(runtimeHandler.Status)))
+			mux.Handle("GET /api/runtime/approvals", user(http.HandlerFunc(runtimeHandler.ListApprovals)))
+			mux.Handle("POST /api/runtime/approvals/{id}/resolve", user(http.HandlerFunc(runtimeHandler.ResolveApproval)))
+			mux.Handle("GET /api/runtime/leases", user(http.HandlerFunc(runtimeHandler.ListLeases)))
+		}
+		if opts.ExtraRoutes != nil {
 			opts.ExtraRoutes(mux, Dependencies{
 				Store:      deps.Store,
 				Vault:      deps.Vault,
@@ -41,8 +89,8 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 				Logger:     deps.Logger,
 				BaseURL:    deps.BaseURL,
 			})
-		}))
-	}
+		}
+	}))
 
 	if opts.WrapRoutes != nil {
 		apiOpts = append(apiOpts, api.WithWrapRoutes(opts.WrapRoutes))
@@ -141,6 +189,21 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	)
 	if err != nil {
 		return err
+	}
+
+	if runtimeSrv != nil {
+		if err := runtimeSrv.Start(); err != nil {
+			return err
+		}
+		opts.Logger.Info("runtime proxy running", "addr", runtimeSrv.Addr())
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := runtimeSrv.Shutdown(shutdownCtx); err != nil && opts.Logger != nil {
+				opts.Logger.Warn("runtime proxy shutdown failed", "error", err)
+			}
+		}()
 	}
 
 	// Start relay client if configured. Give it the real server handler so
