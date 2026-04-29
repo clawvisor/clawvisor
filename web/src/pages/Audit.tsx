@@ -62,6 +62,11 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
   )
 }
 
+function compactID(value?: string) {
+  if (!value) return null
+  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
+}
+
 function AuditRow({ entry }: { entry: AuditEntry }) {
   const [expanded, setExpanded] = useState(false)
   return (
@@ -146,6 +151,33 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
                     <div className="text-text-tertiary text-[10px]">{entry.verification.model} &middot; {entry.verification.latency_ms}ms</div>
                   </div>
                 )}
+                {(entry.session_id || entry.approval_id || entry.lease_id || entry.matched_task_id || entry.lease_task_id) && (
+                  <div className="bg-surface-1 border border-border-default rounded p-2 space-y-1">
+                    <div className="text-text-primary font-medium">Runtime context</div>
+                    {entry.session_id && <div><span className="text-text-tertiary">Session:</span> <code className="font-mono">{compactID(entry.session_id)}</code></div>}
+                    {entry.approval_id && <div><span className="text-text-tertiary">Approval:</span> <code className="font-mono">{compactID(entry.approval_id)}</code></div>}
+                    {entry.lease_id && <div><span className="text-text-tertiary">Lease:</span> <code className="font-mono">{compactID(entry.lease_id)}</code></div>}
+                    {entry.matched_task_id && <div><span className="text-text-tertiary">Matched task:</span> <code className="font-mono">{compactID(entry.matched_task_id)}</code></div>}
+                    {entry.lease_task_id && <div><span className="text-text-tertiary">Lease task:</span> <code className="font-mono">{compactID(entry.lease_task_id)}</code></div>}
+                    {entry.resolution_confidence && <div><span className="text-text-tertiary">Confidence:</span> {entry.resolution_confidence}</div>}
+                    {entry.intent_verdict && <div><span className="text-text-tertiary">Intent verdict:</span> {entry.intent_verdict}</div>}
+                  </div>
+                )}
+                {(entry.would_block || entry.would_review || entry.would_prompt_inline) && (
+                  <div className="bg-warning/10 rounded p-2 space-y-1">
+                    <div className="text-warning font-medium">Observation mode</div>
+                    <div className="flex gap-2 flex-wrap">
+                      {entry.would_block && <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-danger/15 text-danger">would block</span>}
+                      {entry.would_review && <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-warning/15 text-warning">would review</span>}
+                      {entry.would_prompt_inline && <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-brand/15 text-brand">would prompt inline</span>}
+                    </div>
+                    <div className="text-text-tertiary">
+                      {entry.used_active_task_context && 'Used active task context. '}
+                      {entry.used_lease_bias && 'Used lease bias. '}
+                      {entry.used_conv_judge_resolution && 'Used conversation judge resolution.'}
+                    </div>
+                  </div>
+                )}
                 <div className="text-text-tertiary font-mono">{entry.request_id}</div>
               </div>
             </div>
@@ -206,7 +238,7 @@ export default function Audit() {
       }
       const csv = entriesToCsv(allEntries)
       const dateStr = format(new Date(), 'yyyy-MM-dd')
-      downloadCsv(csv, `gateway-log-${dateStr}.csv`)
+      downloadCsv(csv, `audit-log-${dateStr}.csv`)
     } finally {
       setExporting(false)
     }
@@ -215,7 +247,7 @@ export default function Audit() {
   return (
     <div className="p-4 sm:p-8 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold text-text-primary">{orgId ? `${currentOrg!.name} Gateway Log` : 'Gateway Log'}</h1>
+        <h1 className="text-2xl font-bold text-text-primary">{orgId ? `${currentOrg!.name} Audit` : 'Audit'}</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={handleExport}

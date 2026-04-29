@@ -890,7 +890,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   return (
     <div className="p-4 sm:p-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">{orgName} Services</h1>
+        <h1 className="text-2xl font-bold text-text-primary">{orgName} Accounts</h1>
         <p className="text-sm text-text-tertiary mt-1">
           Org-wide shared credentials and per-user service activation.
         </p>
@@ -1141,11 +1141,11 @@ export default function Services() {
     <div className="p-4 sm:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Services</h1>
+          <h1 className="text-2xl font-bold text-text-primary">Connected Accounts</h1>
           <p className="text-sm text-text-tertiary mt-1">
             {activeServices.length > 0
-              ? `${activeServices.length} connected service${activeServices.length !== 1 ? 's' : ''}`
-              : 'Connect services so your agents can take actions.'}
+              ? `${activeServices.length} connected account${activeServices.length !== 1 ? 's' : ''}`
+              : 'Connect accounts so your agents can take actions.'}
           </p>
           <p className="text-xs text-text-tertiary mt-2 max-w-xl">
             Your credentials are only used when your AI agent takes actions on your behalf.

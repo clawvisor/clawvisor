@@ -325,6 +325,20 @@ export interface AuditEntry {
   agent_id?: string
   request_id: string
   task_id?: string
+  session_id?: string
+  approval_id?: string
+  lease_id?: string
+  tool_use_id?: string
+  matched_task_id?: string
+  lease_task_id?: string
+  resolution_confidence?: string
+  intent_verdict?: string
+  used_active_task_context?: boolean
+  used_lease_bias?: boolean
+  used_conv_judge_resolution?: boolean
+  would_block?: boolean
+  would_review?: boolean
+  would_prompt_inline?: boolean
   timestamp: string
   service: string
   action: string
@@ -366,6 +380,26 @@ export interface PendingApproval {
   }
   expires_at: string
   created_at: string
+}
+
+export interface ApprovalRecord {
+  id: string
+  kind: string
+  user_id: string
+  agent_id?: string
+  request_id?: string
+  task_id?: string
+  session_id?: string
+  status: string
+  surface: string
+  summary_json?: Record<string, any>
+  payload_json?: Record<string, any>
+  resolution_transport?: string
+  expires_at?: string
+  resolved_at?: string
+  resolution?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface NotificationConfig {
@@ -529,6 +563,41 @@ export interface ActivityBucket {
   bucket: string
   outcome: string
   count: number
+}
+
+export interface RuntimeStatus {
+  enabled: boolean
+  proxy_url: string
+  observation_mode_default: boolean
+  inline_approval_enabled: boolean
+  tool_lease_timeout_seconds: number
+  one_off_ttl_seconds: number
+  ca_cert_pem: string
+}
+
+export interface RuntimeSession {
+  id: string
+  user_id: string
+  agent_id: string
+  mode: string
+  observation_mode: boolean
+  metadata_json?: Record<string, any>
+  expires_at: string
+  created_at: string
+  revoked_at?: string
+}
+
+export interface ToolExecutionLease {
+  lease_id: string
+  session_id: string
+  task_id: string
+  tool_use_id: string
+  tool_name: string
+  status: string
+  metadata_json?: Record<string, any>
+  opened_at: string
+  expires_at: string
+  closed_at?: string
 }
 
 export interface OverviewData {
@@ -985,12 +1054,26 @@ export const api = {
   },
   approvals: {
     list: () => get<{ entries: PendingApproval[]; total: number }>('/api/approvals'),
-    approve: (requestId: string) =>
-      post<{ status: string; request_id: string; audit_id: string; result?: unknown }>
-        (`/api/approvals/${requestId}/approve`, {}),
+    approve: (requestId: string, resolution?: 'allow_once' | 'allow_session' | 'allow_always') =>
+      post<{ status: string; request_id: string; audit_id: string; resolution?: string; task_id?: string; task_status?: string; task_lifetime?: string; result?: unknown }>
+        (`/api/approvals/${requestId}/approve`, resolution ? { resolution } : {}),
     deny: (requestId: string) =>
       post<{ status: string; request_id: string; audit_id: string }>
         (`/api/approvals/${requestId}/deny`, {}),
+  },
+  runtime: {
+    status: () => get<RuntimeStatus>('/api/runtime/status'),
+    listApprovals: () => get<{ entries: ApprovalRecord[]; total: number }>('/api/runtime/approvals'),
+    resolveApproval: (approvalId: string, resolution: 'allow_once' | 'deny') =>
+      post<{ approval_id: string; status: string; resolution: string }>(
+        `/api/runtime/approvals/${approvalId}/resolve`,
+        { resolution },
+      ),
+    listSessions: () => get<{ entries: RuntimeSession[]; total: number }>('/api/runtime/sessions'),
+    revokeSession: (sessionId: string) =>
+      post<{ session_id: string; status: string }>(`/api/runtime/sessions/${sessionId}/revoke`, {}),
+    listLeases: (sessionId: string) =>
+      get<{ entries: ToolExecutionLease[]; total: number }>('/api/runtime/leases', { session_id: sessionId }),
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),
