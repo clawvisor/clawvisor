@@ -191,7 +191,14 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 			}
 			return h.cfg.RuntimePolicy.OneOffTTLSeconds
 		}(),
-		"ca_cert_pem": h.manager.CACertPEM(),
+		"autovault_mode": func() string {
+			if h.cfg == nil {
+				return ""
+			}
+			return h.cfg.RuntimePolicy.AutovaultMode
+		}(),
+		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
+		"ca_cert_pem":          h.manager.CACertPEM(),
 	})
 }
 

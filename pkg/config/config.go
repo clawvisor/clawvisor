@@ -222,6 +222,8 @@ type RuntimePolicyConfig struct {
 	HarnessAllowlist        []string `yaml:"harness_allowlist"`
 	ToolLeaseTimeoutSeconds int      `yaml:"tool_lease_timeout_seconds"`
 	OneOffTTLSeconds        int      `yaml:"one_off_ttl_seconds"`
+	AutovaultMode           string   `yaml:"autovault_mode"`
+	InjectStoredBearer      bool     `yaml:"inject_stored_bearer"`
 }
 
 // RateLimitBucket configures a single rate limit bucket.
@@ -317,6 +319,8 @@ func Default() *Config {
 			HarnessAllowlist:        nil,
 			ToolLeaseTimeoutSeconds: 300,
 			OneOffTTLSeconds:        300,
+			AutovaultMode:           "auto",
+			InjectStoredBearer:      false,
 		},
 		RateLimit: RateLimitConfig{
 			Gateway:   RateLimitBucket{Limit: 60, Window: 60},
@@ -571,6 +575,12 @@ func Load(path string) (*Config, error) {
 			cfg.RuntimePolicy.OneOffTTLSeconds = n
 		}
 	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_AUTOVAULT_MODE"); v != "" {
+		cfg.RuntimePolicy.AutovaultMode = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_INJECT_STORED_BEARER"); v != "" {
+		cfg.RuntimePolicy.InjectStoredBearer = v == "true" || v == "1"
+	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
@@ -679,6 +689,11 @@ func (c *Config) Validate() error {
 	}
 	if c.RuntimePolicy.OneOffTTLSeconds <= 0 {
 		return fmt.Errorf("runtime_policy.one_off_ttl_seconds must be positive (got %d)", c.RuntimePolicy.OneOffTTLSeconds)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.RuntimePolicy.AutovaultMode)) {
+	case "", "observe", "auto", "strict":
+	default:
+		return fmt.Errorf("runtime_policy.autovault_mode must be one of observe, auto, strict (got %q)", c.RuntimePolicy.AutovaultMode)
 	}
 	return nil
 }

@@ -54,8 +54,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		})
 		runtimeSrv.InstallRequestContextCarrier()
 		runtimeSrv.InstallPlaceholderSwap(runtimeproxy.PlaceholderHooks{
-			Store: opts.Store,
-			Vault: opts.Vault,
+			Store:  opts.Store,
+			Vault:  opts.Vault,
+			Config: opts.Config,
 		})
 		reviewCache = runtimereview.NewApprovalCache()
 		contextJudge := runtimepolicy.NewLLMRuntimeContextJudge(llm.NewHealth(opts.Config.LLM), opts.Logger)

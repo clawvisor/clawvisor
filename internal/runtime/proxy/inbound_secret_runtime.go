@@ -289,44 +289,15 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 }
 
 func (s *runtimeSecretScanner) placeholderForValue(ctx context.Context, service, raw string) (string, error) {
-	if placeholder, ok := s.lookupReusablePlaceholder(raw); ok {
-		return placeholder, nil
+	placeholder, err := captureRuntimeSecret(ctx, s.server, s.hooks.Store, s.hooks.Vault, s.session, service, raw)
+	if err == nil {
+		s.serviceLabels[normalizeSecretService(service)] = struct{}{}
 	}
-	service = normalizeSecretService(service)
-	if service == "" {
-		service = "captured"
-	}
-	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(service))
-	if err != nil {
-		return "", err
-	}
-	serviceID := "runtime.captured." + service + "." + placeholder
-	if err := s.hooks.Vault.Set(ctx, s.session.UserID, serviceID, []byte(raw)); err != nil {
-		return "", err
-	}
-	if err := s.hooks.Store.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      s.session.UserID,
-		AgentID:     s.session.AgentID,
-		ServiceID:   serviceID,
-	}); err != nil {
-		return "", err
-	}
-	s.server.secretValueCache.Store(secretValueCacheKey(s.session.AgentID, raw), capturedSecretEntry{
-		Placeholder: placeholder,
-		ServiceID:   serviceID,
-	})
-	s.serviceLabels[service] = struct{}{}
-	return placeholder, nil
+	return placeholder, err
 }
 
 func (s *runtimeSecretScanner) lookupReusablePlaceholder(raw string) (string, bool) {
-	value, ok := s.server.secretValueCache.Load(secretValueCacheKey(s.session.AgentID, raw))
-	if !ok {
-		return "", false
-	}
-	entry, _ := value.(capturedSecretEntry)
-	return entry.Placeholder, entry.Placeholder != ""
+	return lookupRuntimeSecretPlaceholder(s.server, s.session, raw)
 }
 
 func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName, content string, candidate runtimeautovault.Candidate) (adjudicationVerdict, bool) {
@@ -361,6 +332,49 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 func secretValueCacheKey(agentID, raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return agentID + ":" + hex.EncodeToString(sum[:])
+}
+
+func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v vault.Vault, session *store.RuntimeSession, service, raw string) (string, error) {
+	if placeholder, ok := lookupRuntimeSecretPlaceholder(srv, session, raw); ok {
+		return placeholder, nil
+	}
+	service = normalizeSecretService(service)
+	if service == "" {
+		service = "captured"
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(service))
+	if err != nil {
+		return "", err
+	}
+	serviceID := "runtime.captured." + service + "." + placeholder
+	if err := v.Set(ctx, session.UserID, serviceID, []byte(raw)); err != nil {
+		return "", err
+	}
+	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      session.UserID,
+		AgentID:     session.AgentID,
+		ServiceID:   serviceID,
+	}); err != nil {
+		return "", err
+	}
+	srv.secretValueCache.Store(secretValueCacheKey(session.AgentID, raw), capturedSecretEntry{
+		Placeholder: placeholder,
+		ServiceID:   serviceID,
+	})
+	return placeholder, nil
+}
+
+func lookupRuntimeSecretPlaceholder(srv *Server, session *store.RuntimeSession, raw string) (string, bool) {
+	if srv == nil || session == nil {
+		return "", false
+	}
+	value, ok := srv.secretValueCache.Load(secretValueCacheKey(session.AgentID, raw))
+	if !ok {
+		return "", false
+	}
+	entry, _ := value.(capturedSecretEntry)
+	return entry.Placeholder, entry.Placeholder != ""
 }
 
 func adjudicationCacheKey(host, fieldName, charset, contextWindow string) string {

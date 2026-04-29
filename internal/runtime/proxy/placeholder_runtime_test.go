@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
@@ -68,7 +69,7 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	srv.InstallSessionGuard(&Authenticator{Store: st})
-	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -109,5 +110,165 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected cross-agent placeholder rejection, got %d", resp.StatusCode)
+	}
+}
+
+func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-outbound-auto.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+	cfg.RuntimePolicy.AutovaultMode = "auto"
+
+	rawToken := "ghp_outboundSecret123456789"
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-outbound-auto", userID, agentID, false)
+	srv, err := NewServer(Config{DataDir: cfg.RuntimeProxy.DataDir, Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || seenAuth != "Bearer "+rawToken {
+		t.Fatalf("expected raw header to pass through unchanged, status=%d auth=%q", resp.StatusCode, seenAuth)
+	}
+	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); !ok {
+		t.Fatal("expected outbound raw credential to be captured for later placeholder reuse")
+	}
+	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.EventType == "runtime.autovault.captured" {
+			found = true
+			if strings.Contains(string(event.MetadataJSON), rawToken) {
+				t.Fatalf("runtime event leaked raw credential: %s", string(event.MetadataJSON))
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected runtime.autovault.captured event, got %+v", events)
+	}
+}
+
+func TestRuntimeProxyObservesUnknownOutboundCredentialInObserveMode(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-outbound-observe.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+	cfg.RuntimePolicy.AutovaultMode = "observe"
+
+	rawToken := "ZXhhbXBsZV9iZWFyZXJfdG9rZW5fMTIzNDU2Nzg5"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-outbound-observe", userID, agentID, false)
+	srv, err := NewServer(Config{DataDir: cfg.RuntimeProxy.DataDir, Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	resp.Body.Close()
+	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); ok {
+		t.Fatal("observe mode should not capture unknown outbound credentials")
+	}
+	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.EventType == "runtime.autovault.observed" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected runtime.autovault.observed event, got %+v", events)
+	}
+}
+
+func TestInjectStoredBearerUsesKnownHostService(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-inject-bearer.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, _ := seedRuntimePrincipal(t, st)
+	if err := v.Set(ctx, userID, "github", []byte(`{"token":"ghp_stored_value"}`)); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
+	if err := injectStoredBearer(req, v, userID); err != nil {
+		t.Fatalf("injectStoredBearer: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer ghp_stored_value" {
+		t.Fatalf("expected injected bearer, got %q", got)
 	}
 }
