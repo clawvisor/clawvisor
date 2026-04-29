@@ -47,13 +47,11 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[strin
 		}
 		return &http.Client{
 			Transport: &headerTransport{
-				header:             authDef.Header,
-				headerPrefix:       authDef.HeaderPrefix,
-				mirrorHeader:       authDef.MirrorHeader,
-				mirrorHeaderPrefix: authDef.MirrorHeaderPrefix,
-				token:              token,
-				extraHeaders:       authDef.ExtraHeaders,
-				base:               http.DefaultTransport,
+				header:       authDef.Header,
+				headerPrefix: authDef.HeaderPrefix,
+				token:        token,
+				extraHeaders: authDef.ExtraHeaders,
+				base:         http.DefaultTransport,
 			},
 		}, nil
 
@@ -122,22 +120,17 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[strin
 
 // headerTransport injects an authorization header and extra headers into every request.
 type headerTransport struct {
-	header             string
-	headerPrefix       string
-	mirrorHeader       string
-	mirrorHeaderPrefix string
-	token              string
-	extraHeaders       map[string]string
-	base               http.RoundTripper
+	header       string
+	headerPrefix string
+	token        string
+	extraHeaders map[string]string
+	base         http.RoundTripper
 }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
 	if t.header != "" && t.token != "" {
 		clone.Header.Set(t.header, t.headerPrefix+t.token)
-	}
-	if t.mirrorHeader != "" && t.token != "" {
-		clone.Header.Set(t.mirrorHeader, t.mirrorHeaderPrefix+t.token)
 	}
 	for k, v := range t.extraHeaders {
 		clone.Header.Set(k, v)

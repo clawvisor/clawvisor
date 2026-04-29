@@ -2,15 +2,13 @@ service:
   id: supabase
   display_name: Supabase
   description: "Query and manage Postgres tables, call RPC functions, manage storage buckets, and administer users through the Supabase API."
-  setup_url: "https://supabase.com/dashboard/project/_/settings/api"
-  key_hint: "Supabase service_role key (eyJ...)"
+  setup_url: "https://supabase.com/dashboard/project/_/settings/api-keys"
+  key_hint: "Supabase secret API key (sb_secret_...)"
   icon_svg: '<svg viewBox="0 0 109 113" fill="none"><path d="M63.708 110.284c-2.86 3.601-8.658 1.628-8.727-2.97l-1.007-67.251h45.22c8.19 0 12.758 9.46 7.665 15.874L63.708 110.284z" fill="url(#a)"/><path d="M63.708 110.284c-2.86 3.601-8.658 1.628-8.727-2.97l-1.007-67.251h45.22c8.19 0 12.758 9.46 7.665 15.874L63.708 110.284z" fill="url(#b)" fill-opacity=".2"/><path d="M45.317 2.071c2.86-3.601 8.657-1.628 8.726 2.97l.442 67.251H9.83c-8.19 0-12.759-9.46-7.665-15.875L45.317 2.072z" fill="#3ECF8E"/><defs><linearGradient id="a" x1="53.974" y1="54.974" x2="94.163" y2="71.829" gradientUnits="userSpaceOnUse"><stop stop-color="#249361"/><stop offset="1" stop-color="#3ECF8E"/></linearGradient><linearGradient id="b" x1="36.156" y1="30.578" x2="54.484" y2="65.081" gradientUnits="userSpaceOnUse"><stop/><stop offset="1" stop-opacity="0"/></linearGradient></defs></svg>'
 
 auth:
   type: api_key
   header: "apikey"
-  mirror_header: "Authorization"
-  mirror_header_prefix: "Bearer "
   extra_headers:
     Content-Type: "application/json"
 
@@ -25,7 +23,7 @@ variables:
     required: true
 
 verification_hints: |
-  Supabase actions target a specific project. The service_role key bypasses Row Level Security —
+  Supabase actions target a specific project. The secret API key bypasses Row Level Security —
   treat write and delete actions as high sensitivity. Table names are user-provided and map to
   Postgres tables in the project's public schema.
 
@@ -60,7 +58,7 @@ actions:
 
   insert_rows:
     display_name: "Insert rows"
-    risk: { category: write, sensitivity: high, description: "Insert rows into a Supabase table (bypasses RLS with service_role key)" }
+    risk: { category: write, sensitivity: high, description: "Insert rows into a Supabase table (bypasses RLS with secret API key)" }
     method: POST
     path: "/rest/v1/{{.table}}"
     params:
@@ -72,7 +70,7 @@ actions:
 
   update_rows:
     display_name: "Update rows"
-    risk: { category: write, sensitivity: high, description: "Update rows in a Supabase table (bypasses RLS with service_role key)" }
+    risk: { category: write, sensitivity: high, description: "Update rows in a Supabase table (bypasses RLS with secret API key)" }
     method: PATCH
     path: "/rest/v1/{{.table}}"
     params:
@@ -84,7 +82,7 @@ actions:
 
   delete_rows:
     display_name: "Delete rows"
-    risk: { category: delete, sensitivity: high, description: "Delete rows from a Supabase table (bypasses RLS with service_role key)" }
+    risk: { category: delete, sensitivity: high, description: "Delete rows from a Supabase table (bypasses RLS with secret API key)" }
     method: DELETE
     path: "/rest/v1/{{.table}}"
     params:
