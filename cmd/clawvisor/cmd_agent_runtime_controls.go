@@ -29,12 +29,6 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 		return nil
 	}
 	decision, err := cl.GetRuntimePresetDecision(commandKey, profileID)
-	if err == nil && decision != nil {
-		switch decision.Decision {
-		case "always_skip", "applied":
-			return nil
-		}
-	}
 	settings, err := cl.GetAgentRuntimeSettings(creds.AgentID)
 	if err != nil {
 		return nil
@@ -43,7 +37,7 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	if !ok {
 		return nil
 	}
-	if strings.EqualFold(settings.StarterProfile, profileID) {
+	if shouldSuppressStarterProfilePrompt(decision, settings, profileID) {
 		return nil
 	}
 
@@ -85,7 +79,7 @@ func printObserveModeNotice(observe bool) {
 	if !observe {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "Clawvisor is in observe mode for this session. Actions are being analyzed and logged, but not blocked.")
+	fmt.Fprintln(os.Stderr, observeModeNotice())
 }
 
 func isInteractiveTTY(f *os.File) bool {
@@ -97,4 +91,18 @@ func isInteractiveTTY(f *os.File) bool {
 		return false
 	}
 	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+func shouldSuppressStarterProfilePrompt(decision *client.RuntimePresetDecision, settings *client.AgentRuntimeSettings, profileID string) bool {
+	if decision != nil {
+		switch decision.Decision {
+		case "always_skip", "applied", "skipped":
+			return true
+		}
+	}
+	return settings != nil && strings.EqualFold(settings.StarterProfile, profileID)
+}
+
+func observeModeNotice() string {
+	return "Clawvisor is in observe mode for this session. Actions are being analyzed and logged, but not blocked. To remove this notice, switch this agent to enforce mode in the Clawvisor dashboard."
 }

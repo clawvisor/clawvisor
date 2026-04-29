@@ -188,6 +188,7 @@ func (h *RuntimeHandler) ApplyStarterProfile(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	applied := make([]*store.RuntimePolicyRule, 0, len(profile.Rules))
+	agentID := strings.TrimSpace(body.AgentID)
 	for _, rule := range runtimepolicy.ApplyStarterProfileRules(user.ID, strings.TrimSpace(body.AgentID), *profile) {
 		err := h.st.CreateRuntimePolicyRule(r.Context(), rule)
 		switch {
@@ -200,11 +201,41 @@ func (h *RuntimeHandler) ApplyStarterProfile(w http.ResponseWriter, r *http.Requ
 		}
 		applied = append(applied, rule)
 	}
+	if agentID != "" {
+		settings, err := h.st.GetAgentRuntimeSettings(r.Context(), agentID)
+		if err != nil {
+			if err == store.ErrNotFound {
+				settings = defaultAgentRuntimeSettings(h.cfg, agentID)
+			} else {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update starter profile state")
+				return
+			}
+		}
+		settings.StarterProfile = profile.ID
+		if err := h.st.UpsertAgentRuntimeSettings(r.Context(), settings); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update starter profile state")
+			return
+		}
+	}
+	for _, commandKey := range profile.CommandKeys {
+		if strings.TrimSpace(commandKey) == "" {
+			continue
+		}
+		if err := h.st.UpsertRuntimePresetDecision(r.Context(), &store.RuntimePresetDecision{
+			UserID:     user.ID,
+			CommandKey: strings.TrimSpace(strings.ToLower(commandKey)),
+			Profile:    profile.ID,
+			Decision:   "applied",
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not persist starter profile decision")
+			return
+		}
+	}
 	_ = h.st.CreateRuntimeEvent(r.Context(), &store.RuntimeEvent{
 		Timestamp:  time.Now().UTC(),
 		SessionID:  "runtime-controls",
 		UserID:     user.ID,
-		AgentID:    strings.TrimSpace(body.AgentID),
+		AgentID:    agentID,
 		EventType:  "runtime.policy.starter_profile_applied",
 		ActionKind: "task",
 		Decision:   nullableStr("allow"),
@@ -212,7 +243,7 @@ func (h *RuntimeHandler) ApplyStarterProfile(w http.ResponseWriter, r *http.Requ
 		Reason:     nullableStr("starter profile rules applied"),
 		MetadataJSON: mustJSON(map[string]any{
 			"profile":  profile.ID,
-			"agent_id": strings.TrimSpace(body.AgentID),
+			"agent_id": agentID,
 			"rules":    len(applied),
 		}),
 	})

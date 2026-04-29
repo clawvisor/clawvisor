@@ -93,6 +93,20 @@ func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
 	if len(rules) < 4 {
 		t.Fatalf("expected starter profile rules to be applied, got %d", len(rules))
 	}
+	settings, err := st.GetAgentRuntimeSettings(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgentRuntimeSettings: %v", err)
+	}
+	if settings.StarterProfile != "codex" {
+		t.Fatalf("expected starter profile to persist, got %+v", settings)
+	}
+	appliedDecision, err := st.GetRuntimePresetDecision(ctx, user.ID, "codex", "codex")
+	if err != nil {
+		t.Fatalf("GetRuntimePresetDecision(applied): %v", err)
+	}
+	if appliedDecision.Decision != "applied" {
+		t.Fatalf("expected applied decision after starter profile apply, got %+v", appliedDecision)
+	}
 
 	decisionBody := []byte(`{"command_key":"codex","profile":"codex","decision":"always_skip"}`)
 	decisionReq := httptest.NewRequest(http.MethodPut, "/api/runtime/preset-decisions", bytes.NewReader(decisionBody))

@@ -189,6 +189,7 @@ export default function Runtime() {
       <RuntimeEventsPanel
         events={events?.entries ?? []}
         agents={agentMap}
+        onResolved={refreshRuntime}
         onEditRule={async (event, action) => {
           const candidate = await api.runtime.getRuleCandidate(event.id, action)
           setEditingRule({
@@ -567,14 +568,22 @@ function RuntimeSessionsPanel({
 function RuntimeEventsPanel({
   events,
   agents,
+  onResolved,
   onEditRule,
   onPromoteTask,
 }: {
   events: RuntimeEvent[]
   agents: Map<string, Agent>
+  onResolved: () => void
   onEditRule: (event: RuntimeEvent, action: 'allow' | 'deny' | 'review') => void
   onPromoteTask: (eventId: string, lifetime: 'session' | 'standing') => void
 }) {
+  const resolveMut = useMutation({
+    mutationFn: ({ approvalId, resolution }: { approvalId: string; resolution: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' }) =>
+      api.runtime.resolveApproval(approvalId, resolution),
+    onSuccess: onResolved,
+  })
+
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div>
@@ -585,6 +594,7 @@ function RuntimeEventsPanel({
         {events.length === 0 && <EmptyPanel text="No runtime events yet." />}
         {events.map(event => {
           const meta = event.metadata_json ?? {}
+          const isCredentialReview = event.event_type === 'runtime.autovault.review_required' && !!event.approval_id
           const subject = event.action_kind === 'tool_use'
             ? (meta.tool_name ?? event.event_type)
             : [meta.host, meta.method, meta.path].filter(Boolean).join(' ')
@@ -601,7 +611,31 @@ function RuntimeEventsPanel({
                 <div className="text-xs text-text-tertiary">{new Date(event.timestamp).toLocaleString()}</div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {(event.action_kind === 'egress' || event.action_kind === 'tool_use') && (
+                {isCredentialReview ? (
+                  <>
+                    <ApprovalButton
+                      label="Allow Once"
+                      onClick={() => resolveMut.mutate({ approvalId: event.approval_id!, resolution: 'allow_once' })}
+                      busy={resolveMut.isPending}
+                    />
+                    <ApprovalButton
+                      label="Allow For Session"
+                      onClick={() => resolveMut.mutate({ approvalId: event.approval_id!, resolution: 'allow_session' })}
+                      busy={resolveMut.isPending}
+                    />
+                    <ApprovalButton
+                      label="Allow Always"
+                      onClick={() => resolveMut.mutate({ approvalId: event.approval_id!, resolution: 'allow_always' })}
+                      busy={resolveMut.isPending}
+                    />
+                    <button
+                      onClick={() => resolveMut.mutate({ approvalId: event.approval_id!, resolution: 'deny' })}
+                      className="rounded border border-danger/20 px-3 py-1.5 text-xs text-danger hover:bg-danger/10"
+                    >
+                      Deny
+                    </button>
+                  </>
+                ) : (event.action_kind === 'egress' || event.action_kind === 'tool_use') && (
                   <>
                     <button onClick={() => onEditRule(event, 'allow')} className="rounded border border-brand/30 px-3 py-1.5 text-xs text-brand hover:bg-brand/10">Always allow</button>
                     <button onClick={() => onEditRule(event, 'review')} className="rounded border border-warning/30 px-3 py-1.5 text-xs text-warning hover:bg-warning/10">Always review</button>
