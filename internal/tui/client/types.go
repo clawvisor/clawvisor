@@ -52,6 +52,69 @@ type CreateRuntimeSessionResponse struct {
 	ObservationMode bool           `json:"observation_mode"`
 }
 
+type AgentRuntimeSettings struct {
+	AgentID                string    `json:"agent_id"`
+	RuntimeEnabled         bool      `json:"runtime_enabled"`
+	RuntimeMode            string    `json:"runtime_mode"`
+	StarterProfile         string    `json:"starter_profile"`
+	OutboundCredentialMode string    `json:"outbound_credential_mode"`
+	InjectStoredBearer     bool      `json:"inject_stored_bearer"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+type RuntimePolicyRule struct {
+	ID            string         `json:"id"`
+	UserID        string         `json:"user_id"`
+	AgentID       *string        `json:"agent_id,omitempty"`
+	Kind          string         `json:"kind"`
+	Action        string         `json:"action"`
+	Host          string         `json:"host,omitempty"`
+	Method        string         `json:"method,omitempty"`
+	Path          string         `json:"path,omitempty"`
+	PathRegex     string         `json:"path_regex,omitempty"`
+	HeadersShape  map[string]any `json:"headers_shape_json,omitempty"`
+	BodyShape     map[string]any `json:"body_shape_json,omitempty"`
+	ToolName      string         `json:"tool_name,omitempty"`
+	InputShape    map[string]any `json:"input_shape_json,omitempty"`
+	InputRegex    string         `json:"input_regex,omitempty"`
+	Reason        string         `json:"reason,omitempty"`
+	Source        string         `json:"source"`
+	Enabled       bool           `json:"enabled"`
+	LastMatchedAt *time.Time     `json:"last_matched_at,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+type RuntimePresetDecision struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	CommandKey string    `json:"command_key"`
+	Profile    string    `json:"profile"`
+	Decision   string    `json:"decision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type StarterProfileRuleDraft struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Host      string `json:"host,omitempty"`
+	Method    string `json:"method,omitempty"`
+	Path      string `json:"path,omitempty"`
+	PathRegex string `json:"path_regex,omitempty"`
+	ToolName  string `json:"tool_name,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type StarterProfile struct {
+	ID          string                    `json:"id"`
+	DisplayName string                    `json:"display_name"`
+	Description string                    `json:"description"`
+	CommandKeys []string                  `json:"command_keys"`
+	Rules       []StarterProfileRuleDraft `json:"rules"`
+}
+
 // ── Queue ───────────────────────────────────────────────────────────────────
 
 type QueueResponse struct {
@@ -359,12 +422,13 @@ type ActivityBucket struct {
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 type Agent struct {
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	Name           string    `json:"name"`
-	CreatedAt      time.Time `json:"created_at"`
-	Token          string    `json:"token,omitempty"`           // only on creation
-	CallbackSecret string    `json:"callback_secret,omitempty"` // only on creation with callback
+	ID              string                `json:"id"`
+	UserID          string                `json:"user_id"`
+	Name            string                `json:"name"`
+	CreatedAt       time.Time             `json:"created_at"`
+	Token           string                `json:"token,omitempty"`           // only on creation
+	CallbackSecret  string                `json:"callback_secret,omitempty"` // only on creation with callback
+	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`
 }
 
 // ── Devices ─────────────────────────────────────────────────────────────────

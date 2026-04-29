@@ -246,6 +246,11 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	if orgID != nil {
 		a.OrgID = *orgID
 	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
+	}
 	return a, nil
 }
 
@@ -255,8 +260,11 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
-		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
+		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
+		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.created_at, ars.updated_at
 		FROM agents a
+		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
 		WHERE a.user_id = ? AND a.deleted_at IS NULL
 		ORDER BY a.created_at DESC`,
 		userID,
@@ -272,8 +280,17 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		var createdAt string
 		var orgID *string
 		var lastTaskAt *string
+		var settingsAgentID *string
+		var settingsEnabled *int
+		var settingsMode *string
+		var settingsProfile *string
+		var settingsOutbound *string
+		var settingsInject *int
+		var settingsCreatedAt *string
+		var settingsUpdatedAt *string
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID,
-			&a.ActiveTaskCount, &lastTaskAt); err != nil {
+			&a.ActiveTaskCount, &lastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode, &settingsProfile,
+			&settingsOutbound, &settingsInject, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = parseTime(createdAt)
@@ -284,9 +301,56 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 			ts := parseTime(*lastTaskAt)
 			a.LastTaskAt = &ts
 		}
+		a.RuntimeSettings = scanSQLiteAgentRuntimeSettings(settingsAgentID, settingsEnabled, settingsMode, settingsProfile, settingsOutbound, settingsInject, settingsCreatedAt, settingsUpdatedAt)
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
+		       outbound_credential_mode, inject_stored_bearer, created_at, updated_at
+		FROM agent_runtime_settings
+		WHERE agent_id = ?
+	`, agentID)
+	settings := &store.AgentRuntimeSettings{}
+	var runtimeEnabled int
+	var injectStoredBearer int
+	var createdAt, updatedAt string
+	err := row.Scan(&settings.AgentID, &runtimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
+		&settings.OutboundCredentialMode, &injectStoredBearer, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	settings.RuntimeEnabled = runtimeEnabled != 0
+	settings.InjectStoredBearer = injectStoredBearer != 0
+	settings.CreatedAt = parseTime(createdAt)
+	settings.UpdatedAt = parseTime(updatedAt)
+	return settings, nil
+}
+
+func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.AgentRuntimeSettings) error {
+	if settings == nil {
+		return fmt.Errorf("agent runtime settings are required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO agent_runtime_settings (
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (agent_id) DO UPDATE SET
+			runtime_enabled = excluded.runtime_enabled,
+			runtime_mode = excluded.runtime_mode,
+			starter_profile = excluded.starter_profile,
+			outbound_credential_mode = excluded.outbound_credential_mode,
+			inject_stored_bearer = excluded.inject_stored_bearer,
+			updated_at = CURRENT_TIMESTAMP
+	`, settings.AgentID, boolToInt(settings.RuntimeEnabled), settings.RuntimeMode, settings.StarterProfile,
+		settings.OutboundCredentialMode, boolToInt(settings.InjectStoredBearer))
+	return err
 }
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
@@ -367,6 +431,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a.CreatedAt = parseTime(createdAt)
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
 	}
 	return a, nil
 }
@@ -1627,6 +1696,27 @@ func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEven
 	return err
 }
 
+func (s *Store) GetRuntimeEvent(ctx context.Context, id string) (*store.RuntimeEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimeEvent(rows)
+}
+
 func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter store.RuntimeEventFilter) ([]*store.RuntimeEvent, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -1662,6 +1752,146 @@ func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter sto
 	return out, rows.Err()
 }
 
+func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	if rule.ID == "" {
+		rule.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_policy_rules (
+			id, user_id, agent_id, kind, action, host, method, path, path_regex,
+			headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+			reason, source, enabled, last_matched_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
+		formatNullableTime(rule.LastMatchedAt))
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetRuntimePolicyRule(ctx context.Context, id string) (*store.RuntimePolicyRule, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimePolicyRule(rows)
+}
+
+func (s *Store) ListRuntimePolicyRules(ctx context.Context, userID string, filter store.RuntimePolicyRuleFilter) ([]*store.RuntimePolicyRule, error) {
+	args := []any{userID}
+	query := `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE user_id = ?
+	`
+	if filter.AgentID != "" {
+		query += ` AND (agent_id IS NULL OR agent_id = ?)`
+		args = append(args, filter.AgentID)
+	}
+	if filter.Kind != "" {
+		query += ` AND kind = ?`
+		args = append(args, filter.Kind)
+	}
+	if filter.Enabled != nil {
+		query += ` AND enabled = ?`
+		args = append(args, boolToInt(*filter.Enabled))
+	}
+	query += ` ORDER BY kind ASC, created_at DESC`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimePolicyRule
+	for rows.Next() {
+		rule, err := scanSQLiteRuntimePolicyRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rule)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runtime_policy_rules SET
+			agent_id = ?, kind = ?, action = ?, host = ?, method = ?, path = ?, path_regex = ?,
+			headers_shape_json = ?, body_shape_json = ?, tool_name = ?, input_shape_json = ?, input_regex = ?,
+			reason = ?, source = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND user_id = ?
+	`, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
+		rule.ID, rule.UserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM runtime_policy_rules WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runtime_policy_rules
+		SET last_matched_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, matchedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func scanSQLiteRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeEvent, error) {
 	event := &store.RuntimeEvent{}
 	var timestamp, metadataJSON string
@@ -1676,6 +1906,33 @@ func scanSQLiteRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*stor
 	event.Timestamp = parseTime(timestamp)
 	event.MetadataJSON = json.RawMessage(metadataJSON)
 	return event, nil
+}
+
+func scanSQLiteRuntimePolicyRule(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePolicyRule, error) {
+	rule := &store.RuntimePolicyRule{}
+	var headersShapeJSON, bodyShapeJSON, inputShapeJSON string
+	var enabled int
+	var lastMatchedAt, createdAt, updatedAt *string
+	if err := scanner.Scan(&rule.ID, &rule.UserID, &rule.AgentID, &rule.Kind, &rule.Action, &rule.Host, &rule.Method,
+		&rule.Path, &rule.PathRegex, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
+		&rule.Reason, &rule.Source, &enabled, &lastMatchedAt, &createdAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	rule.HeadersShape = json.RawMessage(headersShapeJSON)
+	rule.BodyShape = json.RawMessage(bodyShapeJSON)
+	rule.InputShape = json.RawMessage(inputShapeJSON)
+	rule.Enabled = enabled != 0
+	if lastMatchedAt != nil {
+		t := parseTime(*lastMatchedAt)
+		rule.LastMatchedAt = &t
+	}
+	if createdAt != nil {
+		rule.CreatedAt = parseTime(*createdAt)
+	}
+	if updatedAt != nil {
+		rule.UpdatedAt = parseTime(*updatedAt)
+	}
+	return rule, nil
 }
 
 func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
@@ -2194,6 +2451,43 @@ func scanSQLiteActiveTaskSession(scanner interface{ Scan(dest ...any) error }) (
 	return sess, nil
 }
 
+func (s *Store) GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*store.RuntimePresetDecision, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, command_key, profile, decision, created_at, updated_at
+		FROM runtime_preset_decisions
+		WHERE user_id = ? AND command_key = ? AND profile = ?
+	`, userID, commandKey, profile)
+	decision := &store.RuntimePresetDecision{}
+	var createdAt, updatedAt string
+	err := row.Scan(&decision.ID, &decision.UserID, &decision.CommandKey, &decision.Profile, &decision.Decision, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	decision.CreatedAt = parseTime(createdAt)
+	decision.UpdatedAt = parseTime(updatedAt)
+	return decision, nil
+}
+
+func (s *Store) UpsertRuntimePresetDecision(ctx context.Context, decision *store.RuntimePresetDecision) error {
+	if decision == nil {
+		return fmt.Errorf("runtime preset decision is required")
+	}
+	if decision.ID == "" {
+		decision.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_preset_decisions (id, user_id, command_key, profile, decision)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, command_key, profile) DO UPDATE SET
+			decision = excluded.decision,
+			updated_at = CURRENT_TIMESTAMP
+	`, decision.ID, decision.UserID, decision.CommandKey, decision.Profile, decision.Decision)
+	return err
+}
+
 // ── Notification Messages ──────────────────────────────────────────────────────
 
 func (s *Store) SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error {
@@ -2628,6 +2922,37 @@ func rawJSONOrDefault(msg json.RawMessage, fallback string) string {
 		return fallback
 	}
 	return string(msg)
+}
+
+func scanSQLiteAgentRuntimeSettings(agentID *string, runtimeEnabled *int, runtimeMode, starterProfile, outboundMode *string, injectStoredBearer *int, createdAt, updatedAt *string) *store.AgentRuntimeSettings {
+	if agentID == nil {
+		return nil
+	}
+	settings := &store.AgentRuntimeSettings{
+		AgentID: *agentID,
+	}
+	if runtimeEnabled != nil {
+		settings.RuntimeEnabled = *runtimeEnabled != 0
+	}
+	if runtimeMode != nil {
+		settings.RuntimeMode = *runtimeMode
+	}
+	if starterProfile != nil {
+		settings.StarterProfile = *starterProfile
+	}
+	if outboundMode != nil {
+		settings.OutboundCredentialMode = *outboundMode
+	}
+	if injectStoredBearer != nil {
+		settings.InjectStoredBearer = *injectStoredBearer != 0
+	}
+	if createdAt != nil {
+		settings.CreatedAt = parseTime(*createdAt)
+	}
+	if updatedAt != nil {
+		settings.UpdatedAt = parseTime(*updatedAt)
+	}
+	return settings
 }
 
 func formatNullableTime(t *time.Time) any {

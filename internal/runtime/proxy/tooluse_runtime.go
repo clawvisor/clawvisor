@@ -302,18 +302,79 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 
 		candidateTasks, _ := loadRuntimeCandidateTasks(ctx.Req.Context(), hooks.Store, st.Session)
 		reviewTask := selectReviewTaskContext(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks)
+		enabled := true
+		rules, _ := hooks.Store.ListRuntimePolicyRules(ctx.Req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
+			AgentID: st.Session.AgentID,
+			Kind:    "tool",
+			Enabled: &enabled,
+		})
 		decisionState := map[string]toolDecisionState{}
 
 		evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 			input := decodeToolInput(tu.Input)
+			key := toolDecisionKey(tu)
+			if matchedRule, err := runtimepolicy.MatchRuntimePolicyTool(rules, st.Session.AgentID, tu.Name, input); err == nil && matchedRule != nil {
+				_ = hooks.Store.TouchRuntimePolicyRule(ctx.Req.Context(), matchedRule.ID, time.Now().UTC())
+				switch strings.ToLower(matchedRule.Action) {
+				case "allow":
+					decisionState[key] = toolDecisionState{Rule: matchedRule}
+					if st.Session.ObservationMode {
+						return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime allow rule matched this tool call")}
+					}
+					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "runtime allow rule matched this tool call")}
+				case "deny":
+					if st.Session.ObservationMode {
+						decisionState[key] = toolDecisionState{Rule: matchedRule, WouldBlock: true}
+						return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime deny rule would block this tool call")}
+					}
+					decisionState[key] = toolDecisionState{Rule: matchedRule, DeniedByRule: true}
+					return conversation.ToolUseVerdict{
+						Allowed:        false,
+						Reason:         firstNonEmpty(matchedRule.Reason, "runtime deny rule blocked this tool call"),
+						SubstituteWith: "This tool call was blocked by Clawvisor runtime policy.",
+					}
+				case "review":
+					reviewReason := firstNonEmpty(matchedRule.Reason, "runtime review rule matched this tool call")
+					if st.Session.ObservationMode {
+						decisionState[key] = toolDecisionState{
+							Rule:              matchedRule,
+							Task:              reviewTask,
+							WouldReview:       true,
+							WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+						}
+						return conversation.ToolUseVerdict{Allowed: true, Reason: reviewReason}
+					}
+					rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, "task_call_review", runtimepolicy.RuntimeContextJudgment{}, reviewReason)
+					if rec != nil {
+						decisionState[key] = toolDecisionState{
+							Rule:              matchedRule,
+							Task:              reviewTask,
+							ApprovalID:        &rec.ID,
+							WouldReview:       true,
+							WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+							Held:              held,
+						}
+					} else {
+						decisionState[key] = toolDecisionState{
+							Rule:                 matchedRule,
+							Task:                 reviewTask,
+							ApprovalCreateFailed: true,
+							FailureReason:        substitute,
+						}
+					}
+					return conversation.ToolUseVerdict{
+						Allowed:        false,
+						Reason:         "runtime approval required",
+						SubstituteWith: substitute,
+					}
+				}
+			}
 			match, task, usedActive, err := matchPreferredToolTask(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks, tu.Name, input)
 			if err == nil && match != nil && task != nil {
-				key := toolDecisionKey(tu)
 				decisionState[key] = toolDecisionState{Task: task, UsedActiveTaskContext: usedActive}
 				return conversation.ToolUseVerdict{Allowed: true, Reason: match.Item.Why}
 			}
 
-			key := toolDecisionKey(tu)
 			var judgment runtimepolicy.RuntimeContextJudgment
 			if hooks.ContextJudge != nil {
 				requestCtx := st.Runtime
@@ -420,6 +481,11 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					if reason == "" {
 						reason = "observation mode: tool use would require runtime approval"
 					}
+				} else if state.WouldBlock {
+					outcome = "observed"
+					if reason == "" {
+						reason = "observation mode: runtime policy would block this tool call"
+					}
 				}
 				s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
 				if state.WouldReview {
@@ -445,9 +511,24 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 							Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
 						})
 					}
+				} else if state.WouldBlock {
+					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+						EventType:  "runtime.observe.would_deny",
+						ActionKind: "tool_use",
+						TaskID:     taskIDPtr(state.Task),
+						ToolUseID:  stringPtr(decision.ToolUse.ID),
+						Decision:   stringPtr("allow"),
+						Outcome:    stringPtr("observed"),
+						Reason:     stringPtr(reason),
+						Metadata: map[string]any{
+							"tool_name":  decision.ToolUse.Name,
+							"rule_id":    ruleIDOrEmpty(state.Rule),
+							"rule_action": "deny",
+						},
+					})
 				} else {
 					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-						EventType:     "runtime.tool_use.allowed",
+						EventType:     toolUseAllowedEventType(state.Rule),
 						ActionKind:    "tool_use",
 						TaskID:        taskIDPtr(state.Task),
 						MatchedTaskID: taskIDPtr(state.Task),
@@ -456,7 +537,11 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 						Decision:      stringPtr("allow"),
 						Outcome:       stringPtr(outcome),
 						Reason:        stringPtr(reason),
-						Metadata:      map[string]any{"tool_name": decision.ToolUse.Name},
+						Metadata: map[string]any{
+							"tool_name":  decision.ToolUse.Name,
+							"rule_id":    ruleIDOrEmpty(state.Rule),
+							"rule_action": ruleActionOrEmpty(state.Rule),
+						},
 					})
 				}
 				continue
@@ -464,12 +549,33 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 			decisionWord := "review"
 			outcome := "pending"
 			reason := "runtime tool call is outside the active task envelope"
-			if state.ApprovalCreateFailed {
+			if state.DeniedByRule {
+				decisionWord = "deny"
+				outcome = "blocked"
+				reason = firstNonEmpty(decision.Verdict.Reason, "runtime deny rule blocked this tool call")
+			} else if state.ApprovalCreateFailed {
 				decisionWord = "deny"
 				outcome = "error"
 				reason = firstNonEmpty(state.FailureReason, "runtime approval could not be created for this tool call")
 			}
 			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
+			if state.DeniedByRule {
+				emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  "runtime.policy.deny_matched",
+					ActionKind: "tool_use",
+					TaskID:     taskIDPtr(state.Task),
+					ToolUseID:  stringPtr(decision.ToolUse.ID),
+					Decision:   stringPtr("deny"),
+					Outcome:    stringPtr("blocked"),
+					Reason:     stringPtr(reason),
+					Metadata: map[string]any{
+						"tool_name":  decision.ToolUse.Name,
+						"rule_id":    ruleIDOrEmpty(state.Rule),
+						"rule_action": "deny",
+					},
+				})
+				continue
+			}
 			if state.ApprovalCreateFailed {
 				emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 					EventType:  "runtime.tool_use.review_failed",
@@ -486,7 +592,7 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				continue
 			}
 			emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-				EventType:           "runtime.tool_use.held",
+				EventType:           toolUseReviewEventType(state.Rule),
 				ActionKind:          "tool_use",
 				ApprovalID:          state.ApprovalID,
 				TaskID:              taskIDPtr(state.Task),
@@ -498,6 +604,8 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				Metadata: map[string]any{
 					"tool_name":           decision.ToolUse.Name,
 					"would_prompt_inline": state.WouldPromptInline,
+					"rule_id":             ruleIDOrEmpty(state.Rule),
+					"rule_action":         ruleActionOrEmpty(state.Rule),
 				},
 			})
 		}
@@ -510,12 +618,15 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 
 type toolDecisionState struct {
 	Task                    *store.Task
+	Rule                    *store.RuntimePolicyRule
 	ApprovalID              *string
 	Held                    *review.HeldApproval
 	UsedActiveTaskContext   bool
 	UsedConvJudgeResolution bool
+	WouldBlock              bool
 	WouldReview             bool
 	WouldPromptInline       bool
+	DeniedByRule            bool
 	ApprovalCreateFailed    bool
 	FailureReason           string
 }
@@ -892,6 +1003,34 @@ func stringOrEmpty(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func ruleIDOrEmpty(rule *store.RuntimePolicyRule) string {
+	if rule == nil {
+		return ""
+	}
+	return rule.ID
+}
+
+func ruleActionOrEmpty(rule *store.RuntimePolicyRule) string {
+	if rule == nil {
+		return ""
+	}
+	return rule.Action
+}
+
+func toolUseAllowedEventType(rule *store.RuntimePolicyRule) string {
+	if rule != nil {
+		return "runtime.policy.allow_matched"
+	}
+	return "runtime.tool_use.allowed"
+}
+
+func toolUseReviewEventType(rule *store.RuntimePolicyRule) string {
+	if rule != nil {
+		return "runtime.policy.review_matched"
+	}
+	return "runtime.tool_use.held"
 }
 
 func boolToDecision(allow bool) string {

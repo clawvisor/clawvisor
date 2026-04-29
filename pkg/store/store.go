@@ -35,6 +35,8 @@ type Store interface {
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
+	GetAgentRuntimeSettings(ctx context.Context, agentID string) (*AgentRuntimeSettings, error)
+	UpsertAgentRuntimeSettings(ctx context.Context, settings *AgentRuntimeSettings) error
 	DeleteAgent(ctx context.Context, id, userID string) error
 	RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error
 	SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error
@@ -130,7 +132,14 @@ type Store interface {
 	ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*RuntimeSession, error)
 	RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error
 	CreateRuntimeEvent(ctx context.Context, event *RuntimeEvent) error
+	GetRuntimeEvent(ctx context.Context, id string) (*RuntimeEvent, error)
 	ListRuntimeEvents(ctx context.Context, userID string, filter RuntimeEventFilter) ([]*RuntimeEvent, error)
+	CreateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
+	GetRuntimePolicyRule(ctx context.Context, id string) (*RuntimePolicyRule, error)
+	ListRuntimePolicyRules(ctx context.Context, userID string, filter RuntimePolicyRuleFilter) ([]*RuntimePolicyRule, error)
+	UpdateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
+	DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error
+	TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error
 
 	// Runtime credential placeholders
 	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
@@ -157,6 +166,10 @@ type Store interface {
 	UpsertActiveTaskSession(ctx context.Context, sess *ActiveTaskSession) error
 	GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*ActiveTaskSession, error)
 	EndActiveTaskSession(ctx context.Context, taskID, sessionID string, endedAt time.Time, status string) error
+
+	// Runtime preset decisions
+	GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*RuntimePresetDecision, error)
+	UpsertRuntimePresetDecision(ctx context.Context, decision *RuntimePresetDecision) error
 
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
@@ -245,14 +258,26 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID              string     `json:"id"`
-	UserID          string     `json:"user_id"`
-	Name            string     `json:"name"`
-	TokenHash       string     `json:"-"`
-	OrgID           string     `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt       time.Time  `json:"created_at"`
-	ActiveTaskCount int        `json:"active_task_count"`
-	LastTaskAt      *time.Time `json:"last_task_at,omitempty"`
+	ID              string                `json:"id"`
+	UserID          string                `json:"user_id"`
+	Name            string                `json:"name"`
+	TokenHash       string                `json:"-"`
+	OrgID           string                `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt       time.Time             `json:"created_at"`
+	ActiveTaskCount int                   `json:"active_task_count"`
+	LastTaskAt      *time.Time            `json:"last_task_at,omitempty"`
+	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`
+}
+
+type AgentRuntimeSettings struct {
+	AgentID                string    `json:"agent_id"`
+	RuntimeEnabled         bool      `json:"runtime_enabled"`
+	RuntimeMode            string    `json:"runtime_mode"`
+	StarterProfile         string    `json:"starter_profile"`
+	OutboundCredentialMode string    `json:"outbound_credential_mode"`
+	InjectStoredBearer     bool      `json:"inject_stored_bearer"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // ServiceMeta records that a user has activated a given service.
@@ -489,6 +514,46 @@ type RuntimeEvent struct {
 	Outcome             *string         `json:"outcome,omitempty"`
 	Reason              *string         `json:"reason,omitempty"`
 	MetadataJSON        json.RawMessage `json:"metadata_json,omitempty"`
+}
+
+type RuntimePolicyRule struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"user_id"`
+	AgentID       *string         `json:"agent_id,omitempty"`
+	Kind          string          `json:"kind"`
+	Action        string          `json:"action"`
+	Host          string          `json:"host,omitempty"`
+	Method        string          `json:"method,omitempty"`
+	Path          string          `json:"path,omitempty"`
+	PathRegex     string          `json:"path_regex,omitempty"`
+	HeadersShape  json.RawMessage `json:"headers_shape_json,omitempty"`
+	BodyShape     json.RawMessage `json:"body_shape_json,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	InputShape    json.RawMessage `json:"input_shape_json,omitempty"`
+	InputRegex    string          `json:"input_regex,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+	Source        string          `json:"source"`
+	Enabled       bool            `json:"enabled"`
+	LastMatchedAt *time.Time      `json:"last_matched_at,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type RuntimePolicyRuleFilter struct {
+	AgentID string
+	Kind    string
+	Enabled *bool
+	Limit   int
+}
+
+type RuntimePresetDecision struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	CommandKey string    `json:"command_key"`
+	Profile    string    `json:"profile"`
+	Decision   string    `json:"decision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // RuntimePlaceholder is an agent-scoped placeholder that resolves to an

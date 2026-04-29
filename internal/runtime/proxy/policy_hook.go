@@ -83,6 +83,167 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			Body:    bodyShape,
 			Headers: headerShape,
 		}
+		enabled := true
+		rules, err := hooks.Store.ListRuntimePolicyRules(req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
+			AgentID: st.Session.AgentID,
+			Kind:    "egress",
+			Enabled: &enabled,
+		})
+		if err != nil {
+			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load runtime policy rules"}`)
+		}
+		matchedRule, err := runtimepolicy.MatchRuntimePolicyEgress(rules, st.Session.AgentID, egressReq)
+		if err != nil {
+			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid runtime policy rule matcher"}`)
+		}
+		if matchedRule != nil {
+			_ = hooks.Store.TouchRuntimePolicyRule(req.Context(), matchedRule.ID, time.Now().UTC())
+			ruleMetadata := map[string]any{
+				"rule_id":      matchedRule.ID,
+				"rule_kind":    matchedRule.Kind,
+				"rule_action":  matchedRule.Action,
+				"host":         host,
+				"method":       req.Method,
+				"path":         req.URL.Path,
+				"observe_mode": st.Session.ObservationMode,
+			}
+			ruleReason := firstNonEmpty(strings.TrimSpace(matchedRule.Reason), "runtime global policy rule matched this request")
+			switch strings.ToLower(matchedRule.Action) {
+			case "deny":
+				if st.Session.ObservationMode {
+					st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+						RuleID:      &matchedRule.ID,
+						WouldBlock:  true,
+						WouldReview: false,
+					}, paramsSafe, req.Method, "allow", "observed", "observation mode: global deny rule would block this request")
+					emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+						EventType:  "runtime.observe.would_deny",
+						ActionKind: "egress",
+						Decision:   stringPtr("allow"),
+						Outcome:    stringPtr("observed"),
+						Reason:     stringPtr(ruleReason),
+						Metadata:   ruleMetadata,
+					})
+					return req, nil
+				}
+				st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+					RuleID: &matchedRule.ID,
+				}, paramsSafe, req.Method, "deny", "blocked", ruleReason)
+				emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  "runtime.policy.deny_matched",
+					ActionKind: "egress",
+					Decision:   stringPtr("deny"),
+					Outcome:    stringPtr("blocked"),
+					Reason:     stringPtr(ruleReason),
+					Metadata:   ruleMetadata,
+				})
+				st.SkipAuditOutcomeUpdate = true
+				return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, `{"error":"blocked by runtime policy","code":"RUNTIME_POLICY_DENY"}`)
+			case "allow":
+				outcome := "approved"
+				decision := "allow"
+				eventType := "runtime.policy.allow_matched"
+				if st.Session.ObservationMode {
+					outcome = "observed"
+				}
+				st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+					RuleID: &matchedRule.ID,
+				}, paramsSafe, req.Method, decision, outcome, ruleReason)
+				emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  eventType,
+					ActionKind: "egress",
+					Decision:   stringPtr("allow"),
+					Outcome:    stringPtr(outcome),
+					Reason:     stringPtr(ruleReason),
+					Metadata:   ruleMetadata,
+				})
+				return req, nil
+			case "review":
+				payload := RuntimeApprovalPayload{
+					SessionID:          st.Session.ID,
+					AgentID:            st.Session.AgentID,
+					RequestFingerprint: reqFingerprint,
+					Method:             req.Method,
+					Host:               host,
+					Path:               req.URL.Path,
+					Classification:     "request_once",
+					Reason:             ruleReason,
+					Query:              queryShape,
+					Body:               bodyShape,
+					Headers:            headerShapeAny,
+				}
+				payloadJSON, _ := json.Marshal(payload)
+				summaryJSON, _ := json.Marshal(map[string]any{
+					"method": req.Method,
+					"host":   host,
+					"path":   req.URL.Path,
+					"rule_id": matchedRule.ID,
+				})
+				if st.Session.ObservationMode {
+					st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+						RuleID:      &matchedRule.ID,
+						WouldBlock:  true,
+						WouldReview: true,
+					}, paramsSafe, req.Method, "allow", "observed", "observation mode: global review rule would require runtime approval")
+					emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+						EventType:  "runtime.observe.would_review",
+						ActionKind: "egress",
+						Decision:   stringPtr("allow"),
+						Outcome:    stringPtr("observed"),
+						Reason:     stringPtr(ruleReason),
+						Metadata:   ruleMetadata,
+					})
+					return req, nil
+				}
+				rec, err := hooks.Store.GetApprovalRecordByRequestID(req.Context(), approvalRequestID)
+				if err != nil && err != store.ErrNotFound {
+					return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load runtime approval"}`)
+				}
+				if err == store.ErrNotFound {
+					rec = &store.ApprovalRecord{
+						ID:                  uuid.NewString(),
+						Kind:                "request_once",
+						UserID:              st.Session.UserID,
+						AgentID:             &st.Session.AgentID,
+						RequestID:           &approvalRequestID,
+						SessionID:           &st.Session.ID,
+						Status:              "pending",
+						Surface:             "dashboard",
+						SummaryJSON:         json.RawMessage(summaryJSON),
+						PayloadJSON:         json.RawMessage(payloadJSON),
+						ResolutionTransport: "consume_one_off_retry",
+					}
+					if err := hooks.Store.CreateApprovalRecord(req.Context(), rec); err != nil {
+						return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
+					}
+				}
+				st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
+					ApprovalID: &rec.ID,
+					RuleID:     &matchedRule.ID,
+					WouldReview: true,
+				}, paramsSafe, req.Method, "review", "pending", ruleReason)
+				emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:           "runtime.policy.review_matched",
+					ActionKind:          "egress",
+					ApprovalID:          &rec.ID,
+					RequestFingerprint:  stringPtr(reqFingerprint),
+					ResolutionTransport: stringPtr(rec.ResolutionTransport),
+					Decision:            stringPtr("review"),
+					Outcome:             stringPtr("pending"),
+					Reason:              stringPtr(ruleReason),
+					Metadata:            ruleMetadata,
+				})
+				st.SkipAuditOutcomeUpdate = true
+				respBody, _ := json.Marshal(map[string]any{
+					"error":               "runtime review required by policy",
+					"code":                "RUNTIME_POLICY_REVIEW_REQUIRED",
+					"approval_id":         rec.ID,
+					"request_fingerprint": reqFingerprint,
+					"rule_id":             matchedRule.ID,
+				})
+				return req, goproxy.NewResponse(req, "application/json", http.StatusForbidden, string(respBody))
+			}
+		}
 
 		var matchedTask *store.Task
 		var matchedWhy string
@@ -338,6 +499,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 type runtimeAuditOptions struct {
 	MatchedTask             *store.Task
 	ApprovalID              *string
+	RuleID                  *string
 	LeaseID                 *string
 	ToolUseID               *string
 	LeaseTaskID             *string
@@ -371,6 +533,7 @@ func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *Request
 		TaskID:                  taskID,
 		SessionID:               &sessionID,
 		ApprovalID:              opts.ApprovalID,
+		RuleID:                  opts.RuleID,
 		LeaseID:                 opts.LeaseID,
 		ToolUseID:               opts.ToolUseID,
 		MatchedTaskID:           matchedTaskID,

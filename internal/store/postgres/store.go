@@ -233,6 +233,11 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	if orgID != nil {
 		a.OrgID = *orgID
 	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
+	}
 	return a, err
 }
 
@@ -242,8 +247,11 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
-		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
+		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
+		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.created_at, ars.updated_at
 		FROM agents a
+		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
 		WHERE a.user_id = $1 AND a.deleted_at IS NULL
 		ORDER BY a.created_at DESC`,
 		userID,
@@ -253,6 +261,42 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 	}
 	defer rows.Close()
 	return scanAgents(rows)
+}
+
+func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
+		       outbound_credential_mode, inject_stored_bearer, created_at, updated_at
+		FROM agent_runtime_settings
+		WHERE agent_id = $1
+	`, agentID)
+	settings := &store.AgentRuntimeSettings{}
+	err := row.Scan(&settings.AgentID, &settings.RuntimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
+		&settings.OutboundCredentialMode, &settings.InjectStoredBearer, &settings.CreatedAt, &settings.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return settings, err
+}
+
+func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.AgentRuntimeSettings) error {
+	if settings == nil {
+		return fmt.Errorf("agent runtime settings are required")
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO agent_runtime_settings (
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer
+		) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (agent_id) DO UPDATE SET
+			runtime_enabled = EXCLUDED.runtime_enabled,
+			runtime_mode = EXCLUDED.runtime_mode,
+			starter_profile = EXCLUDED.starter_profile,
+			outbound_credential_mode = EXCLUDED.outbound_credential_mode,
+			inject_stored_bearer = EXCLUDED.inject_stored_bearer,
+			updated_at = NOW()
+	`, settings.AgentID, settings.RuntimeEnabled, settings.RuntimeMode, settings.StarterProfile,
+		settings.OutboundCredentialMode, settings.InjectStoredBearer)
+	return err
 }
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
@@ -325,6 +369,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
 	}
 	return a, err
 }
@@ -1499,6 +1548,27 @@ func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEven
 	return err
 }
 
+func (s *Store) GetRuntimeEvent(ctx context.Context, id string) (*store.RuntimeEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimeEvent(rows)
+}
+
 func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter store.RuntimeEventFilter) ([]*store.RuntimeEvent, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -1537,6 +1607,146 @@ func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter sto
 	return out, rows.Err()
 }
 
+func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	if rule.ID == "" {
+		rule.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_policy_rules (
+			id, user_id, agent_id, kind, action, host, method, path, path_regex,
+			headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+			reason, source, enabled, last_matched_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefaultBytes(rule.HeadersShape, "{}"), rawJSONOrDefaultBytes(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefaultBytes(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, rule.Enabled, rule.LastMatchedAt)
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetRuntimePolicyRule(ctx context.Context, id string) (*store.RuntimePolicyRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimePolicyRule(rows)
+}
+
+func (s *Store) ListRuntimePolicyRules(ctx context.Context, userID string, filter store.RuntimePolicyRuleFilter) ([]*store.RuntimePolicyRule, error) {
+	args := []any{userID}
+	argPos := 2
+	query := `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE user_id = $1
+	`
+	if filter.AgentID != "" {
+		query += fmt.Sprintf(" AND (agent_id IS NULL OR agent_id = $%d)", argPos)
+		args = append(args, filter.AgentID)
+		argPos++
+	}
+	if filter.Kind != "" {
+		query += fmt.Sprintf(" AND kind = $%d", argPos)
+		args = append(args, filter.Kind)
+		argPos++
+	}
+	if filter.Enabled != nil {
+		query += fmt.Sprintf(" AND enabled = $%d", argPos)
+		args = append(args, *filter.Enabled)
+		argPos++
+	}
+	query += " ORDER BY kind ASC, created_at DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimePolicyRule
+	for rows.Next() {
+		rule, err := scanRuntimePolicyRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rule)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE runtime_policy_rules SET
+			agent_id = $1, kind = $2, action = $3, host = $4, method = $5, path = $6, path_regex = $7,
+			headers_shape_json = $8, body_shape_json = $9, tool_name = $10, input_shape_json = $11, input_regex = $12,
+			reason = $13, source = $14, enabled = $15, updated_at = NOW()
+		WHERE id = $16 AND user_id = $17
+	`, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefaultBytes(rule.HeadersShape, "{}"), rawJSONOrDefaultBytes(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefaultBytes(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, rule.Enabled, rule.ID, rule.UserID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM runtime_policy_rules WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE runtime_policy_rules
+		SET last_matched_at = $1, updated_at = NOW()
+		WHERE id = $2
+	`, matchedAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func scanRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeEvent, error) {
 	event := &store.RuntimeEvent{}
 	var metadataJSON []byte
@@ -1550,6 +1760,20 @@ func scanRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.Runt
 	}
 	event.MetadataJSON = json.RawMessage(metadataJSON)
 	return event, nil
+}
+
+func scanRuntimePolicyRule(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePolicyRule, error) {
+	rule := &store.RuntimePolicyRule{}
+	var headersShapeJSON, bodyShapeJSON, inputShapeJSON []byte
+	if err := scanner.Scan(&rule.ID, &rule.UserID, &rule.AgentID, &rule.Kind, &rule.Action, &rule.Host, &rule.Method,
+		&rule.Path, &rule.PathRegex, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
+		&rule.Reason, &rule.Source, &rule.Enabled, &rule.LastMatchedAt, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+		return nil, err
+	}
+	rule.HeadersShape = json.RawMessage(headersShapeJSON)
+	rule.BodyShape = json.RawMessage(bodyShapeJSON)
+	rule.InputShape = json.RawMessage(inputShapeJSON)
+	return rule, nil
 }
 
 func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
@@ -1998,6 +2222,37 @@ func scanActiveTaskSession(scanner interface{ Scan(dest ...any) error }) (*store
 	return sess, nil
 }
 
+func (s *Store) GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*store.RuntimePresetDecision, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, command_key, profile, decision, created_at, updated_at
+		FROM runtime_preset_decisions
+		WHERE user_id = $1 AND command_key = $2 AND profile = $3
+	`, userID, commandKey, profile)
+	decision := &store.RuntimePresetDecision{}
+	err := row.Scan(&decision.ID, &decision.UserID, &decision.CommandKey, &decision.Profile, &decision.Decision, &decision.CreatedAt, &decision.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return decision, err
+}
+
+func (s *Store) UpsertRuntimePresetDecision(ctx context.Context, decision *store.RuntimePresetDecision) error {
+	if decision == nil {
+		return fmt.Errorf("runtime preset decision is required")
+	}
+	if decision.ID == "" {
+		decision.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_preset_decisions (id, user_id, command_key, profile, decision)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id, command_key, profile) DO UPDATE SET
+			decision = EXCLUDED.decision,
+			updated_at = NOW()
+	`, decision.ID, decision.UserID, decision.CommandKey, decision.Profile, decision.Decision)
+	return err
+}
+
 // ── OAuth ────────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateOAuthClient(ctx context.Context, client *store.OAuthClient) error {
@@ -2338,12 +2593,47 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	for rows.Next() {
 		a := &store.Agent{}
 		var orgID *string
+		var settingsAgentID *string
+		var settingsEnabled *bool
+		var settingsMode *string
+		var settingsProfile *string
+		var settingsOutbound *string
+		var settingsInject *bool
+		var settingsCreatedAt *time.Time
+		var settingsUpdatedAt *time.Time
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID,
-			&a.ActiveTaskCount, &a.LastTaskAt); err != nil {
+			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
+			&settingsProfile, &settingsOutbound, &settingsInject, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
 		if orgID != nil {
 			a.OrgID = *orgID
+		}
+		if settingsAgentID != nil {
+			a.RuntimeSettings = &store.AgentRuntimeSettings{
+				AgentID: *settingsAgentID,
+			}
+			if settingsEnabled != nil {
+				a.RuntimeSettings.RuntimeEnabled = *settingsEnabled
+			}
+			if settingsMode != nil {
+				a.RuntimeSettings.RuntimeMode = *settingsMode
+			}
+			if settingsProfile != nil {
+				a.RuntimeSettings.StarterProfile = *settingsProfile
+			}
+			if settingsOutbound != nil {
+				a.RuntimeSettings.OutboundCredentialMode = *settingsOutbound
+			}
+			if settingsInject != nil {
+				a.RuntimeSettings.InjectStoredBearer = *settingsInject
+			}
+			if settingsCreatedAt != nil {
+				a.RuntimeSettings.CreatedAt = *settingsCreatedAt
+			}
+			if settingsUpdatedAt != nil {
+				a.RuntimeSettings.UpdatedAt = *settingsUpdatedAt
+			}
 		}
 		agents = append(agents, a)
 	}

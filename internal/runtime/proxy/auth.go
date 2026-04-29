@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -115,20 +115,18 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 	defer a.mu.Unlock()
 
 	now := time.Now().UTC()
-	wantObservation := false
 	ttlSeconds := 1800
-	if a.Config != nil {
-		wantObservation = a.Config.RuntimePolicy.ObservationModeDefault
-		if a.Config.RuntimeProxy.SessionTTLSeconds > 0 {
-			ttlSeconds = a.Config.RuntimeProxy.SessionTTLSeconds
-		}
+	settings := mergedAgentRuntimeSettings(agent, a.Config)
+	wantObservation := strings.EqualFold(settings.RuntimeMode, "observe")
+	if a.Config != nil && a.Config.RuntimeProxy.SessionTTLSeconds > 0 {
+		ttlSeconds = a.Config.RuntimeProxy.SessionTTLSeconds
 	}
 
 	sessions, err := a.Store.ListRuntimeSessionsByAgent(ctx, agent.ID)
 	if err != nil {
 		return nil, ErrProxyAuthorizationRejected
 	}
-	if existing := selectReusableAgentTokenRuntimeSession(sessions, now, wantObservation); existing != nil {
+	if existing := selectReusableAgentTokenRuntimeSession(sessions, now, wantObservation, settings); existing != nil {
 		return existing, nil
 	}
 
@@ -137,8 +135,13 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 		return nil, ErrProxyAuthorizationRejected
 	}
 	metadataJSON, err := json.Marshal(map[string]any{
-		"launcher":        agentTokenRuntimeSessionLauncher,
-		"proxy_auth_mode": agentTokenRuntimeSessionAuthMode,
+		"launcher":                 agentTokenRuntimeSessionLauncher,
+		"proxy_auth_mode":          agentTokenRuntimeSessionAuthMode,
+		"runtime_enabled":          settings.RuntimeEnabled,
+		"runtime_mode":             settings.RuntimeMode,
+		"starter_profile":          settings.StarterProfile,
+		"outbound_credential_mode": settings.OutboundCredentialMode,
+		"inject_stored_bearer":     settings.InjectStoredBearer,
 	})
 	if err != nil {
 		return nil, ErrProxyAuthorizationRejected
@@ -159,13 +162,17 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 	return session, nil
 }
 
-func selectReusableAgentTokenRuntimeSession(sessions []*store.RuntimeSession, now time.Time, observation bool) *store.RuntimeSession {
+func selectReusableAgentTokenRuntimeSession(sessions []*store.RuntimeSession, now time.Time, observation bool, want sessionRuntimeSettings) *store.RuntimeSession {
 	var best *store.RuntimeSession
 	for _, session := range sessions {
 		if session == nil || session.RevokedAt != nil || !session.ExpiresAt.After(now) || session.ObservationMode != observation {
 			continue
 		}
 		if !isAgentTokenRuntimeSession(session.MetadataJSON) {
+			continue
+		}
+		got := sessionRuntimeSettingsFromMetadata(session, nil)
+		if got.RuntimeEnabled != want.RuntimeEnabled || got.RuntimeMode != want.RuntimeMode || got.StarterProfile != want.StarterProfile || got.OutboundCredentialMode != want.OutboundCredentialMode || got.InjectStoredBearer != want.InjectStoredBearer {
 			continue
 		}
 		if best == nil || session.CreatedAt.After(best.CreatedAt) {

@@ -108,7 +108,18 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/approvals", user(http.HandlerFunc(runtimeHandler.ListApprovals)))
 			mux.Handle("POST /api/runtime/approvals/{id}/resolve", user(http.HandlerFunc(runtimeHandler.ResolveApproval)))
 			mux.Handle("GET /api/runtime/events", user(http.HandlerFunc(runtimeHandler.ListEvents)))
+			mux.Handle("GET /api/runtime/events/{id}/rule-candidate", user(http.HandlerFunc(runtimeHandler.GetRuleCandidateForEvent)))
+			mux.Handle("POST /api/runtime/events/{id}/promote-task", user(http.HandlerFunc(runtimeHandler.PromoteEventToTask)))
 			mux.Handle("GET /api/runtime/leases", user(http.HandlerFunc(runtimeHandler.ListLeases)))
+			mux.Handle("GET /api/runtime/rules", user(http.HandlerFunc(runtimeHandler.ListRules)))
+			mux.Handle("POST /api/runtime/rules", user(http.HandlerFunc(runtimeHandler.CreateRule)))
+			mux.Handle("GET /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.GetRule)))
+			mux.Handle("PUT /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.UpdateRule)))
+			mux.Handle("DELETE /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.DeleteRule)))
+			mux.Handle("GET /api/runtime/starter-profiles", user(http.HandlerFunc(runtimeHandler.ListStarterProfiles)))
+			mux.Handle("POST /api/runtime/starter-profiles/{profile}/apply", user(http.HandlerFunc(runtimeHandler.ApplyStarterProfile)))
+			mux.Handle("GET /api/runtime/preset-decisions", user(http.HandlerFunc(runtimeHandler.GetPresetDecision)))
+			mux.Handle("PUT /api/runtime/preset-decisions", user(http.HandlerFunc(runtimeHandler.UpsertPresetDecision)))
 		}
 		if opts.ExtraRoutes != nil {
 			opts.ExtraRoutes(mux, Dependencies{

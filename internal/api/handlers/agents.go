@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -15,10 +17,11 @@ type AgentsHandler struct {
 	st       store.Store
 	eventHub events.EventHub
 	logger   *slog.Logger
+	cfg      *config.Config
 }
 
-func NewAgentsHandler(st store.Store, eventHub events.EventHub, logger *slog.Logger) *AgentsHandler {
-	return &AgentsHandler{st: st, eventHub: eventHub, logger: logger}
+func NewAgentsHandler(st store.Store, eventHub events.EventHub, logger *slog.Logger, cfg *config.Config) *AgentsHandler {
+	return &AgentsHandler{st: st, eventHub: eventHub, logger: logger, cfg: cfg}
 }
 
 // Create registers a new agent and returns its raw bearer token (shown once).
@@ -101,6 +104,90 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents)
 }
 
+func (h *AgentsHandler) GetRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	agent, err := h.loadUserAgent(r, user.ID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agent")
+		return
+	}
+	settings := h.defaultAgentRuntimeSettings(agent.ID)
+	if stored, err := h.st.GetAgentRuntimeSettings(r.Context(), agent.ID); err == nil {
+		settings = stored
+	} else if err != store.ErrNotFound {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agent runtime settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	agent, err := h.loadUserAgent(r, user.ID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agent")
+		return
+	}
+	settings := h.defaultAgentRuntimeSettings(agent.ID)
+	if stored, err := h.st.GetAgentRuntimeSettings(r.Context(), agent.ID); err == nil {
+		settings = stored
+	} else if err != store.ErrNotFound {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agent runtime settings")
+		return
+	}
+	var body struct {
+		RuntimeEnabled         bool   `json:"runtime_enabled"`
+		RuntimeMode            string `json:"runtime_mode"`
+		StarterProfile         string `json:"starter_profile"`
+		OutboundCredentialMode string `json:"outbound_credential_mode"`
+		InjectStoredBearer     bool   `json:"inject_stored_bearer"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	switch body.RuntimeMode {
+	case "observe", "enforce":
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "runtime_mode must be observe or enforce")
+		return
+	}
+	switch body.OutboundCredentialMode {
+	case "inherit", "observe", "strict":
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "outbound_credential_mode must be inherit, observe, or strict")
+		return
+	}
+	if body.StarterProfile == "" {
+		body.StarterProfile = "none"
+	}
+	settings.RuntimeEnabled = body.RuntimeEnabled
+	settings.RuntimeMode = body.RuntimeMode
+	settings.StarterProfile = body.StarterProfile
+	settings.OutboundCredentialMode = body.OutboundCredentialMode
+	settings.InjectStoredBearer = body.InjectStoredBearer
+	if err := h.st.UpsertAgentRuntimeSettings(r.Context(), settings); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save agent runtime settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
 // RotateToken generates a new token for an existing agent without deleting
 // the agent record, preserving the agent ID, tasks, and group pairings.
 //
@@ -174,4 +261,40 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"revoked_tasks": revokedCount,
 	})
+}
+
+func (h *AgentsHandler) loadUserAgent(r *http.Request, userID string) (*store.Agent, error) {
+	return loadUserAgent(r.Context(), h.st, userID, r.PathValue("id"))
+}
+
+func (h *AgentsHandler) defaultAgentRuntimeSettings(agentID string) *store.AgentRuntimeSettings {
+	return defaultAgentRuntimeSettings(h.cfg, agentID)
+}
+
+func loadUserAgent(ctx context.Context, st store.Store, userID, agentID string) (*store.Agent, error) {
+	agents, err := st.ListAgents(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, agent := range agents {
+		if agent.ID == agentID {
+			return agent, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func defaultAgentRuntimeSettings(cfg *config.Config, agentID string) *store.AgentRuntimeSettings {
+	runtimeMode := "observe"
+	if cfg != nil && !cfg.RuntimePolicy.ObservationModeDefault {
+		runtimeMode = "enforce"
+	}
+	return &store.AgentRuntimeSettings{
+		AgentID:                agentID,
+		RuntimeEnabled:         true,
+		RuntimeMode:            runtimeMode,
+		StarterProfile:         "none",
+		OutboundCredentialMode: "inherit",
+		InjectStoredBearer:     cfg != nil && cfg.RuntimePolicy.InjectStoredBearer,
+	}
 }

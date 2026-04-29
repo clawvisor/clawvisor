@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
@@ -59,6 +61,15 @@ func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	settings := defaultAgentRuntimeSettings(h.cfg, agent.ID)
+	if agent.RuntimeSettings != nil {
+		settings = agent.RuntimeSettings
+	}
+	if req.ObservationMode == nil {
+		observe := strings.EqualFold(settings.RuntimeMode, "observe")
+		req.ObservationMode = &observe
+	}
+	req.Metadata = mergeRuntimeSessionMetadata(req.Metadata, *settings)
 	result, err := h.manager.CreateRuntimeSession(r.Context(), agent.ID, agent.UserID, runtimeproxy.CreateSessionRequest{
 		Mode:            req.Mode,
 		ObservationMode: req.ObservationMode,
@@ -199,6 +210,7 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		}(),
 		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
 		"ca_cert_pem":          h.manager.CACertPEM(),
+		"starter_profiles":     runtimepolicy.StarterProfiles(),
 	})
 }
 
@@ -215,7 +227,7 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 	var filtered []*store.ApprovalRecord
 	for _, rec := range records {
-		if rec.ResolutionTransport == "consume_one_off_retry" || rec.ResolutionTransport == "release_held_tool_use" {
+		if rec.SessionID != nil && *rec.SessionID != "" {
 			filtered = append(filtered, rec)
 		}
 	}
@@ -648,4 +660,17 @@ func mustJSON(v any) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return data
+}
+
+func mergeRuntimeSessionMetadata(existing map[string]any, settings store.AgentRuntimeSettings) map[string]any {
+	merged := map[string]any{}
+	for key, value := range existing {
+		merged[key] = value
+	}
+	merged["runtime_enabled"] = settings.RuntimeEnabled
+	merged["runtime_mode"] = settings.RuntimeMode
+	merged["starter_profile"] = settings.StarterProfile
+	merged["outbound_credential_mode"] = settings.OutboundCredentialMode
+	merged["inject_stored_bearer"] = settings.InjectStoredBearer
+	return merged
 }

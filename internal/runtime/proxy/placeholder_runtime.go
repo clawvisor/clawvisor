@@ -50,7 +50,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 		}
 
 		injectedAuthorization := false
-		if shouldInjectStoredBearer(hooks.Config) {
+		if sessionShouldInjectStoredBearer(st.Session, hooks.Config) {
 			injectedAuthorization, _ = injectStoredBearer(req, hooks.Vault, st.Session.UserID)
 		}
 
@@ -88,7 +88,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					continue
 				}
 				if detection := detectHeaderCredential(req, headerName, replaced); detection != nil {
-					mode := autovaultMode(hooks.Config)
+					mode := sessionAutovaultMode(st.Session, hooks.Config)
 					emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 						EventType:  "runtime.autovault.observed",
 						ActionKind: "egress",
@@ -235,10 +235,6 @@ func autovaultMode(cfg *config.Config) string {
 		return "observe"
 	}
 	return mode
-}
-
-func shouldInjectStoredBearer(cfg *config.Config) bool {
-	return cfg != nil && cfg.RuntimePolicy.InjectStoredBearer
 }
 
 func knownServiceForToken(token string) (string, bool) {
