@@ -42,7 +42,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		if err != nil {
 			return err
 		}
-		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store})
+		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
 		runtimeSrv.InstallPlaceholderSwap(runtimeproxy.PlaceholderHooks{
 			Store: opts.Store,
 			Vault: opts.Vault,
