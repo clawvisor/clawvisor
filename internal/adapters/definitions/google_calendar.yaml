@@ -57,6 +57,7 @@ actions:
       page_token: { type: string, map_to: pageToken, location: query }
       single_events: { type: string, default: "true", map_to: singleEvents, location: query }
       order_by: { type: string, default: "startTime", map_to: orderBy, location: query }
+      supports_attachments: { type: bool, default: true, map_to: supportsAttachments, location: query }
     response:
       data_path: "items"
       fields:
@@ -70,6 +71,12 @@ actions:
         - { name: description, sanitize: true, optional: true }
         - name: attendees
           expr: "attendees"
+          optional: true
+        - name: attachments
+          expr: "attachments"
+          optional: true
+        - name: hangoutLink
+          expr: "hangoutLink"
           optional: true
         - { name: status }
       meta:
@@ -85,6 +92,7 @@ actions:
     params:
       event_id: { type: string, required: true, location: path }
       calendar_id: { type: string, default: "primary", location: path }
+      supports_attachments: { type: bool, default: true, map_to: supportsAttachments, location: query }
     response:
       fields:
         - { name: id }
@@ -96,6 +104,12 @@ actions:
         - { name: location, sanitize: true }
         - { name: description, sanitize: true }
         - { name: attendees }
+        - name: attachments
+          expr: "attachments"
+          optional: true
+        - name: hangoutLink
+          expr: "hangoutLink"
+          optional: true
         - name: transparency
           expr: "transparency ?? 'opaque'"
         - name: visibility
