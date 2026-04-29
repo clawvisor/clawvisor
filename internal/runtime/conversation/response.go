@@ -111,27 +111,24 @@ func applyBlockSubstitutions(frags []assistantFragment, decisions []ToolUseDecis
 	if len(decisions) == 0 {
 		return frags
 	}
-	denied := map[string]string{}
-	for _, decision := range decisions {
-		if decision.Verdict.Allowed {
-			continue
-		}
-		reason := decision.Verdict.Reason
-		if reason == "" {
-			reason = "blocked by policy"
-		}
-		denied[decision.ToolUse.Name] = reason
-	}
-	if len(denied) == 0 {
-		return frags
-	}
 	out := make([]assistantFragment, 0, len(frags))
+	toolDecisionIdx := 0
 	for _, frag := range frags {
 		if !frag.IsTool {
 			out = append(out, frag)
 			continue
 		}
-		if reason, ok := denied[frag.ToolName]; ok {
+		if toolDecisionIdx >= len(decisions) {
+			out = append(out, frag)
+			continue
+		}
+		decision := decisions[toolDecisionIdx]
+		toolDecisionIdx++
+		if !decision.Verdict.Allowed {
+			reason := decision.Verdict.Reason
+			if reason == "" {
+				reason = "blocked by policy"
+			}
 			out = append(out, assistantFragment{
 				Text: fmt.Sprintf("Tool '%s' was blocked by Clawvisor policy: %s", frag.ToolName, reason),
 			})

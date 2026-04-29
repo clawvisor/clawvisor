@@ -67,3 +67,10 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 		t.Fatalf("unexpected placeholder metadata: %+v", meta)
 	}
 }
+
+func TestRuntimeHandlerOneOffTTLDefaultsWhenConfigNil(t *testing.T) {
+	h := NewRuntimeHandler(nil, nil, nil, nil)
+	if got := h.oneOffTTLSeconds(); got != 300 {
+		t.Fatalf("oneOffTTLSeconds()=%d, want 300", got)
+	}
+}

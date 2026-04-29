@@ -6,20 +6,21 @@ ALTER TABLE tasks ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1;
 
 ALTER TABLE pending_approvals ADD COLUMN approval_record_id TEXT;
 
-ALTER TABLE audit_log ADD COLUMN session_id TEXT;
-ALTER TABLE audit_log ADD COLUMN approval_id TEXT;
-ALTER TABLE audit_log ADD COLUMN lease_id TEXT;
-ALTER TABLE audit_log ADD COLUMN tool_use_id TEXT;
-ALTER TABLE audit_log ADD COLUMN matched_task_id TEXT;
-ALTER TABLE audit_log ADD COLUMN lease_task_id TEXT;
-ALTER TABLE audit_log ADD COLUMN resolution_confidence TEXT;
-ALTER TABLE audit_log ADD COLUMN intent_verdict TEXT;
-ALTER TABLE audit_log ADD COLUMN used_active_task_context BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE audit_log ADD COLUMN used_lease_bias BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE audit_log ADD COLUMN used_conv_judge_resolution BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE audit_log ADD COLUMN would_block BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE audit_log ADD COLUMN would_review BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE audit_log ADD COLUMN would_prompt_inline BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE audit_log
+    ADD COLUMN session_id TEXT,
+    ADD COLUMN approval_id TEXT,
+    ADD COLUMN lease_id TEXT,
+    ADD COLUMN tool_use_id TEXT,
+    ADD COLUMN matched_task_id TEXT,
+    ADD COLUMN lease_task_id TEXT,
+    ADD COLUMN resolution_confidence TEXT,
+    ADD COLUMN intent_verdict TEXT,
+    ADD COLUMN used_active_task_context BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN used_lease_bias BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN used_conv_judge_resolution BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN would_block BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN would_review BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN would_prompt_inline BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE approval_records (
     id                   TEXT PRIMARY KEY,

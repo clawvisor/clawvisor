@@ -77,7 +77,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 
 		resolved, allowed, err := s.consumeDashboardResolvedHeldApproval(req.Context(), hooks, st.Session.ID)
 		if err != nil {
-			return req, nil
+			return req, goproxy.NewResponse(req, "text/plain", http.StatusServiceUnavailable, "Clawvisor could not load the latest runtime approval state. Retry the request.\n")
 		}
 		if resolved != nil {
 			reason := "denied via dashboard"

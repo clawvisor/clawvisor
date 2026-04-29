@@ -158,21 +158,27 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 // executing it. The agent is expected to call HandleExecuteApproved to claim
 // the result. If a callback URL is registered, a notification is sent.
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval, resolution string) (*store.Task, error) {
+	if err := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved"); err != nil {
+		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
+		return nil, err
+	}
 	var promotedTask *store.Task
 	var err error
 	switch resolution {
 	case "allow_session", "allow_always":
 		promotedTask, err = h.promotePendingApprovalToTask(ctx, pa, resolution)
 		if err != nil {
+			if revertErr := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, pa.Status); revertErr != nil {
+				h.logger.Error("failed to revert approval status after task promotion error", "request_id", pa.RequestID, "err", revertErr)
+			}
 			return nil, err
 		}
 	case "allow_once":
 	default:
+		if revertErr := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, pa.Status); revertErr != nil {
+			h.logger.Error("failed to revert approval status after invalid resolution", "request_id", pa.RequestID, "err", revertErr)
+		}
 		return nil, fmt.Errorf("unsupported approval resolution %q", resolution)
-	}
-	if err := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved"); err != nil {
-		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
-		return promotedTask, err
 	}
 	h.resolveCanonicalApproval(ctx, pa, resolution, "approved")
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "approved", "", 0); err != nil {
@@ -522,7 +528,7 @@ func (h *ApprovalsHandler) promotePendingApprovalToTask(ctx context.Context, pa 
 	}
 	approvedAt := time.Now().UTC()
 	task := &store.Task{
-		ID:       uuid.New().String(),
+		ID:       uuid.NewSHA1(uuid.NameSpaceURL, []byte("pending-approval:"+pa.RequestID+":"+resolution)).String(),
 		UserID:   pa.UserID,
 		AgentID:  blob.AgentID,
 		Purpose:  derivePromotedTaskPurpose(blob),
@@ -572,6 +578,12 @@ func (h *ApprovalsHandler) promotePendingApprovalToTask(ctx context.Context, pa 
 		}
 	}
 	if err := h.st.CreateTask(ctx, task); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			existing, getErr := h.st.GetTask(ctx, task.ID)
+			if getErr == nil {
+				return existing, nil
+			}
+		}
 		return nil, fmt.Errorf("create promoted task: %w", err)
 	}
 	return task, nil

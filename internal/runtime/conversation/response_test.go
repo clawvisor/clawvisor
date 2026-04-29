@@ -208,3 +208,61 @@ func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 		t.Fatalf("unexpected chat tool result ids: %v", ids)
 	}
 }
+
+func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {
+	t.Parallel()
+
+	frags := []assistantFragment{
+		{IsTool: true, ToolName: "Bash", ToolArgs: json.RawMessage(`{"command":"pwd"}`)},
+		{IsTool: true, ToolName: "Bash", ToolArgs: json.RawMessage(`{"command":"rm -rf /tmp/demo"}`)},
+	}
+	decisions := []ToolUseDecisionRecord{
+		{ToolUse: ToolUse{Name: "Bash"}, Verdict: ToolUseVerdict{Allowed: true}},
+		{ToolUse: ToolUse{Name: "Bash"}, Verdict: ToolUseVerdict{Allowed: false, Reason: "requires approval"}},
+	}
+
+	got := applyBlockSubstitutions(frags, decisions)
+	if len(got) != 2 {
+		t.Fatalf("expected two fragments, got %d", len(got))
+	}
+	if !got[0].IsTool || got[0].ToolName != "Bash" {
+		t.Fatalf("expected first Bash tool fragment to remain allowed, got %+v", got[0])
+	}
+	if got[1].IsTool || !strings.Contains(got[1].Text, "requires approval") {
+		t.Fatalf("expected second Bash tool fragment to be substituted, got %+v", got[1])
+	}
+}
+
+func TestOpenAIResponseRewriterSortsStreamingChatToolCallsByIndex(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"second","arguments":"{\"step\":2}"}},{"index":0,"id":"call_1","type":"function","function":{"name":"first","arguments":"{\"step\":1}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	var seen []string
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		seen = append(seen, tu.Name)
+		return ToolUseVerdict{Allowed: false, Reason: tu.Name}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if len(seen) != 2 || seen[0] != "first" || seen[1] != "second" {
+		t.Fatalf("expected deterministic tool-call order [first second], got %v", seen)
+	}
+	if len(result.Decisions) != 2 || result.Decisions[0].ToolUse.Index != 0 || result.Decisions[1].ToolUse.Index != 1 {
+		t.Fatalf("unexpected decision indexes: %+v", result.Decisions)
+	}
+}

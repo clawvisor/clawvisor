@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -378,7 +379,6 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 	var decisions []ToolUseDecisionRecord
 	var frags []assistantFragment
 	anyBlocked := false
-	index := 0
 	var text strings.Builder
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -415,22 +415,27 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 					pc.args.WriteString(tc.Function.Arguments)
 				}
 			}
-			if choice.FinishReason == "tool_calls" {
-				if text.Len() > 0 {
-					frags = append(frags, assistantFragment{Text: text.String()})
-					text.Reset()
-				}
-				for _, pc := range pending {
-					tu := ToolUse{
-						ID:    pc.id,
-						Index: index,
-						Name:  pc.name,
-						Input: rawIfJSONOpenAI(pc.args.String()),
+				if choice.FinishReason == "tool_calls" {
+					if text.Len() > 0 {
+						frags = append(frags, assistantFragment{Text: text.String()})
+						text.Reset()
 					}
-					index++
-					verdict := eval(tu)
-					decisions = append(decisions, ToolUseDecisionRecord{
-						ToolUse:          tu,
+					toolCallIndexes := make([]int, 0, len(pending))
+					for toolCallIndex := range pending {
+						toolCallIndexes = append(toolCallIndexes, toolCallIndex)
+					}
+					sort.Ints(toolCallIndexes)
+					for _, toolCallIndex := range toolCallIndexes {
+						pc := pending[toolCallIndex]
+						tu := ToolUse{
+							ID:    pc.id,
+							Index: toolCallIndex,
+							Name:  pc.name,
+							Input: rawIfJSONOpenAI(pc.args.String()),
+						}
+						verdict := eval(tu)
+						decisions = append(decisions, ToolUseDecisionRecord{
+							ToolUse:          tu,
 						Verdict:          verdict,
 						ToolInputPreview: MakeToolInputPreview(tu.Input),
 					})

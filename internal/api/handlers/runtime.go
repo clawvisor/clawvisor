@@ -253,7 +253,7 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 			RequestFingerprint: payload.RequestFingerprint,
 			ApprovalID:         &rec.ID,
 			ApprovedAt:         time.Now().UTC(),
-			ExpiresAt:          time.Now().UTC().Add(time.Duration(h.cfg.RuntimePolicy.OneOffTTLSeconds) * time.Second),
+			ExpiresAt:          time.Now().UTC().Add(time.Duration(h.oneOffTTLSeconds()) * time.Second),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create one-off approval")
 			return
@@ -272,6 +272,13 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 		"status":      status,
 		"resolution":  req.Resolution,
 	})
+}
+
+func (h *RuntimeHandler) oneOffTTLSeconds() int {
+	if h.cfg == nil || h.cfg.RuntimePolicy.OneOffTTLSeconds <= 0 {
+		return 300
+	}
+	return h.cfg.RuntimePolicy.OneOffTTLSeconds
 }
 
 func (h *RuntimeHandler) ListLeases(w http.ResponseWriter, r *http.Request) {
