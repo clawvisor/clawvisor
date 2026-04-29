@@ -46,6 +46,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			return err
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
+		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{
+			Store:  opts.Store,
+			Vault:  opts.Vault,
+			Config: opts.Config,
+			Logger: opts.Logger,
+		})
 		runtimeSrv.InstallRequestContextCarrier()
 		runtimeSrv.InstallPlaceholderSwap(runtimeproxy.PlaceholderHooks{
 			Store: opts.Store,

@@ -16,7 +16,7 @@ func (s *Server) InstallRequestContextCarrier() {
 	registry := conversation.DefaultRegistry()
 	s.goproxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		st := EnsureState(ctx)
-		if st.Session == nil || st.Runtime != nil {
+		if st.Session == nil {
 			return req, nil
 		}
 		parser := registry.Match(req)
@@ -29,7 +29,11 @@ func (s *Server) InstallRequestContextCarrier() {
 		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
-		st.Runtime = buildRuntimeRequestContext(req, parser, body)
+		built := buildRuntimeRequestContext(req, parser, body)
+		if st.Runtime != nil && st.Runtime.SecretScan != nil {
+			built.SecretScan = st.Runtime.SecretScan
+		}
+		st.Runtime = built
 		if st.Session != nil && st.Runtime != nil {
 			s.latestRequestCtxBySession.Store(st.Session.ID, st.Runtime)
 		}

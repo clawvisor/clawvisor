@@ -35,6 +35,8 @@ type Server struct {
 
 	connStates                sync.Map
 	latestRequestCtxBySession sync.Map
+	secretValueCache          sync.Map
+	secretVerdictCache        sync.Map
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
