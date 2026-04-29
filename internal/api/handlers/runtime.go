@@ -279,21 +279,38 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 	var promotedTask *store.Task
 	switch req.Resolution {
 	case "allow_once":
-		if rec.ResolutionTransport == "consume_one_off_retry" {
+		switch {
+		case rec.Kind == "credential_review":
+			if err := h.createCredentialAuthorization(r.Context(), rec, "once"); err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+		case rec.ResolutionTransport == "consume_one_off_retry":
 			if err := h.createRuntimeOneOffApproval(r.Context(), rec); err != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 				return
 			}
 		}
 	case "allow_session", "allow_always":
-		lifetime := "session"
-		if req.Resolution == "allow_always" {
-			lifetime = "standing"
-		}
-		promotedTask, err = h.promoteRuntimeApprovalToTask(r.Context(), rec, lifetime)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
+		if rec.Kind == "credential_review" {
+			scope := "session"
+			if req.Resolution == "allow_always" {
+				scope = "standing"
+			}
+			if err := h.createCredentialAuthorization(r.Context(), rec, scope); err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+		} else {
+			lifetime := "session"
+			if req.Resolution == "allow_always" {
+				lifetime = "standing"
+			}
+			promotedTask, err = h.promoteRuntimeApprovalToTask(r.Context(), rec, lifetime)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
 		}
 	}
 	status := "approved"
@@ -315,6 +332,76 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 			return promotedTask.ID
 		}(),
 	})
+}
+
+func (h *RuntimeHandler) createCredentialAuthorization(ctx context.Context, rec *store.ApprovalRecord, scope string) error {
+	var payload runtimeproxy.RuntimeCredentialReviewPayload
+	if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
+		return fmt.Errorf("could not parse runtime credential approval payload")
+	}
+	if rec.AgentID == nil || *rec.AgentID == "" {
+		return fmt.Errorf("runtime credential approval missing agent context")
+	}
+	auth := &store.CredentialAuthorization{
+		ID:            uuid.NewSHA1(uuid.NameSpaceURL, []byte("credential-approval:"+rec.ID+":"+scope)).String(),
+		ApprovalID:    &rec.ID,
+		UserID:        rec.UserID,
+		AgentID:       *rec.AgentID,
+		Scope:         scope,
+		CredentialRef: payload.CredentialRef,
+		Service:       payload.Service,
+		Host:          payload.Host,
+		HeaderName:    payload.HeaderName,
+		Scheme:        payload.Scheme,
+		Status:        "active",
+		MetadataJSON:  mustJSON(map[string]any{"detector": payload.Detector, "source": "runtime_approval"}),
+	}
+	switch scope {
+	case "once":
+		if payload.SessionID == "" {
+			return fmt.Errorf("runtime credential approval missing session context")
+		}
+		auth.SessionID = &payload.SessionID
+		expiresAt := time.Now().UTC().Add(time.Duration(h.oneOffTTLSeconds()) * time.Second)
+		auth.ExpiresAt = &expiresAt
+	case "session":
+		if payload.SessionID == "" {
+			return fmt.Errorf("runtime credential approval missing session context")
+		}
+		auth.SessionID = &payload.SessionID
+	}
+	if err := h.st.CreateCredentialAuthorization(ctx, auth); err != nil {
+		if !errors.Is(err, store.ErrConflict) {
+			// sqlite/postgres bubble unique errors as driver errors, so fall through to load
+		}
+		existing, getErr := h.st.GetCredentialAuthorization(ctx, auth.ID)
+		if getErr != nil {
+			return fmt.Errorf("could not create runtime credential authorization")
+		}
+		auth = existing
+	}
+	_ = h.st.CreateRuntimeEvent(ctx, &store.RuntimeEvent{
+		Timestamp:           time.Now().UTC(),
+		SessionID:           payload.SessionID,
+		UserID:              rec.UserID,
+		AgentID:             auth.AgentID,
+		EventType:           "runtime.autovault.authorization_created",
+		ActionKind:          "egress",
+		ApprovalID:          &rec.ID,
+		ResolutionTransport: nullableStr(rec.ResolutionTransport),
+		Decision:            nullableStr("allow"),
+		Outcome:             nullableStr("created"),
+		Reason:              nullableStr("runtime credential authorization created"),
+		MetadataJSON: mustJSON(map[string]any{
+			"scope":          auth.Scope,
+			"host":           auth.Host,
+			"header_name":    auth.HeaderName,
+			"scheme":         auth.Scheme,
+			"service_guess":  auth.Service,
+			"credential_ref": auth.CredentialRef,
+		}),
+	})
+	return nil
 }
 
 func (h *RuntimeHandler) createRuntimeOneOffApproval(ctx context.Context, rec *store.ApprovalRecord) error {
@@ -553,4 +640,12 @@ func (h *RuntimeHandler) ListLeases(w http.ResponseWriter, r *http.Request) {
 		"entries": leases,
 		"total":   len(leases),
 	})
+}
+
+func mustJSON(v any) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
 }

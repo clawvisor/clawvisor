@@ -277,6 +277,62 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 		t.Fatalf("second ConsumeAgentOneOffApproval err=%v, want ErrNotFound", err)
 	}
 
+	credAuthExpires := now.Add(10 * time.Minute)
+	credAuth := &store.CredentialAuthorization{
+		ID:            "cred-auth-1",
+		ApprovalID:    &approval.ID,
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		SessionID:     &runtimeSession2.ID,
+		Scope:         "once",
+		CredentialRef: "sha256:abc123",
+		Service:       "github",
+		Host:          "api.github.com",
+		HeaderName:    "Authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON:  []byte(`{"source":"runtime-review"}`),
+		ExpiresAt:     &credAuthExpires,
+	}
+	if err := st.CreateCredentialAuthorization(ctx, credAuth); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+	gotCredAuth, err := st.GetCredentialAuthorization(ctx, credAuth.ID)
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if gotCredAuth.Scope != "once" || gotCredAuth.CredentialRef != credAuth.CredentialRef {
+		t.Fatalf("unexpected credential authorization: %+v", gotCredAuth)
+	}
+	consumedCredAuth, err := st.ConsumeMatchingCredentialAuthorization(ctx, store.CredentialAuthorizationMatch{
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		SessionID:     runtimeSession2.ID,
+		CredentialRef: credAuth.CredentialRef,
+		Service:       credAuth.Service,
+		Host:          credAuth.Host,
+		HeaderName:    credAuth.HeaderName,
+		Scheme:        credAuth.Scheme,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeMatchingCredentialAuthorization: %v", err)
+	}
+	if consumedCredAuth.Status != "used" || consumedCredAuth.UsedAt == nil {
+		t.Fatalf("expected once credential authorization to be consumed, got %+v", consumedCredAuth)
+	}
+	if _, err := st.ConsumeMatchingCredentialAuthorization(ctx, store.CredentialAuthorizationMatch{
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		SessionID:     runtimeSession2.ID,
+		CredentialRef: credAuth.CredentialRef,
+		Service:       credAuth.Service,
+		Host:          credAuth.Host,
+		HeaderName:    credAuth.HeaderName,
+		Scheme:        credAuth.Scheme,
+	}, now.Add(2*time.Minute)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second ConsumeMatchingCredentialAuthorization err=%v, want ErrNotFound", err)
+	}
+
 	lease := &store.ToolExecutionLease{
 		SessionID:    sessionID,
 		TaskID:       task.ID,

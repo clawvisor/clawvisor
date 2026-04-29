@@ -113,7 +113,7 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	}
 }
 
-func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *testing.T) {
+func TestRuntimeProxyObservesKnownOutboundCredentialWithoutCapturing(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-outbound-auto.db"))
 	if err != nil {
@@ -129,7 +129,7 @@ func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *tes
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = true
 	cfg.RuntimeProxy.DataDir = t.TempDir()
-	cfg.RuntimePolicy.AutovaultMode = "auto"
+	cfg.RuntimePolicy.AutovaultMode = "observe"
 
 	rawToken := "ghp_outboundSecret123456789"
 	var seenAuth string
@@ -163,8 +163,8 @@ func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *tes
 	if resp.StatusCode != http.StatusOK || seenAuth != "Bearer "+rawToken {
 		t.Fatalf("expected raw header to pass through unchanged, status=%d auth=%q", resp.StatusCode, seenAuth)
 	}
-	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); !ok {
-		t.Fatal("expected outbound raw credential to be captured for later placeholder reuse")
+	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); ok {
+		t.Fatal("expected outbound raw credential observation to avoid silent capture")
 	}
 	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *tes
 	}
 	found := false
 	for _, event := range events {
-		if event.EventType == "runtime.autovault.captured" {
+		if event.EventType == "runtime.autovault.observed" {
 			found = true
 			if strings.Contains(string(event.MetadataJSON), rawToken) {
 				t.Fatalf("runtime event leaked raw credential: %s", string(event.MetadataJSON))
@@ -180,7 +180,7 @@ func TestRuntimeProxyObservesAndCapturesKnownOutboundCredentialInAutoMode(t *tes
 		}
 	}
 	if !found {
-		t.Fatalf("expected runtime.autovault.captured event, got %+v", events)
+		t.Fatalf("expected runtime.autovault.observed event, got %+v", events)
 	}
 }
 
@@ -265,10 +265,174 @@ func TestInjectStoredBearerUsesKnownHostService(t *testing.T) {
 		t.Fatalf("vault.Set: %v", err)
 	}
 	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
-	if err := injectStoredBearer(req, v, userID); err != nil {
+	injected, err := injectStoredBearer(req, v, userID)
+	if err != nil {
 		t.Fatalf("injectStoredBearer: %v", err)
+	}
+	if !injected {
+		t.Fatal("expected injectStoredBearer to report injected=true")
 	}
 	if got := req.Header.Get("Authorization"); got != "Bearer ghp_stored_value" {
 		t.Fatalf("expected injected bearer, got %q", got)
 	}
+}
+
+func TestRuntimeProxyStrictModeRequiresCredentialReview(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-outbound-strict.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+	cfg.RuntimePolicy.AutovaultMode = "strict"
+
+	rawToken := "ghp_strictSecret123456789"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-outbound-strict", userID, agentID, false)
+	srv, err := NewServer(Config{DataDir: cfg.RuntimeProxy.DataDir, Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected strict mode credential block, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if strings.Contains(string(body), rawToken) {
+		t.Fatalf("response leaked raw credential: %s", string(body))
+	}
+	records, err := st.ListPendingApprovalRecords(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRecords: %v", err)
+	}
+	if len(records) != 1 || records[0].Kind != "credential_review" {
+		t.Fatalf("expected single credential_review approval, got %+v", records)
+	}
+	if strings.Contains(string(records[0].SummaryJSON), rawToken) || strings.Contains(string(records[0].PayloadJSON), rawToken) {
+		t.Fatalf("approval record leaked raw credential: summary=%s payload=%s", string(records[0].SummaryJSON), string(records[0].PayloadJSON))
+	}
+}
+
+func TestRuntimeProxyStrictModeHonorsStandingCredentialAuthorization(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-outbound-strict-standing.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+	cfg.RuntimePolicy.AutovaultMode = "strict"
+
+	rawToken := "ghp_authorizedSecret123456789"
+	detection := detectHeaderCredential(mustRequest(t, "https://api.github.com/user"), "Authorization", "Bearer "+rawToken)
+	if detection == nil {
+		t.Fatal("expected outbound credential detection")
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-outbound-strict-standing", userID, agentID, false)
+	auth := &store.CredentialAuthorization{
+		ID:            "standing-auth",
+		UserID:        userID,
+		AgentID:       agentID,
+		Scope:         "standing",
+		CredentialRef: detection.CredentialRef,
+		Service:       detection.Service,
+		Host:          requestHost(mustRequest(t, upstream.URL)),
+		HeaderName:    "Authorization",
+		Scheme:        detection.Scheme,
+		Status:        "active",
+	}
+	if err := st.CreateCredentialAuthorization(ctx, auth); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: cfg.RuntimeProxy.DataDir, Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected standing credential authorization to allow request, got %d", resp.StatusCode)
+	}
+	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	assertEventTypePresent(t, events, "runtime.autovault.observed")
+	assertEventTypePresent(t, events, "runtime.autovault.authorized")
+}
+
+func mustRequest(t *testing.T, rawURL string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	return req
+}
+
+func assertEventTypePresent(t *testing.T, events []*store.RuntimeEvent, want string) {
+	t.Helper()
+	for _, event := range events {
+		if event.EventType == want {
+			return
+		}
+	}
+	t.Fatalf("expected runtime event %q, got %+v", want, events)
 }

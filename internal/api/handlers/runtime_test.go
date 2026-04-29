@@ -17,6 +17,7 @@ import (
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/google/uuid"
 )
 
 func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
@@ -402,5 +403,167 @@ func TestRuntimeHandlerResolveApprovalAllowAlwaysPromotesHeldToolReviewAndRebind
 	rebound := reviewCache.GetByApprovalRecord(session.ID, approval.ID)
 	if rebound == nil || rebound.TaskID != task.ID {
 		t.Fatalf("expected held approval to rebind to standing task, got %+v", rebound)
+	}
+}
+
+func TestRuntimeHandlerResolveApprovalAllowOnceCreatesCredentialAuthorization(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-credential-once.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "runtime-credential-once@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	session := &store.RuntimeSession{
+		ID:                    "runtime-credential-once-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, session); err != nil {
+		t.Fatalf("CreateRuntimeSession: %v", err)
+	}
+	payload, _ := json.Marshal(runtimeproxy.RuntimeCredentialReviewPayload{
+		SessionID:     session.ID,
+		AgentID:       agent.ID,
+		CredentialRef: "sha256:cred-1",
+		Service:       "github",
+		Host:          "api.github.com",
+		HeaderName:    "Authorization",
+		Scheme:        "bearer",
+		Detector:      "known_service",
+	})
+	approval := &store.ApprovalRecord{
+		ID:                  "approval-credential-once",
+		Kind:                "credential_review",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		SessionID:           &session.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		PayloadJSON:         payload,
+		ResolutionTransport: "create_credential_authorization",
+	}
+	if err := st.CreateApprovalRecord(ctx, approval); err != nil {
+		t.Fatalf("CreateApprovalRecord: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"resolution": "allow_once"})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/approvals/"+approval.ID+"/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", approval.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	h.ResolveApproval(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ResolveApproval status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	auth, err := st.GetCredentialAuthorization(ctx, uuid.NewSHA1(uuid.NameSpaceURL, []byte("credential-approval:"+approval.ID+":once")).String())
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if auth.Scope != "once" || auth.SessionID == nil || *auth.SessionID != session.ID || auth.ExpiresAt == nil {
+		t.Fatalf("unexpected once credential authorization: %+v", auth)
+	}
+}
+
+func TestRuntimeHandlerResolveApprovalAllowAlwaysCreatesStandingCredentialAuthorization(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-credential-standing.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "runtime-credential-standing@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	session := &store.RuntimeSession{
+		ID:                    "runtime-credential-standing-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, session); err != nil {
+		t.Fatalf("CreateRuntimeSession: %v", err)
+	}
+	payload, _ := json.Marshal(runtimeproxy.RuntimeCredentialReviewPayload{
+		SessionID:     session.ID,
+		AgentID:       agent.ID,
+		CredentialRef: "sha256:cred-2",
+		Service:       "github",
+		Host:          "api.github.com",
+		HeaderName:    "Authorization",
+		Scheme:        "bearer",
+		Detector:      "known_service",
+	})
+	approval := &store.ApprovalRecord{
+		ID:                  "approval-credential-standing",
+		Kind:                "credential_review",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		SessionID:           &session.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		PayloadJSON:         payload,
+		ResolutionTransport: "create_credential_authorization",
+	}
+	if err := st.CreateApprovalRecord(ctx, approval); err != nil {
+		t.Fatalf("CreateApprovalRecord: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"resolution": "allow_always"})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/approvals/"+approval.ID+"/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", approval.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	h.ResolveApproval(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ResolveApproval status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	auth, err := st.GetCredentialAuthorization(ctx, uuid.NewSHA1(uuid.NameSpaceURL, []byte("credential-approval:"+approval.ID+":standing")).String())
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if auth.Scope != "standing" || auth.SessionID != nil || auth.CredentialRef != "sha256:cred-2" {
+		t.Fatalf("unexpected standing credential authorization: %+v", auth)
+	}
+	events, err := st.ListRuntimeEvents(ctx, user.ID, store.RuntimeEventFilter{SessionID: session.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRuntimeEvents: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.EventType == "runtime.autovault.authorization_created" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected runtime.autovault.authorization_created event, got %+v", events)
 	}
 }

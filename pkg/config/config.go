@@ -319,7 +319,7 @@ func Default() *Config {
 			HarnessAllowlist:        nil,
 			ToolLeaseTimeoutSeconds: 300,
 			OneOffTTLSeconds:        300,
-			AutovaultMode:           "auto",
+			AutovaultMode:           "observe",
 			InjectStoredBearer:      false,
 		},
 		RateLimit: RateLimitConfig{

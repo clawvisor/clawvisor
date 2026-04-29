@@ -136,6 +136,9 @@ type Store interface {
 	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
 	GetRuntimePlaceholder(ctx context.Context, placeholder string) (*RuntimePlaceholder, error)
 	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error
+	CreateCredentialAuthorization(ctx context.Context, auth *CredentialAuthorization) error
+	GetCredentialAuthorization(ctx context.Context, id string) (*CredentialAuthorization, error)
+	ConsumeMatchingCredentialAuthorization(ctx context.Context, match CredentialAuthorizationMatch, now time.Time) (*CredentialAuthorization, error)
 
 	// Runtime one-off approvals
 	CreateOneOffApproval(ctx context.Context, approval *OneOffApproval) error
@@ -497,6 +500,39 @@ type RuntimePlaceholder struct {
 	ServiceID   string     `json:"service_id"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
+// CredentialAuthorization grants reuse of a previously reviewed outbound
+// credential-bearing header without storing the raw credential itself.
+type CredentialAuthorization struct {
+	ID            string          `json:"id"`
+	ApprovalID    *string         `json:"approval_id,omitempty"`
+	UserID        string          `json:"user_id"`
+	AgentID       string          `json:"agent_id"`
+	SessionID     *string         `json:"session_id,omitempty"`
+	Scope         string          `json:"scope"`
+	CredentialRef string          `json:"credential_ref"`
+	Service       string          `json:"service"`
+	Host          string          `json:"host"`
+	HeaderName    string          `json:"header_name"`
+	Scheme        string          `json:"scheme"`
+	Status        string          `json:"status"`
+	MetadataJSON  json.RawMessage `json:"metadata_json,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	ExpiresAt     *time.Time      `json:"expires_at,omitempty"`
+	UsedAt        *time.Time      `json:"used_at,omitempty"`
+	LastMatchedAt *time.Time      `json:"last_matched_at,omitempty"`
+}
+
+type CredentialAuthorizationMatch struct {
+	UserID        string
+	AgentID       string
+	SessionID     string
+	CredentialRef string
+	Service       string
+	Host          string
+	HeaderName    string
+	Scheme        string
 }
 
 // OneOffApproval is a single-use retry artifact for blocked runtime requests.

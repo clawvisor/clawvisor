@@ -1768,6 +1768,141 @@ func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) 
 	return placeholder, nil
 }
 
+func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.CredentialAuthorization) error {
+	if auth.ID == "" {
+		auth.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO credential_authorizations (
+			id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+			header_name, scheme, status, metadata_json, expires_at, used_at, last_matched_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
+		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefault(auth.MetadataJSON, "{}"),
+		formatNullableTime(auth.ExpiresAt), formatNullableTime(auth.UsedAt), formatNullableTime(auth.LastMatchedAt))
+	return err
+}
+
+func (s *Store) GetCredentialAuthorization(ctx context.Context, id string) (*store.CredentialAuthorization, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteCredentialAuthorization(rows)
+}
+
+func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, match store.CredentialAuthorizationMatch, now time.Time) (*store.CredentialAuthorization, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE user_id = ?
+		  AND agent_id = ?
+		  AND credential_ref = ?
+		  AND host = ?
+		  AND header_name = ?
+		  AND scheme = ?
+		  AND service = ?
+		  AND status = 'active'
+		  AND (
+		    (scope = 'once' AND session_id = ? AND used_at IS NULL AND (expires_at IS NULL OR expires_at > ?))
+		    OR (scope = 'session' AND session_id = ?)
+		    OR (scope = 'standing')
+		  )
+		ORDER BY CASE scope WHEN 'once' THEN 0 WHEN 'session' THEN 1 ELSE 2 END, created_at ASC
+		LIMIT 1
+	`, match.UserID, match.AgentID, match.CredentialRef, match.Host, match.HeaderName, match.Scheme,
+		match.Service, match.SessionID, now.UTC().Format(time.RFC3339), match.SessionID)
+	auth, err := scanSQLiteCredentialAuthorization(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+
+	if auth.Scope == "once" {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE credential_authorizations
+			SET status = 'used', used_at = ?, last_matched_at = ?
+			WHERE id = ? AND status = 'active' AND used_at IS NULL
+		`, now.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339), auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.Status = "used"
+		auth.UsedAt = &now
+		auth.LastMatchedAt = &now
+	} else {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE credential_authorizations
+			SET last_matched_at = ?
+			WHERE id = ? AND status = 'active'
+		`, now.UTC().Format(time.RFC3339), auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.LastMatchedAt = &now
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return auth, nil
+}
+
+func scanSQLiteCredentialAuthorization(scanner interface{ Scan(dest ...any) error }) (*store.CredentialAuthorization, error) {
+	auth := &store.CredentialAuthorization{}
+	var metadataJSON, createdAt string
+	var expiresAt, usedAt, lastMatchedAt *string
+	if err := scanner.Scan(
+		&auth.ID, &auth.ApprovalID, &auth.UserID, &auth.AgentID, &auth.SessionID, &auth.Scope,
+		&auth.CredentialRef, &auth.Service, &auth.Host, &auth.HeaderName, &auth.Scheme, &auth.Status,
+		&metadataJSON, &createdAt, &expiresAt, &usedAt, &lastMatchedAt,
+	); err != nil {
+		return nil, err
+	}
+	auth.MetadataJSON = json.RawMessage(metadataJSON)
+	auth.CreatedAt = parseTime(createdAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		auth.ExpiresAt = &t
+	}
+	if usedAt != nil {
+		t := parseTime(*usedAt)
+		auth.UsedAt = &t
+	}
+	if lastMatchedAt != nil {
+		t := parseTime(*lastMatchedAt)
+		auth.LastMatchedAt = &t
+	}
+	return auth, nil
+}
+
 // ── One-Off Approvals ────────────────────────────────────────────────────────
 
 func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {
