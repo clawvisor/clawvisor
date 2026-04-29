@@ -199,7 +199,7 @@ func (s *ActivityScreen) View() string {
 			marker = tui.StyleBrand.Render("> ")
 		}
 
-		timeStr := entry.Timestamp.Format("3:04 PM")
+		timeStr := entry.Timestamp.Local().Format("3:04 PM")
 
 		var statusIcon string
 		switch entry.Outcome {
@@ -291,7 +291,7 @@ func formatAuditDetail(e *client.AuditEntry) string {
 	b.WriteString(tui.StyleDim.Render("Outcome:     ") + e.Outcome + "\n")
 	b.WriteString(tui.StyleDim.Render("Decision:    ") + e.Decision + "\n")
 	b.WriteString(tui.StyleDim.Render("Request ID:  ") + e.RequestID + "\n")
-	b.WriteString(tui.StyleDim.Render("Timestamp:   ") + e.Timestamp.Format("2006-01-02 15:04:05") + "\n")
+	b.WriteString(tui.StyleDim.Render("Timestamp:   ") + e.Timestamp.Local().Format("2006-01-02 15:04:05") + "\n")
 	b.WriteString(tui.StyleDim.Render("Duration:    ") + fmt.Sprintf("%dms", e.DurationMs) + "\n")
 
 	if e.TaskID != "" {
