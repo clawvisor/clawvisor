@@ -12,7 +12,9 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/llm"
 	runtimeleases "github.com/clawvisor/clawvisor/internal/runtime/leases"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -26,6 +28,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	var apiOpts []api.ServerOption
 	var runtimeSrv *runtimeproxy.Server
 	var runtimeMgr *runtimeproxy.Manager
+	var reviewCache *runtimereview.ApprovalCache
 
 	if opts.Config != nil && opts.Config.RuntimeProxy.Enabled {
 		dataDir := opts.Config.RuntimeProxy.DataDir
@@ -48,7 +51,8 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			Store: opts.Store,
 			Vault: opts.Vault,
 		})
-		reviewCache := runtimereview.NewApprovalCache()
+		reviewCache = runtimereview.NewApprovalCache()
+		contextJudge := runtimepolicy.NewLLMRuntimeContextJudge(llm.NewHealth(opts.Config.LLM), opts.Logger)
 		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{
 			Store:       opts.Store,
 			Config:      opts.Config,
@@ -56,11 +60,13 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			Leases: runtimeleases.Service{
 				Store: opts.Store,
 			},
+			ContextJudge: contextJudge,
 		})
 		runtimeSrv.InstallEgressPolicy(runtimeproxy.PolicyHooks{
-			Store:  opts.Store,
-			Config: opts.Config,
-			Logger: opts.Logger,
+			Store:        opts.Store,
+			Config:       opts.Config,
+			Logger:       opts.Logger,
+			ContextJudge: contextJudge,
 		})
 		runtimeMgr = &runtimeproxy.Manager{
 			Store:  opts.Store,
@@ -84,7 +90,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
 		if runtimeMgr != nil {
-			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config)
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config, reviewCache)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)
 			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))

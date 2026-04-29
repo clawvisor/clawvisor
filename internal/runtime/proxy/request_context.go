@@ -30,6 +30,9 @@ func (s *Server) InstallRequestContextCarrier() {
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 		st.Runtime = buildRuntimeRequestContext(req, parser, body)
+		if st.Session != nil && st.Runtime != nil {
+			s.latestRequestCtxBySession.Store(st.Session.ID, st.Runtime)
+		}
 		return req, nil
 	})
 }
@@ -56,4 +59,16 @@ func buildRuntimeRequestContext(req *http.Request, parser conversation.Parser, b
 func sha256Hex(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) latestRuntimeRequestContext(sessionID string) *RuntimeRequestContext {
+	if s == nil || sessionID == "" {
+		return nil
+	}
+	value, ok := s.latestRequestCtxBySession.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	ctx, _ := value.(*RuntimeRequestContext)
+	return ctx
 }

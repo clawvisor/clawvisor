@@ -130,6 +130,19 @@ func (c *ApprovalCache) Drop(sessionID string, ids ...string) {
 	c.sessions[sessionID] = filtered
 }
 
+func (c *ApprovalCache) RebindTask(sessionID, approvalRecordID, taskID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, held := range c.activeLocked(sessionID) {
+		if held.ApprovalRecordID != approvalRecordID {
+			continue
+		}
+		held.TaskID = taskID
+		return true
+	}
+	return false
+}
+
 func (c *ApprovalCache) Count(sessionID string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

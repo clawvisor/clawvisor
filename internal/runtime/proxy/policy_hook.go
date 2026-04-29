@@ -16,6 +16,7 @@ import (
 	"github.com/elazarl/goproxy"
 	"github.com/google/uuid"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -28,15 +29,19 @@ type RuntimeApprovalPayload struct {
 	Method             string         `json:"method"`
 	Host               string         `json:"host"`
 	Path               string         `json:"path"`
+	Classification     string         `json:"classification,omitempty"`
+	ResolutionHint     string         `json:"resolution_hint,omitempty"`
+	Reason             string         `json:"reason,omitempty"`
 	Query              map[string]any `json:"query,omitempty"`
 	Body               map[string]any `json:"body,omitempty"`
 	Headers            map[string]any `json:"headers,omitempty"`
 }
 
 type PolicyHooks struct {
-	Store  store.Store
-	Config *config.Config
-	Logger *slog.Logger
+	Store        store.Store
+	Config       *config.Config
+	Logger       *slog.Logger
+	ContextJudge runtimepolicy.RuntimeContextJudge
 }
 
 func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
@@ -81,6 +86,8 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 
 		var matchedTask *store.Task
 		var matchedWhy string
+		var approvalKind string
+		var usedConvJudgeResolution bool
 		var leaseID *string
 		var leaseTaskID *string
 		var usedActiveTaskContext bool
@@ -106,15 +113,56 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		} else if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid task egress matcher"}`)
 		}
+		reviewTask := selectReviewTaskContext(req.Context(), hooks.Store, st.Session.ID, candidateTasks)
+		approvalKind = "request_once"
+		if matchedTask == nil && hooks.ContextJudge != nil {
+			requestCtx := st.Runtime
+			if requestCtx == nil {
+				requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
+			}
+			judgment, judgeErr := hooks.ContextJudge.Judge(req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
+				Provider:          requestContextProvider(requestCtx),
+				SessionID:         st.Session.ID,
+				AgentID:           st.Session.AgentID,
+				ActionKind:        "egress",
+				Method:            req.Method,
+				Host:              host,
+				Path:              req.URL.Path,
+				Query:             queryShape,
+				Body:              bodyShape,
+				Headers:           headerShape,
+				ParsedTurns:       requestContextTurns(requestCtx),
+				ActiveTaskBinding: reviewTask,
+				CandidateTasks:    candidateTasks,
+			})
+			if judgeErr != nil && hooks.Logger != nil {
+				hooks.Logger.Warn("runtime context judge failed", "err", judgeErr, "session_id", st.Session.ID, "host", host, "method", req.Method, "path", req.URL.Path)
+			}
+			switch judgment.Kind {
+			case runtimepolicy.ClassificationBelongsToExistingTask:
+				if judgment.MatchedTask != nil {
+					matchedTask = judgment.MatchedTask
+					matchedWhy = firstNonEmpty(strings.TrimSpace(judgment.Rationale), "runtime context judge matched this request to an existing task")
+					usedConvJudgeResolution = true
+					usedActiveTaskContext = usedActiveTaskSelection(req.Context(), hooks.Store, st.Session.ID, matchedTask)
+				}
+			case runtimepolicy.ClassificationNeedsNewTask, runtimepolicy.ClassificationAmbiguous:
+				approvalKind = "task_create"
+				matchedWhy = strings.TrimSpace(judgment.Rationale)
+			case runtimepolicy.ClassificationOneOff:
+				matchedWhy = strings.TrimSpace(judgment.Rationale)
+			}
+		}
 
 		if oneOff, err := hooks.Store.ConsumeOneOffApproval(req.Context(), st.Session.ID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
 			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
-				MatchedTask:           matchedTask,
-				ApprovalID:            oneOff.ApprovalID,
-				LeaseID:               leaseID,
-				LeaseTaskID:           leaseTaskID,
-				UsedActiveTaskContext: usedActiveTaskContext,
-				UsedLeaseBias:         usedLeaseBias,
+				MatchedTask:             matchedTask,
+				ApprovalID:              oneOff.ApprovalID,
+				LeaseID:                 leaseID,
+				LeaseTaskID:             leaseTaskID,
+				UsedActiveTaskContext:   usedActiveTaskContext,
+				UsedLeaseBias:           usedLeaseBias,
+				UsedConvJudgeResolution: usedConvJudgeResolution,
 			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
 			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 				EventType:          "runtime.egress.one_off_consumed",
@@ -141,11 +189,12 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		if matchedTask != nil {
 			s.recordTaskActivity(req.Context(), hooks.Store, st.Session, matchedTask, st.RequestID)
 			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
-				MatchedTask:           matchedTask,
-				LeaseID:               leaseID,
-				LeaseTaskID:           leaseTaskID,
-				UsedActiveTaskContext: usedActiveTaskContext,
-				UsedLeaseBias:         usedLeaseBias,
+				MatchedTask:             matchedTask,
+				LeaseID:                 leaseID,
+				LeaseTaskID:             leaseTaskID,
+				UsedActiveTaskContext:   usedActiveTaskContext,
+				UsedLeaseBias:           usedLeaseBias,
+				UsedConvJudgeResolution: usedConvJudgeResolution,
 			}, paramsSafe, req.Method, "allow", "approved", matchedWhy)
 			emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 				EventType:     "runtime.egress.allowed",
@@ -174,6 +223,8 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			Method:             req.Method,
 			Host:               host,
 			Path:               req.URL.Path,
+			Classification:     approvalKind,
+			Reason:             matchedWhy,
 			Query:              queryShape,
 			Body:               bodyShape,
 			Headers:            headerShapeAny,
@@ -218,7 +269,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		if err == store.ErrNotFound {
 			rec = &store.ApprovalRecord{
 				ID:                  uuid.NewString(),
-				Kind:                "request_once",
+				Kind:                approvalKind,
 				UserID:              st.Session.UserID,
 				AgentID:             &st.Session.AgentID,
 				RequestID:           &approvalRequestID,
@@ -235,10 +286,11 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		}
 
 		st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
-			ApprovalID:        &rec.ID,
-			WouldReview:       true,
-			WouldBlock:        false,
-			WouldPromptInline: false,
+			ApprovalID:              &rec.ID,
+			WouldReview:             true,
+			WouldBlock:              false,
+			WouldPromptInline:       false,
+			UsedConvJudgeResolution: usedConvJudgeResolution,
 		}, paramsSafe, req.Method, "review", "pending", "runtime egress request is outside the active task envelope")
 		emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 			EventType:           "runtime.egress.review_required",
@@ -284,16 +336,17 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 }
 
 type runtimeAuditOptions struct {
-	MatchedTask           *store.Task
-	ApprovalID            *string
-	LeaseID               *string
-	ToolUseID             *string
-	LeaseTaskID           *string
-	UsedActiveTaskContext bool
-	UsedLeaseBias         bool
-	WouldBlock            bool
-	WouldReview           bool
-	WouldPromptInline     bool
+	MatchedTask             *store.Task
+	ApprovalID              *string
+	LeaseID                 *string
+	ToolUseID               *string
+	LeaseTaskID             *string
+	UsedActiveTaskContext   bool
+	UsedLeaseBias           bool
+	UsedConvJudgeResolution bool
+	WouldBlock              bool
+	WouldReview             bool
+	WouldPromptInline       bool
 }
 
 func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *RequestState, opts runtimeAuditOptions, paramsSafe json.RawMessage, method, decision, outcome, reason string) string {
@@ -311,29 +364,30 @@ func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *Request
 	sessionID := reqState.Session.ID
 	agentID := reqState.Session.AgentID
 	_ = st.LogAudit(ctx, &store.AuditEntry{
-		ID:                    auditID,
-		UserID:                reqState.Session.UserID,
-		AgentID:               &agentID,
-		RequestID:             reqState.RequestID,
-		TaskID:                taskID,
-		SessionID:             &sessionID,
-		ApprovalID:            opts.ApprovalID,
-		LeaseID:               opts.LeaseID,
-		ToolUseID:             opts.ToolUseID,
-		MatchedTaskID:         matchedTaskID,
-		LeaseTaskID:           opts.LeaseTaskID,
-		Timestamp:             time.Now().UTC(),
-		Service:               "runtime.egress",
-		Action:                strings.ToLower(method),
-		ParamsSafe:            paramsSafe,
-		Decision:              decision,
-		Outcome:               outcome,
-		Reason:                reasonPtr,
-		UsedActiveTaskContext: opts.UsedActiveTaskContext,
-		UsedLeaseBias:         opts.UsedLeaseBias,
-		WouldBlock:            opts.WouldBlock,
-		WouldReview:           opts.WouldReview,
-		WouldPromptInline:     opts.WouldPromptInline,
+		ID:                      auditID,
+		UserID:                  reqState.Session.UserID,
+		AgentID:                 &agentID,
+		RequestID:               reqState.RequestID,
+		TaskID:                  taskID,
+		SessionID:               &sessionID,
+		ApprovalID:              opts.ApprovalID,
+		LeaseID:                 opts.LeaseID,
+		ToolUseID:               opts.ToolUseID,
+		MatchedTaskID:           matchedTaskID,
+		LeaseTaskID:             opts.LeaseTaskID,
+		Timestamp:               time.Now().UTC(),
+		Service:                 "runtime.egress",
+		Action:                  strings.ToLower(method),
+		ParamsSafe:              paramsSafe,
+		Decision:                decision,
+		Outcome:                 outcome,
+		Reason:                  reasonPtr,
+		UsedActiveTaskContext:   opts.UsedActiveTaskContext,
+		UsedLeaseBias:           opts.UsedLeaseBias,
+		UsedConvJudgeResolution: opts.UsedConvJudgeResolution,
+		WouldBlock:              opts.WouldBlock,
+		WouldReview:             opts.WouldReview,
+		WouldPromptInline:       opts.WouldPromptInline,
 	})
 	return auditID
 }
@@ -408,6 +462,29 @@ func requestHost(req *http.Request) string {
 		return strings.ToLower(req.URL.Hostname())
 	}
 	return strings.ToLower(req.Host)
+}
+
+func requestContextProvider(ctx *RuntimeRequestContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return ctx.Provider
+}
+
+func requestContextTurns(ctx *RuntimeRequestContext) []conversation.Turn {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.ParsedTurns
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func isHarnessAllowlisted(cfg *config.Config, host string) bool {

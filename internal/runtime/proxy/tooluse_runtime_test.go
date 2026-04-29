@@ -10,6 +10,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/leases"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/runtime/review"
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -294,6 +295,46 @@ func TestEnsureHeldToolUseApprovalAllowsMultiplePendingApprovalsPerSession(t *te
 	}
 	if got := hooks.ReviewCache.Get(session.id); got == nil || got.ID != secondHeld.ID {
 		t.Fatalf("expected second held approval to remain after first resolve, got %+v", got)
+	}
+}
+
+func TestEnsureHeldToolUseApprovalCanCreateTaskPromotionReview(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-task-create.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	session := createRuntimeSession(t, st, "runtime-task-create-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+
+	rec, held, substitute := srv.ensureHeldToolUseApprovalWithKind(ctx, hooks, runtimeSession, nil, conversationToolUse("toolu_task_create", "Bash"), map[string]any{"command": "touch /tmp/example"}, "task_create", runtimepolicy.RuntimeContextJudgment{
+		Kind:           runtimepolicy.ClassificationNeedsNewTask,
+		ResolutionHint: "allow_session",
+		Rationale:      "shell mutation should become an explicit task",
+	}, "shell mutation should become an explicit task")
+	if rec == nil || held == nil || substitute == "" {
+		t.Fatalf("expected held approval and prompt, got rec=%v held=%v substitute=%q", rec, held, substitute)
+	}
+	if rec.Kind != "task_create" {
+		t.Fatalf("expected task_create approval kind, got %+v", rec)
 	}
 }
 

@@ -33,7 +33,8 @@ type Server struct {
 	listener net.Listener
 	httpSrv  *http.Server
 
-	connStates sync.Map
+	connStates                sync.Map
+	latestRequestCtxBySession sync.Map
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -292,6 +293,128 @@ func TestRuntimeProxyAcceptsBasicProxyCredentials(t *testing.T) {
 	}
 }
 
+func TestRuntimeProxyContextJudgeCanBindUnmatchedEgressToExistingTask(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-judge-allow.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	task := &store.Task{
+		ID:            "task-judge-existing",
+		UserID:        userID,
+		AgentID:       agentID,
+		Purpose:       "Investigate runtime issue",
+		Status:        "active",
+		Lifetime:      "session",
+		SchemaVersion: 2,
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-judge-allow", userID, agentID, false)
+	srv := newStartedRuntimeProxyWithJudge(t, st, cfg, &stubRuntimeContextJudge{
+		judgment: runtimepolicy.RuntimeContextJudgment{
+			Kind:        runtimepolicy.ClassificationBelongsToExistingTask,
+			MatchedTask: task,
+			Rationale:   "same investigation workflow",
+		},
+	})
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodPost, upstream.URL+"/tickets", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(body))
+	}
+
+	entries, _, err := st.ListAuditEntries(ctx, userID, store.AuditFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(entries) == 0 || !entries[0].UsedConvJudgeResolution || entries[0].TaskID == nil || *entries[0].TaskID != task.ID {
+		t.Fatalf("expected judge-attributed audit entry, got %+v", entries)
+	}
+}
+
+func TestRuntimeProxyContextJudgeCanPromoteUnmatchedEgressToTaskReview(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-judge-review.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-judge-review", userID, agentID, false)
+	srv := newStartedRuntimeProxyWithJudge(t, st, cfg, &stubRuntimeContextJudge{
+		judgment: runtimepolicy.RuntimeContextJudgment{
+			Kind:           runtimepolicy.ClassificationNeedsNewTask,
+			ResolutionHint: "allow_session",
+			Rationale:      "write action should promote into task scope",
+		},
+	})
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodPost, upstream.URL+"/tickets", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected runtime review, got %d %q", resp.StatusCode, string(body))
+	}
+	var blocked map[string]any
+	if err := json.Unmarshal(body, &blocked); err != nil {
+		t.Fatalf("unmarshal blocked body: %v", err)
+	}
+	approvalID, _ := blocked["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatalf("expected approval_id, got %v", blocked)
+	}
+	approval, err := st.GetApprovalRecord(ctx, approvalID)
+	if err != nil {
+		t.Fatalf("GetApprovalRecord: %v", err)
+	}
+	if approval.Kind != "task_create" {
+		t.Fatalf("expected task_create runtime approval, got %+v", approval)
+	}
+}
+
 func TestRuntimeProxyPrefersActiveTaskSessionBinding(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-task-bias.db")
@@ -539,6 +662,24 @@ func newStartedRuntimeProxy(t *testing.T, st store.Store, cfg *config.Config) *S
 	return srv
 }
 
+func newStartedRuntimeProxyWithJudge(t *testing.T, st store.Store, cfg *config.Config, judge runtimepolicy.RuntimeContextJudge) *Server {
+	t.Helper()
+	srv, err := NewServer(Config{
+		DataDir: cfg.RuntimeProxy.DataDir,
+		Addr:    "127.0.0.1:0",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallRequestContextCarrier()
+	srv.InstallEgressPolicy(PolicyHooks{Store: st, Config: cfg, ContextJudge: judge})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return srv
+}
+
 func proxyHTTPClient(t *testing.T, srv *Server) *http.Client {
 	t.Helper()
 	proxyURL, err := url.Parse("http://" + srv.Addr())
@@ -559,4 +700,13 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	return json.RawMessage(b)
+}
+
+type stubRuntimeContextJudge struct {
+	judgment runtimepolicy.RuntimeContextJudgment
+	err      error
+}
+
+func (s *stubRuntimeContextJudge) Judge(context.Context, runtimepolicy.RuntimeContextJudgeRequest) (runtimepolicy.RuntimeContextJudgment, error) {
+	return s.judgment, s.err
 }

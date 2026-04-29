@@ -25,20 +25,23 @@ import (
 const internalBypassHeader = "X-Clawvisor-Internal-Bypass"
 
 type ToolUseHooks struct {
-	Store       store.Store
-	Config      *config.Config
-	ReviewCache *review.ApprovalCache
-	Leases      leases.Service
+	Store        store.Store
+	Config       *config.Config
+	ReviewCache  *review.ApprovalCache
+	Leases       leases.Service
+	ContextJudge runtimepolicy.RuntimeContextJudge
 }
 
 type HeldToolUseApprovalPayload struct {
-	SessionID string         `json:"session_id"`
-	AgentID   string         `json:"agent_id"`
-	TaskID    string         `json:"task_id,omitempty"`
-	ToolUseID string         `json:"tool_use_id"`
-	ToolName  string         `json:"tool_name"`
-	ToolInput map[string]any `json:"tool_input,omitempty"`
-	Reason    string         `json:"reason,omitempty"`
+	SessionID      string         `json:"session_id"`
+	AgentID        string         `json:"agent_id"`
+	TaskID         string         `json:"task_id,omitempty"`
+	ToolUseID      string         `json:"tool_use_id"`
+	ToolName       string         `json:"tool_name"`
+	ToolInput      map[string]any `json:"tool_input,omitempty"`
+	Classification string         `json:"classification,omitempty"`
+	ResolutionHint string         `json:"resolution_hint,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
 }
 
 var approvalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-[a-z0-9]{12})\b`)
@@ -169,7 +172,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 		}
 	}
 
-	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false)
+	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false, false)
 	if allow {
 		emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
 			EventType:           "runtime.tool_use.released",
@@ -311,6 +314,35 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 			}
 
 			key := toolDecisionKey(tu)
+			var judgment runtimepolicy.RuntimeContextJudgment
+			if hooks.ContextJudge != nil {
+				requestCtx := st.Runtime
+				if requestCtx == nil {
+					requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
+				}
+				judgment, err = hooks.ContextJudge.Judge(ctx.Req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
+					Provider:          requestContextProvider(requestCtx),
+					SessionID:         st.Session.ID,
+					AgentID:           st.Session.AgentID,
+					ActionKind:        "tool_use",
+					ToolName:          tu.Name,
+					ToolInput:         input,
+					ParsedTurns:       requestContextTurns(requestCtx),
+					ActiveTaskBinding: reviewTask,
+					CandidateTasks:    candidateTasks,
+				})
+				if err == nil && judgment.Kind == runtimepolicy.ClassificationBelongsToExistingTask && judgment.MatchedTask != nil {
+					decisionState[key] = toolDecisionState{
+						Task:                    judgment.MatchedTask,
+						UsedActiveTaskContext:   usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, judgment.MatchedTask),
+						UsedConvJudgeResolution: true,
+					}
+					return conversation.ToolUseVerdict{
+						Allowed: true,
+						Reason:  firstNonEmpty(judgment.Rationale, "runtime context judge matched this tool call to an existing task"),
+					}
+				}
+			}
 			if st.Session.ObservationMode {
 				decisionState[key] = toolDecisionState{
 					Task:                  reviewTask,
@@ -321,14 +353,20 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				return conversation.ToolUseVerdict{Allowed: true, Reason: "observation mode: tool use would require runtime approval"}
 			}
 
-			rec, held, substitute := s.ensureHeldToolUseApproval(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input)
+			approvalKind := "task_call_review"
+			if judgment.Kind == runtimepolicy.ClassificationNeedsNewTask || judgment.Kind == runtimepolicy.ClassificationAmbiguous {
+				approvalKind = "task_create"
+			}
+			reviewReason := firstNonEmpty(judgment.Rationale, "tool call requires runtime approval")
+			rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, approvalKind, judgment, reviewReason)
 			if rec != nil {
 				decisionState[key] = toolDecisionState{
-					Task:              reviewTask,
-					ApprovalID:        &rec.ID,
-					WouldReview:       true,
-					WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
-					Held:              held,
+					Task:                    reviewTask,
+					ApprovalID:              &rec.ID,
+					WouldReview:             true,
+					WouldPromptInline:       hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+					Held:                    held,
+					UsedConvJudgeResolution: judgment.Kind != "",
 				}
 			}
 			return conversation.ToolUseVerdict{
@@ -376,7 +414,7 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 						reason = "observation mode: tool use would require runtime approval"
 					}
 				}
-				s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.WouldReview, state.WouldReview, state.WouldPromptInline)
+				s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
 				if state.WouldReview {
 					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 						EventType:  "runtime.observe.would_review",
@@ -416,7 +454,7 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				}
 				continue
 			}
-			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, "review", "pending", "runtime tool call is outside the active task envelope", state.UsedActiveTaskContext, false, true, state.WouldPromptInline)
+			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, "review", "pending", "runtime tool call is outside the active task envelope", state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, true, state.WouldPromptInline)
 			emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 				EventType:           "runtime.tool_use.held",
 				ActionKind:          "tool_use",
@@ -441,15 +479,20 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 }
 
 type toolDecisionState struct {
-	Task                  *store.Task
-	ApprovalID            *string
-	Held                  *review.HeldApproval
-	UsedActiveTaskContext bool
-	WouldReview           bool
-	WouldPromptInline     bool
+	Task                    *store.Task
+	ApprovalID              *string
+	Held                    *review.HeldApproval
+	UsedActiveTaskContext   bool
+	UsedConvJudgeResolution bool
+	WouldReview             bool
+	WouldPromptInline       bool
 }
 
 func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any) (*store.ApprovalRecord, *review.HeldApproval, string) {
+	return s.ensureHeldToolUseApprovalWithKind(ctx, hooks, session, reviewTask, tu, input, "task_call_review", runtimepolicy.RuntimeContextJudgment{}, "tool call requires runtime approval")
+}
+
+func (s *Server) ensureHeldToolUseApprovalWithKind(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any, approvalKind string, judgment runtimepolicy.RuntimeContextJudgment, reason string) (*store.ApprovalRecord, *review.HeldApproval, string) {
 	requestID := "runtime-tooluse:" + session.ID + ":" + tu.ID
 	rec, err := hooks.Store.GetApprovalRecordByRequestID(ctx, requestID)
 	if err != nil && err != store.ErrNotFound {
@@ -458,21 +501,24 @@ func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHoo
 
 	if err == store.ErrNotFound {
 		summaryJSON, _ := json.Marshal(map[string]any{
-			"tool_name": tu.Name,
-			"reason":    "tool call requires runtime approval",
+			"tool_name":      tu.Name,
+			"reason":         reason,
+			"classification": firstNonEmpty(judgment.Kind, approvalKind),
 		})
 		payloadJSON, _ := json.Marshal(HeldToolUseApprovalPayload{
-			SessionID: session.ID,
-			AgentID:   session.AgentID,
-			TaskID:    taskIDOrEmpty(reviewTask),
-			ToolUseID: tu.ID,
-			ToolName:  tu.Name,
-			ToolInput: input,
-			Reason:    "tool call requires runtime approval",
+			SessionID:      session.ID,
+			AgentID:        session.AgentID,
+			TaskID:         taskIDOrEmpty(reviewTask),
+			ToolUseID:      tu.ID,
+			ToolName:       tu.Name,
+			ToolInput:      input,
+			Classification: judgment.Kind,
+			ResolutionHint: judgment.ResolutionHint,
+			Reason:         reason,
 		})
 		rec = &store.ApprovalRecord{
 			ID:                  uuid.NewString(),
-			Kind:                "task_call_review",
+			Kind:                approvalKind,
 			UserID:              session.UserID,
 			AgentID:             &session.AgentID,
 			RequestID:           &requestID,
@@ -489,7 +535,7 @@ func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHoo
 		}
 	}
 
-	held, ok := hooks.ReviewCache.Hold(session.ID, rec.ID, taskIDOrEmpty(reviewTask), tu.ID, tu.Name, input, "tool call requires runtime approval")
+	held, ok := hooks.ReviewCache.Hold(session.ID, rec.ID, taskIDOrEmpty(reviewTask), tu.ID, tu.Name, input, reason)
 	if ok {
 		return rec, held, renderHeldToolUsePrompt(held, hooks.Config)
 	}
@@ -745,7 +791,7 @@ func (s *Server) recordToolActivity(ctx context.Context, st store.Store, session
 	_ = st.CreateTaskCall(ctx, call)
 }
 
-func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *store.RuntimeSession, taskID, approvalID string, leaseID *string, toolUseID, toolName, decision, outcome, reason string, usedActiveTaskContext, wouldBlock, wouldReview, wouldPromptInline bool) {
+func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *store.RuntimeSession, taskID, approvalID string, leaseID *string, toolUseID, toolName, decision, outcome, reason string, usedActiveTaskContext, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline bool) {
 	if session == nil {
 		return
 	}
@@ -764,26 +810,27 @@ func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *s
 	sessionID := session.ID
 	agentID := session.AgentID
 	_ = st.LogAudit(ctx, &store.AuditEntry{
-		ID:                    uuid.NewString(),
-		UserID:                session.UserID,
-		AgentID:               &agentID,
-		RequestID:             session.ID + ":" + toolUseID,
-		TaskID:                taskIDPtr,
-		SessionID:             &sessionID,
-		ApprovalID:            approvalIDPtr,
-		LeaseID:               leaseID,
-		ToolUseID:             &toolUseID,
-		MatchedTaskID:         taskIDPtr,
-		Timestamp:             time.Now().UTC(),
-		Service:               "runtime.tool_use",
-		Action:                toolName,
-		Decision:              decision,
-		Outcome:               outcome,
-		Reason:                reasonPtr,
-		UsedActiveTaskContext: usedActiveTaskContext,
-		WouldBlock:            wouldBlock,
-		WouldReview:           wouldReview,
-		WouldPromptInline:     wouldPromptInline,
+		ID:                      uuid.NewString(),
+		UserID:                  session.UserID,
+		AgentID:                 &agentID,
+		RequestID:               session.ID + ":" + toolUseID,
+		TaskID:                  taskIDPtr,
+		SessionID:               &sessionID,
+		ApprovalID:              approvalIDPtr,
+		LeaseID:                 leaseID,
+		ToolUseID:               &toolUseID,
+		MatchedTaskID:           taskIDPtr,
+		Timestamp:               time.Now().UTC(),
+		Service:                 "runtime.tool_use",
+		Action:                  toolName,
+		Decision:                decision,
+		Outcome:                 outcome,
+		Reason:                  reasonPtr,
+		UsedActiveTaskContext:   usedActiveTaskContext,
+		UsedConvJudgeResolution: usedConvJudgeResolution,
+		WouldBlock:              wouldBlock,
+		WouldReview:             wouldReview,
+		WouldPromptInline:       wouldPromptInline,
 	})
 }
 

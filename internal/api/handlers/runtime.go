@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/google/uuid"
 )
 
 type RuntimeManager interface {
@@ -24,14 +29,15 @@ type RuntimeManager interface {
 }
 
 type RuntimeHandler struct {
-	st      store.Store
-	manager RuntimeManager
-	cfg     *config.Config
-	vault   vault.Vault
+	st          store.Store
+	manager     RuntimeManager
+	cfg         *config.Config
+	vault       vault.Vault
+	reviewCache *runtimereview.ApprovalCache
 }
 
-func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config) *RuntimeHandler {
-	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg}
+func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache *runtimereview.ApprovalCache) *RuntimeHandler {
+	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache}
 }
 
 func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -259,42 +265,29 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Resolution != "allow_once" && req.Resolution != "deny" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "resolution must be allow_once or deny")
+	if req.Resolution != "allow_once" && req.Resolution != "allow_session" && req.Resolution != "allow_always" && req.Resolution != "deny" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "resolution must be allow_once, allow_session, allow_always, or deny")
 		return
 	}
-	if req.Resolution == "allow_once" && rec.ResolutionTransport == "consume_one_off_retry" {
-		var payload runtimeproxy.RuntimeApprovalPayload
-		if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not parse runtime approval payload")
+	var promotedTask *store.Task
+	switch req.Resolution {
+	case "allow_once":
+		if rec.ResolutionTransport == "consume_one_off_retry" {
+			if err := h.createRuntimeOneOffApproval(r.Context(), rec); err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+		}
+	case "allow_session", "allow_always":
+		lifetime := "session"
+		if req.Resolution == "allow_always" {
+			lifetime = "standing"
+		}
+		promotedTask, err = h.promoteRuntimeApprovalToTask(r.Context(), rec, lifetime)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		if err := h.st.CreateOneOffApproval(r.Context(), &store.OneOffApproval{
-			SessionID:          payload.SessionID,
-			RequestFingerprint: payload.RequestFingerprint,
-			ApprovalID:         &rec.ID,
-			ApprovedAt:         time.Now().UTC(),
-			ExpiresAt:          time.Now().UTC().Add(time.Duration(h.oneOffTTLSeconds()) * time.Second),
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create one-off approval")
-			return
-		}
-		metadataJSON, _ := json.Marshal(map[string]any{"host": payload.Host, "method": payload.Method, "path": payload.Path})
-		_ = h.st.CreateRuntimeEvent(r.Context(), &store.RuntimeEvent{
-			Timestamp:           time.Now().UTC(),
-			SessionID:           payload.SessionID,
-			UserID:              rec.UserID,
-			AgentID:             payload.AgentID,
-			EventType:           "runtime.egress.one_off_created",
-			ActionKind:          "egress",
-			ApprovalID:          &rec.ID,
-			RequestFingerprint:  nullableStr(payload.RequestFingerprint),
-			ResolutionTransport: nullableStr(rec.ResolutionTransport),
-			Decision:            nullableStr("allow"),
-			Outcome:             nullableStr("created"),
-			Reason:              nullableStr("runtime one-off retry authorization created"),
-			MetadataJSON:        metadataJSON,
-		})
 	}
 	status := "approved"
 	if req.Resolution == "deny" {
@@ -308,7 +301,209 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 		"approval_id": rec.ID,
 		"status":      status,
 		"resolution":  req.Resolution,
+		"task_id": func() string {
+			if promotedTask == nil {
+				return ""
+			}
+			return promotedTask.ID
+		}(),
 	})
+}
+
+func (h *RuntimeHandler) createRuntimeOneOffApproval(ctx context.Context, rec *store.ApprovalRecord) error {
+	var payload runtimeproxy.RuntimeApprovalPayload
+	if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
+		return fmt.Errorf("could not parse runtime approval payload")
+	}
+	if err := h.st.CreateOneOffApproval(ctx, &store.OneOffApproval{
+		SessionID:          payload.SessionID,
+		RequestFingerprint: payload.RequestFingerprint,
+		ApprovalID:         &rec.ID,
+		ApprovedAt:         time.Now().UTC(),
+		ExpiresAt:          time.Now().UTC().Add(time.Duration(h.oneOffTTLSeconds()) * time.Second),
+	}); err != nil {
+		return fmt.Errorf("could not create one-off approval")
+	}
+	metadataJSON, _ := json.Marshal(map[string]any{"host": payload.Host, "method": payload.Method, "path": payload.Path})
+	_ = h.st.CreateRuntimeEvent(ctx, &store.RuntimeEvent{
+		Timestamp:           time.Now().UTC(),
+		SessionID:           payload.SessionID,
+		UserID:              rec.UserID,
+		AgentID:             payload.AgentID,
+		EventType:           "runtime.egress.one_off_created",
+		ActionKind:          "egress",
+		ApprovalID:          &rec.ID,
+		RequestFingerprint:  nullableStr(payload.RequestFingerprint),
+		ResolutionTransport: nullableStr(rec.ResolutionTransport),
+		Decision:            nullableStr("allow"),
+		Outcome:             nullableStr("created"),
+		Reason:              nullableStr("runtime one-off retry authorization created"),
+		MetadataJSON:        metadataJSON,
+	})
+	return nil
+}
+
+func (h *RuntimeHandler) promoteRuntimeApprovalToTask(ctx context.Context, rec *store.ApprovalRecord, lifetime string) (*store.Task, error) {
+	task, sessionID, agentID, err := h.buildRuntimeTaskFromApproval(rec, lifetime)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.st.CreateTask(ctx, task); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			existing, getErr := h.st.GetTask(ctx, task.ID)
+			if getErr == nil {
+				task = existing
+			} else {
+				return nil, fmt.Errorf("could not load promoted runtime task")
+			}
+		} else {
+			return nil, fmt.Errorf("could not create promoted runtime task")
+		}
+	}
+	if sessionID != "" {
+		now := time.Now().UTC()
+		metadataJSON, _ := json.Marshal(map[string]any{"approval_id": rec.ID, "resolution_transport": rec.ResolutionTransport})
+		_ = h.st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+			TaskID:       task.ID,
+			SessionID:    sessionID,
+			UserID:       rec.UserID,
+			AgentID:      agentID,
+			MetadataJSON: metadataJSON,
+			StartedAt:    now,
+			LastSeenAt:   now,
+			Status:       "active",
+		})
+	}
+	if h.reviewCache != nil && sessionID != "" {
+		_ = h.reviewCache.RebindTask(sessionID, rec.ID, task.ID)
+	}
+	metadataJSON, _ := json.Marshal(map[string]any{"lifetime": lifetime, "approval_kind": rec.Kind})
+	_ = h.st.CreateRuntimeEvent(ctx, &store.RuntimeEvent{
+		Timestamp:           time.Now().UTC(),
+		SessionID:           sessionID,
+		UserID:              rec.UserID,
+		AgentID:             agentID,
+		EventType:           "runtime.task.promoted",
+		ActionKind:          "task",
+		ApprovalID:          &rec.ID,
+		TaskID:              &task.ID,
+		MatchedTaskID:       &task.ID,
+		ResolutionTransport: nullableStr(rec.ResolutionTransport),
+		Decision:            nullableStr("allow"),
+		Outcome:             nullableStr("promoted"),
+		Reason:              nullableStr("runtime approval promoted into task scope"),
+		MetadataJSON:        metadataJSON,
+	})
+	return task, nil
+}
+
+func (h *RuntimeHandler) buildRuntimeTaskFromApproval(rec *store.ApprovalRecord, lifetime string) (*store.Task, string, string, error) {
+	approvedAt := time.Now().UTC()
+	task := &store.Task{
+		ID:             uuid.NewSHA1(uuid.NameSpaceURL, []byte("runtime-approval:"+rec.ID+":"+lifetime)).String(),
+		UserID:         rec.UserID,
+		Lifetime:       lifetime,
+		Status:         "active",
+		SchemaVersion:  2,
+		ApprovedAt:     &approvedAt,
+		ApprovalSource: "manual",
+	}
+	if rec.AgentID != nil {
+		task.AgentID = *rec.AgentID
+	}
+	sessionID := ""
+	if rec.SessionID != nil {
+		sessionID = *rec.SessionID
+	}
+	if lifetime == "session" {
+		expiresIn := h.taskExpirySeconds()
+		task.ExpiresInSeconds = expiresIn
+		expiresAt := approvedAt.Add(time.Duration(expiresIn) * time.Second)
+		task.ExpiresAt = &expiresAt
+	}
+	switch rec.ResolutionTransport {
+	case "consume_one_off_retry":
+		var payload runtimeproxy.RuntimeApprovalPayload
+		if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
+			return nil, "", "", fmt.Errorf("could not parse runtime approval payload")
+		}
+		if payload.AgentID != "" {
+			task.AgentID = payload.AgentID
+		}
+		if payload.SessionID != "" {
+			sessionID = payload.SessionID
+		}
+		task.Purpose = firstRuntimeTaskPurpose(payload.Reason, fmt.Sprintf("Runtime egress to %s%s", payload.Host, payload.Path))
+		task.ExpectedUse = firstRuntimeTaskPurpose(payload.Reason, fmt.Sprintf("%s %s%s", payload.Method, payload.Host, payload.Path))
+		expectedEgress, _ := json.Marshal([]runtimetasks.ExpectedEgress{{
+			Host:       payload.Host,
+			Method:     payload.Method,
+			Path:       payload.Path,
+			QueryShape: requiredKeyShape(payload.Query),
+			BodyShape:  requiredKeyShape(payload.Body),
+			Why:        firstRuntimeTaskPurpose(payload.Reason, "Runtime-reviewed egress"),
+		}})
+		task.ExpectedEgress = expectedEgress
+	case "release_held_tool_use":
+		var payload runtimeproxy.HeldToolUseApprovalPayload
+		if err := json.Unmarshal(rec.PayloadJSON, &payload); err != nil {
+			return nil, "", "", fmt.Errorf("could not parse held tool approval payload")
+		}
+		if payload.AgentID != "" {
+			task.AgentID = payload.AgentID
+		}
+		if payload.SessionID != "" {
+			sessionID = payload.SessionID
+		}
+		task.Purpose = firstRuntimeTaskPurpose(payload.Reason, fmt.Sprintf("Runtime tool use: %s", payload.ToolName))
+		task.ExpectedUse = firstRuntimeTaskPurpose(payload.Reason, fmt.Sprintf("Use runtime tool %s", payload.ToolName))
+		expectedTools, _ := json.Marshal([]runtimetasks.ExpectedTool{{
+			ToolName:   payload.ToolName,
+			InputShape: requiredKeyShape(payload.ToolInput),
+			Why:        firstRuntimeTaskPurpose(payload.Reason, "Runtime-reviewed tool use"),
+		}})
+		task.ExpectedTools = expectedTools
+	default:
+		return nil, "", "", fmt.Errorf("unsupported runtime approval transport")
+	}
+	return task, sessionID, task.AgentID, nil
+}
+
+func firstRuntimeTaskPurpose(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return "Runtime-promoted task"
+}
+
+func requiredKeyShape(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return nil
+	}
+	required := make([]any, 0, len(keys))
+	for _, key := range keys {
+		required = append(required, key)
+	}
+	return map[string]any{"required_keys": required}
+}
+
+func (h *RuntimeHandler) taskExpirySeconds() int {
+	if h.cfg == nil || h.cfg.Task.DefaultExpirySeconds <= 0 {
+		return 1800
+	}
+	return h.cfg.Task.DefaultExpirySeconds
 }
 
 func (h *RuntimeHandler) oneOffTTLSeconds() int {
