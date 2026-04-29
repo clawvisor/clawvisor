@@ -1,0 +1,12 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://chatgpt.com/backend-api/codex/responses",
+    "content_type": "application/json",
+    "body_file": "providers/codex_responses/request_function_loop.json"
+  },
+  "response": {
+    "content_type": "application/json",
+    "body_file": "providers/openai_responses/response_function_call.json"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "resp_computer",
+  "object": "response",
+  "output": [
+    {
+      "id": "computer_1",
+      "type": "computer_call",
+      "status": "completed",
+      "call_id": "computer_1",
+      "arguments": {
+        "action": "click",
+        "target": "submit"
+      }
+    }
+  ]
+}
