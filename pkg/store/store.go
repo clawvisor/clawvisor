@@ -130,6 +130,11 @@ type Store interface {
 	ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*RuntimeSession, error)
 	RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error
 
+	// Runtime credential placeholders
+	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
+	GetRuntimePlaceholder(ctx context.Context, placeholder string) (*RuntimePlaceholder, error)
+	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error
+
 	// Runtime one-off approvals
 	CreateOneOffApproval(ctx context.Context, approval *OneOffApproval) error
 	ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*OneOffApproval, error)
@@ -456,6 +461,17 @@ type RuntimeSession struct {
 	ExpiresAt             time.Time       `json:"expires_at"`
 	CreatedAt             time.Time       `json:"created_at"`
 	RevokedAt             *time.Time      `json:"revoked_at,omitempty"`
+}
+
+// RuntimePlaceholder is an agent-scoped placeholder that resolves to an
+// existing vault credential at proxy runtime.
+type RuntimePlaceholder struct {
+	Placeholder string     `json:"placeholder"`
+	UserID      string     `json:"user_id"`
+	AgentID     string     `json:"agent_id"`
+	ServiceID   string     `json:"service_id"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
 // OneOffApproval is a single-use retry artifact for blocked runtime requests.

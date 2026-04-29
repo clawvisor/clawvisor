@@ -3,13 +3,16 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 type RuntimeManager interface {
@@ -24,10 +27,11 @@ type RuntimeHandler struct {
 	st      store.Store
 	manager RuntimeManager
 	cfg     *config.Config
+	vault   vault.Vault
 }
 
-func NewRuntimeHandler(st store.Store, manager RuntimeManager, cfg *config.Config) *RuntimeHandler {
-	return &RuntimeHandler{st: st, manager: manager, cfg: cfg}
+func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config) *RuntimeHandler {
+	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg}
 }
 
 func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +64,54 @@ func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.vault == nil {
+		writeError(w, http.StatusConflict, "RUNTIME_PLACEHOLDERS_DISABLED", "runtime placeholder vault is not configured")
+		return
+	}
+	var req struct {
+		Service string `json:"service"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Service == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service is required")
+		return
+	}
+	if _, err := h.vault.Get(r.Context(), agent.UserID, req.Service); err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "SERVICE_NOT_ACTIVATED", "service credential is not activated")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load service credential")
+		return
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(req.Service))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint runtime placeholder")
+		return
+	}
+	if err := h.st.CreateRuntimePlaceholder(r.Context(), &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      agent.UserID,
+		AgentID:     agent.ID,
+		ServiceID:   req.Service,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save runtime placeholder")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"placeholder": placeholder,
+		"service":     req.Service,
+	})
 }
 
 func (h *RuntimeHandler) ListSessions(w http.ResponseWriter, r *http.Request) {

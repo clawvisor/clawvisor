@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+var placeholderPrefixReplacer = strings.NewReplacer(".", "_", ":", "_", "-", "_", "/", "_")
+
+func PlaceholderPrefix(service string) string {
+	safe := placeholderPrefixReplacer.Replace(strings.ToLower(strings.TrimSpace(service)))
+	if safe == "" {
+		safe = "unknown"
+	}
+	return ShadowMarker + "_" + safe + "_"
+}
+
 const ShadowMarker = "autovault"
 const legacyShadowMarker = "clawvisor"
 

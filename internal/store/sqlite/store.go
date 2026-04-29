@@ -1642,6 +1642,61 @@ func scanSQLiteRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*st
 	return sess, nil
 }
 
+// ── Runtime Placeholders ─────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
+		VALUES (?,?,?,?,?)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, formatNullableTime(placeholder.LastUsedAt))
+	return err
+}
+
+func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders WHERE placeholder = ?
+	`, placeholder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimePlaceholder(rows)
+}
+
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ? WHERE placeholder = ?`,
+		usedAt.UTC().Format(time.RFC3339), placeholder)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
+	placeholder := &store.RuntimePlaceholder{}
+	var createdAt string
+	var lastUsedAt *string
+	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &createdAt, &lastUsedAt); err != nil {
+		return nil, err
+	}
+	placeholder.CreatedAt = parseTime(createdAt)
+	if lastUsedAt != nil {
+		t := parseTime(*lastUsedAt)
+		placeholder.LastUsedAt = &t
+	}
+	return placeholder, nil
+}
+
 // ── One-Off Approvals ────────────────────────────────────────────────────────
 
 func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {

@@ -43,6 +43,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			return err
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store})
+		runtimeSrv.InstallPlaceholderSwap(runtimeproxy.PlaceholderHooks{
+			Store: opts.Store,
+			Vault: opts.Vault,
+		})
 		reviewCache := runtimereview.NewApprovalCache()
 		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{
 			Store:       opts.Store,
@@ -79,10 +83,11 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
 		if runtimeMgr != nil {
-			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, runtimeMgr, opts.Config)
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)
 			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))
+			mux.Handle("POST /api/runtime/placeholders", agent(http.HandlerFunc(runtimeHandler.CreatePlaceholder)))
 			mux.Handle("GET /api/runtime/sessions", user(http.HandlerFunc(runtimeHandler.ListSessions)))
 			mux.Handle("POST /api/runtime/sessions/{id}/revoke", user(http.HandlerFunc(runtimeHandler.RevokeSession)))
 			mux.Handle("GET /api/runtime/status", user(http.HandlerFunc(runtimeHandler.Status)))

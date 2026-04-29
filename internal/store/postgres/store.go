@@ -1505,6 +1505,53 @@ func scanRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.Ru
 	return sess, nil
 }
 
+// ── Runtime Placeholders ─────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
+		VALUES ($1,$2,$3,$4,$5)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, placeholder.LastUsedAt)
+	return err
+}
+
+func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders WHERE placeholder = $1
+	`, placeholder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimePlaceholder(rows)
+}
+
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1 WHERE placeholder = $2`, usedAt, placeholder)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
+	placeholder := &store.RuntimePlaceholder{}
+	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &placeholder.CreatedAt, &placeholder.LastUsedAt); err != nil {
+		return nil, err
+	}
+	return placeholder, nil
+}
+
 // ── One-Off Approvals ────────────────────────────────────────────────────────
 
 func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {
