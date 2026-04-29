@@ -31,6 +31,7 @@ var (
 )
 
 type dockerProxyOptions struct {
+	Credentials  *resolvedAgentCredentials
 	BaseURL      string
 	ContainerURL string
 	AgentToken   string
@@ -100,6 +101,9 @@ Example:
 			return fmt.Errorf("parse docker run args: %w", err)
 		}
 		imageIdx += 2
+		if imageIdx+1 < len(args) {
+			_ = maybeOfferStarterProfile(opts.Credentials, args[imageIdx+1:])
+		}
 		injected := buildDockerRunInjection(buildDockerAgentEnvVars(opts, false), opts.CAHost, opts.CAInside, opts.ProxyHost)
 		final := make([]string, 0, len(args)+len(injected))
 		final = append(final, args[:imageIdx]...)
@@ -171,6 +175,7 @@ func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
 		caHost = defaultRuntimeProxyCAHostPath()
 	}
 	return &dockerProxyOptions{
+		Credentials:  creds,
 		BaseURL:      creds.BaseURL,
 		ContainerURL: containerURL,
 		AgentToken:   creds.AgentToken,
@@ -466,6 +471,7 @@ func init() {
 		subcmd.Flags().IntVar(&dockerProxyPort, "proxy-port", 25290, "Port the runtime proxy listens on")
 		subcmd.Flags().StringVar(&dockerCAInside, "ca-path", "/clawvisor/ca.pem", "Path the runtime proxy CA will be mounted at inside the container")
 		subcmd.Flags().StringVar(&dockerCAHost, "ca-host-path", "", "Path to the runtime proxy CA on the host (default: ~/.clawvisor/runtime-proxy/ca.pem)")
+		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")
 		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
 	agentDockerEnvCmd.Flags().StringVar(&dockerEnvFormat, "format", "env", "Output format: env, export, or docker-args")

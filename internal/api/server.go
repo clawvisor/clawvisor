@@ -381,7 +381,7 @@ func (s *Server) routes() http.Handler {
 	}
 	healthHandler := handlers.NewHealthHandler(s.store, s.vault, authMode)
 	restrictionsHandler := handlers.NewRestrictionsHandler(s.store)
-	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger)
+	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger, s.cfg)
 	auditHandler := handlers.NewAuditHandler(s.store)
 	// The Telegram notifier also implements TelegramPairer and GroupObserver for
 	// pairing and group chat observation flows.
@@ -581,6 +581,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents", user(agentsHandler.List))
 	mux.Handle("POST /api/agents", user(agentsHandler.Create))
 	mux.Handle("POST /api/agents/{id}/rotate", user(agentsHandler.RotateToken))
+	mux.Handle("GET /api/agents/{id}/runtime-settings", user(agentsHandler.GetRuntimeSettings))
+	mux.Handle("PUT /api/agents/{id}/runtime-settings", user(agentsHandler.UpdateRuntimeSettings))
 	mux.Handle("DELETE /api/agents/{id}", user(agentsHandler.Delete))
 
 	// Notifications (user JWT)

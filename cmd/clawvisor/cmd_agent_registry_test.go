@@ -131,7 +131,7 @@ func TestRuntimeBootstrapOptionsFromFlagsUsesRegisteredAgent(t *testing.T) {
 		t.Fatalf("saveAgentRegistry: %v", err)
 	}
 
-	prevName, prevToken, prevURL, prevMode, prevTTL, prevObserve := runtimeAgentName, runtimeAgentToken, runtimeServerURL, runtimeMode, runtimeTTLSeconds, runtimeObserve
+	prevName, prevToken, prevURL, prevMode, prevTTL, prevObserve, prevProfile := runtimeAgentName, runtimeAgentToken, runtimeServerURL, runtimeMode, runtimeTTLSeconds, runtimeObserve, runtimeProfileOverride
 	t.Cleanup(func() {
 		runtimeAgentName = prevName
 		runtimeAgentToken = prevToken
@@ -139,6 +139,7 @@ func TestRuntimeBootstrapOptionsFromFlagsUsesRegisteredAgent(t *testing.T) {
 		runtimeMode = prevMode
 		runtimeTTLSeconds = prevTTL
 		runtimeObserve = prevObserve
+		runtimeProfileOverride = prevProfile
 	})
 
 	runtimeAgentName = "alpha"
@@ -147,8 +148,9 @@ func TestRuntimeBootstrapOptionsFromFlagsUsesRegisteredAgent(t *testing.T) {
 	runtimeMode = "proxy"
 	runtimeTTLSeconds = 123
 	runtimeObserve = true
+	runtimeProfileOverride = ""
 
-	opts, err := runtimeBootstrapOptionsFromFlags()
+	opts, err := runtimeBootstrapOptionsFromFlags(nil)
 	if err != nil {
 		t.Fatalf("runtimeBootstrapOptionsFromFlags: %v", err)
 	}

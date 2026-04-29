@@ -667,10 +667,20 @@ func mergeRuntimeSessionMetadata(existing map[string]any, settings store.AgentRu
 	for key, value := range existing {
 		merged[key] = value
 	}
-	merged["runtime_enabled"] = settings.RuntimeEnabled
-	merged["runtime_mode"] = settings.RuntimeMode
-	merged["starter_profile"] = settings.StarterProfile
-	merged["outbound_credential_mode"] = settings.OutboundCredentialMode
-	merged["inject_stored_bearer"] = settings.InjectStoredBearer
+	if _, ok := merged["runtime_enabled"]; !ok {
+		merged["runtime_enabled"] = settings.RuntimeEnabled
+	}
+	if _, ok := merged["runtime_mode"]; !ok {
+		merged["runtime_mode"] = settings.RuntimeMode
+	}
+	if _, ok := merged["starter_profile"]; !ok {
+		merged["starter_profile"] = settings.StarterProfile
+	}
+	if _, ok := merged["outbound_credential_mode"]; !ok {
+		merged["outbound_credential_mode"] = settings.OutboundCredentialMode
+	}
+	if _, ok := merged["inject_stored_bearer"]; !ok {
+		merged["inject_stored_bearer"] = settings.InjectStoredBearer
+	}
 	return merged
 }

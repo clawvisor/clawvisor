@@ -34,6 +34,8 @@ type registeredAgent struct {
 
 type resolvedAgentCredentials struct {
 	Alias      string
+	AgentID    string
+	AgentName  string
 	AgentToken string
 	BaseURL    string
 }
@@ -206,6 +208,8 @@ func resolveAgentCredentials(agentName, agentToken, baseURL string) (*resolvedAg
 		}
 		return &resolvedAgentCredentials{
 			Alias:      name,
+			AgentID:    entry.AgentID,
+			AgentName:  entry.AgentName,
 			AgentToken: entry.Token,
 			BaseURL:    resolvedURL,
 		}, nil

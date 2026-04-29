@@ -27,7 +27,7 @@ var agentRuntimeEnvCmd = &cobra.Command{
 	Short: "Print proxy environment exports for a runtime-scoped agent run",
 	Long:  "Mint a short-lived runtime session for an agent token and print shell exports that route the child process through Clawvisor's embedded runtime proxy.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts, err := runtimeBootstrapOptionsFromFlags()
+		opts, err := runtimeBootstrapOptionsFromFlags(cmd)
 		if err != nil {
 			return err
 		}
@@ -40,6 +40,7 @@ var agentRuntimeEnvCmd = &cobra.Command{
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		printObserveModeNotice(session.ObservationMode)
 		for _, pair := range envPairs {
 			key, value, _ := strings.Cut(pair, "=")
 			fmt.Printf("export %s=%s\n", key, shellQuote(value))
@@ -55,10 +56,11 @@ var agentRuntimeRunCmd = &cobra.Command{
 	Long:  "Mint a short-lived runtime session for an agent token, inject the required proxy environment, and exec the given command under that session.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts, err := runtimeBootstrapOptionsFromFlags()
+		opts, err := runtimeBootstrapOptionsFromFlags(cmd)
 		if err != nil {
 			return err
 		}
+		_ = maybeOfferStarterProfile(opts.Credentials, args)
 		session, err := createRuntimeBootstrapSession(opts)
 		if err != nil {
 			return err
@@ -73,44 +75,57 @@ var agentRuntimeRunCmd = &cobra.Command{
 		child.Stdout = os.Stdout
 		child.Stderr = os.Stderr
 		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		printObserveModeNotice(session.ObservationMode)
 		return child.Run()
 	},
 	SilenceUsage: true,
 }
 
 type runtimeBootstrapOptions struct {
+	Credentials *resolvedAgentCredentials
 	BaseURL     string
 	AgentToken  string
 	Mode        string
 	TTLSeconds  int
-	Observation bool
+	Observation *bool
+	Profile     string
 }
 
-func runtimeBootstrapOptionsFromFlags() (*runtimeBootstrapOptions, error) {
+func runtimeBootstrapOptionsFromFlags(cmd *cobra.Command) (*runtimeBootstrapOptions, error) {
 	creds, err := resolveAgentCredentials(runtimeAgentName, runtimeAgentToken, runtimeServerURL)
 	if err != nil {
 		return nil, err
 	}
+	var observation *bool
+	if cmd != nil && cmd.Flags().Changed("observe") {
+		observe := runtimeObserve
+		observation = &observe
+	}
 	return &runtimeBootstrapOptions{
+		Credentials: creds,
 		BaseURL:     creds.BaseURL,
 		AgentToken:  creds.AgentToken,
 		Mode:        runtimeMode,
 		TTLSeconds:  runtimeTTLSeconds,
-		Observation: runtimeObserve,
+		Observation: observation,
+		Profile:     strings.TrimSpace(strings.ToLower(runtimeProfileOverride)),
 	}, nil
 }
 
 func createRuntimeBootstrapSession(opts *runtimeBootstrapOptions) (*client.CreateRuntimeSessionResponse, error) {
 	cl := client.New(opts.BaseURL, "")
 	cl.SetAccessToken(opts.AgentToken)
-	observe := opts.Observation
+	metadata := map[string]any{
+		"launcher": "clawvisor-agent-run",
+	}
+	if opts.Profile != "" {
+		metadata["starter_profile"] = opts.Profile
+	}
 	return cl.CreateRuntimeSession(client.CreateRuntimeSessionRequest{
 		Mode:            opts.Mode,
-		ObservationMode: &observe,
+		ObservationMode: opts.Observation,
 		TTLSeconds:      opts.TTLSeconds,
-		Metadata: map[string]any{
-			"launcher": "clawvisor-agent-run",
-		},
+		Metadata:        metadata,
 	})
 }
 
@@ -264,6 +279,7 @@ func init() {
 		subcmd.Flags().StringVar(&runtimeMode, "mode", "proxy", "Runtime session mode")
 		subcmd.Flags().IntVar(&runtimeTTLSeconds, "ttl-seconds", 0, "Runtime session TTL in seconds (default: server runtime_proxy.session_ttl_seconds)")
 		subcmd.Flags().BoolVar(&runtimeObserve, "observe", false, "Create the runtime session in observation mode")
+		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")
 		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
 	agentCmd.AddCommand(agentRuntimeEnvCmd)
