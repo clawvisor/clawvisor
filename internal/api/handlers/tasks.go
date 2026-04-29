@@ -21,6 +21,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -103,12 +105,17 @@ func (h *TasksHandler) SetGroupApproval(buf groupchat.Buffer, health *llm.Health
 // ── Create ────────────────────────────────────────────────────────────────────
 
 type createTaskRequest struct {
-	Purpose           string              `json:"purpose"`
-	AuthorizedActions []store.TaskAction  `json:"authorized_actions"`
-	PlannedCalls      []store.PlannedCall `json:"planned_calls,omitempty"`
-	ExpiresInSeconds  int                 `json:"expires_in_seconds"`
-	CallbackURL       string              `json:"callback_url"`
-	Lifetime          string              `json:"lifetime"` // "session" (default) or "standing"
+	Purpose                string                        `json:"purpose"`
+	AuthorizedActions      []store.TaskAction            `json:"authorized_actions"`
+	PlannedCalls           []store.PlannedCall           `json:"planned_calls,omitempty"`
+	ExpectedTools          []runtimetasks.ExpectedTool   `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []runtimetasks.ExpectedEgress `json:"expected_egress_json,omitempty"`
+	IntentVerificationMode string                        `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                        `json:"expected_use,omitempty"`
+	SchemaVersion          int                           `json:"schema_version,omitempty"`
+	ExpiresInSeconds       int                           `json:"expires_in_seconds"`
+	CallbackURL            string                        `json:"callback_url"`
+	Lifetime               string                        `json:"lifetime"` // "session" (default) or "standing"
 }
 
 // Create declares a new task scope.
@@ -130,18 +137,19 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Collect all missing top-level required fields at once so the caller
 	// can fix everything in a single round-trip.
+	hasRuntimeEnvelope := len(req.ExpectedTools) > 0 || len(req.ExpectedEgress) > 0
 	var missingFields []string
 	if req.Purpose == "" {
 		missingFields = append(missingFields, "purpose")
 	}
-	if len(req.AuthorizedActions) == 0 {
-		missingFields = append(missingFields, "authorized_actions")
+	if len(req.AuthorizedActions) == 0 && !hasRuntimeEnvelope {
+		missingFields = append(missingFields, "authorized_actions", "expected_tools_json", "expected_egress_json")
 	}
 	if len(missingFields) > 0 {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error:         "missing required fields: " + strings.Join(missingFields, ", "),
 			Code:          "INVALID_REQUEST",
-			Hint:          "A task requires a purpose describing what the agent will do and at least one authorized action.",
+			Hint:          "A task requires a purpose describing what the agent will do and at least one scope representation: authorized_actions, expected_tools_json, or expected_egress_json.",
 			MissingFields: missingFields,
 			Example: map[string]any{
 				"purpose": "Read and summarize recent emails",
@@ -151,6 +159,68 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
+	}
+	if len(req.PlannedCalls) > 0 && len(req.AuthorizedActions) == 0 {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error: "planned_calls requires authorized_actions",
+			Code:  "INVALID_REQUEST",
+			Hint:  "planned_calls are matched against authorized_actions and are only supported on adapter-backed task scopes.",
+		})
+		return
+	}
+
+	schemaVersion := req.SchemaVersion
+	if schemaVersion == 0 {
+		if hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "" {
+			schemaVersion = 2
+		} else {
+			schemaVersion = 1
+		}
+	}
+	if schemaVersion != 1 && schemaVersion != 2 {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:     fmt.Sprintf("invalid schema_version %d", req.SchemaVersion),
+			Code:      "INVALID_REQUEST",
+			Hint:      "schema_version must be 1 or 2.",
+			Available: []string{"1", "2"},
+		})
+		return
+	}
+	if schemaVersion == 1 && (hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "") {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error: "schema_version=1 cannot be used with v2 task envelope fields",
+			Code:  "INVALID_REQUEST",
+			Hint:  "Use schema_version 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use.",
+		})
+		return
+	}
+
+	env := runtimetasks.Envelope{
+		ExpectedTools:          req.ExpectedTools,
+		ExpectedEgress:         req.ExpectedEgress,
+		IntentVerificationMode: req.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          schemaVersion,
+	}
+	if hasRuntimeEnvelope && env.IntentVerificationMode == "" {
+		env.IntentVerificationMode = "strict"
+	}
+	if hasRuntimeEnvelope {
+		if issues := runtimepolicy.ValidateTaskEnvelope(env); len(issues) > 0 {
+			var messages []string
+			var fields []string
+			for _, issue := range issues {
+				messages = append(messages, issue.Field+": "+issue.Message)
+				fields = append(fields, issue.Field)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         strings.Join(messages, "; "),
+				Code:          "INVALID_REQUEST",
+				MissingFields: fields,
+				Hint:          "Task envelope v2 items must declare specific tools or egress targets with valid shapes and human-readable why fields.",
+			})
+			return
+		}
 	}
 
 	// Validate each authorized action.
@@ -322,7 +392,19 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Content-based dedup: if an identical task creation request was recently made
 	// by the same agent, return the existing task instead of creating a duplicate.
-	taskDedupKey := buildDedupKey("task", agent.ID, req.Purpose, req.AuthorizedActions, lifetime)
+	taskDedupKey := buildDedupKey(
+		"task",
+		agent.ID,
+		req.Purpose,
+		req.AuthorizedActions,
+		req.PlannedCalls,
+		req.ExpectedTools,
+		req.ExpectedEgress,
+		env.IntentVerificationMode,
+		req.ExpectedUse,
+		schemaVersion,
+		lifetime,
+	)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)
 		writeJSON(w, http.StatusCreated, resp)
@@ -336,35 +418,66 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// All tasks start as pending_approval — no policy-based auto-activation.
 	task := &store.Task{
-		ID:                uuid.New().String(),
-		UserID:            agent.UserID,
-		AgentID:           agent.ID,
-		Purpose:           req.Purpose,
-		Status:            "pending_approval",
-		Lifetime:          lifetime,
-		AuthorizedActions: req.AuthorizedActions,
-		PlannedCalls:      req.PlannedCalls,
-		ExpiresInSeconds:  expiresIn,
+		ID:                     uuid.New().String(),
+		UserID:                 agent.UserID,
+		AgentID:                agent.ID,
+		Purpose:                req.Purpose,
+		Status:                 "pending_approval",
+		Lifetime:               lifetime,
+		AuthorizedActions:      req.AuthorizedActions,
+		PlannedCalls:           req.PlannedCalls,
+		IntentVerificationMode: env.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          schemaVersion,
+		ExpiresInSeconds:       expiresIn,
 	}
 	if req.CallbackURL != "" {
 		task.CallbackURL = &req.CallbackURL
 	}
+	if len(req.ExpectedTools) > 0 {
+		b, err := json.Marshal(req.ExpectedTools)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_tools_json")
+			return
+		}
+		task.ExpectedTools = json.RawMessage(b)
+	}
+	if len(req.ExpectedEgress) > 0 {
+		b, err := json.Marshal(req.ExpectedEgress)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_egress_json")
+			return
+		}
+		task.ExpectedEgress = json.RawMessage(b)
+	}
 
 	// Run risk assessment (non-blocking — errors are logged, not propagated).
 	if h.assessor != nil {
-		assessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
-			Purpose:           req.Purpose,
-			AuthorizedActions: req.AuthorizedActions,
-			PlannedCalls:      req.PlannedCalls,
-			AgentName:         agent.Name,
-		})
-		if err != nil {
-			h.logger.Warn("task risk assessment failed", "error", err)
+		var assessment *taskrisk.RiskAssessment
+		if len(req.AuthorizedActions) > 0 {
+			legacyAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+				Purpose:           req.Purpose,
+				AuthorizedActions: req.AuthorizedActions,
+				PlannedCalls:      req.PlannedCalls,
+				AgentName:         agent.Name,
+			})
+			if err != nil {
+				h.logger.Warn("task risk assessment failed", "error", err)
+			}
+			assessment = legacyAssessment
+		}
+		if hasRuntimeEnvelope {
+			envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+			assessment = mergeRiskAssessments(assessment, envelopeAssessment)
 		}
 		if assessment != nil {
 			task.RiskLevel = assessment.RiskLevel
 			task.RiskDetails = taskrisk.MarshalAssessment(assessment)
 		}
+	} else if hasRuntimeEnvelope {
+		assessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+		task.RiskLevel = assessment.RiskLevel
+		task.RiskDetails = taskrisk.MarshalAssessment(assessment)
 	}
 
 	// Check for group chat approval via LLM analysis of recent messages.
@@ -808,6 +921,44 @@ func applyScopeOverrides(actions []store.TaskAction, overrides []scopeOverride) 
 		}
 	}
 	return out
+}
+
+func mergeRiskAssessments(primary, secondary *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	out := *primary
+	out.RiskLevel = highestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
+	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
+	if secondary.Explanation != "" && highestRiskLevel(primary.RiskLevel, secondary.RiskLevel) == secondary.RiskLevel {
+		out.Explanation = secondary.Explanation
+	}
+	if out.Model == "" {
+		out.Model = secondary.Model
+	}
+	if out.LatencyMS == 0 {
+		out.LatencyMS = secondary.LatencyMS
+	}
+	return &out
+}
+
+func highestRiskLevel(a, b string) string {
+	order := map[string]int{
+		"":         -1,
+		"low":      0,
+		"medium":   1,
+		"high":     2,
+		"critical": 3,
+		"unknown":  4,
+	}
+	if order[b] > order[a] {
+		return b
+	}
+	return a
 }
 
 // ── UpdateScope ───────────────────────────────────────────────────────────────

@@ -417,6 +417,25 @@ export interface PlannedCall {
   reason: string
 }
 
+export interface ExpectedTool {
+  tool_name: string
+  why: string
+  input_shape?: Record<string, unknown>
+  input_regex?: string
+}
+
+export interface ExpectedEgress {
+  host: string
+  why: string
+  method?: string
+  path?: string
+  path_regex?: string
+  query_shape?: Record<string, unknown>
+  body_shape?: Record<string, unknown>
+  headers?: Record<string, unknown>
+  credential_alias?: string
+}
+
 export interface Task {
   id: string
   user_id: string
@@ -426,6 +445,11 @@ export interface Task {
   status: 'pending_approval' | 'pending_scope_expansion' | 'active' | 'completed' | 'expired' | 'denied' | 'revoked'
   authorized_actions: TaskAction[]
   planned_calls?: PlannedCall[]
+  expected_tools_json?: ExpectedTool[]
+  expected_egress_json?: ExpectedEgress[]
+  intent_verification_mode?: 'strict' | 'lenient' | 'off'
+  expected_use?: string
+  schema_version?: number
   callback_url?: string
   created_at: string
   approved_at?: string

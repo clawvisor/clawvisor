@@ -33,12 +33,12 @@ type QueueResponse struct {
 }
 
 type QueueItem struct {
-	Type      string          `json:"type"` // "approval" or "task"
-	ID        string          `json:"id"`
-	CreatedAt time.Time       `json:"created_at"`
-	ExpiresAt *time.Time      `json:"expires_at"`
-	Approval  *QueueApproval  `json:"approval,omitempty"`
-	Task      *Task           `json:"task,omitempty"`
+	Type      string         `json:"type"` // "approval" or "task"
+	ID        string         `json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	ExpiresAt *time.Time     `json:"expires_at"`
+	Approval  *QueueApproval `json:"approval,omitempty"`
+	Task      *Task          `json:"task,omitempty"`
 }
 
 type QueueApproval struct {
@@ -57,25 +57,57 @@ type TasksResponse struct {
 	Total int    `json:"total"`
 }
 
+type PlannedCall struct {
+	Service string         `json:"service"`
+	Action  string         `json:"action"`
+	Params  map[string]any `json:"params,omitempty"`
+	Reason  string         `json:"reason"`
+}
+
+type ExpectedTool struct {
+	ToolName   string         `json:"tool_name"`
+	Why        string         `json:"why"`
+	InputShape map[string]any `json:"input_shape,omitempty"`
+	InputRegex string         `json:"input_regex,omitempty"`
+}
+
+type ExpectedEgress struct {
+	Host            string         `json:"host"`
+	Why             string         `json:"why"`
+	Method          string         `json:"method,omitempty"`
+	Path            string         `json:"path,omitempty"`
+	PathRegex       string         `json:"path_regex,omitempty"`
+	QueryShape      map[string]any `json:"query_shape,omitempty"`
+	BodyShape       map[string]any `json:"body_shape,omitempty"`
+	Headers         map[string]any `json:"headers,omitempty"`
+	CredentialAlias string         `json:"credential_alias,omitempty"`
+}
+
 type Task struct {
-	ID                string       `json:"id"`
-	UserID            string       `json:"user_id"`
-	AgentID           string       `json:"agent_id"`
-	AgentName         string       `json:"agent_name,omitempty"`
-	Purpose           string       `json:"purpose"`
-	Lifetime          string       `json:"lifetime"` // "session" or "standing"
-	Status            string       `json:"status"`
-	AuthorizedActions []TaskAction `json:"authorized_actions"`
-	CallbackURL       string       `json:"callback_url,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	ApprovedAt        *time.Time   `json:"approved_at,omitempty"`
-	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`
-	ExpiresInSeconds  int          `json:"expires_in_seconds"`
-	RequestCount      int          `json:"request_count"`
-	PendingAction     *TaskAction     `json:"pending_action,omitempty"`
-	PendingReason     string          `json:"pending_reason,omitempty"`
-	RiskLevel         string          `json:"risk_level,omitempty"`
-	RiskDetails       json.RawMessage `json:"risk_details,omitempty"`
+	ID                     string           `json:"id"`
+	UserID                 string           `json:"user_id"`
+	AgentID                string           `json:"agent_id"`
+	AgentName              string           `json:"agent_name,omitempty"`
+	Purpose                string           `json:"purpose"`
+	Lifetime               string           `json:"lifetime"` // "session" or "standing"
+	Status                 string           `json:"status"`
+	AuthorizedActions      []TaskAction     `json:"authorized_actions"`
+	PlannedCalls           []PlannedCall    `json:"planned_calls,omitempty"`
+	ExpectedTools          []ExpectedTool   `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []ExpectedEgress `json:"expected_egress_json,omitempty"`
+	IntentVerificationMode string           `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string           `json:"expected_use,omitempty"`
+	SchemaVersion          int              `json:"schema_version,omitempty"`
+	CallbackURL            string           `json:"callback_url,omitempty"`
+	CreatedAt              time.Time        `json:"created_at"`
+	ApprovedAt             *time.Time       `json:"approved_at,omitempty"`
+	ExpiresAt              *time.Time       `json:"expires_at,omitempty"`
+	ExpiresInSeconds       int              `json:"expires_in_seconds"`
+	RequestCount           int              `json:"request_count"`
+	PendingAction          *TaskAction      `json:"pending_action,omitempty"`
+	PendingReason          string           `json:"pending_reason,omitempty"`
+	RiskLevel              string           `json:"risk_level,omitempty"`
+	RiskDetails            json.RawMessage  `json:"risk_details,omitempty"`
 }
 
 type TaskAction struct {
@@ -182,22 +214,22 @@ type ServicesResponse struct {
 }
 
 type ServiceInfo struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	Description        string            `json:"description"`
-	Alias              string            `json:"alias,omitempty"`
-	OAuth              bool              `json:"oauth"`
-	OAuthEndpoint      string            `json:"oauth_endpoint,omitempty"`
-	DeviceFlow         bool              `json:"device_flow,omitempty"`
-	PKCEFlow           bool              `json:"pkce_flow,omitempty"`
-	RequiresActivation bool              `json:"requires_activation"`
-	CredentialFree     bool              `json:"credential_free"`
-	Actions            json.RawMessage   `json:"actions"`
-	Variables          []VariableMeta    `json:"variables,omitempty"`
-	Status             string            `json:"status"` // "activated" or "not_activated"
-	ActivatedAt        string            `json:"activated_at,omitempty"`
-	SetupURL           string            `json:"setup_url,omitempty"`
-	KeyHint            string            `json:"key_hint,omitempty"`
+	ID                 string          `json:"id"`
+	Name               string          `json:"name"`
+	Description        string          `json:"description"`
+	Alias              string          `json:"alias,omitempty"`
+	OAuth              bool            `json:"oauth"`
+	OAuthEndpoint      string          `json:"oauth_endpoint,omitempty"`
+	DeviceFlow         bool            `json:"device_flow,omitempty"`
+	PKCEFlow           bool            `json:"pkce_flow,omitempty"`
+	RequiresActivation bool            `json:"requires_activation"`
+	CredentialFree     bool            `json:"credential_free"`
+	Actions            json.RawMessage `json:"actions"`
+	Variables          []VariableMeta  `json:"variables,omitempty"`
+	Status             string          `json:"status"` // "activated" or "not_activated"
+	ActivatedAt        string          `json:"activated_at,omitempty"`
+	SetupURL           string          `json:"setup_url,omitempty"`
+	KeyHint            string          `json:"key_hint,omitempty"`
 }
 
 // VariableMeta holds metadata for a user-configurable adapter variable.

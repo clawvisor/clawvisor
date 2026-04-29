@@ -50,6 +50,38 @@ func toolDefs() []Tool {
 						},
 						"description": "Actions this task is authorized to perform"
 					},
+					"expected_tools_json": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"tool_name": {"type": "string", "description": "Exact tool name expected at runtime"},
+								"why": {"type": "string", "description": "Why this tool is expected to be used"},
+								"input_shape": {"type": "object", "description": "Optional required/forbidden key shape for tool input"},
+								"input_regex": {"type": "string", "description": "Optional regex compatibility escape hatch for matching serialized tool input"}
+							},
+							"required": ["tool_name", "why"]
+						},
+						"description": "Canonical v2 runtime tool expectations. Use this for proxy/runtime-backed tasks."
+					},
+					"expected_egress_json": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"host": {"type": "string", "description": "Expected egress host, optionally wildcarded as *.example.com"},
+								"why": {"type": "string", "description": "Why this egress target is needed"},
+								"method": {"type": "string", "description": "Optional HTTP method constraint"},
+								"path": {"type": "string", "description": "Optional exact path match"},
+								"path_regex": {"type": "string", "description": "Optional regex path match"},
+								"query_shape": {"type": "object", "description": "Optional required/forbidden key shape for query params"},
+								"body_shape": {"type": "object", "description": "Optional required/forbidden key shape for request body"},
+								"headers": {"type": "object", "description": "Optional required/forbidden key shape for headers"}
+							},
+							"required": ["host", "why"]
+						},
+						"description": "Canonical v2 runtime egress expectations. Use this for proxy/runtime-backed tasks."
+					},
 					"planned_calls": {
 						"type": "array",
 						"items": {
@@ -64,12 +96,20 @@ func toolDefs() []Tool {
 						},
 						"description": "Optional pre-registered calls. Calls matching a planned call skip per-request intent verification. Each must be covered by authorized_actions and must include params."
 					},
+					"intent_verification_mode": {"type": "string", "enum": ["strict", "lenient", "off"], "description": "Runtime intent verification strictness for v2 envelopes. Defaults to strict."},
+					"expected_use": {"type": "string", "description": "Top-level intended use summary for runtime-backed tasks"},
+					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use."},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
 					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
 					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
-				"required": ["purpose", "authorized_actions"]
+				"required": ["purpose"],
+				"anyOf": [
+					{"required": ["authorized_actions"]},
+					{"required": ["expected_tools_json"]},
+					{"required": ["expected_egress_json"]}
+				]
 			}`),
 		},
 		{
