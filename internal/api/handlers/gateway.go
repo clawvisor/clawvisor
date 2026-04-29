@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
@@ -332,28 +333,101 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Step 2: Task ID required ─────────────────────────────────────────────
+	// ── Step 2: Task context resolution ──────────────────────────────────────
 	if req.TaskID == "" {
-		e := baseEntry("reject", "validation_error", nil)
-		e.DurationMS = int(time.Since(start).Milliseconds())
-		errMsg := "missing required field: task_id"
-		e.ErrorMsg = &errMsg
-		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-			h.logger.Warn("audit log failed", "err", logErr)
+		tasks, _, err := h.store.ListTasks(ctx, agent.UserID, store.TaskFilter{ActiveOnly: true})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load active tasks")
+			return
 		}
-		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-			Error:         errMsg,
-			Code:          "TASK_REQUIRED",
-			MissingFields: []string{"task_id"},
-			Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
-			Example: map[string]any{
-				"service": "google.gmail",
-				"action":  "list_messages",
-				"reason":  "Fetch recent emails to summarize for the user",
-				"task_id": "<task_id from POST /api/tasks>",
-			},
-		})
-		return
+		classification := runtimepolicy.ClassifyGatewayRequest(tasks, agent.ID, serviceType, serviceAlias, req.Action)
+		switch classification.Kind {
+		case runtimepolicy.ClassificationBelongsToExistingTask:
+			req.TaskID = classification.MatchedTask.ID
+		case runtimepolicy.ClassificationAmbiguous:
+			e := baseEntry("review", "blocked", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "request matches multiple active tasks; specify task_id explicitly"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			resp := map[string]any{
+				"status":          "ambiguous_task",
+				"request_id":      req.RequestID,
+				"audit_id":        auditID,
+				"code":            "TASK_AMBIGUOUS",
+				"classification":  classification.Kind,
+				"candidate_tasks": summarizeCandidateTasks(classification.CandidateTasks),
+				"message":         "This request is covered by multiple active tasks. Provide task_id explicitly or start a task to bias resolution.",
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusConflict, resp)
+			return
+		case runtimepolicy.ClassificationNeedsNewTask, runtimepolicy.ClassificationOneOff:
+			middleware.AddLogField(ctx, "decision", "approve")
+			middleware.AddLogField(ctx, "outcome", "pending")
+			e := baseEntry("approve", "pending", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
+			blob := buildRequestBlob(req, agent)
+			reason := "raw request needs review before execution"
+			if classification.Kind == runtimepolicy.ClassificationNeedsNewTask {
+				reason = "request is outside every active task and may need a new task"
+			}
+			if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID, req.Context.CallbackURL, expiresAt, reason, nil); routeErr != nil {
+				h.logger.Warn("route to approval failed", "err", routeErr)
+			}
+			if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+				pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, longPollDeadline(r))
+				if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
+					h.executeAndRespond(w, r.Context(), pa, agent.ID)
+					return
+				}
+				if pa == nil {
+					if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), req.RequestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+						writeGatewayStatusResponse(w, entry)
+						return
+					}
+				}
+			}
+			resp := map[string]any{
+				"status":         "pending",
+				"request_id":     req.RequestID,
+				"audit_id":       auditID,
+				"classification": classification.Kind,
+				"message":        fmt.Sprintf("Approval requested. Waiting up to %ds.", h.cfg.Approval.Timeout),
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusAccepted, resp)
+			return
+		default:
+			e := baseEntry("reject", "validation_error", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "missing required field: task_id"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         errMsg,
+				Code:          "TASK_REQUIRED",
+				MissingFields: []string{"task_id"},
+				Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
+				Example: map[string]any{
+					"service": "google.gmail",
+					"action":  "list_messages",
+					"reason":  "Fetch recent emails to summarize for the user",
+					"task_id": "<task_id from POST /api/tasks>",
+				},
+			})
+			return
+		}
 	}
 
 	// ── Step 3: Hardcoded approval check ─────────────────────────────────────
@@ -1958,6 +2032,25 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}
+}
+
+func summarizeCandidateTasks(tasks []*store.Task) []map[string]any {
+	if len(tasks) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id":       task.ID,
+			"purpose":  task.Purpose,
+			"status":   task.Status,
+			"lifetime": task.Lifetime,
+		})
+	}
+	return out
 }
 
 func adapterSupportsAction(adapter adapters.Adapter, action string) bool {

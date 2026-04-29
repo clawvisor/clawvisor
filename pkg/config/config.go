@@ -217,10 +217,11 @@ type RuntimeProxyConfig struct {
 }
 
 type RuntimePolicyConfig struct {
-	ObservationModeDefault  bool `yaml:"observation_mode_default"`
-	InlineApprovalEnabled   bool `yaml:"inline_approval_enabled"`
-	ToolLeaseTimeoutSeconds int  `yaml:"tool_lease_timeout_seconds"`
-	OneOffTTLSeconds        int  `yaml:"one_off_ttl_seconds"`
+	ObservationModeDefault  bool     `yaml:"observation_mode_default"`
+	InlineApprovalEnabled   bool     `yaml:"inline_approval_enabled"`
+	HarnessAllowlist        []string `yaml:"harness_allowlist"`
+	ToolLeaseTimeoutSeconds int      `yaml:"tool_lease_timeout_seconds"`
+	OneOffTTLSeconds        int      `yaml:"one_off_ttl_seconds"`
 }
 
 // RateLimitBucket configures a single rate limit bucket.
@@ -313,6 +314,7 @@ func Default() *Config {
 		RuntimePolicy: RuntimePolicyConfig{
 			ObservationModeDefault:  false,
 			InlineApprovalEnabled:   true,
+			HarnessAllowlist:        nil,
 			ToolLeaseTimeoutSeconds: 300,
 			OneOffTTLSeconds:        300,
 		},

@@ -54,6 +54,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		req.ContentLength = int64(len(bodyBytes))
 
 		host := requestHost(req)
+		if isHarnessAllowlisted(hooks.Config, host) {
+			return req, nil
+		}
 		reqFingerprint := fingerprintRequest(st.Session.AgentID, req, bodyBytes)
 		approvalRequestID := st.Session.ID + ":" + reqFingerprint
 
@@ -292,6 +295,43 @@ func requestHost(req *http.Request) string {
 		return strings.ToLower(req.URL.Hostname())
 	}
 	return strings.ToLower(req.Host)
+}
+
+func isHarnessAllowlisted(cfg *config.Config, host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	if cfg != nil {
+		if endpointHost := normalizedEndpointHost(cfg.LLM.Endpoint); endpointHost != "" && host == endpointHost {
+			return true
+		}
+		for _, allowed := range cfg.RuntimePolicy.HarnessAllowlist {
+			allowed = strings.ToLower(strings.TrimSpace(allowed))
+			if allowed == "" {
+				continue
+			}
+			if host == allowed || strings.HasSuffix(host, "."+allowed) {
+				return true
+			}
+		}
+	}
+	switch host {
+	case "api.anthropic.com", "api.openai.com", "chatgpt.com":
+		return true
+	}
+	return false
+}
+
+func normalizedEndpointHost(endpoint string) string {
+	if strings.TrimSpace(endpoint) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
 }
 
 func fingerprintRequest(agentID string, req *http.Request, body []byte) string {

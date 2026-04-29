@@ -186,13 +186,79 @@ func TestGateway_Block_AuditEntryRecorded(t *testing.T) {
 	}
 }
 
-func TestGateway_NoTaskID_Rejected(t *testing.T) {
-	env := newTestEnv(t, newMockAdapter("google.gmail", "send"))
+func TestGateway_NoTaskID_AutoBindsMatchingTask(t *testing.T) {
+	adapter := newMockAdapter("mock.autobind", "run").
+		withResult("ok", map[string]any{"status": "done"})
+	env := newTestEnv(t, adapter)
 	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.autobind", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
 
-	result := sc.gatewayRequest(env, "req-no-task", "google.gmail", "send")
-	if result["code"] != "TASK_REQUIRED" {
-		t.Errorf("expected code=TASK_REQUIRED, got %v", result["code"])
+	taskID := sc.createApprovedTask(t, env, "mock.autobind", "run", true)
+	result := sc.gatewayRequest(env, "req-no-task-auto", "mock.autobind", "run")
+	if result["status"] != "executed" {
+		t.Fatalf("expected executed status, got %v", result)
+	}
+	if _, ok := result["result"]; !ok {
+		t.Fatalf("expected result payload, got %v", result)
+	}
+
+	entry, err := env.Store.GetAuditEntryByRequestID(context.Background(), "req-no-task-auto", sc.session.UserID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+	if entry.TaskID == nil || *entry.TaskID != taskID {
+		t.Fatalf("expected auto-bound task_id %q, got %+v", taskID, entry.TaskID)
+	}
+}
+
+func TestGateway_NoTaskID_AmbiguousTask(t *testing.T) {
+	adapter := newMockAdapter("mock.ambiguous", "run")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.ambiguous", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	firstTaskID := sc.createApprovedTask(t, env, "mock.ambiguous", "run", true)
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "second ambiguous task",
+		"authorized_actions": []map[string]any{{
+			"service": "mock.ambiguous", "action": "run", "auto_execute": true,
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	secondTaskID := str(t, body, "task_id")
+	if secondTaskID == firstTaskID {
+		t.Fatalf("expected a distinct second task id, got %q", secondTaskID)
+	}
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", secondTaskID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	result := sc.gatewayRequest(env, "req-no-task-ambiguous", "mock.ambiguous", "run")
+	if result["code"] != "TASK_AMBIGUOUS" {
+		t.Fatalf("expected TASK_AMBIGUOUS, got %v", result)
+	}
+	if result["classification"] != "ambiguous" {
+		t.Fatalf("expected ambiguous classification, got %v", result)
+	}
+}
+
+func TestGateway_NoTaskID_UncoveredRoutesToApproval(t *testing.T) {
+	adapter := newMockAdapter("mock.uncovered", "run")
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.uncovered", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	result := sc.gatewayRequest(env, "req-no-task-review", "mock.uncovered", "run")
+	if result["status"] != "pending" {
+		t.Fatalf("expected pending status, got %v", result)
+	}
+	if result["classification"] != "one_off" {
+		t.Fatalf("expected one_off classification, got %v", result)
 	}
 }
 
