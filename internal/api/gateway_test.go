@@ -2,13 +2,17 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
 // ── Restrictions ──────────────────────────────────────────────────────────────
@@ -259,6 +263,111 @@ func TestGateway_NoTaskID_UncoveredRoutesToApproval(t *testing.T) {
 	}
 	if result["classification"] != "one_off" {
 		t.Fatalf("expected one_off classification, got %v", result)
+	}
+}
+
+func TestGateway_NoTaskID_LLMResolvesAmbiguousTask(t *testing.T) {
+	var llmResponse string
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": llmResponse}},
+			},
+		})
+	}))
+	defer llmSrv.Close()
+
+	adapter := newMockAdapter("mock.resolve-ambiguous", "run").
+		withResult("ok", map[string]any{"status": "done"})
+	env := newTestEnvWithLLM(t, testGatewayResolverLLMConfig(llmSrv.URL), adapter)
+	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.resolve-ambiguous", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+
+	firstTaskID := createApprovedVerificationOffTask(t, env, sc, "first ambiguous task", "mock.resolve-ambiguous", "run")
+	secondTaskID := createApprovedVerificationOffTask(t, env, sc, "second ambiguous task", "mock.resolve-ambiguous", "run")
+	if firstTaskID == secondTaskID {
+		t.Fatalf("expected distinct task ids, got %q", firstTaskID)
+	}
+	llmResponse = fmt.Sprintf(`{"kind":"belongs_to_existing_task","task_id":"%s"}`, secondTaskID)
+
+	result := sc.gatewayRequest(env, "req-no-task-resolved-ambiguous", "mock.resolve-ambiguous", "run")
+	if result["status"] != "executed" {
+		t.Fatalf("expected executed status after resolver, got %v", result)
+	}
+
+	entry, err := env.Store.GetAuditEntryByRequestID(context.Background(), "req-no-task-resolved-ambiguous", sc.session.UserID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+	if entry.TaskID == nil || *entry.TaskID != secondTaskID {
+		t.Fatalf("expected resolver-selected task_id %q, got %+v", secondTaskID, entry.TaskID)
+	}
+}
+
+func TestGateway_NoTaskID_LLMResolvesNeedsNewTaskToOneOff(t *testing.T) {
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"kind":"one_off"}`}},
+			},
+		})
+	}))
+	defer llmSrv.Close()
+
+	adapter := newMockAdapter("mock.resolve-review", "run")
+	env := newTestEnvWithLLM(t, testGatewayResolverLLMConfig(llmSrv.URL), adapter)
+	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.resolve-review", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.resolve-review:work", []byte("cred")); err != nil {
+		t.Fatalf("aliased vault seed: %v", err)
+	}
+
+	_ = createApprovedVerificationOffTask(t, env, sc, "existing task on different alias", "mock.resolve-review:work", "run")
+	result := sc.gatewayRequest(env, "req-no-task-llm-one-off", "mock.resolve-review", "run")
+	if result["status"] != "pending" {
+		t.Fatalf("expected pending status, got %v", result)
+	}
+	if result["classification"] != "one_off" {
+		t.Fatalf("expected resolver to classify as one_off, got %v", result)
+	}
+}
+
+func createApprovedVerificationOffTask(t *testing.T, env *testEnv, sc *scenario, purpose, service, action string) string {
+	t.Helper()
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": purpose,
+		"authorized_actions": []map[string]any{{
+			"service": service, "action": action, "auto_execute": true, "verification": "off",
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	taskID := str(t, body, "task_id")
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
+	mustStatus(t, resp, http.StatusOK)
+	return taskID
+}
+
+func testGatewayResolverLLMConfig(endpoint string) config.LLMConfig {
+	return config.LLMConfig{
+		Provider:       "openai",
+		Endpoint:       endpoint,
+		Model:          "test-model",
+		TimeoutSeconds: 5,
+		Verification: config.VerificationConfig{
+			LLMProviderConfig: config.LLMProviderConfig{
+				Enabled:        true,
+				Provider:       "openai",
+				Endpoint:       endpoint,
+				Model:          "test-model",
+				TimeoutSeconds: 5,
+			},
+		},
 	}
 }
 

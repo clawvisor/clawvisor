@@ -1,6 +1,10 @@
 package policy
 
-import "github.com/clawvisor/clawvisor/pkg/store"
+import (
+	"context"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
+)
 
 const (
 	ClassificationBelongsToExistingTask = "belongs_to_existing_task"
@@ -13,6 +17,19 @@ type GatewayRequestClassification struct {
 	Kind           string
 	MatchedTask    *store.Task
 	CandidateTasks []*store.Task
+}
+
+type GatewayRequestResolutionRequest struct {
+	Classification GatewayRequestClassification
+	ServiceType    string
+	ServiceAlias   string
+	Action         string
+	Reason         string
+	Params         map[string]any
+}
+
+type GatewayRequestResolver interface {
+	Resolve(ctx context.Context, req GatewayRequestResolutionRequest) (GatewayRequestClassification, error)
 }
 
 func ClassifyGatewayRequest(tasks []*store.Task, agentID, serviceType, alias, action string) GatewayRequestClassification {

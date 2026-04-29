@@ -29,6 +29,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
@@ -425,6 +426,9 @@ func (s *Server) routes() http.Handler {
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	if s.llmCfg.Verification.Enabled {
+		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
+	}
 	if s.extractionTracker != nil {
 		gatewayHandler.SetExtractionTracker(s.extractionTracker)
 	}

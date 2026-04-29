@@ -80,6 +80,7 @@ type GatewayHandler struct {
 	logger           *slog.Logger
 	baseURL          string
 	eventHub         events.EventHub
+	requestResolver  runtimepolicy.GatewayRequestResolver
 	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
 	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
 	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
@@ -119,6 +120,10 @@ func (h *GatewayHandler) SetExtractionTracker(t ExtractionTracker) {
 // Must be called before any requests are handled.
 func (h *GatewayHandler) SetGatewayHooks(hooks *GatewayHooks) {
 	h.gatewayHooks = hooks
+}
+
+func (h *GatewayHandler) SetGatewayRequestResolver(resolver runtimepolicy.GatewayRequestResolver) {
+	h.requestResolver = resolver
 }
 
 // SetLocalServiceExecutor configures the local daemon service executor.
@@ -341,6 +346,21 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		classification := runtimepolicy.ClassifyGatewayRequest(tasks, agent.ID, serviceType, serviceAlias, req.Action)
+		if h.requestResolver != nil {
+			resolved, resolveErr := h.requestResolver.Resolve(ctx, runtimepolicy.GatewayRequestResolutionRequest{
+				Classification: classification,
+				ServiceType:    serviceType,
+				ServiceAlias:   serviceAlias,
+				Action:         req.Action,
+				Reason:         req.Reason,
+				Params:         req.Params,
+			})
+			if resolveErr != nil {
+				h.logger.Warn("gateway request resolver failed", "err", resolveErr, "service", serviceType, "action", req.Action, "request_id", req.RequestID)
+			} else {
+				classification = resolved
+			}
+		}
 		switch classification.Kind {
 		case runtimepolicy.ClassificationBelongsToExistingTask:
 			req.TaskID = classification.MatchedTask.ID
