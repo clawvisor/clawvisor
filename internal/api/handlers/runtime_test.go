@@ -140,6 +140,132 @@ func TestRuntimeHandlerListEvents(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandlerListApprovalsExcludesRevokedAndExpiredSessions(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-approvals-list.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "runtime-approvals-list@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	liveSession := &store.RuntimeSession{
+		ID:                    "runtime-live-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "live-secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, liveSession); err != nil {
+		t.Fatalf("CreateRuntimeSession(live): %v", err)
+	}
+
+	revokedSession := &store.RuntimeSession{
+		ID:                    "runtime-revoked-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "revoked-secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, revokedSession); err != nil {
+		t.Fatalf("CreateRuntimeSession(revoked): %v", err)
+	}
+	if err := st.RevokeRuntimeSession(ctx, revokedSession.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("RevokeRuntimeSession: %v", err)
+	}
+
+	expiredSession := &store.RuntimeSession{
+		ID:                    "runtime-expired-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "expired-secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, expiredSession); err != nil {
+		t.Fatalf("CreateRuntimeSession(expired): %v", err)
+	}
+	if err := st.UpdateRuntimeSessionExpiry(ctx, expiredSession.ID, time.Now().UTC().Add(-5*time.Minute)); err != nil {
+		t.Fatalf("UpdateRuntimeSessionExpiry: %v", err)
+	}
+
+	createApproval := func(id, sessionID string) {
+		payload, _ := json.Marshal(runtimeproxy.RuntimeApprovalPayload{
+			SessionID:          sessionID,
+			AgentID:            agent.ID,
+			RequestFingerprint: id,
+			Method:             "GET",
+			Host:               "example.com",
+			Path:               "/healthz",
+		})
+		rec := &store.ApprovalRecord{
+			ID:                  id,
+			Kind:                "request_once",
+			UserID:              user.ID,
+			AgentID:             &agent.ID,
+			SessionID:           &sessionID,
+			Status:              "pending",
+			Surface:             "dashboard",
+			PayloadJSON:         payload,
+			ResolutionTransport: "consume_one_off_retry",
+		}
+		if err := st.CreateApprovalRecord(ctx, rec); err != nil {
+			t.Fatalf("CreateApprovalRecord(%s): %v", id, err)
+		}
+	}
+
+	createApproval("approval-live", liveSession.ID)
+	createApproval("approval-revoked", revokedSession.ID)
+	createApproval("approval-expired", expiredSession.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/approvals", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, nil, nil, nil, nil)
+	h.ListApprovals(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListApprovals status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Entries []store.ApprovalRecord `json:"entries"`
+		Total   int                    `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Entries) != 1 || resp.Entries[0].ID != "approval-live" {
+		t.Fatalf("unexpected approvals response: %+v", resp)
+	}
+
+	revokedApproval, err := st.GetApprovalRecord(ctx, "approval-revoked")
+	if err != nil {
+		t.Fatalf("GetApprovalRecord(approval-revoked): %v", err)
+	}
+	if revokedApproval.Status != "revoked" || revokedApproval.Resolution != "session_revoked" || revokedApproval.ResolvedAt == nil {
+		t.Fatalf("unexpected revoked approval state: %+v", revokedApproval)
+	}
+
+	expiredApproval, err := st.GetApprovalRecord(ctx, "approval-expired")
+	if err != nil {
+		t.Fatalf("GetApprovalRecord(approval-expired): %v", err)
+	}
+	if expiredApproval.Status != "expired" || expiredApproval.Resolution != "session_expired" || expiredApproval.ResolvedAt == nil {
+		t.Fatalf("unexpected expired approval state: %+v", expiredApproval)
+	}
+}
+
 func TestRuntimeHandlerResolveApprovalCreatesOneOffEvent(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-approval-events.db"))

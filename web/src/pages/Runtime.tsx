@@ -2,9 +2,22 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type RuntimeEvent, type RuntimePolicyRule, type RuntimeStatus, type RuntimeSession, type StarterProfile } from '../api/client'
 
-type RuleDraft = Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }
+export type RuleDraft = Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }
 
-const emptyEgressRule = (): RuleDraft => ({
+export function isActiveRuntimeSession(session: RuntimeSession): boolean {
+  if (session.revoked_at) return false
+  return new Date(session.expires_at).getTime() > Date.now()
+}
+
+export function filterLiveRuntimeApprovals(approvals: ApprovalRecord[], sessions: RuntimeSession[]): ApprovalRecord[] {
+  const activeSessionIds = new Set(sessions.filter(isActiveRuntimeSession).map(session => session.id))
+  return approvals.filter(approval => {
+    if (!approval.session_id) return true
+    return activeSessionIds.has(approval.session_id)
+  })
+}
+
+export const emptyEgressRule = (): RuleDraft => ({
   scope: 'agent',
   kind: 'egress',
   action: 'allow',
@@ -17,7 +30,7 @@ const emptyEgressRule = (): RuleDraft => ({
   source: 'user',
 })
 
-const emptyToolRule = (): RuleDraft => ({
+export const emptyToolRule = (): RuleDraft => ({
   scope: 'agent',
   kind: 'tool',
   action: 'allow',
@@ -70,6 +83,10 @@ export default function Runtime() {
   })
 
   const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
+  const liveApprovals = useMemo(
+    () => filterLiveRuntimeApprovals(approvals?.entries ?? [], sessions?.entries ?? []),
+    [approvals, sessions],
+  )
 
   const refreshRuntime = () => {
     qc.invalidateQueries({ queryKey: ['runtime-rules'] })
@@ -135,7 +152,7 @@ export default function Runtime() {
       {status && (
         <RuntimeStatusPanel
           status={status}
-          activeSessionCount={(sessions?.entries ?? []).filter(session => !session.revoked_at).length}
+          activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
         />
       )}
 
@@ -182,7 +199,7 @@ export default function Runtime() {
         onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
       />
 
-      <RuntimeApprovalsPanel approvals={approvals?.entries ?? []} onResolved={refreshRuntime} />
+      <RuntimeApprovalsPanel approvals={liveApprovals} onResolved={refreshRuntime} />
 
       <RuntimeSessionsPanel sessions={sessions?.entries ?? []} agents={agentMap} onUpdated={refreshRuntime} />
 
@@ -203,7 +220,7 @@ export default function Runtime() {
   )
 }
 
-function RuntimeStatusPanel({ status, activeSessionCount }: { status: RuntimeStatus; activeSessionCount: number }) {
+export function RuntimeStatusPanel({ status, activeSessionCount }: { status: RuntimeStatus; activeSessionCount: number }) {
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -245,7 +262,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function StarterProfilesPanel({
+export function StarterProfilesPanel({
   profiles,
   agents,
   agentFilter,
@@ -313,7 +330,7 @@ function StarterProfilesPanel({
   )
 }
 
-function RuleSection({
+export function RuleSection({
   title,
   subtitle,
   rules,
@@ -394,7 +411,7 @@ function RuleSection({
   )
 }
 
-function RuleEditorCard({
+export function RuleEditorCard({
   agents,
   draft,
   busy,
@@ -469,7 +486,7 @@ function RuleEditorCard({
   )
 }
 
-function RuntimeApprovalsPanel({ approvals, onResolved }: { approvals: ApprovalRecord[]; onResolved: () => void }) {
+export function RuntimeApprovalsPanel({ approvals, onResolved }: { approvals: ApprovalRecord[]; onResolved: () => void }) {
   const resolveMut = useMutation({
     mutationFn: ({ approvalId, resolution }: { approvalId: string; resolution: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' }) =>
       api.runtime.resolveApproval(approvalId, resolution),
@@ -548,7 +565,7 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function RuntimeSessionsPanel({
+export function RuntimeSessionsPanel({
   sessions,
   agents,
   onUpdated,
@@ -561,15 +578,16 @@ function RuntimeSessionsPanel({
     mutationFn: (sessionId: string) => api.runtime.revokeSession(sessionId),
     onSuccess: onUpdated,
   })
+  const activeSessions = sessions.filter(isActiveRuntimeSession)
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-text-primary">Runtime Sessions</h2>
-        <p className="text-sm text-text-tertiary mt-1">Current and recent sessions, including server-materialized durable Docker sessions.</p>
+        <p className="text-sm text-text-tertiary mt-1">Current live sessions, including server-materialized durable Docker sessions.</p>
       </div>
       <div className="space-y-3">
-        {sessions.length === 0 && <EmptyPanel text="No runtime sessions yet." />}
-        {sessions.map(session => (
+        {activeSessions.length === 0 && <EmptyPanel text="No live runtime sessions." />}
+        {activeSessions.map(session => (
           <div key={session.id} className="rounded border border-border-subtle bg-surface-0 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -580,10 +598,10 @@ function RuntimeSessionsPanel({
               </div>
               <button
                 onClick={() => revokeMut.mutate(session.id)}
-                disabled={!!session.revoked_at || revokeMut.isPending}
+                disabled={revokeMut.isPending}
                 className="rounded border border-danger/20 px-3 py-1.5 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
               >
-                {session.revoked_at ? 'Revoked' : 'Revoke'}
+                Revoke
               </button>
             </div>
           </div>
@@ -593,7 +611,7 @@ function RuntimeSessionsPanel({
   )
 }
 
-function RuntimeEventsPanel({
+export function RuntimeEventsPanel({
   events,
   agents,
   onResolved,

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } fro
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest, type ApprovalRecord, type RuntimeStatus } from '../api/client'
+import { filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
@@ -103,7 +104,10 @@ export default function Overview() {
   }, [agentsData])
 
   const queueItems = overview?.queue ?? []
-  const runtimeApprovalItems = runtimeApprovals?.entries ?? []
+  const runtimeApprovalItems = useMemo(
+    () => filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? []),
+    [runtimeApprovals, runtimeSessions],
+  )
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
   const attentionItems = useMemo<AttentionItem[]>(() => {
@@ -114,7 +118,7 @@ export default function Overview() {
     return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [queueItems, runtimeApprovalItems])
   const activeRuntimeSessions = useMemo(
-    () => (runtimeSessions?.entries ?? []).filter(session => !session.revoked_at && new Date(session.expires_at).getTime() > Date.now()),
+    () => (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession),
     [runtimeSessions],
   )
 

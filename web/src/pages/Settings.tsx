@@ -1498,7 +1498,7 @@ function DaemonCard({ daemon, onDelete, deleting, enabledServiceIds }: {
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">Services</p>
             <button
-              onClick={() => navigate('/dashboard/services')}
+              onClick={() => navigate('/dashboard/accounts')}
               className="text-xs text-brand hover:underline"
             >
               Manage

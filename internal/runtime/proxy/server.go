@@ -5,10 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -47,6 +49,9 @@ type Server struct {
 	latestRequestCtxPruneTick uint64
 	secretValueCache          sync.Map
 	secretVerdictCache        sync.Map
+
+	adjudicationDebugDir string
+	adjudicationDebugMu  sync.Mutex
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -87,17 +92,50 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	p.Verbose = false
 	p.CertStore = &goproxyCertAdapter{cache: certs}
 
+	adjudicationDebugDir := os.Getenv("CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR")
+	if adjudicationDebugDir != "" {
+		if err := runtimetiming.EnsureDir(adjudicationDebugDir); err != nil {
+			return nil, fmt.Errorf("ensure adjudication debug dir: %w", err)
+		}
+	}
+
 	s := &Server{
-		cfg:          cfg,
-		logger:       logger,
-		ca:           ca,
-		caKey:        caKey,
-		certs:        certs,
-		goproxy:      p,
-		traceSink:    traceSink,
-		bodyTraceDir: bodyTraceDir,
+		cfg:                  cfg,
+		logger:               logger,
+		ca:                   ca,
+		caKey:                caKey,
+		certs:                certs,
+		goproxy:              p,
+		traceSink:            traceSink,
+		bodyTraceDir:         bodyTraceDir,
+		adjudicationDebugDir: adjudicationDebugDir,
 	}
 	return s, nil
+}
+
+// writeAdjudicationDebug appends a single JSONL record to today's debug log
+// when CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR is set. Best effort:
+// errors are logged and dropped so a debug-log failure never affects the
+// proxy hot path.
+func (s *Server) writeAdjudicationDebug(record map[string]any) {
+	if s == nil || s.adjudicationDebugDir == "" {
+		return
+	}
+	s.adjudicationDebugMu.Lock()
+	defer s.adjudicationDebugMu.Unlock()
+	ts := time.Now().UTC()
+	path := filepath.Join(s.adjudicationDebugDir, ts.Format("20060102")+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("adjudication debug open failed", "err", err)
+		}
+		return
+	}
+	defer f.Close()
+	if err := json.NewEncoder(f).Encode(record); err != nil && s.logger != nil {
+		s.logger.Warn("adjudication debug encode failed", "err", err)
+	}
 }
 
 func (s *Server) GoProxy() *goproxy.ProxyHttpServer { return s.goproxy }

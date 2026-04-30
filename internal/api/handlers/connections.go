@@ -393,6 +393,11 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 	if err != nil {
 		return "", fmt.Errorf("create agent: %w", err)
 	}
+	if cr.Description != "" {
+		if err := h.st.UpdateAgentDescription(ctx, agent.ID, userID, cr.Description); err != nil {
+			return "", fmt.Errorf("save agent description: %w", err)
+		}
+	}
 
 	if err := h.st.UpdateConnectionRequestStatus(ctx, id, "approved", agent.ID); err != nil {
 		return "", fmt.Errorf("update status: %w", err)

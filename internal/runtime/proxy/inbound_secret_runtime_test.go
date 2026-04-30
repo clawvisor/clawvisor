@@ -554,3 +554,36 @@ func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T
 		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(out))
 	}
 }
+
+func TestLooksObviouslyNonSecret(t *testing.T) {
+	cases := []struct {
+		name string
+		val  string
+		want bool
+	}{
+		{"plain uuid", "b80d8479-a4f8-4a25-97a3-8732637395e9", true},
+		{"uppercase uuid", "B80D8479-A4F8-4A25-97A3-8732637395E9", true},
+		{"vite chunk", "account-snapshot-fields-B44aMyxd", true},
+		{"vite chunk 2", "hook-runtime-Dil0uBb1", true},
+		{"camelcase identifier", "AbstractAsyncHooksContextManager", true},
+		{"long camelcase identifier", "buildCanonicalSentMessageHookContext", true},
+		{"all caps constant", "NODE_TLS_REJECT_UNAUTHORIZED", true},
+		{"toolu prefix", "toolu_01SpEwDzqeBxzbMBZ3gq8ECs", true},
+		{"openai chatcmpl prefix", "chatcmpl_AbCdEf123456789xyz", true},
+		{"css bem class", "wp-block-button__width-25", true},
+		{"filename with js", "main-AbCdEf12.js", true},
+		{"filename with json", "package-lock.json", true},
+
+		// Things that should NOT be filtered (real-secret shapes).
+		{"anthropic key body", "ant_api03_xkLGn9pQRs7AbCdef0123456789", false},
+		{"random base64-ish", "Z3JhYmFzZ2VsZWN0aW9u123456abcd==", false},
+		{"hex high entropy", "9f3c4dab8e1f2a09bc7e4d12af0856e3", false},
+		{"jwt-style", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N", false},
+	}
+	for _, c := range cases {
+		got := looksObviouslyNonSecret(c.val)
+		if got != c.want {
+			t.Errorf("%s: looksObviouslyNonSecret(%q) = %v, want %v", c.name, c.val, got, c.want)
+		}
+	}
+}

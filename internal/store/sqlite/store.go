@@ -207,8 +207,8 @@ func (s *Store) MatchRestriction(ctx context.Context, userID, service, action st
 func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string) (*store.Agent, error) {
 	id := uuid.New().String()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash) VALUES (?, ?, ?, ?)`,
-		id, userID, name, tokenHash,
+		`INSERT INTO agents (id, user_id, name, description, token_hash) VALUES (?, ?, ?, ?, ?)`,
+		id, userID, name, "", tokenHash,
 	)
 	if err != nil {
 		return nil, err
@@ -219,8 +219,8 @@ func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string)
 func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*store.Agent, error) {
 	id := uuid.New().String()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash, org_id) VALUES (?, ?, ?, ?, ?)`,
-		id, userID, name, tokenHash, orgID,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, org_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, userID, name, "", tokenHash, orgID,
 	)
 	if err != nil {
 		return nil, err
@@ -233,9 +233,9 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -256,7 +256,7 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id, a.description,
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
@@ -288,7 +288,7 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		var settingsInject *int
 		var settingsCreatedAt *string
 		var settingsUpdatedAt *string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID,
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID, &a.Description,
 			&a.ActiveTaskCount, &lastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode, &settingsProfile,
 			&settingsOutbound, &settingsInject, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
@@ -305,6 +305,21 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+func (s *Store) UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE agents SET description = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, description, agentID, userID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
@@ -419,9 +434,9 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -877,8 +892,16 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		limit = 50
 	}
 
-	where := "WHERE user_id = ?"
-	args := []any{userID}
+	where := `WHERE user_id = ?
+		AND NOT (
+			service = 'runtime.egress' AND EXISTS (
+				SELECT 1 FROM activity_mutes am
+				WHERE am.user_id = ?
+				  AND am.host = COALESCE(json_extract(params_safe, '$.host'), '')
+				  AND (am.path_prefix = '' OR COALESCE(json_extract(params_safe, '$.path'), '') LIKE am.path_prefix || '%')
+			)
+		)`
+	args := []any{userID, userID}
 
 	if filter.Service != "" {
 		where += " AND service = ?"
@@ -895,6 +918,10 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	if filter.TaskID != "" {
 		where += " AND task_id = ?"
 		args = append(args, filter.TaskID)
+	}
+	if filter.AgentID != "" {
+		where += " AND agent_id = ?"
+		args = append(args, filter.AgentID)
 	}
 
 	var total int
@@ -953,6 +980,59 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		entries = append(entries, e)
 	}
 	return entries, total, rows.Err()
+}
+
+func (s *Store) CreateActivityMute(ctx context.Context, mute *store.ActivityMute) error {
+	if mute.ID == "" {
+		mute.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO activity_mutes (id, user_id, host, path_prefix)
+		VALUES (?, ?, ?, ?)
+	`, mute.ID, mute.UserID, mute.Host, mute.PathPrefix)
+	if isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *Store) ListActivityMutes(ctx context.Context, userID string) ([]*store.ActivityMute, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, host, path_prefix, created_at
+		FROM activity_mutes
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ActivityMute
+	for rows.Next() {
+		mute := &store.ActivityMute{}
+		var createdAt string
+		if err := rows.Scan(&mute.ID, &mute.UserID, &mute.Host, &mute.PathPrefix, &createdAt); err != nil {
+			return nil, err
+		}
+		mute.CreatedAt = parseTime(createdAt)
+		out = append(out, mute)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteActivityMute(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM activity_mutes WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ── Audit Activity Buckets ────────────────────────────────────────────────────
@@ -1789,11 +1869,11 @@ func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.Runtime
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO runtime_policy_rules (
-			id, user_id, agent_id, kind, action, host, method, path, path_regex,
+			id, user_id, agent_id, kind, action, service, service_action, host, method, path, path_regex,
 			headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
 			reason, source, enabled, last_matched_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
 		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
 		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
 		formatNullableTime(rule.LastMatchedAt))
@@ -1809,7 +1889,7 @@ func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.Runtime
 func (s *Store) GetRuntimePolicyRule(ctx context.Context, id string) (*store.RuntimePolicyRule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
-		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
 		       reason, source, enabled, last_matched_at, created_at, updated_at
 		FROM runtime_policy_rules WHERE id = ?
 	`, id)
@@ -1830,7 +1910,7 @@ func (s *Store) ListRuntimePolicyRules(ctx context.Context, userID string, filte
 	args := []any{userID}
 	query := `
 		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
-		       headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
 		       reason, source, enabled, last_matched_at, created_at, updated_at
 		FROM runtime_policy_rules
 		WHERE user_id = ?
@@ -1874,11 +1954,11 @@ func (s *Store) UpdateRuntimePolicyRule(ctx context.Context, rule *store.Runtime
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runtime_policy_rules SET
-			agent_id = ?, kind = ?, action = ?, host = ?, method = ?, path = ?, path_regex = ?,
+			agent_id = ?, kind = ?, action = ?, service = ?, service_action = ?, host = ?, method = ?, path = ?, path_regex = ?,
 			headers_shape_json = ?, body_shape_json = ?, tool_name = ?, input_shape_json = ?, input_regex = ?,
 			reason = ?, source = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND user_id = ?
-	`, rule.AgentID, rule.Kind, rule.Action, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+	`, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
 		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
 		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
 		rule.ID, rule.UserID)
@@ -1942,7 +2022,7 @@ func scanSQLiteRuntimePolicyRule(scanner interface{ Scan(dest ...any) error }) (
 	var enabled int
 	var lastMatchedAt, createdAt, updatedAt *string
 	if err := scanner.Scan(&rule.ID, &rule.UserID, &rule.AgentID, &rule.Kind, &rule.Action, &rule.Host, &rule.Method,
-		&rule.Path, &rule.PathRegex, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
+		&rule.Path, &rule.PathRegex, &rule.Service, &rule.ServiceAction, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
 		&rule.Reason, &rule.Source, &enabled, &lastMatchedAt, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
@@ -2024,6 +2104,39 @@ func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (
 		return nil, store.ErrNotFound
 	}
 	return scanSQLiteRuntimePlaceholder(rows)
+}
+
+func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*store.RuntimePlaceholder
+	for rows.Next() {
+		entry, err := scanSQLiteRuntimePlaceholder(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
+func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM runtime_placeholders WHERE placeholder = ? AND user_id = ?`, placeholder, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {

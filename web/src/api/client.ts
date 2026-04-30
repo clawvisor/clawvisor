@@ -244,6 +244,7 @@ export interface Agent {
   id: string
   user_id: string
   name: string
+  description?: string
   created_at: string
   token?: string // only present on creation
   active_task_count: number
@@ -368,12 +369,28 @@ export interface AuditEntry {
   filters_applied?: unknown
   verification?: VerificationVerdict
   error_msg?: string
+  summary_text?: string
+  activity_kind?: string
+  action_target?: string
+  host?: string
+  path?: string
+  method?: string
+  tool_name?: string
+}
+
+export interface ActivityMute {
+  id: string
+  user_id: string
+  host: string
+  path_prefix?: string
+  created_at: string
 }
 
 export interface AuditFilter {
   service?: string
   outcome?: string
   task_id?: string
+  agent_id?: string
   limit?: number
   offset?: number
 }
@@ -412,6 +429,15 @@ export interface ApprovalRecord {
   resolution?: string
   created_at: string
   updated_at: string
+}
+
+export interface RuntimePlaceholder {
+  placeholder: string
+  user_id: string
+  agent_id: string
+  service_id: string
+  created_at: string
+  last_used_at?: string
 }
 
 export interface NotificationConfig {
@@ -628,8 +654,10 @@ export interface RuntimePolicyRule {
   id: string
   user_id: string
   agent_id?: string
-  kind: 'egress' | 'tool'
+  kind: 'egress' | 'tool' | 'service'
   action: 'allow' | 'deny' | 'review'
+  service?: string
+  service_action?: string
   host?: string
   method?: string
   path?: string
@@ -1073,8 +1101,8 @@ export const api = {
   },
   agents: {
     list: () => get<Agent[]>('/api/agents'),
-    create: (name: string) =>
-      post<Agent>('/api/agents', { name }),
+    create: (name: string, description?: string) =>
+      post<Agent>('/api/agents', { name, ...(description ? { description } : {}) }),
     delete: (id: string) => del<{ revoked_tasks: number }>(`/api/agents/${id}`),
     getRuntimeSettings: (id: string) => get<AgentRuntimeSettings>(`/api/agents/${id}/runtime-settings`),
     updateRuntimeSettings: (id: string, settings: AgentRuntimeSettings) =>
@@ -1148,6 +1176,10 @@ export const api = {
     list: (filter?: AuditFilter) =>
       get<{ entries: AuditEntry[]; total: number }>('/api/audit', filter as Record<string, string | number | undefined>),
     get: (id: string) => get<AuditEntry>(`/api/audit/${id}`),
+    listMutes: () => get<{ entries: ActivityMute[]; total: number }>('/api/audit/mutes'),
+    createMute: (host: string, pathPrefix?: string) =>
+      post<ActivityMute>('/api/audit/mutes', { host, ...(pathPrefix ? { path_prefix: pathPrefix } : {}) }),
+    deleteMute: (id: string) => del<{ status: string }>(`/api/audit/mutes/${id}`),
   },
   approvals: {
     list: () => get<{ entries: PendingApproval[]; total: number }>('/api/approvals'),
@@ -1187,6 +1219,11 @@ export const api = {
     listStarterProfiles: () => get<{ entries: StarterProfile[]; total: number }>('/api/runtime/starter-profiles'),
     applyStarterProfile: (profileId: string, agentId?: string) =>
       post<{ entries: RuntimePolicyRule[]; total: number }>(`/api/runtime/starter-profiles/${profileId}/apply`, agentId ? { agent_id: agentId } : {}),
+    listPlaceholders: () => get<{ entries: RuntimePlaceholder[]; total: number }>('/api/runtime/placeholders'),
+    mintPlaceholder: (agentId: string, service: string) =>
+      post<RuntimePlaceholder>('/api/runtime/placeholders/mint', { agent_id: agentId, service }),
+    deletePlaceholder: (placeholder: string) =>
+      del<{ placeholder: string; status: string }>(`/api/runtime/placeholders/${encodeURIComponent(placeholder)}`),
     getPresetDecision: (commandKey: string, profile: string) =>
       get<{ decision: RuntimePresetDecision | null }>('/api/runtime/preset-decisions', { command_key: commandKey, profile }),
     upsertPresetDecision: (decision: Pick<RuntimePresetDecision, 'command_key' | 'profile' | 'decision'>) =>
@@ -1328,8 +1365,8 @@ export const api = {
     audit: (orgId: string, filter?: AuditFilter) =>
       get<{ entries: AuditEntry[]; total: number }>(`/api/orgs/${orgId}/audit`, filter as Record<string, string | number | undefined>),
     agents: (orgId: string) => get<Agent[]>(`/api/orgs/${orgId}/agents`),
-    createAgent: (orgId: string, name: string) =>
-      post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name }),
+    createAgent: (orgId: string, name: string, description?: string) =>
+      post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name, ...(description ? { description } : {}) }),
     deleteAgent: (orgId: string, agentId: string) =>
       del<{ revoked_tasks: number }>(`/api/orgs/${orgId}/agents/${agentId}`),
     revokeTask: (orgId: string, taskId: string) =>

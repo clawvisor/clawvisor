@@ -310,24 +310,40 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── Step 1: Check restrictions ────────────────────────────────────────────
-	// Check both the full service (with alias) and the base service type.
+	// ── Step 1: Check policy blocks ───────────────────────────────────────────
+	// Check both migrated runtime policy service rules and legacy restrictions.
+	serviceRule, _ := matchServicePolicyRule(ctx, h.store, agent.UserID, req.Service, req.Action)
+	if serviceRule == nil && serviceAlias != "default" {
+		serviceRule, _ = matchServicePolicyRule(ctx, h.store, agent.UserID, serviceType, req.Action)
+	}
 	restriction, _ := h.store.MatchRestriction(ctx, agent.UserID, req.Service, req.Action)
 	if restriction == nil && serviceAlias != "default" {
 		restriction, _ = h.store.MatchRestriction(ctx, agent.UserID, serviceType, req.Action)
 	}
-	if restriction != nil {
+	if serviceRule != nil || restriction != nil {
 		middleware.AddLogField(ctx, "decision", "block")
 		middleware.AddLogField(ctx, "outcome", "blocked")
 		e := baseEntry("block", "blocked", nil)
+		if serviceRule != nil {
+			e.RuleID = &serviceRule.ID
+		}
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 			h.logger.Warn("audit log failed", "err", logErr)
 		}
 		h.publishAuditAndQueue(agent.UserID, "")
-		reason := restriction.Reason
-		if reason == "" {
+		reason := ""
+		if serviceRule != nil {
+			reason = serviceRule.Reason
+		}
+		if reason == "" && restriction != nil {
+			reason = restriction.Reason
+		}
+		if reason == "" && restriction != nil {
 			reason = fmt.Sprintf("Restricted: %s:%s is blocked", restriction.Service, restriction.Action)
+		}
+		if reason == "" && serviceRule != nil {
+			reason = fmt.Sprintf("Policy blocked: %s:%s", serviceRule.Service, serviceRule.ServiceAction)
 		}
 		resp := map[string]any{
 			"status":     "blocked",

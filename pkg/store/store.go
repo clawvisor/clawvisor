@@ -35,6 +35,7 @@ type Store interface {
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
+	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
 	GetAgentRuntimeSettings(ctx context.Context, agentID string) (*AgentRuntimeSettings, error)
 	UpsertAgentRuntimeSettings(ctx context.Context, settings *AgentRuntimeSettings) error
 	DeleteAgent(ctx context.Context, id, userID string) error
@@ -91,6 +92,9 @@ type Store interface {
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
+	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
+	ListActivityMutes(ctx context.Context, userID string) ([]*ActivityMute, error)
+	DeleteActivityMute(ctx context.Context, id, userID string) error
 
 	// Tasks
 	CreateTask(ctx context.Context, task *Task) error
@@ -146,6 +150,8 @@ type Store interface {
 	// Runtime credential placeholders
 	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
 	GetRuntimePlaceholder(ctx context.Context, placeholder string) (*RuntimePlaceholder, error)
+	ListRuntimePlaceholders(ctx context.Context, userID string) ([]*RuntimePlaceholder, error)
+	DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error
 	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error
 	CreateCredentialAuthorization(ctx context.Context, auth *CredentialAuthorization) error
 	GetCredentialAuthorization(ctx context.Context, id string) (*CredentialAuthorization, error)
@@ -263,6 +269,7 @@ type Agent struct {
 	ID              string                `json:"id"`
 	UserID          string                `json:"user_id"`
 	Name            string                `json:"name"`
+	Description     string                `json:"description,omitempty"`
 	TokenHash       string                `json:"-"`
 	OrgID           string                `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
 	CreatedAt       time.Time             `json:"created_at"`
@@ -379,6 +386,16 @@ type AuditEntry struct {
 	FiltersApplied          json.RawMessage `json:"filters_applied,omitempty"`
 	Verification            json.RawMessage `json:"verification,omitempty"`
 	ErrorMsg                *string         `json:"error_msg,omitempty"`
+}
+
+// ActivityMute suppresses noisy runtime egress rows from the activity feed.
+// Matching is host-exact with an optional path-prefix refinement.
+type ActivityMute struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Host       string    `json:"host"`
+	PathPrefix string    `json:"path_prefix,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // TaskAction represents a single authorized action within a task scope.
@@ -524,6 +541,8 @@ type RuntimePolicyRule struct {
 	AgentID       *string         `json:"agent_id,omitempty"`
 	Kind          string          `json:"kind"`
 	Action        string          `json:"action"`
+	Service       string          `json:"service,omitempty"`
+	ServiceAction string          `json:"service_action,omitempty"`
 	Host          string          `json:"host,omitempty"`
 	Method        string          `json:"method,omitempty"`
 	Path          string          `json:"path,omitempty"`
@@ -693,6 +712,7 @@ type AuditFilter struct {
 	Outcome    string // filter by outcome
 	DataOrigin string // filter by data_origin
 	TaskID     string // filter by task_id
+	AgentID    string // filter by agent_id
 	Limit      int    // 0 -> default (50)
 	Offset     int
 }

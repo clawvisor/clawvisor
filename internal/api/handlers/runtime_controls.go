@@ -456,22 +456,24 @@ func (h *RuntimeHandler) createTaskFromRuntimeEvent(ctx context.Context, event *
 
 func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ruleID string) (*store.RuntimePolicyRule, error) {
 	var body struct {
-		AgentID      string         `json:"agent_id"`
-		Scope        string         `json:"scope"`
-		Kind         string         `json:"kind"`
-		Action       string         `json:"action"`
-		Host         string         `json:"host"`
-		Method       string         `json:"method"`
-		Path         string         `json:"path"`
-		PathRegex    string         `json:"path_regex"`
-		HeadersShape map[string]any `json:"headers_shape_json"`
-		BodyShape    map[string]any `json:"body_shape_json"`
-		ToolName     string         `json:"tool_name"`
-		InputShape   map[string]any `json:"input_shape_json"`
-		InputRegex   string         `json:"input_regex"`
-		Reason       string         `json:"reason"`
-		Source       string         `json:"source"`
-		Enabled      *bool          `json:"enabled"`
+		AgentID       string         `json:"agent_id"`
+		Scope         string         `json:"scope"`
+		Kind          string         `json:"kind"`
+		Action        string         `json:"action"`
+		Service       string         `json:"service"`
+		ServiceAction string         `json:"service_action"`
+		Host          string         `json:"host"`
+		Method        string         `json:"method"`
+		Path          string         `json:"path"`
+		PathRegex     string         `json:"path_regex"`
+		HeadersShape  map[string]any `json:"headers_shape_json"`
+		BodyShape     map[string]any `json:"body_shape_json"`
+		ToolName      string         `json:"tool_name"`
+		InputShape    map[string]any `json:"input_shape_json"`
+		InputRegex    string         `json:"input_regex"`
+		Reason        string         `json:"reason"`
+		Source        string         `json:"source"`
+		Enabled       *bool          `json:"enabled"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodySize)).Decode(&body); err != nil {
 		return nil, fmt.Errorf("%s", diagnoseJSONError(err).Error)
@@ -480,9 +482,9 @@ func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ru
 	action := strings.TrimSpace(strings.ToLower(body.Action))
 	scope := strings.TrimSpace(strings.ToLower(body.Scope))
 	switch kind {
-	case "egress", "tool":
+	case "egress", "tool", "service":
 	default:
-		return nil, fmt.Errorf("kind must be egress or tool")
+		return nil, fmt.Errorf("kind must be egress, tool, or service")
 	}
 	switch action {
 	case "allow", "deny", "review":
@@ -508,6 +510,9 @@ func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ru
 	if kind == "tool" && strings.TrimSpace(body.ToolName) == "" {
 		return nil, fmt.Errorf("tool_name is required for tool rules")
 	}
+	if kind == "service" && strings.TrimSpace(body.Service) == "" {
+		return nil, fmt.Errorf("service is required for service rules")
+	}
 	source := strings.TrimSpace(strings.ToLower(body.Source))
 	if source == "" {
 		source = "user"
@@ -517,20 +522,22 @@ func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ru
 		enabled = *body.Enabled
 	}
 	rule := &store.RuntimePolicyRule{
-		ID:         ruleID,
-		UserID:     userID,
-		AgentID:    agentID,
-		Kind:       kind,
-		Action:     action,
-		Host:       strings.TrimSpace(strings.ToLower(body.Host)),
-		Method:     strings.ToUpper(strings.TrimSpace(body.Method)),
-		Path:       strings.TrimSpace(body.Path),
-		PathRegex:  strings.TrimSpace(body.PathRegex),
-		ToolName:   strings.TrimSpace(body.ToolName),
-		InputRegex: strings.TrimSpace(body.InputRegex),
-		Reason:     strings.TrimSpace(body.Reason),
-		Source:     source,
-		Enabled:    enabled,
+		ID:            ruleID,
+		UserID:        userID,
+		AgentID:       agentID,
+		Kind:          kind,
+		Action:        action,
+		Service:       strings.TrimSpace(body.Service),
+		ServiceAction: strings.TrimSpace(body.ServiceAction),
+		Host:          strings.TrimSpace(strings.ToLower(body.Host)),
+		Method:        strings.ToUpper(strings.TrimSpace(body.Method)),
+		Path:          strings.TrimSpace(body.Path),
+		PathRegex:     strings.TrimSpace(body.PathRegex),
+		ToolName:      strings.TrimSpace(body.ToolName),
+		InputRegex:    strings.TrimSpace(body.InputRegex),
+		Reason:        strings.TrimSpace(body.Reason),
+		Source:        source,
+		Enabled:       enabled,
 	}
 	if len(body.HeadersShape) > 0 {
 		rule.HeadersShape = mustJSON(body.HeadersShape)
@@ -542,6 +549,8 @@ func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ru
 		rule.InputShape = mustJSON(body.InputShape)
 	}
 	if kind == "tool" {
+		rule.Service = ""
+		rule.ServiceAction = ""
 		rule.Host = ""
 		rule.Method = ""
 		rule.Path = ""
@@ -550,9 +559,25 @@ func (h *RuntimeHandler) decodeRuntimePolicyRuleBody(r *http.Request, userID, ru
 		rule.BodyShape = nil
 	}
 	if kind == "egress" {
+		rule.Service = ""
+		rule.ServiceAction = ""
 		rule.ToolName = ""
 		rule.InputShape = nil
 		rule.InputRegex = ""
+	}
+	if kind == "service" {
+		rule.Host = ""
+		rule.Method = ""
+		rule.Path = ""
+		rule.PathRegex = ""
+		rule.HeadersShape = nil
+		rule.BodyShape = nil
+		rule.ToolName = ""
+		rule.InputShape = nil
+		rule.InputRegex = ""
+		if rule.ServiceAction == "" {
+			rule.ServiceAction = "*"
+		}
 	}
 	return rule, nil
 }

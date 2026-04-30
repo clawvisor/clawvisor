@@ -131,6 +131,116 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (h *RuntimeHandler) ListUserPlaceholders(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	entries, err := h.st.ListRuntimePlaceholders(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list shadow tokens")
+		return
+	}
+	if entries == nil {
+		entries = []*store.RuntimePlaceholder{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": entries,
+		"total":   len(entries),
+	})
+}
+
+func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.vault == nil {
+		writeError(w, http.StatusConflict, "RUNTIME_PLACEHOLDERS_DISABLED", "runtime placeholder vault is not configured")
+		return
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+		Service string `json:"service"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.Service = strings.TrimSpace(req.Service)
+	if req.AgentID == "" || req.Service == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "agent_id and service are required")
+		return
+	}
+	agents, err := h.st.ListAgents(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agents")
+		return
+	}
+	var agent *store.Agent
+	for _, candidate := range agents {
+		if candidate.ID == req.AgentID {
+			agent = candidate
+			break
+		}
+	}
+	if agent == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+		return
+	}
+	if _, err := h.vault.Get(r.Context(), user.ID, req.Service); err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "SERVICE_NOT_ACTIVATED", "service credential is not activated")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load service credential")
+		return
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(req.Service))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint runtime placeholder")
+		return
+	}
+	entry := &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      user.ID,
+		AgentID:     agent.ID,
+		ServiceID:   req.Service,
+	}
+	if err := h.st.CreateRuntimePlaceholder(r.Context(), entry); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save runtime placeholder")
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (h *RuntimeHandler) DeleteUserPlaceholder(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	placeholder := r.PathValue("placeholder")
+	if strings.TrimSpace(placeholder) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "placeholder is required")
+		return
+	}
+	if err := h.st.DeleteRuntimePlaceholder(r.Context(), placeholder, user.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "shadow token not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke shadow token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"placeholder": placeholder,
+		"status":      "revoked",
+	})
+}
+
 func (h *RuntimeHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -226,8 +336,26 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var filtered []*store.ApprovalRecord
+	now := time.Now().UTC()
 	for _, rec := range records {
 		if rec.SessionID != nil && *rec.SessionID != "" {
+			session, err := h.st.GetRuntimeSession(r.Context(), *rec.SessionID)
+			if err != nil {
+				if err == store.ErrNotFound {
+					_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_missing", "revoked", now)
+					continue
+				}
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not inspect runtime approval session")
+				return
+			}
+			if session.RevokedAt != nil {
+				_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_revoked", "revoked", now)
+				continue
+			}
+			if session.ExpiresAt.Before(now) {
+				_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_expired", "expired", now)
+				continue
+			}
 			filtered = append(filtered, rec)
 		}
 	}

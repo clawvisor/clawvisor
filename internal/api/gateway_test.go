@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // ── Restrictions ──────────────────────────────────────────────────────────────
@@ -29,6 +30,29 @@ func TestRestrictions_CRUD(t *testing.T) {
 	id := str(t, body, "id")
 	if id == "" {
 		t.Fatal("create restriction: id empty")
+	}
+
+	runtimeRules, err := env.Store.ListRuntimePolicyRules(context.Background(), s.UserID, store.RuntimePolicyRuleFilter{
+		Kind: "service",
+	})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules: %v", err)
+	}
+	if len(runtimeRules) != 1 {
+		t.Fatalf("list runtime service rules: expected 1, got %d", len(runtimeRules))
+	}
+	rule := runtimeRules[0]
+	if rule.Kind != "service" {
+		t.Fatalf("runtime rule kind = %v, want service", rule.Kind)
+	}
+	if rule.Action != "deny" {
+		t.Fatalf("runtime rule action = %v, want deny", rule.Action)
+	}
+	if rule.Service != "google.gmail" {
+		t.Fatalf("runtime rule service = %v, want google.gmail", rule.Service)
+	}
+	if rule.ServiceAction != "send" {
+		t.Fatalf("runtime rule service_action = %v, want send", rule.ServiceAction)
 	}
 
 	// List

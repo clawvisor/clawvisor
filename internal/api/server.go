@@ -778,6 +778,9 @@ func (s *Server) routes() http.Handler {
 	// Audit (user JWT)
 	mux.Handle("GET /api/audit", user(auditHandler.List))
 	mux.Handle("GET /api/audit/{id}", user(auditHandler.Get))
+	mux.Handle("GET /api/audit/mutes", user(auditHandler.ListMutes))
+	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
+	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
 
 	// SSE event stream (user JWT or single-use ticket for EventSource)
 	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)

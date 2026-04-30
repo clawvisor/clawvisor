@@ -37,6 +37,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
+		Description        string `json:"description"`
 		Name               string `json:"name"`
 		WithCallbackSecret bool   `json:"with_callback_secret"`
 	}
@@ -59,13 +60,21 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create agent")
 		return
 	}
+	if body.Description != "" {
+		if err := h.st.UpdateAgentDescription(r.Context(), agent.ID, user.ID, body.Description); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save agent description")
+			return
+		}
+		agent.Description = body.Description
+	}
 
 	resp := map[string]any{
-		"id":         agent.ID,
-		"user_id":    agent.UserID,
-		"name":       agent.Name,
-		"created_at": agent.CreatedAt,
-		"token":      rawToken,
+		"id":          agent.ID,
+		"user_id":     agent.UserID,
+		"name":        agent.Name,
+		"description": agent.Description,
+		"created_at":  agent.CreatedAt,
+		"token":       rawToken,
 	}
 
 	if body.WithCallbackSecret {

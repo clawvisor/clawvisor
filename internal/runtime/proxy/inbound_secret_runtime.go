@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -44,23 +45,48 @@ type adjudicationVerdict struct {
 	Confidence float64
 }
 
+// adjudicationDebugRecord is a single observation suitable for emitting to a
+// debug log when CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR is set. It
+// captures both cache-hit and cache-miss paths so we can verify cache shape
+// behavior in production.
+type adjudicationDebugRecord struct {
+	Host       string
+	Field      string
+	Candidate  string
+	Charset    string
+	Entropy    float64
+	CacheHit   bool
+	Concurrent bool
+	Raw        string
+	Verdict    *adjudicationVerdict
+	Duration   time.Duration
+	Err        error
+	ParseErr   error
+}
+
 type runtimeSecretScanner struct {
-	server        *Server
-	hooks         InboundSecretHooks
-	session       *store.RuntimeSession
-	host          string
-	replacements  int
-	observed      int
-	sourceSet     map[string]struct{}
-	serviceLabels map[string]struct{}
-	metrics       map[string]time.Duration
-	stringsSeen   int
-	skippedFields int
-	skippedNoise  int
-	candidates    int
-	passwords     int
-	adjudications int
-	cacheHits     int
+	server           *Server
+	hooks            InboundSecretHooks
+	session          *store.RuntimeSession
+	host             string
+	replacements     int
+	observed         int
+	sourceSet        map[string]struct{}
+	serviceLabels    map[string]struct{}
+	metrics          map[string]time.Duration
+	stringsSeen      int
+	skippedFields    int
+	skippedNoise     int
+	candidates       int
+	passwords        int
+	adjudications    int
+	cacheHits        int
+	prefilteredNoise int
+
+	// adjudMu guards adjudications, cacheHits, and metrics["...adjudicate"]
+	// during the parallel prewarm pass. The sequential walk doesn't need it,
+	// but using it consistently keeps the locking obvious.
+	adjudMu sync.Mutex
 }
 
 var runtimeNoiseSubtreeKeys = map[string]bool{
@@ -209,6 +235,9 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 		metrics:       map[string]time.Duration{},
 	}
 	defer scanner.flushMetrics(ctx)
+	prewarmStartedAt := time.Now()
+	scanner.prewarmVerdicts(ctx, payload)
+	runtimetiming.RecordSpan(ctx, "inbound_secret.scan.prewarm", time.Since(prewarmStartedAt))
 	walkStartedAt := time.Now()
 	rewritten, changed := scanner.walk(ctx, payload, "", true, false)
 	runtimetiming.RecordSpan(ctx, "inbound_secret.scan.walk", time.Since(walkStartedAt))
@@ -345,6 +374,12 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 			s.sourceSet["heuristic_swap"] = struct{}{}
 			continue
 		}
+		if looksObviouslyNonSecret(candidate.Value) {
+			s.prefilteredNoise++
+			s.observed++
+			s.sourceSet["heuristic_observe"] = struct{}{}
+			continue
+		}
 		verdict, ok := s.lookupOrAdjudicate(ctx, fieldName, value, candidate)
 		if ok && verdict.Credential && verdict.Confidence >= 0.6 {
 			placeholder, err := s.placeholderForValue(ctx, firstNonEmpty(normalizeSecretService(verdict.Service), guessService(fieldName, value)), candidate.Value)
@@ -410,6 +445,7 @@ func (s *runtimeSecretScanner) flushMetrics(ctx context.Context) {
 	runtimetiming.SetAttr(ctx, "inbound_secret.scan.passwords", s.passwords)
 	runtimetiming.SetAttr(ctx, "inbound_secret.scan.adjudications", s.adjudications)
 	runtimetiming.SetAttr(ctx, "inbound_secret.scan.cache_hits", s.cacheHits)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.prefiltered_noise", s.prefilteredNoise)
 }
 
 func runtimeLooksLikeContextNoise(value string) bool {
@@ -459,11 +495,208 @@ func (s *runtimeSecretScanner) lookupReusablePlaceholder(raw string) (string, bo
 	return lookupRuntimeSecretPlaceholder(s.server, s.session, raw)
 }
 
+func (s *runtimeSecretScanner) recordAdjudicationDebug(rec adjudicationDebugRecord) {
+	if s == nil || s.server == nil || s.server.adjudicationDebugDir == "" {
+		return
+	}
+	row := map[string]any{
+		"timestamp":   time.Now().UTC().Format(time.RFC3339Nano),
+		"host":        rec.Host,
+		"field":       rec.Field,
+		"candidate":   rec.Candidate,
+		"charset":     rec.Charset,
+		"entropy":     rec.Entropy,
+		"cache_hit":   rec.CacheHit,
+		"concurrent":  rec.Concurrent,
+		"duration_ms": rec.Duration.Milliseconds(),
+	}
+	if rec.Raw != "" {
+		row["raw_response"] = rec.Raw
+	}
+	if rec.Verdict != nil {
+		row["verdict"] = map[string]any{
+			"credential": rec.Verdict.Credential,
+			"service":    rec.Verdict.Service,
+			"confidence": rec.Verdict.Confidence,
+		}
+	}
+	if rec.Err != nil {
+		row["err"] = rec.Err.Error()
+	}
+	if rec.ParseErr != nil {
+		row["parse_err"] = rec.ParseErr.Error()
+	}
+	if s.session != nil {
+		row["session_id"] = s.session.ID
+		row["agent_id"] = s.session.AgentID
+	}
+	s.server.writeAdjudicationDebug(row)
+}
+
+// adjudicationTask is a single LLM-bound verdict request collected during the
+// prewarm pass. We dedupe by cache key so repeated occurrences of the same
+// (host, field, charset, content) tuple only issue one LLM call.
+type adjudicationTask struct {
+	fieldName string
+	content   string
+	candidate runtimeautovault.Candidate
+	cacheKey  string
+}
+
+// prewarmVerdicts walks the JSON payload, collects unique adjudication tasks
+// that would otherwise run sequentially during the replacement walk, and
+// issues their LLM calls in parallel with bounded concurrency. Verdicts land
+// in the shared verdict cache; the subsequent walk hits cache for each.
+func (s *runtimeSecretScanner) prewarmVerdicts(ctx context.Context, payload any) {
+	cfg := verificationConfig(s.hooks.Config)
+	if !cfg.Enabled || cfg.Endpoint == "" || cfg.Model == "" {
+		return
+	}
+	seen := map[string]struct{}{}
+	var tasks []adjudicationTask
+	s.collectAdjudicationTasks(payload, "", true, false, seen, &tasks)
+	if len(tasks) == 0 {
+		return
+	}
+	const concurrency = 8
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(250)
+	for _, task := range tasks {
+		task := task
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.runAdjudication(ctx, client, task)
+		}()
+	}
+	wg.Wait()
+}
+
+// runAdjudication issues a single LLM call and stores the parsed verdict in
+// the shared cache. It increments the adjudications counter so live metrics
+// reflect the actual LLM volume regardless of which pass issued the call.
+func (s *runtimeSecretScanner) runAdjudication(ctx context.Context, client *llm.Client, task adjudicationTask) {
+	if _, ok := s.server.secretVerdictCache.Load(task.cacheKey); ok {
+		return
+	}
+	startedAt := time.Now()
+	raw, err := client.Complete(ctx, []llm.ChatMessage{
+		{Role: "system", Content: runtimeSecretAdjudicatorSystemPrompt},
+		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, task.fieldName, task.content, task.candidate)},
+	})
+	duration := time.Since(startedAt)
+	s.recordAdjudicationDebug(adjudicationDebugRecord{
+		Host:       s.host,
+		Field:      task.fieldName,
+		Candidate:  task.candidate.Value,
+		Charset:    task.candidate.Charset,
+		Entropy:    task.candidate.Entropy,
+		CacheHit:   false,
+		Concurrent: true,
+		Raw:        raw,
+		Duration:   duration,
+		Err:        err,
+	})
+	s.adjudMu.Lock()
+	s.metrics["inbound_secret.scan.adjudicate"] += duration
+	s.adjudications++
+	s.adjudMu.Unlock()
+	if err != nil {
+		if s.hooks.Logger != nil {
+			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", task.fieldName)
+		}
+		return
+	}
+	verdict, perr := parseSecretAdjudicatorVerdict(raw)
+	if perr != nil {
+		if s.hooks.Logger != nil {
+			s.hooks.Logger.Warn("runtime secret adjudicator parse failed",
+				"err", perr, "host", s.host, "field", task.fieldName, "raw_len", len(raw))
+		}
+		return
+	}
+	s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+}
+
+// collectAdjudicationTasks mirrors walk()/rewriteString() filtering rules
+// without mutating the payload or scanner counters. It enqueues unique
+// (cacheKey) adjudication tasks for the prewarm fan-out.
+func (s *runtimeSecretScanner) collectAdjudicationTasks(value any, fieldName string, topLevel, skipHeuristic bool, seen map[string]struct{}, out *[]adjudicationTask) {
+	switch typed := value.(type) {
+	case string:
+		if runtimeProtectedStringFields[strings.ToLower(strings.TrimSpace(fieldName))] {
+			return
+		}
+		if skipHeuristic {
+			return
+		}
+		if runtimeLooksLikeProtocolNoise(fieldName, typed) {
+			return
+		}
+		if runtimeLooksLikeContextNoise(typed) {
+			return
+		}
+		scannable := stripRuntimeHarnessMetadataTags(typed)
+		for _, candidate := range runtimeautovault.DetectCandidates(scannable) {
+			if runtimeautovault.LooksLikeShadow(candidate.Value) {
+				continue
+			}
+			if _, ok := s.lookupReusablePlaceholder(candidate.Value); ok {
+				continue
+			}
+			if highContextSecretField(fieldName) || secretContextHint(typed, candidate.Value) {
+				continue
+			}
+			if looksObviouslyNonSecret(candidate.Value) {
+				continue
+			}
+			key := adjudicationCacheKey(s.host, fieldName, candidate.Charset, redactedCandidateContext(typed, candidate.Value))
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			if _, ok := s.server.secretVerdictCache.Load(key); ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			*out = append(*out, adjudicationTask{
+				fieldName: fieldName,
+				content:   typed,
+				candidate: candidate,
+				cacheKey:  key,
+			})
+		}
+	case map[string]any:
+		if strings.EqualFold(stringValueFromMap(typed, "type"), "thinking") {
+			return
+		}
+		for k, v := range typed {
+			childSkip := skipHeuristic || (topLevel && runtimeNoiseSubtreeKeys[k])
+			s.collectAdjudicationTasks(v, k, false, childSkip, seen, out)
+		}
+	case []any:
+		for _, item := range typed {
+			s.collectAdjudicationTasks(item, fieldName, false, skipHeuristic, seen, out)
+		}
+	}
+}
+
 func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName, content string, candidate runtimeautovault.Candidate) (adjudicationVerdict, bool) {
 	key := adjudicationCacheKey(s.host, fieldName, candidate.Charset, redactedCandidateContext(content, candidate.Value))
 	if cached, ok := s.server.secretVerdictCache.Load(key); ok {
 		verdict, _ := cached.(adjudicationVerdict)
 		s.cacheHits++
+		s.recordAdjudicationDebug(adjudicationDebugRecord{
+			Host:      s.host,
+			Field:     fieldName,
+			Candidate: candidate.Value,
+			Charset:   candidate.Charset,
+			Entropy:   candidate.Entropy,
+			CacheHit:  true,
+			Verdict:   &verdict,
+		})
 		return verdict, true
 	}
 	cfg := verificationConfig(s.hooks.Config)
@@ -476,18 +709,41 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		{Role: "system", Content: runtimeSecretAdjudicatorSystemPrompt},
 		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, fieldName, content, candidate)},
 	})
-	s.addMetric("inbound_secret.scan.adjudicate", time.Since(adjudicateStartedAt))
+	duration := time.Since(adjudicateStartedAt)
+	s.adjudMu.Lock()
+	s.metrics["inbound_secret.scan.adjudicate"] += duration
 	s.adjudications++
+	s.adjudMu.Unlock()
+	debugRec := adjudicationDebugRecord{
+		Host:      s.host,
+		Field:     fieldName,
+		Candidate: candidate.Value,
+		Charset:   candidate.Charset,
+		Entropy:   candidate.Entropy,
+		CacheHit:  false,
+		Raw:       raw,
+		Duration:  duration,
+		Err:       err,
+	}
 	if err != nil {
+		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
 			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", fieldName)
 		}
 		return adjudicationVerdict{}, false
 	}
-	verdict, err := parseSecretAdjudicatorVerdict(raw)
-	if err != nil {
+	verdict, perr := parseSecretAdjudicatorVerdict(raw)
+	if perr != nil {
+		debugRec.ParseErr = perr
+		s.recordAdjudicationDebug(debugRec)
+		if s.hooks.Logger != nil {
+			s.hooks.Logger.Warn("runtime secret adjudicator parse failed",
+				"err", perr, "host", s.host, "field", fieldName, "raw_len", len(raw))
+		}
 		return adjudicationVerdict{}, false
 	}
+	debugRec.Verdict = &verdict
+	s.recordAdjudicationDebug(debugRec)
 	s.server.secretVerdictCache.Store(key, verdict)
 	return verdict, true
 }
@@ -538,6 +794,121 @@ func lookupRuntimeSecretPlaceholder(srv *Server, session *store.RuntimeSession, 
 	}
 	entry, _ := value.(capturedSecretEntry)
 	return entry.Placeholder, entry.Placeholder != ""
+}
+
+var knownProtocolNoisePrefixes = []string{
+	"toolu_",          // Anthropic tool-use IDs
+	"msg_",            // Anthropic message IDs
+	"req_",            // Anthropic request IDs
+	"chatcmpl_",       // OpenAI chat completion IDs
+	"asst_",           // OpenAI assistant IDs
+	"thread_",         // OpenAI thread IDs
+	"run_",            // OpenAI run IDs
+	"step_",           // OpenAI step IDs
+	"call_",           // OpenAI tool call IDs
+	"clear_thinking_", // Anthropic thinking IDs
+}
+
+var (
+	uuidCandidateRe        = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	jsIdentifierRe         = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
+	allCapsConstantRe      = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
+	bundlerChunkSuffixRe   = regexp.MustCompile(`-[A-Za-z0-9_-]{8}$`)
+	fileExtensionInValueRe = regexp.MustCompile(`\.(?:js|ts|tsx|jsx|json|py|go|rs|md|html?|css|ya?ml|toml|lock|map|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|otf|sql|sh|env|txt)$`)
+)
+
+// looksObviouslyNonSecret returns true for candidate strings that the
+// detector flags as high-entropy but are clearly not credentials. Skipping
+// these saves an LLM round-trip per candidate.
+//
+// The filter is conservative: if the field name implies a credential (handled
+// upstream by highContextSecretField / secretContextHint), we never reach this
+// path. Within "content"/"command"/"text" prose, however, we see lots of
+// UUIDs in file paths, vite-style chunked filenames, JS identifiers, and
+// all-caps env-var names. None of those are secrets.
+func looksObviouslyNonSecret(candidate string) bool {
+	if candidate == "" {
+		return false
+	}
+	for _, prefix := range knownProtocolNoisePrefixes {
+		if strings.HasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	if strings.Contains(candidate, "__") {
+		// CSS BEM separator — class names like wp-block-button__width-25.
+		return true
+	}
+	if uuidCandidateRe.MatchString(candidate) {
+		return true
+	}
+	if fileExtensionInValueRe.MatchString(candidate) {
+		return true
+	}
+	if allCapsConstantRe.MatchString(candidate) {
+		return true
+	}
+	// Vite/webpack/rollup chunk pattern: <name>-<8 alnum/sep>. The detector
+	// surfaces these because they're high-entropy, but they're filenames.
+	if bundlerChunkSuffixRe.MatchString(candidate) && !strings.Contains(candidate, "_") {
+		// Only suppress when the prefix looks like a kebab identifier so we
+		// don't accidentally drop `sk-ant-…`-style keys.
+		dashIdx := strings.LastIndex(candidate, "-")
+		if dashIdx > 0 {
+			prefix := candidate[:dashIdx]
+			if isKebabIdentifier(prefix) {
+				return true
+			}
+		}
+	}
+	// Camel/Pascal-case identifier with no separators (AbstractAsyncHooksContextManager).
+	if jsIdentifierRe.MatchString(candidate) && hasMixedCase(candidate) && !hasDigit(candidate) {
+		return true
+	}
+	return false
+}
+
+func isKebabIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func hasMixedCase(s string) bool {
+	hasLower, hasUpper := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			hasLower = true
+		} else if c >= 'A' && c <= 'Z' {
+			hasUpper = true
+		}
+		if hasLower && hasUpper {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func adjudicationCacheKey(host, fieldName, charset, contextWindow string) string {
