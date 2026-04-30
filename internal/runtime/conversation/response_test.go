@@ -55,7 +55,7 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 		return ToolUseVerdict{
 			Allowed:        false,
 			Reason:         "requires approval",
-			SubstituteWith: "Reply `approve cv-test` to release this tool call.",
+			SubstituteWith: "Reply `approve` to run it or `deny` to block it.",
 		}
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 	}
 	content := out["content"].([]any)
 	text := content[0].(map[string]any)["text"].(string)
-	if !strings.Contains(text, "approve cv-test") {
+	if !strings.Contains(text, "Reply `approve`") {
 		t.Fatalf("expected inline approval prompt, got %q", text)
 	}
 }
@@ -112,7 +112,7 @@ func TestOpenAIResponseRewriterBlocksResponsesFunctionCallJSON(t *testing.T) {
 		return ToolUseVerdict{
 			Allowed:        false,
 			Reason:         "requires approval",
-			SubstituteWith: "Reply `approve cv-test` to release this tool call.",
+			SubstituteWith: "Reply `approve` to run it or `deny` to block it.",
 		}
 	})
 	if err != nil {
@@ -127,7 +127,7 @@ func TestOpenAIResponseRewriterBlocksResponsesFunctionCallJSON(t *testing.T) {
 	}
 	output := out["output"].([]any)
 	text := output[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
-	if !strings.Contains(text, "approve cv-test") {
+	if !strings.Contains(text, "Reply `approve`") {
 		t.Fatalf("expected inline approval prompt, got %q", text)
 	}
 }

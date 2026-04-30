@@ -177,7 +177,7 @@ func TestReplayFixturesExerciseSupportedProviderLoops(t *testing.T) {
 			wantParserProvider:  ProviderAnthropic,
 			wantDecisionName:    "fetch_messages",
 			wantRewriteBlocked:  true,
-			wantAssistantMarker: "approve cv-trace",
+			wantAssistantMarker: "Reply `approve`",
 		},
 		{
 			name:                "codex function loop",
@@ -185,7 +185,7 @@ func TestReplayFixturesExerciseSupportedProviderLoops(t *testing.T) {
 			wantParserProvider:  ProviderOpenAI,
 			wantDecisionName:    "Bash",
 			wantRewriteBlocked:  true,
-			wantAssistantMarker: "approve cv-trace",
+			wantAssistantMarker: "Reply `approve`",
 		},
 	}
 
@@ -218,7 +218,7 @@ func TestReplayFixturesExerciseSupportedProviderLoops(t *testing.T) {
 				return ToolUseVerdict{
 					Allowed:        false,
 					Reason:         "requires approval",
-					SubstituteWith: "Reply `approve cv-trace` to release this tool call.",
+					SubstituteWith: "Reply `approve` to run it or `deny` to block it.",
 				}
 			})
 			if err != nil {

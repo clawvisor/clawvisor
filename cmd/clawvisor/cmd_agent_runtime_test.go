@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,30 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	}
 	if values["no_proxy"] != values["NO_PROXY"] {
 		t.Fatalf("expected lowercase no_proxy to match, got %q", values["no_proxy"])
+	}
+}
+
+func TestRuntimeBootstrapMetadataIncludesWorkingDirAndToolRoots(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	metadata := runtimeBootstrapMetadata()
+	if got := metadata["working_dir"]; got != wd {
+		t.Fatalf("working_dir = %v, want %q", got, wd)
+	}
+	roots, ok := metadata["tool_allowed_roots"].([]string)
+	if !ok {
+		t.Fatalf("tool_allowed_roots type = %T, want []string", metadata["tool_allowed_roots"])
+	}
+	if !slices.Contains(roots, wd) {
+		t.Fatalf("tool_allowed_roots %v missing cwd %q", roots, wd)
+	}
+	if !slices.Contains(roots, "/tmp") {
+		t.Fatalf("tool_allowed_roots %v missing /tmp", roots)
+	}
+	if !slices.Contains(roots, filepath.Clean(os.TempDir())) {
+		t.Fatalf("tool_allowed_roots %v missing temp dir %q", roots, filepath.Clean(os.TempDir()))
 	}
 }
 

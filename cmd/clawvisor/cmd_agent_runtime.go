@@ -115,9 +115,8 @@ func runtimeBootstrapOptionsFromFlags(cmd *cobra.Command) (*runtimeBootstrapOpti
 func createRuntimeBootstrapSession(opts *runtimeBootstrapOptions) (*client.CreateRuntimeSessionResponse, error) {
 	cl := client.New(opts.BaseURL, "")
 	cl.SetAccessToken(opts.AgentToken)
-	metadata := map[string]any{
-		"launcher": "clawvisor-agent-run",
-	}
+	metadata := runtimeBootstrapMetadata()
+	metadata["launcher"] = "clawvisor-agent-run"
 	if opts.Profile != "" {
 		metadata["starter_profile"] = opts.Profile
 	}
@@ -127,6 +126,41 @@ func createRuntimeBootstrapSession(opts *runtimeBootstrapOptions) (*client.Creat
 		TTLSeconds:      opts.TTLSeconds,
 		Metadata:        metadata,
 	})
+}
+
+func runtimeBootstrapMetadata() map[string]any {
+	metadata := map[string]any{}
+	if wd, err := os.Getwd(); err == nil {
+		metadata["working_dir"] = wd
+		if roots := defaultToolAllowedRoots(wd); len(roots) > 0 {
+			metadata["tool_allowed_roots"] = roots
+		}
+	}
+	return metadata
+}
+
+func defaultToolAllowedRoots(workingDir string) []string {
+	seen := map[string]bool{}
+	roots := make([]string, 0, 3)
+	add := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		root = filepath.Clean(root)
+		if root == "." || seen[root] {
+			return
+		}
+		seen[root] = true
+		roots = append(roots, root)
+	}
+	add(workingDir)
+	add("/tmp")
+	add(os.TempDir())
+	return roots
 }
 
 func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.CreateRuntimeSessionResponse) ([]string, error) {

@@ -492,10 +492,15 @@ function RuntimeApprovalsPanel({ approvals, onResolved }: { approvals: ApprovalR
             : payload.host
               ? `${payload.method ?? 'HTTP'} ${payload.host}${payload.path ?? ''}`
               : (summary.title ?? approval.kind)
+          const detail = formatRuntimeApprovalDetail(payload)
           return (
             <div key={approval.id} className="rounded border border-border-subtle bg-surface-0 p-4">
               <div className="text-sm font-medium text-text-primary">{label}</div>
               <div className="mt-1 text-xs text-text-tertiary">{approval.kind} · {approval.resolution_transport || 'runtime review'}</div>
+              {detail && <div className="mt-2 text-sm text-text-secondary">{detail}</div>}
+              {typeof payload.reason === 'string' && payload.reason.trim() !== '' && (
+                <div className="mt-1 text-xs text-text-tertiary">{payload.reason}</div>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <ApprovalButton label="Allow Once" onClick={() => resolveMut.mutate({ approvalId: approval.id, resolution: 'allow_once' })} busy={resolveMut.isPending} />
                 <ApprovalButton label="Allow Session" onClick={() => resolveMut.mutate({ approvalId: approval.id, resolution: 'allow_session' })} busy={resolveMut.isPending} />
@@ -518,6 +523,29 @@ function ApprovalButton({ label, onClick, busy }: { label: string; onClick: () =
       {label}
     </button>
   )
+}
+
+function formatRuntimeApprovalDetail(payload: Record<string, any>): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : ''
+  const toolInput = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {}
+  if (toolName) {
+    const filePath = readString(toolInput.file_path) || readString(toolInput.path) || readString(toolInput.directory)
+    if (filePath) return `${toolName} ${filePath}`
+    const pattern = readString(toolInput.pattern)
+    if (pattern) return `${toolName} ${pattern}`
+    const command = readString(toolInput.command)
+    if (command) return `${toolName} ${command}`
+    return toolName
+  }
+  if (typeof payload.host === 'string') {
+    return [payload.method, payload.host, payload.path].filter(Boolean).join(' ')
+  }
+  return ''
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function RuntimeSessionsPanel({

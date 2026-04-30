@@ -383,6 +383,10 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					}
 				}
 			}
+			if reason, ok := allowSessionScopedToolDefault(st.Session, tu.Name, input); ok {
+				decisionState[key] = toolDecisionState{}
+				return conversation.ToolUseVerdict{Allowed: true, Reason: reason}
+			}
 			match, task, usedActive, err := matchPreferredToolTask(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks, tu.Name, input)
 			if err == nil && match != nil && task != nil {
 				decisionState[key] = toolDecisionState{Task: task, UsedActiveTaskContext: usedActive}
@@ -780,10 +784,11 @@ func renderHeldToolUsePrompt(held *review.HeldApproval, cfg *config.Config) stri
 	if held == nil {
 		return "Tool use requires runtime approval in Clawvisor before it can run."
 	}
+	subject := summarizeToolUse(held.ToolName, held.ToolInput)
 	if cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled {
-		return "Clawvisor paused a tool call pending approval.\n\nReply `approve " + held.ID + "` to release it, reply `deny " + held.ID + "` to reject it, or approve it from the Clawvisor dashboard."
+		return "Clawvisor paused " + subject + ".\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
 	}
-	return "Clawvisor paused a tool call pending approval in the dashboard.\n\nApproval ID: " + held.ID
+	return "Clawvisor paused " + subject + " pending approval in the dashboard.\n\nApproval ID: " + held.ID
 }
 
 func renderExistingHeldPrompt(held *review.HeldApproval, cfg *config.Config) string {
