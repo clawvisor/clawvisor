@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,14 +32,20 @@ var agentRuntimeEnvCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		tracer := newLauncherTraceRecorder(opts.Credentials, []string{"runtime-env"})
+		sessionStart := time.Now()
 		session, err := createRuntimeBootstrapSession(opts)
+		tracer.recordPhase("runtime_session.create", session.Session.ID, sessionStart, boolPtr(session.ObservationMode), nil, errorMessage(err))
 		if err != nil {
 			return err
 		}
+		envStart := time.Now()
 		envPairs, err := buildRuntimeBootstrapEnv(opts.BaseURL, opts.AgentToken, session)
+		tracer.recordPhase("runtime_env.build", session.Session.ID, envStart, boolPtr(session.ObservationMode), nil, errorMessage(err))
 		if err != nil {
 			return err
 		}
+		tracer.recordPhase("runtime_env.emit", session.Session.ID, time.Time{}, boolPtr(session.ObservationMode), nil, "printed runtime environment exports")
 		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
 		printObserveModeNotice(session.ObservationMode)
 		for _, pair := range envPairs {
@@ -60,12 +67,28 @@ var agentRuntimeRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = maybeOfferStarterProfile(opts.Credentials, args)
-		session, err := createRuntimeBootstrapSession(opts)
+		tracer := newLauncherTraceRecorder(opts.Credentials, args)
+		profileStart := time.Now()
+		err = maybeOfferStarterProfile(opts.Credentials, args)
+		tracer.recordPhase("starter_profile", "", profileStart, nil, nil, errorMessage(err))
 		if err != nil {
 			return err
 		}
+		sessionStart := time.Now()
+		session, err := createRuntimeBootstrapSession(opts)
+		sessionID := ""
+		observation := (*bool)(nil)
+		if session != nil {
+			sessionID = session.Session.ID
+			observation = boolPtr(session.ObservationMode)
+		}
+		tracer.recordPhase("runtime_session.create", sessionID, sessionStart, observation, nil, errorMessage(err))
+		if err != nil {
+			return err
+		}
+		envStart := time.Now()
 		envPairs, err := buildRuntimeBootstrapEnv(opts.BaseURL, opts.AgentToken, session)
+		tracer.recordPhase("runtime_env.build", session.Session.ID, envStart, boolPtr(session.ObservationMode), nil, errorMessage(err))
 		if err != nil {
 			return err
 		}
@@ -76,7 +99,17 @@ var agentRuntimeRunCmd = &cobra.Command{
 		child.Stderr = os.Stderr
 		fmt.Fprintf(os.Stderr, "Runtime session %s active until %s\n", session.Session.ID, session.Session.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
 		printObserveModeNotice(session.ObservationMode)
-		return child.Run()
+		startAt := time.Now()
+		if err := child.Start(); err != nil {
+			tracer.recordPhase("child.start", session.Session.ID, startAt, boolPtr(session.ObservationMode), nil, errorMessage(err))
+			return err
+		}
+		tracer.recordPhase("child.start", session.Session.ID, startAt, boolPtr(session.ObservationMode), nil, "child process started")
+		waitAt := time.Now()
+		err = child.Wait()
+		exitCode := exitCodeOf(err)
+		tracer.recordPhase("child.wait", session.Session.ID, waitAt, boolPtr(session.ObservationMode), exitCode, errorMessage(err))
+		return err
 	},
 	SilenceUsage: true,
 }
@@ -266,6 +299,30 @@ func mergeNoProxy(existing string, defaults ...string) string {
 		values = append(values, value)
 	}
 	return strings.Join(values, ",")
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func errorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func exitCodeOf(err error) *int {
+	if err == nil {
+		code := 0
+		return &code
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		return &code
+	}
+	return nil
 }
 
 func mergeEnvironment(base []string, overrides []string) []string {

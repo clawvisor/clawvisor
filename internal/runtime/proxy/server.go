@@ -26,18 +26,21 @@ type Config struct {
 	LeafCacheSize     int
 	LogTimings        bool
 	TimingTraceDir    string
+	BodyTraces        bool
+	BodyTraceDir      string
 }
 
 type Server struct {
-	cfg       Config
-	logger    *slog.Logger
-	ca        *x509.Certificate
-	caKey     *ecdsa.PrivateKey
-	certs     *LeafCertCache
-	goproxy   *goproxy.ProxyHttpServer
-	listener  net.Listener
-	httpSrv   *http.Server
-	traceSink *runtimetiming.FileSink
+	cfg          Config
+	logger       *slog.Logger
+	ca           *x509.Certificate
+	caKey        *ecdsa.PrivateKey
+	certs        *LeafCertCache
+	goproxy      *goproxy.ProxyHttpServer
+	listener     net.Listener
+	httpSrv      *http.Server
+	traceSink    *runtimetiming.FileSink
+	bodyTraceDir string
 
 	connStates                sync.Map
 	latestRequestCtxBySession sync.Map
@@ -59,7 +62,7 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	}
 	certs := NewLeafCertCache(ca, caKey, cfg.LeafCacheSize)
 	var traceSink *runtimetiming.FileSink
-	if cfg.LogTimings {
+	if cfg.LogTimings || cfg.BodyTraces {
 		traceDir := cfg.TimingTraceDir
 		if traceDir == "" {
 			traceDir = filepath.Join(cfg.DataDir, "timing-traces")
@@ -69,19 +72,30 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 			return nil, err
 		}
 	}
+	bodyTraceDir := ""
+	if cfg.BodyTraces {
+		bodyTraceDir = cfg.BodyTraceDir
+		if bodyTraceDir == "" {
+			bodyTraceDir = filepath.Join(cfg.DataDir, "body-traces")
+		}
+		if err := runtimetiming.EnsureDir(bodyTraceDir); err != nil {
+			return nil, err
+		}
+	}
 
 	p := goproxy.NewProxyHttpServer()
 	p.Verbose = false
 	p.CertStore = &goproxyCertAdapter{cache: certs}
 
 	s := &Server{
-		cfg:       cfg,
-		logger:    logger,
-		ca:        ca,
-		caKey:     caKey,
-		certs:     certs,
-		goproxy:   p,
-		traceSink: traceSink,
+		cfg:          cfg,
+		logger:       logger,
+		ca:           ca,
+		caKey:        caKey,
+		certs:        certs,
+		goproxy:      p,
+		traceSink:    traceSink,
+		bodyTraceDir: bodyTraceDir,
 	}
 	return s, nil
 }

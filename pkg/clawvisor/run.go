@@ -39,6 +39,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		if home, err := os.UserHomeDir(); err == nil && len(timingTraceDir) > 1 && timingTraceDir[:2] == "~/" {
 			timingTraceDir = filepath.Join(home, timingTraceDir[2:])
 		}
+		bodyTraceDir := opts.Config.RuntimeProxy.BodyTraceDir
+		if home, err := os.UserHomeDir(); err == nil && len(bodyTraceDir) > 1 && bodyTraceDir[:2] == "~/" {
+			bodyTraceDir = filepath.Join(home, bodyTraceDir[2:])
+		}
 		var err error
 		runtimeSrv, err = runtimeproxy.NewServer(runtimeproxy.Config{
 			DataDir:           dataDir,
@@ -47,6 +51,8 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			ListenerHostnames: opts.Config.RuntimeProxy.ListenerHostnames,
 			LogTimings:        opts.Config.RuntimeProxy.TimingTraceEnabled,
 			TimingTraceDir:    timingTraceDir,
+			BodyTraces:        opts.Config.RuntimeProxy.BodyTraceEnabled,
+			BodyTraceDir:      bodyTraceDir,
 		}, opts.Logger)
 		if err != nil {
 			return err
@@ -57,6 +63,13 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 				traceDir = filepath.Join(dataDir, "timing-traces")
 			}
 			opts.Logger.Info("runtime proxy timing traces enabled", "dir", traceDir)
+		}
+		if opts.Config.RuntimeProxy.BodyTraceEnabled && opts.Logger != nil {
+			traceDir := bodyTraceDir
+			if traceDir == "" {
+				traceDir = filepath.Join(dataDir, "body-traces")
+			}
+			opts.Logger.Info("runtime proxy body traces enabled", "dir", traceDir)
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
 		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{

@@ -27,6 +27,8 @@ type RunOptions struct {
 	ConfigPath         string // If set, passed to DefaultOptions instead of using env var.
 	TimingTraceEnabled *bool
 	TimingTraceDir     string
+	BodyTraceEnabled   *bool
+	BodyTraceDir       string
 }
 
 // LocalAuthResult holds the outputs of SetupLocalAuth.
@@ -119,6 +121,12 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 	}
 	if strings.TrimSpace(ropts.TimingTraceDir) != "" {
 		opts.Config.RuntimeProxy.TimingTraceDir = strings.TrimSpace(ropts.TimingTraceDir)
+	}
+	if ropts.BodyTraceEnabled != nil {
+		opts.Config.RuntimeProxy.BodyTraceEnabled = *ropts.BodyTraceEnabled
+	}
+	if strings.TrimSpace(ropts.BodyTraceDir) != "" {
+		opts.Config.RuntimeProxy.BodyTraceDir = strings.TrimSpace(ropts.BodyTraceDir)
 	}
 
 	// ── Magic link setup (local mode) ──────────────────────────────────────

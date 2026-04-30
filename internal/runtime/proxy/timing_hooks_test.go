@@ -57,11 +57,14 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 	}
 
 	traceDir := t.TempDir()
+	bodyDir := t.TempDir()
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = true
 	cfg.RuntimeProxy.DataDir = t.TempDir()
 	cfg.RuntimeProxy.TimingTraceEnabled = true
 	cfg.RuntimeProxy.TimingTraceDir = traceDir
+	cfg.RuntimeProxy.BodyTraceEnabled = true
+	cfg.RuntimeProxy.BodyTraceDir = bodyDir
 
 	session := createRuntimeSession(t, st, "session-timing", userID, agentID, false)
 
@@ -70,6 +73,8 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 		Addr:           "127.0.0.1:0",
 		LogTimings:     true,
 		TimingTraceDir: traceDir,
+		BodyTraces:     true,
+		BodyTraceDir:   bodyDir,
 	}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -125,6 +130,9 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 	if last.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", last.StatusCode)
 	}
+	if last.TraceType != "proxy_request" {
+		t.Fatalf("expected trace_type proxy_request, got %q", last.TraceType)
+	}
 	assertTraceSpanPresent(t, last.Spans, "session_guard.auth")
 	assertTraceSpanPresent(t, last.Spans, "egress.read_body")
 	assertTraceSpanPresent(t, last.Spans, "egress.load_rules")
@@ -138,6 +146,9 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 	if got, ok := last.Attrs["response.client_body_bytes"]; !ok || intFromAny(got) != len("ok") {
 		t.Fatalf("expected response.client_body_bytes=%d, got %#v", len("ok"), got)
 	}
+	assertBodyCapture(t, bodyDir, last.Attrs, "request", `{"hello":"world"}`)
+	assertBodyCapture(t, bodyDir, last.Attrs, "upstream_response", `ok`)
+	assertBodyCapture(t, bodyDir, last.Attrs, "client_response", `ok`)
 }
 
 func splitNonEmptyLines(s string) []string {
@@ -171,5 +182,33 @@ func intFromAny(v any) int {
 		return int(n)
 	default:
 		return 0
+	}
+}
+
+func stringFromAny(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func assertBodyCapture(t *testing.T, bodyDir string, attrs map[string]any, kind, want string) {
+	t.Helper()
+	path := stringFromAny(attrs[kind+".body_path"])
+	if path == "" {
+		t.Fatalf("expected %s.body_path attr in %+v", kind, attrs)
+	}
+	data, err := os.ReadFile(filepath.Join(bodyDir, path))
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", kind, err)
+	}
+	if string(data) != want {
+		t.Fatalf("unexpected %s body %q, want %q", kind, string(data), want)
+	}
+	if got, ok := attrs[kind+".body_bytes"]; !ok || intFromAny(got) != len(want) {
+		t.Fatalf("expected %s.body_bytes=%d, got %#v", kind, len(want), got)
+	}
+	if got := stringFromAny(attrs[kind+".body_sha256"]); got == "" {
+		t.Fatalf("expected %s.body_sha256 attr in %+v", kind, attrs)
 	}
 }

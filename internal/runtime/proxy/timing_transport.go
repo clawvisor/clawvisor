@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"bytes"
 	"crypto/tls"
+	"io"
 	"net/http"
 	"net/http/httptrace"
 	"time"
@@ -27,6 +29,17 @@ func (t *timingRoundTripper) RoundTrip(req *http.Request, ctx *goproxy.ProxyCtx)
 	}
 	if t == nil || t.server == nil {
 		return ctx.Proxy.Tr.RoundTrip(req)
+	}
+	st := StateOf(ctx)
+	if t.server.cfg.BodyTraces && st != nil && req.Body != nil {
+		requestBody, err := io.ReadAll(req.Body)
+		if err != nil {
+			runtimetiming.SetAttr(req.Context(), "request.capture_error", err.Error())
+		} else {
+			req.Body = io.NopCloser(bytes.NewReader(requestBody))
+			req.ContentLength = int64(len(requestBody))
+			t.server.captureBodyArtifact(req.Context(), st, "request", requestBody)
+		}
 	}
 
 	overallStartedAt := time.Now()
@@ -119,6 +132,10 @@ func (t *timingRoundTripper) RoundTrip(req *http.Request, ctx *goproxy.ProxyCtx)
 				readSpanName:  "upstream.response_body_read",
 				closeSpanName: "upstream.response_body_close",
 				bytesAttrName: "upstream.response_body_bytes",
+				captureBody:   t.server.cfg.BodyTraces,
+				bodyHook: func(body []byte) {
+					t.server.captureBodyArtifact(req.Context(), st, "upstream_response", body)
+				},
 			}
 		}
 	}

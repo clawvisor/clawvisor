@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 )
 
 func (s *Server) attachTimingRecorder(req *http.Request, st *RequestState) *http.Request {
-	if s == nil || !s.cfg.LogTimings || req == nil || st == nil {
+	if s == nil || (!s.cfg.LogTimings && !s.cfg.BodyTraces) || req == nil || st == nil {
 		return req
 	}
 	if st.Timings == nil {
@@ -24,14 +25,14 @@ func (s *Server) attachTimingRecorder(req *http.Request, st *RequestState) *http
 }
 
 func (s *Server) recordTimingSpan(req *http.Request, name string, start time.Time) {
-	if s == nil || !s.cfg.LogTimings || req == nil {
+	if s == nil || (!s.cfg.LogTimings && !s.cfg.BodyTraces) || req == nil {
 		return
 	}
 	runtimetiming.Stop(req.Context(), name, start)
 }
 
 func (s *Server) InstallTimingTrace() {
-	if s == nil || !s.cfg.LogTimings {
+	if s == nil || (!s.cfg.LogTimings && !s.cfg.BodyTraces) {
 		return
 	}
 	s.goproxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
@@ -60,6 +61,10 @@ func (s *Server) InstallTimingTrace() {
 			readSpanName:  "response.client_body_read",
 			closeSpanName: "response.client_body_close",
 			bytesAttrName: "response.client_body_bytes",
+			captureBody:   s.cfg.BodyTraces,
+			bodyHook: func(body []byte) {
+				s.captureBodyArtifact(ctx.Req.Context(), st, "client_response", body)
+			},
 			closeHook: func() {
 				s.logTimingTrace(ctx, st, resp)
 			},
@@ -74,6 +79,7 @@ func (s *Server) logTimingTrace(ctx *goproxy.ProxyCtx, st *RequestState, resp *h
 	}
 	st.TimingLogged.Do(func() {
 		entry := runtimetiming.TraceEntry{
+			TraceType: "proxy_request",
 			Timestamp: time.Now().UTC(),
 			RequestID: st.RequestID,
 			TotalMS:   time.Since(st.StartedAt).Milliseconds(),
@@ -116,6 +122,20 @@ func (s *Server) logTimingTrace(ctx *goproxy.ProxyCtx, st *RequestState, resp *h
 	})
 }
 
+func (s *Server) captureBodyArtifact(ctx context.Context, st *RequestState, kind string, body []byte) {
+	if s == nil || !s.cfg.BodyTraces || st == nil || st.Timings == nil || len(body) == 0 || s.traceSink == nil {
+		return
+	}
+	capture, err := s.traceSink.WriteBody(s.bodyTraceDir, time.Now().UTC(), st.RequestID, kind, body)
+	if err != nil {
+		runtimetiming.SetAttr(ctx, kind+".capture_error", err.Error())
+		return
+	}
+	runtimetiming.SetAttr(ctx, kind+".body_path", capture.RelativePath)
+	runtimetiming.SetAttr(ctx, kind+".body_sha256", capture.SHA256)
+	runtimetiming.SetAttr(ctx, kind+".body_bytes", capture.Bytes)
+}
+
 type timingReadCloser struct {
 	rc            io.ReadCloser
 	ctx           context.Context
@@ -123,6 +143,9 @@ type timingReadCloser struct {
 	closeSpanName string
 	bytesAttrName string
 	closeHook     func()
+	captureBody   bool
+	capturedBody  bytes.Buffer
+	bodyHook      func([]byte)
 	readDur       time.Duration
 	bytesRead     int64
 	finalizeOnce  sync.Once
@@ -136,6 +159,9 @@ func (t *timingReadCloser) Read(p []byte) (int, error) {
 	n, err := t.rc.Read(p)
 	t.readDur += time.Since(start)
 	t.bytesRead += int64(n)
+	if t.captureBody && n > 0 {
+		_, _ = t.capturedBody.Write(p[:n])
+	}
 	return n, err
 }
 
@@ -149,6 +175,9 @@ func (t *timingReadCloser) Close() error {
 		runtimetiming.RecordSpan(t.ctx, t.readSpanName, t.readDur)
 		if t.bytesAttrName != "" {
 			runtimetiming.SetAttr(t.ctx, t.bytesAttrName, t.bytesRead)
+		}
+		if t.captureBody && t.bodyHook != nil {
+			t.bodyHook(append([]byte(nil), t.capturedBody.Bytes()...))
 		}
 		runtimetiming.RecordSpan(t.ctx, t.closeSpanName, time.Since(start))
 		if err != nil {

@@ -216,6 +216,8 @@ type RuntimeProxyConfig struct {
 	SessionTTLSeconds  int      `yaml:"session_ttl_seconds"`
 	TimingTraceEnabled bool     `yaml:"timing_trace_enabled"`
 	TimingTraceDir     string   `yaml:"timing_trace_dir"`
+	BodyTraceEnabled   bool     `yaml:"body_trace_enabled"`
+	BodyTraceDir       string   `yaml:"body_trace_dir"`
 }
 
 type RuntimePolicyConfig struct {
@@ -316,6 +318,8 @@ func Default() *Config {
 			SessionTTLSeconds:  3600,
 			TimingTraceEnabled: false,
 			TimingTraceDir:     "~/.clawvisor/runtime-proxy/timing-traces",
+			BodyTraceEnabled:   false,
+			BodyTraceDir:       "~/.clawvisor/runtime-proxy/body-traces",
 		},
 		RuntimePolicy: RuntimePolicyConfig{
 			ObservationModeDefault:  false,
@@ -569,6 +573,12 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TIMING_TRACE_DIR"); v != "" {
 		cfg.RuntimeProxy.TimingTraceDir = v
 	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_BODY_TRACE_ENABLED"); v != "" {
+		cfg.RuntimeProxy.BodyTraceEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_BODY_TRACE_DIR"); v != "" {
+		cfg.RuntimeProxy.BodyTraceDir = v
+	}
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_OBSERVATION_DEFAULT"); v != "" {
 		cfg.RuntimePolicy.ObservationModeDefault = v == "true" || v == "1"
 	}
@@ -696,6 +706,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RuntimeProxy.TimingTraceEnabled && strings.TrimSpace(c.RuntimeProxy.TimingTraceDir) == "" {
 		return fmt.Errorf("runtime_proxy.timing_trace_dir must be set when runtime_proxy.timing_trace_enabled is true")
+	}
+	if c.RuntimeProxy.BodyTraceEnabled && strings.TrimSpace(c.RuntimeProxy.BodyTraceDir) == "" {
+		return fmt.Errorf("runtime_proxy.body_trace_dir must be set when runtime_proxy.body_trace_enabled is true")
 	}
 	if c.RuntimePolicy.ToolLeaseTimeoutSeconds <= 0 {
 		return fmt.Errorf("runtime_policy.tool_lease_timeout_seconds must be positive (got %d)", c.RuntimePolicy.ToolLeaseTimeoutSeconds)
