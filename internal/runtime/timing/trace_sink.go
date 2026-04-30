@@ -15,19 +15,20 @@ type TraceSpan struct {
 }
 
 type TraceEntry struct {
-	Timestamp       time.Time   `json:"timestamp"`
-	RequestID       string      `json:"request_id"`
-	SessionID       string      `json:"session_id,omitempty"`
-	AgentID         string      `json:"agent_id,omitempty"`
-	Method          string      `json:"method,omitempty"`
-	Host            string      `json:"host,omitempty"`
-	Path            string      `json:"path,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	ObservationMode bool        `json:"observation_mode,omitempty"`
-	StatusCode      int         `json:"status_code,omitempty"`
-	TotalMS         int64       `json:"total_ms"`
-	Summary         string      `json:"summary,omitempty"`
-	Spans           []TraceSpan `json:"spans,omitempty"`
+	Timestamp       time.Time      `json:"timestamp"`
+	RequestID       string         `json:"request_id"`
+	SessionID       string         `json:"session_id,omitempty"`
+	AgentID         string         `json:"agent_id,omitempty"`
+	Method          string         `json:"method,omitempty"`
+	Host            string         `json:"host,omitempty"`
+	Path            string         `json:"path,omitempty"`
+	Provider        string         `json:"provider,omitempty"`
+	ObservationMode bool           `json:"observation_mode,omitempty"`
+	StatusCode      int            `json:"status_code,omitempty"`
+	TotalMS         int64          `json:"total_ms"`
+	Summary         string         `json:"summary,omitempty"`
+	Spans           []TraceSpan    `json:"spans,omitempty"`
+	Attrs           map[string]any `json:"attrs,omitempty"`
 }
 
 type FileSink struct {

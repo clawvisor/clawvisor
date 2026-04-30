@@ -58,7 +58,6 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			}
 			opts.Logger.Info("runtime proxy timing traces enabled", "dir", traceDir)
 		}
-		runtimeSrv.InstallTimingTrace()
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
 		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{
 			Store:  opts.Store,
@@ -89,6 +88,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			Logger:       opts.Logger,
 			ContextJudge: contextJudge,
 		})
+		runtimeSrv.InstallTimingTrace()
 		runtimeMgr = &runtimeproxy.Manager{
 			Store:  opts.Store,
 			Config: opts.Config,

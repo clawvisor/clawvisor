@@ -31,6 +31,7 @@ func TestClaudeStarterProfileIncludesObservedStartupTraffic(t *testing.T) {
 		{host: "api.anthropic.com", path: "/api/claude_cli/bootstrap"},
 		{host: "api.anthropic.com", path: "/v1/mcp_servers"},
 		{host: "api.anthropic.com", regex: `^/api/eval/.*`},
+		{host: "platform.claude.com", path: "/v1/oauth/token", method: "POST"},
 		{host: "mcp-proxy.anthropic.com", regex: `^/v1/mcp/.*`},
 		{host: "downloads.claude.ai", path: "/claude-code-releases/plugins/claude-plugins-official/latest", method: "GET"},
 		{host: "downloads.claude.ai", regex: `^/claude-code-releases/plugins/claude-plugins-official/.*`, method: "GET"},

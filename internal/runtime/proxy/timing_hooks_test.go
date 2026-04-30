@@ -31,6 +31,7 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(25 * time.Millisecond)
 		_, _ = w.Write([]byte(`ok`))
 	}))
 	defer upstream.Close()
@@ -73,10 +74,10 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	srv.InstallTimingTrace()
 	srv.InstallSessionGuard(&Authenticator{Store: st, Config: cfg})
 	srv.InstallRequestContextCarrier()
 	srv.InstallEgressPolicy(PolicyHooks{Store: st, Config: cfg})
+	srv.InstallTimingTrace()
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -128,6 +129,15 @@ func TestRuntimeProxyTimingTraceWritesJSONLEntry(t *testing.T) {
 	assertTraceSpanPresent(t, last.Spans, "egress.read_body")
 	assertTraceSpanPresent(t, last.Spans, "egress.load_rules")
 	assertTraceSpanPresent(t, last.Spans, "egress.match_tasks")
+	assertTraceSpanPresent(t, last.Spans, "upstream.roundtrip_headers")
+	assertTraceSpanPresent(t, last.Spans, "upstream.response_body_read")
+	assertTraceSpanPresent(t, last.Spans, "response.client_body_read")
+	if got, ok := last.Attrs["upstream.status_code"]; !ok || intFromAny(got) != http.StatusOK {
+		t.Fatalf("expected upstream.status_code=200, got %#v", got)
+	}
+	if got, ok := last.Attrs["response.client_body_bytes"]; !ok || intFromAny(got) != len("ok") {
+		t.Fatalf("expected response.client_body_bytes=%d, got %#v", len("ok"), got)
+	}
 }
 
 func splitNonEmptyLines(s string) []string {
@@ -149,4 +159,17 @@ func assertTraceSpanPresent(t *testing.T, spans []runtimetiming.TraceSpan, name 
 		}
 	}
 	t.Fatalf("expected timing trace span %q in %+v", name, spans)
+}
+
+func intFromAny(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	default:
+		return 0
+	}
 }

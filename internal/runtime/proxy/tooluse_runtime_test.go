@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func TestRenderHeldToolUsePromptPlacesSubjectOnOwnLine(t *testing.T) {
 	}
 
 	got := renderHeldToolUsePrompt(held, cfg)
-	if !strings.Contains(got, "Clawvisor paused:\nBash python3 /tmp/hello_world.py") {
+	if !strings.Contains(got, "Clawvisor paused:\n\nBash python3 /tmp/hello_world.py") {
 		t.Fatalf("expected paused subject on its own line, got %q", got)
 	}
 	if !strings.Contains(got, "Reply `approve`") {
@@ -519,6 +520,267 @@ func TestSyntheticHeldToolUseResponseOpenAIResponsesAndLeaseClose(t *testing.T) 
 		t.Fatalf("ListRuntimeEvents: %v", err)
 	}
 	assertRuntimeEventTypes(t, events, "runtime.lease.opened", "runtime.tool_use.released", "runtime.lease.closed")
+}
+
+func TestStreamToolUseBlockPassesThroughAnthropicTextSSE(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-pass.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "runtime-stream-pass", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	original := conversation.SynthAnthropicTextSSE("msg_1", "claude", "assistant", "hello")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(string(original))),
+		Request:    req,
+	}
+	stReq := &RequestState{Session: runtimeSession}
+	decisionState := map[string]toolDecisionState{}
+	handled := srv.tryStreamToolUseBlock(req, resp, stReq, ToolUseHooks{Store: st, Config: config.Default(), ReviewCache: review.NewApprovalCache(), Leases: leases.Service{Store: st}}, func(conversation.ToolUse) conversation.ToolUseVerdict {
+		t.Fatal("unexpected tool evaluation for text-only SSE")
+		return conversation.ToolUseVerdict{}
+	}, decisionState)
+	if !handled {
+		t.Fatal("expected streaming handler to engage for Anthropic SSE")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(body) != string(original) {
+		t.Fatalf("streaming pass-through mutated text-only SSE:\n%s", string(body))
+	}
+}
+
+func TestStreamToolUseBlockRewritesBlockedAnthropicSSE(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-anthropic.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "runtime-stream-anthropic", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(string(
+			conversation.SynthAnthropicToolUseSSE("msg_1", "claude", "assistant", "toolu_1", "Read", map[string]any{"file_path": "/tmp/demo.txt"}),
+		))),
+		Request: req,
+	}
+	stReq := &RequestState{Session: runtimeSession}
+	decisionState := map[string]toolDecisionState{}
+	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		input := decodeToolInput(tu.Input)
+		rec, held, substitute := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, nil, tu, input)
+		if rec != nil {
+			decisionState[toolDecisionKey(tu)] = toolDecisionState{
+				ApprovalID:        &rec.ID,
+				Held:              held,
+				WouldReview:       true,
+				WouldPromptInline: true,
+			}
+		}
+		return conversation.ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "runtime approval required",
+			SubstituteWith: substitute,
+		}
+	}
+	if !srv.tryStreamToolUseBlock(req, resp, stReq, hooks, evaluator, decisionState) {
+		t.Fatal("expected streaming handler to engage for Anthropic SSE")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !strings.Contains(string(body), "Clawvisor paused:") {
+		t.Fatalf("expected blocked Anthropc SSE to contain approval prompt, got %s", string(body))
+	}
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":toolu_1")
+	if err != nil {
+		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
+	}
+	if rec.ResolutionTransport != "release_held_tool_use" {
+		t.Fatalf("expected held approval transport, got %+v", rec)
+	}
+}
+
+func TestStreamToolUseBlockRewritesBlockedOpenAISSE(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-openai.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "runtime-stream-openai", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(string(
+			conversation.SynthOpenAIResponsesFunctionCallSSE("call_1", "Read", map[string]any{"file_path": "/tmp/demo.txt"}),
+		))),
+		Request: req,
+	}
+	stReq := &RequestState{Session: runtimeSession}
+	decisionState := map[string]toolDecisionState{}
+	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		input := decodeToolInput(tu.Input)
+		rec, held, substitute := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, nil, tu, input)
+		if rec != nil {
+			decisionState[toolDecisionKey(tu)] = toolDecisionState{
+				ApprovalID:        &rec.ID,
+				Held:              held,
+				WouldReview:       true,
+				WouldPromptInline: true,
+			}
+		}
+		return conversation.ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "runtime approval required",
+			SubstituteWith: substitute,
+		}
+	}
+	if !srv.tryStreamToolUseBlock(req, resp, stReq, hooks, evaluator, decisionState) {
+		t.Fatal("expected streaming handler to engage for OpenAI SSE")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !strings.Contains(string(body), "Clawvisor paused:") {
+		t.Fatalf("expected blocked OpenAI SSE to contain approval prompt, got %s", string(body))
+	}
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_1")
+	if err != nil {
+		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
+	}
+	if rec.ResolutionTransport != "release_held_tool_use" {
+		t.Fatalf("expected held approval transport, got %+v", rec)
+	}
+}
+
+func TestStreamToolUseBlockRewritesBlockedOpenAIChatSSE(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-openai-chat.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "runtime-stream-openai-chat", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      config.Default(),
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(string(
+			conversation.SynthOpenAIChatToolCallSSE("call_2", "Read", map[string]any{"file_path": "/tmp/demo.txt"}),
+		))),
+		Request: req,
+	}
+	stReq := &RequestState{Session: runtimeSession}
+	decisionState := map[string]toolDecisionState{}
+	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		input := decodeToolInput(tu.Input)
+		rec, held, substitute := srv.ensureHeldToolUseApproval(ctx, hooks, runtimeSession, nil, tu, input)
+		if rec != nil {
+			decisionState[toolDecisionKey(tu)] = toolDecisionState{
+				ApprovalID:        &rec.ID,
+				Held:              held,
+				WouldReview:       true,
+				WouldPromptInline: true,
+			}
+		}
+		return conversation.ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "runtime approval required",
+			SubstituteWith: substitute,
+		}
+	}
+	if !srv.tryStreamToolUseBlock(req, resp, stReq, hooks, evaluator, decisionState) {
+		t.Fatal("expected streaming handler to engage for OpenAI chat SSE")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !strings.Contains(string(body), "Clawvisor paused:") {
+		t.Fatalf("expected blocked OpenAI chat SSE to contain approval prompt, got %s", string(body))
+	}
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_2")
+	if err != nil {
+		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
+	}
+	if rec.ResolutionTransport != "release_held_tool_use" {
+		t.Fatalf("expected held approval transport, got %+v", rec)
+	}
 }
 
 func conversationToolUse(id, name string) conversation.ToolUse {

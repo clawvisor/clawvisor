@@ -17,6 +17,7 @@ type Span struct {
 type Recorder struct {
 	mu    sync.Mutex
 	spans []Span
+	attrs map[string]any
 }
 
 func (r *Recorder) Record(name string, d time.Duration) {
@@ -36,6 +37,34 @@ func (r *Recorder) Spans() []Span {
 	defer r.mu.Unlock()
 	out := make([]Span, len(r.spans))
 	copy(out, r.spans)
+	return out
+}
+
+func (r *Recorder) SetAttr(name string, value any) {
+	if r == nil || name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.attrs == nil {
+		r.attrs = map[string]any{}
+	}
+	r.attrs[name] = value
+}
+
+func (r *Recorder) Attrs() map[string]any {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.attrs) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(r.attrs))
+	for k, v := range r.attrs {
+		out[k] = v
+	}
 	return out
 }
 
@@ -100,4 +129,8 @@ func RecordSpan(ctx context.Context, name string, d time.Duration) {
 
 func Stop(ctx context.Context, name string, start time.Time) {
 	RecordSpan(ctx, name, time.Since(start))
+}
+
+func SetAttr(ctx context.Context, name string, value any) {
+	RecorderFrom(ctx).SetAttr(name, value)
 }

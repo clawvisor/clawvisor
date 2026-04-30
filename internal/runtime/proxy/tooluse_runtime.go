@@ -18,6 +18,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/runtime/review"
+	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -464,6 +465,13 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 			}
 		}
 
+		if s.tryStreamToolUseBlock(ctx.Req, resp, st, hooks, evaluator, decisionState) {
+			runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "stream")
+			resp.ContentLength = -1
+			resp.Header.Del("Content-Length")
+			return resp
+		}
+
 		rewriteStartedAt := time.Now()
 		result, err := rewriter.Rewrite(body, resp.Header.Get("Content-Type"), evaluator)
 		s.recordTimingSpan(ctx.Req, "tool_block.rewrite", rewriteStartedAt)
@@ -474,167 +482,176 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 		}
 
 		for _, decision := range result.Decisions {
-			key := toolDecisionKey(decision.ToolUse)
-			state := decisionState[key]
-			if decision.Verdict.Allowed {
-				var leaseID *string
-				if state.Task != nil {
-					lease, err := hooks.Leases.Open(ctx.Req.Context(), st.Session.ID, state.Task.ID, decision.ToolUse.ID, decision.ToolUse.Name, toolLeaseTTL(hooks.Config))
-					if err == nil && lease != nil {
-						leaseID = &lease.LeaseID
-						emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-							EventType:  "runtime.lease.opened",
-							ActionKind: "tool_use",
-							TaskID:     &state.Task.ID,
-							LeaseID:    &lease.LeaseID,
-							ToolUseID:  stringPtr(decision.ToolUse.ID),
-							Decision:   stringPtr("allow"),
-							Outcome:    stringPtr("opened"),
-							Reason:     stringPtr("runtime tool-use lease opened"),
-							Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
-						})
-						s.recordToolActivity(ctx.Req.Context(), hooks.Store, st.Session, state.Task, decision.ToolUse.ID, decision.ToolUse.Name, "", lease)
-					}
-				}
-				outcome := "approved"
-				reason := decision.Verdict.Reason
-				if state.WouldReview {
-					outcome = "observed"
-					if reason == "" {
-						reason = "observation mode: tool use would require runtime approval"
-					}
-				} else if state.WouldBlock {
-					outcome = "observed"
-					if reason == "" {
-						reason = "observation mode: runtime policy would block this tool call"
-					}
-				}
-				s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
-				if state.WouldReview {
-					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-						EventType:  "runtime.observe.would_review",
-						ActionKind: "tool_use",
-						TaskID:     taskIDPtr(state.Task),
-						ToolUseID:  stringPtr(decision.ToolUse.ID),
-						Decision:   stringPtr("allow"),
-						Outcome:    stringPtr("observed"),
-						Reason:     stringPtr(reason),
-						Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
-					})
-					if state.WouldPromptInline {
-						emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-							EventType:  "runtime.observe.would_prompt_inline",
-							ActionKind: "tool_use",
-							TaskID:     taskIDPtr(state.Task),
-							ToolUseID:  stringPtr(decision.ToolUse.ID),
-							Decision:   stringPtr("allow"),
-							Outcome:    stringPtr("observed"),
-							Reason:     stringPtr("observation mode: tool use would prompt inline"),
-							Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
-						})
-					}
-				} else if state.WouldBlock {
-					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-						EventType:  "runtime.observe.would_deny",
-						ActionKind: "tool_use",
-						TaskID:     taskIDPtr(state.Task),
-						ToolUseID:  stringPtr(decision.ToolUse.ID),
-						Decision:   stringPtr("allow"),
-						Outcome:    stringPtr("observed"),
-						Reason:     stringPtr(reason),
-						Metadata: map[string]any{
-							"tool_name":   decision.ToolUse.Name,
-							"rule_id":     ruleIDOrEmpty(state.Rule),
-							"rule_action": "deny",
-						},
-					})
-				} else {
-					emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-						EventType:     toolUseAllowedEventType(state.Rule),
-						ActionKind:    "tool_use",
-						TaskID:        taskIDPtr(state.Task),
-						MatchedTaskID: taskIDPtr(state.Task),
-						LeaseID:       leaseID,
-						ToolUseID:     stringPtr(decision.ToolUse.ID),
-						Decision:      stringPtr("allow"),
-						Outcome:       stringPtr(outcome),
-						Reason:        stringPtr(reason),
-						Metadata: map[string]any{
-							"tool_name":   decision.ToolUse.Name,
-							"rule_id":     ruleIDOrEmpty(state.Rule),
-							"rule_action": ruleActionOrEmpty(state.Rule),
-						},
-					})
-				}
-				continue
-			}
-			decisionWord := "review"
-			outcome := "pending"
-			reason := "runtime tool call is outside the active task envelope"
-			if state.DeniedByRule {
-				decisionWord = "deny"
-				outcome = "blocked"
-				reason = firstNonEmpty(decision.Verdict.Reason, "runtime deny rule blocked this tool call")
-			} else if state.ApprovalCreateFailed {
-				decisionWord = "deny"
-				outcome = "error"
-				reason = firstNonEmpty(state.FailureReason, "runtime approval could not be created for this tool call")
-			}
-			s.logToolUseAudit(ctx.Req.Context(), hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
-			if state.DeniedByRule {
-				emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-					EventType:  "runtime.policy.deny_matched",
-					ActionKind: "tool_use",
-					TaskID:     taskIDPtr(state.Task),
-					ToolUseID:  stringPtr(decision.ToolUse.ID),
-					Decision:   stringPtr("deny"),
-					Outcome:    stringPtr("blocked"),
-					Reason:     stringPtr(reason),
-					Metadata: map[string]any{
-						"tool_name":   decision.ToolUse.Name,
-						"rule_id":     ruleIDOrEmpty(state.Rule),
-						"rule_action": "deny",
-					},
-				})
-				continue
-			}
-			if state.ApprovalCreateFailed {
-				emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-					EventType:  "runtime.tool_use.review_failed",
-					ActionKind: "tool_use",
-					TaskID:     taskIDPtr(state.Task),
-					ToolUseID:  stringPtr(decision.ToolUse.ID),
-					Decision:   stringPtr("deny"),
-					Outcome:    stringPtr("error"),
-					Reason:     stringPtr(reason),
-					Metadata: map[string]any{
-						"tool_name": decision.ToolUse.Name,
-					},
-				})
-				continue
-			}
-			emitRuntimeEvent(ctx.Req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
-				EventType:           toolUseReviewEventType(state.Rule),
-				ActionKind:          "tool_use",
-				ApprovalID:          state.ApprovalID,
-				TaskID:              taskIDPtr(state.Task),
-				ToolUseID:           stringPtr(decision.ToolUse.ID),
-				ResolutionTransport: stringPtr("release_held_tool_use"),
-				Decision:            stringPtr("review"),
-				Outcome:             stringPtr("pending"),
-				Reason:              stringPtr("runtime tool call is outside the active task envelope"),
-				Metadata: map[string]any{
-					"tool_name":           decision.ToolUse.Name,
-					"would_prompt_inline": state.WouldPromptInline,
-					"rule_id":             ruleIDOrEmpty(state.Rule),
-					"rule_action":         ruleActionOrEmpty(state.Rule),
-				},
-			})
+			s.applyToolUseDecision(ctx.Req.Context(), hooks, st, decision, decisionState[toolDecisionKey(decision.ToolUse)])
 		}
 
 		resp.Body = io.NopCloser(bytes.NewReader(result.Body))
 		resp.ContentLength = int64(len(result.Body))
+		runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "buffered")
 		return resp
+	})
+}
+
+func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, st *RequestState, decision conversation.ToolUseDecisionRecord, state toolDecisionState) {
+	if st == nil || st.Session == nil {
+		return
+	}
+	if decision.Verdict.Allowed {
+		var leaseID *string
+		if state.Task != nil {
+			lease, err := hooks.Leases.Open(ctx, st.Session.ID, state.Task.ID, decision.ToolUse.ID, decision.ToolUse.Name, toolLeaseTTL(hooks.Config))
+			if err == nil && lease != nil {
+				leaseID = &lease.LeaseID
+				emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  "runtime.lease.opened",
+					ActionKind: "tool_use",
+					TaskID:     &state.Task.ID,
+					LeaseID:    &lease.LeaseID,
+					ToolUseID:  stringPtr(decision.ToolUse.ID),
+					Decision:   stringPtr("allow"),
+					Outcome:    stringPtr("opened"),
+					Reason:     stringPtr("runtime tool-use lease opened"),
+					Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+				})
+				s.recordToolActivity(ctx, hooks.Store, st.Session, state.Task, decision.ToolUse.ID, decision.ToolUse.Name, "", lease)
+			}
+		}
+		outcome := "approved"
+		reason := decision.Verdict.Reason
+		if state.WouldReview {
+			outcome = "observed"
+			if reason == "" {
+				reason = "observation mode: tool use would require runtime approval"
+			}
+		} else if state.WouldBlock {
+			outcome = "observed"
+			if reason == "" {
+				reason = "observation mode: runtime policy would block this tool call"
+			}
+		}
+		s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
+		if state.WouldReview {
+			emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:  "runtime.observe.would_review",
+				ActionKind: "tool_use",
+				TaskID:     taskIDPtr(state.Task),
+				ToolUseID:  stringPtr(decision.ToolUse.ID),
+				Decision:   stringPtr("allow"),
+				Outcome:    stringPtr("observed"),
+				Reason:     stringPtr(reason),
+				Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+			})
+			if state.WouldPromptInline {
+				emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+					EventType:  "runtime.observe.would_prompt_inline",
+					ActionKind: "tool_use",
+					TaskID:     taskIDPtr(state.Task),
+					ToolUseID:  stringPtr(decision.ToolUse.ID),
+					Decision:   stringPtr("allow"),
+					Outcome:    stringPtr("observed"),
+					Reason:     stringPtr("observation mode: tool use would prompt inline"),
+					Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+				})
+			}
+			return
+		}
+		if state.WouldBlock {
+			emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+				EventType:  "runtime.observe.would_deny",
+				ActionKind: "tool_use",
+				TaskID:     taskIDPtr(state.Task),
+				ToolUseID:  stringPtr(decision.ToolUse.ID),
+				Decision:   stringPtr("allow"),
+				Outcome:    stringPtr("observed"),
+				Reason:     stringPtr(reason),
+				Metadata: map[string]any{
+					"tool_name":   decision.ToolUse.Name,
+					"rule_id":     ruleIDOrEmpty(state.Rule),
+					"rule_action": "deny",
+				},
+			})
+			return
+		}
+		emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+			EventType:     toolUseAllowedEventType(state.Rule),
+			ActionKind:    "tool_use",
+			TaskID:        taskIDPtr(state.Task),
+			MatchedTaskID: taskIDPtr(state.Task),
+			LeaseID:       leaseID,
+			ToolUseID:     stringPtr(decision.ToolUse.ID),
+			Decision:      stringPtr("allow"),
+			Outcome:       stringPtr(outcome),
+			Reason:        stringPtr(reason),
+			Metadata: map[string]any{
+				"tool_name":   decision.ToolUse.Name,
+				"rule_id":     ruleIDOrEmpty(state.Rule),
+				"rule_action": ruleActionOrEmpty(state.Rule),
+			},
+		})
+		return
+	}
+
+	decisionWord := "review"
+	outcome := "pending"
+	reason := "runtime tool call is outside the active task envelope"
+	if state.DeniedByRule {
+		decisionWord = "deny"
+		outcome = "blocked"
+		reason = firstNonEmpty(decision.Verdict.Reason, "runtime deny rule blocked this tool call")
+	} else if state.ApprovalCreateFailed {
+		decisionWord = "deny"
+		outcome = "error"
+		reason = firstNonEmpty(state.FailureReason, "runtime approval could not be created for this tool call")
+	}
+	s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
+	if state.DeniedByRule {
+		emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+			EventType:  "runtime.policy.deny_matched",
+			ActionKind: "tool_use",
+			TaskID:     taskIDPtr(state.Task),
+			ToolUseID:  stringPtr(decision.ToolUse.ID),
+			Decision:   stringPtr("deny"),
+			Outcome:    stringPtr("blocked"),
+			Reason:     stringPtr(reason),
+			Metadata: map[string]any{
+				"tool_name":   decision.ToolUse.Name,
+				"rule_id":     ruleIDOrEmpty(state.Rule),
+				"rule_action": "deny",
+			},
+		})
+		return
+	}
+	if state.ApprovalCreateFailed {
+		emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+			EventType:  "runtime.tool_use.review_failed",
+			ActionKind: "tool_use",
+			TaskID:     taskIDPtr(state.Task),
+			ToolUseID:  stringPtr(decision.ToolUse.ID),
+			Decision:   stringPtr("deny"),
+			Outcome:    stringPtr("error"),
+			Reason:     stringPtr(reason),
+			Metadata: map[string]any{
+				"tool_name": decision.ToolUse.Name,
+			},
+		})
+		return
+	}
+	emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
+		EventType:           toolUseReviewEventType(state.Rule),
+		ActionKind:          "tool_use",
+		ApprovalID:          state.ApprovalID,
+		TaskID:              taskIDPtr(state.Task),
+		ToolUseID:           stringPtr(decision.ToolUse.ID),
+		ResolutionTransport: stringPtr("release_held_tool_use"),
+		Decision:            stringPtr("review"),
+		Outcome:             stringPtr("pending"),
+		Reason:              stringPtr("runtime tool call is outside the active task envelope"),
+		Metadata: map[string]any{
+			"tool_name":           decision.ToolUse.Name,
+			"would_prompt_inline": state.WouldPromptInline,
+			"rule_id":             ruleIDOrEmpty(state.Rule),
+			"rule_action":         ruleActionOrEmpty(state.Rule),
+		},
 	})
 }
 
@@ -786,9 +803,9 @@ func renderHeldToolUsePrompt(held *review.HeldApproval, cfg *config.Config) stri
 	}
 	subject := summarizeToolUse(held.ToolName, held.ToolInput)
 	if cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled {
-		return "Clawvisor paused:\n" + subject + "\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
+		return "Clawvisor paused:\n\n" + subject + "\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
 	}
-	return "Clawvisor paused:\n" + subject + "\n\nPending approval in the dashboard.\nApproval ID: " + held.ID
+	return "Clawvisor paused:\n\n" + subject + "\n\nPending approval in the dashboard.\nApproval ID: " + held.ID
 }
 
 func renderExistingHeldPrompt(held *review.HeldApproval, cfg *config.Config) string {

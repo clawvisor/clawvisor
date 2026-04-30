@@ -56,6 +56,7 @@ func StarterProfiles() []StarterProfile {
 				{Kind: "egress", Action: "allow", Host: "api.anthropic.com", Path: "/v1/mcp_servers", Reason: "Claude MCP server discovery"},
 				{Kind: "egress", Action: "allow", Host: "api.anthropic.com", Path: "/mcp-registry/v0/servers", Reason: "Claude MCP registry discovery"},
 				{Kind: "egress", Action: "allow", Host: "api.anthropic.com", PathRegex: `^/api/eval/.*`, Reason: "Claude eval and diagnostics control plane"},
+				{Kind: "egress", Action: "allow", Host: "platform.claude.com", Method: "POST", Path: "/v1/oauth/token", Reason: "Claude OAuth token refresh"},
 				{Kind: "egress", Action: "allow", Host: "mcp-proxy.anthropic.com", PathRegex: `^/v1/mcp/.*`, Reason: "Claude MCP proxy traffic"},
 				{Kind: "egress", Action: "allow", Host: "downloads.claude.ai", Method: "GET", Path: "/claude-code-releases/plugins/claude-plugins-official/latest", Reason: "Claude plugin release check"},
 				{Kind: "egress", Action: "allow", Host: "downloads.claude.ai", Method: "GET", PathRegex: `^/claude-code-releases/plugins/claude-plugins-official/.*`, Reason: "Claude plugin artifact download"},
