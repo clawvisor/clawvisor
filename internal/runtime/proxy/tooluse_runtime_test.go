@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,26 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+func TestRenderHeldToolUsePromptPlacesSubjectOnOwnLine(t *testing.T) {
+	cfg := config.Default()
+	cfg.RuntimePolicy.InlineApprovalEnabled = true
+	held := &review.HeldApproval{
+		ID:       "cv-abc123def456",
+		ToolName: "Bash",
+		ToolInput: map[string]any{
+			"command": "python3 /tmp/hello_world.py",
+		},
+	}
+
+	got := renderHeldToolUsePrompt(held, cfg)
+	if !strings.Contains(got, "Clawvisor paused:\nBash python3 /tmp/hello_world.py") {
+		t.Fatalf("expected paused subject on its own line, got %q", got)
+	}
+	if !strings.Contains(got, "Reply `approve`") {
+		t.Fatalf("expected inline approval instruction, got %q", got)
+	}
+}
 
 func TestEnsureHeldToolUseApprovalAndDashboardRelease(t *testing.T) {
 	ctx := context.Background()

@@ -786,9 +786,9 @@ func renderHeldToolUsePrompt(held *review.HeldApproval, cfg *config.Config) stri
 	}
 	subject := summarizeToolUse(held.ToolName, held.ToolInput)
 	if cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled {
-		return "Clawvisor paused " + subject + ".\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
+		return "Clawvisor paused:\n" + subject + "\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
 	}
-	return "Clawvisor paused " + subject + " pending approval in the dashboard.\n\nApproval ID: " + held.ID
+	return "Clawvisor paused:\n" + subject + "\n\nPending approval in the dashboard.\nApproval ID: " + held.ID
 }
 
 func renderExistingHeldPrompt(held *review.HeldApproval, cfg *config.Config) string {
