@@ -56,6 +56,11 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	if !ok {
 		return nil
 	}
+	if shouldAutoApplyStarterProfile(decision, settings, profileID) {
+		if applyStarterProfileToAgent(cl, creds.AgentID, settings, profileID) {
+			return nil
+		}
+	}
 	if shouldSuppressStarterProfilePrompt(decision, settings, profileID) {
 		return nil
 	}
@@ -68,9 +73,7 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	choice = strings.ToLower(strings.TrimSpace(choice))
 	switch choice {
 	case "", "y", "yes":
-		if _, err := cl.ApplyRuntimeStarterProfile(profileID, creds.AgentID); err == nil {
-			settings.StarterProfile = profileID
-			_, _ = cl.UpdateAgentRuntimeSettings(creds.AgentID, *settings)
+		if applyStarterProfileToAgent(cl, creds.AgentID, settings, profileID) {
 			_, _ = cl.UpsertRuntimePresetDecision(client.RuntimePresetDecision{
 				CommandKey: commandKey,
 				Profile:    profileID,
@@ -94,6 +97,29 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	return nil
 }
 
+func applyStarterProfileToAgent(cl runtimeControlsClient, agentID string, settings *client.AgentRuntimeSettings, profileID string) bool {
+	if cl == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(profileID) == "" {
+		return false
+	}
+	if _, err := cl.ApplyRuntimeStarterProfile(profileID, agentID); err != nil {
+		return false
+	}
+	if settings == nil {
+		settings = &client.AgentRuntimeSettings{AgentID: agentID}
+	}
+	settings.AgentID = agentID
+	settings.StarterProfile = profileID
+	_, _ = cl.UpdateAgentRuntimeSettings(agentID, *settings)
+	return true
+}
+
+func shouldAutoApplyStarterProfile(decision *client.RuntimePresetDecision, settings *client.AgentRuntimeSettings, profileID string) bool {
+	if decision == nil || decision.Decision != "applied" {
+		return false
+	}
+	return settings == nil || !strings.EqualFold(settings.StarterProfile, profileID)
+}
+
 func printObserveModeNotice(observe bool) {
 	if !observe {
 		return
@@ -115,8 +141,10 @@ func isInteractiveTTY(f *os.File) bool {
 func shouldSuppressStarterProfilePrompt(decision *client.RuntimePresetDecision, settings *client.AgentRuntimeSettings, profileID string) bool {
 	if decision != nil {
 		switch decision.Decision {
-		case "always_skip", "applied", "skipped":
+		case "always_skip", "skipped":
 			return true
+		case "applied":
+			return settings != nil && strings.EqualFold(settings.StarterProfile, profileID)
 		}
 	}
 	return settings != nil && strings.EqualFold(settings.StarterProfile, profileID)

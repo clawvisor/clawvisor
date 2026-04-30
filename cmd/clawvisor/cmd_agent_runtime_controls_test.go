@@ -108,9 +108,20 @@ func TestShouldSuppressStarterProfilePrompt(t *testing.T) {
 			want:    true,
 		},
 		{
-			name: "suppresses applied decision",
+			name: "does not suppress applied decision without matching agent profile",
 			decision: &client.RuntimePresetDecision{
 				Decision: "applied",
+			},
+			profile: "codex",
+			want:    false,
+		},
+		{
+			name: "suppresses applied decision with matching agent profile",
+			decision: &client.RuntimePresetDecision{
+				Decision: "applied",
+			},
+			settings: &client.AgentRuntimeSettings{
+				StarterProfile: "codex",
 			},
 			profile: "codex",
 			want:    true,
@@ -165,6 +176,15 @@ func TestMaybeOfferStarterProfile(t *testing.T) {
 		wantPrompt              bool
 		wantAppliedMessage      bool
 	}{
+		{
+			name: "auto applies previously applied decision to fresh agent",
+			decision: &client.RuntimePresetDecision{
+				Decision: "applied",
+			},
+			settings:           &client.AgentRuntimeSettings{AgentID: "agent-123"},
+			wantApply:          true,
+			wantStarterProfile: "codex",
+		},
 		{
 			name: "suppresses previously skipped decision",
 			decision: &client.RuntimePresetDecision{
