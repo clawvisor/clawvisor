@@ -289,207 +289,211 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 	registry := conversation.DefaultResponseRegistry()
 	s.goproxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		if resp == nil || ctx == nil || ctx.Req == nil {
-			return resp
-		}
-		if ctx.Req.Header.Get(internalBypassHeader) != "" {
-			return resp
-		}
-		st := StateOf(ctx)
-		if st == nil || st.Session == nil {
-			return resp
-		}
-		rewriter := registry.Match(ctx.Req, resp)
-		if rewriter == nil || resp.Body == nil {
-			return resp
-		}
-
-		readStartedAt := time.Now()
-		body, err := io.ReadAll(resp.Body)
-		s.recordTimingSpan(ctx.Req, "tool_block.read_body", readStartedAt)
-		if err != nil {
-			return resp
-		}
-
-		taskLoadStartedAt := time.Now()
-		candidateTasks, _ := loadRuntimeCandidateTasks(ctx.Req.Context(), hooks.Store, st.Session)
-		s.recordTimingSpan(ctx.Req, "tool_block.load_tasks", taskLoadStartedAt)
-		reviewTask := selectReviewTaskContext(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks)
-		enabled := true
-		ruleLoadStartedAt := time.Now()
-		rules, _ := hooks.Store.ListRuntimePolicyRules(ctx.Req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
-			AgentID: st.Session.AgentID,
-			Kind:    "tool",
-			Enabled: &enabled,
-		})
-		s.recordTimingSpan(ctx.Req, "tool_block.load_rules", ruleLoadStartedAt)
-		decisionState := map[string]toolDecisionState{}
-
-		evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-			input := decodeToolInput(tu.Input)
-			key := toolDecisionKey(tu)
-			if matchedRule, err := runtimepolicy.MatchRuntimePolicyTool(rules, st.Session.AgentID, tu.Name, input); err == nil && matchedRule != nil {
-				_ = hooks.Store.TouchRuntimePolicyRule(ctx.Req.Context(), matchedRule.ID, time.Now().UTC())
-				switch strings.ToLower(matchedRule.Action) {
-				case "allow":
-					decisionState[key] = toolDecisionState{Rule: matchedRule}
-					if st.Session.ObservationMode {
-						return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime allow rule matched this tool call")}
-					}
-					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "runtime allow rule matched this tool call")}
-				case "deny":
-					if st.Session.ObservationMode {
-						decisionState[key] = toolDecisionState{Rule: matchedRule, WouldBlock: true}
-						return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime deny rule would block this tool call")}
-					}
-					decisionState[key] = toolDecisionState{Rule: matchedRule, DeniedByRule: true}
-					return conversation.ToolUseVerdict{
-						Allowed:        false,
-						Reason:         firstNonEmpty(matchedRule.Reason, "runtime deny rule blocked this tool call"),
-						SubstituteWith: "This tool call was blocked by Clawvisor runtime policy.",
-					}
-				case "review":
-					reviewReason := firstNonEmpty(matchedRule.Reason, "runtime review rule matched this tool call")
-					if st.Session.ObservationMode {
-						decisionState[key] = toolDecisionState{
-							Rule:              matchedRule,
-							Task:              reviewTask,
-							WouldReview:       true,
-							WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
-						}
-						return conversation.ToolUseVerdict{Allowed: true, Reason: reviewReason}
-					}
-					rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, "task_call_review", runtimepolicy.RuntimeContextJudgment{}, reviewReason)
-					if rec != nil {
-						decisionState[key] = toolDecisionState{
-							Rule:              matchedRule,
-							Task:              reviewTask,
-							ApprovalID:        &rec.ID,
-							WouldReview:       true,
-							WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
-							Held:              held,
-						}
-					} else {
-						decisionState[key] = toolDecisionState{
-							Rule:                 matchedRule,
-							Task:                 reviewTask,
-							ApprovalCreateFailed: true,
-							FailureReason:        substitute,
-						}
-					}
-					return conversation.ToolUseVerdict{
-						Allowed:        false,
-						Reason:         "runtime approval required",
-						SubstituteWith: substitute,
-					}
-				}
-			}
-			if reason, ok := allowSessionScopedToolDefault(st.Session, tu.Name, input); ok {
-				decisionState[key] = toolDecisionState{}
-				return conversation.ToolUseVerdict{Allowed: true, Reason: reason}
-			}
-			match, task, usedActive, err := matchPreferredToolTask(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks, tu.Name, input)
-			if err == nil && match != nil && task != nil {
-				decisionState[key] = toolDecisionState{Task: task, UsedActiveTaskContext: usedActive}
-				return conversation.ToolUseVerdict{Allowed: true, Reason: match.Item.Why}
-			}
-
-			var judgment runtimepolicy.RuntimeContextJudgment
-			if hooks.ContextJudge != nil {
-				requestCtx := st.Runtime
-				if requestCtx == nil {
-					requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
-				}
-				judgeStartedAt := time.Now()
-				judgment, err = hooks.ContextJudge.Judge(ctx.Req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
-					Provider:          requestContextProvider(requestCtx),
-					SessionID:         st.Session.ID,
-					AgentID:           st.Session.AgentID,
-					ActionKind:        "tool_use",
-					ToolName:          tu.Name,
-					ToolInput:         input,
-					ParsedTurns:       requestContextTurns(requestCtx),
-					ActiveTaskBinding: reviewTask,
-					CandidateTasks:    candidateTasks,
-				})
-				s.recordTimingSpan(ctx.Req, "tool_block.context_judge", judgeStartedAt)
-				if err == nil && judgment.Kind == runtimepolicy.ClassificationBelongsToExistingTask && judgment.MatchedTask != nil {
-					decisionState[key] = toolDecisionState{
-						Task:                    judgment.MatchedTask,
-						UsedActiveTaskContext:   usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, judgment.MatchedTask),
-						UsedConvJudgeResolution: true,
-					}
-					return conversation.ToolUseVerdict{
-						Allowed: true,
-						Reason:  firstNonEmpty(judgment.Rationale, "runtime context judge matched this tool call to an existing task"),
-					}
-				}
-			}
-			if st.Session.ObservationMode {
-				decisionState[key] = toolDecisionState{
-					Task:                  reviewTask,
-					UsedActiveTaskContext: reviewTask != nil && usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, reviewTask),
-					WouldReview:           true,
-					WouldPromptInline:     hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
-				}
-				return conversation.ToolUseVerdict{Allowed: true, Reason: "observation mode: tool use would require runtime approval"}
-			}
-
-			approvalKind := "task_call_review"
-			if judgment.Kind == runtimepolicy.ClassificationNeedsNewTask || judgment.Kind == runtimepolicy.ClassificationAmbiguous {
-				approvalKind = "task_create"
-			}
-			reviewReason := firstNonEmpty(judgment.Rationale, "tool call requires runtime approval")
-			rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, approvalKind, judgment, reviewReason)
-			if rec != nil {
-				decisionState[key] = toolDecisionState{
-					Task:                    reviewTask,
-					ApprovalID:              &rec.ID,
-					WouldReview:             true,
-					WouldPromptInline:       hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
-					Held:                    held,
-					UsedConvJudgeResolution: judgment.Kind != "",
-				}
-			} else {
-				decisionState[key] = toolDecisionState{
-					Task:                    reviewTask,
-					UsedConvJudgeResolution: judgment.Kind != "",
-					ApprovalCreateFailed:    true,
-					FailureReason:           substitute,
-				}
-			}
-			return conversation.ToolUseVerdict{
-				Allowed:        false,
-				Reason:         "runtime approval required",
-				SubstituteWith: substitute,
-			}
-		}
-
-		if s.tryStreamToolUseBlock(ctx.Req, resp, st, hooks, evaluator, decisionState) {
-			runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "stream")
-			resp.ContentLength = -1
-			resp.Header.Del("Content-Length")
-			return resp
-		}
-
-		rewriteStartedAt := time.Now()
-		result, err := rewriter.Rewrite(body, resp.Header.Get("Content-Type"), evaluator)
-		s.recordTimingSpan(ctx.Req, "tool_block.rewrite", rewriteStartedAt)
-		if err != nil {
-			resp.Body = io.NopCloser(bytes.NewReader(body))
-			resp.ContentLength = int64(len(body))
-			return resp
-		}
-
-		for _, decision := range result.Decisions {
-			s.applyToolUseDecision(ctx.Req.Context(), hooks, st, decision, decisionState[toolDecisionKey(decision.ToolUse)])
-		}
-
-		resp.Body = io.NopCloser(bytes.NewReader(result.Body))
-		resp.ContentLength = int64(len(result.Body))
-		runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "buffered")
-		return resp
+		return s.handleToolUseBlockedResponse(resp, ctx, hooks, registry)
 	})
+}
+
+func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.ProxyCtx, hooks ToolUseHooks, registry *conversation.ResponseRegistry) *http.Response {
+	if resp == nil || ctx == nil || ctx.Req == nil {
+		return resp
+	}
+	if ctx.Req.Header.Get(internalBypassHeader) != "" {
+		return resp
+	}
+	st := StateOf(ctx)
+	if st == nil || st.Session == nil {
+		return resp
+	}
+	rewriter := registry.Match(ctx.Req, resp)
+	if rewriter == nil || resp.Body == nil {
+		return resp
+	}
+
+	taskLoadStartedAt := time.Now()
+	candidateTasks, _ := loadRuntimeCandidateTasks(ctx.Req.Context(), hooks.Store, st.Session)
+	s.recordTimingSpan(ctx.Req, "tool_block.load_tasks", taskLoadStartedAt)
+	reviewTask := selectReviewTaskContext(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks)
+	enabled := true
+	ruleLoadStartedAt := time.Now()
+	rules, _ := hooks.Store.ListRuntimePolicyRules(ctx.Req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: st.Session.AgentID,
+		Kind:    "tool",
+		Enabled: &enabled,
+	})
+	s.recordTimingSpan(ctx.Req, "tool_block.load_rules", ruleLoadStartedAt)
+	decisionState := map[string]toolDecisionState{}
+
+	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		input := decodeToolInput(tu.Input)
+		key := toolDecisionKey(tu)
+		if matchedRule, err := runtimepolicy.MatchRuntimePolicyTool(rules, st.Session.AgentID, tu.Name, input); err == nil && matchedRule != nil {
+			_ = hooks.Store.TouchRuntimePolicyRule(ctx.Req.Context(), matchedRule.ID, time.Now().UTC())
+			switch strings.ToLower(matchedRule.Action) {
+			case "allow":
+				decisionState[key] = toolDecisionState{Rule: matchedRule}
+				if st.Session.ObservationMode {
+					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime allow rule matched this tool call")}
+				}
+				return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "runtime allow rule matched this tool call")}
+			case "deny":
+				if st.Session.ObservationMode {
+					decisionState[key] = toolDecisionState{Rule: matchedRule, WouldBlock: true}
+					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime deny rule would block this tool call")}
+				}
+				decisionState[key] = toolDecisionState{Rule: matchedRule, DeniedByRule: true}
+				return conversation.ToolUseVerdict{
+					Allowed:        false,
+					Reason:         firstNonEmpty(matchedRule.Reason, "runtime deny rule blocked this tool call"),
+					SubstituteWith: "This tool call was blocked by Clawvisor runtime policy.",
+				}
+			case "review":
+				reviewReason := firstNonEmpty(matchedRule.Reason, "runtime review rule matched this tool call")
+				if st.Session.ObservationMode {
+					decisionState[key] = toolDecisionState{
+						Rule:              matchedRule,
+						Task:              reviewTask,
+						WouldReview:       true,
+						WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+					}
+					return conversation.ToolUseVerdict{Allowed: true, Reason: reviewReason}
+				}
+				rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, "task_call_review", runtimepolicy.RuntimeContextJudgment{}, reviewReason)
+				if rec != nil {
+					decisionState[key] = toolDecisionState{
+						Rule:              matchedRule,
+						Task:              reviewTask,
+						ApprovalID:        &rec.ID,
+						WouldReview:       true,
+						WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+						Held:              held,
+					}
+				} else {
+					decisionState[key] = toolDecisionState{
+						Rule:                 matchedRule,
+						Task:                 reviewTask,
+						ApprovalCreateFailed: true,
+						FailureReason:        substitute,
+					}
+				}
+				return conversation.ToolUseVerdict{
+					Allowed:        false,
+					Reason:         "runtime approval required",
+					SubstituteWith: substitute,
+				}
+			}
+		}
+		if reason, ok := allowSessionScopedToolDefault(st.Session, tu.Name, input); ok {
+			decisionState[key] = toolDecisionState{}
+			return conversation.ToolUseVerdict{Allowed: true, Reason: reason}
+		}
+		match, task, usedActive, err := matchPreferredToolTask(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks, tu.Name, input)
+		if err == nil && match != nil && task != nil {
+			decisionState[key] = toolDecisionState{Task: task, UsedActiveTaskContext: usedActive}
+			return conversation.ToolUseVerdict{Allowed: true, Reason: match.Item.Why}
+		}
+
+		var judgment runtimepolicy.RuntimeContextJudgment
+		if hooks.ContextJudge != nil {
+			requestCtx := st.Runtime
+			if requestCtx == nil {
+				requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
+			}
+			judgeStartedAt := time.Now()
+			judgment, err = hooks.ContextJudge.Judge(ctx.Req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
+				Provider:          requestContextProvider(requestCtx),
+				SessionID:         st.Session.ID,
+				AgentID:           st.Session.AgentID,
+				ActionKind:        "tool_use",
+				ToolName:          tu.Name,
+				ToolInput:         input,
+				ParsedTurns:       requestContextTurns(requestCtx),
+				ActiveTaskBinding: reviewTask,
+				CandidateTasks:    candidateTasks,
+			})
+			s.recordTimingSpan(ctx.Req, "tool_block.context_judge", judgeStartedAt)
+			if err == nil && judgment.Kind == runtimepolicy.ClassificationBelongsToExistingTask && judgment.MatchedTask != nil {
+				decisionState[key] = toolDecisionState{
+					Task:                    judgment.MatchedTask,
+					UsedActiveTaskContext:   usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, judgment.MatchedTask),
+					UsedConvJudgeResolution: true,
+				}
+				return conversation.ToolUseVerdict{
+					Allowed: true,
+					Reason:  firstNonEmpty(judgment.Rationale, "runtime context judge matched this tool call to an existing task"),
+				}
+			}
+		}
+		if st.Session.ObservationMode {
+			decisionState[key] = toolDecisionState{
+				Task:                  reviewTask,
+				UsedActiveTaskContext: reviewTask != nil && usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, reviewTask),
+				WouldReview:           true,
+				WouldPromptInline:     hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+			}
+			return conversation.ToolUseVerdict{Allowed: true, Reason: "observation mode: tool use would require runtime approval"}
+		}
+
+		approvalKind := "task_call_review"
+		if judgment.Kind == runtimepolicy.ClassificationNeedsNewTask || judgment.Kind == runtimepolicy.ClassificationAmbiguous {
+			approvalKind = "task_create"
+		}
+		reviewReason := firstNonEmpty(judgment.Rationale, "tool call requires runtime approval")
+		rec, held, substitute := s.ensureHeldToolUseApprovalWithKind(ctx.Req.Context(), hooks, st.Session, reviewTask, tu, input, approvalKind, judgment, reviewReason)
+		if rec != nil {
+			decisionState[key] = toolDecisionState{
+				Task:                    reviewTask,
+				ApprovalID:              &rec.ID,
+				WouldReview:             true,
+				WouldPromptInline:       hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+				Held:                    held,
+				UsedConvJudgeResolution: judgment.Kind != "",
+			}
+		} else {
+			decisionState[key] = toolDecisionState{
+				Task:                    reviewTask,
+				UsedConvJudgeResolution: judgment.Kind != "",
+				ApprovalCreateFailed:    true,
+				FailureReason:           substitute,
+			}
+		}
+		return conversation.ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "runtime approval required",
+			SubstituteWith: substitute,
+		}
+	}
+
+	if s.tryStreamToolUseBlock(ctx.Req, resp, st, hooks, evaluator, decisionState) {
+		runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "stream")
+		resp.ContentLength = -1
+		resp.Header.Del("Content-Length")
+		return resp
+	}
+
+	readStartedAt := time.Now()
+	body, err := io.ReadAll(resp.Body)
+	s.recordTimingSpan(ctx.Req, "tool_block.read_body", readStartedAt)
+	if err != nil {
+		return resp
+	}
+
+	rewriteStartedAt := time.Now()
+	result, err := rewriter.Rewrite(body, resp.Header.Get("Content-Type"), evaluator)
+	s.recordTimingSpan(ctx.Req, "tool_block.rewrite", rewriteStartedAt)
+	if err != nil {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
+		return resp
+	}
+
+	for _, decision := range result.Decisions {
+		s.applyToolUseDecision(ctx.Req.Context(), hooks, st, decision, decisionState[toolDecisionKey(decision.ToolUse)])
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(result.Body))
+	resp.ContentLength = int64(len(result.Body))
+	runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "buffered")
+	return resp
 }
 
 func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, st *RequestState, decision conversation.ToolUseDecisionRecord, state toolDecisionState) {

@@ -14,6 +14,7 @@ import (
 func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("NO_PROXY", "metadata.internal,localhost")
+	t.Setenv("NODE_OPTIONS", "--trace-warnings")
 
 	session := &client.CreateRuntimeSessionResponse{
 		Session: client.RuntimeSession{
@@ -41,6 +42,9 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	if got := values["CLAWVISOR_RUNTIME_PROXY_URL"]; got != "http://127.0.0.1:4318" {
 		t.Fatalf("unexpected runtime proxy URL %q", got)
 	}
+	if got := values["CLAWVISOR_PROXY"]; got != values["HTTP_PROXY"] {
+		t.Fatalf("expected CLAWVISOR_PROXY to match HTTP_PROXY, got %q vs %q", got, values["HTTP_PROXY"])
+	}
 	if got := values["CLAWVISOR_RUNTIME_OBSERVATION_MODE"]; got != "true" {
 		t.Fatalf("unexpected observation mode %q", got)
 	}
@@ -66,8 +70,19 @@ func TestBuildRuntimeBootstrapEnv(t *testing.T) {
 	if got := values["NODE_EXTRA_CA_CERTS"]; got != caPath {
 		t.Fatalf("expected NODE_EXTRA_CA_CERTS to match runtime CA path, got %q", got)
 	}
+	if got := values["CLAWVISOR_PROXY_CA"]; got != caPath {
+		t.Fatalf("expected CLAWVISOR_PROXY_CA to match runtime CA path, got %q", got)
+	}
 	if got := values["GIT_SSL_CAINFO"]; got != caPath {
 		t.Fatalf("expected GIT_SSL_CAINFO to match runtime CA path, got %q", got)
+	}
+	nodeOptions := values["NODE_OPTIONS"]
+	if !strings.Contains(nodeOptions, "--trace-warnings") || !strings.Contains(nodeOptions, "--require=") {
+		t.Fatalf("expected NODE_OPTIONS to preserve existing flags and add shim, got %q", nodeOptions)
+	}
+	shimPath := strings.TrimPrefix(nodeOptions[strings.LastIndex(nodeOptions, "--require="):], "--require=")
+	if _, err := os.Stat(shimPath); err != nil {
+		t.Fatalf("expected shim file to exist at %q: %v", shimPath, err)
 	}
 	data, err := os.ReadFile(caPath)
 	if err != nil {
@@ -137,8 +152,14 @@ func TestBuildRuntimeBootstrapEnvSkipsCAEnvWhenUnavailable(t *testing.T) {
 	if values["CLAWVISOR_RUNTIME_CA_CERT_FILE"] != "" {
 		t.Fatalf("expected runtime CA env to be omitted, got %q", values["CLAWVISOR_RUNTIME_CA_CERT_FILE"])
 	}
+	if values["CLAWVISOR_PROXY_CA"] != "" {
+		t.Fatalf("expected CLAWVISOR_PROXY_CA to be omitted, got %q", values["CLAWVISOR_PROXY_CA"])
+	}
 	if values["SSL_CERT_FILE"] != "" {
 		t.Fatalf("expected SSL_CERT_FILE to be omitted, got %q", values["SSL_CERT_FILE"])
+	}
+	if got := values["NODE_OPTIONS"]; !strings.Contains(got, "--require=") {
+		t.Fatalf("expected NODE_OPTIONS shim even without CA, got %q", got)
 	}
 }
 

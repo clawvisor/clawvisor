@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/llm"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -52,6 +53,14 @@ type runtimeSecretScanner struct {
 	observed      int
 	sourceSet     map[string]struct{}
 	serviceLabels map[string]struct{}
+	metrics       map[string]time.Duration
+	stringsSeen   int
+	skippedFields int
+	skippedNoise  int
+	candidates    int
+	passwords     int
+	adjudications int
+	cacheHits     int
 }
 
 var runtimeNoiseSubtreeKeys = map[string]bool{
@@ -61,6 +70,17 @@ var runtimeNoiseSubtreeKeys = map[string]bool{
 	"response_format": true,
 	"model":           true,
 	"metadata":        true,
+}
+
+var runtimeContextNoisePrefixes = []string{
+	"As you answer the user's questions, you can use the following context:",
+	"# claudeMd",
+	"Contents of ",
+}
+
+var runtimeProtectedStringFields = map[string]bool{
+	"signature": true,
+	"thinking":  true,
 }
 
 var runtimeHarnessMetadataTags = []string{
@@ -174,9 +194,11 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 		return body, nil, 0, nil
 	}
 	var payload any
+	unmarshalStartedAt := time.Now()
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return body, nil, 0, nil
 	}
+	runtimetiming.RecordSpan(ctx, "inbound_secret.scan.unmarshal", time.Since(unmarshalStartedAt))
 	scanner := &runtimeSecretScanner{
 		server:        s,
 		hooks:         hooks,
@@ -184,12 +206,18 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 		host:          host,
 		sourceSet:     map[string]struct{}{},
 		serviceLabels: map[string]struct{}{},
+		metrics:       map[string]time.Duration{},
 	}
+	defer scanner.flushMetrics(ctx)
+	walkStartedAt := time.Now()
 	rewritten, changed := scanner.walk(ctx, payload, "", true, false)
+	runtimetiming.RecordSpan(ctx, "inbound_secret.scan.walk", time.Since(walkStartedAt))
 	if !changed && scanner.observed == 0 {
 		return body, nil, 0, nil
 	}
+	marshalStartedAt := time.Now()
 	encoded, err := json.Marshal(rewritten)
+	runtimetiming.RecordSpan(ctx, "inbound_secret.scan.marshal", time.Since(marshalStartedAt))
 	if err != nil {
 		return body, nil, 0, nil
 	}
@@ -207,9 +235,16 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool) (any, bool) {
 	switch typed := value.(type) {
 	case string:
+		if runtimeProtectedStringFields[strings.ToLower(strings.TrimSpace(fieldName))] {
+			s.skippedFields++
+			return value, false
+		}
 		rewritten, changed := s.rewriteString(ctx, typed, fieldName, skipHeuristic)
 		return rewritten, changed
 	case map[string]any:
+		if strings.EqualFold(stringValueFromMap(typed, "type"), "thinking") {
+			return value, false
+		}
 		changed := false
 		for key, item := range typed {
 			childSkipHeuristic := skipHeuristic || (topLevel && runtimeNoiseSubtreeKeys[key])
@@ -238,7 +273,9 @@ func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName st
 func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, fieldName string, skipHeuristic bool) (string, bool) {
 	original := value
 	replaced := false
+	s.stringsSeen++
 
+	knownPrefixStartedAt := time.Now()
 	for _, spec := range knownPrefixSpecs {
 		if !strings.Contains(value, spec.Prefix) {
 			continue
@@ -259,13 +296,34 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 			return placeholder
 		})
 	}
+	s.addMetric("inbound_secret.scan.known_prefix", time.Since(knownPrefixStartedAt))
 
 	if skipHeuristic {
 		return value, replaced && value != original
 	}
+	protocolNoiseStartedAt := time.Now()
+	if runtimeLooksLikeProtocolNoise(fieldName, value) {
+		s.addMetric("inbound_secret.scan.protocol_noise_check", time.Since(protocolNoiseStartedAt))
+		s.skippedNoise++
+		return value, replaced && value != original
+	}
+	s.addMetric("inbound_secret.scan.protocol_noise_check", time.Since(protocolNoiseStartedAt))
+	contextNoiseStartedAt := time.Now()
+	if runtimeLooksLikeContextNoise(value) {
+		s.addMetric("inbound_secret.scan.context_noise_check", time.Since(contextNoiseStartedAt))
+		s.skippedNoise++
+		return value, replaced && value != original
+	}
+	s.addMetric("inbound_secret.scan.context_noise_check", time.Since(contextNoiseStartedAt))
 
+	stripStartedAt := time.Now()
 	scannable := stripRuntimeHarnessMetadataTags(value)
-	for _, candidate := range runtimeautovault.DetectCandidates(scannable) {
+	s.addMetric("inbound_secret.scan.strip_tags", time.Since(stripStartedAt))
+	detectStartedAt := time.Now()
+	candidates := runtimeautovault.DetectCandidates(scannable)
+	s.addMetric("inbound_secret.scan.detect_candidates", time.Since(detectStartedAt))
+	s.candidates += len(candidates)
+	for _, candidate := range candidates {
 		if runtimeautovault.LooksLikeShadow(candidate.Value) {
 			continue
 		}
@@ -303,7 +361,11 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		s.sourceSet["heuristic_observe"] = struct{}{}
 	}
 
-	for _, passwordValue := range runtimeautovault.FindPasswordRevealCandidates(scannable) {
+	passwordStartedAt := time.Now()
+	passwordValues := runtimeautovault.FindPasswordRevealCandidates(scannable)
+	s.addMetric("inbound_secret.scan.find_passwords", time.Since(passwordStartedAt))
+	s.passwords += len(passwordValues)
+	for _, passwordValue := range passwordValues {
 		if runtimeautovault.LooksLikeShadow(passwordValue) {
 			continue
 		}
@@ -322,6 +384,56 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 	}
 
 	return value, replaced && value != original
+}
+
+func (s *runtimeSecretScanner) addMetric(name string, d time.Duration) {
+	if s == nil || name == "" || d < 0 {
+		return
+	}
+	if s.metrics == nil {
+		s.metrics = map[string]time.Duration{}
+	}
+	s.metrics[name] += d
+}
+
+func (s *runtimeSecretScanner) flushMetrics(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	for name, d := range s.metrics {
+		runtimetiming.RecordSpan(ctx, name, d)
+	}
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.strings_seen", s.stringsSeen)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.skipped_fields", s.skippedFields)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.skipped_noise", s.skippedNoise)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.candidates", s.candidates)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.passwords", s.passwords)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.adjudications", s.adjudications)
+	runtimetiming.SetAttr(ctx, "inbound_secret.scan.cache_hits", s.cacheHits)
+}
+
+func runtimeLooksLikeContextNoise(value string) bool {
+	if len(value) < 64 {
+		return false
+	}
+	for _, prefix := range runtimeContextNoisePrefixes {
+		if strings.Contains(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeLooksLikeProtocolNoise(fieldName, value string) bool {
+	field := strings.ToLower(strings.TrimSpace(fieldName))
+	switch field {
+	case "tool_use_id", "id":
+		return strings.HasPrefix(value, "toolu_")
+	case "type":
+		return strings.HasPrefix(value, "clear_thinking_")
+	default:
+		return false
+	}
 }
 
 func stripRuntimeHarnessMetadataTags(value string) string {
@@ -351,6 +463,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	key := adjudicationCacheKey(s.host, fieldName, candidate.Charset, redactedCandidateContext(content, candidate.Value))
 	if cached, ok := s.server.secretVerdictCache.Load(key); ok {
 		verdict, _ := cached.(adjudicationVerdict)
+		s.cacheHits++
 		return verdict, true
 	}
 	cfg := verificationConfig(s.hooks.Config)
@@ -358,10 +471,13 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		return adjudicationVerdict{}, false
 	}
 	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(250)
+	adjudicateStartedAt := time.Now()
 	raw, err := client.Complete(ctx, []llm.ChatMessage{
 		{Role: "system", Content: runtimeSecretAdjudicatorSystemPrompt},
 		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, fieldName, content, candidate)},
 	})
+	s.addMetric("inbound_secret.scan.adjudicate", time.Since(adjudicateStartedAt))
+	s.adjudications++
 	if err != nil {
 		if s.hooks.Logger != nil {
 			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", fieldName)
@@ -515,6 +631,15 @@ func verificationConfig(cfg *config.Config) config.VerificationConfig {
 		return config.VerificationConfig{}
 	}
 	return cfg.LLM.Verification
+}
+
+func stringValueFromMap(m map[string]any, key string) string {
+	raw, ok := m[key]
+	if !ok {
+		return ""
+	}
+	value, _ := raw.(string)
+	return value
 }
 
 func runtimeConversationHost(req *http.Request) bool {

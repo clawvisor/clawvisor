@@ -211,6 +211,7 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"CLAWVISOR_RUNTIME_SESSION_ID=" + session.Session.ID,
 		"CLAWVISOR_RUNTIME_PROXY_URL=" + session.ProxyURL,
 		"CLAWVISOR_RUNTIME_OBSERVATION_MODE=" + fmt.Sprintf("%t", session.ObservationMode),
+		"CLAWVISOR_PROXY=" + authenticatedProxyURL,
 		"HTTP_PROXY=" + authenticatedProxyURL,
 		"HTTPS_PROXY=" + authenticatedProxyURL,
 		"ALL_PROXY=" + authenticatedProxyURL,
@@ -221,6 +222,10 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"no_proxy=" + noProxy,
 	}
 	if strings.TrimSpace(session.CACertPEM) == "" {
+		shimPath, err := materializeNodeProxyShim(filepath.Join(os.TempDir(), "clawvisor-runtime-shim"))
+		if err == nil {
+			envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
+		}
 		return envPairs, nil
 	}
 	caPath, err := writeRuntimeCACertFile(session.Session.ID, session.CACertPEM)
@@ -229,12 +234,16 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 	}
 	envPairs = append(envPairs,
 		"CLAWVISOR_RUNTIME_CA_CERT_FILE="+caPath,
+		"CLAWVISOR_PROXY_CA="+caPath,
 		"SSL_CERT_FILE="+caPath,
 		"CURL_CA_BUNDLE="+caPath,
 		"REQUESTS_CA_BUNDLE="+caPath,
 		"NODE_EXTRA_CA_CERTS="+caPath,
 		"GIT_SSL_CAINFO="+caPath,
 	)
+	if shimPath, err := materializeNodeProxyShim(filepath.Join(os.TempDir(), "clawvisor-runtime-shim")); err == nil {
+		envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
+	}
 	return envPairs, nil
 }
 

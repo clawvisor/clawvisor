@@ -39,7 +39,7 @@ func DetectCandidates(s string) []Candidate {
 	seen := map[string]bool{}
 	var out []Candidate
 	add := func(match string, start, end int) {
-		if match == "" || seen[match] || LooksLikeShadow(match) {
+		if match == "" || seen[match] || LooksLikeShadow(match) || looksLikeIdentifier(match) {
 			return
 		}
 		ent := shannonEntropy(match)
@@ -65,6 +65,35 @@ func DetectCandidates(s string) []Candidate {
 		add(s[loc[0]:loc[1]], loc[0], loc[1])
 	}
 	return out
+}
+
+func looksLikeIdentifier(s string) bool {
+	if len(s) < 16 {
+		return false
+	}
+	hasSep := strings.ContainsAny(s, "_-")
+	if !hasSep {
+		return false
+	}
+	hasDigit := false
+	hasUpper := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+		case c == '_' || c == '-':
+		default:
+			return false
+		}
+	}
+	if hasDigit || hasUpper {
+		return false
+	}
+	return true
 }
 
 func FindPasswordRevealCandidates(s string) []string {

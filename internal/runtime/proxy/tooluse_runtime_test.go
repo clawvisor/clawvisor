@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/elazarl/goproxy"
 )
 
 func TestRenderHeldToolUsePromptPlacesSubjectOnOwnLine(t *testing.T) {
@@ -564,6 +566,75 @@ func TestStreamToolUseBlockPassesThroughAnthropicTextSSE(t *testing.T) {
 	}
 	if string(body) != string(original) {
 		t.Fatalf("streaming pass-through mutated text-only SSE:\n%s", string(body))
+	}
+}
+
+func TestToolUseInterceptorStreamsAnthropicTextBeforeUpstreamCompletes(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-live.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "runtime-stream-live", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	cfg := config.Default()
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	hooks := ToolUseHooks{
+		Store:       st,
+		Config:      cfg,
+		ReviewCache: review.NewApprovalCache(),
+		Leases:      leases.Service{Store: st},
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", strings.NewReader(`{"model":"claude","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	pipeR, pipeW := io.Pipe()
+	go func() {
+		_, _ = io.WriteString(pipeW, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
+		time.Sleep(750 * time.Millisecond)
+		_, _ = io.WriteString(pipeW, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		_ = pipeW.Close()
+	}()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       pipeR,
+		Request:    req,
+	}
+	stReq := &RequestState{Session: runtimeSession}
+	proxyCtx := &goproxy.ProxyCtx{Req: req, Resp: resp, UserData: stReq}
+	startedAt := time.Now()
+	handled := srv.handleToolUseBlockedResponse(resp, proxyCtx, hooks, conversation.DefaultResponseRegistry())
+	elapsed := time.Since(startedAt)
+	if handled == nil {
+		t.Fatal("expected response handler to return a response")
+	}
+	defer handled.Body.Close()
+	if elapsed > 400*time.Millisecond {
+		t.Fatalf("expected handler to return before upstream finished, got elapsed=%s", elapsed)
+	}
+	reader := bufio.NewReader(handled.Body)
+	readStartedAt := time.Now()
+	line, err := reader.ReadString('\n')
+	elapsed = time.Since(readStartedAt)
+	if err != nil {
+		t.Fatalf("ReadString: %v", err)
+	}
+	if !strings.HasPrefix(line, "event: content_block_delta") {
+		t.Fatalf("expected first streamed line immediately, got %q", line)
+	}
+	if elapsed > 400*time.Millisecond {
+		t.Fatalf("expected first SSE line before upstream finished, got elapsed=%s", elapsed)
 	}
 }
 
