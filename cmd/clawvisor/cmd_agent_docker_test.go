@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var launchUserPattern = regexp.MustCompile(`^launch-[0-9a-fA-F-]{36}$`)
 
 func TestDeriveContainerURLRewritesLoopbackHost(t *testing.T) {
 	got, err := deriveContainerURL("http://127.0.0.1:25297", "host.docker.internal")
@@ -47,8 +50,13 @@ func TestBuildDockerAgentEnvVars(t *testing.T) {
 	if got := values["CLAWVISOR_URL"]; got != "http://host.docker.internal:25297" {
 		t.Fatalf("unexpected CLAWVISOR_URL %q", got)
 	}
-	if got := values["HTTP_PROXY"]; got != "http://clawvisor:cvis_test_token@host.docker.internal:25290" {
-		t.Fatalf("unexpected HTTP_PROXY %q", got)
+	httpProxy := values["HTTP_PROXY"]
+	user, suffix := splitProxyUserAndSuffix(t, httpProxy)
+	if !launchUserPattern.MatchString(user) {
+		t.Fatalf("expected launch-<uuid> user prefix, got %q in %q", user, httpProxy)
+	}
+	if suffix != "cvis_test_token@host.docker.internal:25290" {
+		t.Fatalf("unexpected HTTP_PROXY suffix %q", suffix)
 	}
 	if got := values["CLAWVISOR_RUNTIME_CA_CERT_FILE"]; got != "/clawvisor/ca.pem" {
 		t.Fatalf("unexpected CA path %q", got)
@@ -56,6 +64,45 @@ func TestBuildDockerAgentEnvVars(t *testing.T) {
 	if got := values["NO_PROXY"]; got != "localhost,127.0.0.1,::1,host.docker.internal" {
 		t.Fatalf("unexpected NO_PROXY %q", got)
 	}
+}
+
+func splitProxyUserAndSuffix(t *testing.T, raw string) (string, string) {
+	t.Helper()
+	const prefix = "http://"
+	if !strings.HasPrefix(raw, prefix) {
+		t.Fatalf("expected http:// scheme, got %q", raw)
+	}
+	rest := raw[len(prefix):]
+	user, after, ok := strings.Cut(rest, ":")
+	if !ok {
+		t.Fatalf("missing user:secret separator in %q", raw)
+	}
+	return user, after
+}
+
+func TestBuildDockerAgentEnvVarsAssignsUniqueLaunchID(t *testing.T) {
+	opts := &dockerProxyOptions{
+		AgentToken: "cvis_test_token",
+		ProxyHost:  "host.docker.internal",
+		ProxyPort:  25290,
+		CAInside:   "/clawvisor/ca.pem",
+	}
+	first := proxyURLFromVars(buildDockerAgentEnvVars(opts, false))
+	second := proxyURLFromVars(buildDockerAgentEnvVars(opts, false))
+	firstUser, _ := splitProxyUserAndSuffix(t, first)
+	secondUser, _ := splitProxyUserAndSuffix(t, second)
+	if firstUser == secondUser {
+		t.Fatalf("expected unique launch ids per invocation, got %q twice", firstUser)
+	}
+}
+
+func proxyURLFromVars(vars []dockerEnvVar) string {
+	for _, v := range vars {
+		if v.Key == "HTTP_PROXY" {
+			return v.Value
+		}
+	}
+	return ""
 }
 
 func TestBuildDockerAgentEnvVarsTemplated(t *testing.T) {
@@ -75,6 +122,9 @@ func TestBuildDockerAgentEnvVarsTemplated(t *testing.T) {
 	}
 	if got := values["HTTP_PROXY"]; !strings.Contains(got, "${CLAWVISOR_AGENT_TOKEN}") {
 		t.Fatalf("expected templated token in HTTP_PROXY, got %q", got)
+	}
+	if got := values["HTTP_PROXY"]; !strings.Contains(got, "launch-") {
+		t.Fatalf("expected launch-<uuid> user in HTTP_PROXY, got %q", got)
 	}
 	if _, ok := values["CLAWVISOR_RUNTIME_SESSION_ID"]; ok {
 		t.Fatalf("durable docker env should not pre-mint runtime session ids, got %+v", values)
@@ -133,8 +183,9 @@ func TestEmitDockerComposeOverrideTemplated(t *testing.T) {
 	if !strings.Contains(out, `CLAWVISOR_AGENT_TOKEN: "${CLAWVISOR_AGENT_TOKEN}"`) {
 		t.Fatalf("expected templated agent token in compose override, got:\n%s", out)
 	}
-	if !strings.Contains(out, `HTTP_PROXY: "http://clawvisor:${CLAWVISOR_AGENT_TOKEN}@host.docker.internal:25290"`) {
-		t.Fatalf("expected templated HTTP_PROXY in compose override, got:\n%s", out)
+	matchedHTTPProxy := regexp.MustCompile(`HTTP_PROXY: "http://launch-[0-9a-fA-F-]{36}:\$\{CLAWVISOR_AGENT_TOKEN\}@host\.docker\.internal:25290"`).MatchString(out)
+	if !matchedHTTPProxy {
+		t.Fatalf("expected templated HTTP_PROXY with launch-<uuid> in compose override, got:\n%s", out)
 	}
 	if !strings.Contains(out, `- "/host/ca.pem:/clawvisor/ca.pem:ro"`) {
 		t.Fatalf("expected CA mount in compose override, got:\n%s", out)

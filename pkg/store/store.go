@@ -132,6 +132,7 @@ type Store interface {
 	GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*RuntimeSession, error)
 	ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*RuntimeSession, error)
 	RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error
+	UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error
 	CreateRuntimeEvent(ctx context.Context, event *RuntimeEvent) error
 	GetRuntimeEvent(ctx context.Context, id string) (*RuntimeEvent, error)
 	ListRuntimeEvents(ctx context.Context, userID string, filter RuntimeEventFilter) ([]*RuntimeEvent, error)

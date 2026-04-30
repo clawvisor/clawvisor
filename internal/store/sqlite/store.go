@@ -1691,6 +1691,19 @@ func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt t
 	return nil
 }
 
+func (s *Store) UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_sessions SET expires_at = ? WHERE id = ?`,
+		expiresAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEvent) error {
 	if event.ID == "" {
 		event.ID = uuid.New().String()

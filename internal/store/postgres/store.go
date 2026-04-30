@@ -1541,6 +1541,17 @@ func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt t
 	return nil
 }
 
+func (s *Store) UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_sessions SET expires_at = $1 WHERE id = $2`, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEvent) error {
 	if event.ID == "" {
 		event.ID = uuid.New().String()

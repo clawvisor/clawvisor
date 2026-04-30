@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -196,7 +197,8 @@ func buildDockerAgentEnvVars(opts *dockerProxyOptions, templated bool) []dockerE
 	if templated {
 		token = "${CLAWVISOR_AGENT_TOKEN}"
 	}
-	authenticatedProxyURL := fmt.Sprintf("http://clawvisor:%s@%s:%d", token, opts.ProxyHost, opts.ProxyPort)
+	launchUser := "launch-" + uuid.NewString()
+	authenticatedProxyURL := fmt.Sprintf("http://%s:%s@%s:%d", launchUser, token, opts.ProxyHost, opts.ProxyPort)
 	noProxy := mergeNoProxy("", "localhost", "127.0.0.1", "::1", opts.ProxyHost)
 	proxyURL := fmt.Sprintf("http://%s:%d", opts.ProxyHost, opts.ProxyPort)
 	return []dockerEnvVar{

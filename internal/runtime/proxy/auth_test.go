@@ -41,6 +41,37 @@ func TestExtractBearerSecretAcceptsBearerAndBasic(t *testing.T) {
 	})
 }
 
+func TestExtractBearerCredentialsParsesUsername(t *testing.T) {
+	header := http.Header{}
+	creds := base64.StdEncoding.EncodeToString([]byte("launch-abc123:secret-token"))
+	header.Set("Proxy-Authorization", "Basic "+creds)
+	user, secret, err := ExtractBearerCredentials(header)
+	if err != nil {
+		t.Fatalf("ExtractBearerCredentials: %v", err)
+	}
+	if user != "launch-abc123" {
+		t.Fatalf("unexpected username %q", user)
+	}
+	if secret != "secret-token" {
+		t.Fatalf("unexpected secret %q", secret)
+	}
+}
+
+func TestParseLaunchID(t *testing.T) {
+	cases := map[string]string{
+		"":                    "",
+		"clawvisor":           "",
+		"launch-":             "",
+		"launch-abc123":       "abc123",
+		"launch-deadbeef-uuid": "deadbeef-uuid",
+	}
+	for input, want := range cases {
+		if got := ParseLaunchID(input); got != want {
+			t.Fatalf("ParseLaunchID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestProxyURLWithSecret(t *testing.T) {
 	got, err := ProxyURLWithSecret("http://127.0.0.1:8080", "secret-token")
 	if err != nil {
@@ -159,5 +190,108 @@ func TestAuthenticatorDoesNotReuseBootstrapRuntimeSessionsForAgentTokenAuth(t *t
 	}
 	if len(sessions) != 2 {
 		t.Fatalf("expected bootstrap + server-managed runtime session, got %d", len(sessions))
+	}
+}
+
+func TestAuthenticatorMintsDistinctSessionsPerLaunchID(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/proxy-auth-launch.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "proxy-auth-launch@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rawToken := "cvis_runtime_agent_token_launch"
+	if _, err := st.CreateAgent(ctx, user.ID, "runtime-agent", intauth.HashToken(rawToken)); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	authn := &Authenticator{Store: st, Config: config.Default()}
+
+	headerWithLaunch := func(launch string) http.Header {
+		h := http.Header{}
+		creds := base64.StdEncoding.EncodeToString([]byte(launch + ":" + rawToken))
+		h.Set("Proxy-Authorization", "Basic "+creds)
+		return h
+	}
+
+	a1, err := authn.Authenticate(ctx, headerWithLaunch("launch-aaa"))
+	if err != nil {
+		t.Fatalf("Authenticate(a1): %v", err)
+	}
+	a2, err := authn.Authenticate(ctx, headerWithLaunch("launch-aaa"))
+	if err != nil {
+		t.Fatalf("Authenticate(a2): %v", err)
+	}
+	if a1.ID != a2.ID {
+		t.Fatalf("expected reuse for same launch id, got %q vs %q", a1.ID, a2.ID)
+	}
+	b, err := authn.Authenticate(ctx, headerWithLaunch("launch-bbb"))
+	if err != nil {
+		t.Fatalf("Authenticate(b): %v", err)
+	}
+	if b.ID == a1.ID {
+		t.Fatalf("expected distinct session for different launch id, got %q", b.ID)
+	}
+}
+
+func TestAuthenticatorExtendsExpiryWhenSessionIsActivelyUsed(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/proxy-auth-extend.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "proxy-auth-extend@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rawToken := "cvis_runtime_agent_token_extend"
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", intauth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	authn := &Authenticator{Store: st, Config: config.Default()}
+	header := http.Header{}
+	header.Set("Proxy-Authorization", "Bearer "+rawToken)
+
+	first, err := authn.Authenticate(ctx, header)
+	if err != nil {
+		t.Fatalf("Authenticate(first): %v", err)
+	}
+
+	// Push the session close to expiry to simulate an actively-used long-lived
+	// container. With the default 30-minute TTL, anything under 15 minutes
+	// remaining should trigger a sliding extension on the next auth.
+	near := time.Now().UTC().Add(2 * time.Minute)
+	if err := st.UpdateRuntimeSessionExpiry(ctx, first.ID, near); err != nil {
+		t.Fatalf("UpdateRuntimeSessionExpiry: %v", err)
+	}
+
+	second, err := authn.Authenticate(ctx, header)
+	if err != nil {
+		t.Fatalf("Authenticate(second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected reuse with sliding TTL, got %q vs %q", first.ID, second.ID)
+	}
+	if !second.ExpiresAt.After(near.Add(5 * time.Minute)) {
+		t.Fatalf("expected expires_at to slide forward, got %s (was %s)", second.ExpiresAt, near)
+	}
+
+	sessions, err := st.ListRuntimeSessionsByAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("ListRuntimeSessionsByAgent: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected single agent-token session after extension, got %d", len(sessions))
 	}
 }
