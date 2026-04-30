@@ -54,6 +54,31 @@ type runtimeSecretScanner struct {
 	serviceLabels map[string]struct{}
 }
 
+var runtimeNoiseSubtreeKeys = map[string]bool{
+	"system":          true,
+	"tools":           true,
+	"tool_choice":     true,
+	"response_format": true,
+	"model":           true,
+	"metadata":        true,
+}
+
+var runtimeHarnessMetadataTags = []string{
+	"system-reminder",
+	"available-deferred-tools",
+	"command-name",
+	"command-message",
+	"local-command-caveat",
+}
+
+var runtimeHarnessMetadataREs = func() []*regexp.Regexp {
+	out := make([]*regexp.Regexp, 0, len(runtimeHarnessMetadataTags))
+	for _, tag := range runtimeHarnessMetadataTags {
+		out = append(out, regexp.MustCompile(`(?s)<`+regexp.QuoteMeta(tag)+`>.*?</`+regexp.QuoteMeta(tag)+`>`))
+	}
+	return out
+}()
+
 type knownPrefixSpec struct {
 	Service string
 	Prefix  string
@@ -160,7 +185,7 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 		sourceSet:     map[string]struct{}{},
 		serviceLabels: map[string]struct{}{},
 	}
-	rewritten, changed := scanner.walk(ctx, payload, "")
+	rewritten, changed := scanner.walk(ctx, payload, "", true, false)
 	if !changed && scanner.observed == 0 {
 		return body, nil, 0, nil
 	}
@@ -179,15 +204,16 @@ func (s *Server) scanAndReplaceRuntimeSecrets(ctx context.Context, hooks Inbound
 	}, scanner.observed, nil
 }
 
-func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName string) (any, bool) {
+func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool) (any, bool) {
 	switch typed := value.(type) {
 	case string:
-		rewritten, changed := s.rewriteString(ctx, typed, fieldName)
+		rewritten, changed := s.rewriteString(ctx, typed, fieldName, skipHeuristic)
 		return rewritten, changed
 	case map[string]any:
 		changed := false
 		for key, item := range typed {
-			next, nextChanged := s.walk(ctx, item, key)
+			childSkipHeuristic := skipHeuristic || (topLevel && runtimeNoiseSubtreeKeys[key])
+			next, nextChanged := s.walk(ctx, item, key, false, childSkipHeuristic)
 			if nextChanged {
 				typed[key] = next
 				changed = true
@@ -197,7 +223,7 @@ func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName st
 	case []any:
 		changed := false
 		for i, item := range typed {
-			next, nextChanged := s.walk(ctx, item, fieldName)
+			next, nextChanged := s.walk(ctx, item, fieldName, false, skipHeuristic)
 			if nextChanged {
 				typed[i] = next
 				changed = true
@@ -209,7 +235,7 @@ func (s *runtimeSecretScanner) walk(ctx context.Context, value any, fieldName st
 	}
 }
 
-func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, fieldName string) (string, bool) {
+func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, fieldName string, skipHeuristic bool) (string, bool) {
 	original := value
 	replaced := false
 
@@ -234,7 +260,12 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		})
 	}
 
-	for _, candidate := range runtimeautovault.DetectCandidates(value) {
+	if skipHeuristic {
+		return value, replaced && value != original
+	}
+
+	scannable := stripRuntimeHarnessMetadataTags(value)
+	for _, candidate := range runtimeautovault.DetectCandidates(scannable) {
 		if runtimeautovault.LooksLikeShadow(candidate.Value) {
 			continue
 		}
@@ -272,7 +303,7 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		s.sourceSet["heuristic_observe"] = struct{}{}
 	}
 
-	for _, passwordValue := range runtimeautovault.FindPasswordRevealCandidates(value) {
+	for _, passwordValue := range runtimeautovault.FindPasswordRevealCandidates(scannable) {
 		if runtimeautovault.LooksLikeShadow(passwordValue) {
 			continue
 		}
@@ -291,6 +322,17 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 	}
 
 	return value, replaced && value != original
+}
+
+func stripRuntimeHarnessMetadataTags(value string) string {
+	if value == "" || !strings.Contains(value, "<") {
+		return value
+	}
+	out := value
+	for _, re := range runtimeHarnessMetadataREs {
+		out = re.ReplaceAllString(out, "")
+	}
+	return out
 }
 
 func (s *runtimeSecretScanner) placeholderForValue(ctx context.Context, service, raw string) (string, error) {

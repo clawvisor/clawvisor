@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
@@ -152,6 +153,123 @@ func TestRuntimeSecretCaptureObservesAmbiguousCandidateWithoutReplacing(t *testi
 	}
 	if observed == 0 || summary == nil || summary.ReplacementCount != 0 {
 		t.Fatalf("unexpected observe-only summary: summary=%+v observed=%d", summary, observed)
+	}
+}
+
+func TestRuntimeSecretCaptureSkipsNoiseSubtreesForHeuristics(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-noise.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "noise-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	var adjudicatorCalls int64
+	adjudicator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&adjudicatorCalls, 1)
+		_, _ = w.Write([]byte(`{"credential":false,"service":"","confidence":0.9}`))
+	}))
+	defer adjudicator.Close()
+
+	cfg := config.Default()
+	cfg.LLM.Verification.Enabled = true
+	cfg.LLM.Verification.Endpoint = adjudicator.URL
+	cfg.LLM.Verification.APIKey = "test"
+	cfg.LLM.Verification.Model = "haiku"
+
+	body := []byte(`{
+  "model": "claude-haiku-4-5-20251001",
+  "system": "You are Claude. SystemNoise_8gyXD1ddhvF8iEFwrt9f3ywd is random.",
+  "tools": [{"name":"foo","description":"Uses ToolsBlob_8gyXD1ddhvF8iEFwrt9f3ywd internally."}],
+  "metadata": {"user_id":"123e4567-e89b-12d3-a456-426614174000"},
+  "messages": [{"role":"user","content":[{"type":"text","text":"hello"}]}]
+}`)
+
+	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: cfg}, runtimeSession, "api.anthropic.com", body)
+	if err != nil {
+		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
+	}
+	if got := atomic.LoadInt64(&adjudicatorCalls); got != 0 {
+		t.Fatalf("expected zero adjudicator calls for top-level noise fields, got %d", got)
+	}
+	if summary != nil && summary.ReplacementCount != 0 {
+		t.Fatalf("expected no replacements from noise fields, got %+v", summary)
+	}
+	if observed != 0 {
+		t.Fatalf("expected no observe-only detections from noise fields, got %d", observed)
+	}
+	if string(rewritten) != string(body) {
+		t.Fatalf("expected noise-only body to remain unchanged, got %s", string(rewritten))
+	}
+}
+
+func TestRuntimeSecretCaptureSkipsHarnessMetadataTagsForHeuristics(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-reminder.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "reminder-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	var adjudicatorCalls int64
+	adjudicator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&adjudicatorCalls, 1)
+		_, _ = w.Write([]byte(`{"credential":false,"service":"","confidence":0.9}`))
+	}))
+	defer adjudicator.Close()
+
+	cfg := config.Default()
+	cfg.LLM.Verification.Enabled = true
+	cfg.LLM.Verification.Endpoint = adjudicator.URL
+	cfg.LLM.Verification.APIKey = "test"
+	cfg.LLM.Verification.Model = "haiku"
+
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>noise: Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0 and SystemNoise_8gyXD1ddhvF8iEFwrt9f3ywd</system-reminder> hello"}]}]}`)
+	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: cfg}, runtimeSession, "api.anthropic.com", body)
+	if err != nil {
+		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
+	}
+	if got := atomic.LoadInt64(&adjudicatorCalls); got != 0 {
+		t.Fatalf("expected zero adjudicator calls for harness metadata tags, got %d", got)
+	}
+	if summary != nil && summary.ReplacementCount != 0 {
+		t.Fatalf("expected no replacements from system-reminder contents, got %+v", summary)
+	}
+	if observed != 0 {
+		t.Fatalf("expected no observe-only detections from system-reminder contents, got %d", observed)
+	}
+	if string(rewritten) != string(body) {
+		t.Fatalf("expected system-reminder-only body to remain unchanged, got %s", string(rewritten))
 	}
 }
 
