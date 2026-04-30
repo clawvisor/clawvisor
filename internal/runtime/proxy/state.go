@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -33,8 +34,10 @@ type RequestState struct {
 	Runtime                *RuntimeRequestContext
 	AuditID                string
 	SkipAuditOutcomeUpdate bool
+	Timings                *runtimetiming.Recorder
 
 	StatusLogged sync.Once
+	TimingLogged sync.Once
 }
 
 func StateOf(ctx *goproxy.ProxyCtx) *RequestState {

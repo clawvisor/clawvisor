@@ -51,9 +51,12 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 
 		injectedAuthorization := false
 		if sessionShouldInjectStoredBearer(st.Session, hooks.Config) {
+			injectStartedAt := time.Now()
 			injectedAuthorization, _ = injectStoredBearer(req, hooks.Vault, st.Session.UserID)
+			s.recordTimingSpan(req, "placeholder_swap.inject_bearer", injectStartedAt)
 		}
 
+		swapStartedAt := time.Now()
 		for headerName, values := range req.Header {
 			if len(values) == 0 {
 				continue
@@ -109,6 +112,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 						},
 					})
 					if mode == "strict" {
+						authStartedAt := time.Now()
 						if auth, err := hooks.Store.ConsumeMatchingCredentialAuthorization(req.Context(), store.CredentialAuthorizationMatch{
 							UserID:        st.Session.UserID,
 							AgentID:       st.Session.AgentID,
@@ -119,6 +123,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 							HeaderName:    headerName,
 							Scheme:        detection.Scheme,
 						}, time.Now().UTC()); err == nil {
+							s.recordTimingSpan(req, "placeholder_swap.strict_authorization", authStartedAt)
 							emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
 								EventType:  "runtime.autovault.authorized",
 								ActionKind: "egress",
@@ -137,9 +142,13 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 							})
 							continue
 						} else if err != store.ErrNotFound {
+							s.recordTimingSpan(req, "placeholder_swap.strict_authorization", authStartedAt)
 							return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not evaluate runtime credential authorization"}`)
 						}
+						s.recordTimingSpan(req, "placeholder_swap.strict_authorization", authStartedAt)
+						reviewStartedAt := time.Now()
 						rec, err := ensureRuntimeCredentialReview(req.Context(), hooks.Store, st.Session, requestHost(req), headerName, detection)
+						s.recordTimingSpan(req, "placeholder_swap.strict_review", reviewStartedAt)
 						if err != nil {
 							return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime credential approval"}`)
 						}
@@ -170,6 +179,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 			}
 			req.Header[headerName] = replacedValues
 		}
+		s.recordTimingSpan(req, "placeholder_swap.headers", swapStartedAt)
 		return req, nil
 	})
 }

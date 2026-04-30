@@ -208,12 +208,14 @@ type MCPConfig struct {
 }
 
 type RuntimeProxyConfig struct {
-	Enabled           bool     `yaml:"enabled"`
-	ListenAddr        string   `yaml:"listen_addr"`
-	DataDir           string   `yaml:"data_dir"`
-	TLS               bool     `yaml:"tls"`
-	ListenerHostnames []string `yaml:"listener_hostnames"`
-	SessionTTLSeconds int      `yaml:"session_ttl_seconds"`
+	Enabled            bool     `yaml:"enabled"`
+	ListenAddr         string   `yaml:"listen_addr"`
+	DataDir            string   `yaml:"data_dir"`
+	TLS                bool     `yaml:"tls"`
+	ListenerHostnames  []string `yaml:"listener_hostnames"`
+	SessionTTLSeconds  int      `yaml:"session_ttl_seconds"`
+	TimingTraceEnabled bool     `yaml:"timing_trace_enabled"`
+	TimingTraceDir     string   `yaml:"timing_trace_dir"`
 }
 
 type RuntimePolicyConfig struct {
@@ -306,12 +308,14 @@ func Default() *Config {
 			SessionTTL:      1440,
 		},
 		RuntimeProxy: RuntimeProxyConfig{
-			Enabled:           false,
-			ListenAddr:        "127.0.0.1:25290",
-			DataDir:           "~/.clawvisor/runtime-proxy",
-			TLS:               false,
-			ListenerHostnames: []string{"localhost", "127.0.0.1"},
-			SessionTTLSeconds: 3600,
+			Enabled:            false,
+			ListenAddr:         "127.0.0.1:25290",
+			DataDir:            "~/.clawvisor/runtime-proxy",
+			TLS:                false,
+			ListenerHostnames:  []string{"localhost", "127.0.0.1"},
+			SessionTTLSeconds:  3600,
+			TimingTraceEnabled: false,
+			TimingTraceDir:     "~/.clawvisor/runtime-proxy/timing-traces",
 		},
 		RuntimePolicy: RuntimePolicyConfig{
 			ObservationModeDefault:  false,
@@ -559,6 +563,12 @@ func Load(path string) (*Config, error) {
 			cfg.RuntimeProxy.SessionTTLSeconds = n
 		}
 	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TIMING_TRACE_ENABLED"); v != "" {
+		cfg.RuntimeProxy.TimingTraceEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TIMING_TRACE_DIR"); v != "" {
+		cfg.RuntimeProxy.TimingTraceDir = v
+	}
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_OBSERVATION_DEFAULT"); v != "" {
 		cfg.RuntimePolicy.ObservationModeDefault = v == "true" || v == "1"
 	}
@@ -683,6 +693,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RuntimeProxy.SessionTTLSeconds <= 0 {
 		return fmt.Errorf("runtime_proxy.session_ttl_seconds must be positive (got %d)", c.RuntimeProxy.SessionTTLSeconds)
+	}
+	if c.RuntimeProxy.TimingTraceEnabled && strings.TrimSpace(c.RuntimeProxy.TimingTraceDir) == "" {
+		return fmt.Errorf("runtime_proxy.timing_trace_dir must be set when runtime_proxy.timing_trace_enabled is true")
 	}
 	if c.RuntimePolicy.ToolLeaseTimeoutSeconds <= 0 {
 		return fmt.Errorf("runtime_policy.tool_lease_timeout_seconds must be positive (got %d)", c.RuntimePolicy.ToolLeaseTimeoutSeconds)

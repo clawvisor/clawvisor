@@ -23,8 +23,10 @@ import (
 
 // RunOptions holds optional flags for the server entrypoint.
 type RunOptions struct {
-	OpenBrowser bool
-	ConfigPath  string // If set, passed to DefaultOptions instead of using env var.
+	OpenBrowser        bool
+	ConfigPath         string // If set, passed to DefaultOptions instead of using env var.
+	TimingTraceEnabled *bool
+	TimingTraceDir     string
 }
 
 // LocalAuthResult holds the outputs of SetupLocalAuth.
@@ -111,6 +113,12 @@ func Run(logger *slog.Logger, ropts RunOptions) error {
 	opts, err := clawvisor.DefaultOptions(logger, ropts.ConfigPath)
 	if err != nil {
 		return err
+	}
+	if ropts.TimingTraceEnabled != nil {
+		opts.Config.RuntimeProxy.TimingTraceEnabled = *ropts.TimingTraceEnabled
+	}
+	if strings.TrimSpace(ropts.TimingTraceDir) != "" {
+		opts.Config.RuntimeProxy.TimingTraceDir = strings.TrimSpace(ropts.TimingTraceDir)
 	}
 
 	// ── Magic link setup (local mode) ──────────────────────────────────────

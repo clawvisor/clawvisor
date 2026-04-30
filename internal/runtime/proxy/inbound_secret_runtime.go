@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/elazarl/goproxy"
 
@@ -95,11 +96,15 @@ func (s *Server) InstallInboundSecretCapture(hooks InboundSecretHooks) {
 			return req, nil
 		}
 
+		readStartedAt := time.Now()
 		body, err := io.ReadAll(req.Body)
+		s.recordTimingSpan(req, "inbound_secret.read_body", readStartedAt)
 		if err != nil {
 			return req, nil
 		}
+		scanStartedAt := time.Now()
 		rewritten, summary, observed, err := s.scanAndReplaceRuntimeSecrets(req.Context(), hooks, st.Session, requestHost(req), body)
+		s.recordTimingSpan(req, "inbound_secret.scan", scanStartedAt)
 		if err == nil && summary != nil {
 			if st.Runtime == nil {
 				st.Runtime = &RuntimeRequestContext{}

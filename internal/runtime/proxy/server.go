@@ -9,10 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/elazarl/goproxy"
+
+	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 )
 
 type Config struct {
@@ -21,17 +24,20 @@ type Config struct {
 	TLS               bool
 	ListenerHostnames []string
 	LeafCacheSize     int
+	LogTimings        bool
+	TimingTraceDir    string
 }
 
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	ca       *x509.Certificate
-	caKey    *ecdsa.PrivateKey
-	certs    *LeafCertCache
-	goproxy  *goproxy.ProxyHttpServer
-	listener net.Listener
-	httpSrv  *http.Server
+	cfg       Config
+	logger    *slog.Logger
+	ca        *x509.Certificate
+	caKey     *ecdsa.PrivateKey
+	certs     *LeafCertCache
+	goproxy   *goproxy.ProxyHttpServer
+	listener  net.Listener
+	httpSrv   *http.Server
+	traceSink *runtimetiming.FileSink
 
 	connStates                sync.Map
 	latestRequestCtxBySession sync.Map
@@ -52,18 +58,30 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 	certs := NewLeafCertCache(ca, caKey, cfg.LeafCacheSize)
+	var traceSink *runtimetiming.FileSink
+	if cfg.LogTimings {
+		traceDir := cfg.TimingTraceDir
+		if traceDir == "" {
+			traceDir = filepath.Join(cfg.DataDir, "timing-traces")
+		}
+		traceSink, err = runtimetiming.NewFileSink(traceDir)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	p := goproxy.NewProxyHttpServer()
 	p.Verbose = false
 	p.CertStore = &goproxyCertAdapter{cache: certs}
 
 	s := &Server{
-		cfg:     cfg,
-		logger:  logger,
-		ca:      ca,
-		caKey:   caKey,
-		certs:   certs,
-		goproxy: p,
+		cfg:       cfg,
+		logger:    logger,
+		ca:        ca,
+		caKey:     caKey,
+		certs:     certs,
+		goproxy:   p,
+		traceSink: traceSink,
 	}
 	return s, nil
 }

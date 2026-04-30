@@ -69,16 +69,22 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 		if st == nil || st.Session == nil {
 			return req, nil
 		}
+		readStartedAt := time.Now()
 		body, err := io.ReadAll(req.Body)
+		s.recordTimingSpan(req, "tool_release.read_body", readStartedAt)
 		if err != nil {
 			return req, nil
 		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 
+		leaseCloseStartedAt := time.Now()
 		s.closeLeasesForToolResults(req.Context(), hooks, req, st, body)
+		s.recordTimingSpan(req, "tool_release.close_leases", leaseCloseStartedAt)
 
+		dashboardStartedAt := time.Now()
 		resolved, allowed, err := s.consumeDashboardResolvedHeldApproval(req.Context(), hooks, st.Session.ID)
+		s.recordTimingSpan(req, "tool_release.dashboard_lookup", dashboardStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "text/plain", http.StatusServiceUnavailable, "Clawvisor could not load the latest runtime approval state. Retry the request.\n")
 		}
@@ -93,7 +99,9 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 		if hooks.Config == nil || !hooks.Config.RuntimePolicy.InlineApprovalEnabled {
 			return req, nil
 		}
+		inlineStartedAt := time.Now()
 		verb, approvalID := parseApprovalReplyForProvider(parser.Name(), body)
+		s.recordTimingSpan(req, "tool_release.inline_lookup", inlineStartedAt)
 		if verb == "" {
 			return req, nil
 		}
@@ -295,19 +303,25 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 			return resp
 		}
 
+		readStartedAt := time.Now()
 		body, err := io.ReadAll(resp.Body)
+		s.recordTimingSpan(ctx.Req, "tool_block.read_body", readStartedAt)
 		if err != nil {
 			return resp
 		}
 
+		taskLoadStartedAt := time.Now()
 		candidateTasks, _ := loadRuntimeCandidateTasks(ctx.Req.Context(), hooks.Store, st.Session)
+		s.recordTimingSpan(ctx.Req, "tool_block.load_tasks", taskLoadStartedAt)
 		reviewTask := selectReviewTaskContext(ctx.Req.Context(), hooks.Store, st.Session.ID, candidateTasks)
 		enabled := true
+		ruleLoadStartedAt := time.Now()
 		rules, _ := hooks.Store.ListRuntimePolicyRules(ctx.Req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
 			AgentID: st.Session.AgentID,
 			Kind:    "tool",
 			Enabled: &enabled,
 		})
+		s.recordTimingSpan(ctx.Req, "tool_block.load_rules", ruleLoadStartedAt)
 		decisionState := map[string]toolDecisionState{}
 
 		evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
@@ -381,6 +395,7 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 				if requestCtx == nil {
 					requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
 				}
+				judgeStartedAt := time.Now()
 				judgment, err = hooks.ContextJudge.Judge(ctx.Req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
 					Provider:          requestContextProvider(requestCtx),
 					SessionID:         st.Session.ID,
@@ -392,6 +407,7 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					ActiveTaskBinding: reviewTask,
 					CandidateTasks:    candidateTasks,
 				})
+				s.recordTimingSpan(ctx.Req, "tool_block.context_judge", judgeStartedAt)
 				if err == nil && judgment.Kind == runtimepolicy.ClassificationBelongsToExistingTask && judgment.MatchedTask != nil {
 					decisionState[key] = toolDecisionState{
 						Task:                    judgment.MatchedTask,
@@ -444,7 +460,9 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 			}
 		}
 
+		rewriteStartedAt := time.Now()
 		result, err := rewriter.Rewrite(body, resp.Header.Get("Content-Type"), evaluator)
+		s.recordTimingSpan(ctx.Req, "tool_block.rewrite", rewriteStartedAt)
 		if err != nil {
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			resp.ContentLength = int64(len(body))
@@ -521,8 +539,8 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 						Outcome:    stringPtr("observed"),
 						Reason:     stringPtr(reason),
 						Metadata: map[string]any{
-							"tool_name":  decision.ToolUse.Name,
-							"rule_id":    ruleIDOrEmpty(state.Rule),
+							"tool_name":   decision.ToolUse.Name,
+							"rule_id":     ruleIDOrEmpty(state.Rule),
 							"rule_action": "deny",
 						},
 					})
@@ -538,8 +556,8 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 						Outcome:       stringPtr(outcome),
 						Reason:        stringPtr(reason),
 						Metadata: map[string]any{
-							"tool_name":  decision.ToolUse.Name,
-							"rule_id":    ruleIDOrEmpty(state.Rule),
+							"tool_name":   decision.ToolUse.Name,
+							"rule_id":     ruleIDOrEmpty(state.Rule),
 							"rule_action": ruleActionOrEmpty(state.Rule),
 						},
 					})
@@ -569,8 +587,8 @@ func (s *Server) installToolUseBlocker(hooks ToolUseHooks) {
 					Outcome:    stringPtr("blocked"),
 					Reason:     stringPtr(reason),
 					Metadata: map[string]any{
-						"tool_name":  decision.ToolUse.Name,
-						"rule_id":    ruleIDOrEmpty(state.Rule),
+						"tool_name":   decision.ToolUse.Name,
+						"rule_id":     ruleIDOrEmpty(state.Rule),
 						"rule_action": "deny",
 					},
 				})

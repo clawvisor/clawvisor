@@ -35,16 +35,30 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		if home, err := os.UserHomeDir(); err == nil && len(dataDir) > 1 && dataDir[:2] == "~/" {
 			dataDir = filepath.Join(home, dataDir[2:])
 		}
+		timingTraceDir := opts.Config.RuntimeProxy.TimingTraceDir
+		if home, err := os.UserHomeDir(); err == nil && len(timingTraceDir) > 1 && timingTraceDir[:2] == "~/" {
+			timingTraceDir = filepath.Join(home, timingTraceDir[2:])
+		}
 		var err error
 		runtimeSrv, err = runtimeproxy.NewServer(runtimeproxy.Config{
 			DataDir:           dataDir,
 			Addr:              opts.Config.RuntimeProxy.ListenAddr,
 			TLS:               opts.Config.RuntimeProxy.TLS,
 			ListenerHostnames: opts.Config.RuntimeProxy.ListenerHostnames,
+			LogTimings:        opts.Config.RuntimeProxy.TimingTraceEnabled,
+			TimingTraceDir:    timingTraceDir,
 		}, opts.Logger)
 		if err != nil {
 			return err
 		}
+		if opts.Config.RuntimeProxy.TimingTraceEnabled && opts.Logger != nil {
+			traceDir := timingTraceDir
+			if traceDir == "" {
+				traceDir = filepath.Join(dataDir, "timing-traces")
+			}
+			opts.Logger.Info("runtime proxy timing traces enabled", "dir", traceDir)
+		}
+		runtimeSrv.InstallTimingTrace()
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
 		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{
 			Store:  opts.Store,

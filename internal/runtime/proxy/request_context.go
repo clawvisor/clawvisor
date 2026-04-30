@@ -30,23 +30,29 @@ func (s *Server) InstallRequestContextCarrier() {
 		if parser == nil || req.Body == nil {
 			return req, nil
 		}
+		readStartedAt := time.Now()
 		body, err := io.ReadAll(req.Body)
+		s.recordTimingSpan(req, "request_context.read_body", readStartedAt)
 		if err != nil {
 			return req, nil
 		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
+		parseStartedAt := time.Now()
 		built := buildRuntimeRequestContext(req, parser, body)
+		s.recordTimingSpan(req, "request_context.parse", parseStartedAt)
 		if st.Runtime != nil && st.Runtime.SecretScan != nil {
 			built.SecretScan = st.Runtime.SecretScan
 		}
 		st.Runtime = built
 		if st.Session != nil && st.Runtime != nil {
+			cacheStartedAt := time.Now()
 			s.latestRequestCtxBySession.Store(st.Session.ID, cachedRuntimeRequestContext{
 				Context:   st.Runtime,
 				ExpiresAt: st.Session.ExpiresAt,
 			})
 			s.pruneLatestRuntimeRequestContexts()
+			s.recordTimingSpan(req, "request_context.cache", cacheStartedAt)
 		}
 		return req, nil
 	})

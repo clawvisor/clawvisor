@@ -52,7 +52,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			return req, nil
 		}
 
+		bodyReadStartedAt := time.Now()
 		bodyBytes, bodyShape, err := readJSONBody(req)
+		s.recordTimingSpan(req, "egress.read_body", bodyReadStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid JSON request body"}`)
 		}
@@ -85,15 +87,19 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			Headers: headerShape,
 		}
 		enabled := true
+		ruleLoadStartedAt := time.Now()
 		rules, err := hooks.Store.ListRuntimePolicyRules(req.Context(), st.Session.UserID, store.RuntimePolicyRuleFilter{
 			AgentID: st.Session.AgentID,
 			Kind:    "egress",
 			Enabled: &enabled,
 		})
+		s.recordTimingSpan(req, "egress.load_rules", ruleLoadStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load runtime policy rules"}`)
 		}
+		ruleMatchStartedAt := time.Now()
 		matchedRule, err := runtimepolicy.MatchRuntimePolicyEgress(rules, st.Session.AgentID, egressReq)
+		s.recordTimingSpan(req, "egress.match_rules", ruleMatchStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid runtime policy rule matcher"}`)
 		}
@@ -248,7 +254,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		var leaseTaskID *string
 		var usedActiveTaskContext bool
 		var usedLeaseBias bool
+		taskLoadStartedAt := time.Now()
 		tasks, _, err := hooks.Store.ListTasks(req.Context(), st.Session.UserID, store.TaskFilter{ActiveOnly: true})
+		s.recordTimingSpan(req, "egress.load_tasks", taskLoadStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load tasks"}`)
 		}
@@ -259,7 +267,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			}
 			candidateTasks = append(candidateTasks, task)
 		}
+		taskMatchStartedAt := time.Now()
 		if matchCtx, err := matchAttributedEgressTask(req.Context(), hooks.Store, st.Session.ID, candidateTasks, egressReq); err == nil && matchCtx != nil && matchCtx.Match != nil {
+			s.recordTimingSpan(req, "egress.match_tasks", taskMatchStartedAt)
 			matchedTask = matchCtx.Task
 			matchedWhy = matchCtx.Match.Item.Why
 			leaseID = matchCtx.LeaseID
@@ -267,7 +277,10 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			usedActiveTaskContext = matchCtx.UsedActiveTaskContext
 			usedLeaseBias = matchCtx.UsedLeaseBias
 		} else if err != nil {
+			s.recordTimingSpan(req, "egress.match_tasks", taskMatchStartedAt)
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid task egress matcher"}`)
+		} else {
+			s.recordTimingSpan(req, "egress.match_tasks", taskMatchStartedAt)
 		}
 		reviewTask := selectReviewTaskContext(req.Context(), hooks.Store, st.Session.ID, candidateTasks)
 		approvalKind = "request_once"
@@ -276,6 +289,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			if requestCtx == nil {
 				requestCtx = s.latestRuntimeRequestContext(st.Session.ID)
 			}
+			judgeStartedAt := time.Now()
 			judgment, judgeErr := hooks.ContextJudge.Judge(req.Context(), runtimepolicy.RuntimeContextJudgeRequest{
 				Provider:          requestContextProvider(requestCtx),
 				SessionID:         st.Session.ID,
@@ -291,6 +305,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				ActiveTaskBinding: reviewTask,
 				CandidateTasks:    candidateTasks,
 			})
+			s.recordTimingSpan(req, "egress.context_judge", judgeStartedAt)
 			if judgeErr != nil && hooks.Logger != nil {
 				hooks.Logger.Warn("runtime context judge failed", "err", judgeErr, "session_id", st.Session.ID, "host", host, "method", req.Method, "path", req.URL.Path)
 			}
@@ -310,7 +325,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			}
 		}
 
+		oneOffStartedAt := time.Now()
 		if oneOff, err := hooks.Store.ConsumeOneOffApproval(req.Context(), st.Session.ID, reqFingerprint, time.Now().UTC()); err == nil && oneOff != nil {
+			s.recordTimingSpan(req, "egress.consume_one_off", oneOffStartedAt)
 			st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
 				MatchedTask:             matchedTask,
 				ApprovalID:              oneOff.ApprovalID,
@@ -340,6 +357,8 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				},
 			})
 			return req, nil
+		} else {
+			s.recordTimingSpan(req, "egress.consume_one_off", oneOffStartedAt)
 		}
 
 		if matchedTask != nil {
@@ -418,6 +437,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			return req, nil
 		}
 
+		approvalStartedAt := time.Now()
 		rec, err := loadOrCreatePendingRuntimeApproval(req.Context(), hooks.Store, &store.ApprovalRecord{
 			ID:                  uuid.NewString(),
 			Kind:                approvalKind,
@@ -431,6 +451,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			PayloadJSON:         json.RawMessage(payloadJSON),
 			ResolutionTransport: "consume_one_off_retry",
 		})
+		s.recordTimingSpan(req, "egress.create_approval", approvalStartedAt)
 		if err != nil {
 			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
 		}
