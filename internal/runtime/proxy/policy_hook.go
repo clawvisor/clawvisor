@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -174,9 +175,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 				}
 				payloadJSON, _ := json.Marshal(payload)
 				summaryJSON, _ := json.Marshal(map[string]any{
-					"method": req.Method,
-					"host":   host,
-					"path":   req.URL.Path,
+					"method":  req.Method,
+					"host":    host,
+					"path":    req.URL.Path,
 					"rule_id": matchedRule.ID,
 				})
 				if st.Session.ObservationMode {
@@ -195,31 +196,25 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 					})
 					return req, nil
 				}
-				rec, err := hooks.Store.GetApprovalRecordByRequestID(req.Context(), approvalRequestID)
-				if err != nil && err != store.ErrNotFound {
-					return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load runtime approval"}`)
-				}
-				if err == store.ErrNotFound {
-					rec = &store.ApprovalRecord{
-						ID:                  uuid.NewString(),
-						Kind:                "request_once",
-						UserID:              st.Session.UserID,
-						AgentID:             &st.Session.AgentID,
-						RequestID:           &approvalRequestID,
-						SessionID:           &st.Session.ID,
-						Status:              "pending",
-						Surface:             "dashboard",
-						SummaryJSON:         json.RawMessage(summaryJSON),
-						PayloadJSON:         json.RawMessage(payloadJSON),
-						ResolutionTransport: "consume_one_off_retry",
-					}
-					if err := hooks.Store.CreateApprovalRecord(req.Context(), rec); err != nil {
-						return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
-					}
+				rec, err := loadOrCreatePendingRuntimeApproval(req.Context(), hooks.Store, &store.ApprovalRecord{
+					ID:                  uuid.NewString(),
+					Kind:                "request_once",
+					UserID:              st.Session.UserID,
+					AgentID:             &st.Session.AgentID,
+					RequestID:           &approvalRequestID,
+					SessionID:           &st.Session.ID,
+					Status:              "pending",
+					Surface:             "dashboard",
+					SummaryJSON:         json.RawMessage(summaryJSON),
+					PayloadJSON:         json.RawMessage(payloadJSON),
+					ResolutionTransport: "consume_one_off_retry",
+				})
+				if err != nil {
+					return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
 				}
 				st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
-					ApprovalID: &rec.ID,
-					RuleID:     &matchedRule.ID,
+					ApprovalID:  &rec.ID,
+					RuleID:      &matchedRule.ID,
 					WouldReview: true,
 				}, paramsSafe, req.Method, "review", "pending", ruleReason)
 				emitRuntimeEvent(req.Context(), hooks.Store, st.Session, st, runtimeEventOptions{
@@ -423,27 +418,21 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			return req, nil
 		}
 
-		rec, err := hooks.Store.GetApprovalRecordByRequestID(req.Context(), approvalRequestID)
-		if err != nil && err != store.ErrNotFound {
-			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not load runtime approval"}`)
-		}
-		if err == store.ErrNotFound {
-			rec = &store.ApprovalRecord{
-				ID:                  uuid.NewString(),
-				Kind:                approvalKind,
-				UserID:              st.Session.UserID,
-				AgentID:             &st.Session.AgentID,
-				RequestID:           &approvalRequestID,
-				SessionID:           &st.Session.ID,
-				Status:              "pending",
-				Surface:             "dashboard",
-				SummaryJSON:         json.RawMessage(summaryJSON),
-				PayloadJSON:         json.RawMessage(payloadJSON),
-				ResolutionTransport: "consume_one_off_retry",
-			}
-			if err := hooks.Store.CreateApprovalRecord(req.Context(), rec); err != nil {
-				return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
-			}
+		rec, err := loadOrCreatePendingRuntimeApproval(req.Context(), hooks.Store, &store.ApprovalRecord{
+			ID:                  uuid.NewString(),
+			Kind:                approvalKind,
+			UserID:              st.Session.UserID,
+			AgentID:             &st.Session.AgentID,
+			RequestID:           &approvalRequestID,
+			SessionID:           &st.Session.ID,
+			Status:              "pending",
+			Surface:             "dashboard",
+			SummaryJSON:         json.RawMessage(summaryJSON),
+			PayloadJSON:         json.RawMessage(payloadJSON),
+			ResolutionTransport: "consume_one_off_retry",
+		})
+		if err != nil {
+			return req, goproxy.NewResponse(req, "application/json", http.StatusInternalServerError, `{"error":"could not create runtime approval"}`)
 		}
 
 		st.AuditID = s.logAudit(req.Context(), hooks.Store, st, runtimeAuditOptions{
@@ -553,6 +542,27 @@ func (s *Server) logAudit(ctx context.Context, st store.Store, reqState *Request
 		WouldPromptInline:       opts.WouldPromptInline,
 	})
 	return auditID
+}
+
+func loadOrCreatePendingRuntimeApproval(ctx context.Context, st store.Store, draft *store.ApprovalRecord) (*store.ApprovalRecord, error) {
+	if draft == nil || draft.RequestID == nil || strings.TrimSpace(*draft.RequestID) == "" {
+		return nil, store.ErrNotFound
+	}
+	rec, err := st.GetApprovalRecordByRequestID(ctx, *draft.RequestID)
+	switch {
+	case err == nil && rec != nil && rec.Status == "pending":
+		return rec, nil
+	case err == nil && rec != nil:
+		if clearErr := st.ClearApprovalRecordRequestID(ctx, rec.ID); clearErr != nil && !errors.Is(clearErr, store.ErrNotFound) {
+			return nil, clearErr
+		}
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
+	if err := st.CreateApprovalRecord(ctx, draft); err != nil {
+		return nil, err
+	}
+	return draft, nil
 }
 
 func (s *Server) recordTaskActivity(ctx context.Context, st store.Store, session *store.RuntimeSession, task *store.Task, requestID string) {

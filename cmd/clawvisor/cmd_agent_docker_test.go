@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -148,5 +150,36 @@ func TestPrintDockerEnvAsArgsUsesShellQuoting(t *testing.T) {
 	want := "-e 'TOKEN=value with spaces $HOME ! backtick` and '\\''quote'\\'''"
 	if got != want {
 		t.Fatalf("unexpected docker args output:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestDockerDefaultsFollowLocalRuntimeConfig(t *testing.T) {
+	home := t.TempDir()
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("Setenv(HOME): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+	})
+
+	cfgDir := filepath.Join(home, ".clawvisor")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	caDir := filepath.Join(home, "runtime-ca")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+runtime_proxy:
+  listen_addr: "127.0.0.1:4318"
+  data_dir: "`+caDir+`"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	if got := defaultRuntimeProxyPort(); got != 4318 {
+		t.Fatalf("defaultRuntimeProxyPort() = %d, want 4318", got)
+	}
+	if got := defaultRuntimeProxyCAHostPath(); got != filepath.Join(caDir, "ca.pem") {
+		t.Fatalf("defaultRuntimeProxyCAHostPath() = %q, want %q", got, filepath.Join(caDir, "ca.pem"))
 	}
 }

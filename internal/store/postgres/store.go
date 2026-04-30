@@ -1425,6 +1425,19 @@ func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) (
 	return out, rows.Err()
 }
 
+func (s *Store) ClearApprovalRecordRequestID(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE approval_records SET request_id = NULL, updated_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE approval_records SET resolution = $1, status = $2, resolved_at = $3, updated_at = NOW() WHERE id = $4

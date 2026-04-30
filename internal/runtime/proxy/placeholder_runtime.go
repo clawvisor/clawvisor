@@ -58,6 +58,9 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 			if len(values) == 0 {
 				continue
 			}
+			if strings.EqualFold(headerName, "Proxy-Authorization") || strings.EqualFold(headerName, "Proxy-Connection") {
+				continue
+			}
 			replacedValues := make([]string, len(values))
 			for i, value := range values {
 				replaced, placeholders, err := runtimeautovault.ReplaceHeaderValue(value, func(placeholder string) (string, error) {

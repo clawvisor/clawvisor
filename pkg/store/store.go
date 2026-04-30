@@ -123,6 +123,7 @@ type Store interface {
 	GetApprovalRecord(ctx context.Context, id string) (*ApprovalRecord, error)
 	GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*ApprovalRecord, error)
 	ListPendingApprovalRecords(ctx context.Context, userID string) ([]*ApprovalRecord, error)
+	ClearApprovalRecordRequestID(ctx context.Context, id string) error
 	ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error
 
 	// Runtime sessions

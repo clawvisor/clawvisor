@@ -189,6 +189,102 @@ func TestRuntimeProxyOneOffApprovalsRemainBoundToOriginatingSession(t *testing.T
 	}
 }
 
+func TestRuntimeProxyCreatesFreshApprovalAfterConsumedOneOff(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-refresh-approval.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-refresh", userID, agentID, false)
+	srv := newStartedRuntimeProxy(t, st, cfg)
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL+"/blocked", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("first blocked request: %v", err)
+	}
+	firstBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected first runtime approval block, got %d", resp.StatusCode)
+	}
+	var first map[string]any
+	if err := json.Unmarshal(firstBody, &first); err != nil {
+		t.Fatalf("unmarshal first blocked response: %v", err)
+	}
+	firstApprovalID := first["approval_id"].(string)
+	fingerprint := first["request_fingerprint"].(string)
+
+	if err := st.CreateOneOffApproval(ctx, &store.OneOffApproval{
+		SessionID:          session.id,
+		RequestFingerprint: fingerprint,
+		ApprovalID:         &firstApprovalID,
+		ApprovedAt:         time.Now().UTC(),
+		ExpiresAt:          time.Now().UTC().Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateOneOffApproval: %v", err)
+	}
+	if err := st.ResolveApprovalRecord(ctx, firstApprovalID, "allow_once", "approved", time.Now().UTC()); err != nil {
+		t.Fatalf("ResolveApprovalRecord: %v", err)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, upstream.URL+"/blocked", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("one-off allowed request: %v", err)
+	}
+	allowedBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(allowedBody) != "ok" {
+		t.Fatalf("expected one-off upstream success, got %d %q", resp.StatusCode, string(allowedBody))
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, upstream.URL+"/blocked", nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("second blocked request: %v", err)
+	}
+	secondBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected second runtime approval block, got %d", resp.StatusCode)
+	}
+	var second map[string]any
+	if err := json.Unmarshal(secondBody, &second); err != nil {
+		t.Fatalf("unmarshal second blocked response: %v", err)
+	}
+	secondApprovalID := second["approval_id"].(string)
+	if secondApprovalID == firstApprovalID {
+		t.Fatalf("expected a fresh approval after one-off consumption, got the same approval id %q", secondApprovalID)
+	}
+
+	records, err := st.ListPendingApprovalRecords(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRecords: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != secondApprovalID {
+		t.Fatalf("expected fresh pending approval %q, got %+v", secondApprovalID, records)
+	}
+}
+
 func TestRuntimeProxyObservationModeAllowsAndAudits(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-observe.db")
@@ -413,6 +509,84 @@ func TestRuntimeProxyContextJudgeCanPromoteUnmatchedEgressToTaskReview(t *testin
 	}
 	if approval.Kind != "task_create" {
 		t.Fatalf("expected task_create runtime approval, got %+v", approval)
+	}
+}
+
+func TestRuntimeProxyActiveTaskBindingDoesNotAutoAllowUnmatchedEgress(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/runtime-active-binding-review.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	allowedUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer allowedUpstream.Close()
+	allowedURL, _ := url.Parse(allowedUpstream.URL)
+
+	if err := st.CreateTask(ctx, &store.Task{
+		ID:            "task-bound",
+		UserID:        userID,
+		AgentID:       agentID,
+		Purpose:       "bound runtime task",
+		Status:        "active",
+		Lifetime:      "session",
+		SchemaVersion: 2,
+		ExpectedEgress: mustJSON(t, []map[string]any{{
+			"host":   allowedURL.Hostname(),
+			"method": "GET",
+			"path":   "/uuid",
+			"why":    "Allow one specific runtime path.",
+		}}),
+		ExpiresInSeconds: 3600,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	session := createRuntimeSession(t, st, "session-active-binding", userID, agentID, false)
+	now := time.Now().UTC()
+	if err := st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+		TaskID:     "task-bound",
+		SessionID:  session.id,
+		UserID:     userID,
+		AgentID:    agentID,
+		Status:     "active",
+		StartedAt:  now,
+		LastSeenAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertActiveTaskSession: %v", err)
+	}
+
+	reviewUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`unexpected`))
+	}))
+	defer reviewUpstream.Close()
+
+	srv := newStartedRuntimeProxyWithJudge(t, st, cfg, runtimepolicy.NewLLMRuntimeContextJudge(nil, nil))
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, reviewUpstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected unmatched egress to remain blocked, got %d %q", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "RUNTIME_APPROVAL_REQUIRED") {
+		t.Fatalf("expected runtime approval block body, got %q", string(body))
 	}
 }
 

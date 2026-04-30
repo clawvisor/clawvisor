@@ -1555,6 +1555,21 @@ func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) (
 	return out, rows.Err()
 }
 
+func (s *Store) ClearApprovalRecordRequestID(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_records
+		SET request_id = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE approval_records

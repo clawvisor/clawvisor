@@ -333,6 +333,12 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve runtime approval")
 		return
 	}
+	if rec.RequestID != nil && strings.TrimSpace(*rec.RequestID) != "" {
+		if err := h.st.ClearApprovalRecordRequestID(r.Context(), rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not finalize runtime approval")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"approval_id": rec.ID,
 		"status":      status,

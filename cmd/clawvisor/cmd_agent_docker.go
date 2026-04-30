@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -170,6 +171,10 @@ func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
 			return nil, err
 		}
 	}
+	proxyPort := dockerProxyPort
+	if proxyPort <= 0 {
+		proxyPort = defaultRuntimeProxyPort()
+	}
 	caHost := strings.TrimSpace(dockerCAHost)
 	if caHost == "" {
 		caHost = defaultRuntimeProxyCAHostPath()
@@ -180,7 +185,7 @@ func dockerProxyOptionsFromFlags() (*dockerProxyOptions, error) {
 		ContainerURL: containerURL,
 		AgentToken:   creds.AgentToken,
 		ProxyHost:    strings.TrimSpace(dockerProxyHost),
-		ProxyPort:    dockerProxyPort,
+		ProxyPort:    proxyPort,
 		CAInside:     strings.TrimSpace(dockerCAInside),
 		CAHost:       caHost,
 	}, nil
@@ -251,8 +256,8 @@ func isLoopbackHostname(host string) bool {
 }
 
 func defaultRuntimeProxyCAHostPath() string {
-	cfg := config.Default()
-	dir := expandHomePath(cfg.RuntimeProxy.DataDir)
+	cfg := loadLocalDockerRuntimeConfig()
+	dir := expandConfigPath(cfg.RuntimeProxy.DataDir)
 	return filepath.Join(dir, "ca.pem")
 }
 
@@ -263,6 +268,41 @@ func expandHomePath(path string) string {
 		}
 	}
 	return path
+}
+
+func expandConfigPath(path string) string {
+	path = expandHomePath(path)
+	if filepath.IsAbs(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
+}
+
+func loadLocalDockerRuntimeConfig() *config.Config {
+	cfg := config.Default()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return cfg
+	}
+	localCfg, err := config.Load(filepath.Join(home, ".clawvisor", "config.yaml"))
+	if err != nil || localCfg == nil {
+		return cfg
+	}
+	return localCfg
+}
+
+func defaultRuntimeProxyPort() int {
+	cfg := loadLocalDockerRuntimeConfig()
+	if _, port, err := net.SplitHostPort(strings.TrimSpace(cfg.RuntimeProxy.ListenAddr)); err == nil {
+		if n, convErr := strconv.Atoi(port); convErr == nil && n > 0 {
+			return n
+		}
+	}
+	return 25290
 }
 
 func printDockerEnvHeader(w io.Writer, opts *dockerProxyOptions) {
@@ -468,7 +508,7 @@ func init() {
 		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL the agent should use (overrides the registered agent URL, otherwise defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
 		subcmd.Flags().StringVar(&dockerContainerURL, "container-url", "", "Clawvisor server URL as seen from inside the container (defaults to a container-safe rewrite of --url)")
 		subcmd.Flags().StringVar(&dockerProxyHost, "proxy-host", "host.docker.internal", "Hostname the container uses to reach the runtime proxy")
-		subcmd.Flags().IntVar(&dockerProxyPort, "proxy-port", 25290, "Port the runtime proxy listens on")
+		subcmd.Flags().IntVar(&dockerProxyPort, "proxy-port", 0, "Port the runtime proxy listens on (defaults to the local runtime proxy config)")
 		subcmd.Flags().StringVar(&dockerCAInside, "ca-path", "/clawvisor/ca.pem", "Path the runtime proxy CA will be mounted at inside the container")
 		subcmd.Flags().StringVar(&dockerCAHost, "ca-host-path", "", "Path to the runtime proxy CA on the host (default: ~/.clawvisor/runtime-proxy/ca.pem)")
 		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")

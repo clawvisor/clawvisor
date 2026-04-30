@@ -95,15 +95,6 @@ type runtimeJudgeDecision struct {
 }
 
 func heuristicRuntimeJudgment(req RuntimeContextJudgeRequest) (RuntimeContextJudgment, bool) {
-	if req.ActiveTaskBinding != nil {
-		return RuntimeContextJudgment{
-			Kind:           ClassificationBelongsToExistingTask,
-			MatchedTask:    req.ActiveTaskBinding,
-			Confidence:     "high",
-			ResolutionHint: "allow_session",
-			Rationale:      "current runtime session is already explicitly bound to this task",
-		}, true
-	}
 	return RuntimeContextJudgment{}, false
 }
 

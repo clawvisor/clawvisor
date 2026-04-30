@@ -7,21 +7,23 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-func TestRuntimeContextJudgeFallsBackToActiveBinding(t *testing.T) {
+func TestRuntimeContextJudgeDoesNotAutoMatchActiveBinding(t *testing.T) {
 	task := &store.Task{ID: "task-active", Purpose: "Bound task"}
 	judge := NewLLMRuntimeContextJudge(nil, nil)
 	got, err := judge.Judge(context.Background(), RuntimeContextJudgeRequest{
 		SessionID:         "session-1",
 		AgentID:           "agent-1",
-		ActionKind:        "tool_use",
-		ToolName:          "search_messages",
+		ActionKind:        "egress",
+		Method:            "GET",
+		Host:              "api.example.com",
+		Path:              "/messages",
 		ActiveTaskBinding: task,
 		CandidateTasks:    []*store.Task{task},
 	})
 	if err != nil {
 		t.Fatalf("Judge: %v", err)
 	}
-	if got.Kind != ClassificationBelongsToExistingTask || got.MatchedTask == nil || got.MatchedTask.ID != task.ID {
+	if got.Kind != ClassificationOneOff || got.MatchedTask != nil {
 		t.Fatalf("unexpected judgment: %+v", got)
 	}
 }
