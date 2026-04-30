@@ -95,6 +95,28 @@ type runtimeJudgeDecision struct {
 }
 
 func heuristicRuntimeJudgment(req RuntimeContextJudgeRequest) (RuntimeContextJudgment, bool) {
+	if req.ActionKind != "tool_use" {
+		return RuntimeContextJudgment{}, false
+	}
+	if len(req.CandidateTasks) > 1 {
+		return RuntimeContextJudgment{}, false
+	}
+	if isMutatingRuntimeAction(req) {
+		return RuntimeContextJudgment{
+			Kind:           ClassificationNeedsNewTask,
+			Confidence:     "high",
+			ResolutionHint: "allow_session",
+			Rationale:      "the action mutates local files or execution state and should promote into task scope",
+		}, true
+	}
+	if isReadLikeRuntimeAction(req) {
+		return RuntimeContextJudgment{
+			Kind:           ClassificationOneOff,
+			Confidence:     "high",
+			ResolutionHint: "allow_once",
+			Rationale:      "the action appears read-only or ad-hoc",
+		}, true
+	}
 	return RuntimeContextJudgment{}, false
 }
 
@@ -138,6 +160,25 @@ func isReadLikeRuntimeAction(req RuntimeContextJudgeRequest) bool {
 		}
 	}
 	return false
+}
+
+func isMutatingRuntimeAction(req RuntimeContextJudgeRequest) bool {
+	if req.ActionKind == "egress" {
+		switch strings.ToUpper(req.Method) {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			return true
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(req.ToolName)) {
+	case "write", "edit", "notebookedit", "write_file", "edit_file", "mcp__filesystem__write_file", "mcp__filesystem__edit_file":
+		return true
+	case "bash", "mcp__shell__exec":
+		return true
+	case "task":
+		return true
+	default:
+		return false
+	}
 }
 
 func runtimeJudgeOptions(req RuntimeContextJudgeRequest) []string {

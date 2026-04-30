@@ -66,6 +66,26 @@ func TestRuntimeContextJudgeFallsBackToNeedsNewTaskForMutatingActions(t *testing
 	}
 }
 
+func TestRuntimeContextJudgeHeuristicallyPromotesMutatingFileTool(t *testing.T) {
+	judge := NewLLMRuntimeContextJudge(nil, nil)
+	got, err := judge.Judge(context.Background(), RuntimeContextJudgeRequest{
+		SessionID:  "session-1",
+		AgentID:    "agent-1",
+		ActionKind: "tool_use",
+		ToolName:   "Write",
+		ToolInput:  map[string]any{"file_path": "/Users/demo/hello.py"},
+	})
+	if err != nil {
+		t.Fatalf("Judge: %v", err)
+	}
+	if got.Kind != ClassificationNeedsNewTask || got.ResolutionHint != "allow_session" {
+		t.Fatalf("unexpected judgment: %+v", got)
+	}
+	if got.Confidence != "high" {
+		t.Fatalf("expected high-confidence mutating heuristic, got %+v", got)
+	}
+}
+
 func TestRuntimeContextJudgeFallsBackToAmbiguousForMultipleCandidates(t *testing.T) {
 	judge := NewLLMRuntimeContextJudge(nil, nil)
 	got, err := judge.Judge(context.Background(), RuntimeContextJudgeRequest{

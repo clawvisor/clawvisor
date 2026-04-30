@@ -554,10 +554,9 @@ function RuntimeApprovalCard({ approval }: { approval: ApprovalRecord }) {
 
   const summary = runtimeSummary(approval)
   const payload = runtimePayload(approval)
-  const primary = payload
-    ? `${(payload.method ?? 'HTTP').toUpperCase()} ${payload.host}${payload.path ?? ''}`
-    : (summary.service && summary.action ? `${serviceName(summary.service)} · ${actionName(summary.action)}` : approval.kind)
-  const reason = summary.reason || summary.policy_reason || payload?.host || ''
+  const primary = runtimeApprovalPrimary(payload, summary, approval.kind)
+  const reason = runtimeApprovalReason(payload, summary)
+  const detail = runtimeApprovalDetail(payload)
   const allowLabel = approval.resolution_transport === 'release_held_tool_use' ? 'Release Tool Call' : 'Allow Once'
 
   const resolveMut = useMutation({
@@ -596,7 +595,8 @@ function RuntimeApprovalCard({ approval }: { approval: ApprovalRecord }) {
         </div>
         {payload && (
           <div className="mt-3 bg-surface-0 border border-border-subtle rounded p-3 space-y-1">
-            <div className="text-[11px] font-mono text-text-tertiary">host: {payload.host}</div>
+            {detail && <div className="text-[11px] font-mono text-text-tertiary break-all">{detail}</div>}
+            {payload.host && <div className="text-[11px] font-mono text-text-tertiary">host: {payload.host}</div>}
             {payload.path && <div className="text-[11px] font-mono text-text-tertiary">path: {payload.path}</div>}
             {payload.query && Object.keys(payload.query).length > 0 && (
               <div className="text-[11px] font-mono text-text-tertiary break-all">query: {JSON.stringify(payload.query)}</div>
@@ -630,6 +630,46 @@ function runtimeSummary(approval: ApprovalRecord): Record<string, any> {
 
 function runtimePayload(approval: ApprovalRecord): Record<string, any> | null {
   return approval.payload_json ?? null
+}
+
+function runtimeApprovalPrimary(payload: Record<string, any> | null, summary: Record<string, any>, fallback: string): string {
+  if (payload?.tool_name) {
+    return String(payload.tool_name)
+  }
+  if (payload?.host) {
+    return `${String(payload.method ?? 'HTTP').toUpperCase()} ${payload.host}${payload.path ?? ''}`
+  }
+  if (summary.service && summary.action) {
+    return `${serviceName(summary.service)} · ${actionName(summary.action)}`
+  }
+  return fallback
+}
+
+function runtimeApprovalReason(payload: Record<string, any> | null, summary: Record<string, any>): string {
+  return String(payload?.reason ?? summary.reason ?? summary.policy_reason ?? payload?.host ?? '')
+}
+
+function runtimeApprovalDetail(payload: Record<string, any> | null): string {
+  if (!payload) return ''
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : ''
+  const toolInput = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {}
+  if (toolName) {
+    const filePath = readRuntimeApprovalString(toolInput.file_path) || readRuntimeApprovalString(toolInput.path) || readRuntimeApprovalString(toolInput.directory)
+    if (filePath) return `${toolName} ${filePath}`
+    const pattern = readRuntimeApprovalString(toolInput.pattern)
+    if (pattern) return `${toolName} ${pattern}`
+    const command = readRuntimeApprovalString(toolInput.command)
+    if (command) return `${toolName} ${command}`
+    return toolName
+  }
+  if (typeof payload.host === 'string') {
+    return [payload.method, payload.host, payload.path].filter(Boolean).join(' ')
+  }
+  return ''
+}
+
+function readRuntimeApprovalString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function hasVerificationIssue(v: VerificationVerdict): boolean {
