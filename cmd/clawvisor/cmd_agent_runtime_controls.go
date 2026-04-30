@@ -56,11 +56,6 @@ func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []st
 	if !ok {
 		return nil
 	}
-	if shouldAutoApplyStarterProfile(decision, settings, profileID) {
-		if applyStarterProfileToAgent(cl, creds.AgentID, settings, profileID) {
-			return nil
-		}
-	}
 	if shouldSuppressStarterProfilePrompt(decision, settings, profileID) {
 		return nil
 	}
@@ -113,13 +108,6 @@ func applyStarterProfileToAgent(cl runtimeControlsClient, agentID string, settin
 	return true
 }
 
-func shouldAutoApplyStarterProfile(decision *client.RuntimePresetDecision, settings *client.AgentRuntimeSettings, profileID string) bool {
-	if decision == nil || decision.Decision != "applied" {
-		return false
-	}
-	return settings == nil || !strings.EqualFold(settings.StarterProfile, profileID)
-}
-
 func printObserveModeNotice(observe bool) {
 	if !observe {
 		return
@@ -143,8 +131,6 @@ func shouldSuppressStarterProfilePrompt(decision *client.RuntimePresetDecision, 
 		switch decision.Decision {
 		case "always_skip", "skipped":
 			return true
-		case "applied":
-			return settings != nil && strings.EqualFold(settings.StarterProfile, profileID)
 		}
 	}
 	return settings != nil && strings.EqualFold(settings.StarterProfile, profileID)

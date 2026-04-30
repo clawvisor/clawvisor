@@ -177,13 +177,17 @@ func TestMaybeOfferStarterProfile(t *testing.T) {
 		wantAppliedMessage      bool
 	}{
 		{
-			name: "auto applies previously applied decision to fresh agent",
+			name:     "prompts again for fresh agent after prior applied decision",
 			decision: &client.RuntimePresetDecision{
 				Decision: "applied",
 			},
-			settings:           &client.AgentRuntimeSettings{AgentID: "agent-123"},
-			wantApply:          true,
-			wantStarterProfile: "codex",
+			settings:            &client.AgentRuntimeSettings{AgentID: "agent-123"},
+			input:               "y\n",
+			wantApply:           true,
+			wantStarterProfile:  "codex",
+			wantPresetDecisions: []string{"applied"},
+			wantPrompt:          true,
+			wantAppliedMessage:  true,
 		},
 		{
 			name: "suppresses previously skipped decision",
