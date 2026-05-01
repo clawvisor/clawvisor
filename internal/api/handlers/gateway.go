@@ -247,7 +247,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// ever silently dropped, this table retains full visibility.
 	var outDecision, outOutcome string
 	defer func() {
-		if logErr := h.store.LogGatewayRequest(context.Background(), &store.GatewayRequestLog{
+		logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if logErr := h.store.LogGatewayRequest(logCtx, &store.GatewayRequestLog{
 			AuditID:    auditID,
 			RequestID:  req.RequestID,
 			AgentID:    agent.ID,

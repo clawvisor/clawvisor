@@ -225,6 +225,10 @@ func normalizeAuditEntry(entry *store.AuditEntry) *auditEntryResponse {
 	params := map[string]any{}
 	if len(entry.ParamsSafe) > 0 {
 		_ = json.Unmarshal(entry.ParamsSafe, &params)
+		params = stripSecretsRecursive(params)
+		if body, err := json.Marshal(params); err == nil {
+			resp.ParamsSafe = body
+		}
 	}
 
 	switch entry.Service {
@@ -290,6 +294,49 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func stripSecretsRecursive(value any) map[string]any {
+	root, _ := stripSecretsNode(value).(map[string]any)
+	if root == nil {
+		return map[string]any{}
+	}
+	return root
+}
+
+func stripSecretsNode(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if looksSecretKey(key) {
+				continue
+			}
+			out[key] = stripSecretsNode(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = stripSecretsNode(child)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func looksSecretKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	for _, pattern := range []string{
+		"token", "secret", "password", "passwd", "credential", "auth",
+		"api_key", "apikey", "access_key", "private_key", "bearer",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func compactParts(values ...string) []string {

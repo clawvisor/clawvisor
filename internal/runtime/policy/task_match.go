@@ -3,6 +3,8 @@ package policy
 import (
 	"encoding/json"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
@@ -164,11 +166,56 @@ func matchRegexMap(expr string, actual map[string]any) (bool, error) {
 	if actual == nil {
 		return false, nil
 	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return false, err
+	}
+	if re.MatchString(flattenRegexMap(actual)) {
+		return true, nil
+	}
 	body, err := json.Marshal(actual)
 	if err != nil {
 		return false, err
 	}
-	return regexp.MatchString(expr, string(body))
+	return re.Match(body), nil
+}
+
+func flattenRegexMap(actual map[string]any) string {
+	if len(actual) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(actual))
+	for key := range actual {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, key := range keys {
+		lines = appendFlattenedRegexLines(lines, key, actual[key])
+	}
+	return strings.Join(lines, "\n")
+}
+
+func appendFlattenedRegexLines(lines []string, path string, value any) []string {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			lines = appendFlattenedRegexLines(lines, path+"."+key, typed[key])
+		}
+	case []any:
+		for i, item := range typed {
+			lines = appendFlattenedRegexLines(lines, path+"["+strconv.Itoa(i)+"]", item)
+		}
+	default:
+		body, _ := json.Marshal(typed)
+		lines = append(lines, path+"="+string(body))
+	}
+	return lines
 }
 
 func toolMatchSpecificity(item runtimetasks.ExpectedTool) int {

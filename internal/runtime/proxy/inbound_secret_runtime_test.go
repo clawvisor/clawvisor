@@ -587,3 +587,35 @@ func TestLooksObviouslyNonSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeNoiseFiltersDoNotSuppressRealSecrets(t *testing.T) {
+	cases := []struct {
+		name      string
+		fieldName string
+		value     string
+	}{
+		{
+			name:      "context prefix mention with real key",
+			fieldName: "content",
+			value:     "As you answer the user's questions, you can use the following context: examplecred_api03_ABCDEFGHIJKLMNOPQRSTUV1234567890",
+		},
+		{
+			name:      "protocol-like type with real key",
+			fieldName: "type",
+			value:     "example_live_secret_51NabcDEFghijkLMNOPqrstuvWXYZ1234567890",
+		},
+		{
+			name:      "identifier-like real secret",
+			fieldName: "text",
+			value:     "exampletoken_1234567890abcdefghijklmnopqrstuv",
+		},
+	}
+	for _, tc := range cases {
+		if runtimeLooksLikeProtocolNoise(tc.fieldName, tc.value) {
+			t.Fatalf("%s: protocol noise filter unexpectedly matched %q", tc.name, tc.value)
+		}
+		if looksObviouslyNonSecret(tc.value) {
+			t.Fatalf("%s: non-secret heuristic unexpectedly matched %q", tc.name, tc.value)
+		}
+	}
+}

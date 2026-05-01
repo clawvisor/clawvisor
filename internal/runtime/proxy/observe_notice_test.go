@@ -132,6 +132,19 @@ func TestScrubHistoricalResponseNoticesFromOpenAIChatRequest(t *testing.T) {
 	}
 }
 
+func TestScrubHistoricalResponseNoticeTextPreservesSimilarButNonExactPrefix(t *testing.T) {
+	t.Parallel()
+
+	text := "([Clawvisor system message]: Clawvisor is currently running in observe mode-ish for a documentation example.)\n\nKeep this."
+	got, changed := scrubHistoricalResponseNoticeText(text)
+	if changed {
+		t.Fatalf("expected similar but non-exact prefix to be preserved, got %q", got)
+	}
+	if got != text {
+		t.Fatalf("unexpected scrubbed text %q", got)
+	}
+}
+
 func TestAnthropicResponseNoticeStreamInjectsBeforeStop(t *testing.T) {
 	t.Parallel()
 

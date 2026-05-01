@@ -896,7 +896,7 @@ func flattenHeaders(header http.Header) map[string]string {
 		if len(vals) == 0 {
 			continue
 		}
-		out[strings.ToLower(k)] = vals[0]
+		out[strings.ToLower(k)] = strings.Join(vals, "\n")
 	}
 	return out
 }

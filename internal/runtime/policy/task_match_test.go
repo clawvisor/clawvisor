@@ -118,3 +118,28 @@ func TestMatchEgressRequestPrefersMoreSpecificCandidate(t *testing.T) {
 		t.Fatalf("expected specific task match, got %+v", match)
 	}
 }
+
+func TestMatchRegexMapUsesFlattenedStructuredRepresentation(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"url": "https://example.com",
+		"options": map[string]any{
+			"extractMode": "text",
+		},
+	}
+	ok, err := matchRegexMap(`(?m)^url="https://example\.com"$`, input)
+	if err != nil {
+		t.Fatalf("matchRegexMap: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected flattened key=value regex to match")
+	}
+	ok, err = matchRegexMap(`(?m)^options\.extractMode="text"$`, input)
+	if err != nil {
+		t.Fatalf("matchRegexMap nested: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected nested flattened key=value regex to match")
+	}
+}

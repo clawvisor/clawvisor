@@ -27,6 +27,8 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
+const defaultRuntimeAdjudicationTimeout = 10 * time.Second
+
 type InboundSecretHooks struct {
 	Store  store.Store
 	Vault  vault.Vault
@@ -579,7 +581,9 @@ func (s *runtimeSecretScanner) prewarmVerdicts(ctx context.Context, payload any)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.runAdjudicationGroup(ctx, client, group)
+			adjudicationCtx, cancel := context.WithTimeout(ctx, runtimeAdjudicationTimeout(cfg))
+			defer cancel()
+			s.runAdjudicationGroup(adjudicationCtx, client, group)
 		}()
 	}
 	wg.Wait()
@@ -764,7 +768,9 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	}
 	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(250)
 	adjudicateStartedAt := time.Now()
-	raw, err := client.Complete(ctx, []llm.ChatMessage{
+	adjudicationCtx, cancel := context.WithTimeout(ctx, runtimeAdjudicationTimeout(cfg))
+	defer cancel()
+	raw, err := client.Complete(adjudicationCtx, []llm.ChatMessage{
 		{Role: "system", Content: runtimeSecretAdjudicatorSystemPrompt},
 		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, fieldName, content, candidate)},
 	})
@@ -1106,6 +1112,13 @@ func verificationConfig(cfg *config.Config) config.VerificationConfig {
 		return config.VerificationConfig{}
 	}
 	return cfg.LLM.Verification
+}
+
+func runtimeAdjudicationTimeout(cfg config.VerificationConfig) time.Duration {
+	if cfg.TimeoutSeconds > 0 {
+		return time.Duration(cfg.TimeoutSeconds) * time.Second
+	}
+	return defaultRuntimeAdjudicationTimeout
 }
 
 func stringValueFromMap(m map[string]any, key string) string {

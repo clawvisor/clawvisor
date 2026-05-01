@@ -171,3 +171,60 @@ func TestAuditHandlerNormalizesRuntimeToolUseURLSummary(t *testing.T) {
 		t.Fatalf("unexpected summary: %+v", resp)
 	}
 }
+
+func TestAuditHandlerStripsSecretsFromLegacyParamsSafeAtReadTime(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "audit-redaction.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "audit-redaction@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	entry := &store.AuditEntry{
+		ID:        "audit-redact-1",
+		UserID:    user.ID,
+		RequestID: "req-redact-1",
+		Timestamp: time.Now().UTC(),
+		Service:   "runtime.egress",
+		Action:    "post",
+		ParamsSafe: json.RawMessage(`{
+			"method":"POST",
+			"host":"api.example.com",
+			"path":"/v1/messages",
+			"headers":{"authorization":"Bearer sk-secret-token"}
+		}`),
+		Decision:   "allow",
+		Outcome:    "executed",
+		DurationMS: 12,
+	}
+	if err := st.LogAudit(ctx, entry); err != nil {
+		t.Fatalf("LogAudit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/"+entry.ID, nil)
+	req.SetPathValue("id", entry.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	NewAuditHandler(st).Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Get status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		ParamsSafe map[string]any `json:"params_safe"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	headers, _ := resp.ParamsSafe["headers"].(map[string]any)
+	if _, ok := headers["authorization"]; ok {
+		t.Fatalf("expected authorization header to be removed, got %+v", headers)
+	}
+}

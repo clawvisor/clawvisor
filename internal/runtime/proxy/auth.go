@@ -96,6 +96,10 @@ type Authenticator struct {
 	mu sync.Mutex
 }
 
+type runtimeSessionLaunchLister interface {
+	ListRuntimeSessionsByAgentAndLaunchID(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error)
+}
+
 const (
 	agentTokenRuntimeSessionLauncher = "runtime-proxy-agent-token"
 	agentTokenRuntimeSessionAuthMode = "agent_token"
@@ -160,7 +164,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 	}
 	ttl := time.Duration(ttlSeconds) * time.Second
 
-	sessions, err := a.Store.ListRuntimeSessionsByAgent(ctx, agent.ID)
+	sessions, err := a.listRuntimeSessionsForReuse(ctx, agent.ID, launchID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: list runtime sessions: %v", ErrProxyAuthorizationUnavailable, err)
 	}
@@ -230,6 +234,13 @@ func (a *Authenticator) maybeExtendSessionExpiry(ctx context.Context, session *s
 		return
 	}
 	session.ExpiresAt = newExpiry
+}
+
+func (a *Authenticator) listRuntimeSessionsForReuse(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error) {
+	if lister, ok := a.Store.(runtimeSessionLaunchLister); ok {
+		return lister.ListRuntimeSessionsByAgentAndLaunchID(ctx, agentID, launchID)
+	}
+	return a.Store.ListRuntimeSessionsByAgent(ctx, agentID)
 }
 
 func selectReusableAgentTokenRuntimeSession(sessions []*store.RuntimeSession, now time.Time, observation bool, want sessionRuntimeSettings, launchID string) *store.RuntimeSession {

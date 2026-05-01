@@ -207,6 +207,13 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		if err := runtimetiming.EnsureDir(adjudicationDebugDir); err != nil {
 			return nil, fmt.Errorf("ensure adjudication debug dir: %w", err)
 		}
+		info, err := os.Stat(adjudicationDebugDir)
+		if err != nil {
+			return nil, fmt.Errorf("stat adjudication debug dir: %w", err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("adjudication debug dir %s must be owner-only (0700)", adjudicationDebugDir)
+		}
 	}
 
 	s := &Server{
@@ -309,8 +316,10 @@ func (s *Server) listenerTLSConfig() (*tls.Config, error) {
 		}
 		return s.certs.Get(host)
 	}
-	if _, err := s.certs.Get(primary); err != nil {
-		return nil, fmt.Errorf("pre-mint listener cert: %w", err)
+	for _, name := range names {
+		if _, err := s.certs.Get(name); err != nil {
+			return nil, fmt.Errorf("pre-mint listener cert for %s: %w", name, err)
+		}
 	}
 	return &tls.Config{
 		GetCertificate: getCert,

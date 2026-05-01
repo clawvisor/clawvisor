@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
@@ -80,5 +82,38 @@ func TestNewServerUsesVerifiedUpstreamTransport(t *testing.T) {
 	}
 	if srv.goproxy.Tr.TLSClientConfig.InsecureSkipVerify {
 		t.Fatal("expected runtime proxy transport to verify upstream TLS")
+	}
+}
+
+func TestNewServerRejectsInsecureAdjudicationDebugDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "adjudication-debug")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	t.Setenv("CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR", dir)
+	if _, err := NewServer(Config{
+		DataDir: t.TempDir(),
+		Addr:    "127.0.0.1:0",
+	}, nil); err == nil {
+		t.Fatal("expected insecure adjudication debug dir to be rejected")
+	}
+}
+
+func TestListenerTLSConfigPreMintsAllConfiguredHostnames(t *testing.T) {
+	srv, err := NewServer(Config{
+		DataDir:           t.TempDir(),
+		Addr:              "127.0.0.1:0",
+		ListenerHostnames: []string{"localhost", "127.0.0.1", "clawvisor.test"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if _, err := srv.listenerTLSConfig(); err != nil {
+		t.Fatalf("listenerTLSConfig: %v", err)
+	}
+	for _, name := range []string{"localhost", "127.0.0.1", "clawvisor.test"} {
+		if _, err := srv.certs.Get(name); err != nil {
+			t.Fatalf("expected preminted cert for %s: %v", name, err)
+		}
 	}
 }

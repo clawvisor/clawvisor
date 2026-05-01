@@ -1761,6 +1761,29 @@ func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) 
 	return out, rows.Err()
 }
 
+func (s *Store) ListRuntimeSessionsByAgentAndLaunchID(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions
+		WHERE agent_id = ?
+		  AND COALESCE(json_extract(metadata_json, '$.launch_id'), '') = ?
+		ORDER BY created_at DESC
+	`, agentID, launchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanSQLiteRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE runtime_sessions SET revoked_at = ? WHERE id = ?`,
 		revokedAt.UTC().Format(time.RFC3339), id)
