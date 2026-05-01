@@ -86,44 +86,94 @@ func scrubHistoricalResponseNoticesFromRequest(req *http.Request, body []byte) (
 }
 
 func scrubAnthropicHistoricalResponseNotices(body []byte) ([]byte, bool) {
+	return rewriteResponseCollection(body, "messages", func(entry map[string]any) bool {
+		if strings.TrimSpace(anyString(entry["role"])) != "assistant" {
+			return false
+		}
+		rewrittenContent, changed := scrubAnthropicMessageContent(entry["content"])
+		if changed {
+			entry["content"] = rewrittenContent
+		}
+		return changed
+	})
+}
+
+func scrubOpenAIChatHistoricalResponseNotices(body []byte) ([]byte, bool) {
+	return rewriteResponseCollection(body, "messages", func(entry map[string]any) bool {
+		if strings.TrimSpace(anyString(entry["role"])) != "assistant" {
+			return false
+		}
+		rewrittenContent, changed := scrubOpenAIMessageContent(entry["content"])
+		if changed {
+			entry["content"] = rewrittenContent
+		}
+		return changed
+	})
+}
+
+func scrubOpenAIResponsesHistoricalResponseNotices(body []byte) ([]byte, bool) {
+	return rewriteResponseCollection(body, "input", func(entry map[string]any) bool {
+		if strings.TrimSpace(anyString(entry["type"])) != "message" || strings.TrimSpace(anyString(entry["role"])) != "assistant" {
+			return false
+		}
+		rewrittenContent, changed := scrubOpenAIMessageContent(entry["content"])
+		if changed {
+			entry["content"] = rewrittenContent
+		}
+		return changed
+	})
+}
+
+func rewriteResponseCollection(body []byte, field string, rewrite func(map[string]any) bool) ([]byte, bool) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return body, false
 	}
-	messages, ok := payload["messages"].([]any)
-	if !ok || len(messages) == 0 {
+	items, ok := payload[field].([]any)
+	if !ok || len(items) == 0 {
 		return body, false
 	}
 	changed := false
-	for i, item := range messages {
-		msg, ok := item.(map[string]any)
-		if !ok || strings.TrimSpace(anyString(msg["role"])) != "assistant" {
-			continue
-		}
-		content, ok := msg["content"].([]any)
+	for i, item := range items {
+		entry, ok := item.(map[string]any)
 		if !ok {
-			if text, ok := msg["content"].(string); ok {
-				if scrubbed, changedText := scrubHistoricalResponseNoticeText(text); changedText {
-					changed = true
-					if strings.TrimSpace(scrubbed) == "" {
-						msg["content"] = []any{}
-					} else {
-						msg["content"] = scrubbed
-					}
-				}
-				messages[i] = msg
-			}
 			continue
 		}
-		rewritten := make([]any, 0, len(content))
-		for _, blockItem := range content {
+		if !rewrite(entry) {
+			continue
+		}
+		changed = true
+		items[i] = entry
+	}
+	if !changed {
+		return body, false
+	}
+	payload[field] = items
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return rewritten, true
+}
+
+func scrubAnthropicMessageContent(content any) (any, bool) {
+	switch value := content.(type) {
+	case string:
+		scrubbed, changed := scrubHistoricalResponseNoticeText(value)
+		if !changed {
+			return content, false
+		}
+		if strings.TrimSpace(scrubbed) == "" {
+			return []any{}, true
+		}
+		return scrubbed, true
+	case []any:
+		rewritten := make([]any, 0, len(value))
+		changed := false
+		for _, blockItem := range value {
 			block, ok := blockItem.(map[string]any)
-			if !ok {
+			if !ok || anyString(block["type"]) != "text" {
 				rewritten = append(rewritten, blockItem)
-				continue
-			}
-			if anyString(block["type"]) != "text" {
-				rewritten = append(rewritten, block)
 				continue
 			}
 			scrubbed, changedText := scrubHistoricalResponseNoticeText(anyString(block["text"]))
@@ -138,86 +188,10 @@ func scrubAnthropicHistoricalResponseNotices(body []byte) ([]byte, bool) {
 			block["text"] = scrubbed
 			rewritten = append(rewritten, block)
 		}
-		msg["content"] = rewritten
-		messages[i] = msg
+		return rewritten, changed
+	default:
+		return content, false
 	}
-	if !changed {
-		return body, false
-	}
-	payload["messages"] = messages
-	rewritten, err := json.Marshal(payload)
-	if err != nil {
-		return body, false
-	}
-	return rewritten, true
-}
-
-func scrubOpenAIChatHistoricalResponseNotices(body []byte) ([]byte, bool) {
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return body, false
-	}
-	messages, ok := payload["messages"].([]any)
-	if !ok || len(messages) == 0 {
-		return body, false
-	}
-	changed := false
-	for i, item := range messages {
-		msg, ok := item.(map[string]any)
-		if !ok || strings.TrimSpace(anyString(msg["role"])) != "assistant" {
-			continue
-		}
-		rewrittenContent, contentChanged := scrubOpenAIMessageContent(msg["content"])
-		if !contentChanged {
-			continue
-		}
-		changed = true
-		msg["content"] = rewrittenContent
-		messages[i] = msg
-	}
-	if !changed {
-		return body, false
-	}
-	payload["messages"] = messages
-	rewritten, err := json.Marshal(payload)
-	if err != nil {
-		return body, false
-	}
-	return rewritten, true
-}
-
-func scrubOpenAIResponsesHistoricalResponseNotices(body []byte) ([]byte, bool) {
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return body, false
-	}
-	input, ok := payload["input"].([]any)
-	if !ok || len(input) == 0 {
-		return body, false
-	}
-	changed := false
-	for i, item := range input {
-		entry, ok := item.(map[string]any)
-		if !ok || strings.TrimSpace(anyString(entry["type"])) != "message" || strings.TrimSpace(anyString(entry["role"])) != "assistant" {
-			continue
-		}
-		rewrittenContent, contentChanged := scrubOpenAIMessageContent(entry["content"])
-		if !contentChanged {
-			continue
-		}
-		changed = true
-		entry["content"] = rewrittenContent
-		input[i] = entry
-	}
-	if !changed {
-		return body, false
-	}
-	payload["input"] = input
-	rewritten, err := json.Marshal(payload)
-	if err != nil {
-		return body, false
-	}
-	return rewritten, true
 }
 
 func scrubOpenAIMessageContent(content any) (any, bool) {
@@ -600,105 +574,127 @@ func injectOpenAIChatResponseNoticeJSON(body []byte, noticeText string) ([]byte,
 }
 
 type anthropicResponseNoticeStreamProcessor struct {
-	text      string
-	injected  bool
-	nextIndex int
+	indexedResponseNoticeStreamProcessor
 }
 
 func newAnthropicResponseNoticeStreamProcessor(text string) *anthropicResponseNoticeStreamProcessor {
-	return &anthropicResponseNoticeStreamProcessor{text: text}
+	return &anthropicResponseNoticeStreamProcessor{
+		indexedResponseNoticeStreamProcessor: newIndexedResponseNoticeStreamProcessor(
+			text,
+			"content_block_delta",
+			[]string{"message_delta", "message_stop"},
+			func(data string) (int, bool) { return extractIndexedSSEField(data, "index") },
+			prefixAnthropicTextDeltaBlock,
+			synthAnthropicNoticeBlock,
+		),
+	}
 }
 
 func (p *anthropicResponseNoticeStreamProcessor) ProcessBlock(raw []byte) ([]byte, bool, error) {
-	event, data, ok := parseSSEBlock(raw)
-	if !ok {
-		return raw, false, nil
-	}
-	p.bumpAnthropicIndex(data)
-	if !p.injected && event == "content_block_delta" {
-		if rewritten, changed := prefixAnthropicTextDeltaBlock(raw, p.text); changed {
-			p.injected = true
-			return rewritten, false, nil
-		}
-	}
-	if !p.injected && (event == "message_delta" || event == "message_stop") {
-		p.injected = true
-		return append(synthAnthropicNoticeBlock(p.nextIndex, p.text), raw...), false, nil
-	}
-	return raw, false, nil
+	return p.indexedResponseNoticeStreamProcessor.ProcessBlock(raw)
 }
 
 func (p *anthropicResponseNoticeStreamProcessor) Finish() ([]byte, error) {
-	if p.injected {
-		return nil, nil
-	}
-	p.injected = true
-	return synthAnthropicNoticeBlock(p.nextIndex, p.text), nil
-}
-
-func (p *anthropicResponseNoticeStreamProcessor) bumpAnthropicIndex(data string) {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(data), &raw); err != nil {
-		return
-	}
-	index, ok := intFromSSEAny(raw["index"])
-	if !ok {
-		return
-	}
-	if index >= p.nextIndex {
-		p.nextIndex = index + 1
-	}
+	return p.indexedResponseNoticeStreamProcessor.Finish()
 }
 
 type openAIResponsesNoticeStreamProcessor struct {
-	text            string
-	injected        bool
-	nextOutputIndex int
+	indexedResponseNoticeStreamProcessor
 }
 
 func newOpenAIResponsesNoticeStreamProcessor(text string) *openAIResponsesNoticeStreamProcessor {
-	return &openAIResponsesNoticeStreamProcessor{text: text}
+	return &openAIResponsesNoticeStreamProcessor{
+		indexedResponseNoticeStreamProcessor: newIndexedResponseNoticeStreamProcessor(
+			text,
+			"response.output_text.delta",
+			[]string{"response.completed"},
+			func(data string) (int, bool) { return extractIndexedSSEField(data, "output_index") },
+			prefixOpenAIResponsesTextDeltaBlock,
+			synthOpenAIResponsesNoticeBlock,
+		),
+	}
 }
 
 func (p *openAIResponsesNoticeStreamProcessor) ProcessBlock(raw []byte) ([]byte, bool, error) {
+	return p.indexedResponseNoticeStreamProcessor.ProcessBlock(raw)
+}
+
+func (p *openAIResponsesNoticeStreamProcessor) Finish() ([]byte, error) {
+	return p.indexedResponseNoticeStreamProcessor.Finish()
+}
+
+type indexedResponseNoticeStreamProcessor struct {
+	text             string
+	injected         bool
+	nextIndex        int
+	prefixEvent      string
+	completionEvents map[string]struct{}
+	bumpIndex        func(data string) (int, bool)
+	prefixDelta      func(raw []byte, noticeText string) ([]byte, bool)
+	synthNotice      func(index int, text string) []byte
+}
+
+func newIndexedResponseNoticeStreamProcessor(
+	text string,
+	prefixEvent string,
+	completionEvents []string,
+	bumpIndex func(data string) (int, bool),
+	prefixDelta func(raw []byte, noticeText string) ([]byte, bool),
+	synthNotice func(index int, text string) []byte,
+) indexedResponseNoticeStreamProcessor {
+	completions := make(map[string]struct{}, len(completionEvents))
+	for _, event := range completionEvents {
+		completions[event] = struct{}{}
+	}
+	return indexedResponseNoticeStreamProcessor{
+		text:             text,
+		prefixEvent:      prefixEvent,
+		completionEvents: completions,
+		bumpIndex:        bumpIndex,
+		prefixDelta:      prefixDelta,
+		synthNotice:      synthNotice,
+	}
+}
+
+func (p *indexedResponseNoticeStreamProcessor) ProcessBlock(raw []byte) ([]byte, bool, error) {
 	event, data, ok := parseSSEBlock(raw)
 	if !ok {
 		return raw, false, nil
 	}
-	p.bumpOutputIndex(data)
-	if !p.injected && event == "response.output_text.delta" {
-		if rewritten, changed := prefixOpenAIResponsesTextDeltaBlock(raw, p.text); changed {
+	if p.bumpIndex != nil {
+		if index, ok := p.bumpIndex(data); ok && index >= p.nextIndex {
+			p.nextIndex = index + 1
+		}
+	}
+	if !p.injected && event == p.prefixEvent {
+		if rewritten, changed := p.prefixDelta(raw, p.text); changed {
 			p.injected = true
 			return rewritten, false, nil
 		}
 	}
-	if !p.injected && event == "response.completed" {
-		p.injected = true
-		return append(synthOpenAIResponsesNoticeBlock(p.nextOutputIndex, p.text), raw...), false, nil
+	if !p.injected {
+		if _, ok := p.completionEvents[event]; ok {
+			p.injected = true
+			return append(p.synthNotice(p.nextIndex, p.text), raw...), false, nil
+		}
 	}
 	return raw, false, nil
 }
 
-func (p *openAIResponsesNoticeStreamProcessor) Finish() ([]byte, error) {
+func (p *indexedResponseNoticeStreamProcessor) Finish() ([]byte, error) {
 	if p.injected {
 		return nil, nil
 	}
 	p.injected = true
-	return synthOpenAIResponsesNoticeBlock(p.nextOutputIndex, p.text), nil
+	return p.synthNotice(p.nextIndex, p.text), nil
 }
 
-func (p *openAIResponsesNoticeStreamProcessor) bumpOutputIndex(data string) {
+func extractIndexedSSEField(data string, field string) (int, bool) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(data), &raw); err != nil {
-		return
+		return 0, false
 	}
-	index, ok := intFromSSEAny(raw["output_index"])
-	if !ok {
-		return
-	}
-	if index >= p.nextOutputIndex {
-		p.nextOutputIndex = index + 1
-	}
+	return intFromSSEAny(raw[field])
 }
 
 type openAIChatResponseNoticeStreamProcessor struct {
