@@ -82,7 +82,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			}
 			opts.Logger.Info("runtime proxy body traces enabled", "dir", traceDir)
 		}
-		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
+		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config, Logger: opts.Logger})
 		runtimeSrv.InstallObserveNoticeRequestScrubber()
 		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{
 			Store:  opts.Store,

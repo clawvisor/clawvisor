@@ -11,6 +11,8 @@ import (
 //go:embed shim/clawvisor-proxy-shim.js
 var nodeProxyShim []byte
 
+var materializeNodeProxyShimFunc = materializeNodeProxyShim
+
 // materializeNodeProxyShim writes the embedded shim to disk and returns its
 // path. The file is content-checked so repeated runs don't rewrite it.
 func materializeNodeProxyShim(dir string) (string, error) {

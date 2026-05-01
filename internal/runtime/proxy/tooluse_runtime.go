@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -44,28 +43,6 @@ type HeldToolUseApprovalPayload struct {
 	Classification string         `json:"classification,omitempty"`
 	ResolutionHint string         `json:"resolution_hint,omitempty"`
 	Reason         string         `json:"reason,omitempty"`
-}
-
-var approvalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-[a-z0-9]{12})\b`)
-var bareApprovalRE = regexp.MustCompile(`(?i)^\s*(approve|deny)\s*$`)
-
-func parseApprovalReplyText(text string) (verb, id string) {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if match := approvalReplyRE.FindStringSubmatch(line); match != nil {
-			return strings.ToLower(match[1]), strings.ToLower(match[2])
-		}
-		if match := bareApprovalRE.FindStringSubmatch(line); match != nil {
-			return strings.ToLower(match[1]), ""
-		}
-		return "", ""
-	}
-	return "", ""
 }
 
 func (s *Server) InstallToolUseInterceptors(hooks ToolUseHooks) {
@@ -868,7 +845,7 @@ func parseAnthropicApprovalReply(body []byte) (verb, id string) {
 		if req.Messages[i].Role != "user" {
 			continue
 		}
-		return parseApprovalReplyText(extractAnthropicUserText(req.Messages[i].Content))
+		return conversation.ParseApprovalReplyText(extractAnthropicUserText(req.Messages[i].Content))
 	}
 	return "", ""
 }

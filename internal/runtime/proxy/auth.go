@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 var ErrProxyAuthorizationRequired = errors.New("proxy authorization required")
 var ErrProxyAuthorizationRejected = errors.New("proxy authorization rejected")
+var ErrProxyAuthorizationUnavailable = errors.New("proxy authorization unavailable")
 
 func HashProxyBearerSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
@@ -89,6 +91,7 @@ func ParseLaunchID(username string) string {
 type Authenticator struct {
 	Store  store.Store
 	Config *config.Config
+	Logger *slog.Logger
 
 	mu sync.Mutex
 }
@@ -112,12 +115,15 @@ func (a *Authenticator) Authenticate(ctx context.Context, header http.Header) (*
 		return session, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
-		return nil, ErrProxyAuthorizationRejected
+		return nil, fmt.Errorf("%w: load runtime session: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 
 	agent, err := a.Store.GetAgentByToken(ctx, intauth.HashToken(secret))
 	if err != nil {
-		return nil, ErrProxyAuthorizationRejected
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrProxyAuthorizationRejected
+		}
+		return nil, fmt.Errorf("%w: load agent by token: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 	return a.getOrCreateAgentRuntimeSession(ctx, agent, launchID)
 }
@@ -156,7 +162,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 
 	sessions, err := a.Store.ListRuntimeSessionsByAgent(ctx, agent.ID)
 	if err != nil {
-		return nil, ErrProxyAuthorizationRejected
+		return nil, fmt.Errorf("%w: list runtime sessions: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 	if existing := selectReusableAgentTokenRuntimeSession(sessions, now, wantObservation, settings, launchID); existing != nil {
 		a.maybeExtendSessionExpiry(ctx, existing, now, ttl)
@@ -165,7 +171,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 
 	secret, err := mintRuntimeSecret()
 	if err != nil {
-		return nil, ErrProxyAuthorizationRejected
+		return nil, fmt.Errorf("%w: mint runtime secret: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 	metadata := map[string]any{
 		"launcher":                 agentTokenRuntimeSessionLauncher,
@@ -181,7 +187,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 	}
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, ErrProxyAuthorizationRejected
+		return nil, fmt.Errorf("%w: marshal runtime session metadata: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 	session := &store.RuntimeSession{
 		ID:                    uuid.NewString(),
@@ -194,7 +200,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 		ExpiresAt:             now.Add(ttl),
 	}
 	if err := a.Store.CreateRuntimeSession(ctx, session); err != nil {
-		return nil, ErrProxyAuthorizationRejected
+		return nil, fmt.Errorf("%w: create runtime session: %v", ErrProxyAuthorizationUnavailable, err)
 	}
 	return session, nil
 }
@@ -218,6 +224,9 @@ func (a *Authenticator) maybeExtendSessionExpiry(ctx context.Context, session *s
 		return
 	}
 	if err := a.Store.UpdateRuntimeSessionExpiry(ctx, session.ID, newExpiry); err != nil {
+		if a.Logger != nil {
+			a.Logger.Warn("failed to extend runtime session expiry", "session_id", session.ID, "err", err)
+		}
 		return
 	}
 	session.ExpiresAt = newExpiry

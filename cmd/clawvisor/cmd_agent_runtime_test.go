@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -160,6 +161,23 @@ func TestBuildRuntimeBootstrapEnvSkipsCAEnvWhenUnavailable(t *testing.T) {
 	}
 	if got := values["NODE_OPTIONS"]; !strings.Contains(got, "--require=") {
 		t.Fatalf("expected NODE_OPTIONS shim even without CA, got %q", got)
+	}
+}
+
+func TestBuildRuntimeBootstrapEnvReturnsErrorWhenShimMaterializationFails(t *testing.T) {
+	orig := materializeNodeProxyShimFunc
+	materializeNodeProxyShimFunc = func(string) (string, error) {
+		return "", errors.New("disk full")
+	}
+	t.Cleanup(func() { materializeNodeProxyShimFunc = orig })
+
+	session := &client.CreateRuntimeSessionResponse{
+		Session:     client.RuntimeSession{ID: "session-123"},
+		ProxyBearer: "secret-token",
+		ProxyURL:    "http://127.0.0.1:4318",
+	}
+	if _, err := buildRuntimeBootstrapEnv("http://127.0.0.1:25297", "agent-token", session); err == nil || !strings.Contains(err.Error(), "materialize node proxy shim") {
+		t.Fatalf("buildRuntimeBootstrapEnv error = %v, want shim materialization failure", err)
 	}
 }
 

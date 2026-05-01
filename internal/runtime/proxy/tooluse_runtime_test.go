@@ -187,6 +187,15 @@ func TestParseAnthropicApprovalReply(t *testing.T) {
 	if verb != "approve" || id != "" {
 		t.Fatalf("unexpected metadata-wrapped approval reply: verb=%q id=%q", verb, id)
 	}
+
+	verb, id = parseAnthropicApprovalReply([]byte(`{
+	  "messages":[
+	    {"role":"user","content":[{"type":"text","text":"approve\n\nsounds good"}]}
+	  ]
+	}`))
+	if verb != "approve" || id != "" {
+		t.Fatalf("unexpected trailing approval reply: verb=%q id=%q", verb, id)
+	}
 }
 
 func TestInlineApprovalResolvesSameApprovalRecord(t *testing.T) {

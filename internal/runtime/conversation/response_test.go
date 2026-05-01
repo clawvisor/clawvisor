@@ -217,6 +217,16 @@ func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 	if verb != "approve" || id != "" {
 		t.Fatalf("unexpected wrapped approval reply: verb=%q id=%q", verb, id)
 	}
+
+	trailingBody := []byte(`{
+	  "messages":[
+	    {"role":"user","content":"approve\n\nthanks"}
+	  ]
+	}`)
+	verb, id = OpenAIApprovalReply(trailingBody)
+	if verb != "approve" || id != "" {
+		t.Fatalf("unexpected trailing approval reply: verb=%q id=%q", verb, id)
+	}
 }
 
 func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {

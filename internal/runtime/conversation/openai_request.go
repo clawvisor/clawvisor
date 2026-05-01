@@ -3,12 +3,8 @@ package conversation
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strings"
 )
-
-var openAIApprovalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-[a-z0-9]{12})\b`)
-var openAIBareApprovalRE = regexp.MustCompile(`(?i)^\s*(approve|deny)\s*$`)
 
 func OpenAIRequestWantsStream(body []byte) bool {
 	var probe struct {
@@ -43,7 +39,7 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 		if probe.Messages[i].Role != "user" {
 			continue
 		}
-		return parseApprovalReplyText(flattenOpenAIContent(probe.Messages[i].Content))
+		return ParseApprovalReplyText(flattenOpenAIContent(probe.Messages[i].Content))
 	}
 	if len(probe.Input) > 0 {
 		var items []openAIInputItem
@@ -52,28 +48,9 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 				if items[i].Type != "message" || items[i].Role != "user" {
 					continue
 				}
-				return parseApprovalReplyText(flattenOpenAIContent(items[i].Content))
+				return ParseApprovalReplyText(flattenOpenAIContent(items[i].Content))
 			}
 		}
-	}
-	return "", ""
-}
-
-func parseApprovalReplyText(text string) (verb, id string) {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if match := openAIApprovalReplyRE.FindStringSubmatch(line); match != nil {
-			return strings.ToLower(match[1]), strings.ToLower(match[2])
-		}
-		if match := openAIBareApprovalRE.FindStringSubmatch(line); match != nil {
-			return strings.ToLower(match[1]), ""
-		}
-		return "", ""
 	}
 	return "", ""
 }

@@ -222,10 +222,11 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"no_proxy=" + noProxy,
 	}
 	if strings.TrimSpace(session.CACertPEM) == "" {
-		shimPath, err := materializeNodeProxyShim(filepath.Join(os.TempDir(), "clawvisor-runtime-shim"))
-		if err == nil {
-			envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
+		shimPath, err := materializeNodeProxyShimFunc(filepath.Join(os.TempDir(), "clawvisor-runtime-shim"))
+		if err != nil {
+			return nil, fmt.Errorf("materialize node proxy shim: %w", err)
 		}
+		envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
 		return envPairs, nil
 	}
 	caPath, err := writeRuntimeCACertFile(session.Session.ID, session.CACertPEM)
@@ -241,9 +242,11 @@ func buildRuntimeBootstrapEnv(baseURL, agentToken string, session *client.Create
 		"NODE_EXTRA_CA_CERTS="+caPath,
 		"GIT_SSL_CAINFO="+caPath,
 	)
-	if shimPath, err := materializeNodeProxyShim(filepath.Join(os.TempDir(), "clawvisor-runtime-shim")); err == nil {
-		envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
+	shimPath, err := materializeNodeProxyShimFunc(filepath.Join(os.TempDir(), "clawvisor-runtime-shim"))
+	if err != nil {
+		return nil, fmt.Errorf("materialize node proxy shim: %w", err)
 	}
+	envPairs = append(envPairs, "NODE_OPTIONS="+mergeNodeOptions(os.Getenv("NODE_OPTIONS"), "--require="+shimPath))
 	return envPairs, nil
 }
 

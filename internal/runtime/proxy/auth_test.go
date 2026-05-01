@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -13,6 +14,42 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+type authStoreWrapper struct {
+	store.Store
+	getRuntimeSessionBySecretHashErr error
+	getAgentByTokenErr               error
+	listRuntimeSessionsByAgentErr    error
+	updateRuntimeSessionExpiryErr    error
+}
+
+func (w authStoreWrapper) GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, hash string) (*store.RuntimeSession, error) {
+	if w.getRuntimeSessionBySecretHashErr != nil {
+		return nil, w.getRuntimeSessionBySecretHashErr
+	}
+	return w.Store.GetRuntimeSessionByProxyBearerSecretHash(ctx, hash)
+}
+
+func (w authStoreWrapper) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
+	if w.getAgentByTokenErr != nil {
+		return nil, w.getAgentByTokenErr
+	}
+	return w.Store.GetAgentByToken(ctx, tokenHash)
+}
+
+func (w authStoreWrapper) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*store.RuntimeSession, error) {
+	if w.listRuntimeSessionsByAgentErr != nil {
+		return nil, w.listRuntimeSessionsByAgentErr
+	}
+	return w.Store.ListRuntimeSessionsByAgent(ctx, agentID)
+}
+
+func (w authStoreWrapper) UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error {
+	if w.updateRuntimeSessionExpiryErr != nil {
+		return w.updateRuntimeSessionExpiryErr
+	}
+	return w.Store.UpdateRuntimeSessionExpiry(ctx, id, expiresAt)
+}
 
 func TestExtractBearerSecretAcceptsBearerAndBasic(t *testing.T) {
 	t.Run("bearer", func(t *testing.T) {
@@ -59,10 +96,10 @@ func TestExtractBearerCredentialsParsesUsername(t *testing.T) {
 
 func TestParseLaunchID(t *testing.T) {
 	cases := map[string]string{
-		"":                    "",
-		"clawvisor":           "",
-		"launch-":             "",
-		"launch-abc123":       "abc123",
+		"":                     "",
+		"clawvisor":            "",
+		"launch-":              "",
+		"launch-abc123":        "abc123",
 		"launch-deadbeef-uuid": "deadbeef-uuid",
 	}
 	for input, want := range cases {
@@ -294,4 +331,83 @@ func TestAuthenticatorExtendsExpiryWhenSessionIsActivelyUsed(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("expected single agent-token session after extension, got %d", len(sessions))
 	}
+}
+
+func TestAuthenticatorReturnsUnavailableOnStoreErrors(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/proxy-auth-unavailable.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	baseStore := sqlite.NewStore(db)
+
+	user, err := baseStore.CreateUser(ctx, "proxy-auth-unavailable@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rawToken := "cvis_runtime_agent_token_unavailable"
+	agent, err := baseStore.CreateAgent(ctx, user.ID, "runtime-agent", intauth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	header := http.Header{}
+	header.Set("Proxy-Authorization", "Bearer "+rawToken)
+
+	t.Run("agent lookup failure", func(t *testing.T) {
+		authn := &Authenticator{
+			Store: authStoreWrapper{
+				Store:                            baseStore,
+				getRuntimeSessionBySecretHashErr: store.ErrNotFound,
+				getAgentByTokenErr:               errors.New("db unavailable"),
+			},
+			Config: config.Default(),
+		}
+		_, err := authn.Authenticate(ctx, header)
+		if !errors.Is(err, ErrProxyAuthorizationUnavailable) {
+			t.Fatalf("Authenticate error = %v, want ErrProxyAuthorizationUnavailable", err)
+		}
+	})
+
+	t.Run("session listing failure", func(t *testing.T) {
+		authn := &Authenticator{
+			Store: authStoreWrapper{
+				Store:                         baseStore,
+				listRuntimeSessionsByAgentErr: errors.New("db unavailable"),
+			},
+			Config: config.Default(),
+		}
+		_, err := authn.Authenticate(ctx, header)
+		if !errors.Is(err, ErrProxyAuthorizationUnavailable) {
+			t.Fatalf("Authenticate error = %v, want ErrProxyAuthorizationUnavailable", err)
+		}
+	})
+
+	t.Run("runtime session secret lookup failure", func(t *testing.T) {
+		runtimeSession := &store.RuntimeSession{
+			ID:                    "runtime-secret-session",
+			UserID:                user.ID,
+			AgentID:               agent.ID,
+			Mode:                  "proxy",
+			ProxyBearerSecretHash: HashProxyBearerSecret("session-secret"),
+			ExpiresAt:             time.Now().UTC().Add(30 * time.Minute),
+		}
+		if err := baseStore.CreateRuntimeSession(ctx, runtimeSession); err != nil {
+			t.Fatalf("CreateRuntimeSession: %v", err)
+		}
+		authn := &Authenticator{
+			Store: authStoreWrapper{
+				Store:                            baseStore,
+				getRuntimeSessionBySecretHashErr: errors.New("db unavailable"),
+			},
+			Config: config.Default(),
+		}
+		sessionHeader := http.Header{}
+		sessionHeader.Set("Proxy-Authorization", "Bearer session-secret")
+		_, err := authn.Authenticate(ctx, sessionHeader)
+		if !errors.Is(err, ErrProxyAuthorizationUnavailable) {
+			t.Fatalf("Authenticate error = %v, want ErrProxyAuthorizationUnavailable", err)
+		}
+	})
 }

@@ -58,6 +58,9 @@ func authRequiredResponse(req *http.Request, err error) *http.Response {
 	body := "Proxy-Authorization required: provide a Clawvisor runtime token or use an authenticated proxy URL.\n"
 	if errors.Is(err, ErrProxyAuthorizationRejected) {
 		body = "Proxy-Authorization rejected: credentials are missing, malformed, or expired.\n"
+	} else if errors.Is(err, ErrProxyAuthorizationUnavailable) {
+		status = http.StatusServiceUnavailable
+		body = "Clawvisor could not validate proxy authorization because its runtime session store is unavailable. Retry shortly.\n"
 	}
 	return goproxy.NewResponse(req, "text/plain", status, body)
 }
