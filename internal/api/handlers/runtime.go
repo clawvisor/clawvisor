@@ -442,6 +442,14 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "resolution must be allow_once, allow_session, allow_always, or deny")
 		return
 	}
+	status := "approved"
+	if req.Resolution == "deny" {
+		status = "denied"
+	}
+	if err := validateApprovalRecordTransition(rec, req.Resolution, status); err != nil {
+		writeError(w, http.StatusConflict, "INVALID_APPROVAL_TRANSITION", err.Error())
+		return
+	}
 	var promotedTask *store.Task
 	switch req.Resolution {
 	case "allow_once":
@@ -478,10 +486,6 @@ func (h *RuntimeHandler) ResolveApproval(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
-	}
-	status := "approved"
-	if req.Resolution == "deny" {
-		status = "denied"
 	}
 	if err := h.st.ResolveApprovalRecord(r.Context(), rec.ID, req.Resolution, status, time.Now().UTC()); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve runtime approval")

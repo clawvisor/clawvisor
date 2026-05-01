@@ -1860,6 +1860,10 @@ func (h *TasksHandler) resolveCanonicalTaskApproval(ctx context.Context, task *s
 		}
 		return
 	}
+	if err := validateApprovalRecordTransition(rec, resolution, status); err != nil {
+		h.logger.Error("illegal canonical task approval transition", "task_id", task.ID, "approval_id", rec.ID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
+		return
+	}
 	if err := h.st.ResolveApprovalRecord(ctx, rec.ID, resolution, status, time.Now().UTC()); err != nil {
 		h.logger.Error("failed to resolve canonical task approval", "task_id", task.ID, "approval_id", rec.ID, "err", err)
 	}

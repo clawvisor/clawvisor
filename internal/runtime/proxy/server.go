@@ -214,6 +214,10 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		if info.Mode().Perm()&0o077 != 0 {
 			return nil, fmt.Errorf("adjudication debug dir %s must be owner-only (0700)", adjudicationDebugDir)
 		}
+		if logger != nil {
+			logger.Warn("adjudication debug dir enabled — plaintext candidate values are being written to disk. This MUST NOT be set in production",
+				"path", adjudicationDebugDir)
+		}
 	}
 
 	s := &Server{

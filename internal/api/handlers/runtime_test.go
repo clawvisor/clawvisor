@@ -695,6 +695,77 @@ func TestRuntimeHandlerResolveApprovalAllowAlwaysCreatesStandingCredentialAuthor
 	}
 }
 
+func TestRuntimeHandlerResolveApprovalRejectsIllegalTransition(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-approval-illegal-transition.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "runtime-illegal-transition@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	session := &store.RuntimeSession{
+		ID:                    "runtime-illegal-transition-session",
+		UserID:                user.ID,
+		AgentID:               agent.ID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: "secret-hash",
+		ExpiresAt:             time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, session); err != nil {
+		t.Fatalf("CreateRuntimeSession: %v", err)
+	}
+	payload, _ := json.Marshal(runtimeproxy.HeldToolUseApprovalPayload{
+		SessionID: session.ID,
+		AgentID:   agent.ID,
+		ToolUseID: "toolu_illegal_transition",
+		ToolName:  "Bash",
+		ToolInput: map[string]any{"command": "touch /tmp/example"},
+	})
+	approval := &store.ApprovalRecord{
+		ID:                  "approval-illegal-transition",
+		Kind:                "task_create",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		SessionID:           &session.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		PayloadJSON:         payload,
+		ResolutionTransport: "release_held_tool_use",
+	}
+	if err := st.CreateApprovalRecord(ctx, approval); err != nil {
+		t.Fatalf("CreateApprovalRecord: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"resolution": "allow_once"})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/approvals/"+approval.ID+"/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", approval.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	h.ResolveApproval(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("ResolveApproval status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	resolved, err := st.GetApprovalRecord(ctx, approval.ID)
+	if err != nil {
+		t.Fatalf("GetApprovalRecord: %v", err)
+	}
+	if resolved.Status != "pending" || resolved.Resolution != "" {
+		t.Fatalf("expected approval to remain pending after rejected transition, got %+v", resolved)
+	}
+}
+
 type failingCredentialAuthorizationStore struct {
 	store.Store
 	err error

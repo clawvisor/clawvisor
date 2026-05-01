@@ -1,10 +1,14 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"log/slog"
 
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -96,6 +100,25 @@ func TestNewServerRejectsInsecureAdjudicationDebugDir(t *testing.T) {
 		Addr:    "127.0.0.1:0",
 	}, nil); err == nil {
 		t.Fatal("expected insecure adjudication debug dir to be rejected")
+	}
+}
+
+func TestNewServerWarnsWhenAdjudicationDebugDirEnabled(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "adjudication-debug")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	t.Setenv("CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR", dir)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	if _, err := NewServer(Config{
+		DataDir: t.TempDir(),
+		Addr:    "127.0.0.1:0",
+	}, logger); err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if !strings.Contains(logs.String(), "MUST NOT be set in production") {
+		t.Fatalf("expected adjudication debug warning in logs, got %q", logs.String())
 	}
 }
 

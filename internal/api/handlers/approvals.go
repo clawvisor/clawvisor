@@ -468,13 +468,29 @@ func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *sto
 		return
 	}
 	approvalID := pa.ApprovalRecordID
+	var rec *store.ApprovalRecord
 	if approvalID == nil {
-		rec, err := h.st.GetApprovalRecordByRequestID(ctx, pa.RequestID)
+		var err error
+		rec, err = h.st.GetApprovalRecordByRequestID(ctx, pa.RequestID)
 		if err == nil {
 			approvalID = &rec.ID
 		}
 	}
 	if approvalID == nil {
+		return
+	}
+	if rec == nil {
+		loaded, err := h.st.GetApprovalRecord(ctx, *approvalID)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				h.logger.Error("failed to load canonical approval before resolve", "approval_id", *approvalID, "request_id", pa.RequestID, "err", err)
+			}
+			return
+		}
+		rec = loaded
+	}
+	if err := validateApprovalRecordTransition(rec, resolution, status); err != nil {
+		h.logger.Error("illegal canonical approval transition", "approval_id", rec.ID, "request_id", pa.RequestID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
 		return
 	}
 	if err := h.st.ResolveApprovalRecord(ctx, *approvalID, resolution, status, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
