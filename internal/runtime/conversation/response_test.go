@@ -207,6 +207,16 @@ func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 	if len(ids) != 1 || ids[0] != "call_456" {
 		t.Fatalf("unexpected chat tool result ids: %v", ids)
 	}
+
+	wrappedBody := []byte(`{
+	  "messages":[
+	    {"role":"user","content":"Conversation info:\njson:{\"chat_id\":\"telegram:123\"}\n\napprove"}
+	  ]
+	}`)
+	verb, id = OpenAIApprovalReply(wrappedBody)
+	if verb != "approve" || id != "" {
+		t.Fatalf("unexpected wrapped approval reply: verb=%q id=%q", verb, id)
+	}
 }
 
 func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {

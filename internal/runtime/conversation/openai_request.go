@@ -60,12 +60,20 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 }
 
 func parseApprovalReplyText(text string) (verb, id string) {
-	text = strings.TrimSpace(text)
-	if match := openAIApprovalReplyRE.FindStringSubmatch(text); match != nil {
-		return strings.ToLower(match[1]), strings.ToLower(match[2])
-	}
-	if match := openAIBareApprovalRE.FindStringSubmatch(text); match != nil {
-		return strings.ToLower(match[1]), ""
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if match := openAIApprovalReplyRE.FindStringSubmatch(line); match != nil {
+			return strings.ToLower(match[1]), strings.ToLower(match[2])
+		}
+		if match := openAIBareApprovalRE.FindStringSubmatch(line); match != nil {
+			return strings.ToLower(match[1]), ""
+		}
+		return "", ""
 	}
 	return "", ""
 }

@@ -178,6 +178,15 @@ func TestParseAnthropicApprovalReply(t *testing.T) {
 	if verb != "deny" || id != "" {
 		t.Fatalf("unexpected bare approval reply: verb=%q id=%q", verb, id)
 	}
+
+	verb, id = parseAnthropicApprovalReply([]byte(`{
+	  "messages":[
+	    {"role":"user","content":[{"type":"text","text":"Conversation info:\njson:{\"chat_id\":\"telegram:123\"}\n\nSender:\njson:{\"id\":\"u1\"}\n\napprove"}]}
+	  ]
+	}`))
+	if verb != "approve" || id != "" {
+		t.Fatalf("unexpected metadata-wrapped approval reply: verb=%q id=%q", verb, id)
+	}
 }
 
 func TestInlineApprovalResolvesSameApprovalRecord(t *testing.T) {
