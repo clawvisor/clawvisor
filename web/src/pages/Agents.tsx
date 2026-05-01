@@ -9,11 +9,13 @@ import CountdownTimer from '../components/CountdownTimer'
 import { RuntimeApprovalsPanel, RuntimeSessionsPanel, filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
 
 export default function Agents() {
-  const { currentOrg } = useAuth()
+  const { currentOrg, features } = useAuth()
   const { agentId } = useParams()
   const navigate = useNavigate()
   const orgId = currentOrg?.id
   const qc = useQueryClient()
+  const liveSessionsUI = !orgId && !!features?.agent_live_sessions
+  const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -33,13 +35,13 @@ export default function Agents() {
   const { data: runtimeSessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: !orgId,
+    enabled: liveSessionsUI,
     refetchInterval: 15_000,
   })
   const { data: runtimeApprovals } = useQuery({
     queryKey: ['runtime-approvals'],
     queryFn: () => api.runtime.listApprovals(),
-    enabled: !orgId,
+    enabled: liveSessionsUI,
     refetchInterval: 10_000,
   })
 
@@ -104,6 +106,8 @@ export default function Agents() {
         orgId={orgId}
         sessions={sessionsByAgent.get(selectedAgent.id) ?? []}
         approvals={approvalsByAgent.get(selectedAgent.id) ?? []}
+        liveSessionsUI={liveSessionsUI}
+        runtimePolicyUI={runtimePolicyUI}
         onDeleted={() => {
           qc.invalidateQueries({ queryKey: ['agents'] })
           qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -218,8 +222,8 @@ export default function Agents() {
         <div className="space-y-2">
           {agents?.map(agent => {
             const hasActiveTasks = agent.active_task_count > 0
-            const liveSessions = sessionsByAgent.get(agent.id) ?? []
-            const pendingApprovals = approvalsByAgent.get(agent.id) ?? []
+            const liveSessions = liveSessionsUI ? (sessionsByAgent.get(agent.id) ?? []) : []
+            const pendingApprovals = liveSessionsUI ? (approvalsByAgent.get(agent.id) ?? []) : []
             return (
               <div
                 key={agent.id}
@@ -248,12 +252,12 @@ export default function Agents() {
                         {agent.active_task_count} active {agent.active_task_count === 1 ? 'task' : 'tasks'}
                       </span>
                     )}
-                    {liveSessions.length > 0 && (
+                    {liveSessionsUI && liveSessions.length > 0 && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                         {liveSessions.length} live session{liveSessions.length === 1 ? '' : 's'}
                       </span>
                     )}
-                    {pendingApprovals.length > 0 && (
+                    {liveSessionsUI && pendingApprovals.length > 0 && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">
                         {pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? '' : 's'}
                       </span>
@@ -285,19 +289,23 @@ function AgentDetailView({
   orgId,
   sessions,
   approvals,
+  liveSessionsUI,
+  runtimePolicyUI,
   onDeleted,
 }: {
   agent: Agent
   orgId?: string
   sessions: RuntimeSession[]
   approvals: ApprovalRecord[]
+  liveSessionsUI: boolean
+  runtimePolicyUI: boolean
   onDeleted: () => void
 }) {
   const qc = useQueryClient()
   const { data: allRuntimeSessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: !orgId,
+    enabled: liveSessionsUI,
     refetchInterval: 15_000,
   })
   const { data: recentActivity } = useQuery({
@@ -309,12 +317,12 @@ function AgentDetailView({
   const { data: allEgressRules } = useQuery({
     queryKey: ['runtime-rules', 'egress', 'all'],
     queryFn: () => api.runtime.listRules({ kind: 'egress' }),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
   const { data: allToolRules } = useQuery({
     queryKey: ['runtime-rules', 'tool', 'all'],
     queryFn: () => api.runtime.listRules({ kind: 'tool' }),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
   const deleteMut = useMutation({
     mutationFn: (id: string) => orgId ? api.orgs.deleteAgent(orgId, id) : api.agents.delete(id),
@@ -361,9 +369,9 @@ function AgentDetailView({
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <AgentMetric label="Live sessions" value={String(sessions.length)} />
-        <AgentMetric label="Pending approvals" value={String(approvals.length)} />
+      <div className={`grid gap-3 ${liveSessionsUI ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
+        {liveSessionsUI && <AgentMetric label="Live sessions" value={String(sessions.length)} />}
+        {liveSessionsUI && <AgentMetric label="Pending approvals" value={String(approvals.length)} />}
         <AgentMetric label="Active tasks" value={String(agent.active_task_count)} />
       </div>
 
@@ -376,9 +384,9 @@ function AgentDetailView({
         </Link>
       </div>
 
-      {!orgId && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
+      {runtimePolicyUI && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
 
-      {!orgId && (
+      {runtimePolicyUI && (
         <AgentPolicyPanel
           agent={agent}
           rules={agentRules}
@@ -386,11 +394,11 @@ function AgentDetailView({
         />
       )}
 
-      {!orgId && (
+      {liveSessionsUI && (
         <RecentSessionsPanel sessions={recentSessions} />
       )}
 
-      {!orgId && (
+      {liveSessionsUI && (
         <RuntimeSessionsPanel
           sessions={sessions}
           agents={agentMap}
@@ -401,7 +409,7 @@ function AgentDetailView({
         />
       )}
 
-      {!orgId && (
+      {liveSessionsUI && (
         <RuntimeApprovalsPanel
           approvals={approvals}
           onResolved={() => {

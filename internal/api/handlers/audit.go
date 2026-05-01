@@ -48,14 +48,16 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	if limit > maxListLimit {
 		limit = maxListLimit
 	}
+	includeRuntime := parseBoolQueryDefault(q.Get("include_runtime"), true)
 	filter := store.AuditFilter{
-		Service:    q.Get("service"),
-		Outcome:    q.Get("outcome"),
-		DataOrigin: q.Get("data_origin"),
-		TaskID:     q.Get("task_id"),
-		AgentID:    q.Get("agent_id"),
-		Limit:      limit,
-		Offset:     parseIntQuery(q.Get("offset"), 0),
+		Service:        q.Get("service"),
+		Outcome:        q.Get("outcome"),
+		DataOrigin:     q.Get("data_origin"),
+		TaskID:         q.Get("task_id"),
+		AgentID:        q.Get("agent_id"),
+		IncludeRuntime: &includeRuntime,
+		Limit:          limit,
+		Offset:         parseIntQuery(q.Get("offset"), 0),
 	}
 
 	entries, total, err := h.st.ListAuditEntries(r.Context(), user.ID, filter)
@@ -201,6 +203,20 @@ func parseIntQuery(s string, defaultVal int) int {
 	return n
 }
 
+func parseBoolQueryDefault(s string, defaultVal bool) bool {
+	if s == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return defaultVal
+	}
+}
+
 func normalizeAuditEntry(entry *store.AuditEntry) *auditEntryResponse {
 	resp := &auditEntryResponse{AuditEntry: entry}
 	if entry == nil {
@@ -226,6 +242,7 @@ func normalizeAuditEntry(entry *store.AuditEntry) *auditEntryResponse {
 		toolName := firstNonEmpty(readString(params["tool_name"]), entry.Action)
 		toolInput, _ := params["tool_input"].(map[string]any)
 		target := firstNonEmpty(
+			readString(toolInput["url"]),
 			readString(toolInput["file_path"]),
 			readString(toolInput["path"]),
 			readString(toolInput["directory"]),

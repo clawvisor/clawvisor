@@ -578,6 +578,63 @@ func TestStreamToolUseBlockPassesThroughAnthropicTextSSE(t *testing.T) {
 	}
 }
 
+func TestLogToolUseAuditPersistsSanitizedToolInput(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-audit.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+
+	session := createRuntimeSession(t, st, "runtime-tool-audit", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	srv.logToolUseAudit(ctx, st, runtimeSession, "", "", nil, "toolu_fetch", "web_fetch", map[string]any{
+		"url":      "https://example.com",
+		"maxChars": 8000,
+		"headers": map[string]any{
+			"Authorization": "Bearer secret",
+			"Accept":        "text/html",
+		},
+	}, "allow", "executed", "ok", false, false, false, false, false)
+
+	entry, err := st.GetAuditEntryByRequestID(ctx, session.id+":toolu_fetch", userID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+
+	var params map[string]any
+	if err := json.Unmarshal(entry.ParamsSafe, &params); err != nil {
+		t.Fatalf("unmarshal params_safe: %v", err)
+	}
+	if got := params["tool_name"]; got != "web_fetch" {
+		t.Fatalf("unexpected tool_name: %#v", got)
+	}
+	toolInput, _ := params["tool_input"].(map[string]any)
+	if got := toolInput["url"]; got != "https://example.com" {
+		t.Fatalf("unexpected persisted url: %#v", got)
+	}
+	if got := toolInput["maxChars"]; got != float64(8000) {
+		t.Fatalf("unexpected persisted maxChars: %#v", got)
+	}
+	headers, _ := toolInput["headers"].(map[string]any)
+	if _, ok := headers["Authorization"]; ok {
+		t.Fatalf("expected Authorization header to be stripped: %#v", headers)
+	}
+	if got := headers["Accept"]; got != "text/html" {
+		t.Fatalf("unexpected sanitized headers: %#v", headers)
+	}
+}
+
 func TestToolUseInterceptorStreamsAnthropicTextBeforeUpstreamCompletes(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, t.TempDir()+"/tooluse-stream-live.db")

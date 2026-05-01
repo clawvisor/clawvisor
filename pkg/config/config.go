@@ -32,6 +32,7 @@ type Config struct {
 	MCP           MCPConfig           `yaml:"mcp"`
 	RuntimeProxy  RuntimeProxyConfig  `yaml:"runtime_proxy"`
 	RuntimePolicy RuntimePolicyConfig `yaml:"runtime_policy"`
+	Features      FeaturesConfig      `yaml:"features"`
 	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
 	Relay         RelayConfig         `yaml:"relay"`
 	Telemetry     TelemetryConfig     `yaml:"telemetry"`
@@ -230,6 +231,13 @@ type RuntimePolicyConfig struct {
 	InjectStoredBearer      bool     `yaml:"inject_stored_bearer"`
 }
 
+// FeaturesConfig gates progressively enhanced UI and runtime surfaces.
+// Defaults are conservative so service/adapter-only installs keep the simpler UX.
+type FeaturesConfig struct {
+	SecretVault    bool `yaml:"secret_vault"`
+	ServicePresets bool `yaml:"service_presets"`
+}
+
 // RateLimitBucket configures a single rate limit bucket.
 type RateLimitBucket struct {
 	Limit  int `yaml:"limit"`  // max requests per window
@@ -329,6 +337,10 @@ func Default() *Config {
 			OneOffTTLSeconds:        300,
 			AutovaultMode:           "observe",
 			InjectStoredBearer:      false,
+		},
+		Features: FeaturesConfig{
+			SecretVault:    false,
+			ServicePresets: false,
 		},
 		RateLimit: RateLimitConfig{
 			Gateway:   RateLimitBucket{Limit: 60, Window: 60},

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ActivityMute, type Agent, type AuditEntry } from '../api/client'
@@ -109,7 +109,8 @@ function runtimeToolDetails(entry: AuditEntry): { toolName: string; target: stri
   const params = entry.params_safe ?? {}
   const toolName = readString(params.tool_name) || actionName(entry.action)
   const toolInput = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input as Record<string, unknown> : {}
-  const target = readString(toolInput.file_path)
+  const target = readString(toolInput.url)
+    || readString(toolInput.file_path)
     || readString(toolInput.path)
     || readString(toolInput.directory)
     || readString(toolInput.pattern)
@@ -482,19 +483,22 @@ function AuditRow({
   entry,
   mode,
   agentName,
+  canCreateRule,
+  canMute,
   onCreateRule,
   onMute,
 }: {
   entry: AuditEntry
   mode: DisplayMode
   agentName?: string
+  canCreateRule: boolean
+  canMute: boolean
   onCreateRule: (entry: AuditEntry) => void
   onMute: (entry: AuditEntry) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const summary = activitySummary(entry)
   const serviceActionLabel = activityLabel(entry)
-  const showAgentColumn = mode !== 'default'
   const isRuntimeEgressMode = mode === 'runtime_egress'
   const isRuntimeToolMode = mode === 'runtime_tool_use'
   const egress = runtimeEgressDetails(entry)
@@ -518,18 +522,16 @@ function AuditRow({
           <div className="text-text-primary font-medium">{primaryLabel}</div>
           <div className="text-xs text-text-tertiary mt-0.5">{serviceActionLabel}</div>
         </td>
-        {showAgentColumn && (
-          <td className="px-4 py-2 text-sm">
-            {entry.agent_id ? (
-              <div>
-                <div className="text-text-primary font-medium">{agentName ?? compactID(entry.agent_id) ?? 'Agent'}</div>
-                <div className="text-xs text-text-tertiary mt-0.5">{compactID(entry.agent_id)}</div>
-              </div>
-            ) : (
-              <span className="text-xs text-text-tertiary">No agent</span>
-            )}
-          </td>
-        )}
+        <td className="px-4 py-2 text-sm">
+          {entry.agent_id ? (
+            <div>
+              <div className="text-text-primary font-medium">{agentName ?? compactID(entry.agent_id) ?? 'Agent'}</div>
+              <div className="text-xs text-text-tertiary mt-0.5">{compactID(entry.agent_id)}</div>
+            </div>
+          ) : (
+            <span className="text-xs text-text-tertiary">No agent</span>
+          )}
+        </td>
         <td className="px-4 py-2">
           <span className={`text-xs px-1.5 py-0.5 rounded ${entry.decision === 'block' ? 'bg-danger/10 text-danger' : entry.decision === 'approve' ? 'bg-warning/10 text-warning' : entry.decision === 'verify' ? 'bg-brand/10 text-brand' : 'bg-success/10 text-success'}`}>
             {entry.decision}
@@ -537,35 +539,11 @@ function AuditRow({
         </td>
         <td className="px-4 py-2"><OutcomeBadge outcome={entry.outcome} /></td>
         <td className="px-4 py-2 text-xs text-text-tertiary">{entry.duration_ms}ms</td>
-        <td className="px-4 py-2">
-          <div className="flex flex-wrap gap-2">
-            {entry.service === 'runtime.egress' && (
-              <button
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onMute(entry)
-                }}
-                className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-0"
-              >
-                Mute
-              </button>
-            )}
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                onCreateRule(entry)
-              }}
-              className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-0"
-            >
-              Create rule
-            </button>
-          </div>
-        </td>
         <td className="px-4 py-2 text-xs text-text-secondary">{expanded ? '▲' : '▼'}</td>
       </tr>
       {expanded && (
         <tr className="border-t border-border-default bg-surface-2">
-          <td colSpan={showAgentColumn ? 8 : 7} className="px-4 py-3">
+          <td colSpan={7} className="px-4 py-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <div className="text-text-primary font-medium mb-1">{summary}</div>
@@ -587,6 +565,33 @@ function AuditRow({
                     </Link>
                   </div>
                 )}
+                <div className="bg-surface-1 border border-border-default rounded p-2">
+                  <div className="text-text-primary font-medium mb-2">Actions</div>
+                  <div className="flex flex-wrap gap-2">
+                    {canMute && entry.service === 'runtime.egress' && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onMute(entry)
+                        }}
+                        className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-0"
+                      >
+                        Mute
+                      </button>
+                    )}
+                    {canCreateRule && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onCreateRule(entry)
+                        }}
+                        className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-0"
+                      >
+                        Create rule
+                      </button>
+                    )}
+                  </div>
+                </div>
                 {entry.reason && (
                   <div className="bg-brand/10 rounded p-2">
                     <div className="text-brand font-medium mb-0.5">Agent's reason</div>
@@ -675,8 +680,10 @@ const PAGE_SIZE = 50
 
 export default function Activity() {
   const qc = useQueryClient()
-  const { currentOrg } = useAuth()
+  const { currentOrg, features } = useAuth()
   const orgId = currentOrg?.id
+  const runtimeActivityUI = !!features?.runtime_activity
+  const runtimePolicyUI = !!features?.runtime_policy_ui
   const [searchParams, setSearchParams] = useSearchParams()
   const [outcomeFilter, setOutcomeFilter] = useState('')
   const [serviceFilter, setServiceFilter] = useState('')
@@ -690,6 +697,7 @@ export default function Activity() {
     outcome: outcomeFilter || undefined,
     service: serviceFilter || undefined,
     agent_id: agentFilter || undefined,
+    include_runtime: runtimeActivityUI || undefined,
     limit: PAGE_SIZE,
     offset,
   }
@@ -711,9 +719,14 @@ export default function Activity() {
     queryKey: ['activity-mutes'],
     queryFn: () => api.audit.listMutes(),
     staleTime: 30_000,
+    enabled: runtimeActivityUI,
   })
 
   const agentMap = useMemo(() => new Map(agents.map((agent: Agent) => [agent.id, agent.name])), [agents])
+  const activityTypeOptions = useMemo(
+    () => runtimeActivityUI ? ACTIVITY_TYPES : ACTIVITY_TYPES.filter(option => option.value === '' || option.value === 'service'),
+    [runtimeActivityUI],
+  )
   const mode = displayMode(activityTypeFilter)
   const rawEntries = data?.entries ?? []
   const entries = useMemo(
@@ -722,6 +735,12 @@ export default function Activity() {
   )
   const total = data?.total ?? 0
   const [exporting, setExporting] = useState(false)
+
+  useEffect(() => {
+    if (!runtimeActivityUI && activityTypeFilter && activityTypeFilter !== 'service') {
+      setActivityTypeFilter('')
+    }
+  }, [activityTypeFilter, runtimeActivityUI])
 
   const createRuleMut = useMutation({
     mutationFn: (rule: RuleDraft) => api.runtime.createRule(rule),
@@ -776,6 +795,7 @@ export default function Activity() {
         const batchFilter = {
           outcome: outcomeFilter || undefined,
           service: serviceFilter || undefined,
+          include_runtime: runtimeActivityUI || undefined,
           limit: batchSize,
           offset: batchOffset,
         }
@@ -793,9 +813,8 @@ export default function Activity() {
     } finally {
       setExporting(false)
     }
-  }, [activityTypeFilter, orgId, outcomeFilter, serviceFilter])
+  }, [activityTypeFilter, orgId, outcomeFilter, runtimeActivityUI, serviceFilter])
 
-  const showAgentColumn = mode !== 'default'
   const summaryHeading = mode === 'runtime_egress'
     ? 'Runtime egress'
     : mode === 'runtime_tool_use'
@@ -865,7 +884,7 @@ export default function Activity() {
           onChange={e => { setActivityTypeFilter(e.target.value as ActivityTypeFilter); setOffset(0) }}
           className="text-sm rounded border border-border-default bg-surface-0 text-text-primary px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
         >
-          {ACTIVITY_TYPES.map(option => (
+          {activityTypeOptions.map(option => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </select>
@@ -887,7 +906,7 @@ export default function Activity() {
         />
       </div>
 
-      {(mutedHosts?.entries?.length ?? 0) > 0 && (
+      {runtimeActivityUI && (mutedHosts?.entries?.length ?? 0) > 0 && (
         <div className="rounded-md border border-border-default bg-surface-1 p-4 space-y-3">
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Muted activity hosts</h2>
@@ -929,11 +948,10 @@ export default function Activity() {
               <tr>
                 <th className="px-4 py-2 text-left">Time</th>
                 <th className="px-4 py-2 text-left">{summaryHeading}</th>
-                {showAgentColumn && <th className="px-4 py-2 text-left">Agent</th>}
+                <th className="px-4 py-2 text-left">Agent</th>
                 <th className="px-4 py-2 text-left">Authorization</th>
                 <th className="px-4 py-2 text-left">Outcome</th>
                 <th className="px-4 py-2 text-left">Duration</th>
-                <th className="px-4 py-2 text-left">Rule</th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
@@ -944,6 +962,8 @@ export default function Activity() {
                   entry={entry}
                   mode={mode}
                   agentName={entry.agent_id ? agentMap.get(entry.agent_id) : undefined}
+                  canCreateRule={runtimePolicyUI || !entry.service.startsWith('runtime.')}
+                  canMute={runtimeActivityUI}
                   onCreateRule={handleOpenCreateRule}
                   onMute={setMuteModalEntry}
                 />

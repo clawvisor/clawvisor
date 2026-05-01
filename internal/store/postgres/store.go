@@ -782,6 +782,9 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		args = append(args, filter.AgentID)
 		i++
 	}
+	if filter.IncludeRuntime != nil && !*filter.IncludeRuntime {
+		where += " AND service NOT LIKE 'runtime.%'"
+	}
 
 	var total int
 	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_log "+where, args...).Scan(&total); err != nil {
@@ -1683,12 +1686,13 @@ func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter sto
 	if filter.SessionID != "" {
 		query += ` AND session_id = $2`
 		args = append(args, filter.SessionID)
-		query += ` ORDER BY timestamp DESC LIMIT $3`
-		args = append(args, limit)
-	} else {
-		query += ` ORDER BY timestamp DESC LIMIT $2`
-		args = append(args, limit)
 	}
+	if filter.EventType != "" {
+		args = append(args, filter.EventType)
+		query += fmt.Sprintf(" AND event_type = $%d", len(args))
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d", len(args))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err

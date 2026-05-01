@@ -127,6 +127,12 @@ type FeatureSet struct {
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
 	MobilePairing     bool `json:"mobile_pairing"`
+	RuntimeProxy      bool `json:"runtime_proxy"`
+	SecretVault       bool `json:"secret_vault"`
+	RuntimePolicyUI   bool `json:"runtime_policy_ui"`
+	RuntimeActivity   bool `json:"runtime_activity"`
+	AgentLiveSessions bool `json:"agent_live_sessions"`
+	ServicePresets    bool `json:"service_presets"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional

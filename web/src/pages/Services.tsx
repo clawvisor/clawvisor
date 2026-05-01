@@ -41,11 +41,9 @@ function AccountSection({
 function VaultInventorySection({
   activeServices,
   googleOAuthConfigured,
-  pkceCredentialCount,
 }: {
   activeServices: ServiceInfo[]
   googleOAuthConfigured: boolean
-  pkceCredentialCount: number
 }) {
   const vaulted = activeServices.filter(service => !service.credential_free)
   const credentialFree = activeServices.filter(service => service.credential_free)
@@ -53,13 +51,12 @@ function VaultInventorySection({
   return (
     <AccountSection
       title="Vault"
-      description="Connected credentials live in Clawvisor’s vault. Use this inventory to see what is vaulted, what is credential-free, and which system OAuth credentials are configured."
+      description="Connected credentials live in Clawvisor’s vault. Use this inventory to see what is vaulted, what is credential-free, and whether system OAuth credentials are configured."
     >
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-3">
         <VaultMetric label="Vaulted credentials" value={String(vaulted.length)} />
         <VaultMetric label="Credential-free" value={String(credentialFree.length)} />
         <VaultMetric label="Google OAuth" value={googleOAuthConfigured ? 'Configured' : 'Missing'} />
-        <VaultMetric label="PKCE client IDs" value={String(pkceCredentialCount)} />
       </div>
       <div className="space-y-2">
         {activeServices.length === 0 && (
@@ -1327,6 +1324,7 @@ export default function Services() {
   const qc = useQueryClient()
   const { features, currentOrg } = useAuth()
   const orgId = currentOrg?.id
+  const secretVaultUI = !orgId && !!features?.secret_vault
   const [showModal, setShowModal] = useState(false)
   const [successService, setSuccessService] = useState<string | null>(null)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1352,11 +1350,6 @@ export default function Services() {
     queryFn: () => api.system.getGoogleOAuth(),
     enabled: !features?.multi_tenant,
   })
-  const { data: pkceCredentials } = useQuery({
-    queryKey: ['pkce-credentials'],
-    queryFn: () => api.system.listPKCECredentials(),
-    enabled: !orgId,
-  })
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
     queryFn: () => api.agents.list(),
@@ -1365,13 +1358,13 @@ export default function Services() {
   const { data: runtimePlaceholders } = useQuery({
     queryKey: ['runtime-placeholders'],
     queryFn: () => api.runtime.listPlaceholders(),
-    enabled: !orgId,
+    enabled: secretVaultUI,
     refetchInterval: 30_000,
   })
   const { data: auditData } = useQuery({
     queryKey: ['audit', 'accounts'],
     queryFn: () => api.audit.list({ limit: 25 }),
-    enabled: !orgId,
+    enabled: secretVaultUI,
   })
 
   // Refresh when the OAuth popup signals completion (for cases where modal isn't open).
@@ -1391,7 +1384,9 @@ export default function Services() {
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')
-  const recentServiceActivity = (auditData?.entries ?? []).filter(entry => !entry.service.startsWith('runtime.')).slice(0, 8)
+  const recentServiceActivity = secretVaultUI
+    ? (auditData?.entries ?? []).filter(entry => !entry.service.startsWith('runtime.')).slice(0, 8)
+    : []
   const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
@@ -1463,17 +1458,20 @@ export default function Services() {
 
       {!orgId && !isLoading && !error && (
         <>
-          <VaultInventorySection
-            activeServices={activeServices}
-            googleOAuthConfigured={!!googleOAuth?.configured}
-            pkceCredentialCount={pkceCredentials?.length ?? 0}
-          />
-          <ShadowTokensSection
-            agents={agents}
-            services={activeServices}
-            entries={runtimePlaceholders?.entries ?? []}
-          />
-          <CredentialActivitySection entries={recentServiceActivity} />
+          {secretVaultUI && (
+            <VaultInventorySection
+              activeServices={activeServices}
+              googleOAuthConfigured={!!googleOAuth?.configured}
+            />
+          )}
+          {secretVaultUI && (
+            <ShadowTokensSection
+              agents={agents}
+              services={activeServices}
+              entries={runtimePlaceholders?.entries ?? []}
+            />
+          )}
+          {secretVaultUI && <CredentialActivitySection entries={recentServiceActivity} />}
         </>
       )}
 

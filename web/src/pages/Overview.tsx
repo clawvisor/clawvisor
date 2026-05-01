@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest, type ApprovalRecord, type RuntimeStatus } from '../api/client'
 import { filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
+import { useAuth } from '../hooks/useAuth'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
@@ -14,9 +15,13 @@ type AttentionItem =
   | { kind: 'runtime_approval'; createdAt: string; approval: ApprovalRecord }
 
 export default function Overview() {
+  const { features } = useAuth()
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [deepLinkResult, setDeepLinkResult] = useState<string | null>(null)
+  const runtimeActivityUI = !!features?.runtime_activity
+  const liveSessionsUI = !!features?.agent_live_sessions
+  const showRuntimeAttention = runtimeActivityUI || liveSessionsUI
 
   // Deep link mutations for approval requests (moved from Queue)
   const deepApproveRequest = useMutation({
@@ -65,6 +70,7 @@ export default function Overview() {
       }
     },
     refetchInterval: 30_000,
+    enabled: showRuntimeAttention,
   })
   const { data: runtimeStatus } = useQuery({
     queryKey: ['runtime-status'],
@@ -76,6 +82,7 @@ export default function Overview() {
       }
     },
     refetchInterval: 30_000,
+    enabled: runtimeActivityUI,
   })
   const { data: runtimeSessions } = useQuery({
     queryKey: ['runtime-sessions'],
@@ -87,6 +94,7 @@ export default function Overview() {
       }
     },
     refetchInterval: 30_000,
+    enabled: liveSessionsUI,
   })
 
   // Agents for name resolution
@@ -105,8 +113,8 @@ export default function Overview() {
 
   const queueItems = overview?.queue ?? []
   const runtimeApprovalItems = useMemo(
-    () => filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? []),
-    [runtimeApprovals, runtimeSessions],
+    () => (showRuntimeAttention ? filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? []) : []),
+    [runtimeApprovals, runtimeSessions, showRuntimeAttention],
   )
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
@@ -118,8 +126,8 @@ export default function Overview() {
     return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [queueItems, runtimeApprovalItems])
   const activeRuntimeSessions = useMemo(
-    () => (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession),
-    [runtimeSessions],
+    () => (liveSessionsUI ? (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession) : []),
+    [runtimeSessions, liveSessionsUI],
   )
 
   // Track tasks that disappear from active_tasks and show them as "completed" for 60s
@@ -169,7 +177,7 @@ export default function Overview() {
         </div>
       )}
 
-      {runtimeStatus && (
+      {runtimeActivityUI && runtimeStatus && (
         <RuntimePolicyCard status={runtimeStatus} activeSessionCount={activeRuntimeSessions.length} />
       )}
 

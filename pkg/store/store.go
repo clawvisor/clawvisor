@@ -693,6 +693,7 @@ type ActiveTaskSession struct {
 
 type RuntimeEventFilter struct {
 	SessionID string
+	EventType string
 	Limit     int
 }
 
@@ -708,13 +709,14 @@ type TaskFilter struct {
 // AuditFilter controls which entries are returned by ListAuditEntries.
 // Zero values mean "no filter" for that field.
 type AuditFilter struct {
-	Service    string // filter by service
-	Outcome    string // filter by outcome
-	DataOrigin string // filter by data_origin
-	TaskID     string // filter by task_id
-	AgentID    string // filter by agent_id
-	Limit      int    // 0 -> default (50)
-	Offset     int
+	Service        string // filter by service
+	Outcome        string // filter by outcome
+	DataOrigin     string // filter by data_origin
+	TaskID         string // filter by task_id
+	AgentID        string // filter by agent_id
+	IncludeRuntime *bool  // nil -> default include, false -> suppress runtime.* rows
+	Limit          int    // 0 -> default (50)
+	Offset         int
 }
 
 // ActivityBucket is one row of the aggregated audit activity histogram.

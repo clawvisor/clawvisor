@@ -24,6 +24,7 @@ type Config struct {
 	DataDir           string
 	Addr              string
 	TLS               bool
+	DashboardBaseURL  string
 	ListenerHostnames []string
 	LeafCacheSize     int
 	LogTimings        bool
@@ -49,6 +50,12 @@ type Server struct {
 	latestRequestCtxPruneTick uint64
 	secretValueCache          sync.Map
 	secretVerdictCache        sync.Map
+	// secretValueVerdictCache stores positive (credential=true) verdicts keyed
+	// by (host, candidate value) so we never re-adjudicate the same secret
+	// across requests or across different surrounding contexts within one
+	// request. Negative verdicts stay context-scoped in secretVerdictCache.
+	secretValueVerdictCache sync.Map
+	observeNoticeBySession  sync.Map
 
 	adjudicationDebugDir string
 	adjudicationDebugMu  sync.Mutex

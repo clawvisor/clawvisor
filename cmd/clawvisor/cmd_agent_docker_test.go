@@ -61,6 +61,9 @@ func TestBuildDockerAgentEnvVars(t *testing.T) {
 	if got := values["CLAWVISOR_RUNTIME_CA_CERT_FILE"]; got != "/clawvisor/ca.pem" {
 		t.Fatalf("unexpected CA path %q", got)
 	}
+	if got := values["OPENCLAW_PROXY_ACTIVE"]; got != "1" {
+		t.Fatalf("unexpected OPENCLAW_PROXY_ACTIVE %q", got)
+	}
 	if got := values["NO_PROXY"]; got != "localhost,127.0.0.1,::1,host.docker.internal" {
 		t.Fatalf("unexpected NO_PROXY %q", got)
 	}

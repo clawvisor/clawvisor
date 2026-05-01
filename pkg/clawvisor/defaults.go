@@ -18,30 +18,30 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"gopkg.in/yaml.v3"
 
-	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
-	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
+	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	dropboxadapter "github.com/clawvisor/clawvisor/internal/adapters/dropbox"
-	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
-	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
+	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
+	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
-	intredis "github.com/clawvisor/clawvisor/internal/redis"
-	"github.com/clawvisor/clawvisor/internal/display"
-	"github.com/clawvisor/clawvisor/internal/groupchat"
-	"github.com/clawvisor/clawvisor/internal/relay"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
+	intredis "github.com/clawvisor/clawvisor/internal/redis"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	intvault "github.com/clawvisor/clawvisor/internal/vault"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -65,6 +65,7 @@ import (
 //	opts.Store = tenancy.Wrap(opts.Store)
 //	opts.Features.PasswordAuth = true
 //	clawvisor.Run(opts)
+//
 // DefaultOptions builds a ServerOptions from config. If configPath is provided,
 // it is used directly; otherwise CONFIG_FILE env var is consulted, falling back
 // to "config.yaml".
@@ -372,7 +373,13 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 
 	features := FeatureSet{
-		PasswordAuth: cfg.Server.AuthMode == "password",
+		PasswordAuth:      cfg.Server.AuthMode == "password",
+		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
+		SecretVault:       cfg.RuntimeProxy.Enabled && cfg.Features.SecretVault,
+		RuntimePolicyUI:   cfg.RuntimeProxy.Enabled,
+		RuntimeActivity:   cfg.RuntimeProxy.Enabled,
+		AgentLiveSessions: cfg.RuntimeProxy.Enabled,
+		ServicePresets:    cfg.RuntimeProxy.Enabled && cfg.Features.ServicePresets,
 	}
 
 	opts := &ServerOptions{

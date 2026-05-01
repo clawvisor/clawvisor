@@ -14,6 +14,7 @@ import (
 	"github.com/elazarl/goproxy"
 	"github.com/google/uuid"
 
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
@@ -191,7 +192,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 				Decision:   stringPtr("allow"),
 				Outcome:    stringPtr("opened"),
 				Reason:     stringPtr("runtime tool-use lease opened"),
-				Metadata:   map[string]any{"tool_name": held.ToolName},
+				Metadata:   runtimeToolMetadata(held.ToolName, held.ToolInput),
 			})
 			if task, taskErr := hooks.Store.GetTask(req.Context(), held.TaskID); taskErr == nil {
 				usedActiveTaskContext = usedActiveTaskSelection(req.Context(), hooks.Store, session.ID, task)
@@ -200,7 +201,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 		}
 	}
 
-	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false, false)
+	s.logToolUseAudit(req.Context(), hooks.Store, session, held.TaskID, held.ApprovalRecordID, leaseID, held.ToolUseID, held.ToolName, held.ToolInput, boolToDecision(allow), boolToOutcome(allow), reason, usedActiveTaskContext, false, false, false, false)
 	if allow {
 		emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
 			EventType:           "runtime.tool_use.released",
@@ -214,7 +215,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 			Decision:            stringPtr("allow"),
 			Outcome:             stringPtr("released"),
 			Reason:              stringPtr(reason),
-			Metadata:            map[string]any{"tool_name": held.ToolName},
+			Metadata:            runtimeToolMetadata(held.ToolName, held.ToolInput),
 		})
 	} else {
 		emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
@@ -227,7 +228,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 			Decision:            stringPtr("deny"),
 			Outcome:             stringPtr("denied"),
 			Reason:              stringPtr(reason),
-			Metadata:            map[string]any{"tool_name": held.ToolName},
+			Metadata:            runtimeToolMetadata(held.ToolName, held.ToolInput),
 		})
 	}
 
@@ -327,6 +328,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	if rewriter == nil || resp.Body == nil {
 		return resp
 	}
+	notices := s.pendingResponseNotices(ctx.Req.Context(), hooks.Store, st.Session)
 
 	taskLoadStartedAt := time.Now()
 	candidateTasks, _ := loadRuntimeCandidateTasks(ctx.Req.Context(), hooks.Store, st.Session)
@@ -483,6 +485,9 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	}
 
 	if s.tryStreamToolUseBlock(ctx.Req, resp, st, hooks, evaluator, decisionState) {
+		if s.tryStreamResponseNotices(ctx.Req, resp, notices) {
+			s.markResponseNoticesInjected(ctx.Req.Context(), hooks.Store, st.Session, st, rewriter.Name(), notices)
+		}
 		runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "stream")
 		resp.ContentLength = -1
 		resp.Header.Del("Content-Length")
@@ -509,8 +514,14 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 		s.applyToolUseDecision(ctx.Req.Context(), hooks, st, decision, decisionState[toolDecisionKey(decision.ToolUse)])
 	}
 
-	resp.Body = io.NopCloser(bytes.NewReader(result.Body))
-	resp.ContentLength = int64(len(result.Body))
+	outBody := result.Body
+	if rewritten, changed := injectResponseNoticesBody(ctx.Req, resp.Header.Get("Content-Type"), outBody, notices); changed {
+		outBody = rewritten
+		s.markResponseNoticesInjected(ctx.Req.Context(), hooks.Store, st.Session, st, rewriter.Name(), notices)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(outBody))
+	resp.ContentLength = int64(len(outBody))
 	runtimetiming.SetAttr(ctx.Req.Context(), "tool_block.mode", "buffered")
 	return resp
 }
@@ -519,6 +530,8 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 	if st == nil || st.Session == nil {
 		return
 	}
+	toolInput := sanitizeToolInputFromRaw(decision.ToolUse.Input)
+	toolMetadata := runtimeToolMetadata(decision.ToolUse.Name, toolInput)
 	if decision.Verdict.Allowed {
 		var leaseID *string
 		if state.Task != nil {
@@ -534,7 +547,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 					Decision:   stringPtr("allow"),
 					Outcome:    stringPtr("opened"),
 					Reason:     stringPtr("runtime tool-use lease opened"),
-					Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+					Metadata:   toolMetadata,
 				})
 				s.recordToolActivity(ctx, hooks.Store, st.Session, state.Task, decision.ToolUse.ID, decision.ToolUse.Name, "", lease)
 			}
@@ -552,7 +565,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 				reason = "observation mode: runtime policy would block this tool call"
 			}
 		}
-		s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
+		s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), leaseID, decision.ToolUse.ID, decision.ToolUse.Name, toolInput, "allow", outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, state.WouldReview, state.WouldReview, state.WouldPromptInline)
 		if state.WouldReview {
 			emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
 				EventType:  "runtime.observe.would_review",
@@ -562,7 +575,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 				Decision:   stringPtr("allow"),
 				Outcome:    stringPtr("observed"),
 				Reason:     stringPtr(reason),
-				Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+				Metadata:   toolMetadata,
 			})
 			if state.WouldPromptInline {
 				emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
@@ -573,7 +586,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 					Decision:   stringPtr("allow"),
 					Outcome:    stringPtr("observed"),
 					Reason:     stringPtr("observation mode: tool use would prompt inline"),
-					Metadata:   map[string]any{"tool_name": decision.ToolUse.Name},
+					Metadata:   toolMetadata,
 				})
 			}
 			return
@@ -587,11 +600,10 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 				Decision:   stringPtr("allow"),
 				Outcome:    stringPtr("observed"),
 				Reason:     stringPtr(reason),
-				Metadata: map[string]any{
-					"tool_name":   decision.ToolUse.Name,
+				Metadata: withRuleMetadata(toolMetadata, map[string]any{
 					"rule_id":     ruleIDOrEmpty(state.Rule),
 					"rule_action": "deny",
-				},
+				}),
 			})
 			return
 		}
@@ -605,11 +617,10 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 			Decision:      stringPtr("allow"),
 			Outcome:       stringPtr(outcome),
 			Reason:        stringPtr(reason),
-			Metadata: map[string]any{
-				"tool_name":   decision.ToolUse.Name,
+			Metadata: withRuleMetadata(toolMetadata, map[string]any{
 				"rule_id":     ruleIDOrEmpty(state.Rule),
 				"rule_action": ruleActionOrEmpty(state.Rule),
-			},
+			}),
 		})
 		return
 	}
@@ -626,7 +637,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 		outcome = "error"
 		reason = firstNonEmpty(state.FailureReason, "runtime approval could not be created for this tool call")
 	}
-	s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
+	s.logToolUseAudit(ctx, hooks.Store, st.Session, taskIDOrEmpty(state.Task), stringOrEmpty(state.ApprovalID), nil, decision.ToolUse.ID, decision.ToolUse.Name, toolInput, decisionWord, outcome, reason, state.UsedActiveTaskContext, state.UsedConvJudgeResolution, false, !state.ApprovalCreateFailed, state.WouldPromptInline)
 	if state.DeniedByRule {
 		emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
 			EventType:  "runtime.policy.deny_matched",
@@ -636,11 +647,10 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 			Decision:   stringPtr("deny"),
 			Outcome:    stringPtr("blocked"),
 			Reason:     stringPtr(reason),
-			Metadata: map[string]any{
-				"tool_name":   decision.ToolUse.Name,
+			Metadata: withRuleMetadata(toolMetadata, map[string]any{
 				"rule_id":     ruleIDOrEmpty(state.Rule),
 				"rule_action": "deny",
-			},
+			}),
 		})
 		return
 	}
@@ -653,9 +663,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 			Decision:   stringPtr("deny"),
 			Outcome:    stringPtr("error"),
 			Reason:     stringPtr(reason),
-			Metadata: map[string]any{
-				"tool_name": decision.ToolUse.Name,
-			},
+			Metadata:   toolMetadata,
 		})
 		return
 	}
@@ -669,12 +677,11 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 		Decision:            stringPtr("review"),
 		Outcome:             stringPtr("pending"),
 		Reason:              stringPtr("runtime tool call is outside the active task envelope"),
-		Metadata: map[string]any{
-			"tool_name":           decision.ToolUse.Name,
+		Metadata: withRuleMetadata(toolMetadata, map[string]any{
 			"would_prompt_inline": state.WouldPromptInline,
 			"rule_id":             ruleIDOrEmpty(state.Rule),
 			"rule_action":         ruleActionOrEmpty(state.Rule),
-		},
+		}),
 	})
 }
 
@@ -990,7 +997,7 @@ func (s *Server) recordToolActivity(ctx context.Context, st store.Store, session
 	_ = st.CreateTaskCall(ctx, call)
 }
 
-func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *store.RuntimeSession, taskID, approvalID string, leaseID *string, toolUseID, toolName, decision, outcome, reason string, usedActiveTaskContext, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline bool) {
+func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *store.RuntimeSession, taskID, approvalID string, leaseID *string, toolUseID, toolName string, toolInput map[string]any, decision, outcome, reason string, usedActiveTaskContext, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline bool) {
 	if session == nil {
 		return
 	}
@@ -1005,6 +1012,10 @@ func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *s
 	var reasonPtr *string
 	if reason != "" {
 		reasonPtr = &reason
+	}
+	var paramsSafe json.RawMessage
+	if payload, err := json.Marshal(runtimeToolMetadata(toolName, toolInput)); err == nil {
+		paramsSafe = payload
 	}
 	sessionID := session.ID
 	agentID := session.AgentID
@@ -1022,6 +1033,7 @@ func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *s
 		Timestamp:               time.Now().UTC(),
 		Service:                 "runtime.tool_use",
 		Action:                  toolName,
+		ParamsSafe:              paramsSafe,
 		Decision:                decision,
 		Outcome:                 outcome,
 		Reason:                  reasonPtr,
@@ -1031,6 +1043,75 @@ func (s *Server) logToolUseAudit(ctx context.Context, st store.Store, session *s
 		WouldReview:             wouldReview,
 		WouldPromptInline:       wouldPromptInline,
 	})
+}
+
+func runtimeToolMetadata(toolName string, toolInput map[string]any) map[string]any {
+	metadata := map[string]any{
+		"tool_name": toolName,
+	}
+	if sanitized := sanitizeToolInput(toolInput); len(sanitized) > 0 {
+		metadata["tool_input"] = sanitized
+	}
+	return metadata
+}
+
+func withRuleMetadata(metadata map[string]any, extras ...map[string]any) map[string]any {
+	out := make(map[string]any, len(metadata)+4)
+	for k, v := range metadata {
+		out[k] = v
+	}
+	for _, extra := range extras {
+		for k, v := range extra {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func sanitizeToolInputFromRaw(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil
+	}
+	return sanitizeToolInput(input)
+}
+
+func sanitizeToolInput(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	sanitized := sanitizeToolValue(input)
+	out, _ := sanitized.(map[string]any)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeToolValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		shallow := format.StripSecrets(typed)
+		if len(shallow) == 0 {
+			return map[string]any{}
+		}
+		out := make(map[string]any, len(shallow))
+		for key, child := range shallow {
+			out[key] = sanitizeToolValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, child := range typed {
+			out = append(out, sanitizeToolValue(child))
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 func toolLeaseTTL(cfg *config.Config) time.Duration {

@@ -2,10 +2,12 @@ package clawvisor
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,11 +45,20 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		if home, err := os.UserHomeDir(); err == nil && len(bodyTraceDir) > 1 && bodyTraceDir[:2] == "~/" {
 			bodyTraceDir = filepath.Join(home, bodyTraceDir[2:])
 		}
+		dashboardBaseURL := strings.TrimSpace(opts.Config.Server.PublicURL)
+		if dashboardBaseURL == "" && opts.Config.Server.Port != 0 {
+			host := strings.TrimSpace(opts.Config.Server.Host)
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				host = "127.0.0.1"
+			}
+			dashboardBaseURL = fmt.Sprintf("http://%s:%d", host, opts.Config.Server.Port)
+		}
 		var err error
 		runtimeSrv, err = runtimeproxy.NewServer(runtimeproxy.Config{
 			DataDir:           dataDir,
 			Addr:              opts.Config.RuntimeProxy.ListenAddr,
 			TLS:               opts.Config.RuntimeProxy.TLS,
+			DashboardBaseURL:  dashboardBaseURL,
 			ListenerHostnames: opts.Config.RuntimeProxy.ListenerHostnames,
 			LogTimings:        opts.Config.RuntimeProxy.TimingTraceEnabled,
 			TimingTraceDir:    timingTraceDir,
@@ -72,6 +83,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			opts.Logger.Info("runtime proxy body traces enabled", "dir", traceDir)
 		}
 		runtimeSrv.InstallSessionGuard(&runtimeproxy.Authenticator{Store: opts.Store, Config: opts.Config})
+		runtimeSrv.InstallObserveNoticeRequestScrubber()
 		runtimeSrv.InstallInboundSecretCapture(runtimeproxy.InboundSecretHooks{
 			Store:  opts.Store,
 			Vault:  opts.Vault,
@@ -120,6 +132,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		PasswordAuth:      opts.Features.PasswordAuth,
 		Billing:           opts.Features.Billing,
 		LocalDaemon:       opts.Features.LocalDaemon,
+		RuntimeProxy:      opts.Features.RuntimeProxy,
+		SecretVault:       opts.Features.SecretVault,
+		RuntimePolicyUI:   opts.Features.RuntimePolicyUI,
+		RuntimeActivity:   opts.Features.RuntimeActivity,
+		AgentLiveSessions: opts.Features.AgentLiveSessions,
+		ServicePresets:    opts.Features.ServicePresets,
 	}))
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {

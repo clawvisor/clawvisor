@@ -49,7 +49,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  params?: Record<string, string | number | undefined>,
+  params?: Record<string, string | number | boolean | undefined>,
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -105,7 +105,7 @@ async function request<T>(
   return res.json()
 }
 
-const get = <T>(path: string, params?: Record<string, string | number | undefined>) =>
+const get = <T>(path: string, params?: Record<string, string | number | boolean | undefined>) =>
   request<T>('GET', path, undefined, params)
 const post = <T>(path: string, body: unknown) => request<T>('POST', path, body)
 const put = <T>(path: string, body: unknown) => request<T>('PUT', path, body)
@@ -391,6 +391,7 @@ export interface AuditFilter {
   outcome?: string
   task_id?: string
   agent_id?: string
+  include_runtime?: boolean
   limit?: number
   offset?: number
 }
@@ -570,6 +571,12 @@ export interface FeatureSet {
   billing: boolean
   local_daemon: boolean
   mobile_pairing: boolean
+  runtime_proxy: boolean
+  secret_vault: boolean
+  runtime_policy_ui: boolean
+  runtime_activity: boolean
+  agent_live_sessions: boolean
+  service_presets: boolean
 }
 
 export interface VersionInfo {
@@ -1174,7 +1181,7 @@ export const api = {
   },
   audit: {
     list: (filter?: AuditFilter) =>
-      get<{ entries: AuditEntry[]; total: number }>('/api/audit', filter as Record<string, string | number | undefined>),
+      get<{ entries: AuditEntry[]; total: number }>('/api/audit', filter as Record<string, string | number | boolean | undefined>),
     get: (id: string) => get<AuditEntry>(`/api/audit/${id}`),
     listMutes: () => get<{ entries: ActivityMute[]; total: number }>('/api/audit/mutes'),
     createMute: (host: string, pathPrefix?: string) =>
@@ -1363,7 +1370,7 @@ export const api = {
         del<void>(`/api/orgs/${orgId}/restrictions/${restrictionId}`),
     },
     audit: (orgId: string, filter?: AuditFilter) =>
-      get<{ entries: AuditEntry[]; total: number }>(`/api/orgs/${orgId}/audit`, filter as Record<string, string | number | undefined>),
+      get<{ entries: AuditEntry[]; total: number }>(`/api/orgs/${orgId}/audit`, filter as Record<string, string | number | boolean | undefined>),
     agents: (orgId: string) => get<Agent[]>(`/api/orgs/${orgId}/agents`),
     createAgent: (orgId: string, name: string, description?: string) =>
       post<{ agent: Agent; token: string }>(`/api/orgs/${orgId}/agents`, { name, ...(description ? { description } : {}) }),

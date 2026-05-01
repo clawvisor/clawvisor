@@ -48,6 +48,7 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
+  const runtimeActivityUI = !!features?.runtime_activity
 
   // Close sidebar on route change (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
@@ -71,8 +72,9 @@ export default function Dashboard() {
       }
     },
     refetchInterval: 30_000,
+    enabled: runtimeActivityUI,
   })
-  const queueCount = (queueData?.total ?? 0) + (runtimeApprovalData?.total ?? 0)
+  const queueCount = (queueData?.total ?? 0) + (runtimeActivityUI ? (runtimeApprovalData?.total ?? 0) : 0)
 
   // Check for version updates (infrequently)
   const { data: versionData } = useQuery({

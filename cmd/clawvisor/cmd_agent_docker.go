@@ -207,6 +207,7 @@ func buildDockerAgentEnvVars(opts *dockerProxyOptions, templated bool) []dockerE
 		{Key: "CLAWVISOR_RUNTIME_PROXY_URL", Value: proxyURL, Comment: "Runtime proxy base URL without embedded credentials"},
 		{Key: "CLAWVISOR_RUNTIME_PROXY_AUTH_MODE", Value: "agent_token", Comment: "Proxy auth mode for durable container launches"},
 		{Key: "CLAWVISOR_RUNTIME_CA_CERT_FILE", Value: opts.CAInside, Comment: "Mounted runtime proxy CA certificate path inside the container"},
+		{Key: "OPENCLAW_PROXY_ACTIVE", Value: "1", Comment: "Tell OpenClaw web tools to honor the injected env proxy path"},
 		{Key: "HTTP_PROXY", Value: authenticatedProxyURL, Comment: "HTTP proxy URL authenticated with the agent token"},
 		{Key: "HTTPS_PROXY", Value: authenticatedProxyURL, Comment: "HTTPS proxy URL authenticated with the agent token"},
 		{Key: "ALL_PROXY", Value: authenticatedProxyURL, Comment: "Fallback proxy URL for libraries that honor ALL_PROXY"},

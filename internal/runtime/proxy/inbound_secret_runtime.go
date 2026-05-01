@@ -544,9 +544,10 @@ type adjudicationTask struct {
 }
 
 // prewarmVerdicts walks the JSON payload, collects unique adjudication tasks
-// that would otherwise run sequentially during the replacement walk, and
-// issues their LLM calls in parallel with bounded concurrency. Verdicts land
-// in the shared verdict cache; the subsequent walk hits cache for each.
+// that would otherwise run sequentially during the replacement walk, groups
+// them by candidate value, and issues at most one LLM call per (host, value)
+// in parallel with bounded concurrency. The verdict for that value is then
+// applied to every task referencing the same secret regardless of context.
 func (s *runtimeSecretScanner) prewarmVerdicts(ctx context.Context, payload any) {
 	cfg := verificationConfig(s.hooks.Config)
 	if !cfg.Enabled || cfg.Endpoint == "" || cfg.Model == "" {
@@ -558,67 +559,109 @@ func (s *runtimeSecretScanner) prewarmVerdicts(ctx context.Context, payload any)
 	if len(tasks) == 0 {
 		return
 	}
+	byValue := map[string][]adjudicationTask{}
+	var values []string
+	for _, task := range tasks {
+		v := task.candidate.Value
+		if _, ok := byValue[v]; !ok {
+			values = append(values, v)
+		}
+		byValue[v] = append(byValue[v], task)
+	}
 	const concurrency = 8
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(250)
-	for _, task := range tasks {
-		task := task
+	for _, value := range values {
+		group := byValue[value]
 		sem <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.runAdjudication(ctx, client, task)
+			s.runAdjudicationGroup(ctx, client, group)
 		}()
 	}
 	wg.Wait()
 }
 
-// runAdjudication issues a single LLM call and stores the parsed verdict in
-// the shared cache. It increments the adjudications counter so live metrics
-// reflect the actual LLM volume regardless of which pass issued the call.
-func (s *runtimeSecretScanner) runAdjudication(ctx context.Context, client *llm.Client, task adjudicationTask) {
-	if _, ok := s.server.secretVerdictCache.Load(task.cacheKey); ok {
+// runAdjudicationGroup decides the verdict for a candidate value once and
+// applies it to every task referencing that value within the request. It
+// short-circuits on the cross-request positive value cache so a secret that
+// was identified as a credential in any prior request never gets re-asked.
+func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client *llm.Client, group []adjudicationTask) {
+	if len(group) == 0 {
 		return
 	}
+	for _, task := range group {
+		if v, ok := s.server.secretVerdictCache.Load(task.cacheKey); ok {
+			verdict := v.(adjudicationVerdict)
+			for _, other := range group {
+				s.server.secretVerdictCache.Store(other.cacheKey, verdict)
+			}
+			return
+		}
+	}
+	valueKey := secretValueVerdictKey(s.host, group[0].candidate.Value)
+	if v, ok := s.server.secretValueVerdictCache.Load(valueKey); ok {
+		verdict := v.(adjudicationVerdict)
+		for _, task := range group {
+			s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+		}
+		return
+	}
+	rep := group[0]
 	startedAt := time.Now()
 	raw, err := client.Complete(ctx, []llm.ChatMessage{
 		{Role: "system", Content: runtimeSecretAdjudicatorSystemPrompt},
-		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, task.fieldName, task.content, task.candidate)},
+		{Role: "user", Content: buildSecretAdjudicatorPrompt(s.host, rep.fieldName, rep.content, rep.candidate)},
 	})
 	duration := time.Since(startedAt)
-	s.recordAdjudicationDebug(adjudicationDebugRecord{
+	debugRec := adjudicationDebugRecord{
 		Host:       s.host,
-		Field:      task.fieldName,
-		Candidate:  task.candidate.Value,
-		Charset:    task.candidate.Charset,
-		Entropy:    task.candidate.Entropy,
+		Field:      rep.fieldName,
+		Candidate:  rep.candidate.Value,
+		Charset:    rep.candidate.Charset,
+		Entropy:    rep.candidate.Entropy,
 		CacheHit:   false,
 		Concurrent: true,
 		Raw:        raw,
 		Duration:   duration,
 		Err:        err,
-	})
+	}
 	s.adjudMu.Lock()
 	s.metrics["inbound_secret.scan.adjudicate"] += duration
 	s.adjudications++
 	s.adjudMu.Unlock()
 	if err != nil {
+		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
-			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", task.fieldName)
+			s.hooks.Logger.Warn("runtime secret adjudicator failed", "err", err, "host", s.host, "field", rep.fieldName)
 		}
 		return
 	}
 	verdict, perr := parseSecretAdjudicatorVerdict(raw)
 	if perr != nil {
+		debugRec.ParseErr = perr
+		s.recordAdjudicationDebug(debugRec)
 		if s.hooks.Logger != nil {
 			s.hooks.Logger.Warn("runtime secret adjudicator parse failed",
-				"err", perr, "host", s.host, "field", task.fieldName, "raw_len", len(raw))
+				"err", perr, "host", s.host, "field", rep.fieldName, "raw_len", len(raw))
 		}
 		return
 	}
-	s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+	debugRec.Verdict = &verdict
+	s.recordAdjudicationDebug(debugRec)
+	for _, task := range group {
+		s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+	}
+	if verdict.Credential {
+		s.server.secretValueVerdictCache.Store(valueKey, verdict)
+	}
+}
+
+func secretValueVerdictKey(host, value string) string {
+	return host + "\x1f" + value
 }
 
 // collectAdjudicationTasks mirrors walk()/rewriteString() filtering rules
@@ -699,6 +742,22 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		})
 		return verdict, true
 	}
+	valueKey := secretValueVerdictKey(s.host, candidate.Value)
+	if cached, ok := s.server.secretValueVerdictCache.Load(valueKey); ok {
+		verdict, _ := cached.(adjudicationVerdict)
+		s.cacheHits++
+		s.server.secretVerdictCache.Store(key, verdict)
+		s.recordAdjudicationDebug(adjudicationDebugRecord{
+			Host:      s.host,
+			Field:     fieldName,
+			Candidate: candidate.Value,
+			Charset:   candidate.Charset,
+			Entropy:   candidate.Entropy,
+			CacheHit:  true,
+			Verdict:   &verdict,
+		})
+		return verdict, true
+	}
 	cfg := verificationConfig(s.hooks.Config)
 	if !cfg.Enabled || cfg.Endpoint == "" || cfg.Model == "" {
 		return adjudicationVerdict{}, false
@@ -745,6 +804,9 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	debugRec.Verdict = &verdict
 	s.recordAdjudicationDebug(debugRec)
 	s.server.secretVerdictCache.Store(key, verdict)
+	if verdict.Credential {
+		s.server.secretValueVerdictCache.Store(valueKey, verdict)
+	}
 	return verdict, true
 }
 
@@ -985,16 +1047,58 @@ Decide whether <TOKEN_CANDIDATE_1> is a real credential that should be captured 
 }
 
 func parseSecretAdjudicatorVerdict(raw string) (adjudicationVerdict, error) {
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimPrefix(raw, "```")
-	raw = strings.TrimSuffix(raw, "```")
-	raw = strings.TrimSpace(raw)
+	body := extractFirstJSONObject(raw)
+	if body == "" {
+		return adjudicationVerdict{}, fmt.Errorf("no JSON object found in adjudicator response")
+	}
 	var verdict adjudicationVerdict
-	if err := json.Unmarshal([]byte(raw), &verdict); err != nil {
+	if err := json.Unmarshal([]byte(body), &verdict); err != nil {
 		return adjudicationVerdict{}, err
 	}
 	return verdict, nil
+}
+
+// extractFirstJSONObject returns the substring spanning the first balanced
+// {...} block in s, ignoring braces that appear inside strings. Handles
+// markdown-fenced replies, trailing prose, and prefix commentary that the
+// adjudicator LLM occasionally emits.
+func extractFirstJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 func verificationConfig(cfg *config.Config) config.VerificationConfig {

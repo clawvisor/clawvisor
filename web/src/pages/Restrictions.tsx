@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, type Agent, type Restriction, type OrgRestriction, type RuntimeEvent, type ServiceInfo } from '../api/client'
+import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type ServiceInfo } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { serviceName, actionName } from '../lib/services'
 import {
@@ -278,12 +278,15 @@ function ServiceGroup({
 }
 
 export default function Policy() {
-  const { currentOrg } = useAuth()
+  const { currentOrg, features } = useAuth()
   const orgId = currentOrg?.id
   const qc = useQueryClient()
+  const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
+  const servicePresetsUI = !orgId && !!features?.service_presets
   const [showAll, setShowAll] = useState(false)
   const [agentFilter, setAgentFilter] = useState<string>('all')
   const [editingRule, setEditingRule] = useState<RuleDraft | null>(null)
+  const [rulesTab, setRulesTab] = useState<'service' | 'egress' | 'tool'>('service')
 
   const { data: servicesData, isLoading: servicesLoading } = useQuery({
     queryKey: ['services'],
@@ -299,41 +302,34 @@ export default function Policy() {
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
     queryFn: () => api.agents.list(),
-    enabled: !orgId,
+    enabled: !orgId && (runtimePolicyUI || servicePresetsUI),
   })
   const { data: status } = useQuery({
     queryKey: ['runtime-status'],
     queryFn: () => api.runtime.status(),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
     refetchInterval: 15_000,
   })
   const { data: egressRules } = useQuery({
     queryKey: ['runtime-rules', 'egress', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'egress', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
   const { data: toolRules } = useQuery({
     queryKey: ['runtime-rules', 'tool', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'tool', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
   const { data: starterProfiles } = useQuery({
     queryKey: ['runtime-starter-profiles'],
     queryFn: () => api.runtime.listStarterProfiles(),
-    enabled: !orgId,
+    enabled: runtimePolicyUI,
   })
-  const { data: runtimeEvents } = useQuery({
-    queryKey: ['runtime-events', 'policy'],
-    queryFn: () => api.runtime.listEvents(),
-    enabled: !orgId,
-    refetchInterval: 15_000,
-  })
-
   const isLoading = servicesLoading || restrictionsLoading
   const allServices = servicesData?.services ?? []
   const allRestrictions = restrictions ?? []
@@ -344,7 +340,6 @@ export default function Policy() {
 
   const refreshRuntime = () => {
     qc.invalidateQueries({ queryKey: ['runtime-rules'] })
-    qc.invalidateQueries({ queryKey: ['runtime-events'] })
     qc.invalidateQueries({ queryKey: ['runtime-approvals'] })
     qc.invalidateQueries({ queryKey: ['runtime-sessions'] })
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -375,16 +370,24 @@ export default function Policy() {
     setEditingRule(kind === 'egress' ? emptyEgressRule() : emptyToolRule())
   }
 
+  useEffect(() => {
+    if (!runtimePolicyUI && rulesTab !== 'service') {
+      setRulesTab('service')
+    }
+  }, [runtimePolicyUI, rulesTab])
+
   return (
     <div className="p-4 sm:p-8 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Policy</h1>
           <p className="text-sm text-text-tertiary mt-1">
-            Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.
+            {runtimePolicyUI || servicePresetsUI
+              ? 'Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.'
+              : 'Configure service restrictions for your connected adapters and integrations.'}
           </p>
         </div>
-        {!orgId && (
+        {!orgId && (runtimePolicyUI || servicePresetsUI) && (
           <div className="flex items-center gap-2">
             <label className="text-xs text-text-tertiary">Scope</label>
             <select
@@ -401,14 +404,14 @@ export default function Policy() {
         )}
       </div>
 
-      {!orgId && status && (
+      {runtimePolicyUI && status && (
         <RuntimeStatusPanel
           status={status}
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
         />
       )}
 
-      {!orgId && (
+      {runtimePolicyUI && (
         <StarterProfilesPanel
           profiles={starterProfiles?.entries ?? []}
           agents={agents}
@@ -417,7 +420,7 @@ export default function Policy() {
         />
       )}
 
-      {!orgId && (
+      {servicePresetsUI && (
         <ServicePresetsPanel
           agents={agents}
           agentFilter={agentFilter}
@@ -425,22 +428,7 @@ export default function Policy() {
         />
       )}
 
-      {!orgId && (
-        <PolicySuggestionsPanel
-          events={runtimeEvents?.entries ?? []}
-          agents={agentMap}
-          agentFilter={agentFilter}
-          onCreateRule={async (event, action) => {
-            const candidate = await api.runtime.getRuleCandidate(event.id, action)
-            setEditingRule({
-              ...candidate.rule,
-              scope: candidate.scope_default,
-            })
-          }}
-        />
-      )}
-
-      {!orgId && editingRule && (
+      {runtimePolicyUI && editingRule && (
         <RuleEditorCard
           key={editingRule.id ?? `${editingRule.kind}-${editingRule.action}-${editingRule.host ?? editingRule.tool_name ?? 'new'}`}
           agents={agents}
@@ -454,173 +442,200 @@ export default function Policy() {
         />
       )}
 
-      {!orgId && (
-        <RuleSection
-          title="Runtime Egress Rules"
-          subtitle="Fast-path controls for background and harness HTTP activity before it falls through to review logic."
-          rules={egressRules?.entries ?? []}
-          agents={agentMap}
-          onNew={() => startCreateRule('egress')}
-          onEdit={setEditingRule}
-          onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-          onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-        />
-      )}
-
-      {!orgId && (
-        <RuleSection
-          title="Runtime Tool Rules"
-          subtitle="Allow, review, or deny repeated tool-use patterns before they turn into unnecessary approval churn."
-          rules={toolRules?.entries ?? []}
-          agents={agentMap}
-          onNew={() => startCreateRule('tool')}
-          onEdit={setEditingRule}
-          onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-          onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-        />
-      )}
-
-      <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-text-primary">Legacy Service Restrictions</h2>
-          <p className="text-sm text-text-tertiary mt-1">
-            Existing service-level block rules remain active here during the migration into unified policy.
-          </p>
-        </div>
-
-        {isLoading && <div className="text-sm text-text-tertiary">Loading...</div>}
-
-        {!isLoading && allServices.length === 0 && (
-          <div className="text-sm text-text-tertiary py-8 text-center">
-            No services registered. Add adapters in the server configuration to manage restrictions.
-          </div>
-        )}
-
-        {!isLoading && allServices.length > 0 && activated.length === 0 && (
-          <div className="text-sm text-text-tertiary py-8 text-center">
-            Activate a service first to manage restrictions.{' '}
-            <Link to="/dashboard/accounts" className="text-brand hover:underline">Go to Accounts</Link>
-          </div>
-        )}
-
-        <div className="space-y-4">
-          {activated.map(svc => (
-            <ServiceGroup
-              key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
-              svc={svc}
-              restrictions={allRestrictions}
-              orgId={orgId}
-            />
-          ))}
-        </div>
-
-        {unactivated.length > 0 && (
-          <div className="space-y-4">
-            <button
-              onClick={() => setShowAll(s => !s)}
-              className="text-sm text-text-tertiary hover:text-text-primary"
-            >
-              {showAll ? 'Hide unactivated services' : `Show all services (${unactivated.length} not activated)`}
-            </button>
-            {showAll && (
-              <div className="space-y-4 opacity-50">
-                {unactivated.map(svc => (
-                  <ServiceGroup
-                    key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
-                    svc={svc}
-                    restrictions={allRestrictions}
-                    orgId={orgId}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+      <PolicyRulesPanel
+        orgId={orgId}
+        rulesTab={rulesTab}
+        onTabChange={setRulesTab}
+        serviceRuleCount={allRestrictions.length}
+        egressRuleCount={egressRules?.entries?.length ?? 0}
+        toolRuleCount={toolRules?.entries?.length ?? 0}
+        runtimePolicyUI={runtimePolicyUI}
+        isLoading={isLoading}
+        allServices={allServices}
+        activated={activated}
+        unactivated={unactivated}
+        restrictions={allRestrictions}
+        showAll={showAll}
+        onToggleShowAll={() => setShowAll(s => !s)}
+        agents={agentMap}
+        egressRules={egressRules?.entries ?? []}
+        toolRules={toolRules?.entries ?? []}
+        onNewRule={startCreateRule}
+        onEditRule={setEditingRule}
+        onToggleRule={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+        onDeleteRule={(rule) => deleteRuleMut.mutate(rule.id)}
+      />
     </div>
   )
 }
 
-function PolicySuggestionsPanel({
-  events,
+function PolicyRulesPanel({
+  orgId,
+  rulesTab,
+  onTabChange,
+  serviceRuleCount,
+  egressRuleCount,
+  toolRuleCount,
+  runtimePolicyUI,
+  isLoading,
+  allServices,
+  activated,
+  unactivated,
+  restrictions,
+  showAll,
+  onToggleShowAll,
   agents,
-  agentFilter,
-  onCreateRule,
+  egressRules,
+  toolRules,
+  onNewRule,
+  onEditRule,
+  onToggleRule,
+  onDeleteRule,
 }: {
-  events: RuntimeEvent[]
+  orgId?: string
+  rulesTab: 'service' | 'egress' | 'tool'
+  onTabChange: (tab: 'service' | 'egress' | 'tool') => void
+  serviceRuleCount: number
+  egressRuleCount: number
+  toolRuleCount: number
+  runtimePolicyUI: boolean
+  isLoading: boolean
+  allServices: ServiceInfo[]
+  activated: ServiceInfo[]
+  unactivated: ServiceInfo[]
+  restrictions: (Restriction | OrgRestriction)[]
+  showAll: boolean
+  onToggleShowAll: () => void
   agents: Map<string, Agent>
-  agentFilter: string
-  onCreateRule: (event: RuntimeEvent, action: 'allow' | 'review' | 'deny') => Promise<void>
+  egressRules: RuntimePolicyRule[]
+  toolRules: RuntimePolicyRule[]
+  onNewRule: (kind: 'egress' | 'tool') => void
+  onEditRule: (rule: RuleDraft) => void
+  onToggleRule: (rule: RuntimePolicyRule) => void
+  onDeleteRule: (rule: RuntimePolicyRule) => void
 }) {
-  const [busyEventId, setBusyEventId] = useState<string | null>(null)
-  const suggestionEvents = useMemo(() => {
-    const filtered = events
-      .filter(event => event.action_kind === 'egress' || event.action_kind === 'tool_use')
-      .filter(event => agentFilter === 'all' || event.agent_id === agentFilter)
-      .slice(0, 8)
-    return filtered
-  }, [agentFilter, events])
+  const tabs: Array<{ id: 'service' | 'egress' | 'tool'; label: string; count: number }> = [
+    { id: 'service', label: 'Service', count: serviceRuleCount },
+    ...(runtimePolicyUI
+      ? [
+          { id: 'egress' as const, label: 'Egress', count: egressRuleCount },
+          { id: 'tool' as const, label: 'Tool', count: toolRuleCount },
+        ]
+      : []),
+  ]
 
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold text-text-primary">Suggestions</h2>
-        <p className="text-sm text-text-tertiary mt-1">
-          Promote repeated runtime observations into policy without switching over to raw event inspection.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-text-primary">Rules</h2>
+          <p className="text-sm text-text-tertiary mt-1">
+            {runtimePolicyUI
+              ? 'Switch between service, egress, and tool policy without bouncing across separate sections.'
+              : 'Manage service-level policy for connected adapters and integrations.'}
+          </p>
+        </div>
+        <div className="inline-flex rounded-lg border border-border-default bg-surface-0 p-1">
+          {tabs.map(tab => {
+            const active = rulesTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange(tab.id)}
+                className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition ${
+                  active
+                    ? 'bg-surface-1 text-text-primary shadow-sm'
+                    : 'text-text-tertiary hover:text-text-primary'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${active ? 'bg-border-subtle text-text-primary' : 'bg-surface-1 text-text-tertiary'}`}>
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
-      <div className="space-y-3">
-        {suggestionEvents.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No recent policy suggestions yet.
-          </div>
-        )}
-        {suggestionEvents.map(event => {
-          const meta = (event.metadata_json ?? {}) as Record<string, any>
-          const subject = event.action_kind === 'tool_use'
-            ? [meta.tool_name, meta.tool_input?.path || meta.tool_input?.file_path || meta.tool_input?.pattern].filter(Boolean).join(' ')
-            : [meta.method, meta.host, meta.path].filter(Boolean).join(' ')
-          return (
-            <div key={event.id} className="rounded border border-border-subtle bg-surface-0 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-text-primary">{subject || event.event_type}</div>
-                  <div className="mt-1 text-xs text-text-tertiary">
-                    {agents.get(event.agent_id)?.name ?? event.agent_id} · {event.action_kind} · {event.decision || 'observe'} / {event.outcome || 'n/a'}
-                  </div>
-                  {event.reason && <div className="mt-2 text-sm text-text-secondary">{event.reason}</div>}
-                </div>
-                <div className="text-xs text-text-tertiary">{new Date(event.timestamp).toLocaleString()}</div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {(['allow', 'review', 'deny'] as const).map(action => (
-                  <button
-                    key={action}
-                    onClick={async () => {
-                      setBusyEventId(event.id + action)
-                      try {
-                        await onCreateRule(event, action)
-                      } finally {
-                        setBusyEventId(null)
-                      }
-                    }}
-                    className={`rounded px-3 py-1.5 text-xs ${
-                      action === 'allow'
-                        ? 'border border-brand/30 text-brand hover:bg-brand/10'
-                        : action === 'review'
-                          ? 'border border-warning/30 text-warning hover:bg-warning/10'
-                          : 'border border-danger/20 text-danger hover:bg-danger/10'
-                    }`}
-                    disabled={busyEventId === event.id + action}
-                  >
-                    {busyEventId === event.id + action ? 'Loading…' : `Create ${action} rule`}
-                  </button>
-                ))}
-              </div>
+
+      {rulesTab === 'service' && (
+        <div className="space-y-4">
+          {isLoading && <div className="text-sm text-text-tertiary">Loading...</div>}
+
+          {!isLoading && allServices.length === 0 && (
+            <div className="text-sm text-text-tertiary py-8 text-center">
+              No services registered. Add adapters in the server configuration to manage policy.
             </div>
-          )
-        })}
-      </div>
+          )}
+
+          {!isLoading && allServices.length > 0 && activated.length === 0 && (
+            <div className="text-sm text-text-tertiary py-8 text-center">
+              Activate a service first to manage service rules.{' '}
+              <Link to="/dashboard/accounts" className="text-brand hover:underline">Go to Accounts</Link>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {activated.map(svc => (
+              <ServiceGroup
+                key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
+                svc={svc}
+                restrictions={restrictions}
+                orgId={orgId}
+              />
+            ))}
+          </div>
+
+          {unactivated.length > 0 && (
+            <div className="space-y-4">
+              <button
+                onClick={onToggleShowAll}
+                className="text-sm text-text-tertiary hover:text-text-primary"
+              >
+                {showAll ? 'Hide unactivated services' : `Show all services (${unactivated.length} not activated)`}
+              </button>
+              {showAll && (
+                <div className="space-y-4 opacity-50">
+                  {unactivated.map(svc => (
+                    <ServiceGroup
+                      key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
+                      svc={svc}
+                      restrictions={restrictions}
+                      orgId={orgId}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {rulesTab === 'egress' && !orgId && (
+        <RuleSection
+          title="Runtime Egress Rules"
+          subtitle="Fast-path controls for background and harness HTTP activity before it falls through to review logic."
+          rules={egressRules}
+          agents={agents}
+          onNew={() => onNewRule('egress')}
+          onEdit={onEditRule}
+          onToggle={onToggleRule}
+          onDelete={onDeleteRule}
+        />
+      )}
+
+      {rulesTab === 'tool' && !orgId && (
+        <RuleSection
+          title="Runtime Tool Rules"
+          subtitle="Allow, review, or deny repeated tool-use patterns before they turn into unnecessary approval churn."
+          rules={toolRules}
+          agents={agents}
+          onNew={() => onNewRule('tool')}
+          onEdit={onEditRule}
+          onToggle={onToggleRule}
+          onDelete={onDeleteRule}
+        />
+      )}
     </section>
   )
 }
