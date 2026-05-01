@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"container/list"
 	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,11 +56,106 @@ type Server struct {
 	// by (host, candidate value) so we never re-adjudicate the same secret
 	// across requests or across different surrounding contexts within one
 	// request. Negative verdicts stay context-scoped in secretVerdictCache.
-	secretValueVerdictCache sync.Map
+	secretValueVerdictCache *boundedTTLCache
 	observeNoticeBySession  sync.Map
 
 	adjudicationDebugDir string
 	adjudicationDebugMu  sync.Mutex
+}
+
+type boundedTTLCache struct {
+	mu    sync.Mutex
+	max   int
+	ttl   time.Duration
+	ll    *list.List
+	items map[string]*list.Element
+}
+
+type boundedTTLCacheEntry struct {
+	key       string
+	value     any
+	expiresAt time.Time
+}
+
+func newBoundedTTLCache(max int, ttl time.Duration) *boundedTTLCache {
+	if max <= 0 {
+		max = 1
+	}
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
+	return &boundedTTLCache{
+		max:   max,
+		ttl:   ttl,
+		ll:    list.New(),
+		items: make(map[string]*list.Element, max),
+	}
+}
+
+func (c *boundedTTLCache) Get(key string) (any, bool) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return nil, false
+	}
+	now := time.Now().UTC()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	elem, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	entry := elem.Value.(*boundedTTLCacheEntry)
+	if now.After(entry.expiresAt) {
+		c.removeElement(elem)
+		return nil, false
+	}
+	c.ll.MoveToFront(elem)
+	return entry.value, true
+}
+
+func (c *boundedTTLCache) Set(key string, value any) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	now := time.Now().UTC()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if elem, ok := c.items[key]; ok {
+		entry := elem.Value.(*boundedTTLCacheEntry)
+		entry.value = value
+		entry.expiresAt = now.Add(c.ttl)
+		c.ll.MoveToFront(elem)
+		return
+	}
+	elem := c.ll.PushFront(&boundedTTLCacheEntry{
+		key:       key,
+		value:     value,
+		expiresAt: now.Add(c.ttl),
+	})
+	c.items[key] = elem
+	c.pruneExpiredLocked(now)
+	for len(c.items) > c.max {
+		c.removeElement(c.ll.Back())
+	}
+}
+
+func (c *boundedTTLCache) pruneExpiredLocked(now time.Time) {
+	for elem := c.ll.Back(); elem != nil; {
+		prev := elem.Prev()
+		entry := elem.Value.(*boundedTTLCacheEntry)
+		if now.After(entry.expiresAt) {
+			c.removeElement(elem)
+		}
+		elem = prev
+	}
+}
+
+func (c *boundedTTLCache) removeElement(elem *list.Element) {
+	if c == nil || elem == nil {
+		return
+	}
+	c.ll.Remove(elem)
+	entry := elem.Value.(*boundedTTLCacheEntry)
+	delete(c.items, entry.key)
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -98,6 +195,12 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	p := goproxy.NewProxyHttpServer()
 	p.Verbose = false
 	p.CertStore = &goproxyCertAdapter{cache: certs}
+	p.Tr = &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
 
 	adjudicationDebugDir := os.Getenv("CLAWVISOR_RUNTIME_PROXY_ADJUDICATION_DEBUG_DIR")
 	if adjudicationDebugDir != "" {
@@ -107,15 +210,16 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:                  cfg,
-		logger:               logger,
-		ca:                   ca,
-		caKey:                caKey,
-		certs:                certs,
-		goproxy:              p,
-		traceSink:            traceSink,
-		bodyTraceDir:         bodyTraceDir,
-		adjudicationDebugDir: adjudicationDebugDir,
+		cfg:                     cfg,
+		logger:                  logger,
+		ca:                      ca,
+		caKey:                   caKey,
+		certs:                   certs,
+		goproxy:                 p,
+		traceSink:               traceSink,
+		bodyTraceDir:            bodyTraceDir,
+		secretValueVerdictCache: newBoundedTTLCache(4096, 24*time.Hour),
+		adjudicationDebugDir:    adjudicationDebugDir,
 	}
 	return s, nil
 }

@@ -253,16 +253,16 @@ func TestRuntimeHandlerListApprovalsExcludesRevokedAndExpiredSessions(t *testing
 	if err != nil {
 		t.Fatalf("GetApprovalRecord(approval-revoked): %v", err)
 	}
-	if revokedApproval.Status != "revoked" || revokedApproval.Resolution != "session_revoked" || revokedApproval.ResolvedAt == nil {
-		t.Fatalf("unexpected revoked approval state: %+v", revokedApproval)
+	if revokedApproval.Status != "pending" || revokedApproval.Resolution != "" || revokedApproval.ResolvedAt != nil {
+		t.Fatalf("expected revoked-session approval to remain unresolved when filtered from list: %+v", revokedApproval)
 	}
 
 	expiredApproval, err := st.GetApprovalRecord(ctx, "approval-expired")
 	if err != nil {
 		t.Fatalf("GetApprovalRecord(approval-expired): %v", err)
 	}
-	if expiredApproval.Status != "expired" || expiredApproval.Resolution != "session_expired" || expiredApproval.ResolvedAt == nil {
-		t.Fatalf("unexpected expired approval state: %+v", expiredApproval)
+	if expiredApproval.Status != "pending" || expiredApproval.Resolution != "" || expiredApproval.ResolvedAt != nil {
+		t.Fatalf("expected expired-session approval to remain unresolved when filtered from list: %+v", expiredApproval)
 	}
 }
 

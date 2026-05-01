@@ -603,10 +603,10 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 		}
 	}
 	valueKey := secretValueVerdictKey(s.host, group[0].candidate.Value)
-	if v, ok := s.server.secretValueVerdictCache.Load(valueKey); ok {
-		verdict := v.(adjudicationVerdict)
+	if verdict, ok := s.server.secretValueVerdictCache.Get(valueKey); ok {
+		cachedVerdict, _ := verdict.(adjudicationVerdict)
 		for _, task := range group {
-			s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+			s.server.secretVerdictCache.Store(task.cacheKey, cachedVerdict)
 		}
 		return
 	}
@@ -656,7 +656,7 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 		s.server.secretVerdictCache.Store(task.cacheKey, verdict)
 	}
 	if verdict.Credential {
-		s.server.secretValueVerdictCache.Store(valueKey, verdict)
+		s.server.secretValueVerdictCache.Set(valueKey, verdict)
 	}
 }
 
@@ -743,7 +743,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		return verdict, true
 	}
 	valueKey := secretValueVerdictKey(s.host, candidate.Value)
-	if cached, ok := s.server.secretValueVerdictCache.Load(valueKey); ok {
+	if cached, ok := s.server.secretValueVerdictCache.Get(valueKey); ok {
 		verdict, _ := cached.(adjudicationVerdict)
 		s.cacheHits++
 		s.server.secretVerdictCache.Store(key, verdict)
@@ -805,7 +805,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	s.recordAdjudicationDebug(debugRec)
 	s.server.secretVerdictCache.Store(key, verdict)
 	if verdict.Credential {
-		s.server.secretValueVerdictCache.Store(valueKey, verdict)
+		s.server.secretValueVerdictCache.Set(valueKey, verdict)
 	}
 	return verdict, true
 }

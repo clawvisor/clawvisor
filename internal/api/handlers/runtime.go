@@ -335,34 +335,60 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime approvals")
 		return
 	}
+	sessionByID, err := h.runtimeSessionsByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not inspect runtime approval sessions")
+		return
+	}
 	var filtered []*store.ApprovalRecord
 	now := time.Now().UTC()
 	for _, rec := range records {
-		if rec.SessionID != nil && *rec.SessionID != "" {
-			session, err := h.st.GetRuntimeSession(r.Context(), *rec.SessionID)
-			if err != nil {
-				if err == store.ErrNotFound {
-					_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_missing", "revoked", now)
-					continue
-				}
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not inspect runtime approval session")
-				return
-			}
-			if session.RevokedAt != nil {
-				_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_revoked", "revoked", now)
-				continue
-			}
-			if session.ExpiresAt.Before(now) {
-				_ = h.st.ResolveApprovalRecord(r.Context(), rec.ID, "session_expired", "expired", now)
-				continue
-			}
+		if rec.SessionID == nil || *rec.SessionID == "" {
 			filtered = append(filtered, rec)
+			continue
 		}
+		session := sessionByID[*rec.SessionID]
+		if session == nil || session.RevokedAt != nil || session.ExpiresAt.Before(now) {
+			continue
+		}
+		filtered = append(filtered, rec)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": filtered,
 		"total":   len(filtered),
 	})
+}
+
+func (h *RuntimeHandler) runtimeSessionsByID(ctx context.Context, userID string) (map[string]*store.RuntimeSession, error) {
+	out := map[string]*store.RuntimeSession{}
+	if h.manager != nil {
+		sessions, err := h.manager.ListRuntimeSessionsForUser(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			if session != nil {
+				out[session.ID] = session
+			}
+		}
+		return out, nil
+	}
+	agents, err := h.st.ListAgents(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, agent := range agents {
+		sessions, err := h.st.ListRuntimeSessionsByAgent(ctx, agent.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			if session != nil {
+				out[session.ID] = session
+			}
+		}
+	}
+	return out, nil
 }
 
 func (h *RuntimeHandler) ListEvents(w http.ResponseWriter, r *http.Request) {

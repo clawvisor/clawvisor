@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -890,6 +891,14 @@ func TestReadJSONBodyAllowsValidNonObjectJSON(t *testing.T) {
 	}
 	if shape != nil {
 		t.Fatalf("expected nil shape for JSON scalar, got %+v", shape)
+	}
+}
+
+func TestReadJSONBodyRejectsOversizedPayload(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodPost, "https://example.com/test", io.NopCloser(strings.NewReader(`{"payload":"`+strings.Repeat("a", int(maxRuntimeJSONBodyBytes))+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	if _, _, err := readJSONBody(req); !errors.Is(err, errRuntimeRequestBodyTooLarge) {
+		t.Fatalf("readJSONBody(oversized) err=%v, want %v", err, errRuntimeRequestBodyTooLarge)
 	}
 }
 

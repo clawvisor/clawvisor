@@ -66,3 +66,19 @@ func TestManagerCreateRuntimeSession(t *testing.T) {
 		t.Fatal("proxy bearer secret should not be stored in plaintext")
 	}
 }
+
+func TestNewServerUsesVerifiedUpstreamTransport(t *testing.T) {
+	srv, err := NewServer(Config{
+		DataDir: t.TempDir(),
+		Addr:    "127.0.0.1:0",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if srv.goproxy == nil || srv.goproxy.Tr == nil || srv.goproxy.Tr.TLSClientConfig == nil {
+		t.Fatal("expected runtime proxy transport with TLS config")
+	}
+	if srv.goproxy.Tr.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("expected runtime proxy transport to verify upstream TLS")
+	}
+}

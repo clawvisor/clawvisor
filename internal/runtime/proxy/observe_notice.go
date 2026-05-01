@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -25,6 +26,12 @@ var observeNoticePrefixRE = regexp.MustCompile(`^(?:\(\[Clawvisor system message
 type responseNotice struct {
 	Kind string
 	Text string
+}
+
+type observeNoticeState struct {
+	mu           sync.Mutex
+	lastEmitted  time.Time
+	pendingUntil time.Time
 }
 
 func (s *Server) InstallObserveNoticeRequestScrubber() {
@@ -304,11 +311,15 @@ func (s *Server) shouldEmitObserveNotice(ctx context.Context, st store.Store, se
 	if s == nil || st == nil || session == nil || session.ID == "" {
 		return false
 	}
+	state := s.observeNoticeState(session.ID)
 	now := time.Now().UTC()
-	if last, ok := s.observeNoticeBySession.Load(session.ID); ok {
-		if ts, ok := last.(time.Time); ok && now.Sub(ts) < observeNoticeInterval {
-			return false
-		}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.lastEmitted.IsZero() && now.Sub(state.lastEmitted) < observeNoticeInterval {
+		return false
+	}
+	if now.Before(state.pendingUntil) {
+		return false
 	}
 	events, err := st.ListRuntimeEvents(ctx, session.UserID, store.RuntimeEventFilter{
 		SessionID: session.ID,
@@ -321,12 +332,14 @@ func (s *Server) shouldEmitObserveNotice(ctx context.Context, st store.Store, se
 				continue
 			}
 			if now.Sub(event.Timestamp) < observeNoticeInterval {
-				s.observeNoticeBySession.Store(session.ID, event.Timestamp)
+				state.lastEmitted = event.Timestamp
+				state.pendingUntil = time.Time{}
 				return false
 			}
 			break
 		}
 	}
+	state.pendingUntil = now.Add(time.Minute)
 	return true
 }
 
@@ -334,7 +347,28 @@ func (s *Server) markObserveNoticeEmitted(sessionID string) {
 	if s == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	s.observeNoticeBySession.Store(sessionID, time.Now().UTC())
+	state := s.observeNoticeState(sessionID)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.lastEmitted = time.Now().UTC()
+	state.pendingUntil = time.Time{}
+}
+
+func (s *Server) observeNoticeState(sessionID string) *observeNoticeState {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return &observeNoticeState{}
+	}
+	if existing, ok := s.observeNoticeBySession.Load(sessionID); ok {
+		if state, ok := existing.(*observeNoticeState); ok {
+			return state
+		}
+	}
+	state := &observeNoticeState{}
+	actual, _ := s.observeNoticeBySession.LoadOrStore(sessionID, state)
+	if loaded, ok := actual.(*observeNoticeState); ok {
+		return loaded
+	}
+	return state
 }
 
 func (s *Server) markResponseNoticesInjected(ctx context.Context, st store.Store, session *store.RuntimeSession, reqState *RequestState, provider conversation.Provider, notices []responseNotice) {

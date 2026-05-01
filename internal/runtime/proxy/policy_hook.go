@@ -17,6 +17,7 @@ import (
 	"github.com/elazarl/goproxy"
 	"github.com/google/uuid"
 
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -38,6 +39,10 @@ type RuntimeApprovalPayload struct {
 	Headers            map[string]any `json:"headers,omitempty"`
 }
 
+const maxRuntimeJSONBodyBytes int64 = 25 << 20
+
+var errRuntimeRequestBodyTooLarge = errors.New("runtime request body too large")
+
 type PolicyHooks struct {
 	Store        store.Store
 	Config       *config.Config
@@ -56,6 +61,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		bodyBytes, bodyShape, err := readJSONBody(req)
 		s.recordTimingSpan(req, "egress.read_body", bodyReadStartedAt)
 		if err != nil {
+			if errors.Is(err, errRuntimeRequestBodyTooLarge) {
+				return req, goproxy.NewResponse(req, "application/json", http.StatusRequestEntityTooLarge, `{"error":"runtime request body exceeds the maximum allowed size"}`)
+			}
 			return req, goproxy.NewResponse(req, "application/json", http.StatusBadRequest, `{"error":"invalid JSON request body"}`)
 		}
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -68,16 +76,17 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		reqFingerprint := fingerprintRequest(st.Session.AgentID, req, bodyBytes)
 		approvalRequestID := st.Session.ID + ":" + reqFingerprint
 
+		queryShape := urlValuesToMap(req.URL.Query())
+		headerShape := flattenHeaders(req.Header)
+		safeQueryShape := sanitizeRuntimeValue(queryShape)
+		safeBodyShape := sanitizeRuntimeValue(bodyShape)
+		safeHeaderShapeAny := sanitizeRuntimeValue(mapStringToAny(headerShape))
 		paramsSafe, _ := json.Marshal(map[string]any{
 			"host":    host,
 			"path":    req.URL.Path,
-			"query":   req.URL.Query(),
-			"headers": flattenHeaders(req.Header),
+			"query":   safeQueryShape,
+			"headers": safeHeaderShapeAny,
 		})
-
-		queryShape := urlValuesToMap(req.URL.Query())
-		headerShape := flattenHeaders(req.Header)
-		headerShapeAny := mapStringToAny(headerShape)
 		egressReq := runtimepolicy.EgressRequest{
 			Host:    host,
 			Method:  req.Method,
@@ -175,9 +184,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 					Path:               req.URL.Path,
 					Classification:     "request_once",
 					Reason:             ruleReason,
-					Query:              queryShape,
-					Body:               bodyShape,
-					Headers:            headerShapeAny,
+					Query:              safeQueryShape,
+					Body:               safeBodyShape,
+					Headers:            safeHeaderShapeAny,
 				}
 				payloadJSON, _ := json.Marshal(payload)
 				summaryJSON, _ := json.Marshal(map[string]any{
@@ -400,9 +409,9 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 			Path:               req.URL.Path,
 			Classification:     approvalKind,
 			Reason:             matchedWhy,
-			Query:              queryShape,
-			Body:               bodyShape,
-			Headers:            headerShapeAny,
+			Query:              safeQueryShape,
+			Body:               safeBodyShape,
+			Headers:            safeHeaderShapeAny,
 		}
 		payloadJSON, _ := json.Marshal(payload)
 		summaryJSON, _ := json.Marshal(map[string]any{
@@ -635,9 +644,12 @@ func readJSONBody(req *http.Request) ([]byte, map[string]any, error) {
 	if req.Body == nil {
 		return nil, nil, nil
 	}
-	body, err := io.ReadAll(req.Body)
+	body, err := io.ReadAll(io.LimitReader(req.Body, maxRuntimeJSONBodyBytes+1))
 	if err != nil {
 		return nil, nil, err
+	}
+	if int64(len(body)) > maxRuntimeJSONBodyBytes {
+		return nil, nil, errRuntimeRequestBodyTooLarge
 	}
 	if len(body) == 0 {
 		return body, nil, nil
@@ -653,6 +665,38 @@ func readJSONBody(req *http.Request) ([]byte, map[string]any, error) {
 		}
 	}
 	return body, asMap, nil
+}
+
+func sanitizeRuntimeValue(value any) map[string]any {
+	sanitized := sanitizeRuntimeNode(value)
+	out, _ := sanitized.(map[string]any)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeRuntimeNode(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		shallow := format.StripSecrets(typed)
+		if len(shallow) == 0 {
+			return map[string]any{}
+		}
+		out := make(map[string]any, len(shallow))
+		for key, child := range shallow {
+			out[key] = sanitizeRuntimeNode(child)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, child := range typed {
+			out = append(out, sanitizeRuntimeNode(child))
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 func requestHost(req *http.Request) string {

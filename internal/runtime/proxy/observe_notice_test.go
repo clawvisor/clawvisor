@@ -270,3 +270,29 @@ func TestShouldEmitObserveNoticeIgnoresUnrelatedEventFlood(t *testing.T) {
 		t.Fatal("expected recent observe notice to suppress another emit even after unrelated event flood")
 	}
 }
+
+func TestShouldEmitObserveNoticeSuppressesConcurrentPendingEmit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, t.TempDir()+"/observe-notice-pending.db")
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "observe-notice-pending-session", userID, agentID, true)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+
+	srv := &Server{}
+	if !srv.shouldEmitObserveNotice(ctx, st, runtimeSession) {
+		t.Fatal("expected fresh session to emit observe notice")
+	}
+	if srv.shouldEmitObserveNotice(ctx, st, runtimeSession) {
+		t.Fatal("expected second pending emit attempt to be suppressed until first notice is marked")
+	}
+}
