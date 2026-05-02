@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/expose"
+)
+
+func TestWriteAndReadExposePIDFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "expose.pid")
+	if err := writeExposePIDFile(path); err != nil {
+		t.Fatalf("writeExposePIDFile: %v", err)
+	}
+	got := readExposePIDFile(path)
+	if got != os.Getpid() {
+		t.Fatalf("readExposePIDFile = %d, want %d", got, os.Getpid())
+	}
+}
+
+func TestReadExposePIDFileMissingReturnsZero(t *testing.T) {
+	if got := readExposePIDFile(filepath.Join(t.TempDir(), "nope")); got != 0 {
+		t.Fatalf("expected 0 for missing pidfile, got %d", got)
+	}
+}
+
+func TestProxyExposeForegroundExitsOnCtxCancel(t *testing.T) {
+	// Stand up two upstreams and exercise the foreground runner end-to-end so
+	// we cover the readiness print, pidfile cleanup, and graceful ctx exit.
+	t.Setenv("HOME", t.TempDir())
+
+	proxyUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "proxy")
+	}))
+	defer proxyUp.Close()
+	apiUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "api")
+	}))
+	defer apiUp.Close()
+
+	cfg := expose.Config{
+		BindAddr:      "127.0.0.1",
+		ProxyUpstream: strings.TrimPrefix(proxyUp.URL, "http://"),
+		APIUpstream:   strings.TrimPrefix(apiUp.URL, "http://"),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	doneCh := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		doneCh <- runProxyExposeForeground(ctx, cfg)
+	}()
+
+	// Wait for pidfile to appear (proxy is "ready").
+	pidPath, err := proxyExposePIDPath()
+	if err != nil {
+		t.Fatalf("proxyExposePIDPath: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, statErr := os.Stat(pidPath); statErr == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, statErr := os.Stat(pidPath); statErr != nil {
+		t.Fatalf("pidfile %s never appeared: %v", pidPath, statErr)
+	}
+
+	cancel()
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("foreground returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground did not exit on ctx cancel")
+	}
+	wg.Wait()
+
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pidfile not cleaned up after exit: stat err=%v", err)
+	}
+}
+
+func TestDefaultExposeUpstreamsHonorsLocalConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, ".clawvisor"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yaml := `server:
+  host: 10.0.0.5
+  port: 18789
+runtime_proxy:
+  listen_addr: 127.0.0.1:33333
+`
+	if err := os.WriteFile(filepath.Join(tmp, ".clawvisor", "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	proxy, api, err := defaultExposeUpstreams()
+	if err != nil {
+		t.Fatalf("defaultExposeUpstreams: %v", err)
+	}
+	if proxy != "127.0.0.1:33333" {
+		t.Errorf("proxy upstream: got %q want 127.0.0.1:33333", proxy)
+	}
+	if api != "10.0.0.5:18789" {
+		t.Errorf("api upstream: got %q want 10.0.0.5:18789", api)
+	}
+}
+
+// freePort returns an OS-assigned ephemeral port as a string, for tests that
+// want to bind explicit ports without colliding.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	return fmt.Sprintf("%d", ln.Addr().(*net.TCPAddr).Port)
+}

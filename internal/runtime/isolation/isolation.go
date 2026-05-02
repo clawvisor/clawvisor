@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/forwarder"
 )
 
 // Mode identifies an isolation mode for `clawvisor agent docker-run`.
@@ -60,9 +62,9 @@ type Handle struct {
 	network   *NetworkInfo
 	holder    *HolderInfo
 	hostIP    string
-	proxyFwd  *Forwarder
-	apiFwd    *Forwarder
-	testFwd   *Forwarder
+	proxyFwd  *forwarder.Forwarder
+	apiFwd    *forwarder.Forwarder
+	testFwd   *forwarder.Forwarder
 	rewritten *RewrittenURL
 
 	cleanupOnce sync.Once
@@ -118,20 +120,20 @@ func Prepare(ctx context.Context, plan Plan) (handle *Handle, err error) {
 		}
 	}()
 
-	proxyFwd, err := StartForwarder(ctx, forwarderBindAddr, plan.UpstreamProxyAddr)
+	proxyFwd, err := forwarder.Start(ctx, forwarderBindAddr, plan.UpstreamProxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("start proxy forwarder: %w", err)
 	}
 	h.proxyFwd = proxyFwd
 
-	apiFwd, err := StartForwarder(ctx, forwarderBindAddr, apiUpstream)
+	apiFwd, err := forwarder.Start(ctx, forwarderBindAddr, apiUpstream)
 	if err != nil {
 		return nil, fmt.Errorf("start api forwarder: %w", err)
 	}
 	h.apiFwd = apiFwd
 
 	if plan.TestAllowHostPort != "" {
-		testFwd, err := StartForwarder(ctx, forwarderBindAddr, plan.TestAllowHostPort)
+		testFwd, err := forwarder.Start(ctx, forwarderBindAddr, plan.TestAllowHostPort)
 		if err != nil {
 			return nil, fmt.Errorf("start test forwarder: %w", err)
 		}
@@ -167,7 +169,7 @@ func Prepare(ctx context.Context, plan Plan) (handle *Handle, err error) {
 	return h, nil
 }
 
-func testForwarderPort(testFwd *Forwarder) int {
+func testForwarderPort(testFwd *forwarder.Forwarder) int {
 	if testFwd == nil {
 		return 0
 	}
