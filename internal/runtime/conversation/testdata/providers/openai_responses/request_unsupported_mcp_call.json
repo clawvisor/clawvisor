@@ -1,0 +1,22 @@
+{
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Ask the MCP server"
+        }
+      ]
+    },
+    {
+      "type": "mcp_call",
+      "call_id": "mcp_1",
+      "name": "search",
+      "arguments": {
+        "query": "runtime strategy"
+      }
+    }
+  ]
+}

@@ -32,7 +32,7 @@ func New(baseURL, refreshToken string) *Client {
 
 func (c *Client) SetAccessToken(t string)  { c.accessToken = t }
 func (c *Client) SetRefreshToken(t string) { c.refreshToken = t }
-func (c *Client) BaseURL() string           { return c.baseURL }
+func (c *Client) BaseURL() string          { return c.baseURL }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -102,6 +102,80 @@ func (c *Client) LoginMagic(token string) (*AuthResponse, error) {
 	c.accessToken = resp.AccessToken
 	c.refreshToken = resp.RefreshToken
 	return &resp, nil
+}
+
+// ── Runtime ────────────────────────────────────────────────────────────────
+
+func (c *Client) CreateRuntimeSession(req CreateRuntimeSessionRequest) (*CreateRuntimeSessionResponse, error) {
+	var resp CreateRuntimeSessionResponse
+	if err := c.post("/api/runtime/sessions", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) GetAgentRuntimeSettings(agentID string) (*AgentRuntimeSettings, error) {
+	var resp AgentRuntimeSettings
+	if err := c.get("/api/agents/"+agentID+"/runtime-settings", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateAgentRuntimeSettings(agentID string, settings AgentRuntimeSettings) (*AgentRuntimeSettings, error) {
+	var resp AgentRuntimeSettings
+	if err := c.doJSON("PUT", c.baseURL+"/api/agents/"+agentID+"/runtime-settings", settings, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) GetRuntimePresetDecision(commandKey, profile string) (*RuntimePresetDecision, error) {
+	params := url.Values{}
+	params.Set("command_key", commandKey)
+	params.Set("profile", profile)
+	var resp struct {
+		Decision *RuntimePresetDecision `json:"decision"`
+	}
+	if err := c.get("/api/runtime/preset-decisions", params, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Decision == nil {
+		return nil, nil
+	}
+	return resp.Decision, nil
+}
+
+func (c *Client) UpsertRuntimePresetDecision(decision RuntimePresetDecision) (*RuntimePresetDecision, error) {
+	var resp RuntimePresetDecision
+	if err := c.doJSON("PUT", c.baseURL+"/api/runtime/preset-decisions", decision, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListRuntimeStarterProfiles() ([]StarterProfile, error) {
+	var resp struct {
+		Entries []StarterProfile `json:"entries"`
+	}
+	if err := c.get("/api/runtime/starter-profiles", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Entries, nil
+}
+
+func (c *Client) ApplyRuntimeStarterProfile(profileID, agentID string) ([]RuntimePolicyRule, error) {
+	body := map[string]string{}
+	if strings.TrimSpace(agentID) != "" {
+		body["agent_id"] = agentID
+	}
+	var resp struct {
+		Entries []RuntimePolicyRule `json:"entries"`
+	}
+	if err := c.post("/api/runtime/starter-profiles/"+profileID+"/apply", body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Entries, nil
 }
 
 // ── Overview ────────────────────────────────────────────────────────────────

@@ -419,11 +419,15 @@ func (h *SkillHandler) writeServiceDetail(buf *strings.Builder, ctx context.Cont
 // isRestricted returns true if the action is restricted on all aliases of the entry.
 func (h *SkillHandler) isRestricted(ctx context.Context, userID string, entry *catalogEntry, action string) bool {
 	for _, alias := range entry.aliases {
+		rule, _ := matchServicePolicyRule(ctx, h.st, userID, alias, action)
+		if rule == nil && alias != entry.baseID {
+			rule, _ = matchServicePolicyRule(ctx, h.st, userID, entry.baseID, action)
+		}
 		restriction, _ := h.st.MatchRestriction(ctx, userID, alias, action)
 		if restriction == nil && alias != entry.baseID {
 			restriction, _ = h.st.MatchRestriction(ctx, userID, entry.baseID, action)
 		}
-		if restriction == nil {
+		if rule == nil && restriction == nil {
 			return false
 		}
 	}

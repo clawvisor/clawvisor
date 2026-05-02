@@ -1,0 +1,21 @@
+{
+  "instructions": "Stay within the approved task.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "List /tmp"
+        }
+      ]
+    },
+    {
+      "type": "shell_call",
+      "name": "shell",
+      "call_id": "shell_1",
+      "arguments": "{\"command\":\"ls /tmp\"}"
+    }
+  ]
+}

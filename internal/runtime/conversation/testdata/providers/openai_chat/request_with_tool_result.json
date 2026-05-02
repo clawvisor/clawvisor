@@ -1,0 +1,24 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "Stay scoped"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "function_call",
+          "id": "call_456",
+          "name": "Bash",
+          "arguments": "{\"command\":\"ls /tmp\"}"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_456",
+      "content": "file-a\nfile-b"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "resp_mcp",
+  "object": "response",
+  "output": [
+    {
+      "id": "mcp_1",
+      "type": "mcp_call",
+      "status": "completed",
+      "call_id": "mcp_1",
+      "name": "search",
+      "arguments": {
+        "query": "runtime strategy"
+      }
+    }
+  ]
+}

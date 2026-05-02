@@ -1,0 +1,14 @@
+{
+  "id": "resp_1",
+  "object": "response",
+  "output": [
+    {
+      "id": "fc_1",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_1",
+      "name": "Bash",
+      "arguments": "{\"command\":\"rm -rf /\"}"
+    }
+  ]
+}

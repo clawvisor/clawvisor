@@ -1,17 +1,27 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest } from '../api/client'
+import { api, type Task, type QueueItem, type Agent, type ActivityBucket, type VerificationVerdict, type ConnectionRequest, type ApprovalRecord, type RuntimeStatus } from '../api/client'
+import { filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
+import { useAuth } from '../hooks/useAuth'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
 import VerificationIcon from '../components/VerificationIcon'
 
+type AttentionItem =
+  | { kind: 'queue'; createdAt: string; item: QueueItem }
+  | { kind: 'runtime_approval'; createdAt: string; approval: ApprovalRecord }
+
 export default function Overview() {
+  const { features } = useAuth()
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [deepLinkResult, setDeepLinkResult] = useState<string | null>(null)
+  const runtimeActivityUI = !!features?.runtime_activity
+  const liveSessionsUI = !!features?.agent_live_sessions
+  const showRuntimeAttention = runtimeActivityUI || liveSessionsUI
 
   // Deep link mutations for approval requests (moved from Queue)
   const deepApproveRequest = useMutation({
@@ -50,6 +60,42 @@ export default function Overview() {
     queryFn: () => api.overview.get(),
     refetchInterval: 30_000,
   })
+  const { data: runtimeApprovals } = useQuery({
+    queryKey: ['runtime-approvals'],
+    queryFn: async () => {
+      try {
+        return await api.runtime.listApprovals()
+      } catch {
+        return { entries: [], total: 0 }
+      }
+    },
+    refetchInterval: 30_000,
+    enabled: showRuntimeAttention,
+  })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: async () => {
+      try {
+        return await api.runtime.status()
+      } catch {
+        return null
+      }
+    },
+    refetchInterval: 30_000,
+    enabled: runtimeActivityUI,
+  })
+  const { data: runtimeSessions } = useQuery({
+    queryKey: ['runtime-sessions'],
+    queryFn: async () => {
+      try {
+        return await api.runtime.listSessions()
+      } catch {
+        return { entries: [], total: 0 }
+      }
+    },
+    refetchInterval: 30_000,
+    enabled: liveSessionsUI,
+  })
 
   // Agents for name resolution
   const { data: agentsData } = useQuery({
@@ -66,8 +112,23 @@ export default function Overview() {
   }, [agentsData])
 
   const queueItems = overview?.queue ?? []
+  const runtimeApprovalItems = useMemo(
+    () => (showRuntimeAttention ? filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? []) : []),
+    [runtimeApprovals, runtimeSessions, showRuntimeAttention],
+  )
   const activeTasks = overview?.active_tasks ?? []
   const activity = overview?.activity ?? []
+  const attentionItems = useMemo<AttentionItem[]>(() => {
+    const combined: AttentionItem[] = [
+      ...queueItems.map(item => ({ kind: 'queue' as const, createdAt: item.created_at, item })),
+      ...runtimeApprovalItems.map(approval => ({ kind: 'runtime_approval' as const, createdAt: approval.created_at, approval })),
+    ]
+    return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }, [queueItems, runtimeApprovalItems])
+  const activeRuntimeSessions = useMemo(
+    () => (liveSessionsUI ? (runtimeSessions?.entries ?? []).filter(isActiveRuntimeSession) : []),
+    [runtimeSessions, liveSessionsUI],
+  )
 
   // Track tasks that disappear from active_tasks and show them as "completed" for 60s
   const prevActiveRef = useRef<Map<string, Task>>(new Map())
@@ -116,18 +177,22 @@ export default function Overview() {
         </div>
       )}
 
+      {runtimeActivityUI && runtimeStatus && (
+        <RuntimePolicyCard status={runtimeStatus} activeSessionCount={activeRuntimeSessions.length} />
+      )}
+
       {/* Queue section */}
       <section>
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-lg font-semibold text-text-primary">Needs your attention</h2>
-          {queueItems.length > 0 && (
+          {attentionItems.length > 0 && (
             <span className="bg-warning text-surface-0 text-xs font-bold rounded px-2.5 py-0.5 font-mono">
-              {queueItems.length}
+              {attentionItems.length}
             </span>
           )}
         </div>
 
-        {queueItems.length === 0 ? (
+        {attentionItems.length === 0 ? (
           <div className="rounded-md border border-success/30 bg-success/10 px-5 py-4 flex items-center gap-3">
             <svg className="w-5 h-5 text-success shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
@@ -137,19 +202,27 @@ export default function Overview() {
           </div>
         ) : (
           <div className="space-y-3">
-            {queueItems.map(item =>
-              item.type === 'approval' ? (
-                <ApprovalCard key={item.id} item={item} />
-              ) : item.type === 'connection' && item.connection ? (
-                <ConnectionQueueCard key={item.id} connection={item.connection} />
-              ) : item.task ? (
-                <TaskCard
-                  key={item.id}
-                  task={item.task}
-                  agentName={agentMap.get(item.task.agent_id) ?? item.task.agent_id.slice(0, 8)}
-                />
-              ) : null
-            )}
+            {attentionItems.map(item => {
+              if (item.kind === 'runtime_approval') {
+                return <RuntimeApprovalCard key={item.approval.id} approval={item.approval} />
+              }
+              if (item.item.type === 'approval') {
+                return <ApprovalCard key={item.item.id} item={item.item} />
+              }
+              if (item.item.type === 'connection' && item.item.connection) {
+                return <ConnectionQueueCard key={item.item.id} connection={item.item.connection} />
+              }
+              if (item.item.task) {
+                return (
+                  <TaskCard
+                    key={item.item.id}
+                    task={item.item.task}
+                    agentName={agentMap.get(item.item.task.agent_id) ?? item.item.task.agent_id.slice(0, 8)}
+                  />
+                )
+              }
+              return null
+            })}
           </div>
         )}
       </section>
@@ -302,12 +375,17 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   const [result, setResult] = useState<string | null>(null)
   const [verifyOpen, setVerifyOpen] = useState(false)
   const a = item.approval!
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['overview'] })
+    qc.invalidateQueries({ queryKey: ['queue'] })
+    qc.invalidateQueries({ queryKey: ['tasks'] })
+  }
 
   const approveMut = useMutation({
-    mutationFn: () => api.approvals.approve(a.request_id),
+    mutationFn: (resolution: 'allow_once' | 'allow_session' | 'allow_always') => api.approvals.approve(a.request_id, resolution),
     onSuccess: (res) => {
       setResult(res.status === 'executed' ? 'Approved & executed' : `Outcome: ${res.status}`)
-      qc.invalidateQueries({ queryKey: ['overview'] })
+      invalidate()
     },
   })
 
@@ -315,7 +393,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
     mutationFn: () => api.approvals.deny(a.request_id),
     onSuccess: () => {
       setResult('Denied')
-      qc.invalidateQueries({ queryKey: ['overview'] })
+      invalidate()
     },
   })
 
@@ -399,15 +477,211 @@ function ApprovalCard({ item }: { item: QueueItem }) {
           Deny
         </button>
         <button
-          onClick={() => approveMut.mutate()}
+          onClick={() => approveMut.mutate('allow_once')}
+          disabled={isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
+        >
+          {approveMut.isPending ? 'Approving...' : 'Allow Once'}
+        </button>
+        <button
+          onClick={() => approveMut.mutate('allow_session')}
+          disabled={isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
+        >
+          Create Session Task
+        </button>
+        <button
+          onClick={() => approveMut.mutate('allow_always')}
           disabled={isPending}
           className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
         >
-          {approveMut.isPending ? 'Approving...' : 'Approve'}
+          Create Standing Task
         </button>
       </div>
     </div>
   )
+}
+
+function RuntimePolicyCard({ status, activeSessionCount }: { status: RuntimeStatus; activeSessionCount: number }) {
+  if (!status.enabled && activeSessionCount === 0) {
+    return null
+  }
+
+  return (
+    <section>
+      <div className="rounded-md border border-border-default bg-surface-1 p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">Runtime policy</h2>
+            <p className="text-sm text-text-tertiary mt-1">
+              Local runtime enforcement and approval settings for proxy-backed agent runs.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+            <span className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 ${status.enabled ? 'bg-success/15 text-success' : 'bg-surface-2 text-text-tertiary'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${status.enabled ? 'bg-success' : 'bg-text-tertiary'}`} />
+              {status.enabled ? 'proxy enabled' : 'proxy disabled'}
+            </span>
+            <span className="inline-flex items-center rounded bg-surface-2 px-2.5 py-1 text-text-secondary">
+              {activeSessionCount} active session{activeSessionCount === 1 ? '' : 's'}
+            </span>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 text-sm">
+          <div className="rounded border border-border-subtle bg-surface-0 p-3">
+            <div className="text-text-tertiary text-xs uppercase tracking-wider">Observation default</div>
+            <div className="mt-1 text-text-primary font-medium">
+              {status.observation_mode_default ? 'Observe only' : 'Enforcing'}
+            </div>
+          </div>
+          <div className="rounded border border-border-subtle bg-surface-0 p-3">
+            <div className="text-text-tertiary text-xs uppercase tracking-wider">Inline approvals</div>
+            <div className="mt-1 text-text-primary font-medium">
+              {status.inline_approval_enabled ? 'Enabled' : 'Disabled'}
+            </div>
+          </div>
+          <div className="rounded border border-border-subtle bg-surface-0 p-3">
+            <div className="text-text-tertiary text-xs uppercase tracking-wider">Lease timeout</div>
+            <div className="mt-1 text-text-primary font-medium">{status.tool_lease_timeout_seconds}s</div>
+          </div>
+          <div className="rounded border border-border-subtle bg-surface-0 p-3">
+            <div className="text-text-tertiary text-xs uppercase tracking-wider">One-off retry TTL</div>
+            <div className="mt-1 text-text-primary font-medium">{status.one_off_ttl_seconds}s</div>
+          </div>
+        </div>
+        {status.proxy_url && (
+          <div className="rounded border border-border-subtle bg-surface-0 p-3">
+            <div className="text-text-tertiary text-xs uppercase tracking-wider">Proxy endpoint</div>
+            <code className="mt-1 block text-xs text-text-primary break-all">{status.proxy_url}</code>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function RuntimeApprovalCard({ approval }: { approval: ApprovalRecord }) {
+  const qc = useQueryClient()
+  const [result, setResult] = useState<string | null>(null)
+
+  const summary = runtimeSummary(approval)
+  const payload = runtimePayload(approval)
+  const primary = runtimeApprovalPrimary(payload, summary, approval.kind)
+  const reason = runtimeApprovalReason(payload, summary)
+  const detail = runtimeApprovalDetail(payload)
+  const allowLabel = approval.resolution_transport === 'release_held_tool_use' ? 'Release Tool Call' : 'Allow Once'
+
+  const resolveMut = useMutation({
+    mutationFn: (resolution: 'allow_once' | 'deny') => api.runtime.resolveApproval(approval.id, resolution),
+    onSuccess: (_res, resolution) => {
+      setResult(resolution === 'deny' ? 'Denied' : 'Allowed once')
+      qc.invalidateQueries({ queryKey: ['overview'] })
+      qc.invalidateQueries({ queryKey: ['runtime-approvals'] })
+      qc.invalidateQueries({ queryKey: ['queue'] })
+    },
+    onError: (err: Error) => setResult(`Failed: ${err.message}`),
+  })
+
+  if (result) {
+    return (
+      <div className="border border-border-default rounded-md bg-surface-1 p-5">
+        <div className="p-3 bg-surface-2 rounded text-sm text-text-tertiary">{result}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-surface-1 border border-border-default rounded-md border-l-[3px] border-l-brand overflow-hidden">
+      <div className="px-5 pt-5 pb-4">
+        <span className="font-mono text-lg font-semibold text-text-primary break-all">{primary}</span>
+        {reason && <p className="text-sm text-text-secondary mt-1.5">{reason}</p>}
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium px-2 py-0.5 rounded bg-brand/15 text-brand">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+            {approval.resolution_transport === 'release_held_tool_use' ? 'inline runtime approval' : 'runtime retry approval'}
+          </span>
+          {approval.session_id && (
+            <span className="text-xs text-text-tertiary">session <code className="font-mono">{approval.session_id.slice(0, 8)}</code></span>
+          )}
+          {approval.expires_at && <CountdownTimer expiresAt={approval.expires_at} />}
+        </div>
+        {payload && (
+          <div className="mt-3 bg-surface-0 border border-border-subtle rounded p-3 space-y-1">
+            {detail && <div className="text-[11px] font-mono text-text-tertiary break-all">{detail}</div>}
+            {payload.host && <div className="text-[11px] font-mono text-text-tertiary">host: {payload.host}</div>}
+            {payload.path && <div className="text-[11px] font-mono text-text-tertiary">path: {payload.path}</div>}
+            {payload.query && Object.keys(payload.query).length > 0 && (
+              <div className="text-[11px] font-mono text-text-tertiary break-all">query: {JSON.stringify(payload.query)}</div>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
+        <button
+          onClick={() => resolveMut.mutate('deny')}
+          disabled={resolveMut.isPending}
+          className="rounded px-4 py-1.5 text-sm font-medium bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+        >
+          Deny
+        </button>
+        <button
+          onClick={() => resolveMut.mutate('allow_once')}
+          disabled={resolveMut.isPending}
+          className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
+        >
+          {resolveMut.isPending ? 'Updating...' : allowLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function runtimeSummary(approval: ApprovalRecord): Record<string, any> {
+  return approval.summary_json ?? {}
+}
+
+function runtimePayload(approval: ApprovalRecord): Record<string, any> | null {
+  return approval.payload_json ?? null
+}
+
+function runtimeApprovalPrimary(payload: Record<string, any> | null, summary: Record<string, any>, fallback: string): string {
+  if (payload?.tool_name) {
+    return String(payload.tool_name)
+  }
+  if (payload?.host) {
+    return `${String(payload.method ?? 'HTTP').toUpperCase()} ${payload.host}${payload.path ?? ''}`
+  }
+  if (summary.service && summary.action) {
+    return `${serviceName(summary.service)} · ${actionName(summary.action)}`
+  }
+  return fallback
+}
+
+function runtimeApprovalReason(payload: Record<string, any> | null, summary: Record<string, any>): string {
+  return String(payload?.reason ?? summary.reason ?? summary.policy_reason ?? payload?.host ?? '')
+}
+
+function runtimeApprovalDetail(payload: Record<string, any> | null): string {
+  if (!payload) return ''
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : ''
+  const toolInput = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {}
+  if (toolName) {
+    const filePath = readRuntimeApprovalString(toolInput.file_path) || readRuntimeApprovalString(toolInput.path) || readRuntimeApprovalString(toolInput.directory)
+    if (filePath) return `${toolName} ${filePath}`
+    const pattern = readRuntimeApprovalString(toolInput.pattern)
+    if (pattern) return `${toolName} ${pattern}`
+    const command = readRuntimeApprovalString(toolInput.command)
+    if (command) return `${toolName} ${command}`
+    return toolName
+  }
+  if (typeof payload.host === 'string') {
+    return [payload.method, payload.host, payload.path].filter(Boolean).join(' ')
+  }
+  return ''
+}
+
+function readRuntimeApprovalString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function hasVerificationIssue(v: VerificationVerdict): boolean {

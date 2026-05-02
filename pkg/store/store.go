@@ -35,6 +35,9 @@ type Store interface {
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
+	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
+	GetAgentRuntimeSettings(ctx context.Context, agentID string) (*AgentRuntimeSettings, error)
+	UpsertAgentRuntimeSettings(ctx context.Context, settings *AgentRuntimeSettings) error
 	DeleteAgent(ctx context.Context, id, userID string) error
 	RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error
 	SetAgentCallbackSecret(ctx context.Context, agentID, secret string) error
@@ -89,6 +92,9 @@ type Store interface {
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
+	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
+	ListActivityMutes(ctx context.Context, userID string) ([]*ActivityMute, error)
+	DeleteActivityMute(ctx context.Context, id, userID string) error
 
 	// Tasks
 	CreateTask(ctx context.Context, task *Task) error
@@ -115,6 +121,63 @@ type Store interface {
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").
 	ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error)
+
+	// Canonical approval records
+	CreateApprovalRecord(ctx context.Context, rec *ApprovalRecord) error
+	GetApprovalRecord(ctx context.Context, id string) (*ApprovalRecord, error)
+	GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*ApprovalRecord, error)
+	ListPendingApprovalRecords(ctx context.Context, userID string) ([]*ApprovalRecord, error)
+	ClearApprovalRecordRequestID(ctx context.Context, id string) error
+	ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error
+
+	// Runtime sessions
+	CreateRuntimeSession(ctx context.Context, sess *RuntimeSession) error
+	GetRuntimeSession(ctx context.Context, id string) (*RuntimeSession, error)
+	GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*RuntimeSession, error)
+	ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*RuntimeSession, error)
+	RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error
+	UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error
+	CreateRuntimeEvent(ctx context.Context, event *RuntimeEvent) error
+	GetRuntimeEvent(ctx context.Context, id string) (*RuntimeEvent, error)
+	ListRuntimeEvents(ctx context.Context, userID string, filter RuntimeEventFilter) ([]*RuntimeEvent, error)
+	CreateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
+	GetRuntimePolicyRule(ctx context.Context, id string) (*RuntimePolicyRule, error)
+	ListRuntimePolicyRules(ctx context.Context, userID string, filter RuntimePolicyRuleFilter) ([]*RuntimePolicyRule, error)
+	UpdateRuntimePolicyRule(ctx context.Context, rule *RuntimePolicyRule) error
+	DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error
+	TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error
+
+	// Runtime credential placeholders
+	CreateRuntimePlaceholder(ctx context.Context, placeholder *RuntimePlaceholder) error
+	GetRuntimePlaceholder(ctx context.Context, placeholder string) (*RuntimePlaceholder, error)
+	ListRuntimePlaceholders(ctx context.Context, userID string) ([]*RuntimePlaceholder, error)
+	DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error
+	TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error
+	CreateCredentialAuthorization(ctx context.Context, auth *CredentialAuthorization) error
+	GetCredentialAuthorization(ctx context.Context, id string) (*CredentialAuthorization, error)
+	ConsumeMatchingCredentialAuthorization(ctx context.Context, match CredentialAuthorizationMatch, now time.Time) (*CredentialAuthorization, error)
+
+	// Runtime one-off approvals
+	CreateOneOffApproval(ctx context.Context, approval *OneOffApproval) error
+	ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*OneOffApproval, error)
+	ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*OneOffApproval, error)
+
+	// Runtime leases
+	CreateToolExecutionLease(ctx context.Context, lease *ToolExecutionLease) error
+	GetToolExecutionLease(ctx context.Context, leaseID string) (*ToolExecutionLease, error)
+	ListOpenToolExecutionLeases(ctx context.Context, sessionID string) ([]*ToolExecutionLease, error)
+	CloseToolExecutionLease(ctx context.Context, leaseID string, closedAt time.Time, status string) error
+
+	// Runtime task attribution
+	CreateTaskInvocation(ctx context.Context, inv *TaskInvocation) error
+	CreateTaskCall(ctx context.Context, call *TaskCall) error
+	UpsertActiveTaskSession(ctx context.Context, sess *ActiveTaskSession) error
+	GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*ActiveTaskSession, error)
+	EndActiveTaskSession(ctx context.Context, taskID, sessionID string, endedAt time.Time, status string) error
+
+	// Runtime preset decisions
+	GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*RuntimePresetDecision, error)
+	UpsertRuntimePresetDecision(ctx context.Context, decision *RuntimePresetDecision) error
 
 	// Notification messages (cross-channel message tracking)
 	SaveNotificationMessage(ctx context.Context, targetType, targetID, channel, messageID string) error
@@ -179,7 +242,7 @@ type Store interface {
 
 // TelemetryCounts holds aggregate, anonymous usage data for telemetry.
 type TelemetryCounts struct {
-	Agents          int            // total registered agents
+	Agents            int            // total registered agents
 	RequestsByService map[string]int // gateway requests per service (e.g. "gmail": 120)
 }
 
@@ -203,14 +266,27 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID              string     `json:"id"`
-	UserID          string     `json:"user_id"`
-	Name            string     `json:"name"`
-	TokenHash       string     `json:"-"`
-	OrgID           string     `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt       time.Time  `json:"created_at"`
-	ActiveTaskCount int        `json:"active_task_count"`
-	LastTaskAt      *time.Time `json:"last_task_at,omitempty"`
+	ID              string                `json:"id"`
+	UserID          string                `json:"user_id"`
+	Name            string                `json:"name"`
+	Description     string                `json:"description,omitempty"`
+	TokenHash       string                `json:"-"`
+	OrgID           string                `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt       time.Time             `json:"created_at"`
+	ActiveTaskCount int                   `json:"active_task_count"`
+	LastTaskAt      *time.Time            `json:"last_task_at,omitempty"`
+	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`
+}
+
+type AgentRuntimeSettings struct {
+	AgentID                string    `json:"agent_id"`
+	RuntimeEnabled         bool      `json:"runtime_enabled"`
+	RuntimeMode            string    `json:"runtime_mode"`
+	StarterProfile         string    `json:"starter_profile"`
+	OutboundCredentialMode string    `json:"outbound_credential_mode"`
+	InjectStoredBearer     bool      `json:"inject_stored_bearer"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // ServiceMeta records that a user has activated a given service.
@@ -274,28 +350,52 @@ type GatewayRequestLog struct {
 
 // AuditEntry is one row in the audit_log table.
 type AuditEntry struct {
-	ID             string          `json:"id"`
-	UserID         string          `json:"user_id"`
-	AgentID        *string         `json:"agent_id,omitempty"`
-	RequestID      string          `json:"request_id"`
-	TaskID         *string         `json:"task_id,omitempty"`
-	Timestamp      time.Time       `json:"timestamp"`
-	Service        string          `json:"service"`
-	Action         string          `json:"action"`
-	ParamsSafe     json.RawMessage `json:"params_safe"`
-	Decision       string          `json:"decision"`
-	Outcome        string          `json:"outcome"`
-	PolicyID       *string         `json:"policy_id,omitempty"`
-	RuleID         *string         `json:"rule_id,omitempty"`
-	SafetyFlagged  bool            `json:"safety_flagged"`
-	SafetyReason   *string         `json:"safety_reason,omitempty"`
-	Reason         *string         `json:"reason,omitempty"`
-	DataOrigin     *string         `json:"data_origin,omitempty"`
-	ContextSrc     *string         `json:"context_src,omitempty"`
-	DurationMS     int             `json:"duration_ms"`
-	FiltersApplied json.RawMessage `json:"filters_applied,omitempty"`
-	Verification   json.RawMessage `json:"verification,omitempty"`
-	ErrorMsg       *string         `json:"error_msg,omitempty"`
+	ID                      string          `json:"id"`
+	UserID                  string          `json:"user_id"`
+	AgentID                 *string         `json:"agent_id,omitempty"`
+	RequestID               string          `json:"request_id"`
+	TaskID                  *string         `json:"task_id,omitempty"`
+	SessionID               *string         `json:"session_id,omitempty"`
+	ApprovalID              *string         `json:"approval_id,omitempty"`
+	LeaseID                 *string         `json:"lease_id,omitempty"`
+	ToolUseID               *string         `json:"tool_use_id,omitempty"`
+	MatchedTaskID           *string         `json:"matched_task_id,omitempty"`
+	LeaseTaskID             *string         `json:"lease_task_id,omitempty"`
+	Timestamp               time.Time       `json:"timestamp"`
+	Service                 string          `json:"service"`
+	Action                  string          `json:"action"`
+	ParamsSafe              json.RawMessage `json:"params_safe"`
+	Decision                string          `json:"decision"`
+	Outcome                 string          `json:"outcome"`
+	PolicyID                *string         `json:"policy_id,omitempty"`
+	RuleID                  *string         `json:"rule_id,omitempty"`
+	ResolutionConfidence    *string         `json:"resolution_confidence,omitempty"`
+	IntentVerdict           *string         `json:"intent_verdict,omitempty"`
+	UsedActiveTaskContext   bool            `json:"used_active_task_context"`
+	UsedLeaseBias           bool            `json:"used_lease_bias"`
+	UsedConvJudgeResolution bool            `json:"used_conv_judge_resolution"`
+	WouldBlock              bool            `json:"would_block"`
+	WouldReview             bool            `json:"would_review"`
+	WouldPromptInline       bool            `json:"would_prompt_inline"`
+	SafetyFlagged           bool            `json:"safety_flagged"`
+	SafetyReason            *string         `json:"safety_reason,omitempty"`
+	Reason                  *string         `json:"reason,omitempty"`
+	DataOrigin              *string         `json:"data_origin,omitempty"`
+	ContextSrc              *string         `json:"context_src,omitempty"`
+	DurationMS              int             `json:"duration_ms"`
+	FiltersApplied          json.RawMessage `json:"filters_applied,omitempty"`
+	Verification            json.RawMessage `json:"verification,omitempty"`
+	ErrorMsg                *string         `json:"error_msg,omitempty"`
+}
+
+// ActivityMute suppresses noisy runtime egress rows from the activity feed.
+// Matching is host-exact with an optional path-prefix refinement.
+type ActivityMute struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Host       string    `json:"host"`
+	PathPrefix string    `json:"path_prefix,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // TaskAction represents a single authorized action within a task scope.
@@ -333,20 +433,25 @@ type PlannedCall struct {
 
 // Task represents a task-scoped authorization.
 type Task struct {
-	ID                string       `json:"id"`
-	UserID            string       `json:"user_id"`
-	AgentID           string       `json:"agent_id"`
-	Purpose           string       `json:"purpose"`
-	Status            string       `json:"status"` // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion | revoked
-	Lifetime          string       `json:"lifetime"` // session | standing
-	AuthorizedActions []TaskAction  `json:"authorized_actions"`
-	PlannedCalls      []PlannedCall `json:"planned_calls,omitempty"`
-	CallbackURL       *string       `json:"callback_url,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	ApprovedAt        *time.Time   `json:"approved_at,omitempty"`
-	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`
-	ExpiresInSeconds  int          `json:"expires_in_seconds,omitempty"`
-	RequestCount      int          `json:"request_count"`
+	ID                     string          `json:"id"`
+	UserID                 string          `json:"user_id"`
+	AgentID                string          `json:"agent_id"`
+	Purpose                string          `json:"purpose"`
+	Status                 string          `json:"status"`   // pending_approval | active | completed | expired | denied | cancelled | pending_scope_expansion | revoked
+	Lifetime               string          `json:"lifetime"` // session | standing
+	AuthorizedActions      []TaskAction    `json:"authorized_actions"`
+	PlannedCalls           []PlannedCall   `json:"planned_calls,omitempty"`
+	ExpectedTools          json.RawMessage `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         json.RawMessage `json:"expected_egress_json,omitempty"`
+	IntentVerificationMode string          `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string          `json:"expected_use,omitempty"`
+	SchemaVersion          int             `json:"schema_version,omitempty"`
+	CallbackURL            *string         `json:"callback_url,omitempty"`
+	CreatedAt              time.Time       `json:"created_at"`
+	ApprovedAt             *time.Time      `json:"approved_at,omitempty"`
+	ExpiresAt              *time.Time      `json:"expires_at,omitempty"`
+	ExpiresInSeconds       int             `json:"expires_in_seconds,omitempty"`
+	RequestCount           int             `json:"request_count"`
 	// PendingAction holds the action awaiting scope expansion approval.
 	PendingAction *TaskAction `json:"pending_action,omitempty"`
 	PendingReason string      `json:"pending_reason,omitempty"`
@@ -360,15 +465,236 @@ type Task struct {
 
 // PendingApproval is a gateway request awaiting human approval.
 type PendingApproval struct {
+	ID               string          `json:"id"`
+	UserID           string          `json:"user_id"`
+	RequestID        string          `json:"request_id"`
+	AuditID          string          `json:"audit_id"`
+	ApprovalRecordID *string         `json:"approval_record_id,omitempty"`
+	RequestBlob      json.RawMessage `json:"request_blob"`
+	CallbackURL      *string         `json:"callback_url,omitempty"`
+	Status           string          `json:"status"` // "pending" or "approved"
+	ExpiresAt        time.Time       `json:"expires_at"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+// ApprovalRecord is the canonical approval object shared across surfaces.
+type ApprovalRecord struct {
+	ID                  string          `json:"id"`
+	Kind                string          `json:"kind"`
+	UserID              string          `json:"user_id"`
+	AgentID             *string         `json:"agent_id,omitempty"`
+	RequestID           *string         `json:"request_id,omitempty"`
+	TaskID              *string         `json:"task_id,omitempty"`
+	SessionID           *string         `json:"session_id,omitempty"`
+	Status              string          `json:"status"`
+	Surface             string          `json:"surface"`
+	SummaryJSON         json.RawMessage `json:"summary_json,omitempty"`
+	PayloadJSON         json.RawMessage `json:"payload_json,omitempty"`
+	ResolutionTransport string          `json:"resolution_transport,omitempty"`
+	ExpiresAt           *time.Time      `json:"expires_at,omitempty"`
+	ResolvedAt          *time.Time      `json:"resolved_at,omitempty"`
+	Resolution          string          `json:"resolution,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+}
+
+// RuntimeSession binds proxy-authenticated traffic to an agent run.
+type RuntimeSession struct {
+	ID                    string          `json:"id"`
+	UserID                string          `json:"user_id"`
+	AgentID               string          `json:"agent_id"`
+	Mode                  string          `json:"mode"`
+	ProxyBearerSecretHash string          `json:"proxy_bearer_secret_hash"`
+	ObservationMode       bool            `json:"observation_mode"`
+	MetadataJSON          json.RawMessage `json:"metadata_json,omitempty"`
+	ExpiresAt             time.Time       `json:"expires_at"`
+	CreatedAt             time.Time       `json:"created_at"`
+	RevokedAt             *time.Time      `json:"revoked_at,omitempty"`
+}
+
+// RuntimeEvent is an append-only observability record for runtime decisions.
+type RuntimeEvent struct {
+	ID                  string          `json:"id"`
+	Timestamp           time.Time       `json:"timestamp"`
+	SessionID           string          `json:"session_id"`
+	UserID              string          `json:"user_id"`
+	AgentID             string          `json:"agent_id"`
+	Provider            string          `json:"provider,omitempty"`
+	EventType           string          `json:"event_type"`
+	ActionKind          string          `json:"action_kind,omitempty"`
+	ApprovalID          *string         `json:"approval_id,omitempty"`
+	TaskID              *string         `json:"task_id,omitempty"`
+	MatchedTaskID       *string         `json:"matched_task_id,omitempty"`
+	LeaseID             *string         `json:"lease_id,omitempty"`
+	ToolUseID           *string         `json:"tool_use_id,omitempty"`
+	RequestFingerprint  *string         `json:"request_fingerprint,omitempty"`
+	ResolutionTransport *string         `json:"resolution_transport,omitempty"`
+	Decision            *string         `json:"decision,omitempty"`
+	Outcome             *string         `json:"outcome,omitempty"`
+	Reason              *string         `json:"reason,omitempty"`
+	MetadataJSON        json.RawMessage `json:"metadata_json,omitempty"`
+}
+
+type RuntimePolicyRule struct {
 	ID            string          `json:"id"`
 	UserID        string          `json:"user_id"`
-	RequestID     string          `json:"request_id"`
-	AuditID       string          `json:"audit_id"`
-	RequestBlob   json.RawMessage `json:"request_blob"`
-	CallbackURL   *string         `json:"callback_url,omitempty"`
-	Status        string          `json:"status"` // "pending" or "approved"
-	ExpiresAt     time.Time       `json:"expires_at"`
+	AgentID       *string         `json:"agent_id,omitempty"`
+	Kind          string          `json:"kind"`
+	Action        string          `json:"action"`
+	Service       string          `json:"service,omitempty"`
+	ServiceAction string          `json:"service_action,omitempty"`
+	Host          string          `json:"host,omitempty"`
+	Method        string          `json:"method,omitempty"`
+	Path          string          `json:"path,omitempty"`
+	PathRegex     string          `json:"path_regex,omitempty"`
+	HeadersShape  json.RawMessage `json:"headers_shape_json,omitempty"`
+	BodyShape     json.RawMessage `json:"body_shape_json,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	InputShape    json.RawMessage `json:"input_shape_json,omitempty"`
+	InputRegex    string          `json:"input_regex,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+	Source        string          `json:"source"`
+	Enabled       bool            `json:"enabled"`
+	LastMatchedAt *time.Time      `json:"last_matched_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type RuntimePolicyRuleFilter struct {
+	AgentID string
+	Kind    string
+	Enabled *bool
+	Limit   int
+}
+
+type RuntimePresetDecision struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	CommandKey string    `json:"command_key"`
+	Profile    string    `json:"profile"`
+	Decision   string    `json:"decision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// RuntimePlaceholder is an agent-scoped placeholder that resolves to an
+// existing vault credential at proxy runtime.
+type RuntimePlaceholder struct {
+	Placeholder string     `json:"placeholder"`
+	UserID      string     `json:"user_id"`
+	AgentID     string     `json:"agent_id"`
+	ServiceID   string     `json:"service_id"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
+// CredentialAuthorization grants reuse of a previously reviewed outbound
+// credential-bearing header without storing the raw credential itself.
+type CredentialAuthorization struct {
+	ID            string          `json:"id"`
+	ApprovalID    *string         `json:"approval_id,omitempty"`
+	UserID        string          `json:"user_id"`
+	AgentID       string          `json:"agent_id"`
+	SessionID     *string         `json:"session_id,omitempty"`
+	Scope         string          `json:"scope"`
+	CredentialRef string          `json:"credential_ref"`
+	Service       string          `json:"service"`
+	Host          string          `json:"host"`
+	HeaderName    string          `json:"header_name"`
+	Scheme        string          `json:"scheme"`
+	Status        string          `json:"status"`
+	MetadataJSON  json.RawMessage `json:"metadata_json,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	ExpiresAt     *time.Time      `json:"expires_at,omitempty"`
+	UsedAt        *time.Time      `json:"used_at,omitempty"`
+	LastMatchedAt *time.Time      `json:"last_matched_at,omitempty"`
+}
+
+type CredentialAuthorizationMatch struct {
+	UserID        string
+	AgentID       string
+	SessionID     string
+	CredentialRef string
+	Service       string
+	Host          string
+	HeaderName    string
+	Scheme        string
+}
+
+// OneOffApproval is a single-use retry artifact for blocked runtime requests.
+type OneOffApproval struct {
+	ID                 string     `json:"id"`
+	SessionID          string     `json:"session_id"`
+	RequestFingerprint string     `json:"request_fingerprint"`
+	ApprovalID         *string    `json:"approval_id,omitempty"`
+	ApprovedAt         time.Time  `json:"approved_at"`
+	ExpiresAt          time.Time  `json:"expires_at"`
+	UsedAt             *time.Time `json:"used_at,omitempty"`
+}
+
+// ToolExecutionLease is the runtime context opened when a tool call is released.
+type ToolExecutionLease struct {
+	LeaseID      string          `json:"lease_id"`
+	SessionID    string          `json:"session_id"`
+	TaskID       string          `json:"task_id"`
+	ToolUseID    string          `json:"tool_use_id"`
+	ToolName     string          `json:"tool_name"`
+	Status       string          `json:"status"`
+	MetadataJSON json.RawMessage `json:"metadata_json,omitempty"`
+	OpenedAt     time.Time       `json:"opened_at"`
+	ExpiresAt    time.Time       `json:"expires_at"`
+	ClosedAt     *time.Time      `json:"closed_at,omitempty"`
+}
+
+// TaskInvocation records a task-scoped execution attempt or session start.
+type TaskInvocation struct {
+	ID             string          `json:"id"`
+	TaskID         string          `json:"task_id"`
+	SessionID      string          `json:"session_id"`
+	UserID         string          `json:"user_id"`
+	AgentID        string          `json:"agent_id"`
+	RequestID      string          `json:"request_id,omitempty"`
+	InvocationType string          `json:"invocation_type"`
+	Status         string          `json:"status"`
+	MetadataJSON   json.RawMessage `json:"metadata_json,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+}
+
+// TaskCall records one task-attributed tool or egress action.
+type TaskCall struct {
+	ID           string          `json:"id"`
+	TaskID       string          `json:"task_id"`
+	InvocationID string          `json:"invocation_id,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	Service      string          `json:"service"`
+	Action       string          `json:"action"`
+	Outcome      string          `json:"outcome,omitempty"`
+	ApprovalID   *string         `json:"approval_id,omitempty"`
+	AuditID      *string         `json:"audit_id,omitempty"`
+	MetadataJSON json.RawMessage `json:"metadata_json,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ActiveTaskSession tracks live task context for a runtime session.
+type ActiveTaskSession struct {
+	ID           string          `json:"id"`
+	TaskID       string          `json:"task_id"`
+	SessionID    string          `json:"session_id"`
+	UserID       string          `json:"user_id"`
+	AgentID      string          `json:"agent_id"`
+	Status       string          `json:"status"`
+	MetadataJSON json.RawMessage `json:"metadata_json,omitempty"`
+	StartedAt    time.Time       `json:"started_at"`
+	LastSeenAt   time.Time       `json:"last_seen_at"`
+	EndedAt      *time.Time      `json:"ended_at,omitempty"`
+}
+
+type RuntimeEventFilter struct {
+	SessionID string
+	EventType string
+	Limit     int
 }
 
 // TaskFilter controls which tasks are returned by ListTasks.
@@ -383,12 +709,14 @@ type TaskFilter struct {
 // AuditFilter controls which entries are returned by ListAuditEntries.
 // Zero values mean "no filter" for that field.
 type AuditFilter struct {
-	Service    string // filter by service
-	Outcome    string // filter by outcome
-	DataOrigin string // filter by data_origin
-	TaskID     string // filter by task_id
-	Limit      int    // 0 -> default (50)
-	Offset     int
+	Service        string // filter by service
+	Outcome        string // filter by outcome
+	DataOrigin     string // filter by data_origin
+	TaskID         string // filter by task_id
+	AgentID        string // filter by agent_id
+	IncludeRuntime *bool  // nil -> default include, false -> suppress runtime.* rows
+	Limit          int    // 0 -> default (50)
+	Offset         int
 }
 
 // ActivityBucket is one row of the aggregated audit activity histogram.
@@ -431,9 +759,9 @@ type ConnectionRequest struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CallbackURL string    `json:"callback_url,omitempty"`
-	Status      string    `json:"status"`              // pending | approved | denied | expired
-	AgentID     string    `json:"agent_id,omitempty"`   // set on approval
-	Token       string    `json:"token,omitempty"`      // raw token, set on approval (never persisted)
+	Status      string    `json:"status"`             // pending | approved | denied | expired
+	AgentID     string    `json:"agent_id,omitempty"` // set on approval
+	Token       string    `json:"token,omitempty"`    // raw token, set on approval (never persisted)
 	IPAddress   string    `json:"ip_address"`
 	CreatedAt   time.Time `json:"created_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
@@ -488,13 +816,13 @@ type FeedbackReport struct {
 	UserID      string          `json:"user_id"`
 	AgentID     string          `json:"agent_id"`
 	AgentName   string          `json:"agent_name"`
-	RequestID   string          `json:"request_id,omitempty"`   // the gateway request that triggered the report
-	TaskID      string          `json:"task_id,omitempty"`      // the task scope at the time
-	Category    string          `json:"category"`               // wrong_block | wrong_deny | slow_approval | scope_too_narrow | other
-	Description string          `json:"description"`            // free-form agent narrative
-	Severity    string          `json:"severity"`               // low | medium | high | critical
-	Context     json.RawMessage `json:"context,omitempty"`      // optional structured context the agent provides
-	Response    string          `json:"response,omitempty"`     // Clawvisor's response to the agent
+	RequestID   string          `json:"request_id,omitempty"` // the gateway request that triggered the report
+	TaskID      string          `json:"task_id,omitempty"`    // the task scope at the time
+	Category    string          `json:"category"`             // wrong_block | wrong_deny | slow_approval | scope_too_narrow | other
+	Description string          `json:"description"`          // free-form agent narrative
+	Severity    string          `json:"severity"`             // low | medium | high | critical
+	Context     json.RawMessage `json:"context,omitempty"`    // optional structured context the agent provides
+	Response    string          `json:"response,omitempty"`   // Clawvisor's response to the agent
 	CreatedAt   time.Time       `json:"created_at"`
 }
 

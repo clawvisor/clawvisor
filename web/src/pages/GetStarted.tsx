@@ -167,7 +167,7 @@ function SetupSteps({
               <PopularService id="slack" label="Slack" />
               <PopularService id="google.calendar" label="Google Calendar" />
               <Link
-                to="/dashboard/services"
+                to="/dashboard/accounts"
                 className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-strong px-3 py-1.5 rounded-md border border-brand/40 bg-brand-muted transition-colors"
               >
                 Browse all services
@@ -248,7 +248,7 @@ function SetupStepCard({
 function PopularService({ id, label }: { id: string; label: string }) {
   return (
     <Link
-      to={`/dashboard/services?search=${encodeURIComponent(id)}`}
+      to={`/dashboard/accounts?search=${encodeURIComponent(id)}`}
       className="inline-flex items-center gap-1.5 text-sm text-text-primary bg-surface-2 hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-subtle transition-colors"
     >
       {label}
@@ -281,7 +281,7 @@ function ConnectedServicesStrip({ services }: { services: WelcomeService[] }) {
         </div>
       ))}
       <Link
-        to="/dashboard/services"
+        to="/dashboard/accounts"
         className="text-sm text-brand hover:text-brand-strong font-medium px-2.5 py-1.5"
       >
         Connect another →
@@ -326,7 +326,7 @@ function YourSetupSection({ services, agents }: { services: WelcomeService[]; ag
         <div className="rounded-lg border border-border-subtle bg-surface-1 p-4">
           <div className="flex items-baseline justify-between mb-3">
             <h3 className="font-medium text-text-primary">Services</h3>
-            <Link to="/dashboard/services" className="text-xs text-brand hover:text-brand-strong font-medium">
+            <Link to="/dashboard/accounts" className="text-xs text-brand hover:text-brand-strong font-medium">
               Manage →
             </Link>
           </div>
@@ -623,4 +623,3 @@ function ExampleWalkthrough({ example }: { example?: WalkthroughExample }) {
     </section>
   )
 }
-

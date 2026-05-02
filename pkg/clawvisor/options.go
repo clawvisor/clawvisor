@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/redis/go-redis/v9"
 )
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -123,15 +124,16 @@ type ServerOptions struct {
 	Quiet bool
 
 	// Multi-instance Redis-backed stores. When nil, in-memory defaults are used.
-	TicketStore       intauth.TicketStorer
-	ReplayCache       middleware.ReplayCache
-	TokenCache        handlers.TokenCache
+	TicketStore        intauth.TicketStorer
+	ReplayCache        middleware.ReplayCache
+	TokenCache         handlers.TokenCache
 	DevicePairingStore handlers.DevicePairingStore
-	OAuthStateStore   handlers.OAuthStateStore
-	PairingCodeStore  handlers.PairingCodeStore
-	DedupCache        handlers.DedupCache
-	VerdictCache      intent.VerdictCacher
-	ExtractionTracker handlers.ExtractionTracker
+	OAuthStateStore    handlers.OAuthStateStore
+	PairingCodeStore   handlers.PairingCodeStore
+	DedupCache         handlers.DedupCache
+	VerdictCache       intent.VerdictCacher
+	ExtractionTracker  handlers.ExtractionTracker
+	RedisClient        *redis.Client
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -194,4 +196,10 @@ type FeatureSet struct {
 	PasswordAuth      bool `json:"password_auth"`
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
+	RuntimeProxy      bool `json:"runtime_proxy"`
+	SecretVault       bool `json:"secret_vault"`
+	RuntimePolicyUI   bool `json:"runtime_policy_ui"`
+	RuntimeActivity   bool `json:"runtime_activity"`
+	AgentLiveSessions bool `json:"agent_live_sessions"`
+	ServicePresets    bool `json:"service_presets"`
 }

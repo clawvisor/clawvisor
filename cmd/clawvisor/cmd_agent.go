@@ -12,7 +12,7 @@ import (
 
 var agentCmd = &cobra.Command{
 	Use:   "agent",
-	Short: "Manage agents (create, list, delete)",
+	Short: "Manage agents and local agent registrations",
 }
 
 // ── agent create ────────────────────────────────────────────────────────────

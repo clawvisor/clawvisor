@@ -13,13 +13,13 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/auth"
-	"github.com/clawvisor/clawvisor/pkg/config"
-	"github.com/clawvisor/clawvisor/pkg/store"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
@@ -38,6 +38,10 @@ type testEnv struct {
 // newTestEnv spins up a full API server backed by an in-process SQLite DB.
 // Pass extra adapters to register them in the adapter registry (e.g. mockAdapter).
 func newTestEnv(t *testing.T, extra ...adapters.Adapter) *testEnv {
+	return newTestEnvWithLLM(t, config.LLMConfig{}, extra...)
+}
+
+func newTestEnvWithLLM(t *testing.T, llmCfg config.LLMConfig, extra ...adapters.Adapter) *testEnv {
 	t.Helper()
 
 	ctx := context.Background()
@@ -77,7 +81,7 @@ func newTestEnv(t *testing.T, extra ...adapters.Adapter) *testEnv {
 	}
 
 	// Tests use password auth so Register/Login routes are available.
-	srv, err := api.New(cfg, st, v, jwtSvc, adapterReg, nil, config.LLMConfig{}, nil,
+	srv, err := api.New(cfg, st, v, jwtSvc, adapterReg, nil, llmCfg, nil,
 		api.WithFeatures(api.FeatureSet{PasswordAuth: true}),
 	)
 	if err != nil {
@@ -352,7 +356,7 @@ func (m *mockAdapter) withError(err error) *mockAdapter {
 	return m
 }
 
-func (m *mockAdapter) ServiceID() string       { return m.serviceID }
+func (m *mockAdapter) ServiceID() string          { return m.serviceID }
 func (m *mockAdapter) SupportedActions() []string { return m.actions }
 
 func (m *mockAdapter) Execute(_ context.Context, _ adapters.Request) (*adapters.Result, error) {
@@ -360,7 +364,7 @@ func (m *mockAdapter) Execute(_ context.Context, _ adapters.Request) (*adapters.
 }
 
 func (m *mockAdapter) OAuthConfig() *oauth2.Config { return nil }
-func (m *mockAdapter) RequiredScopes() []string     { return nil }
+func (m *mockAdapter) RequiredScopes() []string    { return nil }
 
 func (m *mockAdapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 	return []byte("mock-cred"), nil
@@ -372,7 +376,6 @@ func (m *mockAdapter) ValidateCredential(b []byte) error {
 	}
 	return nil
 }
-
 
 // ── Scenario builder ──────────────────────────────────────────────────────────
 

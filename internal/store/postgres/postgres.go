@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,6 +33,10 @@ func New(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 }
 
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	return runMigrationsFS(ctx, pool, migrationsFS)
+}
+
+func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) error {
 	// Create migrations tracking table
 	_, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -63,7 +68,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 
 	// Read migration files
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	entries, err := fs.ReadDir(migrations, "migrations")
 	if err != nil {
 		return err
 	}
@@ -79,19 +84,29 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			continue
 		}
 
-		data, err := migrationsFS.ReadFile("migrations/" + entry.Name())
+		data, err := fs.ReadFile(migrations, "migrations/"+entry.Name())
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", entry.Name(), err)
 		}
 
-		if _, err := pool.Exec(ctx, string(data)); err != nil {
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
+		}
+		if _, err := tx.Exec(ctx, string(data)); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("applying migration %s: %w", entry.Name(), err)
 		}
-		if _, err := pool.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`INSERT INTO schema_migrations (name) VALUES ($1)`,
 			entry.Name(),
 		); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("recording migration %s: %w", entry.Name(), err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("committing migration %s: %w", entry.Name(), err)
 		}
 	}
 	return nil

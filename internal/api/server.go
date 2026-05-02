@@ -29,6 +29,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
@@ -76,13 +77,13 @@ type Server struct {
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
 
-	pushNotifier         *push.Notifier                 // concrete push notifier; may be nil
-	msgBuffer            groupchat.Buffer               // group chat message buffer; may be nil
-	decisionBus          notify.DecisionBus             // cross-instance decision delivery; may be nil
-	gatewayHooks         *GatewayHooks                  // cloud-injected gateway authorization hooks; may be nil
-	feedbackHooks        *FeedbackHooks                 // cloud-injected feedback event hooks; may be nil
-	localServiceProvider handlers.LocalServiceProvider  // cloud-injected local daemon service provider; may be nil
-	localServiceExecutor handlers.LocalServiceExecutor  // cloud-injected local service executor; may be nil
+	pushNotifier         *push.Notifier                // concrete push notifier; may be nil
+	msgBuffer            groupchat.Buffer              // group chat message buffer; may be nil
+	decisionBus          notify.DecisionBus            // cross-instance decision delivery; may be nil
+	gatewayHooks         *GatewayHooks                 // cloud-injected gateway authorization hooks; may be nil
+	feedbackHooks        *FeedbackHooks                // cloud-injected feedback event hooks; may be nil
+	localServiceProvider handlers.LocalServiceProvider // cloud-injected local daemon service provider; may be nil
+	localServiceExecutor handlers.LocalServiceExecutor // cloud-injected local service executor; may be nil
 
 	eventHub    events.EventHub
 	mcpServer   *mcp.Server
@@ -126,6 +127,12 @@ type FeatureSet struct {
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
 	MobilePairing     bool `json:"mobile_pairing"`
+	RuntimeProxy      bool `json:"runtime_proxy"`
+	SecretVault       bool `json:"secret_vault"`
+	RuntimePolicyUI   bool `json:"runtime_policy_ui"`
+	RuntimeActivity   bool `json:"runtime_activity"`
+	AgentLiveSessions bool `json:"agent_live_sessions"`
+	ServicePresets    bool `json:"service_presets"`
 }
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -380,7 +387,7 @@ func (s *Server) routes() http.Handler {
 	}
 	healthHandler := handlers.NewHealthHandler(s.store, s.vault, authMode)
 	restrictionsHandler := handlers.NewRestrictionsHandler(s.store)
-	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger)
+	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger, s.cfg)
 	auditHandler := handlers.NewAuditHandler(s.store)
 	// The Telegram notifier also implements TelegramPairer and GroupObserver for
 	// pairing and group chat observation flows.
@@ -425,6 +432,9 @@ func (s *Server) routes() http.Handler {
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	if s.llmCfg.Verification.Enabled {
+		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
+	}
 	if s.extractionTracker != nil {
 		gatewayHandler.SetExtractionTracker(s.extractionTracker)
 	}
@@ -452,14 +462,13 @@ func (s *Server) routes() http.Handler {
 	if s.localServiceProvider != nil {
 		skillHandler.SetLocalServiceProvider(s.localServiceProvider)
 	}
-	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, s.logger, s.eventHub)
-	s.approvalsHandler = approvalsHandler
-
 	// Construct task risk assessor (noop if disabled).
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
 		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
+	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
+	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
@@ -578,6 +587,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents", user(agentsHandler.List))
 	mux.Handle("POST /api/agents", user(agentsHandler.Create))
 	mux.Handle("POST /api/agents/{id}/rotate", user(agentsHandler.RotateToken))
+	mux.Handle("GET /api/agents/{id}/runtime-settings", user(agentsHandler.GetRuntimeSettings))
+	mux.Handle("PUT /api/agents/{id}/runtime-settings", user(agentsHandler.UpdateRuntimeSettings))
 	mux.Handle("DELETE /api/agents/{id}", user(agentsHandler.Delete))
 
 	// Notifications (user JWT)
@@ -756,6 +767,8 @@ func (s *Server) routes() http.Handler {
 	// Tasks (agent auth)
 	mux.Handle("POST /api/tasks", requireAgent(e2e(http.HandlerFunc(tasksHandler.Create))))
 	mux.Handle("GET /api/tasks/{id}", requireAgent(e2e(http.HandlerFunc(tasksHandler.Get))))
+	mux.Handle("POST /api/tasks/{id}/start", requireAgent(e2e(http.HandlerFunc(tasksHandler.Start))))
+	mux.Handle("POST /api/tasks/{id}/end", requireAgent(e2e(http.HandlerFunc(tasksHandler.End))))
 	mux.Handle("POST /api/tasks/{id}/complete", requireAgent(e2e(http.HandlerFunc(tasksHandler.Complete))))
 	mux.Handle("POST /api/tasks/{id}/expand", requireAgent(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
@@ -771,6 +784,9 @@ func (s *Server) routes() http.Handler {
 	// Audit (user JWT)
 	mux.Handle("GET /api/audit", user(auditHandler.List))
 	mux.Handle("GET /api/audit/{id}", user(auditHandler.Get))
+	mux.Handle("GET /api/audit/mutes", user(auditHandler.ListMutes))
+	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
+	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
 
 	// SSE event stream (user JWT or single-use ticket for EventSource)
 	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)
@@ -870,6 +886,8 @@ func (s *Server) routes() http.Handler {
 			"GET /api/skill/catalog":                         http.HandlerFunc(skillHandler.Catalog),
 			"POST /api/tasks":                                http.HandlerFunc(tasksHandler.Create),
 			"GET /api/tasks/{id}":                            http.HandlerFunc(tasksHandler.Get),
+			"POST /api/tasks/{id}/start":                     http.HandlerFunc(tasksHandler.Start),
+			"POST /api/tasks/{id}/end":                       http.HandlerFunc(tasksHandler.End),
 			"POST /api/tasks/{id}/complete":                  http.HandlerFunc(tasksHandler.Complete),
 			"POST /api/tasks/{id}/expand":                    http.HandlerFunc(tasksHandler.Expand),
 			"POST /api/gateway/request":                      http.HandlerFunc(gatewayHandler.HandleRequest),

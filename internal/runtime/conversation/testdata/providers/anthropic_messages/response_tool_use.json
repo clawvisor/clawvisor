@@ -1,0 +1,17 @@
+{
+  "id": "msg_1",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_1",
+      "name": "fetch_messages",
+      "input": {
+        "max_results": 10
+      }
+    }
+  ],
+  "stop_reason": "tool_use"
+}

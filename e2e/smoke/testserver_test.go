@@ -382,20 +382,14 @@ func newCIEnv(t *testing.T) *ciTestEnv {
 	}
 }
 
-// resolveOrBuildBinary finds or builds the clawvisor binary.
+// resolveOrBuildBinary returns the explicitly requested test binary or builds
+// the current workspace's CLI binary so smoke tests always exercise the code
+// under test instead of a potentially stale installed copy.
 func resolveOrBuildBinary(t *testing.T) string {
 	t.Helper()
 
 	if binPath := os.Getenv("CLAWVISOR_BIN"); binPath != "" {
 		return binPath
-	}
-
-	home, _ := os.UserHomeDir()
-	if home != "" {
-		installed := filepath.Join(home, ".clawvisor", "bin", "clawvisor")
-		if _, err := os.Stat(installed); err == nil {
-			return installed
-		}
 	}
 
 	projectRoot, err := filepath.Abs(filepath.Join("..", ".."))

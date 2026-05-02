@@ -1,0 +1,13 @@
+{
+  "id": "resp_patch",
+  "object": "response",
+  "output": [
+    {
+      "id": "patch_1",
+      "type": "apply_patch_call",
+      "status": "completed",
+      "call_id": "patch_1",
+      "arguments": "*** Begin Patch\n*** End Patch\n"
+    }
+  ]
+}

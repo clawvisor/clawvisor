@@ -20,23 +20,26 @@ type AutoConfigured struct {
 }
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Vault     VaultConfig     `yaml:"vault"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Approval  ApprovalConfig  `yaml:"approval"`
-	Callback  CallbackConfig  `yaml:"callback"`
-	Task      TaskConfig      `yaml:"task"`
-	Gateway   GatewayConfig   `yaml:"gateway"`
-	LLM       LLMConfig       `yaml:"llm"`
-	MCP       MCPConfig       `yaml:"mcp"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	Relay     RelayConfig     `yaml:"relay"`
-	Telemetry TelemetryConfig `yaml:"telemetry"`
-	Daemon    DaemonConfig    `yaml:"daemon"`
-	Push       PushConfig       `yaml:"push"`
-	AutoUpdate AutoUpdateConfig `yaml:"auto_update"`
-	Redis      RedisConfig      `yaml:"redis"`
+	Server        ServerConfig        `yaml:"server"`
+	Database      DatabaseConfig      `yaml:"database"`
+	Vault         VaultConfig         `yaml:"vault"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Approval      ApprovalConfig      `yaml:"approval"`
+	Callback      CallbackConfig      `yaml:"callback"`
+	Task          TaskConfig          `yaml:"task"`
+	Gateway       GatewayConfig       `yaml:"gateway"`
+	LLM           LLMConfig           `yaml:"llm"`
+	MCP           MCPConfig           `yaml:"mcp"`
+	RuntimeProxy  RuntimeProxyConfig  `yaml:"runtime_proxy"`
+	RuntimePolicy RuntimePolicyConfig `yaml:"runtime_policy"`
+	Features      FeaturesConfig      `yaml:"features"`
+	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
+	Relay         RelayConfig         `yaml:"relay"`
+	Telemetry     TelemetryConfig     `yaml:"telemetry"`
+	Daemon        DaemonConfig        `yaml:"daemon"`
+	Push          PushConfig          `yaml:"push"`
+	AutoUpdate    AutoUpdateConfig    `yaml:"auto_update"`
+	Redis         RedisConfig         `yaml:"redis"`
 
 	AutoConfig AutoConfigured `yaml:"-"`
 }
@@ -111,10 +114,10 @@ type ServerConfig struct {
 	Port        int    `yaml:"port"`
 	Host        string `yaml:"host"`
 	FrontendDir string `yaml:"frontend_dir"`
-	PublicURL   string `yaml:"public_url"`  // e.g. "http://192.168.4.247:5173" — used in Telegram notification links
-	AuthMode    string `yaml:"auth_mode"`   // "magic_link", "password", or "" (auto-detect from IsLocal)
-	LogFormat   string `yaml:"log_format"`  // "json", "text", or "" (auto: json in prod, text in dev)
-	LogLevel    string `yaml:"log_level"`   // "debug", "info", "warn", "error" (default: "info")
+	PublicURL   string `yaml:"public_url"` // e.g. "http://192.168.4.247:5173" — used in Telegram notification links
+	AuthMode    string `yaml:"auth_mode"`  // "magic_link", "password", or "" (auto-detect from IsLocal)
+	LogFormat   string `yaml:"log_format"` // "json", "text", or "" (auto: json in prod, text in dev)
+	LogLevel    string `yaml:"log_level"`  // "debug", "info", "warn", "error" (default: "info")
 }
 
 type DatabaseConfig struct {
@@ -146,9 +149,9 @@ type ApprovalConfig struct {
 // LLMProviderConfig holds settings for one LLM provider endpoint.
 type LLMProviderConfig struct {
 	Enabled        bool   `yaml:"enabled"`
-	Provider       string `yaml:"provider"`        // "openai" (default) | "anthropic"
-	Endpoint       string `yaml:"endpoint"`        // Base URL, e.g. https://api.anthropic.com/v1
-	APIKey         string `yaml:"api_key"`          // Overridable via env
+	Provider       string `yaml:"provider"` // "openai" (default) | "anthropic"
+	Endpoint       string `yaml:"endpoint"` // Base URL, e.g. https://api.anthropic.com/v1
+	APIKey         string `yaml:"api_key"`  // Overridable via env
 	Model          string `yaml:"model"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	SkipReadonly   bool   `yaml:"skip_readonly"` // Safety only: skip check for read actions
@@ -187,15 +190,15 @@ type FeedbackReviewConfig struct {
 type LLMConfig struct {
 	Provider       string `yaml:"provider"`        // Shared default: "anthropic"
 	Endpoint       string `yaml:"endpoint"`        // Shared default: "https://api.anthropic.com/v1"
-	APIKey         string `yaml:"api_key"`          // Shared default; overridable via CLAWVISOR_LLM_API_KEY
-	Model          string `yaml:"model"`            // Shared default: "claude-haiku-4-5-20251001"
-	TimeoutSeconds int    `yaml:"timeout_seconds"`  // Shared default: 10
+	APIKey         string `yaml:"api_key"`         // Shared default; overridable via CLAWVISOR_LLM_API_KEY
+	Model          string `yaml:"model"`           // Shared default: "claude-haiku-4-5-20251001"
+	TimeoutSeconds int    `yaml:"timeout_seconds"` // Shared default: 10
 
 	Verification   VerificationConfig   `yaml:"verification"`    // Intent verification (runtime)
-	TaskRisk       TaskRiskConfig       `yaml:"task_risk"`        // Task risk assessment (creation time)
-	ChainContext   ChainContextConfig   `yaml:"chain_context"`    // Chain context extraction (multi-step tasks)
-	AdapterGen     AdapterGenConfig     `yaml:"adapter_gen"`      // LLM-powered adapter generation
-	FeedbackReview FeedbackReviewConfig `yaml:"feedback_review"`  // Agent feedback report review
+	TaskRisk       TaskRiskConfig       `yaml:"task_risk"`       // Task risk assessment (creation time)
+	ChainContext   ChainContextConfig   `yaml:"chain_context"`   // Chain context extraction (multi-step tasks)
+	AdapterGen     AdapterGenConfig     `yaml:"adapter_gen"`     // LLM-powered adapter generation
+	FeedbackReview FeedbackReviewConfig `yaml:"feedback_review"` // Agent feedback report review
 }
 
 // MCPConfig holds settings for the MCP server.
@@ -203,6 +206,36 @@ type MCPConfig struct {
 	Enabled         bool `yaml:"enabled"`          // default: true
 	ApprovalTimeout int  `yaml:"approval_timeout"` // MCP tool call approval timeout in seconds (default 240s)
 	SessionTTL      int  `yaml:"session_ttl"`      // session TTL in minutes (default: 1440 = 24h)
+}
+
+type RuntimeProxyConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	ListenAddr         string   `yaml:"listen_addr"`
+	DataDir            string   `yaml:"data_dir"`
+	TLS                bool     `yaml:"tls"`
+	ListenerHostnames  []string `yaml:"listener_hostnames"`
+	SessionTTLSeconds  int      `yaml:"session_ttl_seconds"`
+	TimingTraceEnabled bool     `yaml:"timing_trace_enabled"`
+	TimingTraceDir     string   `yaml:"timing_trace_dir"`
+	BodyTraceEnabled   bool     `yaml:"body_trace_enabled"`
+	BodyTraceDir       string   `yaml:"body_trace_dir"`
+}
+
+type RuntimePolicyConfig struct {
+	ObservationModeDefault  bool     `yaml:"observation_mode_default"`
+	InlineApprovalEnabled   bool     `yaml:"inline_approval_enabled"`
+	HarnessAllowlist        []string `yaml:"harness_allowlist"`
+	ToolLeaseTimeoutSeconds int      `yaml:"tool_lease_timeout_seconds"`
+	OneOffTTLSeconds        int      `yaml:"one_off_ttl_seconds"`
+	AutovaultMode           string   `yaml:"autovault_mode"`
+	InjectStoredBearer      bool     `yaml:"inject_stored_bearer"`
+}
+
+// FeaturesConfig gates progressively enhanced UI and runtime surfaces.
+// Defaults are conservative so service/adapter-only installs keep the simpler UX.
+type FeaturesConfig struct {
+	SecretVault    bool `yaml:"secret_vault"`
+	ServicePresets bool `yaml:"service_presets"`
 }
 
 // RateLimitBucket configures a single rate limit bucket.
@@ -247,7 +280,7 @@ func Default() *Config {
 		},
 		Gateway: GatewayConfig{
 			ContentDedupTTLSeconds: 5,
-			NPSSamplePercent:      1,
+			NPSSamplePercent:       1,
 		},
 		LLM: LLMConfig{
 			Provider:       "anthropic",
@@ -283,6 +316,31 @@ func Default() *Config {
 			Enabled:         true,
 			ApprovalTimeout: 240,
 			SessionTTL:      1440,
+		},
+		RuntimeProxy: RuntimeProxyConfig{
+			Enabled:            false,
+			ListenAddr:         "127.0.0.1:25290",
+			DataDir:            "~/.clawvisor/runtime-proxy",
+			TLS:                false,
+			ListenerHostnames:  []string{"localhost", "127.0.0.1"},
+			SessionTTLSeconds:  3600,
+			TimingTraceEnabled: false,
+			TimingTraceDir:     "~/.clawvisor/runtime-proxy/timing-traces",
+			BodyTraceEnabled:   false,
+			BodyTraceDir:       "~/.clawvisor/runtime-proxy/body-traces",
+		},
+		RuntimePolicy: RuntimePolicyConfig{
+			ObservationModeDefault:  false,
+			InlineApprovalEnabled:   true,
+			HarnessAllowlist:        nil,
+			ToolLeaseTimeoutSeconds: 300,
+			OneOffTTLSeconds:        300,
+			AutovaultMode:           "observe",
+			InjectStoredBearer:      false,
+		},
+		Features: FeaturesConfig{
+			SecretVault:    false,
+			ServicePresets: false,
 		},
 		RateLimit: RateLimitConfig{
 			Gateway:   RateLimitBucket{Limit: 60, Window: 60},
@@ -504,6 +562,57 @@ func Load(path string) (*Config, error) {
 			cfg.Gateway.NPSSamplePercent = n
 		}
 	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_ENABLED"); v != "" {
+		cfg.RuntimeProxy.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_LISTEN_ADDR"); v != "" {
+		cfg.RuntimeProxy.ListenAddr = v
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_DATA_DIR"); v != "" {
+		cfg.RuntimeProxy.DataDir = v
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TLS"); v != "" {
+		cfg.RuntimeProxy.TLS = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_SESSION_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RuntimeProxy.SessionTTLSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TIMING_TRACE_ENABLED"); v != "" {
+		cfg.RuntimeProxy.TimingTraceEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_TIMING_TRACE_DIR"); v != "" {
+		cfg.RuntimeProxy.TimingTraceDir = v
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_BODY_TRACE_ENABLED"); v != "" {
+		cfg.RuntimeProxy.BodyTraceEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_PROXY_BODY_TRACE_DIR"); v != "" {
+		cfg.RuntimeProxy.BodyTraceDir = v
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_OBSERVATION_DEFAULT"); v != "" {
+		cfg.RuntimePolicy.ObservationModeDefault = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_INLINE_APPROVAL_ENABLED"); v != "" {
+		cfg.RuntimePolicy.InlineApprovalEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_TOOL_LEASE_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RuntimePolicy.ToolLeaseTimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_ONE_OFF_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RuntimePolicy.OneOffTTLSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_AUTOVAULT_MODE"); v != "" {
+		cfg.RuntimePolicy.AutovaultMode = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_INJECT_STORED_BEARER"); v != "" {
+		cfg.RuntimePolicy.InjectStoredBearer = v == "true" || v == "1"
+	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
@@ -600,6 +709,29 @@ func (c *Config) Validate() error {
 	}
 	if c.Task.DefaultExpirySeconds <= 0 {
 		return fmt.Errorf("task.default_expiry_seconds must be positive (got %d)", c.Task.DefaultExpirySeconds)
+	}
+	if c.RuntimeProxy.Enabled && c.RuntimeProxy.ListenAddr == "" {
+		return fmt.Errorf("runtime_proxy.listen_addr must be set when runtime_proxy.enabled is true")
+	}
+	if c.RuntimeProxy.SessionTTLSeconds <= 0 {
+		return fmt.Errorf("runtime_proxy.session_ttl_seconds must be positive (got %d)", c.RuntimeProxy.SessionTTLSeconds)
+	}
+	if c.RuntimeProxy.TimingTraceEnabled && strings.TrimSpace(c.RuntimeProxy.TimingTraceDir) == "" {
+		return fmt.Errorf("runtime_proxy.timing_trace_dir must be set when runtime_proxy.timing_trace_enabled is true")
+	}
+	if c.RuntimeProxy.BodyTraceEnabled && strings.TrimSpace(c.RuntimeProxy.BodyTraceDir) == "" {
+		return fmt.Errorf("runtime_proxy.body_trace_dir must be set when runtime_proxy.body_trace_enabled is true")
+	}
+	if c.RuntimePolicy.ToolLeaseTimeoutSeconds <= 0 {
+		return fmt.Errorf("runtime_policy.tool_lease_timeout_seconds must be positive (got %d)", c.RuntimePolicy.ToolLeaseTimeoutSeconds)
+	}
+	if c.RuntimePolicy.OneOffTTLSeconds <= 0 {
+		return fmt.Errorf("runtime_policy.one_off_ttl_seconds must be positive (got %d)", c.RuntimePolicy.OneOffTTLSeconds)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.RuntimePolicy.AutovaultMode)) {
+	case "", "observe", "auto", "strict":
+	default:
+		return fmt.Errorf("runtime_policy.autovault_mode must be one of observe, auto, strict (got %q)", c.RuntimePolicy.AutovaultMode)
 	}
 	return nil
 }

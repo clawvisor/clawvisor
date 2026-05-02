@@ -54,6 +54,10 @@ func New(ctx context.Context, path string) (*sql.DB, error) {
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {
+	return runMigrationsFS(ctx, db, migrationsFS)
+}
+
+func runMigrationsFS(ctx context.Context, db *sql.DB, migrations fs.FS) error {
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			name       TEXT PRIMARY KEY,
@@ -81,7 +85,7 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	entries, err := fs.ReadDir(migrations, "migrations")
 	if err != nil {
 		return err
 	}
@@ -97,24 +101,34 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 
-		data, err := migrationsFS.ReadFile("migrations/" + entry.Name())
+		data, err := fs.ReadFile(migrations, "migrations/"+entry.Name())
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", entry.Name(), err)
 		}
 
-		if _, err := db.ExecContext(ctx, string(data)); err != nil {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
+		}
+		if _, err := tx.ExecContext(ctx, string(data)); err != nil {
 			// SQLite doesn't support ADD COLUMN IF NOT EXISTS. Tolerate
 			// "duplicate column name" errors so migrations survive renumbering
 			// (e.g., 020_agent_org_id.sql → 021_agent_org_id.sql).
 			if !strings.Contains(err.Error(), "duplicate column name") {
+				_ = tx.Rollback()
 				return fmt.Errorf("applying migration %s: %w", entry.Name(), err)
 			}
 		}
-		if _, err := db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations (name) VALUES (?)`,
 			entry.Name(),
 		); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("recording migration %s: %w", entry.Name(), err)
+		}
+		if err := tx.Commit(); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("committing migration %s: %w", entry.Name(), err)
 		}
 	}
 	return nil

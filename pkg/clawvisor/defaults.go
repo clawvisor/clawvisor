@@ -16,32 +16,33 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 
-	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
-	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
+	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
 	dropboxadapter "github.com/clawvisor/clawvisor/internal/adapters/dropbox"
-	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
-	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
+	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
+	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/callback"
+	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/events"
+	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
-	intredis "github.com/clawvisor/clawvisor/internal/redis"
-	"github.com/clawvisor/clawvisor/internal/display"
-	"github.com/clawvisor/clawvisor/internal/groupchat"
-	"github.com/clawvisor/clawvisor/internal/relay"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
+	intredis "github.com/clawvisor/clawvisor/internal/redis"
+	"github.com/clawvisor/clawvisor/internal/relay"
 	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	intvault "github.com/clawvisor/clawvisor/internal/vault"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -65,6 +66,7 @@ import (
 //	opts.Store = tenancy.Wrap(opts.Store)
 //	opts.Features.PasswordAuth = true
 //	clawvisor.Run(opts)
+//
 // DefaultOptions builds a ServerOptions from config. If configPath is provided,
 // it is used directly; otherwise CONFIG_FILE env var is consulted, falling back
 // to "config.yaml".
@@ -323,56 +325,64 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
 	var extractionTracker handlers.ExtractionTracker
+	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
-		rdb, err := intredis.Connect(ctx, cfg.Redis.URL)
+		client, err := intredis.Connect(ctx, cfg.Redis.URL)
 		if err != nil {
 			return nil, fmt.Errorf("connecting to redis: %w", err)
 		}
-		eventHub = events.NewRedisHub(ctx, rdb, logger)
-		magicStore = auth.NewRedisMagicTokenStore(rdb)
-		decisionBus = intnotify.NewRedisDecisionBus(rdb, logger)
+		rdb = client
+		eventHub = events.NewRedisHub(ctx, client, logger)
+		magicStore = auth.NewRedisMagicTokenStore(client)
+		decisionBus = intnotify.NewRedisDecisionBus(client, logger)
 
 		// Multi-instance stores.
-		ticketStore = auth.NewRedisTicketStore(rdb)
-		replayCache = middleware.NewRedisReplayCache(rdb)
-		tokenCache = handlers.NewRedisTokenCache(rdb, 5*time.Minute)
-		devicePairingStore = handlers.NewRedisDevicePairingStore(rdb)
-		oauthStateStore = handlers.NewRedisOAuthStateStore(rdb)
-		pairingCodeStore = handlers.NewRedisPairingCodeStore(rdb, 5*time.Minute, 3)
+		ticketStore = auth.NewRedisTicketStore(client)
+		replayCache = middleware.NewRedisReplayCache(client)
+		tokenCache = handlers.NewRedisTokenCache(client, 5*time.Minute)
+		devicePairingStore = handlers.NewRedisDevicePairingStore(client)
+		oauthStateStore = handlers.NewRedisOAuthStateStore(client)
+		pairingCodeStore = handlers.NewRedisPairingCodeStore(client, 5*time.Minute, 3)
 
 		dedupTTL := time.Duration(cfg.Gateway.ContentDedupTTLSeconds) * time.Second
 		if dedupTTL <= 0 {
 			dedupTTL = 5 * time.Second
 		}
-		dedupCache = handlers.NewRedisDedupCache(rdb, dedupTTL)
+		dedupCache = handlers.NewRedisDedupCache(client, dedupTTL)
 
 		verdictTTL := time.Duration(cfg.LLM.Verification.CacheTTLSeconds) * time.Second
 		if verdictTTL <= 0 {
 			verdictTTL = 60 * time.Second
 		}
-		verdictCache = intent.NewRedisVerdictCache(rdb, verdictTTL)
+		verdictCache = intent.NewRedisVerdictCache(client, verdictTTL)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
-		extractionTracker = handlers.NewRedisExtractionTracker(rdb, 60*time.Second)
+		extractionTracker = handlers.NewRedisExtractionTracker(client, 60*time.Second)
 
 		// Redis-backed group chat buffer.
-		msgBuffer = groupchat.NewRedisMessageBuffer(rdb, 20, 15*time.Minute)
+		msgBuffer = groupchat.NewRedisMessageBuffer(client, 20, 15*time.Minute)
 
 		// Telegram multi-instance stores.
 		instanceID, _ := os.Hostname()
 		telegramN.SetRedisStores(
-			telegramnotify.NewRedisCallbackTokenStore(rdb),
-			telegramnotify.NewRedisPendingGroupStore(rdb),
-			telegramnotify.NewRedisGroupPairingStore(rdb),
-			telegramnotify.NewRedisPollingLock(rdb, instanceID),
+			telegramnotify.NewRedisCallbackTokenStore(client),
+			telegramnotify.NewRedisPendingGroupStore(client),
+			telegramnotify.NewRedisGroupPairingStore(client),
+			telegramnotify.NewRedisPollingLock(client, instanceID),
 		)
 
-		logger.Info("redis connected", "addr", rdb.Options().Addr)
+		logger.Info("redis connected", "addr", client.Options().Addr)
 	}
 
 	features := FeatureSet{
-		PasswordAuth: cfg.Server.AuthMode == "password",
+		PasswordAuth:      cfg.Server.AuthMode == "password",
+		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
+		SecretVault:       cfg.RuntimeProxy.Enabled && cfg.Features.SecretVault,
+		RuntimePolicyUI:   cfg.RuntimeProxy.Enabled,
+		RuntimeActivity:   cfg.RuntimeProxy.Enabled,
+		AgentLiveSessions: cfg.RuntimeProxy.Enabled,
+		ServicePresets:    cfg.RuntimeProxy.Enabled && cfg.Features.ServicePresets,
 	}
 
 	opts := &ServerOptions{
@@ -399,6 +409,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		DedupCache:         dedupCache,
 		VerdictCache:       verdictCache,
 		ExtractionTracker:  extractionTracker,
+		RedisClient:        rdb,
 	}
 
 	// Wire relay client when configured.

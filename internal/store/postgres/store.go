@@ -187,14 +187,15 @@ func (s *Store) MatchRestriction(ctx context.Context, userID, service, action st
 
 func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Name:      name,
-		TokenHash: tokenHash,
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		Name:        name,
+		Description: "",
+		TokenHash:   tokenHash,
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash) VALUES ($1, $2, $3, $4)`,
-		a.ID, a.UserID, a.Name, a.TokenHash,
+		`INSERT INTO agents (id, user_id, name, description, token_hash) VALUES ($1, $2, $3, $4, $5)`,
+		a.ID, a.UserID, a.Name, a.Description, a.TokenHash,
 	)
 	if err != nil {
 		return nil, err
@@ -204,15 +205,16 @@ func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string)
 
 func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*store.Agent, error) {
 	a := &store.Agent{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Name:      name,
-		TokenHash: tokenHash,
-		OrgID:     orgID,
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		Name:        name,
+		Description: "",
+		TokenHash:   tokenHash,
+		OrgID:       orgID,
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash, org_id) VALUES ($1, $2, $3, $4, $5)`,
-		a.ID, a.UserID, a.Name, a.TokenHash, a.OrgID,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, org_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+		a.ID, a.UserID, a.Name, a.Description, a.TokenHash, a.OrgID,
 	)
 	if err != nil {
 		return nil, err
@@ -224,14 +226,19 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	a := &store.Agent{}
 	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
 	}
 	return a, err
 }
@@ -239,11 +246,15 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		       a.description,
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
-		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
+		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
+		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.created_at, ars.updated_at
 		FROM agents a
+		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
 		WHERE a.user_id = $1 AND a.deleted_at IS NULL
 		ORDER BY a.created_at DESC`,
 		userID,
@@ -253,6 +264,42 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 	}
 	defer rows.Close()
 	return scanAgents(rows)
+}
+
+func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
+		       outbound_credential_mode, inject_stored_bearer, created_at, updated_at
+		FROM agent_runtime_settings
+		WHERE agent_id = $1
+	`, agentID)
+	settings := &store.AgentRuntimeSettings{}
+	err := row.Scan(&settings.AgentID, &settings.RuntimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
+		&settings.OutboundCredentialMode, &settings.InjectStoredBearer, &settings.CreatedAt, &settings.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return settings, err
+}
+
+func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.AgentRuntimeSettings) error {
+	if settings == nil {
+		return fmt.Errorf("agent runtime settings are required")
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO agent_runtime_settings (
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer
+		) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (agent_id) DO UPDATE SET
+			runtime_enabled = EXCLUDED.runtime_enabled,
+			runtime_mode = EXCLUDED.runtime_mode,
+			starter_profile = EXCLUDED.starter_profile,
+			outbound_credential_mode = EXCLUDED.outbound_credential_mode,
+			inject_stored_bearer = EXCLUDED.inject_stored_bearer,
+			updated_at = NOW()
+	`, settings.AgentID, settings.RuntimeEnabled, settings.RuntimeMode, settings.StarterProfile,
+		settings.OutboundCredentialMode, settings.InjectStoredBearer)
+	return err
 }
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
@@ -313,18 +360,34 @@ func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (str
 	return *secret, nil
 }
 
+func (s *Store) UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE agents SET description = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL`, description, agentID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var orgID *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
 	}
 	return a, err
 }
@@ -571,14 +634,21 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_log (
-			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-			params_safe, decision, outcome, policy_id, rule_id,
+			id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+			tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+			params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
+		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
-		e.PolicyID, e.RuleID, e.SafetyFlagged, e.SafetyReason, e.Reason,
+		e.PolicyID, e.RuleID, e.ResolutionConfidence, e.IntentVerdict,
+		e.UsedActiveTaskContext, e.UsedLeaseBias, e.UsedConvJudgeResolution,
+		e.WouldBlock, e.WouldReview, e.WouldPromptInline,
+		e.SafetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, nilIfEmpty(e.FiltersApplied),
 		nilIfEmpty(e.Verification), e.ErrorMsg)
 	return err
@@ -599,15 +669,22 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied, verification []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE id = $1 AND user_id = $2
 	`, id, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
+		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
+		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -629,15 +706,22 @@ func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID 
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied, verification []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE request_id = $1 AND user_id = $2
 	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
+		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
+		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -661,7 +745,15 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		limit = 50
 	}
 
-	where := "WHERE user_id = $1"
+	where := `WHERE user_id = $1
+		AND NOT (
+			service = 'runtime.egress' AND EXISTS (
+				SELECT 1 FROM activity_mutes am
+				WHERE am.user_id = $1
+				  AND am.host = COALESCE(params_safe->>'host', '')
+				  AND (am.path_prefix = '' OR COALESCE(params_safe->>'path', '') LIKE am.path_prefix || '%')
+			)
+		)`
 	args := []any{userID}
 	i := 2
 
@@ -685,14 +777,25 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		args = append(args, filter.TaskID)
 		i++
 	}
+	if filter.AgentID != "" {
+		where += fmt.Sprintf(" AND agent_id = $%d", i)
+		args = append(args, filter.AgentID)
+		i++
+	}
+	if filter.IncludeRuntime != nil && !*filter.IncludeRuntime {
+		where += " AND service NOT LIKE 'runtime.%'"
+	}
 
 	var total int
 	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_log "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	dataQuery := `SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		params_safe, decision, outcome, policy_id, rule_id,
+	dataQuery := `SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		would_block, would_review, would_prompt_inline,
 		safety_flagged, safety_reason, reason, data_origin, context_src,
 		duration_ms, filters_applied, verification, error_msg
 		FROM audit_log ` + where +
@@ -706,6 +809,53 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	defer rows.Close()
 	entries, err := scanAuditEntries(rows)
 	return entries, total, err
+}
+
+func (s *Store) CreateActivityMute(ctx context.Context, mute *store.ActivityMute) error {
+	if mute.ID == "" {
+		mute.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO activity_mutes (id, user_id, host, path_prefix)
+		VALUES ($1, $2, $3, $4)
+	`, mute.ID, mute.UserID, mute.Host, mute.PathPrefix)
+	if isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *Store) ListActivityMutes(ctx context.Context, userID string) ([]*store.ActivityMute, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, host, path_prefix, created_at
+		FROM activity_mutes
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ActivityMute
+	for rows.Next() {
+		mute := &store.ActivityMute{}
+		if err := rows.Scan(&mute.ID, &mute.UserID, &mute.Host, &mute.PathPrefix, &mute.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, mute)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteActivityMute(ctx context.Context, id, userID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM activity_mutes WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ── Audit Activity Buckets ────────────────────────────────────────────────────
@@ -745,6 +895,9 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if task.Lifetime == "" {
 		task.Lifetime = "session"
 	}
+	if task.SchemaVersion == 0 {
+		task.SchemaVersion = 1
+	}
 	actionsJSON, err := json.Marshal(task.AuthorizedActions)
 	if err != nil {
 		return err
@@ -753,6 +906,8 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if err != nil {
 		return err
 	}
+	expectedToolsJSON := rawJSONOrDefaultBytes(task.ExpectedTools, "[]")
+	expectedEgressJSON := rawJSONOrDefaultBytes(task.ExpectedEgress, "[]")
 	var pendingActionJSON []byte
 	if task.PendingAction != nil {
 		pendingActionJSON, _ = json.Marshal(task.PendingAction)
@@ -765,30 +920,34 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
-			risk_level, risk_details, approval_source, approval_rationale)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
+			expected_egress_json, intent_verification_mode, expected_use, schema_version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		actionsJSON, plannedCallsJSON, task.CallbackURL, task.ExpiresInSeconds,
 		task.ApprovedAt, task.ExpiresAt,
 		nilIfEmpty(pendingActionJSON), task.PendingReason, task.Lifetime,
-		task.RiskLevel, string(riskDetails), task.ApprovalSource, approvalRationale)
+		task.RiskLevel, string(riskDetails), task.ApprovalSource, approvalRationale,
+		expectedToolsJSON, expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion)
 	return err
 }
 
 func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
-	var actionsJSON, plannedCallsJSON, pendingActionJSON []byte
+	var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON []byte
 	var riskDetailsStr, approvalRationaleStr string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE id = $1
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 		&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
-		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr)
+		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+		&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -815,6 +974,12 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	}
 	if approvalRationaleStr != "" {
 		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+	}
+	if expectedToolsJSON != nil {
+		t.ExpectedTools = json.RawMessage(expectedToolsJSON)
+	}
+	if expectedEgressJSON != nil {
+		t.ExpectedEgress = json.RawMessage(expectedEgressJSON)
 	}
 	return t, nil
 }
@@ -845,7 +1010,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -986,7 +1152,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < NOW()
 	`)
 	if err != nil {
@@ -1000,12 +1167,13 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 	var tasks []*store.Task
 	for rows.Next() {
 		t := &store.Task{}
-		var actionsJSON, plannedCallsJSON, pendingActionJSON []byte
+		var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON []byte
 		var riskDetailsStr, approvalRationaleStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 			&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
 			return nil, err
 		}
 		// authorized_actions IS the task scope — fail loudly rather than load
@@ -1032,6 +1200,12 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 		if approvalRationaleStr != "" {
 			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 		}
+		if expectedToolsJSON != nil {
+			t.ExpectedTools = json.RawMessage(expectedToolsJSON)
+		}
+		if expectedEgressJSON != nil {
+			t.ExpectedEgress = json.RawMessage(expectedEgressJSON)
+		}
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
@@ -1047,9 +1221,9 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 		pa.Status = "pending"
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, []byte(pa.RequestBlob),
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt)
 	return err
 }
@@ -1058,10 +1232,10 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	pa := &store.PendingApproval{}
 	var requestBlob []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE request_id = $1
 	`, requestID).Scan(
-		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1081,7 +1255,7 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) err
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW() ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -1092,7 +1266,7 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE status = 'pending' AND expires_at < NOW()`)
 	if err != nil {
 		return nil, err
@@ -1216,9 +1390,13 @@ func scanAuditEntries(rows pgx.Rows) ([]*store.AuditEntry, error) {
 		e := &store.AuditEntry{}
 		var paramsSafe, filtersApplied, verification []byte
 		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.Timestamp,
+			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+			&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
 			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-			&e.PolicyID, &e.RuleID, &e.SafetyFlagged, &e.SafetyReason, &e.Reason,
+			&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+			&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
+			&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
+			&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
 			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg,
 		); err != nil {
 			return nil, err
@@ -1241,7 +1419,7 @@ func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 		pa := &store.PendingApproval{}
 		var requestBlob []byte
 		if err := rows.Scan(
-			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 			&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1268,6 +1446,969 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ── Canonical Approval Records ───────────────────────────────────────────────
+
+func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRecord) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefaultBytes(rec.SummaryJSON, "{}"), rawJSONOrDefaultBytes(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, rec.ExpiresAt, rec.ResolvedAt, rec.Resolution)
+	return err
+}
+
+func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE id = $1
+	`, id)
+}
+
+func (s *Store) GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE request_id = $1
+	`, requestID)
+}
+
+func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) ([]*store.ApprovalRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE user_id = $1 AND status = 'pending' ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ApprovalRecord
+	for rows.Next() {
+		rec, err := scanApprovalRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ClearApprovalRecordRequestID(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE approval_records SET request_id = NULL, updated_at = NOW() WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE approval_records SET resolution = $1, status = $2, resolved_at = $3, updated_at = NOW() WHERE id = $4
+	`, resolution, status, resolvedAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) getApprovalRecord(ctx context.Context, query string, arg any) (*store.ApprovalRecord, error) {
+	rows, err := s.pool.Query(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanApprovalRecord(rows)
+}
+
+func scanApprovalRecord(scanner interface{ Scan(dest ...any) error }) (*store.ApprovalRecord, error) {
+	rec := &store.ApprovalRecord{}
+	var summaryJSON, payloadJSON []byte
+	if err := scanner.Scan(
+		&rec.ID, &rec.Kind, &rec.UserID, &rec.AgentID, &rec.RequestID, &rec.TaskID, &rec.SessionID,
+		&rec.Status, &rec.Surface, &summaryJSON, &payloadJSON, &rec.ResolutionTransport, &rec.ExpiresAt, &rec.ResolvedAt,
+		&rec.Resolution, &rec.CreatedAt, &rec.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	rec.SummaryJSON = json.RawMessage(summaryJSON)
+	rec.PayloadJSON = json.RawMessage(payloadJSON)
+	return rec, nil
+}
+
+// ── Runtime Sessions ─────────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimeSession(ctx context.Context, sess *store.RuntimeSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_sessions (
+			id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, revoked_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, sess.ID, sess.UserID, sess.AgentID, sess.Mode, sess.ProxyBearerSecretHash, sess.ObservationMode,
+		rawJSONOrDefaultBytes(sess.MetadataJSON, "{}"), sess.ExpiresAt, sess.RevokedAt)
+	return err
+}
+
+func (s *Store) GetRuntimeSession(ctx context.Context, id string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE id = $1
+	`, id)
+}
+
+func (s *Store) GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE proxy_bearer_secret_hash = $1
+	`, secretHash)
+}
+
+func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE agent_id = $1 ORDER BY created_at DESC
+	`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListRuntimeSessionsByAgentAndLaunchID(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions
+		WHERE agent_id = $1
+		  AND COALESCE(metadata_json->>'launch_id', '') = $2
+		ORDER BY created_at DESC
+	`, agentID, launchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_sessions SET revoked_at = $1 WHERE id = $2`, revokedAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_sessions SET expires_at = $1 WHERE id = $2`, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.New().String()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_events (
+			id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+			approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+			resolution_transport, decision, outcome, reason, metadata_json
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+	`, event.ID, event.Timestamp, event.SessionID, event.UserID, event.AgentID, event.Provider, event.EventType,
+		event.ActionKind, event.ApprovalID, event.TaskID, event.MatchedTaskID, event.LeaseID, event.ToolUseID,
+		event.RequestFingerprint, event.ResolutionTransport, event.Decision, event.Outcome, event.Reason,
+		rawJSONOrDefaultBytes(event.MetadataJSON, "{}"))
+	return err
+}
+
+func (s *Store) GetRuntimeEvent(ctx context.Context, id string) (*store.RuntimeEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimeEvent(rows)
+}
+
+func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter store.RuntimeEventFilter) ([]*store.RuntimeEvent, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	args := []any{userID}
+	query := `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE user_id = $1
+	`
+	if filter.SessionID != "" {
+		query += ` AND session_id = $2`
+		args = append(args, filter.SessionID)
+	}
+	if filter.EventType != "" {
+		args = append(args, filter.EventType)
+		query += fmt.Sprintf(" AND event_type = $%d", len(args))
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d", len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeEvent
+	for rows.Next() {
+		event, err := scanRuntimeEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	if rule.ID == "" {
+		rule.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_policy_rules (
+			id, user_id, agent_id, kind, action, service, service_action, host, method, path, path_regex,
+			headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+			reason, source, enabled, last_matched_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefaultBytes(rule.HeadersShape, "{}"), rawJSONOrDefaultBytes(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefaultBytes(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, rule.Enabled, rule.LastMatchedAt)
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetRuntimePolicyRule(ctx context.Context, id string) (*store.RuntimePolicyRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimePolicyRule(rows)
+}
+
+func (s *Store) ListRuntimePolicyRules(ctx context.Context, userID string, filter store.RuntimePolicyRuleFilter) ([]*store.RuntimePolicyRule, error) {
+	args := []any{userID}
+	argPos := 2
+	query := `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE user_id = $1
+	`
+	if filter.AgentID != "" {
+		query += fmt.Sprintf(" AND (agent_id IS NULL OR agent_id = $%d)", argPos)
+		args = append(args, filter.AgentID)
+		argPos++
+	}
+	if filter.Kind != "" {
+		query += fmt.Sprintf(" AND kind = $%d", argPos)
+		args = append(args, filter.Kind)
+		argPos++
+	}
+	if filter.Enabled != nil {
+		query += fmt.Sprintf(" AND enabled = $%d", argPos)
+		args = append(args, *filter.Enabled)
+		argPos++
+	}
+	query += " ORDER BY kind ASC, created_at DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimePolicyRule
+	for rows.Next() {
+		rule, err := scanRuntimePolicyRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rule)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE runtime_policy_rules SET
+			agent_id = $1, kind = $2, action = $3, service = $4, service_action = $5, host = $6, method = $7, path = $8, path_regex = $9,
+			headers_shape_json = $10, body_shape_json = $11, tool_name = $12, input_shape_json = $13, input_regex = $14,
+			reason = $15, source = $16, enabled = $17, updated_at = NOW()
+		WHERE id = $18 AND user_id = $19
+	`, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefaultBytes(rule.HeadersShape, "{}"), rawJSONOrDefaultBytes(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefaultBytes(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, rule.Enabled, rule.ID, rule.UserID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM runtime_policy_rules WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE runtime_policy_rules
+		SET last_matched_at = $1, updated_at = NOW()
+		WHERE id = $2
+	`, matchedAt, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeEvent, error) {
+	event := &store.RuntimeEvent{}
+	var metadataJSON []byte
+	if err := scanner.Scan(
+		&event.ID, &event.Timestamp, &event.SessionID, &event.UserID, &event.AgentID, &event.Provider,
+		&event.EventType, &event.ActionKind, &event.ApprovalID, &event.TaskID, &event.MatchedTaskID,
+		&event.LeaseID, &event.ToolUseID, &event.RequestFingerprint, &event.ResolutionTransport,
+		&event.Decision, &event.Outcome, &event.Reason, &metadataJSON,
+	); err != nil {
+		return nil, err
+	}
+	event.MetadataJSON = json.RawMessage(metadataJSON)
+	return event, nil
+}
+
+func scanRuntimePolicyRule(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePolicyRule, error) {
+	rule := &store.RuntimePolicyRule{}
+	var headersShapeJSON, bodyShapeJSON, inputShapeJSON []byte
+	if err := scanner.Scan(&rule.ID, &rule.UserID, &rule.AgentID, &rule.Kind, &rule.Action, &rule.Host, &rule.Method,
+		&rule.Path, &rule.PathRegex, &rule.Service, &rule.ServiceAction, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
+		&rule.Reason, &rule.Source, &rule.Enabled, &rule.LastMatchedAt, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+		return nil, err
+	}
+	rule.HeadersShape = json.RawMessage(headersShapeJSON)
+	rule.BodyShape = json.RawMessage(bodyShapeJSON)
+	rule.InputShape = json.RawMessage(inputShapeJSON)
+	return rule, nil
+}
+
+func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
+	rows, err := s.pool.Query(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimeSession(rows)
+}
+
+func scanRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeSession, error) {
+	sess := &store.RuntimeSession{}
+	var metadataJSON []byte
+	if err := scanner.Scan(&sess.ID, &sess.UserID, &sess.AgentID, &sess.Mode, &sess.ProxyBearerSecretHash,
+		&sess.ObservationMode, &metadataJSON, &sess.ExpiresAt, &sess.CreatedAt, &sess.RevokedAt); err != nil {
+		return nil, err
+	}
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	return sess, nil
+}
+
+// ── Runtime Placeholders ─────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
+		VALUES ($1,$2,$3,$4,$5)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, placeholder.LastUsedAt)
+	return err
+}
+
+func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders WHERE placeholder = $1
+	`, placeholder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanRuntimePlaceholder(rows)
+}
+
+func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*store.RuntimePlaceholder
+	for rows.Next() {
+		entry, err := scanRuntimePlaceholder(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
+func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM runtime_placeholders WHERE placeholder = $1 AND user_id = $2`, placeholder, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1 WHERE placeholder = $2`, usedAt, placeholder)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
+	placeholder := &store.RuntimePlaceholder{}
+	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &placeholder.CreatedAt, &placeholder.LastUsedAt); err != nil {
+		return nil, err
+	}
+	return placeholder, nil
+}
+
+func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.CredentialAuthorization) error {
+	if auth.ID == "" {
+		auth.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO credential_authorizations (
+			id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+			header_name, scheme, status, metadata_json, expires_at, used_at, last_matched_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
+		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefaultBytes(auth.MetadataJSON, "{}"),
+		auth.ExpiresAt, auth.UsedAt, auth.LastMatchedAt)
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *Store) GetCredentialAuthorization(ctx context.Context, id string) (*store.CredentialAuthorization, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanCredentialAuthorization(rows)
+}
+
+func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, match store.CredentialAuthorizationMatch, now time.Time) (*store.CredentialAuthorization, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row := tx.QueryRow(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE user_id = $1
+		  AND agent_id = $2
+		  AND credential_ref = $3
+		  AND host = $4
+		  AND header_name = $5
+		  AND scheme = $6
+		  AND service = $7
+		  AND status = 'active'
+		  AND (
+		    (scope = 'once' AND session_id = $8 AND used_at IS NULL AND (expires_at IS NULL OR expires_at > $9))
+		    OR (scope = 'session' AND session_id = $8)
+		    OR (scope = 'standing')
+		  )
+		ORDER BY CASE scope WHEN 'once' THEN 0 WHEN 'session' THEN 1 ELSE 2 END, created_at ASC
+		LIMIT 1
+	`, match.UserID, match.AgentID, match.CredentialRef, match.Host, match.HeaderName, match.Scheme, match.Service, match.SessionID, now)
+	auth, err := scanCredentialAuthorization(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+
+	if auth.Scope == "once" {
+		tag, err := tx.Exec(ctx, `
+			UPDATE credential_authorizations
+			SET status = 'used', used_at = $1, last_matched_at = $1
+			WHERE id = $2 AND status = 'active' AND used_at IS NULL
+		`, now, auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.Status = "used"
+		auth.UsedAt = &now
+		auth.LastMatchedAt = &now
+	} else {
+		tag, err := tx.Exec(ctx, `
+			UPDATE credential_authorizations
+			SET last_matched_at = $1
+			WHERE id = $2 AND status = 'active'
+		`, now, auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.LastMatchedAt = &now
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return auth, nil
+}
+
+func scanCredentialAuthorization(scanner interface{ Scan(dest ...any) error }) (*store.CredentialAuthorization, error) {
+	auth := &store.CredentialAuthorization{}
+	var metadataJSON []byte
+	if err := scanner.Scan(
+		&auth.ID, &auth.ApprovalID, &auth.UserID, &auth.AgentID, &auth.SessionID, &auth.Scope,
+		&auth.CredentialRef, &auth.Service, &auth.Host, &auth.HeaderName, &auth.Scheme, &auth.Status,
+		&metadataJSON, &auth.CreatedAt, &auth.ExpiresAt, &auth.UsedAt, &auth.LastMatchedAt,
+	); err != nil {
+		return nil, err
+	}
+	auth.MetadataJSON = json.RawMessage(metadataJSON)
+	return auth, nil
+}
+
+// ── One-Off Approvals ────────────────────────────────────────────────────────
+
+func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {
+	if approval.ID == "" {
+		approval.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO one_off_approvals (id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+	`, approval.ID, approval.SessionID, approval.RequestFingerprint, approval.ApprovalID, approval.ApprovedAt, approval.ExpiresAt, approval.UsedAt)
+	return err
+}
+
+func (s *Store) ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row := tx.QueryRow(ctx, `
+		SELECT id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at
+		FROM one_off_approvals
+		WHERE session_id = $1 AND request_fingerprint = $2 AND used_at IS NULL AND expires_at > $3
+		ORDER BY approved_at ASC LIMIT 1
+	`, sessionID, requestFingerprint, now)
+	approval := &store.OneOffApproval{}
+	if err := row.Scan(&approval.ID, &approval.SessionID, &approval.RequestFingerprint, &approval.ApprovalID,
+		&approval.ApprovedAt, &approval.ExpiresAt, &approval.UsedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE one_off_approvals SET used_at = $1 WHERE id = $2 AND used_at IS NULL`, now, approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+func (s *Store) ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row := tx.QueryRow(ctx, `
+		SELECT o.id, o.session_id, o.request_fingerprint, o.approval_id, o.approved_at, o.expires_at, o.used_at
+		FROM one_off_approvals o
+		JOIN runtime_sessions rs ON rs.id = o.session_id
+		WHERE rs.agent_id = $1 AND o.request_fingerprint = $2 AND o.used_at IS NULL AND o.expires_at > $3
+		ORDER BY o.approved_at ASC LIMIT 1
+	`, agentID, requestFingerprint, now)
+	approval := &store.OneOffApproval{}
+	if err := row.Scan(&approval.ID, &approval.SessionID, &approval.RequestFingerprint, &approval.ApprovalID,
+		&approval.ApprovedAt, &approval.ExpiresAt, &approval.UsedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE one_off_approvals SET used_at = $1 WHERE id = $2 AND used_at IS NULL`, now, approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+// ── Tool Execution Leases ────────────────────────────────────────────────────
+
+func (s *Store) CreateToolExecutionLease(ctx context.Context, lease *store.ToolExecutionLease) error {
+	if lease.LeaseID == "" {
+		lease.LeaseID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO tool_execution_leases (
+			lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, lease.LeaseID, lease.SessionID, lease.TaskID, lease.ToolUseID, lease.ToolName, lease.Status,
+		rawJSONOrDefaultBytes(lease.MetadataJSON, "{}"), lease.OpenedAt, lease.ExpiresAt, lease.ClosedAt)
+	return err
+}
+
+func (s *Store) GetToolExecutionLease(ctx context.Context, leaseID string) (*store.ToolExecutionLease, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases WHERE lease_id = $1
+	`, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanToolExecutionLease(rows)
+}
+
+func (s *Store) ListOpenToolExecutionLeases(ctx context.Context, sessionID string) ([]*store.ToolExecutionLease, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases WHERE session_id = $1 AND closed_at IS NULL ORDER BY opened_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ToolExecutionLease
+	for rows.Next() {
+		lease, err := scanToolExecutionLease(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lease)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CloseToolExecutionLease(ctx context.Context, leaseID string, closedAt time.Time, status string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tool_execution_leases SET closed_at = $1, status = $2 WHERE lease_id = $3
+	`, closedAt, status, leaseID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanToolExecutionLease(scanner interface{ Scan(dest ...any) error }) (*store.ToolExecutionLease, error) {
+	lease := &store.ToolExecutionLease{}
+	var metadataJSON []byte
+	if err := scanner.Scan(&lease.LeaseID, &lease.SessionID, &lease.TaskID, &lease.ToolUseID, &lease.ToolName,
+		&lease.Status, &metadataJSON, &lease.OpenedAt, &lease.ExpiresAt, &lease.ClosedAt); err != nil {
+		return nil, err
+	}
+	lease.MetadataJSON = json.RawMessage(metadataJSON)
+	return lease, nil
+}
+
+// ── Task Invocations And Calls ───────────────────────────────────────────────
+
+func (s *Store) CreateTaskInvocation(ctx context.Context, inv *store.TaskInvocation) error {
+	if inv.ID == "" {
+		inv.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO task_invocations (
+			id, task_id, session_id, user_id, agent_id, request_id, invocation_type, status, metadata_json, created_at, completed_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	`, inv.ID, inv.TaskID, inv.SessionID, inv.UserID, inv.AgentID, inv.RequestID, inv.InvocationType,
+		inv.Status, rawJSONOrDefaultBytes(inv.MetadataJSON, "{}"), inv.CreatedAt, inv.CompletedAt)
+	return err
+}
+
+func (s *Store) CreateTaskCall(ctx context.Context, call *store.TaskCall) error {
+	if call.ID == "" {
+		call.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO task_calls (
+			id, task_id, invocation_id, request_id, session_id, service, action, outcome, approval_id, audit_id, metadata_json, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	`, call.ID, call.TaskID, call.InvocationID, call.RequestID, call.SessionID, call.Service, call.Action,
+		call.Outcome, call.ApprovalID, call.AuditID, rawJSONOrDefaultBytes(call.MetadataJSON, "{}"), call.CreatedAt)
+	return err
+}
+
+func (s *Store) UpsertActiveTaskSession(ctx context.Context, sess *store.ActiveTaskSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO active_task_sessions (
+			id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (task_id, session_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			metadata_json = EXCLUDED.metadata_json,
+			last_seen_at = EXCLUDED.last_seen_at,
+			ended_at = EXCLUDED.ended_at
+	`, sess.ID, sess.TaskID, sess.SessionID, sess.UserID, sess.AgentID, sess.Status,
+		rawJSONOrDefaultBytes(sess.MetadataJSON, "{}"), sess.StartedAt, sess.LastSeenAt, sess.EndedAt)
+	return err
+}
+
+func (s *Store) GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*store.ActiveTaskSession, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		FROM active_task_sessions
+		WHERE task_id = $1 AND session_id = $2 AND status = 'active' AND ended_at IS NULL
+	`, taskID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanActiveTaskSession(rows)
+}
+
+func (s *Store) EndActiveTaskSession(ctx context.Context, taskID, sessionID string, endedAt time.Time, status string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE active_task_sessions SET ended_at = $1, status = $2, last_seen_at = $1 WHERE task_id = $3 AND session_id = $4
+	`, endedAt, status, taskID, sessionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanActiveTaskSession(scanner interface{ Scan(dest ...any) error }) (*store.ActiveTaskSession, error) {
+	sess := &store.ActiveTaskSession{}
+	var metadataJSON []byte
+	if err := scanner.Scan(&sess.ID, &sess.TaskID, &sess.SessionID, &sess.UserID, &sess.AgentID,
+		&sess.Status, &metadataJSON, &sess.StartedAt, &sess.LastSeenAt, &sess.EndedAt); err != nil {
+		return nil, err
+	}
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	return sess, nil
+}
+
+func (s *Store) GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*store.RuntimePresetDecision, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, command_key, profile, decision, created_at, updated_at
+		FROM runtime_preset_decisions
+		WHERE user_id = $1 AND command_key = $2 AND profile = $3
+	`, userID, commandKey, profile)
+	decision := &store.RuntimePresetDecision{}
+	err := row.Scan(&decision.ID, &decision.UserID, &decision.CommandKey, &decision.Profile, &decision.Decision, &decision.CreatedAt, &decision.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return decision, err
+}
+
+func (s *Store) UpsertRuntimePresetDecision(ctx context.Context, decision *store.RuntimePresetDecision) error {
+	if decision == nil {
+		return fmt.Errorf("runtime preset decision is required")
+	}
+	if decision.ID == "" {
+		decision.ID = uuid.New().String()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO runtime_preset_decisions (id, user_id, command_key, profile, decision)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id, command_key, profile) DO UPDATE SET
+			decision = EXCLUDED.decision,
+			updated_at = NOW()
+	`, decision.ID, decision.UserID, decision.CommandKey, decision.Profile, decision.Decision)
+	return err
 }
 
 // ── OAuth ────────────────────────────────────────────────────────────────────
@@ -1335,6 +2476,13 @@ func nilIfEmpty(b json.RawMessage) []byte {
 		return nil
 	}
 	return []byte(b)
+}
+
+func rawJSONOrDefaultBytes(msg json.RawMessage, fallback string) []byte {
+	if len(msg) == 0 {
+		return []byte(fallback)
+	}
+	return []byte(msg)
 }
 
 // ── MCP Sessions ─────────────────────────────────────────────────────────────
@@ -1603,12 +2751,47 @@ func scanAgents(rows pgx.Rows) ([]*store.Agent, error) {
 	for rows.Next() {
 		a := &store.Agent{}
 		var orgID *string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID,
-			&a.ActiveTaskCount, &a.LastTaskAt); err != nil {
+		var settingsAgentID *string
+		var settingsEnabled *bool
+		var settingsMode *string
+		var settingsProfile *string
+		var settingsOutbound *string
+		var settingsInject *bool
+		var settingsCreatedAt *time.Time
+		var settingsUpdatedAt *time.Time
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &a.CreatedAt, &orgID, &a.Description,
+			&a.ActiveTaskCount, &a.LastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode,
+			&settingsProfile, &settingsOutbound, &settingsInject, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
 		if orgID != nil {
 			a.OrgID = *orgID
+		}
+		if settingsAgentID != nil {
+			a.RuntimeSettings = &store.AgentRuntimeSettings{
+				AgentID: *settingsAgentID,
+			}
+			if settingsEnabled != nil {
+				a.RuntimeSettings.RuntimeEnabled = *settingsEnabled
+			}
+			if settingsMode != nil {
+				a.RuntimeSettings.RuntimeMode = *settingsMode
+			}
+			if settingsProfile != nil {
+				a.RuntimeSettings.StarterProfile = *settingsProfile
+			}
+			if settingsOutbound != nil {
+				a.RuntimeSettings.OutboundCredentialMode = *settingsOutbound
+			}
+			if settingsInject != nil {
+				a.RuntimeSettings.InjectStoredBearer = *settingsInject
+			}
+			if settingsCreatedAt != nil {
+				a.RuntimeSettings.CreatedAt = *settingsCreatedAt
+			}
+			if settingsUpdatedAt != nil {
+				a.RuntimeSettings.UpdatedAt = *settingsUpdatedAt
+			}
 		}
 		agents = append(agents, a)
 	}
@@ -1788,7 +2971,6 @@ func (s *Store) ListGeneratedAdapters(ctx context.Context, userID string) ([]*st
 	}
 	return out, rows.Err()
 }
-
 
 func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error {
 	_, err := s.pool.Exec(ctx,
