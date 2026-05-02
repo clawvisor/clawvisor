@@ -37,6 +37,7 @@ var proxyCmd = &cobra.Command{
 var proxyExposeCmd = &cobra.Command{
 	Use:   "expose",
 	Short: "Expose the runtime proxy and daemon API on a network address",
+	Args:  cobra.NoArgs,
 	Long: `Run two TCP forwarders that bridge the local clawvisor runtime proxy and
 daemon API onto a network-routable bind address. Intended for docker-compose
 isolation on a remote host or other off-box workloads that need to reach the
@@ -72,6 +73,7 @@ agent token; the API still requires its own auth headers).`,
 var proxyExposeStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop a detached `clawvisor proxy expose` process",
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := proxyExposePIDPath()
 		if err != nil {
@@ -110,25 +112,37 @@ func runProxyExposeForeground(ctx context.Context, cfg expose.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := writeExposePIDFile(pidPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not write pidfile %s: %v\n", pidPath, err)
-	} else {
-		defer os.Remove(pidPath)
-	}
+	// Defer pidfile cleanup unconditionally; we may have written one in onReady.
+	defer os.Remove(pidPath)
 
 	return expose.Run(ctx, cfg, func(ep expose.Endpoints) {
+		// Only write the pidfile after listeners are bound. The detached
+		// runner uses pidfile presence as the readiness signal — writing it
+		// before bind would let `--detach` succeed even when the child exits.
+		if err := writeExposePIDFile(pidPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not write pidfile %s: %v\n", pidPath, err)
+		}
 		fmt.Printf("clawvisor proxy expose: ready (proxy=%s api=%s)\n", ep.ProxyAddr, ep.APIAddr)
 	})
 }
 
 // runProxyExposeDetached re-execs `clawvisor proxy expose` in the background
-// without --detach. The parent waits briefly for the child to print readiness
-// (or exit), then returns. The child manages its own pidfile.
+// without --detach. It waits for either the child to write its pidfile
+// (success) or exit (failure), so a bind error in the child surfaces as a
+// non-zero exit from the parent.
 func runProxyExposeDetached(cfg expose.Config) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate clawvisor binary: %w", err)
 	}
+	pidPath, err := proxyExposePIDPath()
+	if err != nil {
+		return err
+	}
+	// Stale pidfile from a previous crashed run would falsely satisfy the
+	// readiness check below; remove it before launching the child.
+	_ = os.Remove(pidPath)
+
 	args := []string{"proxy", "expose",
 		"--bind", cfg.BindAddr,
 		"--proxy-port", fmt.Sprintf("%d", cfg.ProxyPort),
@@ -144,15 +158,42 @@ func runProxyExposeDetached(cfg expose.Config) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start detached expose: %w", err)
 	}
-	// Brief delay so the child prints its readiness/error before we return.
-	time.Sleep(200 * time.Millisecond)
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	deadline := time.Now().Add(detachReadinessTimeout)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if pidInFile := readExposePIDFile(pidPath); pidInFile == cmd.Process.Pid {
+			break
+		}
+		select {
+		case err := <-waitCh:
+			if err != nil {
+				return fmt.Errorf("detached expose exited before becoming ready: %w", err)
+			}
+			return fmt.Errorf("detached expose exited before becoming ready (pid=%d)", cmd.Process.Pid)
+		case <-tick.C:
+			if time.Now().After(deadline) {
+				_ = cmd.Process.Kill()
+				return fmt.Errorf("detached expose did not become ready within %s", detachReadinessTimeout)
+			}
+		}
+	}
+
 	if err := cmd.Process.Release(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: release detached process: %v\n", err)
 	}
-	pidPath, _ := proxyExposePIDPath()
 	fmt.Printf("clawvisor proxy expose: detached (pid=%d, pidfile=%s)\n", cmd.Process.Pid, pidPath)
 	return nil
 }
+
+// detachReadinessTimeout caps how long the parent waits for the detached
+// child to bind its listeners and write the pidfile. 5s is generous for a
+// local TCP bind without giving up too quickly under load.
+const detachReadinessTimeout = 5 * time.Second
 
 func writeExposePIDFile(path string) error {
 	return os.WriteFile(path, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600)
@@ -205,7 +246,7 @@ func init() {
 		"Source CIDR allowlist (repeatable). Default: loopback + RFC-1918.")
 	proxyExposeCmd.Flags().BoolVar(&proxyExposeDetach, "detach", false, "Run in the background and write a pidfile")
 
+	proxyExposeCmd.AddCommand(proxyExposeStopCmd)
 	proxyCmd.AddCommand(proxyExposeCmd)
-	proxyCmd.AddCommand(proxyExposeStopCmd)
 	rootCmd.AddCommand(proxyCmd)
 }

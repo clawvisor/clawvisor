@@ -77,6 +77,12 @@ func ParseExposeURL(rawURL, label string) (ParsedExpose, error) {
 	if kind == HostKindLoopback {
 		return ParsedExpose{}, fmt.Errorf("%s: %q points at loopback; expose URLs must be reachable from the holder", label, rawURL)
 	}
+	// init-firewall.sh is IPv4-only (resolves via getent ahostsv4 and the
+	// iptables ACCEPT rules use IPv4 destinations). Reject IPv6 literals up
+	// front so the holder doesn't fail at startup with a confusing message.
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return ParsedExpose{}, fmt.Errorf("%s: %q is an IPv6 literal; only IPv4 hosts are supported", label, rawURL)
+	}
 	portStr := parsed.Port()
 	if portStr == "" {
 		switch parsed.Scheme {

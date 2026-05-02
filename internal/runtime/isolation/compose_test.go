@@ -39,6 +39,8 @@ func TestParseExposeURLRejects(t *testing.T) {
 		"empty scheme":  "192.168.1.10:25291",
 		"bad scheme":    "ftp://192.168.1.10:25291",
 		"no host":       "http://:25291",
+		"ipv6 literal":  "http://[2001:db8::1]:25291",
+		"ipv6 loopback": "http://[::1]:25291",
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {

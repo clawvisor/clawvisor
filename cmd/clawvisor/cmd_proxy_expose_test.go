@@ -136,3 +136,39 @@ func freePort(t *testing.T) string {
 	defer ln.Close()
 	return fmt.Sprintf("%d", ln.Addr().(*net.TCPAddr).Port)
 }
+
+func TestProxyExposeForegroundOnlyWritesPidfileAfterReady(t *testing.T) {
+	// Make pidfile presence the readiness contract: the foreground runner
+	// must NOT write the pidfile until both listeners have bound. The
+	// detached runner relies on this — pidfile presence == healthy.
+	t.Setenv("HOME", t.TempDir())
+
+	// Occupy a port so the proxy listener fails to bind. Run with explicit
+	// ProxyPort = the occupied port so expose.Run returns an error before
+	// onReady fires.
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer occupied.Close()
+	occupiedPort := occupied.Addr().(*net.TCPAddr).Port
+
+	cfg := expose.Config{
+		BindAddr:      "127.0.0.1",
+		ProxyPort:     occupiedPort,
+		APIPort:       0,
+		ProxyUpstream: "127.0.0.1:1",
+		APIUpstream:   "127.0.0.1:2",
+	}
+	err = runProxyExposeForeground(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected runProxyExposeForeground to fail when port is occupied")
+	}
+	pidPath, perr := proxyExposePIDPath()
+	if perr != nil {
+		t.Fatalf("pidpath: %v", perr)
+	}
+	if _, statErr := os.Stat(pidPath); statErr == nil {
+		t.Fatal("pidfile should not exist when bind fails — detached readiness contract is broken")
+	}
+}
