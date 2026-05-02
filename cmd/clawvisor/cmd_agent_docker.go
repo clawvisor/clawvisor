@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -16,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/isolation"
 	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
@@ -30,6 +34,7 @@ var (
 	dockerRunDryRun    bool
 	dockerComposeSvc   string
 	dockerComposeTpl   bool
+	dockerIsolation    string
 )
 
 type dockerProxyOptions struct {
@@ -98,6 +103,10 @@ Example:
 		if len(args) < 2 || args[0] != "docker" || args[1] != "run" {
 			return fmt.Errorf("expected `-- docker run ...` after the flags; got %v", args)
 		}
+		mode, err := isolation.ParseMode(dockerIsolation)
+		if err != nil {
+			return err
+		}
 		imageIdx, err := findDockerRunImageIndex(args[2:])
 		if err != nil {
 			return fmt.Errorf("parse docker run args: %w", err)
@@ -106,6 +115,16 @@ Example:
 		if imageIdx+1 < len(args) {
 			_ = maybeOfferStarterProfile(opts.Credentials, args[imageIdx+1:])
 		}
+
+		dockerPath, err := exec.LookPath("docker")
+		if err != nil {
+			return fmt.Errorf("docker not found on PATH: %w", err)
+		}
+
+		if mode == isolation.ModeContainer {
+			return runDockerRunIsolated(cmd.Context(), dockerPath, opts, args, imageIdx)
+		}
+
 		injected := buildDockerRunInjection(buildDockerAgentEnvVars(opts, false), opts.CAHost, opts.CAInside, opts.ProxyHost)
 		final := make([]string, 0, len(args)+len(injected))
 		final = append(final, args[:imageIdx]...)
@@ -115,11 +134,7 @@ Example:
 			fmt.Println(formatCmdLine(final))
 			return nil
 		}
-		path, err := exec.LookPath("docker")
-		if err != nil {
-			return fmt.Errorf("docker not found on PATH: %w", err)
-		}
-		return syscall.Exec(path, final, os.Environ())
+		return syscall.Exec(dockerPath, final, os.Environ())
 	},
 	SilenceUsage: true,
 }
@@ -357,6 +372,136 @@ func buildDockerRunInjection(vars []dockerEnvVar, caHost, caInside, proxyHost st
 	return out
 }
 
+func buildIsolatedDockerRunInjection(vars []dockerEnvVar, caHost, caInside, holderID string, addHosts []string) []string {
+	out := make([]string, 0, len(vars)*2+8)
+	out = append(out, "--network", "container:"+holderID)
+	for _, h := range addHosts {
+		out = append(out, "--add-host", h)
+	}
+	out = append(out, "-v", fmt.Sprintf("%s:%s:ro", caHost, caInside))
+	for _, v := range vars {
+		out = append(out, "-e", v.Key+"="+v.Value)
+	}
+	return out
+}
+
+func runDockerRunIsolated(parent context.Context, dockerPath string, opts *dockerProxyOptions, args []string, imageIdx int) error {
+	if err := isolation.CheckUserArgs(args[2:imageIdx]); err != nil {
+		return err
+	}
+
+	plan := isolation.Plan{
+		DockerBin:         dockerPath,
+		BaseURL:           opts.Credentials.BaseURL,
+		UpstreamProxyAddr: runtimeProxyUpstreamAddr(opts.ProxyPort),
+		SessionShort:      shortLaunchID(),
+	}
+	handle, err := isolation.Prepare(parent, plan)
+	if err != nil {
+		return fmt.Errorf("prepare isolation: %w", err)
+	}
+	defer func() { _ = handle.Cleanup() }()
+
+	opts.ProxyHost = handle.GatewayIP()
+	opts.ProxyPort = handle.ProxyForwarderPort()
+	opts.ContainerURL = handle.ContainerAPIURL()
+
+	envVars := buildDockerAgentEnvVars(opts, false)
+	if hostname := handle.PreservedHostname(); hostname != "" {
+		envVars = appendNoProxyHosts(envVars, hostname)
+	}
+
+	injection := buildIsolatedDockerRunInjection(envVars, opts.CAHost, opts.CAInside, handle.HolderContainerID(), handle.ExtraAddHosts())
+
+	final := make([]string, 0, len(args)+len(injection))
+	final = append(final, args[:imageIdx]...)
+	final = append(final, injection...)
+	final = append(final, args[imageIdx:]...)
+
+	if dockerRunDryRun {
+		fmt.Println(formatCmdLine(final))
+		return nil
+	}
+
+	dockerArgs := final[1:]
+	child := exec.Command(dockerPath, dockerArgs...)
+	child.Stdin = os.Stdin
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+	if err := child.Start(); err != nil {
+		return fmt.Errorf("start docker run: %w", err)
+	}
+
+	if err := waitWithSignalRelay(parent, child); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return err
+		}
+		return fmt.Errorf("docker run: %w", err)
+	}
+	return nil
+}
+
+// waitWithSignalRelay blocks until child exits, relaying SIGINT/SIGTERM from
+// the parent process (and ctx cancellation) to the child. This matters for
+// `docker run`: an attached docker CLI receiving SIGINT/SIGTERM forwards it to
+// the container's PID 1 so the workload can shut down gracefully and `--rm`
+// can clean up. exec.CommandContext + signal.NotifyContext would instead
+// SIGKILL the local CLI, leaking the running container in the daemon.
+func waitWithSignalRelay(ctx context.Context, child *exec.Cmd) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- child.Wait() }()
+
+	for {
+		select {
+		case sig := <-sigCh:
+			_ = child.Process.Signal(sig)
+		case <-ctx.Done():
+			_ = child.Process.Signal(syscall.SIGTERM)
+		case err := <-waitCh:
+			return err
+		}
+	}
+}
+
+func runtimeProxyUpstreamAddr(port int) string {
+	if port <= 0 {
+		port = defaultRuntimeProxyPort()
+	}
+	host := "127.0.0.1"
+	cfg := loadLocalDockerRuntimeConfig()
+	if addr := strings.TrimSpace(cfg.RuntimeProxy.ListenAddr); addr != "" {
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			if h != "" && h != "0.0.0.0" && h != "::" {
+				host = h
+			}
+		}
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+func shortLaunchID() string {
+	id := uuid.NewString()
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func appendNoProxyHosts(vars []dockerEnvVar, hosts ...string) []dockerEnvVar {
+	for i := range vars {
+		switch vars[i].Key {
+		case "NO_PROXY", "no_proxy":
+			vars[i].Value = mergeNoProxy(vars[i].Value, hosts...)
+		}
+	}
+	return vars
+}
+
 func findDockerRunImageIndex(args []string) (int, error) {
 	skipNext := false
 	for i, tok := range args {
@@ -520,6 +665,7 @@ func init() {
 	agentDockerEnvCmd.Flags().StringVar(&dockerEnvFormat, "format", "env", "Output format: env, export, or docker-args")
 	agentDockerEnvCmd.Flags().BoolVar(&dockerEnvQuiet, "quiet", false, "Suppress the instructional header")
 	agentDockerRunCmd.Flags().BoolVar(&dockerRunDryRun, "dry-run", false, "Print the modified docker command without executing")
+	agentDockerRunCmd.Flags().StringVar(&dockerIsolation, "isolation", "off", "Egress isolation mode: off (default) or container (iptables-locked netns sidecar)")
 	agentDockerComposeCmd.Flags().StringVar(&dockerComposeSvc, "service", "", "Compose service name to wire through Clawvisor (required)")
 	agentDockerComposeCmd.Flags().BoolVar(&dockerComposeTpl, "templated", true, "Emit ${CLAWVISOR_AGENT_TOKEN} references instead of baking the token into the override")
 

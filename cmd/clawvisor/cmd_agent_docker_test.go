@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 var launchUserPattern = regexp.MustCompile(`^launch-[0-9a-fA-F-]{36}$`)
@@ -207,6 +211,106 @@ func TestPrintDockerEnvAsArgsUsesShellQuoting(t *testing.T) {
 	}
 }
 
+func TestBuildIsolatedDockerRunInjection(t *testing.T) {
+	injected := buildIsolatedDockerRunInjection(
+		[]dockerEnvVar{
+			{Key: "CLAWVISOR_URL", Value: "http://172.20.0.1:34567"},
+			{Key: "HTTPS_PROXY", Value: "http://launch-x:tok@172.20.0.1:34568"},
+		},
+		"/host/ca.pem", "/clawvisor/ca.pem",
+		"holderID0123",
+		[]string{"clawvisor.company.internal:172.20.0.1"},
+	)
+	got := strings.Join(injected, " ")
+	if !strings.Contains(got, "--network container:holderID0123") {
+		t.Fatalf("expected --network container:<holder>, got %q", got)
+	}
+	if !strings.Contains(got, "--add-host clawvisor.company.internal:172.20.0.1") {
+		t.Fatalf("expected --add-host for preserved hostname, got %q", got)
+	}
+	if !strings.Contains(got, "-v /host/ca.pem:/clawvisor/ca.pem:ro") {
+		t.Fatalf("expected CA mount, got %q", got)
+	}
+	if !strings.Contains(got, "-e CLAWVISOR_URL=http://172.20.0.1:34567") {
+		t.Fatalf("expected CLAWVISOR_URL env, got %q", got)
+	}
+}
+
+func TestBuildIsolatedDockerRunInjectionNoHostnameAddsNoExtraHosts(t *testing.T) {
+	injected := buildIsolatedDockerRunInjection(
+		[]dockerEnvVar{{Key: "CLAWVISOR_URL", Value: "http://172.20.0.1:34567"}},
+		"/host/ca.pem", "/clawvisor/ca.pem",
+		"holderID0123",
+		nil,
+	)
+	got := strings.Join(injected, " ")
+	if strings.Contains(got, "--add-host") {
+		t.Fatalf("did not expect --add-host for loopback rewrite, got %q", got)
+	}
+}
+
+func TestAppendNoProxyHostsMergesIntoBothCases(t *testing.T) {
+	vars := []dockerEnvVar{
+		{Key: "NO_PROXY", Value: "localhost,127.0.0.1"},
+		{Key: "no_proxy", Value: "localhost,127.0.0.1"},
+		{Key: "HTTP_PROXY", Value: "http://x"},
+	}
+	out := appendNoProxyHosts(vars, "clawvisor.company.internal", "172.20.0.1")
+	wantSubs := []string{"clawvisor.company.internal", "172.20.0.1"}
+	for _, v := range out {
+		if v.Key != "NO_PROXY" && v.Key != "no_proxy" {
+			continue
+		}
+		for _, s := range wantSubs {
+			if !strings.Contains(v.Value, s) {
+				t.Fatalf("%s: missing %q in %q", v.Key, s, v.Value)
+			}
+		}
+	}
+}
+
+func TestRuntimeProxyUpstreamAddrUnboundLoopback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".clawvisor")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+runtime_proxy:
+  listen_addr: "0.0.0.0:25290"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+	if got := runtimeProxyUpstreamAddr(0); got != "127.0.0.1:25290" {
+		t.Fatalf("runtimeProxyUpstreamAddr(0) = %q, want 127.0.0.1:25290", got)
+	}
+	if got := runtimeProxyUpstreamAddr(31337); got != "127.0.0.1:31337" {
+		t.Fatalf("runtimeProxyUpstreamAddr(31337) = %q, want 127.0.0.1:31337 (--proxy-port override)", got)
+	}
+}
+
+func TestRuntimeProxyUpstreamAddrCustomHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".clawvisor")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+runtime_proxy:
+  listen_addr: "10.0.0.5:25290"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+	if got := runtimeProxyUpstreamAddr(0); got != "10.0.0.5:25290" {
+		t.Fatalf("runtimeProxyUpstreamAddr(0) = %q, want 10.0.0.5:25290 (preserve config host)", got)
+	}
+	if got := runtimeProxyUpstreamAddr(31337); got != "10.0.0.5:31337" {
+		t.Fatalf("runtimeProxyUpstreamAddr(31337) = %q, want 10.0.0.5:31337 (host from config, port override)", got)
+	}
+}
+
 func TestDockerDefaultsFollowLocalRuntimeConfig(t *testing.T) {
 	home := t.TempDir()
 	prevHome := os.Getenv("HOME")
@@ -235,5 +339,88 @@ runtime_proxy:
 	}
 	if got := defaultRuntimeProxyCAHostPath(); got != filepath.Join(caDir, "ca.pem") {
 		t.Fatalf("defaultRuntimeProxyCAHostPath() = %q, want %q", got, filepath.Join(caDir, "ca.pem"))
+	}
+}
+
+// TestWaitWithSignalRelayForwardsSIGTERM proves that a SIGTERM delivered to
+// the parent process is relayed to the child rather than killing it via
+// context cancellation. The child traps SIGTERM and exits 42; if the relay
+// were broken (e.g. exec.CommandContext SIGKILL on ctx-cancel) we'd observe
+// a different exit code or no exit code at all.
+func TestWaitWithSignalRelayForwardsSIGTERM(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	child := exec.Command("bash", "-c", `trap "exit 42" TERM; sleep 30 & wait`)
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		// Give bash a beat to install its trap before signaling.
+		time.Sleep(100 * time.Millisecond)
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	}()
+
+	err := waitWithSignalRelay(ctx, child)
+	if err == nil {
+		t.Fatal("expected non-nil error (child should have exited 42)")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	if got := exitErr.ExitCode(); got != 42 {
+		t.Fatalf("child exit code = %d, want 42 (signal relay → trapped TERM)", got)
+	}
+}
+
+// TestWaitWithSignalRelayContextCancelTerminatesChild proves that ctx
+// cancellation flows through as SIGTERM to the child (not SIGKILL) so the
+// child can run its shutdown trap.
+func TestWaitWithSignalRelayContextCancelTerminatesChild(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	child := exec.Command("bash", "-c", `trap "exit 17" TERM; sleep 30 & wait`)
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	defer cancel()
+
+	err := waitWithSignalRelay(ctx, child)
+	if err == nil {
+		t.Fatal("expected non-nil error (child should have exited 17)")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	if got := exitErr.ExitCode(); got != 17 {
+		t.Fatalf("child exit code = %d, want 17 (ctx cancel → SIGTERM relay)", got)
+	}
+}
+
+// TestWaitWithSignalRelayNaturalExit confirms the happy path: child exits on
+// its own, helper returns its error.
+func TestWaitWithSignalRelayNaturalExit(t *testing.T) {
+	if _, err := exec.LookPath("true"); err != nil {
+		t.Skipf("/bin/true not available: %v", err)
+	}
+	child := exec.Command("true")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	if err := waitWithSignalRelay(context.Background(), child); err != nil {
+		t.Fatalf("expected nil error from successful child, got %v", err)
 	}
 }
