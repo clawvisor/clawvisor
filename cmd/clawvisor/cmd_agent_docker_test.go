@@ -424,3 +424,85 @@ func TestWaitWithSignalRelayNaturalExit(t *testing.T) {
 		t.Fatalf("expected nil error from successful child, got %v", err)
 	}
 }
+
+// runDockerComposeIsolated end-to-end coverage: missing flags, then a
+// minimal happy path that emits the holder + user service stanzas.
+
+func withResetDockerComposeIsolationFlags(t *testing.T) {
+	t.Helper()
+	prev := struct {
+		svc, exposeURL, exposeAPIURL, isolation string
+		tpl                                     bool
+	}{dockerComposeSvc, dockerComposeExposeURL, dockerComposeExposeAPIURL, dockerIsolation, dockerComposeTpl}
+	t.Cleanup(func() {
+		dockerComposeSvc = prev.svc
+		dockerComposeExposeURL = prev.exposeURL
+		dockerComposeExposeAPIURL = prev.exposeAPIURL
+		dockerIsolation = prev.isolation
+		dockerComposeTpl = prev.tpl
+	})
+}
+
+func TestRunDockerComposeIsolatedRequiresExposeFlags(t *testing.T) {
+	withResetDockerComposeIsolationFlags(t)
+	dockerComposeSvc = "agent"
+	dockerComposeExposeURL = ""
+	dockerComposeExposeAPIURL = "http://192.168.1.10:18791"
+
+	opts := &dockerProxyOptions{
+		ContainerURL: "http://host.docker.internal:25297",
+		AgentToken:   "tok",
+		ProxyHost:    "host.docker.internal",
+		ProxyPort:    25290,
+		CAInside:     "/clawvisor/ca.pem",
+		CAHost:       "/host/ca.pem",
+	}
+	var buf bytes.Buffer
+	if err := runDockerComposeIsolated(&buf, opts); err == nil {
+		t.Fatal("expected error when --expose-url is missing")
+	}
+}
+
+func TestRunDockerComposeIsolatedEmitsHolderAndUserService(t *testing.T) {
+	withResetDockerComposeIsolationFlags(t)
+	dockerComposeSvc = "agent"
+	dockerComposeExposeURL = "http://192.168.1.10:25291"
+	dockerComposeExposeAPIURL = "http://192.168.1.10:18791"
+	dockerComposeTpl = true
+
+	opts := &dockerProxyOptions{
+		ContainerURL: "http://192.168.1.10:18791",
+		AgentToken:   "tok",
+		ProxyHost:    "host.docker.internal",
+		ProxyPort:    25290,
+		CAInside:     "/clawvisor/ca.pem",
+		CAHost:       "/host/ca.pem",
+	}
+	var buf bytes.Buffer
+	if err := runDockerComposeIsolated(&buf, opts); err != nil {
+		t.Fatalf("runDockerComposeIsolated: %v", err)
+	}
+	out := buf.String()
+
+	wants := []string{
+		"  clawvisor-netns-holder:",
+		"      - NET_ADMIN",
+		`      CLAWVISOR_HOST_TARGET: "192.168.1.10"`,
+		`      CLAWVISOR_PROXY_PORT: "25291"`,
+		`      CLAWVISOR_API_PORT: "18791"`,
+		"  agent:",
+		`    network_mode: "service:clawvisor-netns-holder"`,
+		`        condition: service_healthy`,
+		`      CLAWVISOR_URL: "http://192.168.1.10:18791"`,
+		// proxy plumbing is rewritten to the expose host:port; templated token preserved.
+		`@192.168.1.10:25291`,
+	}
+	for _, s := range wants {
+		if !strings.Contains(out, s) {
+			t.Errorf("output missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+	if !strings.Contains(out, "192.168.1.10") {
+		t.Fatalf("NO_PROXY should include the API host so traffic to CLAWVISOR_URL bypasses the proxy. Output:\n%s", out)
+	}
+}

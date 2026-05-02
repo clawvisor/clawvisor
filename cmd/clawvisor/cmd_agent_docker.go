@@ -35,6 +35,9 @@ var (
 	dockerComposeSvc   string
 	dockerComposeTpl   bool
 	dockerIsolation    string
+
+	dockerComposeExposeURL    string
+	dockerComposeExposeAPIURL string
 )
 
 type dockerProxyOptions struct {
@@ -144,7 +147,16 @@ var agentDockerComposeCmd = &cobra.Command{
 	Short: "Emit a Compose override wiring a service through the runtime proxy",
 	Long: `Emit a docker-compose override file for a named service. The generated
 override uses the durable agent token path so containers can restart without
-requiring a freshly minted runtime session secret.`,
+requiring a freshly minted runtime session secret.
+
+With --isolation=container, the override also emits a privileged netns-holder
+sidecar that installs an iptables-locked egress policy. The user service is
+wired to share the holder's netns via network_mode: service:…, so direct TCP
+connect() to anything other than the configured expose listeners returns
+ECONNREFUSED at the kernel level — regardless of HTTPS_PROXY honoring.
+
+Isolation mode requires --expose-url and --expose-api-url pointing at a
+running ` + "`clawvisor proxy expose`" + ` instance the docker network can reach.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, err := dockerProxyOptionsFromFlags()
 		if err != nil {
@@ -152,6 +164,13 @@ requiring a freshly minted runtime session secret.`,
 		}
 		if strings.TrimSpace(dockerComposeSvc) == "" {
 			return fmt.Errorf("--service is required")
+		}
+		mode, err := isolation.ParseMode(dockerIsolation)
+		if err != nil {
+			return err
+		}
+		if mode == isolation.ModeContainer {
+			return runDockerComposeIsolated(os.Stdout, opts)
 		}
 		emitDockerComposeOverride(os.Stdout, dockerComposeOverrideOptions{
 			Service:      dockerComposeSvc,
@@ -468,6 +487,68 @@ func waitWithSignalRelay(ctx context.Context, child *exec.Cmd) error {
 	}
 }
 
+// runDockerComposeIsolated emits the `--isolation=container` compose override.
+// It rewires the user service through a privileged netns-holder sidecar that
+// installs an iptables-locked egress policy keyed to a running standalone
+// `clawvisor proxy expose` instance.
+func runDockerComposeIsolated(out io.Writer, opts *dockerProxyOptions) error {
+	if strings.TrimSpace(dockerComposeExposeURL) == "" {
+		return fmt.Errorf("--isolation=container requires --expose-url (full http(s)://host:port URL of `clawvisor proxy expose` proxy listener)")
+	}
+	if strings.TrimSpace(dockerComposeExposeAPIURL) == "" {
+		return fmt.Errorf("--isolation=container requires --expose-api-url (full http(s)://host:port URL of `clawvisor proxy expose` API listener)")
+	}
+	proxyExpose, err := isolation.ParseExposeURL(dockerComposeExposeURL, "--expose-url")
+	if err != nil {
+		return err
+	}
+	apiExpose, err := isolation.ParseExposeURL(dockerComposeExposeAPIURL, "--expose-api-url")
+	if err != nil {
+		return err
+	}
+	holderImage, err := isolation.ImageTag()
+	if err != nil {
+		return fmt.Errorf("resolve isolation image tag: %w", err)
+	}
+
+	// Override the proxy plumbing so buildDockerAgentEnvVars produces values
+	// targeting the expose listeners. The user container speaks plain HTTP to
+	// the proxy regardless of the upstream URL scheme — `http://` is correct.
+	composeOpts := *opts
+	composeOpts.ProxyHost = proxyExpose.Host
+	composeOpts.ProxyPort = proxyExpose.Port
+	composeOpts.ContainerURL = strings.TrimSpace(dockerComposeExposeAPIURL)
+
+	envVars := buildDockerAgentEnvVars(&composeOpts, dockerComposeTpl)
+
+	// NO_PROXY should bypass the API host so the user container's
+	// CLAWVISOR_URL traffic doesn't recursively route through the proxy.
+	envVars = appendNoProxyHosts(envVars, apiExpose.Host)
+
+	plan := isolation.ComposeIsolationPlan{
+		UserService: dockerComposeSvc,
+		HolderImage: holderImage,
+		Expose: isolation.ComposeExposeEndpoints{
+			ProxyURL: dockerComposeExposeURL,
+			APIURL:   dockerComposeExposeAPIURL,
+		},
+		EnvVars:         convertToComposeEnvVars(envVars),
+		CAHostPath:      composeOpts.CAHost,
+		CAContainerPath: composeOpts.CAInside,
+	}
+	return isolation.EmitComposeIsolationOverride(out, plan)
+}
+
+// convertToComposeEnvVars adapts the local dockerEnvVar slice to the isolation
+// package's ComposeEnvVar slice. Kept simple — both types are flat.
+func convertToComposeEnvVars(in []dockerEnvVar) []isolation.ComposeEnvVar {
+	out := make([]isolation.ComposeEnvVar, 0, len(in))
+	for _, v := range in {
+		out = append(out, isolation.ComposeEnvVar{Key: v.Key, Value: v.Value, Comment: v.Comment})
+	}
+	return out
+}
+
 func runtimeProxyUpstreamAddr(port int) string {
 	if port <= 0 {
 		port = defaultRuntimeProxyPort()
@@ -668,6 +749,9 @@ func init() {
 	agentDockerRunCmd.Flags().StringVar(&dockerIsolation, "isolation", "off", "Egress isolation mode: off (default) or container (iptables-locked netns sidecar)")
 	agentDockerComposeCmd.Flags().StringVar(&dockerComposeSvc, "service", "", "Compose service name to wire through Clawvisor (required)")
 	agentDockerComposeCmd.Flags().BoolVar(&dockerComposeTpl, "templated", true, "Emit ${CLAWVISOR_AGENT_TOKEN} references instead of baking the token into the override")
+	agentDockerComposeCmd.Flags().StringVar(&dockerIsolation, "isolation", "off", "Egress isolation mode: off (default) or container (iptables-locked netns sidecar)")
+	agentDockerComposeCmd.Flags().StringVar(&dockerComposeExposeURL, "expose-url", "", "URL of the `clawvisor proxy expose` proxy listener (required for --isolation=container)")
+	agentDockerComposeCmd.Flags().StringVar(&dockerComposeExposeAPIURL, "expose-api-url", "", "URL of the `clawvisor proxy expose` API listener (required for --isolation=container)")
 
 	agentCmd.AddCommand(agentDockerEnvCmd)
 	agentCmd.AddCommand(agentDockerRunCmd)
