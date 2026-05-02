@@ -606,12 +606,25 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 			return
 		}
 	}
+	if verdict, ok := s.server.sharedSecretVerdictGet(group[0].cacheKey); ok {
+		for _, task := range group {
+			s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+		}
+		return
+	}
 	valueKey := secretValueVerdictKey(s.host, group[0].candidate.Value)
 	if verdict, ok := s.server.secretValueVerdictCache.Get(valueKey); ok {
 		cachedVerdict, _ := verdict.(adjudicationVerdict)
 		for _, task := range group {
 			s.server.secretVerdictCache.Store(task.cacheKey, cachedVerdict)
 		}
+		return
+	}
+	if verdict, ok := s.server.sharedSecretValueVerdictGet(s.host, group[0].candidate.Value); ok {
+		for _, task := range group {
+			s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+		}
+		s.server.secretValueVerdictCache.Set(valueKey, verdict)
 		return
 	}
 	rep := group[0]
@@ -658,9 +671,11 @@ func (s *runtimeSecretScanner) runAdjudicationGroup(ctx context.Context, client 
 	s.recordAdjudicationDebug(debugRec)
 	for _, task := range group {
 		s.server.secretVerdictCache.Store(task.cacheKey, verdict)
+		s.server.sharedSecretVerdictSet(task.cacheKey, verdict)
 	}
 	if verdict.Credential {
 		s.server.secretValueVerdictCache.Set(valueKey, verdict)
+		s.server.sharedSecretValueVerdictSet(s.host, group[0].candidate.Value, verdict)
 	}
 }
 
@@ -746,11 +761,40 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 		})
 		return verdict, true
 	}
+	if verdict, ok := s.server.sharedSecretVerdictGet(key); ok {
+		s.cacheHits++
+		s.server.secretVerdictCache.Store(key, verdict)
+		s.recordAdjudicationDebug(adjudicationDebugRecord{
+			Host:      s.host,
+			Field:     fieldName,
+			Candidate: candidate.Value,
+			Charset:   candidate.Charset,
+			Entropy:   candidate.Entropy,
+			CacheHit:  true,
+			Verdict:   &verdict,
+		})
+		return verdict, true
+	}
 	valueKey := secretValueVerdictKey(s.host, candidate.Value)
 	if cached, ok := s.server.secretValueVerdictCache.Get(valueKey); ok {
 		verdict, _ := cached.(adjudicationVerdict)
 		s.cacheHits++
 		s.server.secretVerdictCache.Store(key, verdict)
+		s.recordAdjudicationDebug(adjudicationDebugRecord{
+			Host:      s.host,
+			Field:     fieldName,
+			Candidate: candidate.Value,
+			Charset:   candidate.Charset,
+			Entropy:   candidate.Entropy,
+			CacheHit:  true,
+			Verdict:   &verdict,
+		})
+		return verdict, true
+	}
+	if verdict, ok := s.server.sharedSecretValueVerdictGet(s.host, candidate.Value); ok {
+		s.cacheHits++
+		s.server.secretVerdictCache.Store(key, verdict)
+		s.server.secretValueVerdictCache.Set(valueKey, verdict)
 		s.recordAdjudicationDebug(adjudicationDebugRecord{
 			Host:      s.host,
 			Field:     fieldName,
@@ -810,8 +854,10 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 	debugRec.Verdict = &verdict
 	s.recordAdjudicationDebug(debugRec)
 	s.server.secretVerdictCache.Store(key, verdict)
+	s.server.sharedSecretVerdictSet(key, verdict)
 	if verdict.Credential {
 		s.server.secretValueVerdictCache.Set(valueKey, verdict)
+		s.server.sharedSecretValueVerdictSet(s.host, candidate.Value, verdict)
 	}
 	return verdict, true
 }
@@ -824,6 +870,25 @@ func secretValueCacheKey(agentID, raw string) string {
 func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v vault.Vault, session *store.RuntimeSession, service, raw string) (string, error) {
 	if placeholder, ok := lookupRuntimeSecretPlaceholder(srv, session, raw); ok {
 		return placeholder, nil
+	}
+	cacheKey := secretValueCacheKey(session.AgentID, raw)
+	if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
+		srv.secretValueCache.Store(cacheKey, entry)
+		return entry.Placeholder, nil
+	}
+	release := func() {}
+	if ok, unlock := srv.acquireCapturedSecretLock(cacheKey); ok {
+		release = unlock
+		defer release()
+	} else if srv != nil && srv.redisClient != nil {
+		deadline := time.Now().UTC().Add(2 * time.Second)
+		for time.Now().UTC().Before(deadline) {
+			if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
+				srv.secretValueCache.Store(cacheKey, entry)
+				return entry.Placeholder, nil
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 	service = normalizeSecretService(service)
 	if service == "" {
@@ -845,10 +910,12 @@ func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v va
 	}); err != nil {
 		return "", err
 	}
-	srv.secretValueCache.Store(secretValueCacheKey(session.AgentID, raw), capturedSecretEntry{
+	entry := capturedSecretEntry{
 		Placeholder: placeholder,
 		ServiceID:   serviceID,
-	})
+	}
+	srv.secretValueCache.Store(cacheKey, entry)
+	srv.sharedCapturedSecretSet(cacheKey, entry)
 	return placeholder, nil
 }
 
@@ -856,8 +923,13 @@ func lookupRuntimeSecretPlaceholder(srv *Server, session *store.RuntimeSession, 
 	if srv == nil || session == nil {
 		return "", false
 	}
-	value, ok := srv.secretValueCache.Load(secretValueCacheKey(session.AgentID, raw))
+	cacheKey := secretValueCacheKey(session.AgentID, raw)
+	value, ok := srv.secretValueCache.Load(cacheKey)
 	if !ok {
+		if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
+			srv.secretValueCache.Store(cacheKey, entry)
+			return entry.Placeholder, true
+		}
 		return "", false
 	}
 	entry, _ := value.(capturedSecretEntry)

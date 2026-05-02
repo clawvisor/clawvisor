@@ -28,7 +28,7 @@ const internalBypassHeader = "X-Clawvisor-Internal-Bypass"
 type ToolUseHooks struct {
 	Store        store.Store
 	Config       *config.Config
-	ReviewCache  *review.ApprovalCache
+	ReviewCache  review.HeldApprovalCache
 	Leases       leases.Service
 	ContextJudge runtimepolicy.RuntimeContextJudge
 }

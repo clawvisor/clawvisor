@@ -23,6 +23,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/redis/go-redis/v9"
 )
 
 // GatewayHooks allows cloud/enterprise layers to inject additional
@@ -132,6 +133,7 @@ type ServerOptions struct {
 	DedupCache         handlers.DedupCache
 	VerdictCache       intent.VerdictCacher
 	ExtractionTracker  handlers.ExtractionTracker
+	RedisClient        *redis.Client
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.

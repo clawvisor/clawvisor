@@ -35,10 +35,10 @@ type RuntimeHandler struct {
 	manager     RuntimeManager
 	cfg         *config.Config
 	vault       vault.Vault
-	reviewCache *runtimereview.ApprovalCache
+	reviewCache runtimereview.HeldApprovalCache
 }
 
-func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache *runtimereview.ApprovalCache) *RuntimeHandler {
+func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache runtimereview.HeldApprovalCache) *RuntimeHandler {
 	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache}
 }
 

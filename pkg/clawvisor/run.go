@@ -30,7 +30,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	var apiOpts []api.ServerOption
 	var runtimeSrv *runtimeproxy.Server
 	var runtimeMgr *runtimeproxy.Manager
-	var reviewCache *runtimereview.ApprovalCache
+	var reviewCache runtimereview.HeldApprovalCache
 
 	if opts.Config != nil && opts.Config.RuntimeProxy.Enabled {
 		dataDir := opts.Config.RuntimeProxy.DataDir
@@ -64,6 +64,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			TimingTraceDir:    timingTraceDir,
 			BodyTraces:        opts.Config.RuntimeProxy.BodyTraceEnabled,
 			BodyTraceDir:      bodyTraceDir,
+			RedisClient:       opts.RedisClient,
 		}, opts.Logger)
 		if err != nil {
 			return err
@@ -97,6 +98,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			Config: opts.Config,
 		})
 		reviewCache = runtimereview.NewApprovalCache()
+		if opts.RedisClient != nil {
+			reviewCache = runtimereview.NewRedisApprovalCache(opts.RedisClient)
+		}
 		contextJudge := runtimepolicy.NewLLMRuntimeContextJudge(llm.NewHealth(opts.Config.LLM), opts.Logger)
 		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{
 			Store:       opts.Store,

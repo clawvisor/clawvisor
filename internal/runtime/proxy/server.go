@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/elazarl/goproxy"
+	"github.com/redis/go-redis/v9"
 
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	TimingTraceDir    string
 	BodyTraces        bool
 	BodyTraceDir      string
+	RedisClient       *redis.Client
 }
 
 type Server struct {
@@ -61,6 +63,8 @@ type Server struct {
 
 	adjudicationDebugDir string
 	adjudicationDebugMu  sync.Mutex
+	redisClient          *redis.Client
+	secretCacheHMACKey   []byte
 }
 
 type boundedTTLCache struct {
@@ -170,6 +174,10 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 	certs := NewLeafCertCache(ca, caKey, cfg.LeafCacheSize)
+	secretCacheHMACKey, err := x509.MarshalECPrivateKey(caKey)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runtime proxy cache hmac key: %w", err)
+	}
 	var traceSink *runtimetiming.FileSink
 	if cfg.LogTimings || cfg.BodyTraces {
 		traceDir := cfg.TimingTraceDir
@@ -231,6 +239,8 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		bodyTraceDir:            bodyTraceDir,
 		secretValueVerdictCache: newBoundedTTLCache(4096, 24*time.Hour),
 		adjudicationDebugDir:    adjudicationDebugDir,
+		redisClient:             cfg.RedisClient,
+		secretCacheHMACKey:      secretCacheHMACKey,
 	}
 	return s, nil
 }

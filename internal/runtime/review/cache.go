@@ -22,6 +22,18 @@ type HeldApproval struct {
 }
 
 // ApprovalCache holds buffered tool_use approvals per runtime session.
+type HeldApprovalCache interface {
+	Hold(sessionID, approvalRecordID, taskID, toolUseID, toolName string, toolInput map[string]any, reason string) (*HeldApproval, bool)
+	Get(sessionID string) *HeldApproval
+	GetByApprovalRecord(sessionID, approvalRecordID string) *HeldApproval
+	Resolve(sessionID, id string) *HeldApproval
+	Drop(sessionID string, ids ...string)
+	RebindTask(sessionID, approvalRecordID, taskID string) bool
+	Count(sessionID string) int
+	List(sessionID string) []*HeldApproval
+}
+
+// ApprovalCache holds buffered tool_use approvals per runtime session.
 type ApprovalCache struct {
 	IdleTTL time.Duration
 
