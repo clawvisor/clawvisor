@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -326,17 +327,67 @@ func stripSecretsNode(value any) any {
 	}
 }
 
+// looksSecretKey reports whether a JSON key likely contains a credential.
+//
+// The matcher splits the key on separators and camelCase boundaries, then
+// matches whole tokens against a small allowlist. This avoids the false
+// positives the prior substring matcher produced (e.g. it stripped
+// "oauth_endpoint" because it contained "auth", and "author" for the same
+// reason). "oauth" alone is not treated as a secret marker — it's the
+// protocol name; "oauth_token" still matches because the "token" token does.
 func looksSecretKey(key string) bool {
-	lower := strings.ToLower(strings.TrimSpace(key))
-	for _, pattern := range []string{
-		"token", "secret", "password", "passwd", "credential", "auth",
-		"api_key", "apikey", "access_key", "private_key", "bearer",
-	} {
-		if strings.Contains(lower, pattern) {
+	tokens := tokenizeSecretKey(key)
+	for _, t := range tokens {
+		switch t {
+		case "token", "tokens",
+			"secret", "secrets",
+			"password", "passwd",
+			"credential", "credentials",
+			"auth", "authorization",
+			"bearer",
+			"apikey", "accesskey", "privatekey":
+			return true
+		}
+	}
+	for i := 0; i < len(tokens)-1; i++ {
+		if tokens[i+1] != "key" {
+			continue
+		}
+		switch tokens[i] {
+		case "api", "access", "private":
 			return true
 		}
 	}
 	return false
+}
+
+// tokenizeSecretKey splits a JSON key into lowercase tokens, treating both
+// non-alphanumeric separators ("_", "-", ".", " ") and camelCase boundaries
+// ("apiKey" → "api","key") as token splits.
+func tokenizeSecretKey(key string) []string {
+	var tokens []string
+	var cur []rune
+	var prev rune
+	flush := func() {
+		if len(cur) > 0 {
+			tokens = append(tokens, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	for i, r := range key {
+		switch {
+		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
+			flush()
+		case i > 0 && unicode.IsUpper(r) && unicode.IsLower(prev):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+		prev = r
+	}
+	flush()
+	return tokens
 }
 
 func compactParts(values ...string) []string {

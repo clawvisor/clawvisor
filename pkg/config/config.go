@@ -48,6 +48,13 @@ type Config struct {
 type GatewayConfig struct {
 	ContentDedupTTLSeconds int `yaml:"content_dedup_ttl_seconds"` // default: 5
 	NPSSamplePercent       int `yaml:"nps_sample_percent"`        // 0-100, default: 1
+	// ClassifyMissingTaskID controls behavior when a gateway request omits task_id.
+	// When false (default), the request is rejected with 400 TASK_REQUIRED — the
+	// long-standing behavior, preserved on upgrade so older clients keep working.
+	// When true, the gateway runs task classification: it may reuse an active task,
+	// return 409 ambiguous_task, or 202 pending while routing the request to
+	// approval. Opt in only when downstream clients are prepared for the new shape.
+	ClassifyMissingTaskID bool `yaml:"classify_missing_task_id"`
 }
 
 // RelayConfig holds settings for the cloud relay connection.

@@ -78,6 +78,10 @@ func newTestEnvWithLLM(t *testing.T, llmCfg config.LLMConfig, extra ...adapters.
 		},
 		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
 		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
+		// Tests cover the missing-task_id classification path (TestGateway_NoTaskID_*),
+		// which is opt-in in production. Enable it here so the existing tests exercise
+		// the feature without needing per-test config plumbing.
+		Gateway: config.GatewayConfig{ClassifyMissingTaskID: true},
 	}
 
 	// Tests use password auth so Register/Login routes are available.
@@ -139,6 +143,10 @@ func newMagicLinkTestEnv(t *testing.T) *magicLinkTestEnv {
 		},
 		Approval: config.ApprovalConfig{Timeout: 300, OnTimeout: "fail"},
 		Task:     config.TaskConfig{DefaultExpirySeconds: 3600},
+		// Tests cover the missing-task_id classification path (TestGateway_NoTaskID_*),
+		// which is opt-in in production. Enable it here so the existing tests exercise
+		// the feature without needing per-test config plumbing.
+		Gateway: config.GatewayConfig{ClassifyMissingTaskID: true},
 	}
 
 	ms := auth.NewMagicTokenStore()

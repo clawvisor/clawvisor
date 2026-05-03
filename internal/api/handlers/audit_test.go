@@ -172,6 +172,49 @@ func TestAuditHandlerNormalizesRuntimeToolUseURLSummary(t *testing.T) {
 	}
 }
 
+func TestLooksSecretKeyTokenBoundary(t *testing.T) {
+	cases := []struct {
+		key  string
+		want bool
+	}{
+		// Should match — direct credential keys.
+		{"token", true},
+		{"access_token", true},
+		{"refresh_token", true},
+		{"oauth_token", true},
+		{"Authorization", true},
+		{"authorization", true},
+		{"auth", true},
+		{"auth_header", true},
+		{"api_key", true},
+		{"apiKey", true},
+		{"x-api-key", true},
+		{"access_key", true},
+		{"private_key", true},
+		{"privateKey", true},
+		{"client_secret", true},
+		{"password", true},
+		{"bearer", true},
+
+		// Should NOT match — historical false positives from substring matcher.
+		{"oauth_endpoint", false},
+		{"oauth_url", false},
+		{"oauth_state", false},
+		{"author", false},
+		{"authority", false},
+		{"authentication_method", false}, // method name, not secret
+		{"keypath", false},
+		{"keyboard", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			if got := looksSecretKey(tc.key); got != tc.want {
+				t.Fatalf("looksSecretKey(%q) = %v, want %v", tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAuditHandlerStripsSecretsFromLegacyParamsSafeAtReadTime(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "audit-redaction.db"))

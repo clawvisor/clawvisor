@@ -361,6 +361,32 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// ── Step 2: Task context resolution ──────────────────────────────────────
 	if req.TaskID == "" {
+		// When classification is gated off (the default), a missing task_id is
+		// always a 400. Skip the classifier — older clients depend on the
+		// TASK_REQUIRED error contract.
+		if !h.cfg.Gateway.ClassifyMissingTaskID {
+			e := baseEntry("reject", "validation_error", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "missing required field: task_id"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         errMsg,
+				Code:          "TASK_REQUIRED",
+				MissingFields: []string{"task_id"},
+				Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
+				Example: map[string]any{
+					"service": "google.gmail",
+					"action":  "list_messages",
+					"reason":  "Fetch recent emails to summarize for the user",
+					"task_id": "<task_id from POST /api/tasks>",
+				},
+			})
+			return
+		}
+
 		tasks, _, err := h.store.ListTasks(ctx, agent.UserID, store.TaskFilter{ActiveOnly: true})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load active tasks")

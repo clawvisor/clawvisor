@@ -161,12 +161,42 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.PlannedCalls) > 0 && len(req.AuthorizedActions) == 0 {
-		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-			Error: "planned_calls requires authorized_actions",
-			Code:  "INVALID_REQUEST",
-			Hint:  "planned_calls are matched against authorized_actions and are only supported on adapter-backed task scopes.",
-		})
-		return
+		// Pre-merge the gateway tolerated planned_calls without authorized_actions
+		// (the planned calls were stored as risk-assessment metadata and the
+		// scope was inferred elsewhere). To avoid breaking existing clients,
+		// auto-derive a scope from the planned call (service, action) pairs and
+		// log a deprecation. Callers should send authorized_actions explicitly —
+		// this fallback may be removed in a future release.
+		seen := make(map[string]struct{}, len(req.PlannedCalls))
+		for _, pc := range req.PlannedCalls {
+			service := strings.TrimSpace(pc.Service)
+			action := strings.TrimSpace(pc.Action)
+			if service == "" || action == "" {
+				continue
+			}
+			key := service + ":" + action
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			req.AuthorizedActions = append(req.AuthorizedActions, store.TaskAction{
+				Service:     service,
+				Action:      action,
+				AutoExecute: false,
+			})
+		}
+		if len(req.AuthorizedActions) == 0 {
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: "planned_calls requires authorized_actions",
+				Code:  "INVALID_REQUEST",
+				Hint:  "Each planned_call must have non-empty service and action, or set authorized_actions explicitly.",
+			})
+			return
+		}
+		h.logger.Warn("deprecated: task created with planned_calls but no authorized_actions; deriving scope from planned_calls",
+			"agent_id", agent.ID,
+			"derived_scope_count", len(req.AuthorizedActions),
+		)
 	}
 
 	schemaVersion := req.SchemaVersion
