@@ -183,10 +183,11 @@ func runProxyExposeDetached(cfg expose.Config) error {
 		}
 	}
 
+	pid := cmd.Process.Pid
 	if err := cmd.Process.Release(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: release detached process: %v\n", err)
 	}
-	fmt.Printf("clawvisor proxy expose: detached (pid=%d, pidfile=%s)\n", cmd.Process.Pid, pidPath)
+	fmt.Printf("clawvisor proxy expose: detached (pid=%d, pidfile=%s)\n", pid, pidPath)
 	return nil
 }
 
