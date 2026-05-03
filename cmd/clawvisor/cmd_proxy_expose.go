@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,11 +20,13 @@ import (
 )
 
 var (
-	proxyExposeBind      string
-	proxyExposeProxyPort int
-	proxyExposeAPIPort   int
-	proxyExposeAllowCIDR []string
-	proxyExposeDetach    bool
+	proxyExposeBind          string
+	proxyExposeProxyPort     int
+	proxyExposeAPIPort       int
+	proxyExposeAllowCIDR     []string
+	proxyExposeDetach        bool
+	proxyExposeUpstreamProxy string
+	proxyExposeUpstreamAPI   string
 
 	// Test seam: in tests this is replaced to point at the test daemon's
 	// runtime proxy + API instead of the local clawvisor config.
@@ -47,7 +51,7 @@ Both listeners apply a source-IP allowlist (default: loopback + RFC-1918) and
 relay raw TCP — auth is enforced upstream (the proxy still requires a valid
 agent token; the API still requires its own auth headers).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		proxyUpstream, apiUpstream, err := proxyExposeUpstreams()
+		proxyUpstream, apiUpstream, err := resolveExposeUpstreams()
 		if err != nil {
 			return err
 		}
@@ -151,6 +155,16 @@ func runProxyExposeDetached(cfg expose.Config) error {
 	for _, c := range cfg.AllowCIDRs {
 		args = append(args, "--allow-cidr", c)
 	}
+	// Forward upstream overrides so the child resolves the same endpoints
+	// the parent did. Without this, --detach would launch a child that
+	// re-derives upstreams from local config and silently bridges to the
+	// wrong host.
+	if cfg.ProxyUpstream != "" {
+		args = append(args, "--upstream-proxy", cfg.ProxyUpstream)
+	}
+	if cfg.APIUpstream != "" {
+		args = append(args, "--upstream-api", cfg.APIUpstream)
+	}
 	cmd := exec.Command(exe, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -239,6 +253,66 @@ func defaultExposeUpstreams() (proxy, api string, err error) {
 	return proxy, api, nil
 }
 
+// resolveExposeUpstreams applies the explicit --upstream-proxy / --upstream-api
+// overrides on top of the config-derived defaults. Operators reach for the
+// override when the local clawvisor config doesn't reflect the actually-running
+// daemon (e.g. daemon launched with a custom --listen flag, or the operator
+// only runs the CLI side and proxies to a remote daemon).
+func resolveExposeUpstreams() (proxy, api string, err error) {
+	proxyOverride := strings.TrimSpace(proxyExposeUpstreamProxy)
+	apiOverride := strings.TrimSpace(proxyExposeUpstreamAPI)
+
+	// Skip config probing entirely when both upstreams are explicit — lets
+	// the CLI work on hosts with no ~/.clawvisor/config.yaml at all.
+	if proxyOverride != "" && apiOverride != "" {
+		if err := validateUpstreamHostPort(proxyOverride, "--upstream-proxy"); err != nil {
+			return "", "", err
+		}
+		if err := validateUpstreamHostPort(apiOverride, "--upstream-api"); err != nil {
+			return "", "", err
+		}
+		return proxyOverride, apiOverride, nil
+	}
+
+	defaultProxy, defaultAPI, err := proxyExposeUpstreams()
+	if err != nil {
+		// Config-derived API failed but the operator gave us both overrides;
+		// the early-return above covers that. Otherwise propagate the error.
+		return "", "", err
+	}
+	if proxyOverride != "" {
+		if err := validateUpstreamHostPort(proxyOverride, "--upstream-proxy"); err != nil {
+			return "", "", err
+		}
+		defaultProxy = proxyOverride
+	}
+	if apiOverride != "" {
+		if err := validateUpstreamHostPort(apiOverride, "--upstream-api"); err != nil {
+			return "", "", err
+		}
+		defaultAPI = apiOverride
+	}
+	return defaultProxy, defaultAPI, nil
+}
+
+// validateUpstreamHostPort rejects malformed override values up front so the
+// failure surfaces as a CLI error rather than a confusing dial error inside
+// the forwarder.
+func validateUpstreamHostPort(addr, label string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a valid host:port: %w", label, addr, err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("%s: %q is missing a host", label, addr)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return fmt.Errorf("%s: %q has invalid port", label, addr)
+	}
+	return nil
+}
+
 func init() {
 	proxyExposeCmd.Flags().StringVar(&proxyExposeBind, "bind", "0.0.0.0", "Bind address for both listeners")
 	proxyExposeCmd.Flags().IntVar(&proxyExposeProxyPort, "proxy-port", 25291, "Port for the runtime-proxy listener")
@@ -246,6 +320,10 @@ func init() {
 	proxyExposeCmd.Flags().StringSliceVar(&proxyExposeAllowCIDR, "allow-cidr", nil,
 		"Source CIDR allowlist (repeatable). Default: loopback + RFC-1918.")
 	proxyExposeCmd.Flags().BoolVar(&proxyExposeDetach, "detach", false, "Run in the background and write a pidfile")
+	proxyExposeCmd.Flags().StringVar(&proxyExposeUpstreamProxy, "upstream-proxy", "",
+		"Override the proxy upstream host:port (defaults to runtime_proxy.listen_addr from local config). Use when the running daemon's listen address isn't reflected in ~/.clawvisor/config.yaml.")
+	proxyExposeCmd.Flags().StringVar(&proxyExposeUpstreamAPI, "upstream-api", "",
+		"Override the API upstream host:port (defaults to server.host:port from local config). Use when the running daemon's listen address isn't reflected in ~/.clawvisor/config.yaml.")
 
 	proxyExposeCmd.AddCommand(proxyExposeStopCmd)
 	proxyCmd.AddCommand(proxyExposeCmd)

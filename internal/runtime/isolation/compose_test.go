@@ -124,6 +124,104 @@ func TestEmitComposeIsolationOverrideIPLiteralGolden(t *testing.T) {
 	}
 }
 
+func TestEmitComposeIsolationOverridePublishPorts(t *testing.T) {
+	plan := ComposeIsolationPlan{
+		UserService: "agent",
+		HolderImage: "clawvisor-isolation:abc123",
+		Expose: ComposeExposeEndpoints{
+			ProxyURL: "http://192.168.1.10:25291",
+			APIURL:   "http://192.168.1.10:18791",
+		},
+		EnvVars:      []ComposeEnvVar{{Key: "CLAWVISOR_URL", Value: "http://192.168.1.10:18791"}},
+		PublishPorts: []string{"18789:18789", "0.0.0.0:18790:18790/tcp"},
+	}
+	var buf bytes.Buffer
+	if err := EmitComposeIsolationOverride(&buf, plan); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+
+	// Holder must publish; user service must reset its inherited ports list.
+	holderBlock, userBlock := splitServices(t, out, "agent")
+	if !strings.Contains(holderBlock, "ports:") {
+		t.Errorf("holder service should emit ports:\n%s", holderBlock)
+	}
+	if !strings.Contains(holderBlock, `      - "18789:18789"`) {
+		t.Errorf("holder missing 18789 port:\n%s", holderBlock)
+	}
+	if !strings.Contains(holderBlock, `      - "0.0.0.0:18790:18790/tcp"`) {
+		t.Errorf("holder missing tcp port:\n%s", holderBlock)
+	}
+	if !strings.Contains(userBlock, "ports: !reset []") {
+		t.Errorf("user service must clear inherited ports with !reset []:\n%s", userBlock)
+	}
+}
+
+func TestEmitComposeIsolationOverrideNoPublishPortsByDefault(t *testing.T) {
+	plan := ComposeIsolationPlan{
+		UserService: "agent",
+		HolderImage: "clawvisor-isolation:abc123",
+		Expose: ComposeExposeEndpoints{
+			ProxyURL: "http://192.168.1.10:25291",
+			APIURL:   "http://192.168.1.10:18791",
+		},
+		EnvVars: []ComposeEnvVar{{Key: "CLAWVISOR_URL", Value: "http://192.168.1.10:18791"}},
+	}
+	var buf bytes.Buffer
+	if err := EmitComposeIsolationOverride(&buf, plan); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	yamlOnly := strings.SplitN(out, "services:\n", 2)[1]
+	if strings.Contains(yamlOnly, "ports:") {
+		t.Errorf("no PublishPorts → no ports keys should appear:\n%s", out)
+	}
+}
+
+func TestEmitComposeIsolationOverrideRejectsBadPublishPorts(t *testing.T) {
+	cases := map[string][]string{
+		"empty":      {""},
+		"whitespace": {" 18789:18789"},
+		"newline":    {"18789:18789\n"},
+		"quote":      {`18789:18789"`},
+	}
+	for name, ports := range cases {
+		t.Run(name, func(t *testing.T) {
+			plan := ComposeIsolationPlan{
+				UserService: "agent",
+				HolderImage: "clawvisor-isolation:abc123",
+				Expose: ComposeExposeEndpoints{
+					ProxyURL: "http://192.168.1.10:25291",
+					APIURL:   "http://192.168.1.10:18791",
+				},
+				PublishPorts: ports,
+			}
+			var buf bytes.Buffer
+			if err := EmitComposeIsolationOverride(&buf, plan); err == nil {
+				t.Fatalf("expected error for %s (%q)", name, ports)
+			}
+		})
+	}
+}
+
+// splitServices returns the holder block and the named user-service block
+// from an emitted override. Used so port-related assertions can target the
+// correct block independent of emission order.
+func splitServices(t *testing.T, out, userSvc string) (holder, user string) {
+	t.Helper()
+	holderTag := "  " + HolderServiceName + ":"
+	userTag := "  " + userSvc + ":"
+	hi := strings.Index(out, holderTag)
+	ui := strings.Index(out, userTag)
+	if hi < 0 || ui < 0 {
+		t.Fatalf("could not find both service blocks in output:\n%s", out)
+	}
+	if hi < ui {
+		return out[hi:ui], out[ui:]
+	}
+	return out[hi:], out[ui:hi]
+}
+
 func TestEmitComposeIsolationOverrideHostnameGolden(t *testing.T) {
 	plan := ComposeIsolationPlan{
 		UserService: "agent",

@@ -125,6 +125,92 @@ runtime_proxy:
 	}
 }
 
+func TestResolveExposeUpstreamsOverridesWithoutConfig(t *testing.T) {
+	// Both overrides set → no config required.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	prevProxy, prevAPI := proxyExposeUpstreamProxy, proxyExposeUpstreamAPI
+	t.Cleanup(func() {
+		proxyExposeUpstreamProxy = prevProxy
+		proxyExposeUpstreamAPI = prevAPI
+	})
+	proxyExposeUpstreamProxy = "10.1.2.3:4318"
+	proxyExposeUpstreamAPI = "10.1.2.3:18789"
+
+	proxy, api, err := resolveExposeUpstreams()
+	if err != nil {
+		t.Fatalf("resolveExposeUpstreams: %v", err)
+	}
+	if proxy != "10.1.2.3:4318" || api != "10.1.2.3:18789" {
+		t.Fatalf("got proxy=%q api=%q", proxy, api)
+	}
+}
+
+func TestResolveExposeUpstreamsOverridesProxyOnly(t *testing.T) {
+	// Proxy override + config-derived API.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, ".clawvisor"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yaml := `server:
+  host: 10.0.0.5
+  port: 18789
+runtime_proxy:
+  listen_addr: 127.0.0.1:25290
+`
+	if err := os.WriteFile(filepath.Join(tmp, ".clawvisor", "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	prevProxy, prevAPI := proxyExposeUpstreamProxy, proxyExposeUpstreamAPI
+	t.Cleanup(func() {
+		proxyExposeUpstreamProxy = prevProxy
+		proxyExposeUpstreamAPI = prevAPI
+	})
+	proxyExposeUpstreamProxy = "127.0.0.1:4318"
+	proxyExposeUpstreamAPI = ""
+
+	proxy, api, err := resolveExposeUpstreams()
+	if err != nil {
+		t.Fatalf("resolveExposeUpstreams: %v", err)
+	}
+	if proxy != "127.0.0.1:4318" {
+		t.Errorf("proxy: got %q want 127.0.0.1:4318 (override)", proxy)
+	}
+	if api != "10.0.0.5:18789" {
+		t.Errorf("api: got %q want 10.0.0.5:18789 (config)", api)
+	}
+}
+
+func TestResolveExposeUpstreamsRejectsBadOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	prevProxy, prevAPI := proxyExposeUpstreamProxy, proxyExposeUpstreamAPI
+	t.Cleanup(func() {
+		proxyExposeUpstreamProxy = prevProxy
+		proxyExposeUpstreamAPI = prevAPI
+	})
+
+	cases := map[string][2]string{
+		"missing port":  {"10.1.2.3", "10.1.2.3:18789"},
+		"bad port":      {"10.1.2.3:abc", "10.1.2.3:18789"},
+		"empty host":    {":4318", "10.1.2.3:18789"},
+		"port too high": {"10.1.2.3:99999", "10.1.2.3:18789"},
+	}
+	for name, hp := range cases {
+		t.Run(name, func(t *testing.T) {
+			proxyExposeUpstreamProxy = hp[0]
+			proxyExposeUpstreamAPI = hp[1]
+			if _, _, err := resolveExposeUpstreams(); err == nil {
+				t.Fatalf("expected error for %s (proxy=%q)", name, hp[0])
+			}
+		})
+	}
+}
+
 // freePort returns an OS-assigned ephemeral port as a string, for tests that
 // want to bind explicit ports without colliding.
 func freePort(t *testing.T) string {

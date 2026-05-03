@@ -39,6 +39,13 @@ type ComposeIsolationPlan struct {
 	CAHostPath string
 	// CAContainerPath is the mount path inside the user container.
 	CAContainerPath string
+	// PublishPorts are docker-compose `ports:` entries (e.g. "18789:18789",
+	// "0.0.0.0:18790:18790/tcp") that should be published from the *holder*,
+	// not the user service. Compose forbids `ports:` on a service using
+	// `network_mode: service:…`, but the holder owns the netns and can publish
+	// for the user service. When set, the user service emits `ports: !reset []`
+	// to clear any inherited list from the base compose file.
+	PublishPorts []string
 }
 
 // ComposeEnvVar is a single environment variable destined for the user service.
@@ -151,13 +158,17 @@ func EmitComposeIsolationOverride(w io.Writer, plan ComposeIsolationPlan) error 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "services:")
 
-	emitHolderService(w, plan.HolderImage, proxyExpose, apiExpose)
+	if err := validatePublishPorts(plan.PublishPorts); err != nil {
+		return err
+	}
+
+	emitHolderService(w, plan.HolderImage, proxyExpose, apiExpose, plan.PublishPorts)
 	fmt.Fprintln(w)
 	emitUserService(w, plan)
 	return nil
 }
 
-func emitHolderService(w io.Writer, image string, proxy, api ParsedExpose) {
+func emitHolderService(w io.Writer, image string, proxy, api ParsedExpose, publishPorts []string) {
 	fmt.Fprintf(w, "  %s:\n", HolderServiceName)
 	fmt.Fprintf(w, "    image: %s\n", yamlQuote(image))
 	fmt.Fprintln(w, "    cap_add:")
@@ -168,6 +179,15 @@ func emitHolderService(w io.Writer, image string, proxy, api ParsedExpose) {
 	fmt.Fprintf(w, "      CLAWVISOR_HOST_TARGET: %s\n", yamlQuote(proxy.Host))
 	fmt.Fprintf(w, "      CLAWVISOR_PROXY_PORT: %s\n", yamlQuote(strconv.Itoa(proxy.Port)))
 	fmt.Fprintf(w, "      CLAWVISOR_API_PORT: %s\n", yamlQuote(strconv.Itoa(api.Port)))
+	if len(publishPorts) > 0 {
+		fmt.Fprintln(w, "    # Holder publishes ports on behalf of the user service —")
+		fmt.Fprintln(w, "    # Compose forbids `ports:` on a service using `network_mode: service:…`,")
+		fmt.Fprintln(w, "    # but the holder owns the netns and may publish freely.")
+		fmt.Fprintln(w, "    ports:")
+		for _, p := range publishPorts {
+			fmt.Fprintf(w, "      - %s\n", yamlQuote(p))
+		}
+	}
 	fmt.Fprintln(w, "    healthcheck:")
 	fmt.Fprintln(w, `      test: ["CMD", "test", "-f", "/run/clawvisor/firewall.ready"]`)
 	fmt.Fprintln(w, "      interval: 1s")
@@ -181,6 +201,12 @@ func emitUserService(w io.Writer, plan ComposeIsolationPlan) {
 	fmt.Fprintln(w, "    depends_on:")
 	fmt.Fprintf(w, "      %s:\n", HolderServiceName)
 	fmt.Fprintln(w, "        condition: service_healthy")
+	if len(plan.PublishPorts) > 0 {
+		fmt.Fprintln(w, "    # Clear any inherited `ports:` from the base compose file —")
+		fmt.Fprintln(w, "    # Compose v2 rejects `ports:` on services with `network_mode: service:…`.")
+		fmt.Fprintln(w, "    # Publishing happens on the holder above instead.")
+		fmt.Fprintln(w, "    ports: !reset []")
+	}
 	fmt.Fprintln(w, "    environment:")
 	keyed := make(map[string]ComposeEnvVar, len(plan.EnvVars))
 	keys := make([]string, 0, len(plan.EnvVars))
@@ -200,6 +226,28 @@ func emitUserService(w io.Writer, plan ComposeIsolationPlan) {
 		fmt.Fprintln(w, "    volumes:")
 		fmt.Fprintf(w, "      - %s\n", yamlQuote(fmt.Sprintf("%s:%s:ro", plan.CAHostPath, plan.CAContainerPath)))
 	}
+}
+
+// validatePublishPorts performs a coarse syntax check on each entry. We
+// intentionally don't fully parse — Compose itself is the source of truth for
+// the rich port-mapping grammar — but reject obviously malformed entries
+// (empty, contains whitespace, has YAML-breaking characters) up front so the
+// failure mode is a clear CLI error instead of a confusing compose parse
+// error several seconds into `docker compose up`.
+func validatePublishPorts(ports []string) error {
+	for _, p := range ports {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return fmt.Errorf("--publish-port: empty entry")
+		}
+		if trimmed != p {
+			return fmt.Errorf("--publish-port: %q has surrounding whitespace", p)
+		}
+		if strings.ContainsAny(p, " \t\n\"") {
+			return fmt.Errorf("--publish-port: %q contains invalid characters", p)
+		}
+	}
+	return nil
 }
 
 func yamlQuote(s string) string {

@@ -38,6 +38,7 @@ var (
 
 	dockerComposeExposeURL    string
 	dockerComposeExposeAPIURL string
+	dockerComposePublishPorts []string
 )
 
 type dockerProxyOptions struct {
@@ -292,10 +293,31 @@ func isLoopbackHostname(host string) bool {
 	}
 }
 
+// defaultRuntimeProxyCAHostPath returns the host-side path to the runtime
+// proxy CA. The daemon and the agent CLI may run from different working
+// directories — when the daemon is configured with a relative DataDir
+// (e.g. `.clawvisor/runtime-proxy`) the CA ends up in the daemon's working
+// dir, not under $HOME. To keep the user-facing flow ergonomic we probe
+// several candidate locations and return the first that exists. If none
+// exist, we fall back to the configured path so the eventual error message
+// points at the location the user actually configured.
 func defaultRuntimeProxyCAHostPath() string {
 	cfg := loadLocalDockerRuntimeConfig()
-	dir := expandConfigPath(cfg.RuntimeProxy.DataDir)
-	return filepath.Join(dir, "ca.pem")
+	configured := filepath.Join(expandConfigPath(cfg.RuntimeProxy.DataDir), "ca.pem")
+
+	candidates := []string{configured}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".clawvisor", "runtime-proxy", "ca.pem"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, ".clawvisor", "runtime-proxy", "ca.pem"))
+	}
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return configured
 }
 
 func expandHomePath(path string) string {
@@ -535,6 +557,7 @@ func runDockerComposeIsolated(out io.Writer, opts *dockerProxyOptions) error {
 		EnvVars:         convertToComposeEnvVars(envVars),
 		CAHostPath:      composeOpts.CAHost,
 		CAContainerPath: composeOpts.CAInside,
+		PublishPorts:    dockerComposePublishPorts,
 	}
 	return isolation.EmitComposeIsolationOverride(out, plan)
 }
@@ -752,6 +775,8 @@ func init() {
 	agentDockerComposeCmd.Flags().StringVar(&dockerIsolation, "isolation", "off", "Egress isolation mode: off (default) or container (iptables-locked netns sidecar)")
 	agentDockerComposeCmd.Flags().StringVar(&dockerComposeExposeURL, "expose-url", "", "URL of the `clawvisor proxy expose` proxy listener (required for --isolation=container)")
 	agentDockerComposeCmd.Flags().StringVar(&dockerComposeExposeAPIURL, "expose-api-url", "", "URL of the `clawvisor proxy expose` API listener (required for --isolation=container)")
+	agentDockerComposeCmd.Flags().StringArrayVar(&dockerComposePublishPorts, "publish-port", nil,
+		"Port to publish on the holder (compose `ports:` syntax, e.g. \"18789:18789\" or \"0.0.0.0:18790:18790/tcp\"). Repeatable. Required when the user service in the base compose file declares `ports:`, since `network_mode: service:…` forbids it. Only meaningful with --isolation=container.")
 
 	agentCmd.AddCommand(agentDockerEnvCmd)
 	agentCmd.AddCommand(agentDockerRunCmd)

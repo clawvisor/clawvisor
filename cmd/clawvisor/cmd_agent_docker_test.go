@@ -342,6 +342,80 @@ runtime_proxy:
 	}
 }
 
+func TestDefaultRuntimeProxyCAHostPathFallsBackToHome(t *testing.T) {
+	home := t.TempDir()
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("Setenv(HOME): %v", err)
+	}
+	t.Cleanup(func() { _ = os.Setenv("HOME", prevHome) })
+
+	// No config file → configured path resolves to ~/.clawvisor/runtime-proxy/ca.pem
+	// already (the home-relative default). To make the fallback observable, we
+	// drop a CA file at the home path and verify it's selected even when the
+	// configured DataDir points elsewhere.
+	cfgDir := filepath.Join(home, ".clawvisor")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	bogusDataDir := filepath.Join(home, "does-not-exist")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+runtime_proxy:
+  data_dir: "`+bogusDataDir+`"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	homeCAPath := filepath.Join(home, ".clawvisor", "runtime-proxy", "ca.pem")
+	if err := os.MkdirAll(filepath.Dir(homeCAPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(home CA dir): %v", err)
+	}
+	if err := os.WriteFile(homeCAPath, []byte("home"), 0o644); err != nil {
+		t.Fatalf("WriteFile(home CA): %v", err)
+	}
+
+	if got := defaultRuntimeProxyCAHostPath(); got != homeCAPath {
+		t.Fatalf("defaultRuntimeProxyCAHostPath() = %q, want %q (home fallback)", got, homeCAPath)
+	}
+}
+
+func TestDefaultRuntimeProxyCAHostPathFallsBackToWorkspace(t *testing.T) {
+	home := t.TempDir()
+	prevHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("Setenv(HOME): %v", err)
+	}
+	t.Cleanup(func() { _ = os.Setenv("HOME", prevHome) })
+
+	wd := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	// Workspace-relative path mimics a daemon launched with a relative
+	// DataDir from this directory; verify the CLI finds it.
+	resolvedWD, err := filepath.EvalSymlinks(wd)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	wsCAPath := filepath.Join(resolvedWD, ".clawvisor", "runtime-proxy", "ca.pem")
+	if err := os.MkdirAll(filepath.Dir(wsCAPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(wsCAPath, []byte("ws"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := defaultRuntimeProxyCAHostPath(); got != wsCAPath {
+		t.Fatalf("defaultRuntimeProxyCAHostPath() = %q, want %q (workspace fallback)", got, wsCAPath)
+	}
+}
+
 // TestWaitWithSignalRelayForwardsSIGTERM proves that a SIGTERM delivered to
 // the parent process is relayed to the child rather than killing it via
 // context cancellation. The child traps SIGTERM and exits 42; if the relay
