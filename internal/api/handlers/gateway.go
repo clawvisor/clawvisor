@@ -245,9 +245,13 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Backup log: append-only record of every gateway request. Written after
 	// the response so it captures the outcome. If the primary audit insert is
 	// ever silently dropped, this table retains full visibility.
+	//
+	// The timeout is generous (30s) so that a temporarily slow database does
+	// not silently lose log rows; the prior 5s deadline dropped writes under
+	// load that would otherwise have completed.
 	var outDecision, outOutcome string
 	defer func() {
-		logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		logCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if logErr := h.store.LogGatewayRequest(logCtx, &store.GatewayRequestLog{
 			AuditID:    auditID,
