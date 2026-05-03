@@ -361,10 +361,16 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// ── Step 2: Task context resolution ──────────────────────────────────────
 	if req.TaskID == "" {
-		// When classification is gated off (the default), a missing task_id is
-		// always a 400. Skip the classifier — older clients depend on the
-		// TASK_REQUIRED error contract.
-		if !h.cfg.Gateway.ClassifyMissingTaskID {
+		// Behavior change in #310: when the runtime proxy is enabled, a missing
+		// task_id triggers task classification instead of an immediate 400.
+		// Classification can reuse an active task, return 409 ambiguous_task,
+		// or return 202 pending while routing the request to approval.
+		//
+		// When the runtime proxy is disabled (legacy gateway-only deploys),
+		// keep the long-standing TASK_REQUIRED contract so older clients that
+		// always send task_id and treat its absence as a programmer error
+		// continue to work without surprise.
+		if !h.cfg.RuntimeProxy.Enabled {
 			e := baseEntry("reject", "validation_error", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "missing required field: task_id"
