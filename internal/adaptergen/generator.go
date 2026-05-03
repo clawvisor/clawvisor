@@ -158,7 +158,7 @@ func (g *Generator) Install(ctx context.Context, yamlContent string) (*GenerateR
 // Update regenerates an existing adapter from new source material.
 // The old adapter is replaced in-place.
 func (g *Generator) Update(ctx context.Context, serviceID string, src Source) (*GenerateResult, error) {
-	if _, ok := g.registry.Get(serviceID); !ok {
+	if _, ok := g.registry.GetForUser(ctx, serviceID, g.userID); !ok {
 		return nil, fmt.Errorf("adapter %q not found in registry", serviceID)
 	}
 
@@ -243,6 +243,15 @@ func (g *Generator) classifyRisk(ctx context.Context, rawYAML string) (string, e
 
 // install persists the YAML via the adapter store and hot-loads the adapter into the registry.
 func (g *Generator) install(ctx context.Context, def yamldef.ServiceDef, yamlContent string) error {
+	// In per-user (cloud/tenant) mode, refuse to overwrite a built-in service ID.
+	// The shared registry is populated with built-ins at startup, so any hit here
+	// means the user is attempting to shadow a built-in adapter for every tenant.
+	if g.userID != "" {
+		if _, ok := g.registry.Get(def.Service.ID); ok {
+			return fmt.Errorf("service ID %q conflicts with a built-in adapter", def.Service.ID)
+		}
+	}
+
 	if err := g.store.Save(ctx, def.Service.ID, yamlContent); err != nil {
 		return fmt.Errorf("saving adapter: %w", err)
 	}
@@ -252,7 +261,11 @@ func (g *Generator) install(ctx context.Context, def yamldef.ServiceDef, yamlCon
 	if err != nil {
 		return fmt.Errorf("building adapter from definition: %w", err)
 	}
+	if g.userID != "" {
+		g.registry.ReplaceForUser(def.Service.ID, g.userID, adapter)
+	} else {
 	g.registry.Replace(adapter)
+	}
 
 	return nil
 }
