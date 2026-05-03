@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.0](https://github.com/clawvisor/clawvisor/compare/v0.8.16...v0.9.0) (2026-05-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* add runtime proxy, controls, expose, and compose isolation ([#315](https://github.com/clawvisor/clawvisor/issues/315))
+
+### Features
+
+* add runtime proxy, controls, expose, and compose isolation ([#315](https://github.com/clawvisor/clawvisor/issues/315)) ([145c95b](https://github.com/clawvisor/clawvisor/commit/145c95b27f9f81ede384c606d2d1fd585c4586f3))
+* **gateway:** add batch endpoint and structured error codes ([#291](https://github.com/clawvisor/clawvisor/issues/291)) ([39e2705](https://github.com/clawvisor/clawvisor/commit/39e270509c2f698326056f98275e3efbf83e384c))
+* **intent:** per-scope verification modes with approval overrides ([#293](https://github.com/clawvisor/clawvisor/issues/293)) ([cef347d](https://github.com/clawvisor/clawvisor/commit/cef347d5a1f752dc9ea32dcd489c11677ff06de9))
+* **scripts:** add dev.sh for hot-reloading local daemon ([#296](https://github.com/clawvisor/clawvisor/issues/296)) ([fd1db5c](https://github.com/clawvisor/clawvisor/commit/fd1db5c637c217e9eb18403cd4d878ca67fe6916))
+* **web:** ScopePill tooltips + stacked mobile layout ([#294](https://github.com/clawvisor/clawvisor/issues/294)) ([cdae30a](https://github.com/clawvisor/clawvisor/commit/cdae30ae3af1f08c68efcb949be35a682d03644d))
+
+
+### Bug Fixes
+
+* **api:** eliminate spurious 503s on long-poll and MCP endpoints ([#299](https://github.com/clawvisor/clawvisor/issues/299)) ([eb7d7f0](https://github.com/clawvisor/clawvisor/commit/eb7d7f098aec8fccc35e8472a8d71ca80a699e65))
+* **api:** scope concurrent connection-poll limit per user ([#298](https://github.com/clawvisor/clawvisor/issues/298)) ([81a77c6](https://github.com/clawvisor/clawvisor/commit/81a77c6bf870ef105cbdfc9d1e1ed5491be6fc2e))
+* **api:** scope pending connection request limit per user ([#297](https://github.com/clawvisor/clawvisor/issues/297)) ([e30f885](https://github.com/clawvisor/clawvisor/commit/e30f885b65b7c167edb093939622a18d9f0eb11a))
+* **calendar:** surface attachments and hangoutLink in event responses ([#308](https://github.com/clawvisor/clawvisor/issues/308)) ([9f83db6](https://github.com/clawvisor/clawvisor/commit/9f83db67d24c05bb7f4ad878c0ba9419360033cd))
+* **daemon:** make `clawvisor stop` actually stop the daemon ([#303](https://github.com/clawvisor/clawvisor/issues/303)) ([bd33370](https://github.com/clawvisor/clawvisor/commit/bd3337017c244aeb06f1d44af09bd90365dd06b0))
+* separate tui config from server config ([#305](https://github.com/clawvisor/clawvisor/issues/305)) ([daf333d](https://github.com/clawvisor/clawvisor/commit/daf333deabdf24e8504bd735c6b2e59cf58eba5c))
+* **tui:** render gateway log timestamps in local time ([#309](https://github.com/clawvisor/clawvisor/issues/309)) ([3b35afa](https://github.com/clawvisor/clawvisor/commit/3b35afabf7251360e20f3e792fa154be0cd34cd4))
+
 ## [0.8.16](https://github.com/clawvisor/clawvisor/compare/v0.8.15...v0.8.16) (2026-04-19)
 
 
