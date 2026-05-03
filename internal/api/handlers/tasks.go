@@ -392,19 +392,29 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Content-based dedup: if an identical task creation request was recently made
 	// by the same agent, return the existing task instead of creating a duplicate.
-	taskDedupKey := buildDedupKey(
-		"task",
-		agent.ID,
-		req.Purpose,
-		req.AuthorizedActions,
-		req.PlannedCalls,
-		req.ExpectedTools,
-		req.ExpectedEgress,
-		env.IntentVerificationMode,
-		req.ExpectedUse,
-		schemaVersion,
-		lifetime,
-	)
+	//
+	// v2 envelope fields (planned_calls, expected_tools_json, expected_egress_json,
+	// intent_verification_mode, expected_use, schema_version) only participate in
+	// the hash when any are non-empty. v1-only requests therefore produce the
+	// same fingerprint they did pre-#310, preserving the existing dedup window.
+	dedupParts := []any{"task", agent.ID, req.Purpose, req.AuthorizedActions}
+	if len(req.PlannedCalls) > 0 ||
+		len(req.ExpectedTools) > 0 ||
+		len(req.ExpectedEgress) > 0 ||
+		env.IntentVerificationMode != "" ||
+		req.ExpectedUse != "" ||
+		schemaVersion != 1 {
+		dedupParts = append(dedupParts,
+			req.PlannedCalls,
+			req.ExpectedTools,
+			req.ExpectedEgress,
+			env.IntentVerificationMode,
+			req.ExpectedUse,
+			schemaVersion,
+		)
+	}
+	dedupParts = append(dedupParts, lifetime)
+	taskDedupKey := buildDedupKey(dedupParts...)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)
 		writeJSON(w, http.StatusCreated, resp)
