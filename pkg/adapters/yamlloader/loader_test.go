@@ -32,6 +32,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"dropbox":          false,
 		"granola":          false,
 		"perplexity":       false,
+		"supabase":         false,
 	}
 
 	for _, a := range adapters {
