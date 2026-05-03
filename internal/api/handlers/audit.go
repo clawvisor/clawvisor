@@ -361,9 +361,12 @@ func looksSecretKey(key string) bool {
 	return false
 }
 
-// tokenizeSecretKey splits a JSON key into lowercase tokens, treating both
-// non-alphanumeric separators ("_", "-", ".", " ") and camelCase boundaries
-// ("apiKey" → "api","key") as token splits.
+// tokenizeSecretKey splits a JSON key into lowercase tokens at separator,
+// camelCase, and letter↔digit boundaries so that names like "apiKey",
+// "oauth2Token", or "api_v2_token" all surface their semantic words for
+// allowlist matching. Without the digit-boundary split, "oauth2Token"
+// would collapse to a single token "oauth2token" and bypass the "token"
+// match.
 func tokenizeSecretKey(key string) []string {
 	var tokens []string
 	var cur []rune
@@ -379,6 +382,10 @@ func tokenizeSecretKey(key string) []string {
 		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
 			flush()
 		case i > 0 && unicode.IsUpper(r) && unicode.IsLower(prev):
+			flush()
+			cur = append(cur, r)
+		case i > 0 && unicode.IsLetter(r) && unicode.IsDigit(prev),
+			i > 0 && unicode.IsDigit(r) && unicode.IsLetter(prev):
 			flush()
 			cur = append(cur, r)
 		default:

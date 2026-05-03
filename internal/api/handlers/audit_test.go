@@ -196,6 +196,13 @@ func TestLooksSecretKeyTokenBoundary(t *testing.T) {
 		{"password", true},
 		{"bearer", true},
 
+		// Versioned key names — must split on letter↔digit boundaries so
+		// the semantic word still surfaces to the allowlist.
+		{"oauth2Token", true},
+		{"oauth2_token", true},
+		{"v2AccessToken", true},
+		{"oauth2_password", true},
+
 		// Should NOT match — historical false positives from substring matcher.
 		{"oauth_endpoint", false},
 		{"oauth_url", false},
