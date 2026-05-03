@@ -170,7 +170,9 @@ Available profiles ship with Clawvisor:
 | `claude_code` | Claude Code | `claude` | `api.anthropic.com`, `platform.claude.com`, `mcp-proxy.anthropic.com`, plugin distribution, telemetry |
 | `codex` | Codex | `codex` | `api.openai.com /v1/responses`, `/v1/chat/completions`, `chatgpt.com /backend-api/codex/responses` |
 
-Press `Y` to apply, `n` to skip this launch, or `a` to remember the skip and never prompt for that agent + command pair again. You can manage these decisions later from the dashboard.
+Press `Y` to apply, or `n`/`a` to skip. Both `n` and `a` persist a skip decision keyed by command + profile (not by agent), so future launches of that command won't prompt again for that profile. You can manage these decisions later from the dashboard.
+
+The prompt also won't fire if the agent's runtime settings already record this profile as its starter profile, if the launcher isn't attached to a TTY, or if the launched argv isn't a recognized command key (currently `claude` or `codex`).
 
 To apply a profile non-interactively:
 
@@ -178,11 +180,18 @@ To apply a profile non-interactively:
 clawvisor agent run --agent my-agent --runtime-profile claude_code -- claude
 ```
 
-Pass `--runtime-profile none` to suppress the prompt entirely.
-
 ## Observe vs enforce
 
-Each runtime session runs in either observe mode (default for new agents) or enforce mode. In observe mode, the proxy logs what it *would* have done — held a request, prompted inline, denied — but lets traffic pass. This is the recommended way to onboard a new agent: run it for a while, review the activity feed for unintended egress, promote rules into your policy, and then flip to enforce.
+Each runtime session runs in either observe mode or enforce mode. In observe mode, the proxy logs what it *would* have done — held a request, prompted inline, denied — but lets traffic pass.
+
+New agents default to **enforce**. To make new agents start in observe instead — useful if you'd rather onboard each agent by running it for a while, reviewing the activity feed for unintended egress, promoting rules into your policy, and then flipping to enforce — set the daemon-wide default in `config.yaml`:
+
+```yaml
+runtime_policy:
+  observation_mode_default: true
+```
+
+(Or `CLAWVISOR_RUNTIME_POLICY_OBSERVATION_DEFAULT=true`.) This only affects the initial runtime settings created for new agents; existing agents keep whatever they have.
 
 The launcher prints a notice on every observe-mode run so it's not silently lost.
 
@@ -193,7 +202,7 @@ clawvisor agent run --agent my-agent --observe -- claude        # force observe
 clawvisor agent run --agent my-agent --observe=false -- claude  # force enforce
 ```
 
-The persistent default for an agent lives at `agents.<agent>.runtime_settings.observation_mode` and is configurable from the dashboard.
+The persistent default for a specific agent is its `runtime_mode` field (`observe` or `enforce`) on the agent's runtime settings record, configurable from the dashboard or via `PUT /api/agents/{id}/runtime-settings`.
 
 ## Where things live
 
