@@ -1,0 +1,19 @@
+{
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Patch app.py"
+        }
+      ]
+    },
+    {
+      "type": "apply_patch_call",
+      "call_id": "patch_1",
+      "arguments": "*** Begin Patch\n*** End Patch\n"
+    }
+  ]
+}

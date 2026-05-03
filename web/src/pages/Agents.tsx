@@ -1,17 +1,23 @@
-import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, type Agent, type ApprovalRecord, type AgentRuntimeSettings, type AuditEntry, type RuntimePolicyRule, type RuntimeSession } from '../api/client'
 import type { ConnectionRequest } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 import CountdownTimer from '../components/CountdownTimer'
+import { RuntimeApprovalsPanel, RuntimeSessionsPanel, filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
 
 export default function Agents() {
-  const { currentOrg } = useAuth()
+  const { currentOrg, features } = useAuth()
+  const { agentId } = useParams()
+  const navigate = useNavigate()
   const orgId = currentOrg?.id
   const qc = useQueryClient()
+  const liveSessionsUI = !orgId && !!features?.agent_live_sessions
+  const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -26,33 +32,91 @@ export default function Agents() {
     queryFn: () => api.connections.list(),
     enabled: !orgId,
   })
+  const { data: runtimeSessions } = useQuery({
+    queryKey: ['runtime-sessions'],
+    queryFn: () => api.runtime.listSessions(),
+    enabled: liveSessionsUI,
+    refetchInterval: 15_000,
+  })
+  const { data: runtimeApprovals } = useQuery({
+    queryKey: ['runtime-approvals'],
+    queryFn: () => api.runtime.listApprovals(),
+    enabled: liveSessionsUI,
+    refetchInterval: 10_000,
+  })
 
   const createMut = useMutation({
     mutationFn: () => orgId
-      ? api.orgs.createAgent(orgId, name)
-      : api.agents.create(name).then(agent => ({ agent, token: agent.token ?? '' })),
+      ? api.orgs.createAgent(orgId, name, description)
+      : api.agents.create(name, description).then(agent => ({ agent, token: agent.token ?? '' })),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       qc.invalidateQueries({ queryKey: ['welcome'] })
       setNewToken(result.token ?? null)
       setName('')
+      setDescription('')
       setFormError(null)
       setShowCreateForm(false)
     },
     onError: (err: Error) => setFormError(err.message),
   })
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => orgId ? api.orgs.deleteAgent(orgId, id) : api.agents.delete(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agents'] })
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      qc.invalidateQueries({ queryKey: ['overview'] })
-      qc.invalidateQueries({ queryKey: ['welcome'] })
-    },
-  })
-
   const pending = (!orgId ? connections : undefined) ?? []
+  const sessionsByAgent = useMemo(() => {
+    const grouped = new Map<string, RuntimeSession[]>()
+    for (const session of runtimeSessions?.entries ?? []) {
+      if (!isActiveRuntimeSession(session)) continue
+      const list = grouped.get(session.agent_id) ?? []
+      list.push(session)
+      grouped.set(session.agent_id, list)
+    }
+    return grouped
+  }, [runtimeSessions])
+  const approvalsByAgent = useMemo(() => {
+    const grouped = new Map<string, ApprovalRecord[]>()
+    const liveApprovals = filterLiveRuntimeApprovals(runtimeApprovals?.entries ?? [], runtimeSessions?.entries ?? [])
+    for (const approval of liveApprovals) {
+      if (!approval.agent_id) continue
+      const list = grouped.get(approval.agent_id) ?? []
+      list.push(approval)
+      grouped.set(approval.agent_id, list)
+    }
+    return grouped
+  }, [runtimeApprovals, runtimeSessions])
+
+  const selectedAgent = useMemo(() => agents?.find(agent => agent.id === agentId), [agents, agentId])
+
+  if (agentId) {
+    if (isLoading) {
+      return <div className="p-4 sm:p-8 text-sm text-text-tertiary">Loading…</div>
+    }
+    if (!selectedAgent) {
+      return (
+        <div className="p-4 sm:p-8 space-y-4">
+          <Link to="/dashboard/agents" className="text-sm text-brand hover:underline">← Back to agents</Link>
+          <div className="rounded-md border border-border-default bg-surface-1 p-6 text-sm text-text-tertiary">
+            Agent not found.
+          </div>
+        </div>
+      )
+    }
+    return (
+      <AgentDetailView
+        agent={selectedAgent}
+        orgId={orgId}
+        sessions={sessionsByAgent.get(selectedAgent.id) ?? []}
+        approvals={approvalsByAgent.get(selectedAgent.id) ?? []}
+        liveSessionsUI={liveSessionsUI}
+        runtimePolicyUI={runtimePolicyUI}
+        onDeleted={() => {
+          qc.invalidateQueries({ queryKey: ['agents'] })
+          qc.invalidateQueries({ queryKey: ['tasks'] })
+          qc.invalidateQueries({ queryKey: ['overview'] })
+          qc.invalidateQueries({ queryKey: ['welcome'] })
+        }}
+      />
+    )
+  }
 
   return (
     <div className="p-4 sm:p-8 space-y-8">
@@ -120,18 +184,26 @@ export default function Agents() {
           <div className="bg-surface-1 border border-border-default rounded-md p-4 mb-3 space-y-3">
             {formError && <div className="text-xs text-danger">{formError}</div>}
             <div className="flex gap-3">
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && name.trim()) createMut.mutate() }}
-                placeholder="Agent name"
-                autoFocus
-                className="flex-1 text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-              />
+              <div className="flex-1 space-y-3">
+                <input
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && name.trim()) createMut.mutate() }}
+                  placeholder="Agent name"
+                  autoFocus
+                  className="w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                />
+                <textarea
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  placeholder="Short description of what this agent does"
+                  className="w-full min-h-[84px] text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                />
+              </div>
               <button
                 onClick={() => createMut.mutate()}
                 disabled={createMut.isPending || !name.trim()}
-                className="px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                className="self-start px-4 py-1.5 text-sm rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
               >
                 {createMut.isPending ? 'Creating…' : 'Create'}
               </button>
@@ -150,24 +222,50 @@ export default function Agents() {
         <div className="space-y-2">
           {agents?.map(agent => {
             const hasActiveTasks = agent.active_task_count > 0
+            const liveSessions = liveSessionsUI ? (sessionsByAgent.get(agent.id) ?? []) : []
+            const pendingApprovals = liveSessionsUI ? (approvalsByAgent.get(agent.id) ?? []) : []
             return (
               <div
                 key={agent.id}
+                role="link"
+                tabIndex={0}
+                onClick={() => navigate(`/dashboard/agents/${agent.id}`)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    navigate(`/dashboard/agents/${agent.id}`)
+                  }
+                }}
                 className={`bg-surface-1 border rounded-md px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   hasActiveTasks
                     ? 'border-brand/40 border-l-[3px] border-l-brand'
                     : 'border-border-default'
-                }`}
+                } cursor-pointer hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-brand/30`}
               >
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-text-primary">{agent.name}</span>
+                    <span className="font-medium text-text-primary truncate">
+                      {agent.name}
+                    </span>
                     {hasActiveTasks && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-brand/10 text-brand">
                         {agent.active_task_count} active {agent.active_task_count === 1 ? 'task' : 'tasks'}
                       </span>
                     )}
+                    {liveSessionsUI && liveSessions.length > 0 && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
+                        {liveSessions.length} live session{liveSessions.length === 1 ? '' : 's'}
+                      </span>
+                    )}
+                    {liveSessionsUI && pendingApprovals.length > 0 && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">
+                        {pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? '' : 's'}
+                      </span>
+                    )}
                   </div>
+                  {agent.description && (
+                    <p className="text-sm text-text-secondary mt-1 line-clamp-2">{agent.description}</p>
+                  )}
                   <p className="text-xs text-text-tertiary mt-0.5">
                     Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
                     {agent.last_task_at && (
@@ -175,26 +273,381 @@ export default function Agents() {
                     )}
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    const taskWarning = hasActiveTasks
-                      ? `\n\n${agent.active_task_count} active ${agent.active_task_count === 1 ? 'task' : 'tasks'} will be revoked.`
-                      : ''
-                    if (confirm(`Revoke agent "${agent.name}"? Running agents using this token will stop working.${taskWarning}`)) {
-                      deleteMut.mutate(agent.id)
-                    }
-                  }}
-                  disabled={deleteMut.isPending}
-                  className="text-xs px-3 py-1.5 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20"
-                >
-                  Revoke
-                </button>
+                <span className="text-xs text-text-tertiary">View details →</span>
               </div>
             )
           })}
         </div>
       </section>
 
+    </div>
+  )
+}
+
+function AgentDetailView({
+  agent,
+  orgId,
+  sessions,
+  approvals,
+  liveSessionsUI,
+  runtimePolicyUI,
+  onDeleted,
+}: {
+  agent: Agent
+  orgId?: string
+  sessions: RuntimeSession[]
+  approvals: ApprovalRecord[]
+  liveSessionsUI: boolean
+  runtimePolicyUI: boolean
+  onDeleted: () => void
+}) {
+  const qc = useQueryClient()
+  const { data: allRuntimeSessions } = useQuery({
+    queryKey: ['runtime-sessions'],
+    queryFn: () => api.runtime.listSessions(),
+    enabled: liveSessionsUI,
+    refetchInterval: 15_000,
+  })
+  const { data: recentActivity } = useQuery({
+    queryKey: ['audit', 'agent', agent.id],
+    queryFn: () => api.audit.list({ agent_id: agent.id, limit: 8 }),
+    enabled: !orgId,
+    refetchInterval: 20_000,
+  })
+  const { data: allEgressRules } = useQuery({
+    queryKey: ['runtime-rules', 'egress', 'all'],
+    queryFn: () => api.runtime.listRules({ kind: 'egress' }),
+    enabled: runtimePolicyUI,
+  })
+  const { data: allToolRules } = useQuery({
+    queryKey: ['runtime-rules', 'tool', 'all'],
+    queryFn: () => api.runtime.listRules({ kind: 'tool' }),
+    enabled: runtimePolicyUI,
+  })
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => orgId ? api.orgs.deleteAgent(orgId, id) : api.agents.delete(id),
+    onSuccess: onDeleted,
+  })
+  const agentMap = useMemo(() => new Map([[agent.id, agent]]), [agent])
+  const recentSessions = useMemo(() => {
+    return (allRuntimeSessions?.entries ?? [])
+      .filter(session => session.agent_id === agent.id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 10)
+  }, [agent.id, allRuntimeSessions])
+  const agentRules = useMemo(() => {
+    const rules = [...(allEgressRules?.entries ?? []), ...(allToolRules?.entries ?? [])]
+    return rules.filter(rule => !rule.agent_id || rule.agent_id === agent.id)
+  }, [agent.id, allEgressRules, allToolRules])
+
+  return (
+    <div className="p-4 sm:p-8 space-y-8">
+      <div className="space-y-3">
+        <Link to="/dashboard/agents" className="text-sm text-brand hover:underline">← Back to agents</Link>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-text-primary">{agent.name}</h1>
+            {agent.description && <p className="text-sm text-text-secondary mt-2 max-w-3xl">{agent.description}</p>}
+            <p className="text-xs text-text-tertiary mt-2">
+              Created {formatDistanceToNow(new Date(agent.created_at), { addSuffix: true })} · {agent.id}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              const taskWarning = agent.active_task_count > 0
+                ? `\n\n${agent.active_task_count} active ${agent.active_task_count === 1 ? 'task' : 'tasks'} will be revoked.`
+                : ''
+              if (confirm(`Revoke agent "${agent.name}"? Running agents using this token will stop working.${taskWarning}`)) {
+                deleteMut.mutate(agent.id)
+              }
+            }}
+            disabled={deleteMut.isPending}
+            className="text-sm px-4 py-2 rounded bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20 disabled:opacity-50"
+          >
+            {deleteMut.isPending ? 'Revoking…' : 'Revoke agent'}
+          </button>
+        </div>
+      </div>
+
+      <div className={`grid gap-3 ${liveSessionsUI ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
+        {liveSessionsUI && <AgentMetric label="Live sessions" value={String(sessions.length)} />}
+        {liveSessionsUI && <AgentMetric label="Pending approvals" value={String(approvals.length)} />}
+        <AgentMetric label="Active tasks" value={String(agent.active_task_count)} />
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Link to={`/dashboard/activity?agent_id=${encodeURIComponent(agent.id)}`} className="rounded border border-border-default px-4 py-2 text-sm text-text-secondary hover:bg-surface-2">
+          Open Activity for Agent
+        </Link>
+        <Link to="/dashboard/policy" className="rounded border border-border-default px-4 py-2 text-sm text-text-secondary hover:bg-surface-2">
+          Open Policy
+        </Link>
+      </div>
+
+      {runtimePolicyUI && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
+
+      {runtimePolicyUI && (
+        <AgentPolicyPanel
+          agent={agent}
+          rules={agentRules}
+          recentActivity={recentActivity?.entries ?? []}
+        />
+      )}
+
+      {liveSessionsUI && (
+        <RecentSessionsPanel sessions={recentSessions} />
+      )}
+
+      {liveSessionsUI && (
+        <RuntimeSessionsPanel
+          sessions={sessions}
+          agents={agentMap}
+          onUpdated={() => {
+            qc.invalidateQueries({ queryKey: ['runtime-sessions'] })
+            qc.invalidateQueries({ queryKey: ['overview'] })
+          }}
+        />
+      )}
+
+      {liveSessionsUI && (
+        <RuntimeApprovalsPanel
+          approvals={approvals}
+          onResolved={() => {
+            qc.invalidateQueries({ queryKey: ['runtime-approvals'] })
+            qc.invalidateQueries({ queryKey: ['runtime-sessions'] })
+            qc.invalidateQueries({ queryKey: ['overview'] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function AgentPolicyPanel({
+  agent,
+  rules,
+  recentActivity,
+}: {
+  agent: Agent
+  rules: RuntimePolicyRule[]
+  recentActivity: AuditEntry[]
+}) {
+  const starterProfile = agent.runtime_settings?.starter_profile ?? 'none'
+  const systemRules = rules.filter(rule => rule.source === 'system')
+  const manualRules = rules.filter(rule => rule.source !== 'system')
+  const inferredPresets = new Set<string>()
+  for (const rule of systemRules) {
+    if (rule.host === 'api.telegram.org') inferredPresets.add('Telegram')
+  }
+
+  return (
+    <section className="rounded border border-border-subtle bg-surface-1 p-5 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Applied Policy</h2>
+        <p className="text-sm text-text-tertiary mt-1">Current starter profile, service presets, and effective runtime restrictions for this agent.</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <AgentMetric label="Starter profile" value={starterProfile === 'none' ? 'None' : starterProfile} />
+        <AgentMetric label="Service presets" value={String(inferredPresets.size)} />
+        <AgentMetric label="Effective runtime rules" value={String(rules.length)} />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded border border-border-subtle bg-surface-0 p-4">
+          <div className="text-sm font-medium text-text-primary">Presets</div>
+          <div className="mt-2 space-y-2 text-sm text-text-secondary">
+            <div>Harness profile: <span className="text-text-primary">{starterProfile === 'none' ? 'None' : starterProfile}</span></div>
+            <div>Service presets: <span className="text-text-primary">{inferredPresets.size === 0 ? 'None detected' : Array.from(inferredPresets).join(', ')}</span></div>
+          </div>
+        </div>
+        <div className="rounded border border-border-subtle bg-surface-0 p-4">
+          <div className="text-sm font-medium text-text-primary">Restrictions</div>
+          <div className="mt-2 space-y-2 text-sm text-text-secondary">
+            <div>Manual / event-derived rules: <span className="text-text-primary">{manualRules.length}</span></div>
+            <div>Preset-installed rules: <span className="text-text-primary">{systemRules.length}</span></div>
+          </div>
+        </div>
+      </div>
+      <div className="rounded border border-border-subtle bg-surface-0 p-4">
+        <div className="text-sm font-medium text-text-primary">Recent Activity Summary</div>
+        <div className="mt-3 space-y-2">
+          {recentActivity.length === 0 && (
+            <div className="text-sm text-text-tertiary">No recent activity for this agent.</div>
+          )}
+          {recentActivity.map(entry => (
+            <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="text-text-primary">{entry.summary_text || `${entry.service} ${entry.action}`}</div>
+              <div className="text-xs text-text-tertiary">
+                {entry.outcome} · {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function RecentSessionsPanel({ sessions }: { sessions: RuntimeSession[] }) {
+  return (
+    <section className="rounded border border-border-subtle bg-surface-1 p-5 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Recent Sessions</h2>
+        <p className="text-sm text-text-tertiary mt-1">Most recent runtime sessions for this agent, including ended and revoked sessions.</p>
+      </div>
+      <div className="space-y-2">
+        {sessions.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No runtime sessions yet.
+          </div>
+        )}
+        {sessions.map(session => {
+          const status = session.revoked_at
+            ? 'revoked'
+            : new Date(session.expires_at).getTime() <= Date.now()
+              ? 'expired'
+              : 'live'
+          return (
+            <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
+              <div>
+                <div className="text-sm font-medium text-text-primary">{session.id}</div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {session.observation_mode ? 'observe' : 'enforce'} · started {formatDistanceToNow(new Date(session.created_at), { addSuffix: true })}
+                </div>
+              </div>
+              <div className="text-xs text-text-tertiary">{status}</div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function AgentMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 p-4">
+      <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-text-primary">{value}</div>
+    </div>
+  )
+}
+
+function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; defaultOpen?: boolean }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(defaultOpen)
+  const { data: settings } = useQuery({
+    queryKey: ['agent-runtime-settings', agentId],
+    queryFn: () => api.agents.getRuntimeSettings(agentId),
+    enabled: open || defaultOpen,
+  })
+  const [draft, setDraft] = useState<AgentRuntimeSettings | null>(null)
+
+  useEffect(() => {
+    if (settings && draft == null) {
+      setDraft(settings)
+    }
+  }, [settings, draft])
+
+  const saveMut = useMutation({
+    mutationFn: (next: AgentRuntimeSettings) => api.agents.updateRuntimeSettings(agentId, next),
+    onSuccess: (saved) => {
+      setDraft(saved)
+      qc.invalidateQueries({ queryKey: ['agent-runtime-settings', agentId] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['runtime-status'] })
+    },
+  })
+
+  const current = draft ?? settings
+
+  return (
+    <div className="mt-3 rounded border border-border-subtle bg-surface-0">
+      <button
+        onClick={() => {
+          setOpen(v => !v)
+          if (!open && settings && !draft) setDraft(settings)
+        }}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="text-sm font-medium text-text-primary">Runtime settings</div>
+          <div className="text-xs text-text-tertiary">
+            {current
+              ? `${current.runtime_enabled ? 'enabled' : 'disabled'} · ${current.runtime_mode} · ${current.starter_profile || 'none'}`
+              : 'Configure observe vs enforce defaults, starter profile, and outbound credential posture.'}
+          </div>
+        </div>
+        <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Edit'}</span>
+      </button>
+      {open && current && (
+        <div className="border-t border-border-subtle px-4 py-4 space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Runtime enabled</span>
+              <select
+                value={current.runtime_enabled ? 'true' : 'false'}
+                onChange={e => setDraft({ ...current, runtime_enabled: e.target.value === 'true' })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Runtime mode</span>
+              <select
+                value={current.runtime_mode}
+                onChange={e => setDraft({ ...current, runtime_mode: e.target.value as AgentRuntimeSettings['runtime_mode'] })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="observe">Observe</option>
+                <option value="enforce">Enforce</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Starter profile</span>
+              <select
+                value={current.starter_profile}
+                onChange={e => setDraft({ ...current, starter_profile: e.target.value })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="none">None</option>
+                <option value="claude_code">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-text-tertiary">Outbound credential mode</span>
+              <select
+                value={current.outbound_credential_mode}
+                onChange={e => setDraft({ ...current, outbound_credential_mode: e.target.value as AgentRuntimeSettings['outbound_credential_mode'] })}
+                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="inherit">Inherit</option>
+                <option value="observe">Observe</option>
+                <option value="strict">Strict</option>
+              </select>
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <input
+              type="checkbox"
+              checked={current.inject_stored_bearer}
+              onChange={e => setDraft({ ...current, inject_stored_bearer: e.target.checked })}
+            />
+            Inject stored bearer credentials
+          </label>
+          <div className="flex justify-end">
+            <button
+              onClick={() => saveMut.mutate(current)}
+              disabled={saveMut.isPending}
+              className="rounded bg-brand px-4 py-2 text-sm font-medium text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saveMut.isPending ? 'Saving…' : 'Save runtime settings'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -705,4 +1158,3 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
     </div>
   )
 }
-

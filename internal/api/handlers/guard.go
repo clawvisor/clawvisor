@@ -166,9 +166,16 @@ func (h *GuardHandler) Check(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Without task_id: check restrictions only ────────────────────────────
+	serviceRule, _ := matchServicePolicyRule(ctx, h.store, agent.UserID, service, action)
 	restriction, _ := h.store.MatchRestriction(ctx, agent.UserID, service, action)
-	if restriction != nil {
-		r := restriction.Reason
+	if serviceRule != nil || restriction != nil {
+		r := ""
+		if serviceRule != nil {
+			r = serviceRule.Reason
+		}
+		if r == "" && restriction != nil {
+			r = restriction.Reason
+		}
 		if r == "" {
 			r = fmt.Sprintf("restricted: %s:%s is blocked", service, action)
 		}

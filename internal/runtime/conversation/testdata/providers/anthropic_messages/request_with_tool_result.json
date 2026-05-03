@@ -1,0 +1,32 @@
+{
+  "system": "Follow task constraints",
+  "messages": [
+    {
+      "role": "user",
+      "content": "List my inbox"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_1",
+          "name": "fetch_messages",
+          "input": {
+            "max_results": 10
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_1",
+          "content": "10 messages"
+        }
+      ]
+    }
+  ]
+}

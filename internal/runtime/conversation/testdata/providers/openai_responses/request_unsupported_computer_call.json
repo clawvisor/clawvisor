@@ -1,0 +1,22 @@
+{
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Click the submit button"
+        }
+      ]
+    },
+    {
+      "type": "computer_call",
+      "call_id": "computer_1",
+      "arguments": {
+        "action": "click",
+        "target": "submit"
+      }
+    }
+  ]
+}

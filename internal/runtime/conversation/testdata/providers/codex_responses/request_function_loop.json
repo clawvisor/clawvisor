@@ -1,0 +1,26 @@
+{
+  "instructions": "Stay within the approved task.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "continue"
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "name": "Bash",
+      "arguments": "{\"command\":\"ls /tmp\"}",
+      "call_id": "call_codex"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_codex",
+      "output": "file-a\nfile-b"
+    }
+  ]
+}

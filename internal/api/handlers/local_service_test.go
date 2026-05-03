@@ -87,6 +87,10 @@ func (s *localTestStore) MatchRestriction(_ context.Context, _, _, _ string) (*s
 	return nil, nil
 }
 
+func (s *localTestStore) ListRuntimePolicyRules(_ context.Context, _ string, _ store.RuntimePolicyRuleFilter) ([]*store.RuntimePolicyRule, error) {
+	return nil, nil
+}
+
 func (s *localTestStore) LogAudit(_ context.Context, entry *store.AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,10 +155,10 @@ func (m *mockVerifier) Verify(_ context.Context, _ intent.VerifyRequest) (*inten
 // testVault is a minimal vault for tests — never stores or retrieves anything.
 type testVault struct{}
 
-func (testVault) Set(_ context.Context, _, _ string, _ []byte) error    { return nil }
-func (testVault) Get(_ context.Context, _, _ string) ([]byte, error)    { return nil, vault.ErrNotFound }
-func (testVault) Delete(_ context.Context, _, _ string) error           { return nil }
-func (testVault) List(_ context.Context, _ string) ([]string, error)    { return nil, nil }
+func (testVault) Set(_ context.Context, _, _ string, _ []byte) error { return nil }
+func (testVault) Get(_ context.Context, _, _ string) ([]byte, error) { return nil, vault.ErrNotFound }
+func (testVault) Delete(_ context.Context, _, _ string) error        { return nil }
+func (testVault) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
 
 // testServices returns a standard set of local services for testing.
 func testServices() []LocalCatalogService {
@@ -262,8 +266,8 @@ func newTestGatewayHandler(st *localTestStore, provider *mockLocalProvider, exec
 		st,
 		testVault{},
 		adapters.NewRegistry(),
-		nil,                  // notifier
-		verifier,             // intent verifier
+		nil,                    // notifier
+		verifier,               // intent verifier
 		intent.NoopExtractor{}, // extractor
 		config.Config{},
 		slog.Default(),

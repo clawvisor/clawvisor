@@ -1,0 +1,14 @@
+{
+  "id": "resp_shell",
+  "object": "response",
+  "output": [
+    {
+      "id": "shell_1",
+      "type": "shell_call",
+      "status": "completed",
+      "call_id": "shell_1",
+      "name": "shell",
+      "arguments": "{\"command\":\"ls /tmp\"}"
+    }
+  ]
+}

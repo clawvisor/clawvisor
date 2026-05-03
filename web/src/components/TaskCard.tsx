@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall } from '../api/client'
+import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall, type ExpectedTool, type ExpectedEgress } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
 import CountdownTimer from './CountdownTimer'
@@ -75,6 +75,10 @@ export default function TaskCard({
   const [confirmApprove, setConfirmApprove] = useState(false)
   const [openPillKey, setOpenPillKey] = useState<string | null>(null)
   const [scopeOverrides, setScopeOverrides] = useState<Record<string, ScopeOverride>>({})
+  const authorizedActions = Array.isArray(task.authorized_actions) ? task.authorized_actions : []
+  const plannedCalls = Array.isArray(task.planned_calls) ? task.planned_calls : []
+  const expectedTools = Array.isArray(task.expected_tools_json) ? task.expected_tools_json : []
+  const expectedEgress = Array.isArray(task.expected_egress_json) ? task.expected_egress_json : []
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -135,30 +139,31 @@ export default function TaskCard({
   }
 
   const effectiveAuto = (a: TaskAction) => effectiveValue(a).auto
-  const autoActions = task.authorized_actions.filter(effectiveAuto)
-  const manualActions = task.authorized_actions.filter(a => !effectiveAuto(a))
+  const autoActions = authorizedActions.filter(effectiveAuto)
+  const manualActions = authorizedActions.filter(a => !effectiveAuto(a))
 
   const groupedByService = useMemo(() => {
     const groups = new Map<string, { service: string; actions: TaskAction[] }>()
-    for (const a of task.authorized_actions) {
+    for (const a of authorizedActions) {
       const g = groups.get(a.service) ?? { service: a.service, actions: [] }
       g.actions.push(a)
       groups.set(a.service, g)
     }
     return [...groups.values()]
-  }, [task.authorized_actions])
+  }, [authorizedActions])
 
   const plannedByKey = useMemo(() => {
     const m = new Map<string, PlannedCall[]>()
-    for (const p of task.planned_calls ?? []) {
+    for (const p of plannedCalls) {
       const k = `${baseService(p.service)}|${p.action}`
       const list = m.get(k) ?? []
       list.push(p)
       m.set(k, list)
     }
     return m
-  }, [task.planned_calls])
-  const totalPlanned = task.planned_calls?.length ?? 0
+  }, [plannedCalls])
+  const totalPlanned = plannedCalls.length
+  const hasRuntimeEnvelope = expectedTools.length > 0 || expectedEgress.length > 0 || task.schema_version === 2 || !!task.expected_use || !!task.intent_verification_mode
 
   const [showPlannedCalls, setShowPlannedCalls] = useState(() => {
     if (totalPlanned === 0) return false
@@ -304,17 +309,30 @@ export default function TaskCard({
                 />
               </div>
             )}
-            <GroupedScopes
-              groups={groupedByService}
-              effectiveValue={effectiveValue}
-              openPillKey={openPillKey}
-              setOpenPillKey={setOpenPillKey}
-              onChange={handleScopeChange}
-              disabled={isPending}
-              plannedByKey={plannedByKey}
-              showPlanned={showPlannedCalls}
-              onMarkerClick={() => setShowPlannedCalls(s => !s)}
-            />
+            {groupedByService.length > 0 && (
+              <GroupedScopes
+                groups={groupedByService}
+                effectiveValue={effectiveValue}
+                openPillKey={openPillKey}
+                setOpenPillKey={setOpenPillKey}
+                onChange={handleScopeChange}
+                disabled={isPending}
+                plannedByKey={plannedByKey}
+                showPlanned={showPlannedCalls}
+                onMarkerClick={() => setShowPlannedCalls(s => !s)}
+              />
+            )}
+            {hasRuntimeEnvelope && (
+              <div className={groupedByService.length > 0 ? 'pt-4' : ''}>
+                <RuntimeEnvelopePanel
+                  expectedUse={task.expected_use}
+                  schemaVersion={task.schema_version}
+                  intentVerificationMode={task.intent_verification_mode}
+                  expectedTools={expectedTools}
+                  expectedEgress={expectedEgress}
+                />
+              </div>
+            )}
           </div>
           <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-end gap-2">
             <button onClick={() => denyMut.mutate()} disabled={isPending}
@@ -453,17 +471,30 @@ export default function TaskCard({
                     />
                   </div>
                 )}
-                <GroupedScopes
-                  groups={groupedByService}
-                  effectiveValue={effectiveValue}
-                  openPillKey={openPillKey}
-                  setOpenPillKey={setOpenPillKey}
-                  onChange={handleScopeChange}
-                  disabled={!isActive || isPending}
-                  plannedByKey={plannedByKey}
-                  showPlanned={showPlannedCalls}
-                  onMarkerClick={() => setShowPlannedCalls(s => !s)}
-                />
+                {groupedByService.length > 0 && (
+                  <GroupedScopes
+                    groups={groupedByService}
+                    effectiveValue={effectiveValue}
+                    openPillKey={openPillKey}
+                    setOpenPillKey={setOpenPillKey}
+                    onChange={handleScopeChange}
+                    disabled={!isActive || isPending}
+                    plannedByKey={plannedByKey}
+                    showPlanned={showPlannedCalls}
+                    onMarkerClick={() => setShowPlannedCalls(s => !s)}
+                  />
+                )}
+                {hasRuntimeEnvelope && (
+                  <div className={groupedByService.length > 0 ? 'pt-4' : ''}>
+                    <RuntimeEnvelopePanel
+                      expectedUse={task.expected_use}
+                      schemaVersion={task.schema_version}
+                      intentVerificationMode={task.intent_verification_mode}
+                      expectedTools={expectedTools}
+                      expectedEgress={expectedEgress}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -707,6 +738,112 @@ function ScopeGroupTables({ autoActions, manualActions }: {
         </div>
       )}
     </>
+  )
+}
+
+function RuntimeEnvelopePanel({
+  expectedUse,
+  schemaVersion,
+  intentVerificationMode,
+  expectedTools,
+  expectedEgress,
+}: {
+  expectedUse?: string
+  schemaVersion?: number
+  intentVerificationMode?: 'strict' | 'lenient' | 'off'
+  expectedTools: ExpectedTool[]
+  expectedEgress: ExpectedEgress[]
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded border border-border-subtle bg-surface-0 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-brand">Runtime envelope</span>
+          <span className="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-mono text-brand">
+            schema v{schemaVersion ?? 2}
+          </span>
+          {intentVerificationMode && (
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+              verify {intentVerificationMode}
+            </span>
+          )}
+          {expectedTools.length > 0 && (
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+              {expectedTools.length} tool{expectedTools.length === 1 ? '' : 's'}
+            </span>
+          )}
+          {expectedEgress.length > 0 && (
+            <span className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-text-secondary">
+              {expectedEgress.length} egress rule{expectedEgress.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+        {expectedUse && <p className="mt-2 text-sm text-text-secondary">{expectedUse}</p>}
+      </div>
+
+      {expectedTools.length > 0 && (
+        <div className="rounded border border-border-subtle bg-surface-0 overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-brand">Expected tools</span>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {expectedTools.map((item, index) => (
+              <div key={`${item.tool_name}-${index}`} className="px-3 py-2.5 space-y-1">
+                <div className="font-mono text-xs text-text-primary">{item.tool_name}</div>
+                <div className="text-xs text-text-secondary">{item.why}</div>
+                {item.input_shape && Object.keys(item.input_shape).length > 0 && (
+                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                    shape: {JSON.stringify(item.input_shape)}
+                  </div>
+                )}
+                {item.input_regex && (
+                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                    regex: {item.input_regex}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {expectedEgress.length > 0 && (
+        <div className="rounded border border-border-subtle bg-surface-0 overflow-hidden">
+          <div className="px-3 py-1.5 border-b border-border-subtle flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-success" />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-success">Expected egress</span>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {expectedEgress.map((item, index) => (
+              <div key={`${item.host}-${item.path ?? item.path_regex ?? index}`} className="px-3 py-2.5 space-y-1">
+                <div className="font-mono text-xs text-text-primary">
+                  {item.method ? `${item.method.toUpperCase()} ` : ''}
+                  {item.host}
+                  {item.path ? item.path : item.path_regex ? ` /${item.path_regex}/` : ''}
+                </div>
+                <div className="text-xs text-text-secondary">{item.why}</div>
+                {item.query_shape && Object.keys(item.query_shape).length > 0 && (
+                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                    query: {JSON.stringify(item.query_shape)}
+                  </div>
+                )}
+                {item.body_shape && Object.keys(item.body_shape).length > 0 && (
+                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                    body: {JSON.stringify(item.body_shape)}
+                  </div>
+                )}
+                {item.headers && Object.keys(item.headers).length > 0 && (
+                  <div className="font-mono text-[10px] text-text-tertiary break-all">
+                    headers: {JSON.stringify(item.headers)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

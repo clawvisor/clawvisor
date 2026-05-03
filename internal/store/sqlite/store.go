@@ -207,8 +207,8 @@ func (s *Store) MatchRestriction(ctx context.Context, userID, service, action st
 func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string) (*store.Agent, error) {
 	id := uuid.New().String()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash) VALUES (?, ?, ?, ?)`,
-		id, userID, name, tokenHash,
+		`INSERT INTO agents (id, user_id, name, description, token_hash) VALUES (?, ?, ?, ?, ?)`,
+		id, userID, name, "", tokenHash,
 	)
 	if err != nil {
 		return nil, err
@@ -219,8 +219,8 @@ func (s *Store) CreateAgent(ctx context.Context, userID, name, tokenHash string)
 func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*store.Agent, error) {
 	id := uuid.New().String()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, token_hash, org_id) VALUES (?, ?, ?, ?, ?)`,
-		id, userID, name, tokenHash, orgID,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, org_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, userID, name, "", tokenHash, orgID,
 	)
 	if err != nil {
 		return nil, err
@@ -233,9 +233,9 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -246,17 +246,25 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	if orgID != nil {
 		a.OrgID = *orgID
 	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
+	}
 	return a, nil
 }
 
 func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id,
+		SELECT a.id, a.user_id, a.name, a.token_hash, a.created_at, a.org_id, a.description,
 		       COALESCE((SELECT COUNT(*) FROM tasks t
 		                 WHERE t.agent_id = a.id
 		                   AND t.status IN ('active','pending_approval','pending_scope_expansion')), 0),
-		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id)
+		       (SELECT MAX(t.created_at) FROM tasks t WHERE t.agent_id = a.id),
+		       ars.agent_id, ars.runtime_enabled, ars.runtime_mode, ars.starter_profile,
+		       ars.outbound_credential_mode, ars.inject_stored_bearer, ars.created_at, ars.updated_at
 		FROM agents a
+		LEFT JOIN agent_runtime_settings ars ON ars.agent_id = a.id
 		WHERE a.user_id = ? AND a.deleted_at IS NULL
 		ORDER BY a.created_at DESC`,
 		userID,
@@ -272,8 +280,17 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 		var createdAt string
 		var orgID *string
 		var lastTaskAt *string
-		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID,
-			&a.ActiveTaskCount, &lastTaskAt); err != nil {
+		var settingsAgentID *string
+		var settingsEnabled *int
+		var settingsMode *string
+		var settingsProfile *string
+		var settingsOutbound *string
+		var settingsInject *int
+		var settingsCreatedAt *string
+		var settingsUpdatedAt *string
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID, &a.Description,
+			&a.ActiveTaskCount, &lastTaskAt, &settingsAgentID, &settingsEnabled, &settingsMode, &settingsProfile,
+			&settingsOutbound, &settingsInject, &settingsCreatedAt, &settingsUpdatedAt); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = parseTime(createdAt)
@@ -284,9 +301,71 @@ func (s *Store) ListAgents(ctx context.Context, userID string) ([]*store.Agent, 
 			ts := parseTime(*lastTaskAt)
 			a.LastTaskAt = &ts
 		}
+		a.RuntimeSettings = scanSQLiteAgentRuntimeSettings(settingsAgentID, settingsEnabled, settingsMode, settingsProfile, settingsOutbound, settingsInject, settingsCreatedAt, settingsUpdatedAt)
 		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+func (s *Store) UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE agents SET description = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, description, agentID, userID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetAgentRuntimeSettings(ctx context.Context, agentID string) (*store.AgentRuntimeSettings, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT agent_id, runtime_enabled, runtime_mode, starter_profile,
+		       outbound_credential_mode, inject_stored_bearer, created_at, updated_at
+		FROM agent_runtime_settings
+		WHERE agent_id = ?
+	`, agentID)
+	settings := &store.AgentRuntimeSettings{}
+	var runtimeEnabled int
+	var injectStoredBearer int
+	var createdAt, updatedAt string
+	err := row.Scan(&settings.AgentID, &runtimeEnabled, &settings.RuntimeMode, &settings.StarterProfile,
+		&settings.OutboundCredentialMode, &injectStoredBearer, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	settings.RuntimeEnabled = runtimeEnabled != 0
+	settings.InjectStoredBearer = injectStoredBearer != 0
+	settings.CreatedAt = parseTime(createdAt)
+	settings.UpdatedAt = parseTime(updatedAt)
+	return settings, nil
+}
+
+func (s *Store) UpsertAgentRuntimeSettings(ctx context.Context, settings *store.AgentRuntimeSettings) error {
+	if settings == nil {
+		return fmt.Errorf("agent runtime settings are required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO agent_runtime_settings (
+			agent_id, runtime_enabled, runtime_mode, starter_profile, outbound_credential_mode, inject_stored_bearer
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (agent_id) DO UPDATE SET
+			runtime_enabled = excluded.runtime_enabled,
+			runtime_mode = excluded.runtime_mode,
+			starter_profile = excluded.starter_profile,
+			outbound_credential_mode = excluded.outbound_credential_mode,
+			inject_stored_bearer = excluded.inject_stored_bearer,
+			updated_at = CURRENT_TIMESTAMP
+	`, settings.AgentID, boolToInt(settings.RuntimeEnabled), settings.RuntimeMode, settings.StarterProfile,
+		settings.OutboundCredentialMode, boolToInt(settings.InjectStoredBearer))
+	return err
 }
 
 func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
@@ -355,9 +434,9 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	var createdAt string
 	var orgID *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -367,6 +446,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a.CreatedAt = parseTime(createdAt)
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
+		a.RuntimeSettings = settings
+	} else if settingsErr != store.ErrNotFound {
+		return nil, settingsErr
 	}
 	return a, nil
 }
@@ -641,20 +725,58 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		s := string(e.Verification)
 		verification = &s
 	}
+	var resolutionConfidence, intentVerdict *string
+	if e.ResolutionConfidence != nil {
+		resolutionConfidence = e.ResolutionConfidence
+	}
+	if e.IntentVerdict != nil {
+		intentVerdict = e.IntentVerdict
+	}
 	safetyFlagged := 0
 	if e.SafetyFlagged {
 		safetyFlagged = 1
 	}
+	usedActiveTaskContext := 0
+	if e.UsedActiveTaskContext {
+		usedActiveTaskContext = 1
+	}
+	usedLeaseBias := 0
+	if e.UsedLeaseBias {
+		usedLeaseBias = 1
+	}
+	usedConvJudgeResolution := 0
+	if e.UsedConvJudgeResolution {
+		usedConvJudgeResolution = 1
+	}
+	wouldBlock := 0
+	if e.WouldBlock {
+		wouldBlock = 1
+	}
+	wouldReview := 0
+	if e.WouldReview {
+		wouldReview = 1
+	}
+	wouldPromptInline := 0
+	if e.WouldPromptInline {
+		wouldPromptInline = 1
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (
-			id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-			params_safe, decision, outcome, policy_id, rule_id,
+			id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+			tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+			params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
 			duration_ms, filters_applied, verification, error_msg
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.Timestamp.UTC().Format(time.RFC3339),
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
+		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp.UTC().Format(time.RFC3339),
 		e.Service, e.Action, paramsSafe, e.Decision, e.Outcome,
-		e.PolicyID, e.RuleID, safetyFlagged, e.SafetyReason, e.Reason,
+		e.PolicyID, e.RuleID, resolutionConfidence, intentVerdict,
+		usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution,
+		wouldBlock, wouldReview, wouldPromptInline,
+		safetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, filtersApplied, verification, e.ErrorMsg)
 	return err
 }
@@ -673,18 +795,25 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var timestamp, paramsSafe string
-	var safetyFlagged int
+	var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 	var filtersApplied, verification *string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE id = ? AND user_id = ?
 	`, id, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+		&wouldBlock, &wouldReview, &wouldPromptInline,
+		&safetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -694,6 +823,12 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	}
 	e.Timestamp = parseTime(timestamp)
 	e.SafetyFlagged = safetyFlagged != 0
+	e.UsedActiveTaskContext = usedActiveTaskContext != 0
+	e.UsedLeaseBias = usedLeaseBias != 0
+	e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+	e.WouldBlock = wouldBlock != 0
+	e.WouldReview = wouldReview != 0
+	e.WouldPromptInline = wouldPromptInline != 0
 	e.ParamsSafe = json.RawMessage(paramsSafe)
 	if filtersApplied != nil {
 		e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -707,18 +842,25 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var timestamp, paramsSafe string
-	var safetyFlagged int
+	var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 	var filtersApplied, verification *string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log WHERE request_id = ? AND user_id = ?
 	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+		&wouldBlock, &wouldReview, &wouldPromptInline,
+		&safetyFlagged, &e.SafetyReason, &e.Reason,
 		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -728,6 +870,12 @@ func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID 
 	}
 	e.Timestamp = parseTime(timestamp)
 	e.SafetyFlagged = safetyFlagged != 0
+	e.UsedActiveTaskContext = usedActiveTaskContext != 0
+	e.UsedLeaseBias = usedLeaseBias != 0
+	e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+	e.WouldBlock = wouldBlock != 0
+	e.WouldReview = wouldReview != 0
+	e.WouldPromptInline = wouldPromptInline != 0
 	e.ParamsSafe = json.RawMessage(paramsSafe)
 	if filtersApplied != nil {
 		e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -744,8 +892,16 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		limit = 50
 	}
 
-	where := "WHERE user_id = ?"
-	args := []any{userID}
+	where := `WHERE user_id = ?
+		AND NOT (
+			service = 'runtime.egress' AND EXISTS (
+				SELECT 1 FROM activity_mutes am
+				WHERE am.user_id = ?
+				  AND am.host = COALESCE(json_extract(params_safe, '$.host'), '')
+				  AND (am.path_prefix = '' OR COALESCE(json_extract(params_safe, '$.path'), '') LIKE am.path_prefix || '%')
+			)
+		)`
+	args := []any{userID, userID}
 
 	if filter.Service != "" {
 		where += " AND service = ?"
@@ -763,6 +919,13 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		where += " AND task_id = ?"
 		args = append(args, filter.TaskID)
 	}
+	if filter.AgentID != "" {
+		where += " AND agent_id = ?"
+		args = append(args, filter.AgentID)
+	}
+	if filter.IncludeRuntime != nil && !*filter.IncludeRuntime {
+		where += " AND service NOT LIKE 'runtime.%'"
+	}
 
 	var total int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_log "+where, args...).Scan(&total); err != nil {
@@ -771,8 +934,11 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 
 	dataArgs := append(args, limit, filter.Offset)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id,
+		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		       would_block, would_review, would_prompt_inline,
 		       safety_flagged, safety_reason, reason, data_origin, context_src,
 		       duration_ms, filters_applied, verification, error_msg
 		FROM audit_log `+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`, dataArgs...)
@@ -785,18 +951,28 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 	for rows.Next() {
 		e := &store.AuditEntry{}
 		var timestamp, paramsSafe string
-		var safetyFlagged int
+		var safetyFlagged, usedActiveTaskContext, usedLeaseBias, usedConvJudgeResolution, wouldBlock, wouldReview, wouldPromptInline int
 		var filtersApplied, verification *string
 		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &timestamp,
+			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+			&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &timestamp,
 			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-			&e.PolicyID, &e.RuleID, &safetyFlagged, &e.SafetyReason, &e.Reason,
+			&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+			&usedActiveTaskContext, &usedLeaseBias, &usedConvJudgeResolution,
+			&wouldBlock, &wouldReview, &wouldPromptInline,
+			&safetyFlagged, &e.SafetyReason, &e.Reason,
 			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg,
 		); err != nil {
 			return nil, 0, err
 		}
 		e.Timestamp = parseTime(timestamp)
 		e.SafetyFlagged = safetyFlagged != 0
+		e.UsedActiveTaskContext = usedActiveTaskContext != 0
+		e.UsedLeaseBias = usedLeaseBias != 0
+		e.UsedConvJudgeResolution = usedConvJudgeResolution != 0
+		e.WouldBlock = wouldBlock != 0
+		e.WouldReview = wouldReview != 0
+		e.WouldPromptInline = wouldPromptInline != 0
 		e.ParamsSafe = json.RawMessage(paramsSafe)
 		if filtersApplied != nil {
 			e.FiltersApplied = json.RawMessage(*filtersApplied)
@@ -807,6 +983,59 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		entries = append(entries, e)
 	}
 	return entries, total, rows.Err()
+}
+
+func (s *Store) CreateActivityMute(ctx context.Context, mute *store.ActivityMute) error {
+	if mute.ID == "" {
+		mute.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO activity_mutes (id, user_id, host, path_prefix)
+		VALUES (?, ?, ?, ?)
+	`, mute.ID, mute.UserID, mute.Host, mute.PathPrefix)
+	if isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *Store) ListActivityMutes(ctx context.Context, userID string) ([]*store.ActivityMute, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, host, path_prefix, created_at
+		FROM activity_mutes
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ActivityMute
+	for rows.Next() {
+		mute := &store.ActivityMute{}
+		var createdAt string
+		if err := rows.Scan(&mute.ID, &mute.UserID, &mute.Host, &mute.PathPrefix, &createdAt); err != nil {
+			return nil, err
+		}
+		mute.CreatedAt = parseTime(createdAt)
+		out = append(out, mute)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteActivityMute(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM activity_mutes WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ── Audit Activity Buckets ────────────────────────────────────────────────────
@@ -848,6 +1077,9 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if task.Lifetime == "" {
 		task.Lifetime = "session"
 	}
+	if task.SchemaVersion == 0 {
+		task.SchemaVersion = 1
+	}
 	actionsJSON, err := json.Marshal(task.AuthorizedActions)
 	if err != nil {
 		return err
@@ -856,6 +1088,8 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	if err != nil {
 		return err
 	}
+	expectedToolsJSON := rawJSONOrDefault(task.ExpectedTools, "[]")
+	expectedEgressJSON := rawJSONOrDefault(task.ExpectedEgress, "[]")
 	var pendingActionJSON *string
 	if task.PendingAction != nil {
 		b, err := json.Marshal(task.PendingAction)
@@ -879,12 +1113,14 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
-			risk_level, risk_details, approval_source, approval_rationale)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
+			expected_egress_json, intent_verification_mode, expected_use, schema_version)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
 		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
-		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale)
+		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale, expectedToolsJSON,
+		expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion)
 	return err
 }
 
@@ -892,17 +1128,19 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
-	var riskDetailsStr, approvalRationaleStr string
+	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr)
+		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+		&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -939,6 +1177,12 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if approvalRationaleStr != "" {
 		t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 	}
+	if expectedToolsStr != "" {
+		t.ExpectedTools = json.RawMessage(expectedToolsStr)
+	}
+	if expectedEgressStr != "" {
+		t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+	}
 	return t, nil
 }
 
@@ -965,7 +1209,8 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 	query := `SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -984,11 +1229,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
 			return nil, 0, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -1020,6 +1266,12 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		}
 		if approvalRationaleStr != "" {
 			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
+		}
+		if expectedToolsStr != "" {
+			t.ExpectedTools = json.RawMessage(expectedToolsStr)
+		}
+		if expectedEgressStr != "" {
+			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -1159,7 +1411,8 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
-		       approval_source, approval_rationale
+		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
+		       intent_verification_mode, expected_use, schema_version
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -1173,11 +1426,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
-			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr); err != nil {
+			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
+			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTime(createdAt)
@@ -1210,6 +1464,12 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		if approvalRationaleStr != "" {
 			t.ApprovalRationale = json.RawMessage(approvalRationaleStr)
 		}
+		if expectedToolsStr != "" {
+			t.ExpectedTools = json.RawMessage(expectedToolsStr)
+		}
+		if expectedEgressStr != "" {
+			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
@@ -1225,9 +1485,9 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 		pa.Status = "pending"
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at)
-		VALUES (?,?,?,?,?,?,?,?)
-	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, string(pa.RequestBlob),
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, string(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt.UTC().Format(time.RFC3339))
 	return err
 }
@@ -1236,10 +1496,10 @@ func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*stor
 	pa := &store.PendingApproval{}
 	var requestBlob, expiresAt, createdAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE request_id = ?
 	`, requestID).Scan(
-		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 		&pa.CallbackURL, &pa.Status, &expiresAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1261,7 +1521,7 @@ func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) err
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE user_id = ? AND status = 'pending' AND expires_at > datetime('now') ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -1272,7 +1532,7 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, request_id, audit_id, request_blob, callback_url, status, expires_at, created_at
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
 		FROM pending_approvals WHERE status = 'pending' AND expires_at < datetime('now')`)
 	if err != nil {
 		return nil, err
@@ -1287,7 +1547,7 @@ func scanSQLitePendingApprovals(rows *sql.Rows) ([]*store.PendingApproval, error
 		pa := &store.PendingApproval{}
 		var requestBlob, expiresAt, createdAt string
 		if err := rows.Scan(
-			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &requestBlob,
+			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
 			&pa.CallbackURL, &pa.Status, &expiresAt, &createdAt,
 		); err != nil {
 			return nil, err
@@ -1320,6 +1580,1083 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ── Canonical Approval Records ───────────────────────────────────────────────
+
+func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRecord) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution)
+	return err
+}
+
+func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE id = ?
+	`, id)
+}
+
+func (s *Store) GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*store.ApprovalRecord, error) {
+	return s.getApprovalRecord(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records WHERE request_id = ?
+	`, requestID)
+}
+
+func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) ([]*store.ApprovalRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+		FROM approval_records
+		WHERE user_id = ? AND status = 'pending'
+		ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ApprovalRecord
+	for rows.Next() {
+		rec, err := scanSQLiteApprovalRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ClearApprovalRecordRequestID(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_records
+		SET request_id = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE approval_records
+		SET resolution = ?, status = ?, resolved_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, resolution, status, resolvedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) getApprovalRecord(ctx context.Context, query string, arg any) (*store.ApprovalRecord, error) {
+	rows, err := s.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteApprovalRecord(rows)
+}
+
+func scanSQLiteApprovalRecord(scanner interface{ Scan(dest ...any) error }) (*store.ApprovalRecord, error) {
+	rec := &store.ApprovalRecord{}
+	var summaryJSON, payloadJSON, createdAt, updatedAt string
+	var expiresAt, resolvedAt *string
+	if err := scanner.Scan(
+		&rec.ID, &rec.Kind, &rec.UserID, &rec.AgentID, &rec.RequestID, &rec.TaskID, &rec.SessionID,
+		&rec.Status, &rec.Surface, &summaryJSON, &payloadJSON, &rec.ResolutionTransport, &expiresAt, &resolvedAt,
+		&rec.Resolution, &createdAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	rec.SummaryJSON = json.RawMessage(summaryJSON)
+	rec.PayloadJSON = json.RawMessage(payloadJSON)
+	rec.CreatedAt = parseTime(createdAt)
+	rec.UpdatedAt = parseTime(updatedAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		rec.ExpiresAt = &t
+	}
+	if resolvedAt != nil {
+		t := parseTime(*resolvedAt)
+		rec.ResolvedAt = &t
+	}
+	return rec, nil
+}
+
+// ── Runtime Sessions ─────────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimeSession(ctx context.Context, sess *store.RuntimeSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_sessions (
+			id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode,
+			metadata_json, expires_at, revoked_at
+		) VALUES (?,?,?,?,?,?,?,?,?)
+	`, sess.ID, sess.UserID, sess.AgentID, sess.Mode, sess.ProxyBearerSecretHash,
+		boolToInt(sess.ObservationMode), rawJSONOrDefault(sess.MetadataJSON, "{}"),
+		sess.ExpiresAt.UTC().Format(time.RFC3339), formatNullableTime(sess.RevokedAt))
+	return err
+}
+
+func (s *Store) GetRuntimeSession(ctx context.Context, id string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE id = ?
+	`, id)
+}
+
+func (s *Store) GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*store.RuntimeSession, error) {
+	return s.getRuntimeSession(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE proxy_bearer_secret_hash = ?
+	`, secretHash)
+}
+
+func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions WHERE agent_id = ? ORDER BY created_at DESC
+	`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanSQLiteRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListRuntimeSessionsByAgentAndLaunchID(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		FROM runtime_sessions
+		WHERE agent_id = ?
+		  AND COALESCE(json_extract(metadata_json, '$.launch_id'), '') = ?
+		ORDER BY created_at DESC
+	`, agentID, launchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeSession
+	for rows.Next() {
+		sess, err := scanSQLiteRuntimeSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeRuntimeSession(ctx context.Context, id string, revokedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_sessions SET revoked_at = ? WHERE id = ?`,
+		revokedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateRuntimeSessionExpiry(ctx context.Context, id string, expiresAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_sessions SET expires_at = ? WHERE id = ?`,
+		expiresAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateRuntimeEvent(ctx context.Context, event *store.RuntimeEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.New().String()
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_events (
+			id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+			approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+			resolution_transport, decision, outcome, reason, metadata_json
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, event.ID, event.Timestamp.UTC().Format(time.RFC3339), event.SessionID, event.UserID, event.AgentID,
+		event.Provider, event.EventType, event.ActionKind, event.ApprovalID, event.TaskID, event.MatchedTaskID,
+		event.LeaseID, event.ToolUseID, event.RequestFingerprint, event.ResolutionTransport, event.Decision,
+		event.Outcome, event.Reason, rawJSONOrDefault(event.MetadataJSON, "{}"))
+	return err
+}
+
+func (s *Store) GetRuntimeEvent(ctx context.Context, id string) (*store.RuntimeEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimeEvent(rows)
+}
+
+func (s *Store) ListRuntimeEvents(ctx context.Context, userID string, filter store.RuntimeEventFilter) ([]*store.RuntimeEvent, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	args := []any{userID}
+	query := `
+		SELECT id, timestamp, session_id, user_id, agent_id, provider, event_type, action_kind,
+		       approval_id, task_id, matched_task_id, lease_id, tool_use_id, request_fingerprint,
+		       resolution_transport, decision, outcome, reason, metadata_json
+		FROM runtime_events
+		WHERE user_id = ?
+	`
+	if filter.SessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, filter.SessionID)
+	}
+	if filter.EventType != "" {
+		query += ` AND event_type = ?`
+		args = append(args, filter.EventType)
+	}
+	query += ` ORDER BY timestamp DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimeEvent
+	for rows.Next() {
+		event, err := scanSQLiteRuntimeEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	if rule.ID == "" {
+		rule.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_policy_rules (
+			id, user_id, agent_id, kind, action, service, service_action, host, method, path, path_regex,
+			headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+			reason, source, enabled, last_matched_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rule.ID, rule.UserID, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
+		formatNullableTime(rule.LastMatchedAt))
+	if err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetRuntimePolicyRule(ctx context.Context, id string) (*store.RuntimePolicyRule, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimePolicyRule(rows)
+}
+
+func (s *Store) ListRuntimePolicyRules(ctx context.Context, userID string, filter store.RuntimePolicyRuleFilter) ([]*store.RuntimePolicyRule, error) {
+	args := []any{userID}
+	query := `
+		SELECT id, user_id, agent_id, kind, action, host, method, path, path_regex,
+		       service, service_action, headers_shape_json, body_shape_json, tool_name, input_shape_json, input_regex,
+		       reason, source, enabled, last_matched_at, created_at, updated_at
+		FROM runtime_policy_rules
+		WHERE user_id = ?
+	`
+	if filter.AgentID != "" {
+		query += ` AND (agent_id IS NULL OR agent_id = ?)`
+		args = append(args, filter.AgentID)
+	}
+	if filter.Kind != "" {
+		query += ` AND kind = ?`
+		args = append(args, filter.Kind)
+	}
+	if filter.Enabled != nil {
+		query += ` AND enabled = ?`
+		args = append(args, boolToInt(*filter.Enabled))
+	}
+	query += ` ORDER BY kind ASC, created_at DESC`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.RuntimePolicyRule
+	for rows.Next() {
+		rule, err := scanSQLiteRuntimePolicyRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rule)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateRuntimePolicyRule(ctx context.Context, rule *store.RuntimePolicyRule) error {
+	if rule == nil {
+		return fmt.Errorf("runtime policy rule is required")
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runtime_policy_rules SET
+			agent_id = ?, kind = ?, action = ?, service = ?, service_action = ?, host = ?, method = ?, path = ?, path_regex = ?,
+			headers_shape_json = ?, body_shape_json = ?, tool_name = ?, input_shape_json = ?, input_regex = ?,
+			reason = ?, source = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND user_id = ?
+	`, rule.AgentID, rule.Kind, rule.Action, rule.Service, rule.ServiceAction, rule.Host, rule.Method, rule.Path, rule.PathRegex,
+		rawJSONOrDefault(rule.HeadersShape, "{}"), rawJSONOrDefault(rule.BodyShape, "{}"), rule.ToolName,
+		rawJSONOrDefault(rule.InputShape, "{}"), rule.InputRegex, rule.Reason, rule.Source, boolToInt(rule.Enabled),
+		rule.ID, rule.UserID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteRuntimePolicyRule(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM runtime_policy_rules WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePolicyRule(ctx context.Context, id string, matchedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE runtime_policy_rules
+		SET last_matched_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, matchedAt.UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteRuntimeEvent(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeEvent, error) {
+	event := &store.RuntimeEvent{}
+	var timestamp, metadataJSON string
+	if err := scanner.Scan(
+		&event.ID, &timestamp, &event.SessionID, &event.UserID, &event.AgentID, &event.Provider,
+		&event.EventType, &event.ActionKind, &event.ApprovalID, &event.TaskID, &event.MatchedTaskID,
+		&event.LeaseID, &event.ToolUseID, &event.RequestFingerprint, &event.ResolutionTransport,
+		&event.Decision, &event.Outcome, &event.Reason, &metadataJSON,
+	); err != nil {
+		return nil, err
+	}
+	event.Timestamp = parseTime(timestamp)
+	event.MetadataJSON = json.RawMessage(metadataJSON)
+	return event, nil
+}
+
+func scanSQLiteRuntimePolicyRule(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePolicyRule, error) {
+	rule := &store.RuntimePolicyRule{}
+	var headersShapeJSON, bodyShapeJSON, inputShapeJSON string
+	var enabled int
+	var lastMatchedAt, createdAt, updatedAt *string
+	if err := scanner.Scan(&rule.ID, &rule.UserID, &rule.AgentID, &rule.Kind, &rule.Action, &rule.Host, &rule.Method,
+		&rule.Path, &rule.PathRegex, &rule.Service, &rule.ServiceAction, &headersShapeJSON, &bodyShapeJSON, &rule.ToolName, &inputShapeJSON, &rule.InputRegex,
+		&rule.Reason, &rule.Source, &enabled, &lastMatchedAt, &createdAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	rule.HeadersShape = json.RawMessage(headersShapeJSON)
+	rule.BodyShape = json.RawMessage(bodyShapeJSON)
+	rule.InputShape = json.RawMessage(inputShapeJSON)
+	rule.Enabled = enabled != 0
+	if lastMatchedAt != nil {
+		t := parseTime(*lastMatchedAt)
+		rule.LastMatchedAt = &t
+	}
+	if createdAt != nil {
+		rule.CreatedAt = parseTime(*createdAt)
+	}
+	if updatedAt != nil {
+		rule.UpdatedAt = parseTime(*updatedAt)
+	}
+	return rule, nil
+}
+
+func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*store.RuntimeSession, error) {
+	rows, err := s.db.QueryContext(ctx, query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimeSession(rows)
+}
+
+func scanSQLiteRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeSession, error) {
+	sess := &store.RuntimeSession{}
+	var metadataJSON, expiresAt, createdAt string
+	var observationMode int
+	var revokedAt *string
+	if err := scanner.Scan(&sess.ID, &sess.UserID, &sess.AgentID, &sess.Mode, &sess.ProxyBearerSecretHash,
+		&observationMode, &metadataJSON, &expiresAt, &createdAt, &revokedAt); err != nil {
+		return nil, err
+	}
+	sess.ObservationMode = observationMode != 0
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	sess.ExpiresAt = parseTime(expiresAt)
+	sess.CreatedAt = parseTime(createdAt)
+	if revokedAt != nil {
+		t := parseTime(*revokedAt)
+		sess.RevokedAt = &t
+	}
+	return sess, nil
+}
+
+// ── Runtime Placeholders ─────────────────────────────────────────────────────
+
+func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
+		VALUES (?,?,?,?,?)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, formatNullableTime(placeholder.LastUsedAt))
+	return err
+}
+
+func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders WHERE placeholder = ?
+	`, placeholder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteRuntimePlaceholder(rows)
+}
+
+func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		FROM runtime_placeholders
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*store.RuntimePlaceholder
+	for rows.Next() {
+		entry, err := scanSQLiteRuntimePlaceholder(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
+func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM runtime_placeholders WHERE placeholder = ? AND user_id = ?`, placeholder, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ? WHERE placeholder = ?`,
+		usedAt.UTC().Format(time.RFC3339), placeholder)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
+	placeholder := &store.RuntimePlaceholder{}
+	var createdAt string
+	var lastUsedAt *string
+	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &createdAt, &lastUsedAt); err != nil {
+		return nil, err
+	}
+	placeholder.CreatedAt = parseTime(createdAt)
+	if lastUsedAt != nil {
+		t := parseTime(*lastUsedAt)
+		placeholder.LastUsedAt = &t
+	}
+	return placeholder, nil
+}
+
+func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.CredentialAuthorization) error {
+	if auth.ID == "" {
+		auth.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO credential_authorizations (
+			id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+			header_name, scheme, status, metadata_json, expires_at, used_at, last_matched_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
+		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefault(auth.MetadataJSON, "{}"),
+		formatNullableTime(auth.ExpiresAt), formatNullableTime(auth.UsedAt), formatNullableTime(auth.LastMatchedAt))
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *Store) GetCredentialAuthorization(ctx context.Context, id string) (*store.CredentialAuthorization, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteCredentialAuthorization(rows)
+}
+
+func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, match store.CredentialAuthorizationMatch, now time.Time) (*store.CredentialAuthorization, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
+		       header_name, scheme, status, metadata_json, created_at, expires_at, used_at, last_matched_at
+		FROM credential_authorizations
+		WHERE user_id = ?
+		  AND agent_id = ?
+		  AND credential_ref = ?
+		  AND host = ?
+		  AND header_name = ?
+		  AND scheme = ?
+		  AND service = ?
+		  AND status = 'active'
+		  AND (
+		    (scope = 'once' AND session_id = ? AND used_at IS NULL AND (expires_at IS NULL OR expires_at > ?))
+		    OR (scope = 'session' AND session_id = ?)
+		    OR (scope = 'standing')
+		  )
+		ORDER BY CASE scope WHEN 'once' THEN 0 WHEN 'session' THEN 1 ELSE 2 END, created_at ASC
+		LIMIT 1
+	`, match.UserID, match.AgentID, match.CredentialRef, match.Host, match.HeaderName, match.Scheme,
+		match.Service, match.SessionID, now.UTC().Format(time.RFC3339), match.SessionID)
+	auth, err := scanSQLiteCredentialAuthorization(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+
+	if auth.Scope == "once" {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE credential_authorizations
+			SET status = 'used', used_at = ?, last_matched_at = ?
+			WHERE id = ? AND status = 'active' AND used_at IS NULL
+		`, now.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339), auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.Status = "used"
+		auth.UsedAt = &now
+		auth.LastMatchedAt = &now
+	} else {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE credential_authorizations
+			SET last_matched_at = ?
+			WHERE id = ? AND status = 'active'
+		`, now.UTC().Format(time.RFC3339), auth.ID)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, store.ErrNotFound
+		}
+		auth.LastMatchedAt = &now
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return auth, nil
+}
+
+func scanSQLiteCredentialAuthorization(scanner interface{ Scan(dest ...any) error }) (*store.CredentialAuthorization, error) {
+	auth := &store.CredentialAuthorization{}
+	var metadataJSON, createdAt string
+	var expiresAt, usedAt, lastMatchedAt *string
+	if err := scanner.Scan(
+		&auth.ID, &auth.ApprovalID, &auth.UserID, &auth.AgentID, &auth.SessionID, &auth.Scope,
+		&auth.CredentialRef, &auth.Service, &auth.Host, &auth.HeaderName, &auth.Scheme, &auth.Status,
+		&metadataJSON, &createdAt, &expiresAt, &usedAt, &lastMatchedAt,
+	); err != nil {
+		return nil, err
+	}
+	auth.MetadataJSON = json.RawMessage(metadataJSON)
+	auth.CreatedAt = parseTime(createdAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		auth.ExpiresAt = &t
+	}
+	if usedAt != nil {
+		t := parseTime(*usedAt)
+		auth.UsedAt = &t
+	}
+	if lastMatchedAt != nil {
+		t := parseTime(*lastMatchedAt)
+		auth.LastMatchedAt = &t
+	}
+	return auth, nil
+}
+
+// ── One-Off Approvals ────────────────────────────────────────────────────────
+
+func (s *Store) CreateOneOffApproval(ctx context.Context, approval *store.OneOffApproval) error {
+	if approval.ID == "" {
+		approval.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO one_off_approvals (id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at)
+		VALUES (?,?,?,?,?,?,?)
+	`, approval.ID, approval.SessionID, approval.RequestFingerprint, approval.ApprovalID,
+		approval.ApprovedAt.UTC().Format(time.RFC3339), approval.ExpiresAt.UTC().Format(time.RFC3339),
+		formatNullableTime(approval.UsedAt))
+	return err
+}
+
+func (s *Store) ConsumeOneOffApproval(ctx context.Context, sessionID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, session_id, request_fingerprint, approval_id, approved_at, expires_at, used_at
+		FROM one_off_approvals
+		WHERE session_id = ? AND request_fingerprint = ? AND used_at IS NULL AND expires_at > ?
+		ORDER BY approved_at ASC LIMIT 1
+	`, sessionID, requestFingerprint, now.UTC().Format(time.RFC3339))
+	approval, err := scanSQLiteOneOffApproval(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE one_off_approvals SET used_at = ? WHERE id = ? AND used_at IS NULL`,
+		now.UTC().Format(time.RFC3339), approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+func (s *Store) ConsumeAgentOneOffApproval(ctx context.Context, agentID, requestFingerprint string, now time.Time) (*store.OneOffApproval, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT o.id, o.session_id, o.request_fingerprint, o.approval_id, o.approved_at, o.expires_at, o.used_at
+		FROM one_off_approvals o
+		JOIN runtime_sessions rs ON rs.id = o.session_id
+		WHERE rs.agent_id = ? AND o.request_fingerprint = ? AND o.used_at IS NULL AND o.expires_at > ?
+		ORDER BY o.approved_at ASC LIMIT 1
+	`, agentID, requestFingerprint, now.UTC().Format(time.RFC3339))
+	approval, err := scanSQLiteOneOffApproval(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE one_off_approvals SET used_at = ? WHERE id = ? AND used_at IS NULL`,
+		now.UTC().Format(time.RFC3339), approval.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, store.ErrNotFound
+	}
+	approval.UsedAt = &now
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return approval, nil
+}
+
+func scanSQLiteOneOffApproval(scanner interface{ Scan(dest ...any) error }) (*store.OneOffApproval, error) {
+	approval := &store.OneOffApproval{}
+	var approvedAt, expiresAt string
+	var usedAt *string
+	if err := scanner.Scan(&approval.ID, &approval.SessionID, &approval.RequestFingerprint, &approval.ApprovalID,
+		&approvedAt, &expiresAt, &usedAt); err != nil {
+		return nil, err
+	}
+	approval.ApprovedAt = parseTime(approvedAt)
+	approval.ExpiresAt = parseTime(expiresAt)
+	if usedAt != nil {
+		t := parseTime(*usedAt)
+		approval.UsedAt = &t
+	}
+	return approval, nil
+}
+
+// ── Tool Execution Leases ────────────────────────────────────────────────────
+
+func (s *Store) CreateToolExecutionLease(ctx context.Context, lease *store.ToolExecutionLease) error {
+	if lease.LeaseID == "" {
+		lease.LeaseID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO tool_execution_leases (
+			lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?)
+	`, lease.LeaseID, lease.SessionID, lease.TaskID, lease.ToolUseID, lease.ToolName, lease.Status,
+		rawJSONOrDefault(lease.MetadataJSON, "{}"), lease.OpenedAt.UTC().Format(time.RFC3339),
+		lease.ExpiresAt.UTC().Format(time.RFC3339), formatNullableTime(lease.ClosedAt))
+	return err
+}
+
+func (s *Store) GetToolExecutionLease(ctx context.Context, leaseID string) (*store.ToolExecutionLease, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases WHERE lease_id = ?
+	`, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteToolExecutionLease(rows)
+}
+
+func (s *Store) ListOpenToolExecutionLeases(ctx context.Context, sessionID string) ([]*store.ToolExecutionLease, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT lease_id, session_id, task_id, tool_use_id, tool_name, status, metadata_json, opened_at, expires_at, closed_at
+		FROM tool_execution_leases
+		WHERE session_id = ? AND closed_at IS NULL
+		ORDER BY opened_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.ToolExecutionLease
+	for rows.Next() {
+		lease, err := scanSQLiteToolExecutionLease(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lease)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CloseToolExecutionLease(ctx context.Context, leaseID string, closedAt time.Time, status string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE tool_execution_leases SET closed_at = ?, status = ? WHERE lease_id = ?`,
+		closedAt.UTC().Format(time.RFC3339), status, leaseID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteToolExecutionLease(scanner interface{ Scan(dest ...any) error }) (*store.ToolExecutionLease, error) {
+	lease := &store.ToolExecutionLease{}
+	var metadataJSON, openedAt, expiresAt string
+	var closedAt *string
+	if err := scanner.Scan(&lease.LeaseID, &lease.SessionID, &lease.TaskID, &lease.ToolUseID, &lease.ToolName,
+		&lease.Status, &metadataJSON, &openedAt, &expiresAt, &closedAt); err != nil {
+		return nil, err
+	}
+	lease.MetadataJSON = json.RawMessage(metadataJSON)
+	lease.OpenedAt = parseTime(openedAt)
+	lease.ExpiresAt = parseTime(expiresAt)
+	if closedAt != nil {
+		t := parseTime(*closedAt)
+		lease.ClosedAt = &t
+	}
+	return lease, nil
+}
+
+// ── Task Invocations And Calls ───────────────────────────────────────────────
+
+func (s *Store) CreateTaskInvocation(ctx context.Context, inv *store.TaskInvocation) error {
+	if inv.ID == "" {
+		inv.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO task_invocations (
+			id, task_id, session_id, user_id, agent_id, request_id, invocation_type, status, metadata_json, created_at, completed_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, inv.ID, inv.TaskID, inv.SessionID, inv.UserID, inv.AgentID, inv.RequestID, inv.InvocationType,
+		inv.Status, rawJSONOrDefault(inv.MetadataJSON, "{}"), inv.CreatedAt.UTC().Format(time.RFC3339),
+		formatNullableTime(inv.CompletedAt))
+	return err
+}
+
+func (s *Store) CreateTaskCall(ctx context.Context, call *store.TaskCall) error {
+	if call.ID == "" {
+		call.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO task_calls (
+			id, task_id, invocation_id, request_id, session_id, service, action, outcome, approval_id, audit_id, metadata_json, created_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+	`, call.ID, call.TaskID, call.InvocationID, call.RequestID, call.SessionID, call.Service, call.Action,
+		call.Outcome, call.ApprovalID, call.AuditID, rawJSONOrDefault(call.MetadataJSON, "{}"),
+		call.CreatedAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+func (s *Store) UpsertActiveTaskSession(ctx context.Context, sess *store.ActiveTaskSession) error {
+	if sess.ID == "" {
+		sess.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO active_task_sessions (
+			id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(task_id, session_id) DO UPDATE SET
+			status = excluded.status,
+			metadata_json = excluded.metadata_json,
+			last_seen_at = excluded.last_seen_at,
+			ended_at = excluded.ended_at
+	`, sess.ID, sess.TaskID, sess.SessionID, sess.UserID, sess.AgentID, sess.Status,
+		rawJSONOrDefault(sess.MetadataJSON, "{}"), sess.StartedAt.UTC().Format(time.RFC3339),
+		sess.LastSeenAt.UTC().Format(time.RFC3339), formatNullableTime(sess.EndedAt))
+	return err
+}
+
+func (s *Store) GetActiveTaskSession(ctx context.Context, taskID, sessionID string) (*store.ActiveTaskSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, task_id, session_id, user_id, agent_id, status, metadata_json, started_at, last_seen_at, ended_at
+		FROM active_task_sessions
+		WHERE task_id = ? AND session_id = ? AND status = 'active' AND ended_at IS NULL
+	`, taskID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, store.ErrNotFound
+	}
+	return scanSQLiteActiveTaskSession(rows)
+}
+
+func (s *Store) EndActiveTaskSession(ctx context.Context, taskID, sessionID string, endedAt time.Time, status string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE active_task_sessions SET ended_at = ?, status = ?, last_seen_at = ? WHERE task_id = ? AND session_id = ?
+	`, endedAt.UTC().Format(time.RFC3339), status, endedAt.UTC().Format(time.RFC3339), taskID, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanSQLiteActiveTaskSession(scanner interface{ Scan(dest ...any) error }) (*store.ActiveTaskSession, error) {
+	sess := &store.ActiveTaskSession{}
+	var metadataJSON, startedAt, lastSeenAt string
+	var endedAt *string
+	if err := scanner.Scan(&sess.ID, &sess.TaskID, &sess.SessionID, &sess.UserID, &sess.AgentID,
+		&sess.Status, &metadataJSON, &startedAt, &lastSeenAt, &endedAt); err != nil {
+		return nil, err
+	}
+	sess.MetadataJSON = json.RawMessage(metadataJSON)
+	sess.StartedAt = parseTime(startedAt)
+	sess.LastSeenAt = parseTime(lastSeenAt)
+	if endedAt != nil {
+		t := parseTime(*endedAt)
+		sess.EndedAt = &t
+	}
+	return sess, nil
+}
+
+func (s *Store) GetRuntimePresetDecision(ctx context.Context, userID, commandKey, profile string) (*store.RuntimePresetDecision, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, command_key, profile, decision, created_at, updated_at
+		FROM runtime_preset_decisions
+		WHERE user_id = ? AND command_key = ? AND profile = ?
+	`, userID, commandKey, profile)
+	decision := &store.RuntimePresetDecision{}
+	var createdAt, updatedAt string
+	err := row.Scan(&decision.ID, &decision.UserID, &decision.CommandKey, &decision.Profile, &decision.Decision, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	decision.CreatedAt = parseTime(createdAt)
+	decision.UpdatedAt = parseTime(updatedAt)
+	return decision, nil
+}
+
+func (s *Store) UpsertRuntimePresetDecision(ctx context.Context, decision *store.RuntimePresetDecision) error {
+	if decision == nil {
+		return fmt.Errorf("runtime preset decision is required")
+	}
+	if decision.ID == "" {
+		decision.ID = uuid.New().String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO runtime_preset_decisions (id, user_id, command_key, profile, decision)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, command_key, profile) DO UPDATE SET
+			decision = excluded.decision,
+			updated_at = CURRENT_TIMESTAMP
+	`, decision.ID, decision.UserID, decision.CommandKey, decision.Profile, decision.Decision)
+	return err
 }
 
 // ── Notification Messages ──────────────────────────────────────────────────────
@@ -1751,6 +3088,58 @@ func isDuplicate(err error) bool {
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
 }
 
+func rawJSONOrDefault(msg json.RawMessage, fallback string) string {
+	if len(msg) == 0 {
+		return fallback
+	}
+	return string(msg)
+}
+
+func scanSQLiteAgentRuntimeSettings(agentID *string, runtimeEnabled *int, runtimeMode, starterProfile, outboundMode *string, injectStoredBearer *int, createdAt, updatedAt *string) *store.AgentRuntimeSettings {
+	if agentID == nil {
+		return nil
+	}
+	settings := &store.AgentRuntimeSettings{
+		AgentID: *agentID,
+	}
+	if runtimeEnabled != nil {
+		settings.RuntimeEnabled = *runtimeEnabled != 0
+	}
+	if runtimeMode != nil {
+		settings.RuntimeMode = *runtimeMode
+	}
+	if starterProfile != nil {
+		settings.StarterProfile = *starterProfile
+	}
+	if outboundMode != nil {
+		settings.OutboundCredentialMode = *outboundMode
+	}
+	if injectStoredBearer != nil {
+		settings.InjectStoredBearer = *injectStoredBearer != 0
+	}
+	if createdAt != nil {
+		settings.CreatedAt = parseTime(*createdAt)
+	}
+	if updatedAt != nil {
+		settings.UpdatedAt = parseTime(*updatedAt)
+	}
+	return settings
+}
+
+func formatNullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // parseTime parses SQLite TEXT timestamps in multiple formats.
 func parseTime(s string) time.Time {
 	formats := []string{
@@ -1984,7 +3373,6 @@ func (s *Store) ListGeneratedAdapters(ctx context.Context, userID string) ([]*st
 	}
 	return out, rows.Err()
 }
-
 
 func (s *Store) DeleteGeneratedAdapter(ctx context.Context, userID, serviceID string) error {
 	_, err := s.db.ExecContext(ctx,

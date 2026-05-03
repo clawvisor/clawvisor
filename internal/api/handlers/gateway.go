@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
@@ -31,16 +32,16 @@ import (
 // pendingRequestBlob is stored in pending_approvals.request_blob.
 // It contains everything needed to re-execute the request on approval.
 type pendingRequestBlob struct {
-	Service     string         `json:"service"`
-	Action      string         `json:"action"`
-	Params      map[string]any `json:"params"`
-	UserID      string         `json:"user_id"`
-	AgentID     string         `json:"agent_id"`
-	AgentName   string         `json:"agent_name"`
-	RequestID   string         `json:"request_id"`
-	TaskID      string         `json:"task_id"`
-	Reason      string         `json:"reason"`
-	CallbackURL  string                    `json:"callback_url"`
+	Service      string                      `json:"service"`
+	Action       string                      `json:"action"`
+	Params       map[string]any              `json:"params"`
+	UserID       string                      `json:"user_id"`
+	AgentID      string                      `json:"agent_id"`
+	AgentName    string                      `json:"agent_name"`
+	RequestID    string                      `json:"request_id"`
+	TaskID       string                      `json:"task_id"`
+	Reason       string                      `json:"reason"`
+	CallbackURL  string                      `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
 }
 
@@ -68,20 +69,21 @@ func isLocalService(serviceType string) bool {
 
 // GatewayHandler handles POST /api/gateway/request.
 type GatewayHandler struct {
-	store        store.Store
-	vault        vault.Vault
-	adapterReg   *adapters.Registry
-	notifier     notify.Notifier // may be nil if Telegram not configured
-	verifier     intent.Verifier
-	extractor    intent.Extractor
-	extractTrack ExtractionTracker // tracks in-flight async extractions; never nil
-	cfg          config.Config
-	logger       *slog.Logger
-	baseURL      string
-	eventHub     events.EventHub
+	store            store.Store
+	vault            vault.Vault
+	adapterReg       *adapters.Registry
+	notifier         notify.Notifier // may be nil if Telegram not configured
+	verifier         intent.Verifier
+	extractor        intent.Extractor
+	extractTrack     ExtractionTracker // tracks in-flight async extractions; never nil
+	cfg              config.Config
+	logger           *slog.Logger
+	baseURL          string
+	eventHub         events.EventHub
+	requestResolver  runtimepolicy.GatewayRequestResolver
 	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
-	localExec        LocalServiceExecutor  // cloud-injected local service executor; may be nil
-	localSvcProvider LocalServiceProvider  // cloud-injected local service catalog; may be nil
+	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
+	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
 }
 
 func NewGatewayHandler(
@@ -100,7 +102,7 @@ func NewGatewayHandler(
 		store: st, vault: v, adapterReg: adapterReg,
 		notifier: notifier, verifier: verifier, extractor: extractor,
 		extractTrack: NewMemoryExtractionTracker(60 * time.Second),
-		cfg: cfg, logger: logger, baseURL: baseURL,
+		cfg:          cfg, logger: logger, baseURL: baseURL,
 		eventHub: eventHub,
 	}
 }
@@ -118,6 +120,10 @@ func (h *GatewayHandler) SetExtractionTracker(t ExtractionTracker) {
 // Must be called before any requests are handled.
 func (h *GatewayHandler) SetGatewayHooks(hooks *GatewayHooks) {
 	h.gatewayHooks = hooks
+}
+
+func (h *GatewayHandler) SetGatewayRequestResolver(resolver runtimepolicy.GatewayRequestResolver) {
+	h.requestResolver = resolver
 }
 
 // SetLocalServiceExecutor configures the local daemon service executor.
@@ -222,7 +228,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			preTask := existing.TaskID == nil // blocked/error before task scope
 			sameTask := req.TaskID != "" && existing.TaskID != nil && *existing.TaskID == req.TaskID
 			if preTask || sameTask {
-				writeGatewayStatusResponse(w, existing)
+				writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+					Deduped: true,
+					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+				})
 				return
 			}
 		}
@@ -236,9 +245,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Backup log: append-only record of every gateway request. Written after
 	// the response so it captures the outcome. If the primary audit insert is
 	// ever silently dropped, this table retains full visibility.
+	//
+	// The timeout is generous (30s) so that a temporarily slow database does
+	// not silently lose log rows; the prior 5s deadline dropped writes under
+	// load that would otherwise have completed.
 	var outDecision, outOutcome string
 	defer func() {
-		if logErr := h.store.LogGatewayRequest(context.Background(), &store.GatewayRequestLog{
+		logCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if logErr := h.store.LogGatewayRequest(logCtx, &store.GatewayRequestLog{
 			AuditID:    auditID,
 			RequestID:  req.RequestID,
 			AgentID:    agent.ID,
@@ -301,24 +316,40 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── Step 1: Check restrictions ────────────────────────────────────────────
-	// Check both the full service (with alias) and the base service type.
+	// ── Step 1: Check policy blocks ───────────────────────────────────────────
+	// Check both migrated runtime policy service rules and legacy restrictions.
+	serviceRule, _ := matchServicePolicyRule(ctx, h.store, agent.UserID, req.Service, req.Action)
+	if serviceRule == nil && serviceAlias != "default" {
+		serviceRule, _ = matchServicePolicyRule(ctx, h.store, agent.UserID, serviceType, req.Action)
+	}
 	restriction, _ := h.store.MatchRestriction(ctx, agent.UserID, req.Service, req.Action)
 	if restriction == nil && serviceAlias != "default" {
 		restriction, _ = h.store.MatchRestriction(ctx, agent.UserID, serviceType, req.Action)
 	}
-	if restriction != nil {
+	if serviceRule != nil || restriction != nil {
 		middleware.AddLogField(ctx, "decision", "block")
 		middleware.AddLogField(ctx, "outcome", "blocked")
 		e := baseEntry("block", "blocked", nil)
+		if serviceRule != nil {
+			e.RuleID = &serviceRule.ID
+		}
 		e.DurationMS = int(time.Since(start).Milliseconds())
 		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 			h.logger.Warn("audit log failed", "err", logErr)
 		}
 		h.publishAuditAndQueue(agent.UserID, "")
-		reason := restriction.Reason
-		if reason == "" {
+		reason := ""
+		if serviceRule != nil {
+			reason = serviceRule.Reason
+		}
+		if reason == "" && restriction != nil {
+			reason = restriction.Reason
+		}
+		if reason == "" && restriction != nil {
 			reason = fmt.Sprintf("Restricted: %s:%s is blocked", restriction.Service, restriction.Action)
+		}
+		if reason == "" && serviceRule != nil {
+			reason = fmt.Sprintf("Policy blocked: %s:%s", serviceRule.Service, serviceRule.ServiceAction)
 		}
 		resp := map[string]any{
 			"status":     "blocked",
@@ -332,28 +363,148 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Step 2: Task ID required ─────────────────────────────────────────────
+	// ── Step 2: Task context resolution ──────────────────────────────────────
 	if req.TaskID == "" {
-		e := baseEntry("reject", "validation_error", nil)
-		e.DurationMS = int(time.Since(start).Milliseconds())
-		errMsg := "missing required field: task_id"
-		e.ErrorMsg = &errMsg
-		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-			h.logger.Warn("audit log failed", "err", logErr)
+		// Behavior change in #310: when the runtime proxy is enabled, a missing
+		// task_id triggers task classification instead of an immediate 400.
+		// Classification can reuse an active task, return 409 ambiguous_task,
+		// or return 202 pending while routing the request to approval.
+		//
+		// When the runtime proxy is disabled (legacy gateway-only deploys),
+		// keep the long-standing TASK_REQUIRED contract so older clients that
+		// always send task_id and treat its absence as a programmer error
+		// continue to work without surprise.
+		if !h.cfg.RuntimeProxy.Enabled {
+			e := baseEntry("reject", "validation_error", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "missing required field: task_id"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         errMsg,
+				Code:          "TASK_REQUIRED",
+				MissingFields: []string{"task_id"},
+				Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
+				Example: map[string]any{
+					"service": "google.gmail",
+					"action":  "list_messages",
+					"reason":  "Fetch recent emails to summarize for the user",
+					"task_id": "<task_id from POST /api/tasks>",
+				},
+			})
+			return
 		}
-		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
-			Error:         errMsg,
-			Code:          "TASK_REQUIRED",
-			MissingFields: []string{"task_id"},
-			Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
-			Example: map[string]any{
-				"service": "google.gmail",
-				"action":  "list_messages",
-				"reason":  "Fetch recent emails to summarize for the user",
-				"task_id": "<task_id from POST /api/tasks>",
-			},
-		})
-		return
+
+		tasks, _, err := h.store.ListTasks(ctx, agent.UserID, store.TaskFilter{ActiveOnly: true})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load active tasks")
+			return
+		}
+		classification := runtimepolicy.ClassifyGatewayRequest(tasks, agent.ID, serviceType, serviceAlias, req.Action)
+		if h.requestResolver != nil {
+			resolved, resolveErr := h.requestResolver.Resolve(ctx, runtimepolicy.GatewayRequestResolutionRequest{
+				Classification: classification,
+				ServiceType:    serviceType,
+				ServiceAlias:   serviceAlias,
+				Action:         req.Action,
+				Reason:         req.Reason,
+				Params:         req.Params,
+			})
+			if resolveErr != nil {
+				h.logger.Warn("gateway request resolver failed", "err", resolveErr, "service", serviceType, "action", req.Action, "request_id", req.RequestID)
+			} else {
+				classification = resolved
+			}
+		}
+		switch classification.Kind {
+		case runtimepolicy.ClassificationBelongsToExistingTask:
+			req.TaskID = classification.MatchedTask.ID
+		case runtimepolicy.ClassificationAmbiguous:
+			e := baseEntry("review", "blocked", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "request matches multiple active tasks; specify task_id explicitly"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			resp := map[string]any{
+				"status":          "ambiguous_task",
+				"request_id":      req.RequestID,
+				"audit_id":        auditID,
+				"code":            "TASK_AMBIGUOUS",
+				"classification":  classification.Kind,
+				"candidate_tasks": summarizeCandidateTasks(classification.CandidateTasks),
+				"message":         "This request is covered by multiple active tasks. Provide task_id explicitly or start a task to bias resolution.",
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusConflict, resp)
+			return
+		case runtimepolicy.ClassificationNeedsNewTask, runtimepolicy.ClassificationOneOff:
+			middleware.AddLogField(ctx, "decision", "approve")
+			middleware.AddLogField(ctx, "outcome", "pending")
+			e := baseEntry("approve", "pending", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
+			blob := buildRequestBlob(req, agent)
+			reason := "raw request needs review before execution"
+			if classification.Kind == runtimepolicy.ClassificationNeedsNewTask {
+				reason = "request is outside every active task and may need a new task"
+			}
+			if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID, req.Context.CallbackURL, expiresAt, reason, nil); routeErr != nil {
+				h.logger.Warn("route to approval failed", "err", routeErr)
+			}
+			if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
+				pa := h.waitForApprovalDecision(r.Context(), req.RequestID, agent.UserID, longPollDeadline(r))
+				if pa != nil && pa.Status == "approved" && !time.Now().After(pa.ExpiresAt) {
+					h.executeAndRespond(w, r.Context(), pa, agent.ID)
+					return
+				}
+				if pa == nil {
+					if entry, err := h.store.GetAuditEntryByRequestID(r.Context(), req.RequestID, agent.UserID); err == nil && entry.Outcome != "pending" {
+						writeGatewayStatusResponse(w, entry)
+						return
+					}
+				}
+			}
+			resp := map[string]any{
+				"status":         "pending",
+				"request_id":     req.RequestID,
+				"audit_id":       auditID,
+				"classification": classification.Kind,
+				"message":        fmt.Sprintf("Approval requested. Waiting up to %ds.", h.cfg.Approval.Timeout),
+			}
+			h.maybeInjectNPS(ctx, resp, agent.ID)
+			writeJSON(w, http.StatusAccepted, resp)
+			return
+		default:
+			e := baseEntry("reject", "validation_error", nil)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "missing required field: task_id"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         errMsg,
+				Code:          "TASK_REQUIRED",
+				MissingFields: []string{"task_id"},
+				Hint:          "Create a task first via POST /api/tasks, then include the returned task_id in every gateway request.",
+				Example: map[string]any{
+					"service": "google.gmail",
+					"action":  "list_messages",
+					"reason":  "Fetch recent emails to summarize for the user",
+					"task_id": "<task_id from POST /api/tasks>",
+				},
+			})
+			return
+		}
 	}
 
 	// ── Step 3: Hardcoded approval check ─────────────────────────────────────
@@ -1318,11 +1469,24 @@ func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.
-func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry) {
+type gatewayStatusResponseOptions struct {
+	Deduped bool
+	Message string
+}
+
+func writeGatewayStatusResponse(w http.ResponseWriter, e *store.AuditEntry, opts ...gatewayStatusResponseOptions) {
 	resp := map[string]any{
 		"status":     e.Outcome,
 		"request_id": e.RequestID,
 		"audit_id":   e.ID,
+	}
+	if len(opts) > 0 {
+		if opts[0].Deduped {
+			resp["deduped"] = true
+		}
+		if opts[0].Message != "" {
+			resp["message"] = opts[0].Message
+		}
 	}
 	if e.ErrorMsg != nil && *e.ErrorMsg != "" {
 		resp["error"] = *e.ErrorMsg
@@ -1360,7 +1524,6 @@ func (h *GatewayHandler) RegisterCallback(w http.ResponseWriter, r *http.Request
 		"callback_secret": secret,
 	})
 }
-
 
 // publishAuditAndQueue publishes SSE events for audit and queue changes.
 func (h *GatewayHandler) publishAuditAndQueue(userID, taskID string) {
@@ -1760,13 +1923,41 @@ func (h *GatewayHandler) routeToApproval(
 	verdict *intent.VerificationVerdict,
 ) error {
 	blobBytes, _ := json.Marshal(blob)
+	var taskID *string
+	if blob.TaskID != "" {
+		taskID = &blob.TaskID
+	}
+	summaryBytes, _ := json.Marshal(map[string]any{
+		"service":       blob.Service,
+		"action":        blob.Action,
+		"reason":        blob.Reason,
+		"policy_reason": policyReason,
+	})
+	approvalRecord := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                "request_once",
+		UserID:              userID,
+		AgentID:             &blob.AgentID,
+		RequestID:           &blob.RequestID,
+		TaskID:              taskID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		SummaryJSON:         json.RawMessage(summaryBytes),
+		PayloadJSON:         json.RawMessage(blobBytes),
+		ResolutionTransport: "execute_pending_request",
+		ExpiresAt:           &expiresAt,
+	}
+	if err := h.store.CreateApprovalRecord(ctx, approvalRecord); err != nil {
+		return fmt.Errorf("create approval record: %w", err)
+	}
 	pa := &store.PendingApproval{
-		ID:          uuid.New().String(),
-		UserID:      userID,
-		RequestID:   blob.RequestID,
-		AuditID:     auditID,
-		RequestBlob: json.RawMessage(blobBytes),
-		ExpiresAt:   expiresAt,
+		ID:               uuid.New().String(),
+		UserID:           userID,
+		RequestID:        blob.RequestID,
+		AuditID:          auditID,
+		ApprovalRecordID: &approvalRecord.ID,
+		RequestBlob:      json.RawMessage(blobBytes),
+		ExpiresAt:        expiresAt,
 	}
 	if callbackURL != "" {
 		pa.CallbackURL = &callbackURL
@@ -1933,6 +2124,25 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 	}
 }
 
+func summarizeCandidateTasks(tasks []*store.Task) []map[string]any {
+	if len(tasks) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id":       task.ID,
+			"purpose":  task.Purpose,
+			"status":   task.Status,
+			"lifetime": task.Lifetime,
+		})
+	}
+	return out
+}
+
 func adapterSupportsAction(adapter adapters.Adapter, action string) bool {
 	for _, a := range adapter.SupportedActions() {
 		if a == action {
@@ -2084,4 +2294,3 @@ func cloneParams(m map[string]any) map[string]any {
 	}
 	return out
 }
-

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService } from '../api/client'
+import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -16,6 +16,239 @@ function openOAuthUrl(url: string) {
   }
   const popup = window.open(url, '_blank', 'width=600,height=700')
   if (!popup) window.location.href = url
+}
+
+function AccountSection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-lg border border-border-default bg-surface-1 p-5 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+        {description && <p className="mt-1 text-sm text-text-tertiary">{description}</p>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function VaultInventorySection({
+  activeServices,
+  googleOAuthConfigured,
+}: {
+  activeServices: ServiceInfo[]
+  googleOAuthConfigured: boolean
+}) {
+  const vaulted = activeServices.filter(service => !service.credential_free)
+  const credentialFree = activeServices.filter(service => service.credential_free)
+
+  return (
+    <AccountSection
+      title="Vault"
+      description="Connected credentials live in Clawvisor’s vault. Use this inventory to see what is vaulted, what is credential-free, and whether system OAuth credentials are configured."
+    >
+      <div className="grid gap-3 md:grid-cols-3">
+        <VaultMetric label="Vaulted credentials" value={String(vaulted.length)} />
+        <VaultMetric label="Credential-free" value={String(credentialFree.length)} />
+        <VaultMetric label="Google OAuth" value={googleOAuthConfigured ? 'Configured' : 'Missing'} />
+      </div>
+      <div className="space-y-2">
+        {activeServices.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No connected services yet.
+          </div>
+        )}
+        {activeServices.map(service => (
+          <div key={`${service.id}:${service.alias ?? 'default'}`} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-text-primary">{serviceName(service.id, service.alias)}</div>
+              <div className="mt-1 text-xs text-text-tertiary">
+                {service.credential_free ? 'Credential-free activation' : 'Vault-backed credential'}
+                {service.activated_at ? ` · connected ${formatDistanceToNow(new Date(service.activated_at), { addSuffix: true })}` : ''}
+              </div>
+            </div>
+            <div className={`rounded px-2 py-1 text-xs font-medium ${
+              service.credential_free ? 'bg-surface-2 text-text-secondary' : 'bg-success/10 text-success'
+            }`}>
+              {service.credential_free ? 'No secret stored' : 'Stored in vault'}
+            </div>
+          </div>
+        ))}
+      </div>
+    </AccountSection>
+  )
+}
+
+function VaultMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border-subtle bg-surface-0 p-3">
+      <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
+      <div className="mt-1 text-sm font-medium text-text-primary">{value}</div>
+    </div>
+  )
+}
+
+function ShadowTokensSection({
+  agents,
+  services,
+  entries,
+}: {
+  agents: Agent[]
+  services: ServiceInfo[]
+  entries: RuntimePlaceholder[]
+}) {
+  const qc = useQueryClient()
+  const [agentId, setAgentId] = useState('')
+  const [serviceId, setServiceId] = useState('')
+  const [freshToken, setFreshToken] = useState<string | null>(null)
+  const tokenServices = services.filter(service => service.status === 'activated' && !service.credential_free)
+  const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
+
+  useEffect(() => {
+    if (!agentId && agents.length > 0) setAgentId(agents[0].id)
+  }, [agentId, agents])
+  useEffect(() => {
+    if (!serviceId && tokenServices.length > 0) {
+      const first = tokenServices[0]
+      setServiceId(first.alias ? `${first.id}:${first.alias}` : first.id)
+    }
+  }, [serviceId, tokenServices])
+
+  const mintMut = useMutation({
+    mutationFn: () => api.runtime.mintPlaceholder(agentId, serviceId),
+    onSuccess: (entry) => {
+      setFreshToken(entry.placeholder)
+      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+    },
+  })
+  const deleteMut = useMutation({
+    mutationFn: (placeholder: string) => api.runtime.deletePlaceholder(placeholder),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+    },
+  })
+
+  return (
+    <AccountSection
+      title="Shadow Tokens"
+      description="Mint revocable shadow tokens for a specific agent and connected service. Agents can use these placeholders in config or prompts without ever seeing the real credential."
+    >
+      <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+        <select
+          value={agentId}
+          onChange={e => setAgentId(e.target.value)}
+          className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+        >
+          <option value="">Choose agent</option>
+          {agents.map(agent => (
+            <option key={agent.id} value={agent.id}>{agent.name}</option>
+          ))}
+        </select>
+        <select
+          value={serviceId}
+          onChange={e => setServiceId(e.target.value)}
+          className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+        >
+          <option value="">Choose connected service</option>
+          {tokenServices.map(service => {
+            const value = service.alias ? `${service.id}:${service.alias}` : service.id
+            return (
+              <option key={value} value={value}>{serviceName(service.id, service.alias)}</option>
+            )
+          })}
+        </select>
+        <button
+          onClick={() => mintMut.mutate()}
+          disabled={mintMut.isPending || !agentId || !serviceId}
+          className="rounded bg-brand px-4 py-2 text-sm font-medium text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {mintMut.isPending ? 'Minting…' : 'Mint token'}
+        </button>
+      </div>
+      {freshToken && (
+        <div className="rounded border border-success/30 bg-success/5 p-4">
+          <div className="text-sm font-medium text-text-primary">New shadow token</div>
+          <div className="mt-2 flex items-center gap-2">
+            <code className="flex-1 break-all rounded border border-success/20 bg-surface-0 px-3 py-2 text-xs text-text-primary">{freshToken}</code>
+            <button
+              onClick={() => navigator.clipboard.writeText(freshToken)}
+              className="rounded border border-success/20 px-3 py-2 text-xs text-success hover:bg-success/10"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {entries.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No shadow tokens minted yet.
+          </div>
+        )}
+        {entries.map(entry => (
+          <div key={entry.placeholder} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-text-primary">{serviceName(entry.service_id)}</div>
+              <div className="mt-1 text-xs text-text-tertiary">
+                {agentMap.get(entry.agent_id)?.name ?? entry.agent_id} · minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
+                {entry.last_used_at ? ` · last used ${formatDistanceToNow(new Date(entry.last_used_at), { addSuffix: true })}` : ' · not used yet'}
+              </div>
+              <code className="mt-2 block break-all text-xs text-text-secondary">{entry.placeholder}</code>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => navigator.clipboard.writeText(entry.placeholder)}
+                className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => deleteMut.mutate(entry.placeholder)}
+                disabled={deleteMut.isPending}
+                className="rounded border border-danger/20 px-3 py-1.5 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
+              >
+                Revoke
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </AccountSection>
+  )
+}
+
+function CredentialActivitySection({ entries }: { entries: AuditEntry[] }) {
+  return (
+    <AccountSection
+      title="Credential Activity"
+      description="Recent account and credential-related activity touching your connected services."
+    >
+      <div className="space-y-2">
+        {entries.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No recent service activity.
+          </div>
+        )}
+        {entries.map(entry => (
+          <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-text-primary">{entry.summary_text || `${serviceName(entry.service)} ${entry.action}`}</div>
+              <div className="mt-1 text-xs text-text-tertiary">
+                {entry.outcome} · {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+              </div>
+            </div>
+            {entry.reason && <div className="max-w-xl text-xs text-text-secondary">{entry.reason}</div>}
+          </div>
+        ))}
+      </div>
+    </AccountSection>
+  )
 }
 
 // ── Active Service Row ───────────────────────────────────────────────────────
@@ -890,7 +1123,7 @@ function OrgServicesView({ orgId, orgName }: { orgId: string; orgName: string })
   return (
     <div className="p-4 sm:p-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-text-primary">{orgName} Services</h1>
+        <h1 className="text-2xl font-bold text-text-primary">{orgName} Accounts</h1>
         <p className="text-sm text-text-tertiary mt-1">
           Org-wide shared credentials and per-user service activation.
         </p>
@@ -1091,6 +1324,7 @@ export default function Services() {
   const qc = useQueryClient()
   const { features, currentOrg } = useAuth()
   const orgId = currentOrg?.id
+  const secretVaultUI = !orgId && !!features?.secret_vault
   const [showModal, setShowModal] = useState(false)
   const [successService, setSuccessService] = useState<string | null>(null)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1116,6 +1350,22 @@ export default function Services() {
     queryFn: () => api.system.getGoogleOAuth(),
     enabled: !features?.multi_tenant,
   })
+  const { data: agents = [] } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => api.agents.list(),
+    enabled: !orgId,
+  })
+  const { data: runtimePlaceholders } = useQuery({
+    queryKey: ['runtime-placeholders'],
+    queryFn: () => api.runtime.listPlaceholders(),
+    enabled: secretVaultUI,
+    refetchInterval: 30_000,
+  })
+  const { data: auditData } = useQuery({
+    queryKey: ['audit', 'accounts'],
+    queryFn: () => api.audit.list({ limit: 25 }),
+    enabled: secretVaultUI,
+  })
 
   // Refresh when the OAuth popup signals completion (for cases where modal isn't open).
   useEffect(() => {
@@ -1134,6 +1384,9 @@ export default function Services() {
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')
+  const recentServiceActivity = secretVaultUI
+    ? (auditData?.entries ?? []).filter(entry => !entry.service.startsWith('runtime.')).slice(0, 8)
+    : []
   const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
@@ -1141,11 +1394,11 @@ export default function Services() {
     <div className="p-4 sm:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Services</h1>
+          <h1 className="text-2xl font-bold text-text-primary">Accounts</h1>
           <p className="text-sm text-text-tertiary mt-1">
             {activeServices.length > 0
-              ? `${activeServices.length} connected service${activeServices.length !== 1 ? 's' : ''}`
-              : 'Connect services so your agents can take actions.'}
+              ? `${activeServices.length} connected account${activeServices.length !== 1 ? 's' : ''}`
+              : 'Connect accounts so your agents can take actions.'}
           </p>
           <p className="text-xs text-text-tertiary mt-2 max-w-xl">
             Your credentials are only used when your AI agent takes actions on your behalf.
@@ -1202,6 +1455,25 @@ export default function Services() {
 
       {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
       {error && <div className="text-sm text-danger">Failed to load services.</div>}
+
+      {!orgId && !isLoading && !error && (
+        <>
+          {secretVaultUI && (
+            <VaultInventorySection
+              activeServices={activeServices}
+              googleOAuthConfigured={!!googleOAuth?.configured}
+            />
+          )}
+          {secretVaultUI && (
+            <ShadowTokensSection
+              agents={agents}
+              services={activeServices}
+              entries={runtimePlaceholders?.entries ?? []}
+            />
+          )}
+          {secretVaultUI && <CredentialActivitySection entries={recentServiceActivity} />}
+        </>
+      )}
 
       {!isLoading && !error && activeServices.length === 0 && (
         <button

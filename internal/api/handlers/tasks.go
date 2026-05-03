@@ -21,6 +21,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -53,10 +55,10 @@ type TasksHandler struct {
 	eventHub         events.EventHub
 	assessor         taskrisk.Assessor
 	contentDedup     DedupCache
-	msgBuffer        groupchat.Buffer         // may be nil; set via SetGroupApproval
-	llmHealth        *llm.Health              // may be nil; needed for approval check LLM calls
-	agentPairer      notify.AgentGroupPairer  // may be nil; set via SetGroupApproval
-	localSvcProvider LocalServiceProvider     // may be nil; set via SetLocalServiceProvider
+	msgBuffer        groupchat.Buffer        // may be nil; set via SetGroupApproval
+	llmHealth        *llm.Health             // may be nil; needed for approval check LLM calls
+	agentPairer      notify.AgentGroupPairer // may be nil; set via SetGroupApproval
+	localSvcProvider LocalServiceProvider    // may be nil; set via SetLocalServiceProvider
 }
 
 // SetLocalServiceProvider configures the local daemon service provider for
@@ -103,12 +105,17 @@ func (h *TasksHandler) SetGroupApproval(buf groupchat.Buffer, health *llm.Health
 // ── Create ────────────────────────────────────────────────────────────────────
 
 type createTaskRequest struct {
-	Purpose           string              `json:"purpose"`
-	AuthorizedActions []store.TaskAction  `json:"authorized_actions"`
-	PlannedCalls      []store.PlannedCall `json:"planned_calls,omitempty"`
-	ExpiresInSeconds  int                 `json:"expires_in_seconds"`
-	CallbackURL       string              `json:"callback_url"`
-	Lifetime          string              `json:"lifetime"` // "session" (default) or "standing"
+	Purpose                string                        `json:"purpose"`
+	AuthorizedActions      []store.TaskAction            `json:"authorized_actions"`
+	PlannedCalls           []store.PlannedCall           `json:"planned_calls,omitempty"`
+	ExpectedTools          []runtimetasks.ExpectedTool   `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []runtimetasks.ExpectedEgress `json:"expected_egress_json,omitempty"`
+	IntentVerificationMode string                        `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string                        `json:"expected_use,omitempty"`
+	SchemaVersion          int                           `json:"schema_version,omitempty"`
+	ExpiresInSeconds       int                           `json:"expires_in_seconds"`
+	CallbackURL            string                        `json:"callback_url"`
+	Lifetime               string                        `json:"lifetime"` // "session" (default) or "standing"
 }
 
 // Create declares a new task scope.
@@ -130,18 +137,19 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Collect all missing top-level required fields at once so the caller
 	// can fix everything in a single round-trip.
+	hasRuntimeEnvelope := len(req.ExpectedTools) > 0 || len(req.ExpectedEgress) > 0
 	var missingFields []string
 	if req.Purpose == "" {
 		missingFields = append(missingFields, "purpose")
 	}
-	if len(req.AuthorizedActions) == 0 {
-		missingFields = append(missingFields, "authorized_actions")
+	if len(req.AuthorizedActions) == 0 && !hasRuntimeEnvelope {
+		missingFields = append(missingFields, "authorized_actions", "expected_tools_json", "expected_egress_json")
 	}
 	if len(missingFields) > 0 {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error:         "missing required fields: " + strings.Join(missingFields, ", "),
 			Code:          "INVALID_REQUEST",
-			Hint:          "A task requires a purpose describing what the agent will do and at least one authorized action.",
+			Hint:          "A task requires a purpose describing what the agent will do and at least one scope representation: authorized_actions, expected_tools_json, or expected_egress_json.",
 			MissingFields: missingFields,
 			Example: map[string]any{
 				"purpose": "Read and summarize recent emails",
@@ -151,6 +159,98 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
+	}
+	if len(req.PlannedCalls) > 0 && len(req.AuthorizedActions) == 0 {
+		// Pre-merge the gateway tolerated planned_calls without authorized_actions
+		// (the planned calls were stored as risk-assessment metadata and the
+		// scope was inferred elsewhere). To avoid breaking existing clients,
+		// auto-derive a scope from the planned call (service, action) pairs and
+		// log a deprecation. Callers should send authorized_actions explicitly —
+		// this fallback may be removed in a future release.
+		seen := make(map[string]struct{}, len(req.PlannedCalls))
+		for _, pc := range req.PlannedCalls {
+			service := strings.TrimSpace(pc.Service)
+			action := strings.TrimSpace(pc.Action)
+			if service == "" || action == "" {
+				continue
+			}
+			key := service + ":" + action
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			req.AuthorizedActions = append(req.AuthorizedActions, store.TaskAction{
+				Service:     service,
+				Action:      action,
+				AutoExecute: false,
+			})
+		}
+		if len(req.AuthorizedActions) == 0 {
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error: "planned_calls requires authorized_actions",
+				Code:  "INVALID_REQUEST",
+				Hint:  "Each planned_call must have non-empty service and action, or set authorized_actions explicitly.",
+			})
+			return
+		}
+		h.logger.Warn("deprecated: task created with planned_calls but no authorized_actions; deriving scope from planned_calls",
+			"agent_id", agent.ID,
+			"derived_scope_count", len(req.AuthorizedActions),
+		)
+	}
+
+	schemaVersion := req.SchemaVersion
+	if schemaVersion == 0 {
+		if hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "" {
+			schemaVersion = 2
+		} else {
+			schemaVersion = 1
+		}
+	}
+	if schemaVersion != 1 && schemaVersion != 2 {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:     fmt.Sprintf("invalid schema_version %d", req.SchemaVersion),
+			Code:      "INVALID_REQUEST",
+			Hint:      "schema_version must be 1 or 2.",
+			Available: []string{"1", "2"},
+		})
+		return
+	}
+	if schemaVersion == 1 && (hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "") {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error: "schema_version=1 cannot be used with v2 task envelope fields",
+			Code:  "INVALID_REQUEST",
+			Hint:  "Use schema_version 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use.",
+		})
+		return
+	}
+
+	env := runtimetasks.Envelope{
+		ExpectedTools:          req.ExpectedTools,
+		ExpectedEgress:         req.ExpectedEgress,
+		IntentVerificationMode: req.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          schemaVersion,
+	}
+	if hasRuntimeEnvelope && env.IntentVerificationMode == "" {
+		env.IntentVerificationMode = "strict"
+	}
+	if hasRuntimeEnvelope {
+		if issues := runtimepolicy.ValidateTaskEnvelope(env); len(issues) > 0 {
+			var messages []string
+			var fields []string
+			for _, issue := range issues {
+				messages = append(messages, issue.Field+": "+issue.Message)
+				fields = append(fields, issue.Field)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         strings.Join(messages, "; "),
+				Code:          "INVALID_REQUEST",
+				MissingFields: fields,
+				Hint:          "Task envelope v2 items must declare specific tools or egress targets with valid shapes and human-readable why fields.",
+			})
+			return
+		}
 	}
 
 	// Validate each authorized action.
@@ -322,7 +422,29 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Content-based dedup: if an identical task creation request was recently made
 	// by the same agent, return the existing task instead of creating a duplicate.
-	taskDedupKey := buildDedupKey("task", agent.ID, req.Purpose, req.AuthorizedActions, lifetime)
+	//
+	// v2 envelope fields (planned_calls, expected_tools_json, expected_egress_json,
+	// intent_verification_mode, expected_use, schema_version) only participate in
+	// the hash when any are non-empty. v1-only requests therefore produce the
+	// same fingerprint they did pre-#310, preserving the existing dedup window.
+	dedupParts := []any{"task", agent.ID, req.Purpose, req.AuthorizedActions}
+	if len(req.PlannedCalls) > 0 ||
+		len(req.ExpectedTools) > 0 ||
+		len(req.ExpectedEgress) > 0 ||
+		env.IntentVerificationMode != "" ||
+		req.ExpectedUse != "" ||
+		schemaVersion != 1 {
+		dedupParts = append(dedupParts,
+			req.PlannedCalls,
+			req.ExpectedTools,
+			req.ExpectedEgress,
+			env.IntentVerificationMode,
+			req.ExpectedUse,
+			schemaVersion,
+		)
+	}
+	dedupParts = append(dedupParts, lifetime)
+	taskDedupKey := buildDedupKey(dedupParts...)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)
 		writeJSON(w, http.StatusCreated, resp)
@@ -336,35 +458,66 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// All tasks start as pending_approval — no policy-based auto-activation.
 	task := &store.Task{
-		ID:                uuid.New().String(),
-		UserID:            agent.UserID,
-		AgentID:           agent.ID,
-		Purpose:           req.Purpose,
-		Status:            "pending_approval",
-		Lifetime:          lifetime,
-		AuthorizedActions: req.AuthorizedActions,
-		PlannedCalls:      req.PlannedCalls,
-		ExpiresInSeconds:  expiresIn,
+		ID:                     uuid.New().String(),
+		UserID:                 agent.UserID,
+		AgentID:                agent.ID,
+		Purpose:                req.Purpose,
+		Status:                 "pending_approval",
+		Lifetime:               lifetime,
+		AuthorizedActions:      req.AuthorizedActions,
+		PlannedCalls:           req.PlannedCalls,
+		IntentVerificationMode: env.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+		SchemaVersion:          schemaVersion,
+		ExpiresInSeconds:       expiresIn,
 	}
 	if req.CallbackURL != "" {
 		task.CallbackURL = &req.CallbackURL
 	}
+	if len(req.ExpectedTools) > 0 {
+		b, err := json.Marshal(req.ExpectedTools)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_tools_json")
+			return
+		}
+		task.ExpectedTools = json.RawMessage(b)
+	}
+	if len(req.ExpectedEgress) > 0 {
+		b, err := json.Marshal(req.ExpectedEgress)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_egress_json")
+			return
+		}
+		task.ExpectedEgress = json.RawMessage(b)
+	}
 
 	// Run risk assessment (non-blocking — errors are logged, not propagated).
 	if h.assessor != nil {
-		assessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
-			Purpose:           req.Purpose,
-			AuthorizedActions: req.AuthorizedActions,
-			PlannedCalls:      req.PlannedCalls,
-			AgentName:         agent.Name,
-		})
-		if err != nil {
-			h.logger.Warn("task risk assessment failed", "error", err)
+		var assessment *taskrisk.RiskAssessment
+		if len(req.AuthorizedActions) > 0 {
+			legacyAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+				Purpose:           req.Purpose,
+				AuthorizedActions: req.AuthorizedActions,
+				PlannedCalls:      req.PlannedCalls,
+				AgentName:         agent.Name,
+			})
+			if err != nil {
+				h.logger.Warn("task risk assessment failed", "error", err)
+			}
+			assessment = legacyAssessment
+		}
+		if hasRuntimeEnvelope {
+			envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+			assessment = mergeRiskAssessments(assessment, envelopeAssessment)
 		}
 		if assessment != nil {
 			task.RiskLevel = assessment.RiskLevel
 			task.RiskDetails = taskrisk.MarshalAssessment(assessment)
 		}
+	} else if hasRuntimeEnvelope {
+		assessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+		task.RiskLevel = assessment.RiskLevel
+		task.RiskDetails = taskrisk.MarshalAssessment(assessment)
 	}
 
 	// Check for group chat approval via LLM analysis of recent messages.
@@ -437,6 +590,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("create task failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create task")
 		return
+	}
+	if !preApproved {
+		if err := h.createCanonicalTaskApproval(ctx, task, "task_create"); err != nil {
+			h.logger.Error("failed to create canonical task approval", "task_id", task.ID, "err", err)
+		}
 	}
 
 	if preApproved {
@@ -573,6 +731,127 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	sanitizeTaskForResponse(task)
 	writeJSON(w, http.StatusOK, task)
+}
+
+// Start resolves a task into the active state and, when provided a runtime
+// session id, binds that runtime session to the task for subsequent proxy
+// attribution and biasing.
+//
+// POST /api/tasks/{id}/start
+// Auth: agent bearer token
+//
+// Query params:
+//
+//	wait=true    – long-poll until the task leaves a pending state (or timeout)
+//	timeout=N    – wait timeout in seconds (default 120, max 120)
+//
+// Body:
+//
+//	{"session_id":"<runtime session id>"}
+func (h *TasksHandler) Start(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agent := middleware.AgentFromContext(ctx)
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	taskID := r.PathValue("id")
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != agent.UserID || task.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+	if r.URL.Query().Get("wait") == "true" && isTaskPending(task.Status) && h.eventHub != nil {
+		task = h.waitForTaskResolution(ctx, taskID, agent.UserID, longPollDeadline(r))
+		if r.Context().Err() != nil {
+			return
+		}
+	}
+
+	var req struct {
+		SessionID        string `json:"session_id"`
+		RuntimeSessionID string `json:"runtime_session_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+
+	if task.Status != "active" {
+		sanitizeTaskForResponse(task)
+		writeJSON(w, http.StatusOK, task)
+		return
+	}
+
+	resp := map[string]any{
+		"task_id": task.ID,
+		"status":  task.Status,
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.RuntimeSessionID)
+	}
+	if sessionID == "" {
+		if task.ExpiresAt != nil {
+			resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	sess, err := h.st.GetRuntimeSession(ctx, sessionID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "runtime session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get runtime session")
+		return
+	}
+	if sess.UserID != agent.UserID || sess.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
+		return
+	}
+	if sess.RevokedAt != nil || !sess.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, http.StatusGone, "RUNTIME_SESSION_EXPIRED", "runtime session is no longer active")
+		return
+	}
+	now := time.Now().UTC()
+	startedAt := now
+	if existing, err := h.st.GetActiveTaskSession(ctx, task.ID, sess.ID); err == nil && existing != nil {
+		startedAt = existing.StartedAt
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"source": "task_start",
+	})
+	if err := h.st.UpsertActiveTaskSession(ctx, &store.ActiveTaskSession{
+		TaskID:       task.ID,
+		SessionID:    sess.ID,
+		UserID:       sess.UserID,
+		AgentID:      sess.AgentID,
+		Status:       "active",
+		MetadataJSON: metadata,
+		StartedAt:    startedAt,
+		LastSeenAt:   now,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not bind runtime session to task")
+		return
+	}
+	resp["session_id"] = sess.ID
+	if task.ExpiresAt != nil {
+		resp["expires_at"] = task.ExpiresAt.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // isTaskPending returns true if the status represents a state that is
@@ -745,6 +1024,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -802,6 +1082,44 @@ func applyScopeOverrides(actions []store.TaskAction, overrides []scopeOverride) 
 		}
 	}
 	return out
+}
+
+func mergeRiskAssessments(primary, secondary *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
+	if primary == nil {
+		return secondary
+	}
+	if secondary == nil {
+		return primary
+	}
+	out := *primary
+	out.RiskLevel = highestRiskLevel(primary.RiskLevel, secondary.RiskLevel)
+	out.Factors = append(append([]string{}, primary.Factors...), secondary.Factors...)
+	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, primary.Conflicts...), secondary.Conflicts...)
+	if secondary.Explanation != "" && highestRiskLevel(primary.RiskLevel, secondary.RiskLevel) == secondary.RiskLevel {
+		out.Explanation = secondary.Explanation
+	}
+	if out.Model == "" {
+		out.Model = secondary.Model
+	}
+	if out.LatencyMS == 0 {
+		out.LatencyMS = secondary.LatencyMS
+	}
+	return &out
+}
+
+func highestRiskLevel(a, b string) string {
+	order := map[string]int{
+		"":         -1,
+		"unknown":  0,
+		"low":      1,
+		"medium":   2,
+		"high":     3,
+		"critical": 4,
+	}
+	if order[b] > order[a] {
+		return b
+	}
+	return a
 }
 
 // ── UpdateScope ───────────────────────────────────────────────────────────────
@@ -902,6 +1220,7 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 	if err := h.st.DeleteChainFactsByTask(ctx, taskID); err != nil {
 		h.logger.Warn("chain facts cleanup failed", "err", err, "task_id", taskID)
 	}
@@ -972,6 +1291,92 @@ func (h *TasksHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"task_id": taskID,
 		"status":  "completed",
+	})
+}
+
+// End clears the runtime-session binding for a task without completing the task.
+//
+// POST /api/tasks/{id}/end
+// Auth: agent bearer token
+//
+// Body:
+//
+//	{"session_id":"<runtime session id>"}
+func (h *TasksHandler) End(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agent := middleware.AgentFromContext(ctx)
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	taskID := r.PathValue("id")
+	task, err := h.st.GetTask(ctx, taskID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get task")
+		return
+	}
+	if task.UserID != agent.UserID || task.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your task")
+		return
+	}
+
+	var req struct {
+		SessionID        string `json:"session_id"`
+		RuntimeSessionID string `json:"runtime_session_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.RuntimeSessionID)
+	}
+	if sessionID == "" {
+		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+			Error:         "missing required field: runtime_session_id",
+			Code:          "INVALID_REQUEST",
+			MissingFields: []string{"runtime_session_id"},
+			Hint:          "Provide the runtime session id to clear the task binding without completing the task.",
+		})
+		return
+	}
+
+	sess, err := h.st.GetRuntimeSession(ctx, sessionID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "runtime session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get runtime session")
+		return
+	}
+	if sess.UserID != agent.UserID || sess.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
+		return
+	}
+
+	if err := h.st.EndActiveTaskSession(ctx, task.ID, sess.ID, time.Now().UTC(), "ended"); err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "active task session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not end runtime task binding")
+		return
+	}
+
+	h.publishTasksAndQueue(agent.UserID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"task_id":    task.ID,
+		"status":     task.Status,
+		"session_id": sess.ID,
+		"binding":    "ended",
 	})
 }
 
@@ -1073,6 +1478,12 @@ func (h *TasksHandler) Expand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not request scope expansion")
 		return
 	}
+	task.PendingAction = pendingAction
+	task.PendingReason = req.Reason
+	task.Status = "pending_scope_expansion"
+	if err := h.createCanonicalTaskApproval(ctx, task, "task_expand"); err != nil {
+		h.logger.Error("failed to create canonical scope expansion approval", "task_id", taskID, "err", err)
+	}
 
 	// Send notification.
 	if h.notifier != nil {
@@ -1159,6 +1570,7 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not expand task")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
 
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
@@ -1228,6 +1640,7 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny expansion")
 		return
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 	// Restore proper status (UpdateTaskActions sets status to active).
 	if newStatus != "active" {
 		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
@@ -1277,6 +1690,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, task.AuthorizedActions); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
 	h.publishTasksAndQueue(userID)
@@ -1310,6 +1724,7 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "❌ <b>Denied</b> — task rejected.")
 	h.decrementNotifierPolling(userID)
@@ -1352,6 +1767,7 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 	if err := h.st.UpdateTaskActions(ctx, taskID, newActions, expiresAt); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "allow_session", "approved")
 
 	h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Scope expanded</b>")
 	h.publishTasksAndQueue(userID)
@@ -1394,6 +1810,7 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 	if err := h.st.UpdateTaskActions(ctx, taskID, task.AuthorizedActions, exp); err != nil {
 		return err
 	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_expand", "deny", "denied")
 	if newStatus != "active" {
 		_ = h.st.UpdateTaskStatus(ctx, taskID, newStatus)
 	}
@@ -1423,6 +1840,93 @@ func (h *TasksHandler) decrementNotifierPolling(userID string) {
 	if pd, ok := h.notifier.(notify.PollingDecrementer); ok {
 		pd.DecrementPolling(userID)
 	}
+}
+
+func canonicalTaskApprovalKind(task *store.Task) string {
+	if task.Status == "pending_scope_expansion" || task.PendingAction != nil {
+		return "task_expand"
+	}
+	return "task_create"
+}
+
+func taskApprovalResolution(task *store.Task) string {
+	if task.Lifetime == "standing" {
+		return "allow_always"
+	}
+	return "allow_session"
+}
+
+func (h *TasksHandler) createCanonicalTaskApproval(ctx context.Context, task *store.Task, kind string) error {
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+
+	summary := map[string]any{
+		"purpose":    task.Purpose,
+		"lifetime":   task.Lifetime,
+		"risk_level": task.RiskLevel,
+	}
+	if kind == "task_expand" && task.PendingAction != nil {
+		summary["service"] = task.PendingAction.Service
+		summary["action"] = task.PendingAction.Action
+		summary["reason"] = task.PendingReason
+	}
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+
+	rec := &store.ApprovalRecord{
+		ID:                  uuid.New().String(),
+		Kind:                kind,
+		UserID:              task.UserID,
+		AgentID:             &task.AgentID,
+		TaskID:              &task.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		SummaryJSON:         json.RawMessage(summaryJSON),
+		PayloadJSON:         json.RawMessage(payload),
+		ResolutionTransport: "task_state_update",
+	}
+	return h.st.CreateApprovalRecord(ctx, rec)
+}
+
+func (h *TasksHandler) resolveCanonicalTaskApproval(ctx context.Context, task *store.Task, kind, resolution, status string) {
+	rec, err := h.findPendingTaskApprovalRecord(ctx, task.UserID, task.ID, kind)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			h.logger.Error("failed to load canonical task approval", "task_id", task.ID, "kind", kind, "err", err)
+		}
+		return
+	}
+	if err := validateApprovalRecordTransition(rec, resolution, status); err != nil {
+		h.logger.Error("illegal canonical task approval transition", "task_id", task.ID, "approval_id", rec.ID, "kind", rec.Kind, "from_status", rec.Status, "resolution", resolution, "status", status, "err", err)
+		return
+	}
+	if err := h.st.ResolveApprovalRecord(ctx, rec.ID, resolution, status, time.Now().UTC()); err != nil {
+		h.logger.Error("failed to resolve canonical task approval", "task_id", task.ID, "approval_id", rec.ID, "err", err)
+	}
+}
+
+func (h *TasksHandler) findPendingTaskApprovalRecord(ctx context.Context, userID, taskID, kind string) (*store.ApprovalRecord, error) {
+	recs, err := h.st.ListPendingApprovalRecords(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var latest *store.ApprovalRecord
+	for _, rec := range recs {
+		if rec.Kind != kind || rec.TaskID == nil || *rec.TaskID != taskID {
+			continue
+		}
+		if latest == nil || rec.CreatedAt.After(latest.CreatedAt) {
+			latest = rec
+		}
+	}
+	if latest == nil {
+		return nil, store.ErrNotFound
+	}
+	return latest, nil
 }
 
 // updateNotificationMsg updates the Telegram message for a target
