@@ -100,6 +100,11 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		reviewCache = runtimereview.NewApprovalCache()
 		if opts.RedisClient != nil {
 			reviewCache = runtimereview.NewRedisApprovalCache(opts.RedisClient)
+		} else if opts.Logger != nil {
+			// In-memory approval cache is correct only for single-instance deploys.
+			// On a multi-replica setup, an approval held on one replica is invisible
+			// to others and the proxy will block forever on the second instance.
+			opts.Logger.Warn("runtime proxy: RedisClient not configured — held-approval cache is process-local; running multiple replicas will desync approvals")
 		}
 		contextJudge := runtimepolicy.NewLLMRuntimeContextJudge(llm.NewHealth(opts.Config.LLM), opts.Logger)
 		runtimeSrv.InstallToolUseInterceptors(runtimeproxy.ToolUseHooks{

@@ -36,6 +36,22 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	return runMigrationsFS(ctx, pool, migrationsFS)
 }
 
+// runMigrationsFS applies every unapplied .sql file under migrations/ in
+// lexicographic order. Each file runs inside its own transaction together
+// with the matching schema_migrations row insert, so a partial failure
+// rolls back the entire file.
+//
+// Convention for new migration files:
+//   - Do NOT include BEGIN/COMMIT — the runner already wraps each file in a
+//     transaction and an explicit BEGIN inside one will fail.
+//   - Do NOT use statements that cannot run inside a transaction
+//     (e.g. CREATE INDEX CONCURRENTLY, ALTER SYSTEM). If you need one,
+//     split it into its own file and wrap it in a way the runner can detect
+//     — at present the runner has no escape hatch, so prefer the regular
+//     non-CONCURRENTLY index for now.
+//   - File names should be NNN_name.sql with NNN strictly increasing; the
+//     name is used as the schema_migrations primary key, so renaming an
+//     already-applied file will reapply it.
 func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) error {
 	// Create migrations tracking table
 	_, err := pool.Exec(ctx, `
