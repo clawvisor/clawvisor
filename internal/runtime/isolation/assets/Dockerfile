@@ -6,3 +6,4 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint-holder.sh /usr/local/bin/clawvisor-firewall-and-hold
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/clawvisor-firewall-and-hold
 ENTRYPOINT ["/usr/bin/tini","--"]
+CMD ["/usr/local/bin/clawvisor-firewall-and-hold"]

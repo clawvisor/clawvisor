@@ -1,4 +1,8 @@
-package isolation
+// Package forwarder implements a small TCP relay used by clawvisor to bridge
+// network-isolated workloads to host-side endpoints. The same primitive is
+// used both by the per-invocation isolation runtime and by the standalone
+// `clawvisor proxy expose` daemon.
+package forwarder
 
 import (
 	"context"
@@ -10,20 +14,29 @@ import (
 )
 
 // Forwarder is a TCP relay from a local listener to a fixed upstream address.
-// Used to bridge in-netns workload traffic to clawvisor endpoints (proxy + API)
-// because the workload's iptables only permits the bridge gateway IP.
 type Forwarder struct {
 	target   string
 	listener net.Listener
 	addr     string
+	allow    func(net.Addr) bool
 	wg       sync.WaitGroup
 	closed   atomic.Bool
 }
 
-// StartForwarder binds a TCP listener at bindAddr (host:port; port may be 0)
-// and forwards every accepted connection to target. The returned Forwarder
-// must be Closed to release the listener and stop accept loops.
-func StartForwarder(ctx context.Context, bindAddr, target string) (*Forwarder, error) {
+// Option configures optional Forwarder behavior.
+type Option func(*Forwarder)
+
+// WithAllowFunc installs a predicate evaluated on each accepted connection's
+// remote address. Connections for which the predicate returns false are
+// closed immediately. Nil predicate means accept all (default).
+func WithAllowFunc(allow func(net.Addr) bool) Option {
+	return func(f *Forwarder) { f.allow = allow }
+}
+
+// Start binds a TCP listener at bindAddr (host:port; port may be 0) and
+// forwards every accepted connection to target. The returned Forwarder must
+// be Closed to release the listener and stop accept loops.
+func Start(ctx context.Context, bindAddr, target string, opts ...Option) (*Forwarder, error) {
 	if bindAddr == "" {
 		return nil, fmt.Errorf("forwarder: bind address required")
 	}
@@ -39,6 +52,9 @@ func StartForwarder(ctx context.Context, bindAddr, target string) (*Forwarder, e
 		target:   target,
 		listener: ln,
 		addr:     ln.Addr().String(),
+	}
+	for _, o := range opts {
+		o(f)
 	}
 	f.wg.Add(1)
 	go f.acceptLoop()
@@ -75,6 +91,10 @@ func (f *Forwarder) acceptLoop() {
 				return
 			}
 			return
+		}
+		if f.allow != nil && !f.allow(conn.RemoteAddr()) {
+			_ = conn.Close()
+			continue
 		}
 		go f.handle(conn)
 	}

@@ -12,18 +12,28 @@ valid_port() {
 valid_port "$CLAWVISOR_PROXY_PORT" || { echo "init-firewall: invalid CLAWVISOR_PROXY_PORT=$CLAWVISOR_PROXY_PORT" >&2; exit 1; }
 valid_port "$CLAWVISOR_API_PORT" || { echo "init-firewall: invalid CLAWVISOR_API_PORT=$CLAWVISOR_API_PORT" >&2; exit 1; }
 
-# Resolve host.docker.internal to its IP. On Docker Desktop this points to the
-# host via the VM's port-forwarding magic; on Linux Engine (with `--add-host
-# host.docker.internal:host-gateway` set on the container) it points to the
-# bridge gateway IP. Either way, the host-side forwarders bound on 0.0.0.0
-# are reachable at this IP.
-HOST_IP=$(getent ahostsv4 host.docker.internal | awk '{print $1; exit}' || true)
+# Resolve the egress target host to its IPv4 address. The default is
+# host.docker.internal (PR1 per-invocation flow): on Docker Desktop it points
+# at the host via the VM's port-forwarding magic; on Linux Engine 20.10+ (with
+# `--add-host host.docker.internal:host-gateway` set on the holder) it points
+# at the bridge gateway IP. The host-side forwarders bound on 0.0.0.0 are
+# reachable at this IP.
+#
+# The compose isolation flow (PR3) overrides this via CLAWVISOR_HOST_TARGET to
+# point at the standalone `clawvisor proxy expose` host (which may be an IP
+# literal or a DNS hostname).
+HOST_TARGET="${CLAWVISOR_HOST_TARGET:-host.docker.internal}"
+if [[ "$HOST_TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    HOST_IP="$HOST_TARGET"
+else
+    HOST_IP=$(getent ahostsv4 "$HOST_TARGET" | awk '{print $1; exit}' || true)
+fi
 if [[ -z "$HOST_IP" ]]; then
-    echo "init-firewall: could not resolve host.docker.internal (IPv4)" >&2
+    echo "init-firewall: could not resolve $HOST_TARGET (IPv4)" >&2
     exit 1
 fi
 if [[ ! "$HOST_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "init-firewall: resolved host.docker.internal to non-IPv4 address: $HOST_IP" >&2
+    echo "init-firewall: resolved $HOST_TARGET to non-IPv4 address: $HOST_IP" >&2
     exit 1
 fi
 mkdir -p /run/clawvisor
