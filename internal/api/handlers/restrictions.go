@@ -119,6 +119,19 @@ func (h *RestrictionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dual-write to the legacy restrictions table so a downgrade to a pre-merge
+	// build still sees rules created on this version. Best-effort: a duplicate
+	// row in the legacy table is fine, and any other failure is non-fatal.
+	if _, err := h.st.CreateRestriction(r.Context(), &store.Restriction{
+		ID:      rule.ID,
+		UserID:  user.ID,
+		Service: req.Service,
+		Action:  req.Action,
+		Reason:  rule.Reason,
+	}); err != nil && err != store.ErrConflict {
+		// Do not fail the request — the runtime policy rule is the source of truth.
+	}
+
 	created, err := h.st.GetRuntimePolicyRule(r.Context(), rule.ID)
 	if err != nil {
 		writeJSON(w, http.StatusCreated, serviceRuleToRestriction(rule))
@@ -161,6 +174,9 @@ func (h *RestrictionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete restriction")
 		return
 	}
+
+	// Best-effort: also delete the dual-written legacy row if present.
+	_ = h.st.DeleteRestriction(r.Context(), id, user.ID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
