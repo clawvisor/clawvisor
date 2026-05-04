@@ -734,7 +734,21 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 // header (e.g. "<abc@mail.gmail.com>") and returns the Gmail thread ID.
 // Returns "" if the message can't be found.
 func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messageID string) string {
-	// Gmail search supports rfc822msgid: operator for Message-ID lookup.
+	// If the value doesn't contain angle brackets it's likely a Gmail API
+	// message ID (e.g. "19abc123def") rather than an RFC 2822 Message-ID
+	// (e.g. "<CABx...@mail.gmail.com>"). Agents commonly pass the API ID
+	// since that's the `id` field returned by get_message/list_messages.
+	if !strings.Contains(messageID, "<") {
+		u := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=minimal", messageID)
+		var msg struct {
+			ThreadId string `json:"threadId"`
+		}
+		if err := gmailGET(ctx, client, u, &msg); err == nil && msg.ThreadId != "" {
+			return msg.ThreadId
+		}
+	}
+
+	// Fall back to rfc822msgid: search for proper RFC 2822 Message-IDs.
 	query := "rfc822msgid:" + messageID
 	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=%s", encodeParam(query))
 	var resp struct {
