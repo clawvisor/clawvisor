@@ -158,7 +158,14 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		"service", req.Service,
 		"action", req.Action,
 		"task_id", req.TaskID,
+		"fail_closed", cfg.FailClosed,
 	)
+	if !cfg.FailClosed {
+		// Fail open: degrade to "no verification performed" so the request is
+		// not blocked on LLM availability. The gateway treats nil verdict the
+		// same as the NoopVerifier ‒ proceed without a verification check.
+		return nil, nil
+	}
 	return &VerificationVerdict{
 		Allow:           false,
 		ParamScope:      "n/a",
