@@ -5,9 +5,12 @@ set -euo pipefail
 #
 # - Backend: `air` rebuilds and restarts on .go changes (see .air.toml).
 # - Frontend: Vite dev server with HMR; proxies API/WS calls to the backend.
-# - Ports: chosen dynamically so this won't collide with the installed daemon.
-#   Pass a port as the first arg (or via $PORT) to pin the Vite port.
-# - Config: reuses ~/.clawvisor/config.yaml (PORT/SERVER_HOST overridden via env).
+# - Ports: Vite defaults to 25297 so it matches the registered OAuth
+#   redirect_uri and shares localStorage/cookies with the installed daemon.
+#   The backend listens on a random free port. Pass a port as the first arg
+#   (or via $PORT) to override the Vite port.
+# - Config: reuses ~/.clawvisor/config.yaml (PORT/SERVER_HOST/PUBLIC_URL
+#   overridden via env so the daemon advertises the Vite origin).
 #
 # The Vite URL is the only one you need — open it in your browser.
 
@@ -46,7 +49,7 @@ find_free_port() {
     done
 }
 
-FRONTEND_PORT="${1:-${PORT:-$(find_free_port)}}"
+FRONTEND_PORT="${1:-${PORT:-25297}}"
 BACKEND_PORT="$(find_free_port "$FRONTEND_PORT")"
 
 # air's tmp_dir create is non-recursive, so make sure the parent exists.
@@ -94,13 +97,14 @@ echo "  Frontend : http://127.0.0.1:$FRONTEND_PORT  (Vite, HMR — open this URL
 echo "  Config   : ~/.clawvisor/config.yaml"
 echo ""
 
-# Rewrite ":$BACKEND_PORT" → ":$FRONTEND_PORT" in the daemon's output so the
-# printed magic-link URL points to Vite (the only URL that serves the live
-# frontend; the backend's embedded SPA is just web/dist/placeholder.html in a
-# dev checkout). Process substitution keeps $! as air's PID so cleanup works.
-PORT="$BACKEND_PORT" SERVER_HOST="127.0.0.1" air -c .air.toml \
-    > >(awk -v from=":$BACKEND_PORT" -v to=":$FRONTEND_PORT" '{gsub(from, to); print; fflush()}') \
-    2>&1 &
+# PUBLIC_URL pins the daemon's advertised origin to the Vite port, so OAuth
+# redirect URIs and printed magic links point at Vite (the only URL that
+# serves the live frontend; the backend's embedded SPA is just
+# web/dist/placeholder.html in a dev checkout). Vite proxies /api/* back to
+# the backend's actual listen port.
+PORT="$BACKEND_PORT" SERVER_HOST="127.0.0.1" \
+    PUBLIC_URL="http://localhost:$FRONTEND_PORT" \
+    air -c .air.toml &
 BACKEND_PID=$!
 
 BACKEND_PORT="$BACKEND_PORT" npm --prefix "$REPO_ROOT/web" run dev -- --port "$FRONTEND_PORT" --strictPort &
