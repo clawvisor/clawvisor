@@ -547,6 +547,27 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// Tasks are owned by the agent that created them. A different agent
+		// belonging to the same user cannot execute against another agent's
+		// task scope — that would let a low-trust agent reuse a higher-trust
+		// peer's authorization. Empty AgentID means a legacy task before the
+		// AgentID column existed and is left permissive for now.
+		if task.AgentID != "" && task.AgentID != agent.ID {
+			taskIDPtr := &req.TaskID
+			e := baseEntry("reject", "forbidden", taskIDPtr)
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			errMsg := "task belongs to a different agent"
+			e.ErrorMsg = &errMsg
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
+				Error: errMsg,
+				Code:  "FORBIDDEN",
+				Hint:  "Tasks are scoped to the agent that created them. Create a new task with this agent, or have the owning agent execute the request.",
+			})
+			return
+		}
 		if task.ExpiresAt != nil && time.Now().After(*task.ExpiresAt) {
 			taskIDPtr := &req.TaskID
 			e := baseEntry("reject", "task_expired", taskIDPtr)
@@ -1381,6 +1402,19 @@ func (h *GatewayHandler) HandleExecuteApproved(w http.ResponseWriter, r *http.Re
 
 	if pa.UserID != agent.UserID {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
+		return
+	}
+	// Pending approvals are owned by the agent that originated the request.
+	// Block sibling agents on the same user from executing each other's
+	// approved requests — the approval was scoped to a specific task created
+	// by a specific agent.
+	var paBlob pendingRequestBlob
+	if err := json.Unmarshal(pa.RequestBlob, &paBlob); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "invalid request blob")
+		return
+	}
+	if paBlob.AgentID != "" && paBlob.AgentID != agent.ID {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "approval belongs to a different agent")
 		return
 	}
 
