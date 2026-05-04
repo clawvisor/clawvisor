@@ -540,7 +540,76 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 	to, _ := params["to"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
-	inReplyTo, _ := params["in_reply_to"].(string)
+	threadID, _ := params["thread_id"].(string)
+	legacyInReplyTo, _ := params["in_reply_to"].(string)
+
+	// Resolve thread context for draft replies — same logic as sendMessage.
+	var inReplyTo, references, quotedBody, htmlBody string
+
+	if threadID == "" && legacyInReplyTo != "" {
+		if tid := resolveThreadFromMessageID(ctx, client, legacyInReplyTo); tid != "" {
+			threadID = tid
+		} else {
+			inReplyTo = legacyInReplyTo
+		}
+	}
+
+	if threadID != "" {
+		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+		var threadResp struct {
+			ID       string         `json:"id"`
+			Messages []gmailMessage `json:"messages"`
+		}
+		if err := gmailGET(ctx, client, threadURL, &threadResp); err != nil {
+			return nil, fmt.Errorf("gmail create_draft: fetch thread: %w", err)
+		}
+		if len(threadResp.Messages) == 0 {
+			return nil, fmt.Errorf("gmail create_draft: thread %s has no messages", threadID)
+		}
+
+		lastMsg := threadResp.Messages[len(threadResp.Messages)-1]
+		lastDetail := parseMessageDetail(lastMsg, nil)
+
+		if to == "" {
+			to = lastDetail.ReplyTo
+		}
+		if to == "" {
+			to = lastDetail.From
+		}
+
+		if subject == "" {
+			subject = lastDetail.Subject
+			if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+				subject = "Re: " + subject
+			}
+		}
+
+		inReplyTo = lastDetail.MessageID
+		references = lastDetail.References
+		if lastDetail.MessageID != "" {
+			if references != "" {
+				references += " " + lastDetail.MessageID
+			} else {
+				references = lastDetail.MessageID
+			}
+		}
+
+		if lastDetail.Body != "" {
+			var qb strings.Builder
+			qb.WriteString("\r\n\r\nOn ")
+			qb.WriteString(lastDetail.Date)
+			qb.WriteString(", ")
+			qb.WriteString(lastDetail.From)
+			qb.WriteString(" wrote:\r\n")
+			for _, line := range strings.Split(lastDetail.Body, "\n") {
+				qb.WriteString("> ")
+				qb.WriteString(strings.TrimRight(line, "\r"))
+				qb.WriteString("\r\n")
+			}
+			quotedBody = qb.String()
+			htmlBody = buildReplyHTML(body, lastDetail.Date, lastDetail.From, lastDetail.Body)
+		}
+	}
 
 	if to == "" {
 		return nil, fmt.Errorf("gmail create_draft: to is required")
@@ -551,11 +620,16 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 
 	from, _ := fetchSenderAddress(ctx, client)
 
-	raw := buildMIMEMessage(from, to, subject, body, "", inReplyTo, "")
+	fullBody := body + quotedBody
+	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
+	msg := map[string]string{"raw": encoded}
+	if threadID != "" {
+		msg["threadId"] = threadID
+	}
 	payload := map[string]any{
-		"message": map[string]string{"raw": encoded},
+		"message": msg,
 	}
 
 	var draftResp struct {
@@ -574,6 +648,9 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 		"message_id": draftResp.Message.ID,
 		"to":         to,
 		"subject":    subject,
+	}
+	if threadID != "" {
+		result["thread_id"] = threadID
 	}
 	summary := format.Summary("Draft created for %s (subject: %q)", to, subject)
 	return &adapters.Result{Summary: summary, Data: result}, nil

@@ -85,10 +85,11 @@ actions:
     scopes: ["https://www.googleapis.com/auth/gmail.compose"]
     override: go
     params:
-      to: { type: string, required: true }
-      subject: { type: string, required: true }
+      to: { type: string }
+      subject: { type: string }
       body: { type: string }
-      in_reply_to: { type: string }
+      thread_id: { type: string, description: "Gmail thread ID for drafting a reply in-thread (preferred — auto-populates to/subject, quotes previous message)" }
+      in_reply_to: { type: string, description: "RFC 2822 Message-ID to reply to (alternative to thread_id — will resolve the thread automatically)" }
 
   archive_message:
     display_name: "Archive message"
