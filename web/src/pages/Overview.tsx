@@ -382,7 +382,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   }
 
   const approveMut = useMutation({
-    mutationFn: (resolution: 'allow_once' | 'allow_session' | 'allow_always') => api.approvals.approve(a.request_id, resolution),
+    mutationFn: () => api.approvals.approve(a.request_id, 'allow_once'),
     onSuccess: (res) => {
       setResult(res.status === 'executed' ? 'Approved & executed' : `Outcome: ${res.status}`)
       invalidate()
@@ -477,25 +477,11 @@ function ApprovalCard({ item }: { item: QueueItem }) {
           Deny
         </button>
         <button
-          onClick={() => approveMut.mutate('allow_once')}
-          disabled={isPending}
-          className="rounded px-4 py-1.5 text-sm font-medium border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
-        >
-          {approveMut.isPending ? 'Approving...' : 'Allow Once'}
-        </button>
-        <button
-          onClick={() => approveMut.mutate('allow_session')}
-          disabled={isPending}
-          className="rounded px-4 py-1.5 text-sm font-medium border border-brand/30 text-brand hover:bg-brand/10 disabled:opacity-50"
-        >
-          Create Session Task
-        </button>
-        <button
-          onClick={() => approveMut.mutate('allow_always')}
+          onClick={() => approveMut.mutate()}
           disabled={isPending}
           className="bg-brand text-surface-0 font-medium rounded px-5 py-1.5 text-sm hover:bg-brand-strong disabled:opacity-50"
         >
-          Create Standing Task
+          {approveMut.isPending ? 'Approving...' : 'Approve'}
         </button>
       </div>
     </div>
