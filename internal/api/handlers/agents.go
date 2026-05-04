@@ -110,6 +110,9 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list agents")
 		return
 	}
+	if agents == nil {
+		agents = []*store.Agent{}
+	}
 	writeJSON(w, http.StatusOK, agents)
 }
 
