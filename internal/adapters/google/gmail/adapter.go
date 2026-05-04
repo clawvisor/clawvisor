@@ -13,7 +13,6 @@ import (
 	"mime/quotedprintable"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -26,39 +25,16 @@ import (
 
 const serviceID = "google.gmail"
 
-// gmailBaseScopes are always requested.
-var gmailBaseScopes = []string{
+// gmailScopes is the full set of scopes Gmail can use. The YAML definition is
+// the source of truth for OAuth URL generation and action gating; this list
+// is only consumed by the in-process token-source builder below.
+var gmailScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
+	"https://www.googleapis.com/auth/gmail.compose",
+	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
-}
-
-// draftsEnabled reports whether the create_draft action is available.
-// Set GMAIL_DRAFTS_ENABLED=false to disable in environments where the
-// gmail.compose scope has not yet been approved.
-func draftsEnabled() bool {
-	return os.Getenv("GMAIL_DRAFTS_ENABLED") != "false"
-}
-
-// archiveEnabled reports whether the archive_message action is available.
-// Set GMAIL_ARCHIVE_ENABLED=false to disable in environments where the
-// gmail.modify scope has not yet been approved.
-func archiveEnabled() bool {
-	return os.Getenv("GMAIL_ARCHIVE_ENABLED") != "false"
-}
-
-// gmailScopes returns the scopes to request, including gmail.compose and
-// gmail.modify only when their respective gates are enabled.
-func gmailScopes() []string {
-	scopes := append([]string{}, gmailBaseScopes...)
-	if draftsEnabled() {
-		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.compose")
-	}
-	if archiveEnabled() {
-		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.modify")
-	}
-	return scopes
 }
 
 // GmailAdapter implements adapters.Adapter for Gmail.
@@ -73,17 +49,13 @@ func New(provider adapters.OAuthCredentialProvider) *GmailAdapter {
 func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
-	actions := []string{"list_messages", "get_message", "get_thread", "get_attachment", "send_message"}
-	if draftsEnabled() {
-		actions = append(actions, "create_draft")
+	return []string{
+		"list_messages", "get_message", "get_thread", "get_attachment",
+		"send_message", "create_draft", "archive_message",
 	}
-	if archiveEnabled() {
-		actions = append(actions, "archive_message")
-	}
-	return actions
 }
 
-func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes() }
+func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes }
 
 func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
@@ -93,13 +65,13 @@ func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		Scopes:       gmailScopes(),
+		Scopes:       gmailScopes,
 		Endpoint:     google.Endpoint,
 	}
 }
 
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, gmailScopes(), false)
+	return credential.FromToken(token, gmailScopes, false)
 }
 
 func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {

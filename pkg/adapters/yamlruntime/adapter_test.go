@@ -1488,3 +1488,70 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestYAMLAdapter_ConditionalScopes_GateOnAndOff(t *testing.T) {
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "demo.svc"},
+		Auth: yamldef.AuthDef{
+			Type: "oauth2",
+			OAuth: &yamldef.OAuthDef{
+				Scopes: []string{"https://example.com/auth/base"},
+				ConditionalScopes: []yamldef.ConditionalScope{
+					{Scope: "https://example.com/auth/write", EnvGate: "DEMO_WRITE_ENABLED", Default: true},
+				},
+			},
+		},
+		API: yamldef.APIDef{BaseURL: "https://example.com", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"read":  {Override: "go", Scopes: []string{"https://example.com/auth/base"}},
+			"write": {Override: "go", Scopes: []string{"https://example.com/auth/write"}},
+		},
+	}
+
+	adapter, err := New(def, map[string]ActionFunc{
+		"read":  func(context.Context, adapters.Request) (*adapters.Result, error) { return &adapters.Result{}, nil },
+		"write": func(context.Context, adapters.Request) (*adapters.Result, error) { return &adapters.Result{}, nil },
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// Default true → write scope active, write action listed.
+	t.Setenv("DEMO_WRITE_ENABLED", "")
+	if got := adapter.RequiredScopes(); !containsString(got,"https://example.com/auth/write") {
+		t.Errorf("RequiredScopes missing conditional scope when gate defaults true: %v", got)
+	}
+	if got := adapter.SupportedActions(); !containsString(got,"write") {
+		t.Errorf("SupportedActions missing 'write' when gate defaults true: %v", got)
+	}
+	if _, err := adapter.Execute(context.Background(), adapters.Request{Action: "write"}); err != nil {
+		t.Errorf("Execute(write) should succeed when gate is on: %v", err)
+	}
+
+	// Explicitly false → scope dropped, action hidden, execute rejected.
+	t.Setenv("DEMO_WRITE_ENABLED", "false")
+	if got := adapter.RequiredScopes(); containsString(got,"https://example.com/auth/write") {
+		t.Errorf("RequiredScopes should drop conditional scope when gate is false: %v", got)
+	}
+	if got := adapter.SupportedActions(); containsString(got,"write") {
+		t.Errorf("SupportedActions should hide 'write' when gate is false: %v", got)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{Action: "write"})
+	if err == nil {
+		t.Errorf("Execute(write) should fail when gate is false")
+	}
+
+	// Read action remains unaffected by the gate.
+	if got := adapter.SupportedActions(); !containsString(got,"read") {
+		t.Errorf("SupportedActions should always include 'read': %v", got)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
