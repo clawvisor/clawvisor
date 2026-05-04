@@ -74,6 +74,8 @@ actions:
     override: go
     params:
       to: { type: string }
+      cc: { type: string, description: "Comma-separated CC recipients" }
+      bcc: { type: string, description: "Comma-separated BCC recipients" }
       subject: { type: string }
       body: { type: string }
       thread_id: { type: string, description: "Gmail thread ID for replying in-thread (preferred — auto-populates to/subject, quotes previous message)" }
@@ -86,6 +88,8 @@ actions:
     override: go
     params:
       to: { type: string }
+      cc: { type: string, description: "Comma-separated CC recipients" }
+      bcc: { type: string, description: "Comma-separated BCC recipients" }
       subject: { type: string }
       body: { type: string }
       thread_id: { type: string, description: "Gmail thread ID for drafting a reply in-thread (preferred — auto-populates to/subject, quotes previous message)" }

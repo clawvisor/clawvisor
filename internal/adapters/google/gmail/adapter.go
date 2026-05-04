@@ -385,6 +385,8 @@ func (a *GmailAdapter) getAttachment(ctx context.Context, client *http.Client, p
 
 func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
+	cc, _ := params["cc"].(string)
+	bcc, _ := params["bcc"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
 	threadID, _ := params["thread_id"].(string)
@@ -478,7 +480,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	from, _ := fetchSenderAddress(ctx, client)
 
 	fullBody := body + quotedBody
-	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
+	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]string{"raw": encoded}
@@ -538,6 +540,8 @@ func (a *GmailAdapter) requireModifyScope(credBytes []byte) error {
 
 func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
+	cc, _ := params["cc"].(string)
+	bcc, _ := params["bcc"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
 	threadID, _ := params["thread_id"].(string)
@@ -621,7 +625,7 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 	from, _ := fetchSenderAddress(ctx, client)
 
 	fullBody := body + quotedBody
-	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
+	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	msg := map[string]string{"raw": encoded}
@@ -1093,7 +1097,7 @@ func decodeBase64(s string) string {
 	return string(b)
 }
 
-func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references string) string {
+func buildMIMEMessage(from, to, cc, bcc, subject, body, htmlBody, inReplyTo, references string) string {
 	var sb strings.Builder
 	if from != "" {
 		sb.WriteString("From: " + from + "\r\n")
@@ -1101,6 +1105,12 @@ func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references s
 		sb.WriteString("From: me\r\n")
 	}
 	sb.WriteString("To: " + to + "\r\n")
+	if cc != "" {
+		sb.WriteString("Cc: " + cc + "\r\n")
+	}
+	if bcc != "" {
+		sb.WriteString("Bcc: " + bcc + "\r\n")
+	}
 	sb.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	if inReplyTo != "" {
 		sb.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
