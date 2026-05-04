@@ -514,5 +514,8 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list connection requests")
 		return
 	}
+	if requests == nil {
+		requests = []*store.ConnectionRequest{}
+	}
 	writeJSON(w, http.StatusOK, requests)
 }
