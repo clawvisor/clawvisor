@@ -41,13 +41,24 @@ func draftsEnabled() bool {
 	return os.Getenv("GMAIL_DRAFTS_ENABLED") != "false"
 }
 
-// gmailScopes returns the scopes to request, including gmail.compose
-// only when drafts are enabled.
+// archiveEnabled reports whether the archive_message action is available.
+// Set GMAIL_ARCHIVE_ENABLED=false to disable in environments where the
+// gmail.modify scope has not yet been approved.
+func archiveEnabled() bool {
+	return os.Getenv("GMAIL_ARCHIVE_ENABLED") != "false"
+}
+
+// gmailScopes returns the scopes to request, including gmail.compose and
+// gmail.modify only when their respective gates are enabled.
 func gmailScopes() []string {
-	if !draftsEnabled() {
-		return gmailBaseScopes
+	scopes := append([]string{}, gmailBaseScopes...)
+	if draftsEnabled() {
+		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.compose")
 	}
-	return append(gmailBaseScopes, "https://www.googleapis.com/auth/gmail.compose")
+	if archiveEnabled() {
+		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.modify")
+	}
+	return scopes
 }
 
 // GmailAdapter implements adapters.Adapter for Gmail.
@@ -65,6 +76,9 @@ func (a *GmailAdapter) SupportedActions() []string {
 	actions := []string{"list_messages", "get_message", "get_thread", "get_attachment", "send_message"}
 	if draftsEnabled() {
 		actions = append(actions, "create_draft")
+	}
+	if archiveEnabled() {
+		actions = append(actions, "archive_message")
 	}
 	return actions
 }
@@ -124,6 +138,11 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 			return nil, err
 		}
 		return a.createDraft(ctx, client, req.Params)
+	case "archive_message":
+		if err := a.requireModifyScope(req.Credential); err != nil {
+			return nil, err
+		}
+		return a.archiveMessage(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("gmail: unsupported action %q", req.Action)
 	}
@@ -529,6 +548,20 @@ func (a *GmailAdapter) requireComposeScope(credBytes []byte) error {
 	return nil
 }
 
+// requireModifyScope checks whether the stored credential includes the
+// gmail.modify scope. Legacy tokens lacking it will fail with a descriptive
+// error prompting the user to reconnect.
+func (a *GmailAdapter) requireModifyScope(credBytes []byte) error {
+	cred, err := credential.Parse(credBytes)
+	if err != nil {
+		return fmt.Errorf("gmail archive_message: %w", err)
+	}
+	if !credential.HasAllScopes(cred.Scopes, []string{"https://www.googleapis.com/auth/gmail.modify"}) {
+		return fmt.Errorf("gmail archive_message: the gmail.modify scope is required — please reconnect your Google account to grant label-modification permissions")
+	}
+	return nil
+}
+
 // ── create_draft ──────────────────────────────────────────────────────────────
 
 func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -571,6 +604,35 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 		"subject":    subject,
 	}
 	summary := format.Summary("Draft created for %s (subject: %q)", to, subject)
+	return &adapters.Result{Summary: summary, Data: result}, nil
+}
+
+// ── archive_message ───────────────────────────────────────────────────────────
+
+func (a *GmailAdapter) archiveMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	msgID, _ := params["message_id"].(string)
+	if msgID == "" {
+		return nil, fmt.Errorf("gmail archive_message: message_id is required")
+	}
+
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgID)
+	payload := map[string][]string{"removeLabelIds": {"INBOX"}}
+
+	var modifyResp struct {
+		ID       string   `json:"id"`
+		ThreadId string   `json:"threadId"`
+		LabelIds []string `json:"labelIds"`
+	}
+	if err := gmailPOST(ctx, client, url, payload, &modifyResp); err != nil {
+		return nil, fmt.Errorf("gmail archive_message: %w", err)
+	}
+
+	result := map[string]any{
+		"message_id": modifyResp.ID,
+		"thread_id":  modifyResp.ThreadId,
+		"labels":     modifyResp.LabelIds,
+	}
+	summary := format.Summary("Archived message %s", msgID)
 	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 
