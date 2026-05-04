@@ -122,6 +122,12 @@ func (h *OverviewHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if activity == nil {
 		activity = []store.ActivityBucket{}
 	}
+	if queueItems == nil {
+		queueItems = []queueItem{}
+	}
+	if activeTasks == nil {
+		activeTasks = []*store.Task{}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"queue":        queueItems,

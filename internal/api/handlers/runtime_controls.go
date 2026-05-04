@@ -37,6 +37,9 @@ func (h *RuntimeHandler) ListRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime rules")
 		return
 	}
+	if rules == nil {
+		rules = []*store.RuntimePolicyRule{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": rules,
 		"total":   len(rules),
