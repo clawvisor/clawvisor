@@ -59,8 +59,12 @@ func (a *YAMLAdapter) ServiceID() string { return a.def.Service.ID }
 func (a *YAMLAdapter) Overrides() map[string]ActionFunc { return a.overrides }
 
 func (a *YAMLAdapter) SupportedActions() []string {
+	active := scopeSet(a.activeScopes())
 	actions := make([]string, 0, len(a.def.Actions))
-	for name := range a.def.Actions {
+	for name, action := range a.def.Actions {
+		if !actionScopesEnabled(action, active) {
+			continue
+		}
 		actions = append(actions, name)
 	}
 	sort.Strings(actions)
@@ -90,6 +94,11 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	action, ok := a.def.Actions[req.Action]
 	if !ok {
 		return nil, fmt.Errorf("%s: unsupported action %q", a.def.Service.ID, req.Action)
+	}
+
+	if missing := actionDisabledScopes(action, scopeSet(a.activeScopes())); len(missing) > 0 {
+		return nil, fmt.Errorf("%s: action %q is disabled (scopes not enabled: %s)",
+			a.def.Service.ID, req.Action, strings.Join(missing, ", "))
 	}
 
 	// Check for Go override.
@@ -232,19 +241,7 @@ func (a *YAMLAdapter) OAuthConfig() *oauth2.Config {
 		return nil // OAuth not yet configured
 	}
 
-	scopes := make([]string, len(oauthDef.Scopes))
-	copy(scopes, oauthDef.Scopes)
-
-	for _, cs := range oauthDef.ConditionalScopes {
-		envVal := os.Getenv(cs.EnvGate)
-		include := cs.Default
-		if envVal != "" {
-			include = !strings.EqualFold(envVal, "false")
-		}
-		if include {
-			scopes = append(scopes, cs.Scope)
-		}
-	}
+	scopes := a.activeScopes()
 
 	var endpoint oauth2.Endpoint
 	switch oauthDef.Endpoint {
@@ -319,9 +316,80 @@ func (a *YAMLAdapter) RequiredScopes() []string {
 	if a.def.Auth.Type != "oauth2" || a.def.Auth.OAuth == nil {
 		return nil
 	}
-	// Return scopes from the definition directly — these are known regardless
-	// of whether OAuth app credentials are configured in the vault yet.
-	return a.def.Auth.OAuth.Scopes
+	// Return base + currently-enabled conditional scopes so callers (auth URL
+	// generation, vault scope merging, etc.) request consent for everything
+	// the active actions need — not just the unconditional base set.
+	return a.activeScopes()
+}
+
+// activeScopes returns the deduplicated scopes currently in effect: base
+// scopes plus any conditional_scopes whose env_gate evaluates to true.
+func (a *YAMLAdapter) activeScopes() []string {
+	if a.def.Auth.OAuth == nil {
+		return nil
+	}
+	oauthDef := a.def.Auth.OAuth
+	out := make([]string, 0, len(oauthDef.Scopes)+len(oauthDef.ConditionalScopes))
+	seen := make(map[string]bool, cap(out))
+	for _, s := range oauthDef.Scopes {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, cs := range oauthDef.ConditionalScopes {
+		if !conditionalScopeEnabled(cs) {
+			continue
+		}
+		if !seen[cs.Scope] {
+			seen[cs.Scope] = true
+			out = append(out, cs.Scope)
+		}
+	}
+	return out
+}
+
+// conditionalScopeEnabled evaluates a conditional scope's env_gate.
+// Unset env var → cs.Default. Set to "false" (case-insensitive) → false.
+// Any other value → true.
+func conditionalScopeEnabled(cs yamldef.ConditionalScope) bool {
+	envVal := os.Getenv(cs.EnvGate)
+	if envVal == "" {
+		return cs.Default
+	}
+	return !strings.EqualFold(envVal, "false")
+}
+
+// scopeSet builds a lookup set from a slice of scopes.
+func scopeSet(scopes []string) map[string]bool {
+	m := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
+		m[s] = true
+	}
+	return m
+}
+
+// actionScopesEnabled reports whether every scope an action declares is
+// currently active. Actions with no declared scopes are always enabled.
+func actionScopesEnabled(action yamldef.Action, active map[string]bool) bool {
+	for _, s := range action.Scopes {
+		if !active[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// actionDisabledScopes returns the scopes an action declares that are not
+// currently active. Empty result means the action is enabled.
+func actionDisabledScopes(action yamldef.Action, active map[string]bool) []string {
+	var missing []string
+	for _, s := range action.Scopes {
+		if !active[s] {
+			missing = append(missing, s)
+		}
+	}
+	return missing
 }
 
 // ScopesForAction returns the OAuth scopes required by a specific action,

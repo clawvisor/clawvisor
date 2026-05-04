@@ -434,6 +434,53 @@ func TestSendMessage_WithThreadID_QuotesPreviousMessage(t *testing.T) {
 	}
 }
 
+func TestArchiveMessage_RemovesInboxLabel(t *testing.T) {
+	var sentPayload struct {
+		RemoveLabelIDs []string `json:"removeLabelIds"`
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/messages/msg-1/modify") {
+				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			}
+			data, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("read request body: %v", err)
+			}
+			if err := json.Unmarshal(data, &sentPayload); err != nil {
+				t.Fatalf("unmarshal modify payload: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"msg-1","threadId":"thread-1","labelIds":["UNREAD"]}`)),
+			}, nil
+		}),
+	}
+
+	adapter := &GmailAdapter{}
+	result, err := adapter.archiveMessage(context.Background(), client, map[string]any{
+		"message_id": "msg-1",
+	})
+	if err != nil {
+		t.Fatalf("archiveMessage error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("archiveMessage returned nil result")
+	}
+	if len(sentPayload.RemoveLabelIDs) != 1 || sentPayload.RemoveLabelIDs[0] != "INBOX" {
+		t.Fatalf("removeLabelIds = %v, want [INBOX]", sentPayload.RemoveLabelIDs)
+	}
+}
+
+func TestArchiveMessage_RequiresMessageID(t *testing.T) {
+	adapter := &GmailAdapter{}
+	if _, err := adapter.archiveMessage(context.Background(), &http.Client{}, map[string]any{}); err == nil {
+		t.Fatal("expected error when message_id missing")
+	}
+}
+
 func TestSendMessage_WithInReplyTo_ResolvesThreadAndQuotesPreviousMessage(t *testing.T) {
 	var sentPayload struct {
 		Raw      string `json:"raw"`

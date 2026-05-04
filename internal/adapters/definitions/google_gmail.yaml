@@ -20,6 +20,9 @@ auth:
       - scope: "https://www.googleapis.com/auth/gmail.compose"
         env_gate: "GMAIL_DRAFTS_ENABLED"
         default: true
+      - scope: "https://www.googleapis.com/auth/gmail.modify"
+        env_gate: "GMAIL_ARCHIVE_ENABLED"
+        default: true
     endpoint: google
     vault_key: google
     scope_merge: true
@@ -86,3 +89,11 @@ actions:
       subject: { type: string, required: true }
       body: { type: string }
       in_reply_to: { type: string }
+
+  archive_message:
+    display_name: "Archive message"
+    risk: { category: write, sensitivity: low, description: "Archive a message (remove the INBOX label)" }
+    scopes: ["https://www.googleapis.com/auth/gmail.modify"]
+    override: go
+    params:
+      message_id: { type: string, required: true }

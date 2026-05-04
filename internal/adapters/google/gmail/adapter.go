@@ -13,7 +13,6 @@ import (
 	"mime/quotedprintable"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -26,28 +25,16 @@ import (
 
 const serviceID = "google.gmail"
 
-// gmailBaseScopes are always requested.
-var gmailBaseScopes = []string{
+// gmailScopes is the full set of scopes Gmail can use. The YAML definition is
+// the source of truth for OAuth URL generation and action gating; this list
+// is only consumed by the in-process token-source builder below.
+var gmailScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
+	"https://www.googleapis.com/auth/gmail.compose",
+	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
-}
-
-// draftsEnabled reports whether the create_draft action is available.
-// Set GMAIL_DRAFTS_ENABLED=false to disable in environments where the
-// gmail.compose scope has not yet been approved.
-func draftsEnabled() bool {
-	return os.Getenv("GMAIL_DRAFTS_ENABLED") != "false"
-}
-
-// gmailScopes returns the scopes to request, including gmail.compose
-// only when drafts are enabled.
-func gmailScopes() []string {
-	if !draftsEnabled() {
-		return gmailBaseScopes
-	}
-	return append(gmailBaseScopes, "https://www.googleapis.com/auth/gmail.compose")
 }
 
 // GmailAdapter implements adapters.Adapter for Gmail.
@@ -62,14 +49,13 @@ func New(provider adapters.OAuthCredentialProvider) *GmailAdapter {
 func (a *GmailAdapter) ServiceID() string { return serviceID }
 
 func (a *GmailAdapter) SupportedActions() []string {
-	actions := []string{"list_messages", "get_message", "get_thread", "get_attachment", "send_message"}
-	if draftsEnabled() {
-		actions = append(actions, "create_draft")
+	return []string{
+		"list_messages", "get_message", "get_thread", "get_attachment",
+		"send_message", "create_draft", "archive_message",
 	}
-	return actions
 }
 
-func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes() }
+func (a *GmailAdapter) RequiredScopes() []string { return gmailScopes }
 
 func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	clientID, clientSecret := a.oauthProvider.OAuthClientCredentials()
@@ -79,13 +65,13 @@ func (a *GmailAdapter) OAuthConfig() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		Scopes:       gmailScopes(),
+		Scopes:       gmailScopes,
 		Endpoint:     google.Endpoint,
 	}
 }
 
 func (a *GmailAdapter) CredentialFromToken(token *oauth2.Token) ([]byte, error) {
-	return credential.FromToken(token, gmailScopes(), false)
+	return credential.FromToken(token, gmailScopes, false)
 }
 
 func (a *GmailAdapter) ValidateCredential(credBytes []byte) error {
@@ -124,6 +110,11 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 			return nil, err
 		}
 		return a.createDraft(ctx, client, req.Params)
+	case "archive_message":
+		if err := a.requireModifyScope(req.Credential); err != nil {
+			return nil, err
+		}
+		return a.archiveMessage(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("gmail: unsupported action %q", req.Action)
 	}
@@ -529,6 +520,20 @@ func (a *GmailAdapter) requireComposeScope(credBytes []byte) error {
 	return nil
 }
 
+// requireModifyScope checks whether the stored credential includes the
+// gmail.modify scope. Legacy tokens lacking it will fail with a descriptive
+// error prompting the user to reconnect.
+func (a *GmailAdapter) requireModifyScope(credBytes []byte) error {
+	cred, err := credential.Parse(credBytes)
+	if err != nil {
+		return fmt.Errorf("gmail archive_message: %w", err)
+	}
+	if !credential.HasAllScopes(cred.Scopes, []string{"https://www.googleapis.com/auth/gmail.modify"}) {
+		return fmt.Errorf("gmail archive_message: the gmail.modify scope is required — please reconnect your Google account to grant label-modification permissions")
+	}
+	return nil
+}
+
 // ── create_draft ──────────────────────────────────────────────────────────────
 
 func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
@@ -571,6 +576,35 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 		"subject":    subject,
 	}
 	summary := format.Summary("Draft created for %s (subject: %q)", to, subject)
+	return &adapters.Result{Summary: summary, Data: result}, nil
+}
+
+// ── archive_message ───────────────────────────────────────────────────────────
+
+func (a *GmailAdapter) archiveMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	msgID, _ := params["message_id"].(string)
+	if msgID == "" {
+		return nil, fmt.Errorf("gmail archive_message: message_id is required")
+	}
+
+	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgID)
+	payload := map[string][]string{"removeLabelIds": {"INBOX"}}
+
+	var modifyResp struct {
+		ID       string   `json:"id"`
+		ThreadId string   `json:"threadId"`
+		LabelIds []string `json:"labelIds"`
+	}
+	if err := gmailPOST(ctx, client, url, payload, &modifyResp); err != nil {
+		return nil, fmt.Errorf("gmail archive_message: %w", err)
+	}
+
+	result := map[string]any{
+		"message_id": modifyResp.ID,
+		"thread_id":  modifyResp.ThreadId,
+		"labels":     modifyResp.LabelIds,
+	}
+	summary := format.Summary("Archived message %s", msgID)
 	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 

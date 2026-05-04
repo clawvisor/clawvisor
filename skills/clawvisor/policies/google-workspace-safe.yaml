@@ -17,6 +17,11 @@ rules:
     reason: Sending email requires your approval
 
   - service: google.gmail
+    actions: [archive_message]
+    require_approval: true
+    reason: Archiving email requires your approval
+
+  - service: google.gmail
     actions: [delete_message]
     allow: false
     reason: Email deletion is disabled for safety
