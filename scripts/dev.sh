@@ -6,6 +6,7 @@ set -euo pipefail
 # - Backend: `air` rebuilds and restarts on .go changes (see .air.toml).
 # - Frontend: Vite dev server with HMR; proxies API/WS calls to the backend.
 # - Ports: chosen dynamically so this won't collide with the installed daemon.
+#   Pass a port as the first arg (or via $PORT) to pin the Vite port.
 # - Config: reuses ~/.clawvisor/config.yaml (PORT/SERVER_HOST overridden via env).
 #
 # The Vite URL is the only one you need — open it in your browser.
@@ -34,11 +35,19 @@ if ! command -v air >/dev/null 2>&1; then
 fi
 
 find_free_port() {
-    node -e "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>console.log(p));});"
+    local exclude="${1:-}"
+    while :; do
+        local p
+        p="$(node -e "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{const port=s.address().port;s.close(()=>console.log(port));});")"
+        if [[ "$p" != "$exclude" ]]; then
+            echo "$p"
+            return
+        fi
+    done
 }
 
-BACKEND_PORT="$(find_free_port)"
-FRONTEND_PORT="$(find_free_port)"
+FRONTEND_PORT="${1:-${PORT:-$(find_free_port)}}"
+BACKEND_PORT="$(find_free_port "$FRONTEND_PORT")"
 
 # air's tmp_dir create is non-recursive, so make sure the parent exists.
 mkdir -p "$REPO_ROOT/bin/.air"
