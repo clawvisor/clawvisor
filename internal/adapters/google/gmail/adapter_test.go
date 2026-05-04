@@ -278,6 +278,7 @@ func TestBuildMIMEMessage_WithReferences(t *testing.T) {
 	msg := buildMIMEMessage(
 		"Alice Smith <alice@example.com>",
 		"bob@example.com",
+		"", "",
 		"Re: Test",
 		"Reply body",
 		"",
@@ -303,7 +304,7 @@ func TestBuildMIMEMessage_WithReferences(t *testing.T) {
 }
 
 func TestBuildMIMEMessage_WithoutReferences(t *testing.T) {
-	msg := buildMIMEMessage("", "bob@example.com", "Hello", "Body", "", "", "")
+	msg := buildMIMEMessage("", "bob@example.com", "", "", "Hello", "Body", "", "", "")
 
 	if !strings.Contains(msg, "From: me") {
 		t.Error("should fall back to From: me when from is empty")
@@ -320,6 +321,7 @@ func TestBuildMIMEMessage_WithHTMLAlternative(t *testing.T) {
 	msg := buildMIMEMessage(
 		"Alice Smith <alice@example.com>",
 		"bob@example.com",
+		"", "",
 		"Re: Test",
 		"Reply body\r\n\r\nOn date, person wrote:\r\n> quoted",
 		`<div dir="ltr">Reply body</div><br><div class="gmail_quote gmail_quote_container"><blockquote class="gmail_quote">quoted</blockquote></div>`,

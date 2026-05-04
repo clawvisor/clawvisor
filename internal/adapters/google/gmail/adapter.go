@@ -385,6 +385,8 @@ func (a *GmailAdapter) getAttachment(ctx context.Context, client *http.Client, p
 
 func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
+	cc, _ := params["cc"].(string)
+	bcc, _ := params["bcc"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
 	threadID, _ := params["thread_id"].(string)
@@ -478,7 +480,7 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	from, _ := fetchSenderAddress(ctx, client)
 
 	fullBody := body + quotedBody
-	raw := buildMIMEMessage(from, to, subject, fullBody, htmlBody, inReplyTo, references)
+	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
 	payload := map[string]string{"raw": encoded}
@@ -538,9 +540,80 @@ func (a *GmailAdapter) requireModifyScope(credBytes []byte) error {
 
 func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
+	cc, _ := params["cc"].(string)
+	bcc, _ := params["bcc"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
-	inReplyTo, _ := params["in_reply_to"].(string)
+	threadID, _ := params["thread_id"].(string)
+	legacyInReplyTo, _ := params["in_reply_to"].(string)
+
+	// Resolve thread context for draft replies — same logic as sendMessage.
+	var inReplyTo, references, quotedBody, htmlBody string
+
+	if threadID == "" && legacyInReplyTo != "" {
+		if tid := resolveThreadFromMessageID(ctx, client, legacyInReplyTo); tid != "" {
+			threadID = tid
+		} else {
+			inReplyTo = legacyInReplyTo
+		}
+	}
+
+	if threadID != "" {
+		threadURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/threads/%s?format=full", threadID)
+		var threadResp struct {
+			ID       string         `json:"id"`
+			Messages []gmailMessage `json:"messages"`
+		}
+		if err := gmailGET(ctx, client, threadURL, &threadResp); err != nil {
+			return nil, fmt.Errorf("gmail create_draft: fetch thread: %w", err)
+		}
+		if len(threadResp.Messages) == 0 {
+			return nil, fmt.Errorf("gmail create_draft: thread %s has no messages", threadID)
+		}
+
+		lastMsg := threadResp.Messages[len(threadResp.Messages)-1]
+		lastDetail := parseMessageDetail(lastMsg, nil)
+
+		if to == "" {
+			to = lastDetail.ReplyTo
+		}
+		if to == "" {
+			to = lastDetail.From
+		}
+
+		if subject == "" {
+			subject = lastDetail.Subject
+			if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+				subject = "Re: " + subject
+			}
+		}
+
+		inReplyTo = lastDetail.MessageID
+		references = lastDetail.References
+		if lastDetail.MessageID != "" {
+			if references != "" {
+				references += " " + lastDetail.MessageID
+			} else {
+				references = lastDetail.MessageID
+			}
+		}
+
+		if lastDetail.Body != "" {
+			var qb strings.Builder
+			qb.WriteString("\r\n\r\nOn ")
+			qb.WriteString(lastDetail.Date)
+			qb.WriteString(", ")
+			qb.WriteString(lastDetail.From)
+			qb.WriteString(" wrote:\r\n")
+			for _, line := range strings.Split(lastDetail.Body, "\n") {
+				qb.WriteString("> ")
+				qb.WriteString(strings.TrimRight(line, "\r"))
+				qb.WriteString("\r\n")
+			}
+			quotedBody = qb.String()
+			htmlBody = buildReplyHTML(body, lastDetail.Date, lastDetail.From, lastDetail.Body)
+		}
+	}
 
 	if to == "" {
 		return nil, fmt.Errorf("gmail create_draft: to is required")
@@ -551,11 +624,16 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 
 	from, _ := fetchSenderAddress(ctx, client)
 
-	raw := buildMIMEMessage(from, to, subject, body, "", inReplyTo, "")
+	fullBody := body + quotedBody
+	raw := buildMIMEMessage(from, to, cc, bcc, subject, fullBody, htmlBody, inReplyTo, references)
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 
+	msg := map[string]string{"raw": encoded}
+	if threadID != "" {
+		msg["threadId"] = threadID
+	}
 	payload := map[string]any{
-		"message": map[string]string{"raw": encoded},
+		"message": msg,
 	}
 
 	var draftResp struct {
@@ -574,6 +652,9 @@ func (a *GmailAdapter) createDraft(ctx context.Context, client *http.Client, par
 		"message_id": draftResp.Message.ID,
 		"to":         to,
 		"subject":    subject,
+	}
+	if threadID != "" {
+		result["thread_id"] = threadID
 	}
 	summary := format.Summary("Draft created for %s (subject: %q)", to, subject)
 	return &adapters.Result{Summary: summary, Data: result}, nil
@@ -653,7 +734,21 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 // header (e.g. "<abc@mail.gmail.com>") and returns the Gmail thread ID.
 // Returns "" if the message can't be found.
 func resolveThreadFromMessageID(ctx context.Context, client *http.Client, messageID string) string {
-	// Gmail search supports rfc822msgid: operator for Message-ID lookup.
+	// If the value doesn't contain angle brackets it's likely a Gmail API
+	// message ID (e.g. "19abc123def") rather than an RFC 2822 Message-ID
+	// (e.g. "<CABx...@mail.gmail.com>"). Agents commonly pass the API ID
+	// since that's the `id` field returned by get_message/list_messages.
+	if !strings.Contains(messageID, "<") {
+		u := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=minimal", messageID)
+		var msg struct {
+			ThreadId string `json:"threadId"`
+		}
+		if err := gmailGET(ctx, client, u, &msg); err == nil && msg.ThreadId != "" {
+			return msg.ThreadId
+		}
+	}
+
+	// Fall back to rfc822msgid: search for proper RFC 2822 Message-IDs.
 	query := "rfc822msgid:" + messageID
 	url := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=%s", encodeParam(query))
 	var resp struct {
@@ -1016,7 +1111,7 @@ func decodeBase64(s string) string {
 	return string(b)
 }
 
-func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references string) string {
+func buildMIMEMessage(from, to, cc, bcc, subject, body, htmlBody, inReplyTo, references string) string {
 	var sb strings.Builder
 	if from != "" {
 		sb.WriteString("From: " + from + "\r\n")
@@ -1024,6 +1119,12 @@ func buildMIMEMessage(from, to, subject, body, htmlBody, inReplyTo, references s
 		sb.WriteString("From: me\r\n")
 	}
 	sb.WriteString("To: " + to + "\r\n")
+	if cc != "" {
+		sb.WriteString("Cc: " + cc + "\r\n")
+	}
+	if bcc != "" {
+		sb.WriteString("Bcc: " + bcc + "\r\n")
+	}
 	sb.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	if inReplyTo != "" {
 		sb.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
