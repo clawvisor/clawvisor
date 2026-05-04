@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.1](https://github.com/clawvisor/clawvisor/compare/v0.9.0...v0.9.1) (2026-05-04)
+
+
+### Features
+
+* **dev:** allow pinning the Vite port via arg or ([#317](https://github.com/clawvisor/clawvisor/issues/317)) ([f033e8f](https://github.com/clawvisor/clawvisor/commit/f033e8fbbbae0d8fcef294ae6e5c0c64998bc469))
+* **gmail:** add archive_message action and gate write scopes ([#316](https://github.com/clawvisor/clawvisor/issues/316)) ([db0a92d](https://github.com/clawvisor/clawvisor/commit/db0a92dd6cbf05b8e9a08ac030e52faef37900e9))
+
+
+### Bug Fixes
+
+* **web:** make per-request approval prompt binary ([#319](https://github.com/clawvisor/clawvisor/issues/319)) ([bb7a075](https://github.com/clawvisor/clawvisor/commit/bb7a075e6596c4098722c539a20a71caa3d9a43a))
+
 ## [0.9.0](https://github.com/clawvisor/clawvisor/compare/v0.8.16...v0.9.0) (2026-05-03)
 
 
