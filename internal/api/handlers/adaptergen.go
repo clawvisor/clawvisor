@@ -64,6 +64,9 @@ type updateAdapterRequest struct {
 const maxFetchBytes = 2 * 1024 * 1024 // 2 MB limit for fetched specs
 
 // ssrfRanges are private/internal CIDR blocks that must not be targeted.
+// Loopback (127.0.0.0/8, ::1/128) is intentionally separate so OAuth token
+// exchanges — which validateTokenEndpoint allows over http://localhost for
+// dev/test — can opt in via ssrfSafeOAuthClient without re-listing every range.
 var ssrfRanges = func() []*net.IPNet {
 	cidrs := []string{
 		"0.0.0.0/8",     // "this" network (includes 0.0.0.0)
@@ -71,8 +74,6 @@ var ssrfRanges = func() []*net.IPNet {
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"169.254.0.0/16", // link-local / cloud metadata
-		"127.0.0.0/8",
-		"::1/128",
 		"fc00::/7",
 		"fe80::/10",
 	}
@@ -84,43 +85,71 @@ var ssrfRanges = func() []*net.IPNet {
 	return nets
 }()
 
-// ssrfSafeClient is an HTTP client that blocks requests to private/internal IPs,
-// resolving DNS at dial time to prevent rebinding attacks. Used both for adapter
-// generation source fetches and for OAuth token-endpoint exchanges in services.go.
-var ssrfSafeClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, fmt.Errorf("invalid address %q: %w", address, err)
-			}
-			ips, err := net.DefaultResolver.LookupHost(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("cannot resolve host %q: %w", host, err)
-			}
-			for _, ipStr := range ips {
-				ip := net.ParseIP(ipStr)
-				if ip == nil {
-					continue
+var ssrfLoopbackRanges = func() []*net.IPNet {
+	cidrs := []string{"127.0.0.0/8", "::1/128"}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// newSSRFSafeClient builds an HTTP client that resolves DNS at dial time and
+// rejects connections to internal IPs. When allowLoopback is true, 127.0.0.0/8
+// and ::1 are not treated as SSRF targets — used for OAuth token endpoints,
+// which validateTokenEndpoint already restricts to https or loopback http.
+func newSSRFSafeClient(allowLoopback bool) *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(address)
+				if err != nil {
+					return nil, fmt.Errorf("invalid address %q: %w", address, err)
 				}
-				for _, n := range ssrfRanges {
-					if n.Contains(ip) {
-						return nil, fmt.Errorf("host %q resolves to blocked IP %s", host, ipStr)
+				ips, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("cannot resolve host %q: %w", host, err)
+				}
+				for _, ipStr := range ips {
+					ip := net.ParseIP(ipStr)
+					if ip == nil {
+						continue
 					}
+					for _, n := range ssrfRanges {
+						if n.Contains(ip) {
+							return nil, fmt.Errorf("host %q resolves to blocked IP %s", host, ipStr)
+						}
+					}
+					if !allowLoopback {
+						for _, n := range ssrfLoopbackRanges {
+							if n.Contains(ip) {
+								return nil, fmt.Errorf("host %q resolves to blocked IP %s", host, ipStr)
+							}
+						}
+					}
+					return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ipStr, port))
 				}
-				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ipStr, port))
-			}
-			return nil, fmt.Errorf("no safe IPs found for host %q", host)
+				return nil, fmt.Errorf("no safe IPs found for host %q", host)
+			},
 		},
-	},
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return fmt.Errorf("too many redirects")
-		}
-		return nil
-	},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
 }
+
+// ssrfSafeClient blocks all internal ranges including loopback. Used for
+// adapter spec fetches, where there's no legitimate dev-time loopback case.
+var ssrfSafeClient = newSSRFSafeClient(false)
+
+// ssrfSafeOAuthClient mirrors validateTokenEndpoint's loopback exemption so
+// http://localhost OAuth token endpoints used in tests/dev still work.
+var ssrfSafeOAuthClient = newSSRFSafeClient(true)
 
 // fetchSourceURL downloads content from a URL with optional headers. Returns the body as a string.
 func fetchSourceURL(ctx context.Context, rawURL string, headers map[string]string) (string, error) {

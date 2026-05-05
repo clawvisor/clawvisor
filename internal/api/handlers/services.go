@@ -77,7 +77,8 @@ func validAlias(s string) bool {
 // validateTokenEndpoint checks that an OAuth token (or device-code) URL is
 // safe to dial: parseable, https-only (or http for localhost dev), and not
 // using userinfo or a fragment. IP-level SSRF checks happen at connect time
-// in ssrfSafeClient's DialContext, which prevents DNS rebinding.
+// in ssrfSafeOAuthClient's DialContext, which prevents DNS rebinding while
+// still allowing the loopback exemption documented below.
 func validateTokenEndpoint(raw string) error {
 	if raw == "" {
 		return fmt.Errorf("token_url is empty")
@@ -585,7 +586,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		tokenReq.Header.Set("Accept", "application/json")
 
-		resp, err := ssrfSafeClient.Do(tokenReq)
+		resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Token exchange with provider failed.", "")
@@ -631,7 +632,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
 			return
 		}
-		exchangeCtx := context.WithValue(r.Context(), oauth2.HTTPClient, ssrfSafeClient)
+		exchangeCtx := context.WithValue(r.Context(), oauth2.HTTPClient, ssrfSafeOAuthClient)
 		token, err := oauthCfg.Exchange(exchangeCtx, code)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
@@ -1530,7 +1531,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := ssrfSafeClient.Do(req)
+	resp, err := ssrfSafeOAuthClient.Do(req)
 	if err != nil {
 		h.logger.Warn("device flow: request to provider failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
@@ -1648,7 +1649,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := ssrfSafeClient.Do(req)
+	resp, err := ssrfSafeOAuthClient.Do(req)
 	if err != nil {
 		h.logger.Warn("device flow poll: request failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
@@ -1956,7 +1957,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("Accept", "application/json")
 
-	resp, err := ssrfSafeClient.Do(tokenReq)
+	resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 	if err != nil {
 		h.logger.Warn("pkce flow: token exchange failed", "err", err)
 		oauthPopupClose(w, "Failed to contact token endpoint.", "")
