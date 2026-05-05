@@ -15,9 +15,9 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/internal/runtime/leases"
+	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	"github.com/clawvisor/clawvisor/internal/runtime/review"
+	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"

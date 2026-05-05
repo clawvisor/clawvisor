@@ -14,7 +14,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
-	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
+	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
