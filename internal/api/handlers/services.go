@@ -741,6 +741,24 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// If the caller passed a pending_request_id, verify they own it before
+		// stashing it in OAuth state. Otherwise an attacker could supply
+		// another user's pending request ID and trigger reactivation of that
+		// pending request under their own credentials when the OAuth flow
+		// completes.
+		if body.PendingRequestID != "" {
+			pa, err := h.st.GetPendingApproval(r.Context(), body.PendingRequestID)
+			if err != nil || pa.UserID != user.ID {
+				h.logger.Warn("rejected oauth init with cross-user pending_request_id",
+					"caller_user_id", user.ID,
+					"pending_request_id", body.PendingRequestID,
+					"err", err,
+				)
+				writeError(w, http.StatusForbidden, "FORBIDDEN", "pending_request_id does not belong to this user")
+				return
+			}
+		}
+
 		mergedScopes, alreadyAuthorized := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
 		if alreadyAuthorized {
 			_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
@@ -1173,6 +1191,17 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 	pa, err := h.st.GetPendingApproval(ctx, requestID)
 	if err != nil {
 		h.logger.Warn("reactivate: pending approval not found", "request_id", requestID, "err", err)
+		return
+	}
+	// Defense in depth: even though OAuth init verifies ownership before
+	// stashing the request_id, refuse to act on a pending approval that does
+	// not belong to the user whose OAuth flow we just completed.
+	if pa.UserID != userID {
+		h.logger.Warn("reactivate: refusing cross-user pending approval",
+			"request_id", requestID,
+			"oauth_user_id", userID,
+			"pending_user_id", pa.UserID,
+		)
 		return
 	}
 
