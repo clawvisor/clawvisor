@@ -31,7 +31,7 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "create_task",
-			Description: "Create a new task for scoped authorization. Use wait=true (recommended) to block until the user approves or denies.",
+			Description: "Create a new task for scoped authorization. Use wait=true (recommended) to block until the user approves or denies. Must include at least one of: authorized_actions, expected_tools_json, or expected_egress_json.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -104,12 +104,7 @@ func toolDefs() []Tool {
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},
 					"timeout": {"type": "integer", "description": "Long-poll timeout in seconds (default 120, max 120)"}
 				},
-				"required": ["purpose"],
-				"anyOf": [
-					{"required": ["authorized_actions"]},
-					{"required": ["expected_tools_json"]},
-					{"required": ["expected_egress_json"]}
-				]
+				"required": ["purpose"]
 			}`),
 		},
 		{
