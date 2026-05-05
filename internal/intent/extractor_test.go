@@ -8,6 +8,34 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+func TestExtractFirstJSONValue(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain object", `{"a":1}`, `{"a":1}`},
+		{"plain array", `[1,2,3]`, `[1,2,3]`},
+		{"json fence wrapper", "```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"bare fence wrapper", "```\n{\"a\":1}\n```", `{"a":1}`},
+		{"trailing prose", "{\"a\":1}\n\nNote: this is the result.", `{"a":1}`},
+		{"leading prose", "Here you go:\n{\"a\":1}", `{"a":1}`},
+		{"fence + trailing prose", "```json\n{\"a\":1}\n```\n\nLet me know.", `{"a":1}`},
+		{"nested braces in string", `{"q":"a {b} c","d":1}`, `{"q":"a {b} c","d":1}`},
+		{"escaped quote in string", `{"q":"\"hi\"","d":1}`, `{"q":"\"hi\"","d":1}`},
+		{"no json at all", "Sorry, I can't help with that.", ""},
+		{"unterminated object", `{"a":1`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := extractFirstJSONValue(c.in)
+			if got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestParseExtractionResponse_NewFormat(t *testing.T) {
 	raw := `{"facts": [{"fact_type": "email_address", "fact_value": "alice@co.com"}], "patterns": [{"fact_type": "email_address", "regex": "\"email\":\\s*\"([^\"]+)\""}]}`
 	facts, patterns := parseExtractionResponse(raw, slog.Default(), "test")

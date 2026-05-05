@@ -79,14 +79,16 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(a.registry))
 	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildAssessUserMessage(req)
+	// systemPrompt is stable across the process lifetime (registry metadata
+	// is loaded at startup), so it makes a good prompt-cache prefix.
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
 	}
 
 	var lastErr error
 	for attempt := range 2 {
-		raw, err := client.Complete(ctx, messages)
+		raw, usage, err := client.CompleteWithUsage(ctx, messages)
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, llm.ErrSpendCapExhausted) {
@@ -110,6 +112,7 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 		assessment.Model = cfg.Model
 		assessment.LatencyMS = int(time.Since(start).Milliseconds())
+		llm.LogUsage(a.logger, "task_risk_assessment", cfg.Model, usage)
 		return assessment, nil
 	}
 

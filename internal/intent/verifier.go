@@ -107,13 +107,13 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		systemPrompt = verificationSystemPrompt + lenientAddendum
 	}
 	messages := []llm.ChatMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
 	}
 
 	var lastErr error
 	for attempt := range 2 {
-		raw, err := client.Complete(ctx, messages)
+		raw, usage, err := client.CompleteWithUsage(ctx, messages)
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, llm.ErrSpendCapExhausted) {
@@ -148,6 +148,8 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		verdict.Model = cfg.Model
 		verdict.LatencyMS = int(time.Since(start).Milliseconds())
 		verdict.Cached = false
+
+		llm.LogUsage(v.logger, "intent_verification", cfg.Model, usage)
 
 		v.cache.Put(key, verdict)
 		return verdict, nil

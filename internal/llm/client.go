@@ -44,10 +44,29 @@ func (c *Client) effectiveMaxTokens() int {
 	return defaultMaxTokens
 }
 
+// buildSystemField returns the value for the Anthropic/Vertex "system" field.
+// When cache is true, returns a single text block with an ephemeral cache_control
+// breakpoint so the system prompt becomes a prompt-cache prefix. Otherwise
+// returns the plain string form.
+func buildSystemField(system string, cache bool) any {
+	if !cache {
+		return system
+	}
+	return []map[string]any{{
+		"type":          "text",
+		"text":          system,
+		"cache_control": map[string]string{"type": "ephemeral"},
+	}}
+}
+
 // ChatMessage is one turn in a chat completion request.
 type ChatMessage struct {
 	Role    string `json:"role"`    // "system" | "user" | "assistant"
 	Content string `json:"content"`
+	// CacheControl marks this message as a prompt-cache breakpoint. Only honored
+	// on Anthropic and Vertex providers, and only for system messages. Ignored
+	// elsewhere.
+	CacheControl bool `json:"-"`
 }
 
 // Client calls either an OpenAI-compatible, Anthropic, or Vertex AI chat endpoint.
@@ -152,8 +171,24 @@ func (c *Client) statusError(statusCode int, body []byte) error {
 	return base
 }
 
+// Usage is provider-reported token accounting for a single completion.
+// Cache fields are populated only by Anthropic and Vertex; OpenAI-compatible
+// providers leave them at zero.
+type Usage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
 // Complete sends a chat completion request and returns the assistant's reply.
 func (c *Client) Complete(ctx context.Context, messages []ChatMessage) (string, error) {
+	text, _, err := c.CompleteWithUsage(ctx, messages)
+	return text, err
+}
+
+// CompleteWithUsage is like Complete but also returns provider usage info.
+func (c *Client) CompleteWithUsage(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
 	switch c.provider {
 	case "anthropic":
 		return c.completeAnthropic(ctx, messages)
@@ -166,7 +201,7 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage) (string, 
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
 
-func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (string, error) {
+func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
 	body, err := json.Marshal(map[string]any{
 		"model":       c.model,
 		"messages":    messages,
@@ -174,7 +209,7 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 		"temperature": 0,
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -183,7 +218,7 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.endpoint+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -192,13 +227,13 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", c.statusError(resp.StatusCode, b)
+		return "", nil, c.statusError(resp.StatusCode, b)
 	}
 
 	var out struct {
@@ -207,27 +242,37 @@ func (c *Client) completeOpenAI(ctx context.Context, messages []ChatMessage) (st
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("llm: no choices in response")
+		return "", nil, fmt.Errorf("llm: no choices in response")
 	}
-	return out.Choices[0].Message.Content, nil
+	usage := &Usage{
+		InputTokens:  out.Usage.PromptTokens,
+		OutputTokens: out.Usage.CompletionTokens,
+	}
+	return out.Choices[0].Message.Content, usage, nil
 }
 
 // ── Anthropic ─────────────────────────────────────────────────────────────────
 
-func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) (string, error) {
+func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
 	// Anthropic's Messages API separates the system prompt from the conversation.
 	// Extract the first system message (if any); the rest must be user/assistant.
 	var system string
+	var systemCache bool
 	var convo []ChatMessage
 	for _, m := range messages {
 		if m.Role == "system" {
 			if system == "" {
 				system = m.Content
+				systemCache = m.CacheControl
 			}
 			// Additional system messages are merged into the first.
 			continue
@@ -242,12 +287,12 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 		"temperature": 0,
 	}
 	if system != "" {
-		reqBody["system"] = system
+		reqBody["system"] = buildSystemField(system, systemCache)
 	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -256,7 +301,7 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.endpoint+"/messages", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", anthropicVersion)
@@ -264,38 +309,23 @@ func (c *Client) completeAnthropic(ctx context.Context, messages []ChatMessage) 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", c.statusError(resp.StatusCode, b)
+		return "", nil, c.statusError(resp.StatusCode, b)
 	}
 
-	// Anthropic response: {"content": [{"type": "text", "text": "..."}], ...}
-	var out struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	for _, block := range out.Content {
-		if block.Type == "text" {
-			return block.Text, nil
-		}
-	}
-	return "", fmt.Errorf("llm: no text content in anthropic response")
+	return decodeAnthropicResponse(resp.Body)
 }
 
 // ── Vertex AI ────────────────────────────────────────────────────────────────
 
-func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (string, error) {
+func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
 	if c.tokenSource == nil {
-		return "", fmt.Errorf("llm: vertex provider requires application default credentials")
+		return "", nil, fmt.Errorf("llm: vertex provider requires application default credentials")
 	}
 
 	// Build the list of endpoints to try: primary first, then fallbacks.
@@ -305,11 +335,13 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 
 	// Same request body as Anthropic Messages API.
 	var system string
+	var systemCache bool
 	var convo []ChatMessage
 	for _, m := range messages {
 		if m.Role == "system" {
 			if system == "" {
 				system = m.Content
+				systemCache = m.CacheControl
 			}
 			continue
 		}
@@ -323,36 +355,36 @@ func (c *Client) completeVertex(ctx context.Context, messages []ChatMessage) (st
 		"anthropic_version": vertexAnthropicVersion,
 	}
 	if system != "" {
-		reqBody["system"] = system
+		reqBody["system"] = buildSystemField(system, systemCache)
 	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	var lastErr error
 	for _, ep := range endpoints {
 		// Try each region up to 2 times before moving to the next.
 		for attempt := range 2 {
-			result, err := c.doVertexRequest(ctx, ep, body)
+			text, usage, err := c.doVertexRequest(ctx, ep, body)
 			if err == nil {
-				return result, nil
+				return text, usage, nil
 			}
 			lastErr = err
 			// Don't retry spend-cap errors at all.
 			if errors.Is(err, ErrSpendCapExhausted) {
-				return "", err
+				return "", nil, err
 			}
 			if !isVertexRetriableErr(err) {
-				return "", err
+				return "", nil, err
 			}
 			// First attempt failed with retriable error — retry same region.
 			// Second attempt failed — move to next region.
 			_ = attempt
 		}
 	}
-	return "", lastErr
+	return "", nil, lastErr
 }
 
 // isVertexRetriableErr checks whether the error is worth retrying on a
@@ -383,7 +415,7 @@ func isVertexRetriableErr(err error) bool {
 }
 
 // doVertexRequest performs a single Vertex AI rawPredict call against the given endpoint.
-func (c *Client) doVertexRequest(ctx context.Context, endpoint string, body []byte) (string, error) {
+func (c *Client) doVertexRequest(ctx context.Context, endpoint string, body []byte) (string, *Usage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -391,41 +423,58 @@ func (c *Client) doVertexRequest(ctx context.Context, endpoint string, body []by
 	url := fmt.Sprintf("%s/%s:rawPredict", endpoint, c.model)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	token, err := c.tokenSource.Token()
 	if err != nil {
-		return "", fmt.Errorf("llm: vertex auth: %w", err)
+		return "", nil, fmt.Errorf("llm: vertex auth: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", c.statusError(resp.StatusCode, b)
+		return "", nil, c.statusError(resp.StatusCode, b)
 	}
 
-	// Response format is the same as Anthropic Messages API.
+	return decodeAnthropicResponse(resp.Body)
+}
+
+// decodeAnthropicResponse parses the Anthropic Messages API response shape used
+// by both the native Anthropic and Vertex AI providers.
+func decodeAnthropicResponse(body io.Reader) (string, *Usage, error) {
 	var out struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Usage struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+	if err := json.NewDecoder(body).Decode(&out); err != nil {
+		return "", nil, err
+	}
+	usage := &Usage{
+		InputTokens:              out.Usage.InputTokens,
+		OutputTokens:             out.Usage.OutputTokens,
+		CacheCreationInputTokens: out.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     out.Usage.CacheReadInputTokens,
 	}
 	for _, block := range out.Content {
 		if block.Type == "text" {
-			return block.Text, nil
+			return block.Text, usage, nil
 		}
 	}
-	return "", fmt.Errorf("llm: no text content in vertex response")
+	return "", usage, fmt.Errorf("llm: no text content in response")
 }

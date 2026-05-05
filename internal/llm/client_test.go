@@ -243,6 +243,49 @@ func TestClient_Anthropic_ExtractsSystemMessage(t *testing.T) {
 	}
 }
 
+func TestClient_Anthropic_SystemCacheControl(t *testing.T) {
+	_, cfg := newAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		// With CacheControl, system must be a single text block carrying an
+		// ephemeral cache_control breakpoint, not a bare string.
+		blocks, ok := body["system"].([]any)
+		if !ok {
+			t.Fatalf("system field: expected array of blocks, got %T (%v)", body["system"], body["system"])
+		}
+		if len(blocks) != 1 {
+			t.Fatalf("system blocks: got %d, want 1", len(blocks))
+		}
+		block := blocks[0].(map[string]any)
+		if block["type"] != "text" {
+			t.Errorf("block type: got %v, want text", block["type"])
+		}
+		if block["text"] != "you are cacheable" {
+			t.Errorf("block text: got %v", block["text"])
+		}
+		cc, ok := block["cache_control"].(map[string]any)
+		if !ok {
+			t.Fatalf("cache_control: expected object, got %T", block["cache_control"])
+		}
+		if cc["type"] != "ephemeral" {
+			t.Errorf("cache_control type: got %v, want ephemeral", cc["type"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(anthropicResponse("ok"))
+	})
+
+	client := llm.NewClient(cfg)
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "you are cacheable", CacheControl: true},
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestClient_Anthropic_NoSystemMessage(t *testing.T) {
 	_, cfg := newAnthropicServer(t, func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
