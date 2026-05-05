@@ -187,16 +187,10 @@ func (n *Notifier) ConfirmPairing(ctx context.Context, pairingID, code string) e
 		return fmt.Errorf("invalid pairing code")
 	}
 
-	// Save to store.
-	cfgBytes, err := json.Marshal(map[string]string{
-		"bot_token": s.BotToken,
-		"chat_id":   s.ChatID,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	if err := n.store.UpsertNotificationConfig(ctx, s.UserID, "telegram", cfgBytes); err != nil {
-		return fmt.Errorf("save notification config: %w", err)
+	// Persist via the vault-aware writer so the bot token never lands in
+	// the notification_configs.config JSON column.
+	if err := n.SaveTelegramConfig(ctx, s.UserID, s.BotToken, s.ChatID); err != nil {
+		return err
 	}
 
 	s.Status = "confirmed"

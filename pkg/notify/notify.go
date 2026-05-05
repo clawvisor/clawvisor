@@ -111,6 +111,17 @@ type TelegramPairer interface {
 	CancelPairing(pairingID string)
 }
 
+// TelegramConfigStore persists and retrieves a user's Telegram bot
+// configuration. Implementations are expected to encrypt the bot token at
+// rest (e.g. via the credential vault) — the token never appears in any
+// API response and should never be written into a plaintext database
+// column.
+type TelegramConfigStore interface {
+	SaveTelegramConfig(ctx context.Context, userID, botToken, chatID string) error
+	TelegramConfig(ctx context.Context, userID string) (botToken, chatID string, err error)
+	DeleteTelegramConfig(ctx context.Context, userID string) error
+}
+
 // CallbackDecision is sent by the Telegram notifier when a user taps an
 // inline Approve/Deny button. The server routes this to the appropriate handler.
 type CallbackDecision struct {

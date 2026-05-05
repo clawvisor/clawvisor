@@ -281,6 +281,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// ── Notifier ─────────────────────────────────────────────────────────────
 	telegramN := telegramnotify.New(st, ctx)
 	telegramN.SetMessageBuffer(msgBuffer)
+	telegramN.SetVault(v)
 
 	var pushN *pushnotify.Notifier
 	if cfg.Push.Enabled && ed25519Key != nil {

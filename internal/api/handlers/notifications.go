@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,52 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// fallbackTelegramConfigStore is used when the configured notifier does not
+// implement notify.TelegramConfigStore (e.g. in tests with notifier=nil).
+// It writes/reads the legacy plaintext JSON column directly and never
+// touches the vault. Production deployments always use the notifier-backed
+// implementation, which encrypts the bot token at rest.
+type fallbackTelegramConfigStore struct {
+	st store.Store
+}
+
+func (f *fallbackTelegramConfigStore) SaveTelegramConfig(ctx context.Context, userID, botToken, chatID string) error {
+	cfg, err := json.Marshal(map[string]string{"bot_token": botToken, "chat_id": chatID})
+	if err != nil {
+		return err
+	}
+	return f.st.UpsertNotificationConfig(ctx, userID, "telegram", cfg)
+}
+
+func (f *fallbackTelegramConfigStore) TelegramConfig(ctx context.Context, userID string) (string, string, error) {
+	nc, err := f.st.GetNotificationConfig(ctx, userID, "telegram")
+	if err != nil {
+		return "", "", err
+	}
+	var c struct {
+		BotToken string `json:"bot_token"`
+		ChatID   string `json:"chat_id"`
+	}
+	if err := json.Unmarshal(nc.Config, &c); err != nil {
+		return "", "", err
+	}
+	return c.BotToken, c.ChatID, nil
+}
+
+func (f *fallbackTelegramConfigStore) DeleteTelegramConfig(ctx context.Context, userID string) error {
+	return f.st.DeleteNotificationConfig(ctx, userID, "telegram")
+}
+
+// telegramConfigStore returns the active TelegramConfigStore: the notifier's
+// vault-backed implementation when available, or a plaintext fallback for
+// test setups that pass notifier=nil.
+func (h *NotificationsHandler) telegramConfigStore() notify.TelegramConfigStore {
+	if cs, ok := h.notifier.(notify.TelegramConfigStore); ok {
+		return cs
+	}
+	return &fallbackTelegramConfigStore{st: h.st}
+}
 
 // sanitizeNotificationConfig redacts secret fields (bot_token) from a
 // notification config before returning it to the browser.
@@ -100,16 +147,7 @@ func (h *NotificationsHandler) UpsertTelegram(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	cfgBytes, err := json.Marshal(map[string]string{
-		"bot_token": body.BotToken,
-		"chat_id":   body.ChatID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not encode config")
-		return
-	}
-
-	if err := h.st.UpsertNotificationConfig(r.Context(), user.ID, "telegram", cfgBytes); err != nil {
+	if err := h.telegramConfigStore().SaveTelegramConfig(r.Context(), user.ID, body.BotToken, body.ChatID); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save notification config")
 		return
 	}
@@ -134,7 +172,7 @@ func (h *NotificationsHandler) DeleteTelegram(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.st.DeleteNotificationConfig(r.Context(), user.ID, "telegram"); err != nil {
+	if err := h.telegramConfigStore().DeleteTelegramConfig(r.Context(), user.ID); err != nil {
 		if err == store.ErrNotFound {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -321,8 +359,9 @@ func (h *NotificationsHandler) UpsertTelegramGroup(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Read existing Telegram config to get bot token for observation.
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
+	// Resolve bot token + DM chat ID for this user. Goes through the
+	// vault-aware store rather than reading the JSON column directly.
+	botToken, chatID, err := h.telegramConfigStore().TelegramConfig(r.Context(), user.ID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
 		return
@@ -341,12 +380,7 @@ func (h *NotificationsHandler) UpsertTelegramGroup(w http.ResponseWriter, r *htt
 
 	// Start group observation.
 	if h.groupObs != nil {
-		var cfgMap map[string]any
-		if json.Unmarshal(nc.Config, &cfgMap) == nil {
-			botToken, _ := cfgMap["bot_token"].(string)
-			chatID, _ := cfgMap["chat_id"].(string)
-			h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, body.GroupChatID)
-		}
+		h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, body.GroupChatID)
 	}
 	// Remove from pending list now that it's been enabled.
 	if h.groupDetector != nil {
@@ -668,8 +702,8 @@ func (h *NotificationsHandler) AddGroupManually(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Read existing Telegram config to get bot token for observation.
-	nc, err := h.st.GetNotificationConfig(r.Context(), user.ID, "telegram")
+	// Resolve bot token + DM chat ID for this user via the vault-aware store.
+	botToken, chatID, err := h.telegramConfigStore().TelegramConfig(r.Context(), user.ID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "NOT_CONFIGURED", "Telegram notifications must be configured first")
 		return
@@ -688,12 +722,7 @@ func (h *NotificationsHandler) AddGroupManually(w http.ResponseWriter, r *http.R
 
 	// Start group observation.
 	if h.groupObs != nil {
-		var cfgMap map[string]any
-		if json.Unmarshal(nc.Config, &cfgMap) == nil {
-			botToken, _ := cfgMap["bot_token"].(string)
-			chatID, _ := cfgMap["chat_id"].(string)
-			h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, info.ChatID)
-		}
+		h.groupObs.EnsureGroupObservation(user.ID, botToken, chatID, info.ChatID)
 	}
 	// Remove from pending list if it was there.
 	if h.groupDetector != nil {

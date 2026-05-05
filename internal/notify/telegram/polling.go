@@ -145,16 +145,12 @@ func (n *Notifier) BootstrapGroupObservation(ctx context.Context) {
 	for _, g := range groups {
 		bi, ok := configCache[g.UserID]
 		if !ok {
-			nc, err := n.store.GetNotificationConfig(ctx, g.UserID, "telegram")
+			botToken, chatID, err := n.userConfig(ctx, g.UserID)
 			if err != nil {
-				continue
-			}
-			var cfg telegramCfg
-			if err := json.Unmarshal(nc.Config, &cfg); err != nil || cfg.BotToken == "" || cfg.ChatID == "" {
 				configCache[g.UserID] = nil
 				continue
 			}
-			bi = &botInfo{botToken: cfg.BotToken, chatID: cfg.ChatID}
+			bi = &botInfo{botToken: botToken, chatID: chatID}
 			configCache[g.UserID] = bi
 		}
 		if bi == nil {

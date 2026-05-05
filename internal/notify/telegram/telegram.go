@@ -21,11 +21,20 @@ import (
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/vault"
 )
+
+// vaultBotTokenKey is the key under which a user's Telegram bot token is
+// encrypted in the credential vault. The legacy plaintext copy in
+// notification_configs.config.bot_token is kept readable for backward
+// compatibility with rows written before this protection landed; new
+// writes always store an empty string in the JSON blob.
+const vaultBotTokenKey = "notify.telegram.bot_token"
 
 // Notifier sends Telegram messages for approval and service-activation requests.
 type Notifier struct {
 	store         store.Store
+	vault         vault.Vault // optional; when set, bot tokens are encrypted at rest
 	client        *http.Client
 	pairingClient *http.Client // longer timeout for long-poll getUpdates
 	pairings      sync.Map     // pairing ID → *pairingSession
@@ -62,6 +71,14 @@ func New(st store.Store, serverCtx context.Context) *Notifier {
 // SetMessageBuffer sets the message buffer used for group chat observation.
 func (n *Notifier) SetMessageBuffer(buf groupchat.Buffer) {
 	n.msgBuffer = buf
+}
+
+// SetVault wires the credential vault into the notifier. Once set, bot
+// tokens are written via vault.Set rather than embedded in the
+// notification_configs JSON column. Call before the server starts handling
+// pairing or upsert traffic.
+func (n *Notifier) SetVault(v vault.Vault) {
+	n.vault = v
 }
 
 // SetRedisStores configures Redis-backed stores for multi-instance deployments.
@@ -948,6 +965,9 @@ type telegramCfg struct {
 }
 
 // userConfig fetches the per-user bot_token and chat_id from the store.
+// When a vault is configured, the bot token is read from the vault and the
+// JSON column's bot_token field acts only as a legacy fallback for rows
+// written before encryption was introduced.
 func (n *Notifier) userConfig(ctx context.Context, userID string) (botToken, chatID string, err error) {
 	nc, err := n.store.GetNotificationConfig(ctx, userID, "telegram")
 	if errors.Is(err, store.ErrNotFound) {
@@ -960,6 +980,11 @@ func (n *Notifier) userConfig(ctx context.Context, userID string) (botToken, cha
 	if err := json.Unmarshal(nc.Config, &cfg); err != nil {
 		return "", "", fmt.Errorf("telegram: invalid config for user %s: %w", userID, err)
 	}
+	if cfg.BotToken == "" && n.vault != nil {
+		if data, vErr := n.vault.Get(ctx, userID, vaultBotTokenKey); vErr == nil {
+			cfg.BotToken = string(data)
+		}
+	}
 	if cfg.BotToken == "" {
 		return "", "", fmt.Errorf("telegram: user %s config missing bot_token", userID)
 	}
@@ -968,3 +993,60 @@ func (n *Notifier) userConfig(ctx context.Context, userID string) (botToken, cha
 	}
 	return cfg.BotToken, cfg.ChatID, nil
 }
+
+// SaveTelegramConfig persists a user's Telegram bot token and DM chat ID.
+// When a vault is configured the bot token is stored encrypted; otherwise
+// it falls back to the JSON column (used in tests and pre-vault setups).
+// Implements notify.TelegramConfigStore.
+func (n *Notifier) SaveTelegramConfig(ctx context.Context, userID, botToken, chatID string) error {
+	if userID == "" {
+		return fmt.Errorf("telegram: user_id is required")
+	}
+	if botToken == "" {
+		return fmt.Errorf("telegram: bot_token is required")
+	}
+	if chatID == "" {
+		return fmt.Errorf("telegram: chat_id is required")
+	}
+	jsonToken := botToken
+	if n.vault != nil {
+		if err := n.vault.Set(ctx, userID, vaultBotTokenKey, []byte(botToken)); err != nil {
+			return fmt.Errorf("telegram: persist bot_token: %w", err)
+		}
+		jsonToken = "" // do not duplicate the secret into the JSON column
+	}
+	cfgBytes, err := json.Marshal(map[string]string{
+		"bot_token": jsonToken,
+		"chat_id":   chatID,
+	})
+	if err != nil {
+		return fmt.Errorf("telegram: marshal config: %w", err)
+	}
+	if err := n.store.UpsertNotificationConfig(ctx, userID, "telegram", cfgBytes); err != nil {
+		// Roll back the vault write so we don't leave a token without a corresponding row.
+		if n.vault != nil {
+			_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+		}
+		return fmt.Errorf("telegram: save notification config: %w", err)
+	}
+	return nil
+}
+
+// TelegramConfig returns the user's bot token and DM chat ID.
+// Implements notify.TelegramConfigStore.
+func (n *Notifier) TelegramConfig(ctx context.Context, userID string) (botToken, chatID string, err error) {
+	return n.userConfig(ctx, userID)
+}
+
+// DeleteTelegramConfig removes the user's Telegram bot token from the
+// vault (if configured) and the notification config row from the store.
+// Implements notify.TelegramConfigStore.
+func (n *Notifier) DeleteTelegramConfig(ctx context.Context, userID string) error {
+	if n.vault != nil {
+		_ = n.vault.Delete(ctx, userID, vaultBotTokenKey)
+	}
+	return n.store.DeleteNotificationConfig(ctx, userID, "telegram")
+}
+
+// Compile-time check that *Notifier satisfies notify.TelegramConfigStore.
+var _ notify.TelegramConfigStore = (*Notifier)(nil)
