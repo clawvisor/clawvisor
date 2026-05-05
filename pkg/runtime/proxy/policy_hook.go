@@ -70,7 +70,7 @@ func (s *Server) InstallEgressPolicy(hooks PolicyHooks) {
 		req.ContentLength = int64(len(bodyBytes))
 
 		host := requestHost(req)
-		if isHarnessAllowlisted(hooks.Config, host) {
+		if isHarnessAllowlistedForSession(st.Session, hooks.Config, host) {
 			return req, nil
 		}
 		reqFingerprint := fingerprintRequest(st.Session.AgentID, req, bodyBytes)
@@ -730,6 +730,14 @@ func firstNonEmpty(values ...string) string {
 }
 
 func isHarnessAllowlisted(cfg *config.Config, host string) bool {
+	return isHarnessAllowlistedForSession(nil, cfg, host)
+}
+
+// isHarnessAllowlistedForSession returns whether the given host is on the
+// harness allowlist for this session. Per-session allowlist override (when
+// non-empty) takes precedence over cfg.RuntimePolicy.HarnessAllowlist; the
+// LLM endpoint and the built-in defaults always pass through regardless.
+func isHarnessAllowlistedForSession(session *store.RuntimeSession, cfg *config.Config, host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
 		return false
@@ -738,14 +746,14 @@ func isHarnessAllowlisted(cfg *config.Config, host string) bool {
 		if endpointHost := normalizedEndpointHost(cfg.LLM.Endpoint); endpointHost != "" && host == endpointHost {
 			return true
 		}
-		for _, allowed := range cfg.RuntimePolicy.HarnessAllowlist {
-			allowed = strings.ToLower(strings.TrimSpace(allowed))
-			if allowed == "" {
-				continue
-			}
-			if host == allowed || strings.HasSuffix(host, "."+allowed) {
-				return true
-			}
+	}
+	for _, allowed := range sessionHarnessAllowlist(session, cfg) {
+		allowed = strings.ToLower(strings.TrimSpace(allowed))
+		if allowed == "" {
+			continue
+		}
+		if host == allowed || strings.HasSuffix(host, "."+allowed) {
+			return true
 		}
 	}
 	switch host {

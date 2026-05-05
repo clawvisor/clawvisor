@@ -94,7 +94,7 @@ func (s *Server) installHeldApprovalRelease(hooks ToolUseHooks) {
 			return s.syntheticHeldToolUseResponse(req, st.Session, hooks, resolved, allowed, reason, body)
 		}
 
-		if hooks.Config == nil || !hooks.Config.RuntimePolicy.InlineApprovalEnabled {
+		if !sessionInlineApprovalEnabled(st.Session, hooks.Config) {
 			return req, nil
 		}
 		inlineStartedAt := time.Now()
@@ -157,7 +157,7 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 	var leaseID *string
 	usedActiveTaskContext := false
 	if allow && held.TaskID != "" {
-		lease, err := hooks.Leases.Open(req.Context(), session.ID, held.TaskID, held.ToolUseID, held.ToolName, toolLeaseTTL(hooks.Config))
+		lease, err := hooks.Leases.Open(req.Context(), session.ID, held.TaskID, held.ToolUseID, held.ToolName, sessionToolLeaseTTL(session, hooks.Config))
 		if err == nil && lease != nil {
 			leaseID = &lease.LeaseID
 			emitRuntimeEvent(req.Context(), hooks.Store, session, nil, runtimeEventOptions{
@@ -351,7 +351,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 						Rule:              matchedRule,
 						Task:              reviewTask,
 						WouldReview:       true,
-						WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+						WouldPromptInline: sessionInlineApprovalEnabled(st.Session, hooks.Config),
 					}
 					return conversation.ToolUseVerdict{Allowed: true, Reason: reviewReason}
 				}
@@ -362,7 +362,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 						Task:              reviewTask,
 						ApprovalID:        &rec.ID,
 						WouldReview:       true,
-						WouldPromptInline: hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+						WouldPromptInline: sessionInlineApprovalEnabled(st.Session, hooks.Config),
 						Held:              held,
 					}
 				} else {
@@ -426,7 +426,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 				Task:                  reviewTask,
 				UsedActiveTaskContext: reviewTask != nil && usedActiveTaskSelection(ctx.Req.Context(), hooks.Store, st.Session.ID, reviewTask),
 				WouldReview:           true,
-				WouldPromptInline:     hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+				WouldPromptInline:     sessionInlineApprovalEnabled(st.Session, hooks.Config),
 			}
 			return conversation.ToolUseVerdict{Allowed: true, Reason: "observation mode: tool use would require runtime approval"}
 		}
@@ -442,7 +442,7 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 				Task:                    reviewTask,
 				ApprovalID:              &rec.ID,
 				WouldReview:             true,
-				WouldPromptInline:       hooks.Config != nil && hooks.Config.RuntimePolicy.InlineApprovalEnabled,
+				WouldPromptInline:       sessionInlineApprovalEnabled(st.Session, hooks.Config),
 				Held:                    held,
 				UsedConvJudgeResolution: judgment.Kind != "",
 			}
@@ -512,7 +512,7 @@ func (s *Server) applyToolUseDecision(ctx context.Context, hooks ToolUseHooks, s
 	if decision.Verdict.Allowed {
 		var leaseID *string
 		if state.Task != nil {
-			lease, err := hooks.Leases.Open(ctx, st.Session.ID, state.Task.ID, decision.ToolUse.ID, decision.ToolUse.Name, toolLeaseTTL(hooks.Config))
+			lease, err := hooks.Leases.Open(ctx, st.Session.ID, state.Task.ID, decision.ToolUse.ID, decision.ToolUse.Name, sessionToolLeaseTTL(st.Session, hooks.Config))
 			if err == nil && lease != nil {
 				leaseID = &lease.LeaseID
 				emitRuntimeEvent(ctx, hooks.Store, st.Session, st, runtimeEventOptions{
