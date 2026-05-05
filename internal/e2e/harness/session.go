@@ -31,7 +31,7 @@ func (s *Server) CreateSession(ctx context.Context, p *Principal) (*SessionHandl
 	if p == nil || p.Agent == nil || p.User == nil {
 		return nil, fmt.Errorf("harness: principal is required")
 	}
-	res, err := s.Manager.CreateRuntimeSession(ctx, p.Agent.ID, p.User.ID, runtimeproxy.CreateSessionRequest{
+	res, err := s.Manager.CreateRuntimeSession(ctx, p.Agent, runtimeproxy.CreateSessionRequest{
 		Mode: "proxy",
 	})
 	if err != nil {
