@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 )
 
 // SessionHandle bundles everything the responder needs to talk through the

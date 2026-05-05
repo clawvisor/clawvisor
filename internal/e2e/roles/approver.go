@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 

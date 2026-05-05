@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 )
 
 // Upstreams installs in-process httptest mocks behind hostnames and rewires

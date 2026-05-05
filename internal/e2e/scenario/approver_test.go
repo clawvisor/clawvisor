@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 )
 
 func TestProbabilisticDeciderDeterministicWithSeed(t *testing.T) {

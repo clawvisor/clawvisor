@@ -27,7 +27,7 @@ import (
 	"sync"
 
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	"github.com/clawvisor/clawvisor/internal/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
