@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.2](https://github.com/clawvisor/clawvisor/compare/v0.9.1...v0.9.2) (2026-05-05)
+
+
+### Features
+
+* **e2e:** add LLM-driven harness with 15 scenarios for runtime + tasks + gateway ([#325](https://github.com/clawvisor/clawvisor/issues/325)) ([fe3dd48](https://github.com/clawvisor/clawvisor/commit/fe3dd4841be9721c34ac71348d9b544d1a8538a3))
+* **runtime:** edge TLS provider, multi-tenant leaf cert cache, log redaction handler ([#329](https://github.com/clawvisor/clawvisor/issues/329)) ([98a0f8e](https://github.com/clawvisor/clawvisor/commit/98a0f8e9d7fceed4c19efc35c64588512ac3f97c))
+* **runtime:** per-session overrides for InlineApproval, lease TTL, harness allowlist ([#328](https://github.com/clawvisor/clawvisor/issues/328)) ([736de18](https://github.com/clawvisor/clawvisor/commit/736de18425ccb34e4576b9cd607709d2e08048a5))
+
+
+### Bug Fixes
+
+* **api:** return empty array for agents list when none exist ([#320](https://github.com/clawvisor/clawvisor/issues/320)) ([c9e1061](https://github.com/clawvisor/clawvisor/commit/c9e1061cb53c1f7bb1374ed9ef995ab83f8d91a4))
+* **api:** return empty arrays for remaining list endpoints ([#322](https://github.com/clawvisor/clawvisor/issues/322)) ([345bc86](https://github.com/clawvisor/clawvisor/commit/345bc86f335fa307b50fe074def7d4f68725f471))
+* **dev:** pin Vite to 25297 and randomize backend so OAuth works ([#323](https://github.com/clawvisor/clawvisor/issues/323)) ([47bdf88](https://github.com/clawvisor/clawvisor/commit/47bdf88864724b8bf4be48724d7efc7b12908eac))
+* **e2e:** update harness to new CreateRuntimeSession signature ([#334](https://github.com/clawvisor/clawvisor/issues/334)) ([65f7bda](https://github.com/clawvisor/clawvisor/commit/65f7bdace562c0235afc2a36847173bbbe4aec51))
+* **e2e:** update proxy imports to pkg/ after package move ([#333](https://github.com/clawvisor/clawvisor/issues/333)) ([a0edd3f](https://github.com/clawvisor/clawvisor/commit/a0edd3f9644f346afb7861166f341dddc9f6a01b))
+* **gmail:** thread draft replies and add cc/bcc support ([#324](https://github.com/clawvisor/clawvisor/issues/324)) ([0b27b7f](https://github.com/clawvisor/clawvisor/commit/0b27b7fa916e04874c90eabc47692d039626f6e9))
+
 ## [0.9.1](https://github.com/clawvisor/clawvisor/compare/v0.9.0...v0.9.1) (2026-05-04)
 
 
