@@ -127,7 +127,7 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		}
 		return internalRoute{"GET", path, "GET /api/skill/catalog", nil}, nil, nil
 
-	case "create_task", "clawvisor_task_create":
+	case "create_task":
 		path := "/api/tasks"
 		path += buildWaitQuery(args, getString, true)
 		// Remove wait/timeout from body — they're query params, not task fields.
@@ -145,17 +145,6 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		return internalRoute{"GET", path, "GET /api/tasks/{id}",
 			map[string]string{"id": id}}, nil, nil
 
-	case "clawvisor_task_start":
-		id := getString("task_id")
-		if err := validatePathParam(id, "task_id"); err != nil {
-			return internalRoute{}, nil, err
-		}
-		path := "/api/tasks/" + id + "/start"
-		path += buildWaitQuery(args, getString, true)
-		body := stripKeys(args, "task_id", "wait", "timeout")
-		return internalRoute{"POST", path, "POST /api/tasks/{id}/start",
-			map[string]string{"id": id}}, body, nil
-
 	case "complete_task":
 		id := getString("task_id")
 		if err := validatePathParam(id, "task_id"); err != nil {
@@ -163,15 +152,6 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		}
 		return internalRoute{"POST", "/api/tasks/" + id + "/complete", "POST /api/tasks/{id}/complete",
 			map[string]string{"id": id}}, nil, nil
-
-	case "clawvisor_task_end":
-		id := getString("task_id")
-		if err := validatePathParam(id, "task_id"); err != nil {
-			return internalRoute{}, nil, err
-		}
-		body := stripKeys(args, "task_id", "wait", "timeout")
-		return internalRoute{"POST", "/api/tasks/" + id + "/end", "POST /api/tasks/{id}/end",
-			map[string]string{"id": id}}, body, nil
 
 	case "expand_task":
 		id := getString("task_id")
@@ -207,27 +187,6 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 		path += buildWaitQuery(args, getString, true)
 		return internalRoute{"POST", path, "POST /api/gateway/request/{request_id}/execute",
 			map[string]string{"request_id": id}}, nil, nil
-
-	case "create_adapter":
-		body, _ := json.Marshal(args)
-		return internalRoute{"POST", "/api/adapters/generate", "POST /api/adapters/generate", nil}, body, nil
-
-	case "update_adapter":
-		id := getString("service_id")
-		if err := validatePathParam(id, "service_id"); err != nil {
-			return internalRoute{}, nil, err
-		}
-		body := stripKeys(args, "service_id")
-		return internalRoute{"PUT", "/api/adapters/" + id + "/generate", "PUT /api/adapters/{service_id}/generate",
-			map[string]string{"service_id": id}}, body, nil
-
-	case "remove_adapter":
-		id := getString("service_id")
-		if err := validatePathParam(id, "service_id"); err != nil {
-			return internalRoute{}, nil, err
-		}
-		return internalRoute{"DELETE", "/api/adapters/" + id, "DELETE /api/adapters/{service_id}",
-			map[string]string{"service_id": id}}, nil, nil
 
 	case "report_bug":
 		body, _ := json.Marshal(args)
