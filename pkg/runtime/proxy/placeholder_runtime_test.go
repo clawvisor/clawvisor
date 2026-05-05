@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
-	"github.com/clawvisor/clawvisor/internal/store/sqlite"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"

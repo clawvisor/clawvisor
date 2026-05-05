@@ -40,8 +40,8 @@ import (
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/relay"
-	pgstore "github.com/clawvisor/clawvisor/internal/store/postgres"
-	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	pgstore "github.com/clawvisor/clawvisor/pkg/store/postgres"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"

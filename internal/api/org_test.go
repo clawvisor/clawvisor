@@ -11,7 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
-	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/store"

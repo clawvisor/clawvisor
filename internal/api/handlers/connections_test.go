@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/notify"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )

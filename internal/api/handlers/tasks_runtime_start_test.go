@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/internal/store/sqlite"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 

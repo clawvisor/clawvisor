@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	sqlitestore "github.com/clawvisor/clawvisor/internal/store/sqlite"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/internal/vault"
 )
 

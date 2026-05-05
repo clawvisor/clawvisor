@@ -189,10 +189,10 @@ If the extraction LLM call fails (timeout, malformed JSON, rate limit), the fail
 | `internal/intent/extractor.go` | **New file.** `Extractor` interface, `LLMExtractor`, `NoopExtractor`, extraction prompt, response parser, substring validation |
 | `internal/intent/cache.go` | Include chain facts hash in cache key (omitted when no session) |
 | `pkg/store/store.go` | Add `ChainFact` model, `SaveChainFacts`, `ListChainFacts`, `DeleteChainFactsByTask` to Store interface |
-| `internal/store/sqlite/store.go` | Implement `SaveChainFacts`, `ListChainFacts`, `DeleteChainFactsByTask` |
-| `internal/store/postgres/store.go` | Implement `SaveChainFacts`, `ListChainFacts`, `DeleteChainFactsByTask` |
-| `internal/store/sqlite/migrations/012_chain_facts.sql` | **New file.** Create `chain_facts` table (with `session_id` column) |
-| `internal/store/postgres/migrations/012_chain_facts.sql` | **New file.** Create `chain_facts` table (with `session_id` column) |
+| `pkg/store/sqlite/store.go` | Implement `SaveChainFacts`, `ListChainFacts`, `DeleteChainFactsByTask` |
+| `pkg/store/postgres/store.go` | Implement `SaveChainFacts`, `ListChainFacts`, `DeleteChainFactsByTask` |
+| `pkg/store/sqlite/migrations/012_chain_facts.sql` | **New file.** Create `chain_facts` table (with `session_id` column) |
+| `pkg/store/postgres/migrations/012_chain_facts.sql` | **New file.** Create `chain_facts` table (with `session_id` column) |
 | `internal/api/handlers/gateway.go` | Accept `session_id` from request, load chain facts before verify, extraction after execute, substring validation |
 | `internal/api/handlers/guard.go` | Accept `session_id` from request, load chain facts before verify |
 | `internal/api/handlers/tasks.go` | Delete chain facts on task completion/revocation |

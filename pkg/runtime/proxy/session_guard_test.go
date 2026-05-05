@@ -11,7 +11,7 @@ import (
 
 	"github.com/elazarl/goproxy"
 
-	"github.com/clawvisor/clawvisor/internal/store/sqlite"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
