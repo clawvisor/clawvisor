@@ -35,6 +35,13 @@ type Config struct {
 	BodyTraces        bool
 	BodyTraceDir      string
 	RedisClient       *redis.Client
+
+	// Phase 0.2: when set, the listener's tls.Config.GetCertificate
+	// returns this provider's cert (the cloud-mode path: a publicly-
+	// trusted cert mounted from a cert-manager-managed Secret) instead
+	// of forging one from the MITM CA. Daemon mode leaves this nil and
+	// gets the existing single-CA behavior.
+	EdgeCert EdgeCertProvider
 }
 
 type Server struct {
@@ -318,6 +325,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) listenerTLSConfig() (*tls.Config, error) {
+	// Phase 0.2: when an EdgeCertProvider is configured (cloud mode),
+	// the listener serves the provider's cert directly. Forged-from-CA
+	// leaves stay reserved for goproxy MITM, not the listener.
+	if s.cfg.EdgeCert != nil {
+		return &tls.Config{
+			GetCertificate: s.cfg.EdgeCert.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}, nil
+	}
+
 	names := s.cfg.ListenerHostnames
 	if len(names) == 0 {
 		names = []string{"localhost", "127.0.0.1"}
