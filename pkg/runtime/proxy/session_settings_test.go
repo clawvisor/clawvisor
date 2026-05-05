@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clawvisor/clawvisor/internal/runtime/review"
+	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )

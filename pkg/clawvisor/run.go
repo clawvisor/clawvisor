@@ -15,10 +15,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/llm"
-	runtimeleases "github.com/clawvisor/clawvisor/internal/runtime/leases"
+	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
-	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
+	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
