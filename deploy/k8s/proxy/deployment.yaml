@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clawvisor-proxy
+  namespace: clawvisor-proxy
+  labels:
+    app: clawvisor-proxy
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # keep listener up during rollouts
+  selector:
+    matchLabels:
+      app: clawvisor-proxy
+  template:
+    metadata:
+      labels:
+        app: clawvisor-proxy
+      annotations:
+        # cert-manager rotation triggers a rollout via this annotation
+        # when the edge cert Secret changes. The proxy binary itself
+        # also reloads via FileEdgeCertProvider's atomic-pointer swap;
+        # the rollout is belt-and-suspenders for cases where the binary
+        # missed the change and to refresh the in-flight cert pinning
+        # in the running goroutines.
+        cert-rotation/trigger: "manual"
+    spec:
+      serviceAccountName: clawvisor-proxy
+
+      # Phase 0.X: drain hijacked CONNECT tunnels gracefully. The
+      # binary's SIGTERM handler closes the listener, waits for the
+      # tunnel registry to drain (≤60s), then hard-closes stragglers.
+      # K8s gives us up to terminationGracePeriodSeconds.
+      terminationGracePeriodSeconds: 90
+
+      # PDB on top of this; max 1 unavailable at a time.
+      # See pdb.yaml.
+
+      affinity:
+        # Spread replicas across zones in the regional cluster.
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: clawvisor-proxy
+
+      containers:
+        - name: proxy
+          image: us-central1-docker.pkg.dev/clawvisor-staging/clawvisor/clawvisor-proxy:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: proxy
+              containerPort: 8080
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: clawvisor-proxy-config
+            - secretRef:
+                name: clawvisor-proxy-secrets
+
+          # Phase 0.3 decision: TCP probe only, no HTTP /healthz on
+          # the proxy binary. goproxy 401s anything it doesn't know
+          # which would falsely fail HTTP probes.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+
+          volumeMounts:
+            - name: edge-tls
+              mountPath: /etc/edge-tls
+              readOnly: true
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+
+        # Cloud SQL Auth Proxy sidecar — provides IAM-authenticated
+        # connection to Postgres without static credentials. The
+        # Cloud SQL connection name comes from the TF output:
+        # `<project>:<region>:<instance>` e.g.
+        # `clawvisor-staging:us-central1:clawvisor-proxy-staging`.
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.13.0
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "--auto-iam-authn"
+            - "clawvisor-staging:us-central1:clawvisor-proxy-staging"
+          ports:
+            - name: pg
+              containerPort: 5432
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: edge-tls
+          secret:
+            secretName: clawvisor-proxy-edge-tls
+            optional: false # require cert-manager to have minted it

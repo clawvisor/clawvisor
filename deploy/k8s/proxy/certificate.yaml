@@ -1,0 +1,49 @@
+# cert-manager Issuer + Certificate for the edge TLS cert that the
+# proxy listener serves on proxy-staging.clawvisor.com (or
+# proxy.clawvisor.com in prod).
+#
+# DNS-01 is required because the listener can't speak HTTP/HTTPS
+# challenge — it's a TCP-pass-through L4 LB. The Issuer uses Cloud DNS
+# via the workload identity SA; the GCP SA needs the
+# `roles/dns.admin` role on the DNS zone (NOT in the proxy TF; add to
+# DNS-zone TF if managed elsewhere).
+
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-dns
+  namespace: clawvisor-proxy
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@clawvisor.com # update to real on-call alias
+    privateKeySecretRef:
+      name: letsencrypt-dns-account
+    solvers:
+      - dns01:
+          cloudDNS:
+            project: clawvisor-staging
+            # The K8s SA `clawvisor-proxy` is bound to the GCP SA
+            # `clawvisor-proxy-workload`, which must have
+            # `roles/dns.admin` on the DNS zone. cert-manager picks up
+            # the credential via Workload Identity automatically.
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: edge-tls
+  namespace: clawvisor-proxy
+spec:
+  secretName: clawvisor-proxy-edge-tls
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days before expiry
+  issuerRef:
+    name: letsencrypt-dns
+    kind: Issuer
+  commonName: proxy-staging.clawvisor.com
+  dnsNames:
+    - proxy-staging.clawvisor.com
+  privateKey:
+    algorithm: ECDSA
+    size: 256

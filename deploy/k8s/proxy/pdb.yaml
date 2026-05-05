@@ -1,0 +1,14 @@
+# PodDisruptionBudget — never let voluntary disruptions
+# (node drains, autoscaler scale-downs, rolling deploys) drop us
+# below 2 ready replicas. Combined with the Deployment's
+# maxUnavailable: 0, this keeps the listener up across rollouts.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: clawvisor-proxy
+  namespace: clawvisor-proxy
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: clawvisor-proxy

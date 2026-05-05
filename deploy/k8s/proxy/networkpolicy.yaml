@@ -1,0 +1,92 @@
+# Phase 0.X — Pod egress firewall for the runtime proxy fleet.
+#
+# Denies all egress except: Cloud SQL (Postgres), Memorystore (Redis),
+# Vertex AI endpoints, GCP metadata server (workload identity), and the
+# public internet via Cloud NAT for upstream agent traffic.
+#
+# This NetworkPolicy is the LAUNCH-BLOCKING guardrail. The plan documents
+# that the upstream-traffic allowance (0.0.0.0/0:443) means a live runtime
+# compromise can still exfiltrate plaintext — Cloud NAT static IPs only
+# provide attribution. The mitigations on top of this policy are:
+#   - Per-org upstream allowlist (Phase 1b enterprise tier)
+#   - Cloud NAT log review with anomaly detection on per-pod destination
+#     cardinality
+#   - Per-user concurrency limits to bound exfil rate
+#
+# Apply: kubectl apply -f networkpolicy.yaml
+#
+# IP/CIDR placeholders below MUST be filled in from the actual
+# Cloud SQL / Memorystore / Vertex deployments before this manifest is
+# applied. See the runbook entry in on-call appendix.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clawvisor-proxy-egress
+  namespace: clawvisor-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app: clawvisor-proxy
+  policyTypes:
+    - Egress
+
+  egress:
+    # ── DNS ──────────────────────────────────────────────────────────────
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # ── Cloud SQL Postgres (private IP via PSC or Auth Proxy sidecar) ────
+    # Replace 10.x.x.x/32 with the actual Cloud SQL private IP.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8       # PLACEHOLDER — VPC private range
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # ── Memorystore Redis (VPC peering) ──────────────────────────────────
+    # Replace with actual Memorystore VPC range.
+    - to:
+        - ipBlock:
+            cidr: 10.128.0.0/9     # PLACEHOLDER
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # ── GCP metadata server (for Workload Identity) ──────────────────────
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - port: 80
+          protocol: TCP
+
+    # ── Vertex AI ────────────────────────────────────────────────────────
+    # us-aiplatform.googleapis.com — currently routed via *.googleapis.com.
+    # CIDR-based allow against Google's public range; refined to a specific
+    # private Service Connect endpoint once that's provisioned.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Internal cluster ranges blocked here; egress to internal
+              # services goes through the explicit allows above.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+    # NOTE: this last rule is the broad "outbound HTTPS" allow that lets
+    # the proxy reach arbitrary user-chosen upstream APIs (Anthropic,
+    # OpenAI, etc.). It is the documented launch risk. Tighten to a per-org
+    # allowlist in Phase 1b's enterprise tier.

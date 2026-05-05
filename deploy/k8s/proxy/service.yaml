@@ -1,0 +1,23 @@
+# L4 LoadBalancer Service — TCP pass-through to the proxy pod's port
+# 8080. The `cloud.google.com/l4-rbs: enabled` annotation provisions a
+# regional Network LB (the same shape Phase 0.0 validated). The
+# loadBalancerIP pins the LB to the static external IP reserved in TF,
+# so DNS doesn't break across Service re-creates.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clawvisor-proxy
+  namespace: clawvisor-proxy
+  annotations:
+    cloud.google.com/l4-rbs: "enabled"
+spec:
+  type: LoadBalancer
+  loadBalancerIP: "REPLACE_FROM_TF_OUTPUT_lb_external_ip"
+  externalTrafficPolicy: Cluster
+  selector:
+    app: clawvisor-proxy
+  ports:
+    - name: tls
+      port: 443
+      targetPort: 8080
+      protocol: TCP

@@ -1,0 +1,32 @@
+# Non-secret runtime config injected as env vars into the proxy pod.
+# Secret values (DATABASE_URL credentials, REDIS auth, vault master
+# key, secret cache HMAC) are mounted from Secret resources, not here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clawvisor-proxy-config
+  namespace: clawvisor-proxy
+data:
+  PROXY_ADDR: "0.0.0.0:8080"
+  PROXY_REGION: "us-central1"
+
+  # cert-manager mounts the edge TLS Secret at this path.
+  EDGE_TLS_CERT_PATH: "/etc/edge-tls/tls.crt"
+  EDGE_TLS_KEY_PATH: "/etc/edge-tls/tls.key"
+
+  # Vertex AI — judge LLM endpoint config. Project + model committed in
+  # the plan (`gemini-1.5-flash` for staging; revisit for prod after
+  # accuracy comparison vs alternatives in Phase 1b).
+  VERTEX_PROJECT: "clawvisor-staging"
+  VERTEX_MODEL: "gemini-1.5-flash"
+
+  # Postgres connection string template. Secret-backed username/password
+  # are materialized via envFrom; the pod resolves these into a real
+  # DSN at startup.
+  DATABASE_HOST: "10.0.0.0" # placeholder — Cloud SQL private IP from TF output
+  DATABASE_NAME: "clawvisor"
+  DATABASE_SSLMODE: "require"
+
+  # Redis (Memorystore) connection.
+  REDIS_HOST: "10.0.0.0" # placeholder — Memorystore host from TF output
+  REDIS_PORT: "6379"

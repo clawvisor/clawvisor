@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clawvisor-proxy
+  labels:
+    app.kubernetes.io/name: clawvisor-proxy
