@@ -85,7 +85,8 @@ var ssrfRanges = func() []*net.IPNet {
 }()
 
 // ssrfSafeClient is an HTTP client that blocks requests to private/internal IPs,
-// resolving DNS at dial time to prevent rebinding attacks.
+// resolving DNS at dial time to prevent rebinding attacks. Used both for adapter
+// generation source fetches and for OAuth token-endpoint exchanges in services.go.
 var ssrfSafeClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{

@@ -74,6 +74,37 @@ func validAlias(s string) bool {
 	return validAliasRe.MatchString(s)
 }
 
+// validateTokenEndpoint checks that an OAuth token (or device-code) URL is
+// safe to dial: parseable, https-only (or http for localhost dev), and not
+// using userinfo or a fragment. IP-level SSRF checks happen at connect time
+// in ssrfSafeClient's DialContext, which prevents DNS rebinding.
+func validateTokenEndpoint(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("token_url is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("token_url is not a valid URL: %w", err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("token_url is missing a host")
+	}
+	if u.User != nil {
+		return fmt.Errorf("token_url must not embed userinfo")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" {
+		host := u.Hostname()
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+		return fmt.Errorf("token_url must use https (http only allowed for localhost)")
+	}
+	return fmt.Errorf("token_url must use http or https (got %q)", u.Scheme)
+}
+
 // validateCLICallback checks that a CLI callback URL is safe — it must be
 // http-only and point to localhost or 127.0.0.1. Returns "" if invalid.
 func validateCLICallback(raw string) string {
@@ -541,6 +572,11 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			"redirect_uri":  {oauthCfg.RedirectURL},
 			"grant_type":    {"authorization_code"},
 		}
+		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
+			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+			return
+		}
 		tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", oauthCfg.Endpoint.TokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
 			oauthPopupClose(w, "Failed to build token request.", "")
@@ -549,7 +585,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		tokenReq.Header.Set("Accept", "application/json")
 
-		resp, err := http.DefaultClient.Do(tokenReq)
+		resp, err := ssrfSafeClient.Do(tokenReq)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Token exchange with provider failed.", "")
@@ -589,8 +625,14 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		// Standard OAuth2 token exchange.
-		token, err := oauthCfg.Exchange(r.Context(), code)
+		// Standard OAuth2 token exchange — route through the SSRF-safe client.
+		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
+			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
+			oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+			return
+		}
+		exchangeCtx := context.WithValue(r.Context(), oauth2.HTTPClient, ssrfSafeClient)
+		token, err := oauthCfg.Exchange(exchangeCtx, code)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
 			oauthPopupClose(w, "Token exchange with provider failed.", "")
@@ -1475,6 +1517,11 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 		"client_id": {clientID},
 		"scope":     {strings.Join(dfCfg.Scopes, " ")},
 	}
+	if err := validateTokenEndpoint(dfCfg.DeviceCodeURL); err != nil {
+		h.logger.Warn("device flow: invalid device_code_url", "service", serviceID, "err", err)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "device_code_url is not allowed")
+		return
+	}
 	req, err := http.NewRequestWithContext(r.Context(), "POST", dfCfg.DeviceCodeURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to build request")
@@ -1483,7 +1530,7 @@ func (h *ServicesHandler) DeviceFlowStart(w http.ResponseWriter, r *http.Request
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		h.logger.Warn("device flow: request to provider failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
@@ -1588,6 +1635,11 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 		"device_code": {entry.DeviceCode},
 		"grant_type":  {entry.GrantType},
 	}
+	if err := validateTokenEndpoint(entry.TokenURL); err != nil {
+		h.logger.Warn("device flow poll: invalid token_url", "service", entry.ServiceID, "err", err)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "token_url is not allowed")
+		return
+	}
 	req, err := http.NewRequestWithContext(r.Context(), "POST", entry.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to build request")
@@ -1596,7 +1648,7 @@ func (h *ServicesHandler) DeviceFlowPoll(w http.ResponseWriter, r *http.Request)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		h.logger.Warn("device flow poll: request failed", "err", err)
 		writeError(w, http.StatusBadGateway, "PROVIDER_ERROR", "failed to contact provider")
@@ -1891,6 +1943,11 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 		"redirect_uri":  {entry.RedirectURI},
 		"grant_type":    {"authorization_code"},
 	}
+	if err := validateTokenEndpoint(entry.TokenURL); err != nil {
+		h.logger.Warn("pkce flow: invalid token_url", "service", entry.ServiceID, "err", err)
+		oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+		return
+	}
 	tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", entry.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		oauthPopupClose(w, "Failed to build token request.", "")
@@ -1899,7 +1956,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(tokenReq)
+	resp, err := ssrfSafeClient.Do(tokenReq)
 	if err != nil {
 		h.logger.Warn("pkce flow: token exchange failed", "err", err)
 		oauthPopupClose(w, "Failed to contact token endpoint.", "")
