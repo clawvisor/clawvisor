@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -80,6 +82,66 @@ func TestReactivatePendingRequest_RejectsCrossUserHijack(t *testing.T) {
 	}
 	if got.Status != "pending" {
 		t.Fatalf("victim's pending approval status changed to %q", got.Status)
+	}
+}
+
+// TestCheckPendingRequestOwnership_RejectsCrossUser exercises the upstream
+// guard used by every OAuth init path (POST /api/oauth/init, GET /api/oauth/url,
+// GET /api/oauth/start). The downstream reactivatePendingRequest check is
+// separately covered above; this guard makes sure attacker-controlled IDs
+// never get stashed in OAuth state in the first place.
+func TestCheckPendingRequestOwnership_RejectsCrossUser(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := sqlitestore.New(ctx, t.TempDir()+"/test.db")
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	st := sqlitestore.NewStore(db)
+	victim, _ := st.CreateUser(ctx, "v@test", "h")
+	attacker, _ := st.CreateUser(ctx, "a@test", "h")
+
+	pa := &store.PendingApproval{
+		ID:        "pa-x",
+		UserID:    victim.ID,
+		RequestID: "req-x",
+		AuditID:   "audit-x",
+		Status:    "pending",
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	h := NewServicesHandler(st, nil, adapters.NewRegistry(),
+		slog.New(slog.NewTextHandler(discardWriter{}, nil)), "", nil)
+
+	cases := []struct {
+		name       string
+		callerID   string
+		pendingID  string
+		wantOK     bool
+		wantStatus int
+	}{
+		{"empty pending id is allowed", attacker.ID, "", true, 0},
+		{"victim's id rejected for attacker", attacker.ID, "req-x", false, http.StatusForbidden},
+		{"unknown id rejected", attacker.ID, "does-not-exist", false, http.StatusForbidden},
+		{"victim's id allowed for victim", victim.ID, "req-x", true, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/oauth/start", nil)
+			ok := h.checkPendingRequestOwnership(rec, req, tc.callerID, tc.pendingID)
+			if ok != tc.wantOK {
+				t.Fatalf("ok=%v want=%v", ok, tc.wantOK)
+			}
+			if !tc.wantOK && rec.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d", rec.Code, tc.wantStatus)
+			}
+		})
 	}
 }
 

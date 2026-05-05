@@ -106,6 +106,31 @@ func validateTokenEndpoint(raw string) error {
 	return fmt.Errorf("token_url must use http or https (got %q)", u.Scheme)
 }
 
+// checkPendingRequestOwnership verifies that pendingReqID — if non-empty —
+// belongs to userID before it gets stashed in OAuth state. Without this an
+// attacker who knows another user's pending_request_id could pass it on the
+// OAuth init step; the OAuth flow would then reactivate that pending request
+// under the attacker's freshly minted credential when the callback completes.
+// reactivatePendingRequest re-checks ownership at callback time as defense in
+// depth, but this helper is the upstream guard. Returns true on success;
+// returns false (and writes the HTTP error) on any failure.
+func (h *ServicesHandler) checkPendingRequestOwnership(w http.ResponseWriter, r *http.Request, userID, pendingReqID string) bool {
+	if pendingReqID == "" {
+		return true
+	}
+	pa, err := h.st.GetPendingApproval(r.Context(), pendingReqID)
+	if err != nil || pa.UserID != userID {
+		h.logger.Warn("rejected oauth init with cross-user pending_request_id",
+			"caller_user_id", userID,
+			"pending_request_id", pendingReqID,
+			"err", err,
+		)
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "pending_request_id does not belong to this user")
+		return false
+	}
+	return true
+}
+
 // validateCLICallback checks that a CLI callback URL is safe — it must be
 // http-only and point to localhost or 127.0.0.1. Returns "" if invalid.
 func validateCLICallback(raw string) string {
@@ -437,12 +462,17 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &flowConfig)
 	}
 
+	pendingReqID := r.URL.Query().Get("pending_request_id")
+	if !h.checkPendingRequestOwnership(w, r, user.ID, pendingReqID) {
+		return
+	}
+
 	stateToken := uuid.New().String()
 	h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
-		PendingReqID: r.URL.Query().Get("pending_request_id"),
+		PendingReqID: pendingReqID,
 		CLICallback:  validateCLICallback(r.URL.Query().Get("cli_callback")),
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
@@ -503,12 +533,17 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &flowConfig)
 	}
 
+	pendingReqID := r.URL.Query().Get("pending_request_id")
+	if !h.checkPendingRequestOwnership(w, r, user.ID, pendingReqID) {
+		return
+	}
+
 	stateToken := uuid.New().String()
 	h.oauthStore.StoreOAuth(stateToken, oauthStateEntry{
 		UserID:       user.ID,
 		ServiceID:    serviceID,
 		Alias:        alias,
-		PendingReqID: r.URL.Query().Get("pending_request_id"),
+		PendingReqID: pendingReqID,
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
 		TokenPath:    adapterTokenPath(adapter),
@@ -784,22 +819,8 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// If the caller passed a pending_request_id, verify they own it before
-		// stashing it in OAuth state. Otherwise an attacker could supply
-		// another user's pending request ID and trigger reactivation of that
-		// pending request under their own credentials when the OAuth flow
-		// completes.
-		if body.PendingRequestID != "" {
-			pa, err := h.st.GetPendingApproval(r.Context(), body.PendingRequestID)
-			if err != nil || pa.UserID != user.ID {
-				h.logger.Warn("rejected oauth init with cross-user pending_request_id",
-					"caller_user_id", user.ID,
-					"pending_request_id", body.PendingRequestID,
-					"err", err,
-				)
-				writeError(w, http.StatusForbidden, "FORBIDDEN", "pending_request_id does not belong to this user")
-				return
-			}
+		if !h.checkPendingRequestOwnership(w, r, user.ID, body.PendingRequestID) {
+			return
 		}
 
 		mergedScopes, alreadyAuthorized := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
