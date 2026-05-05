@@ -419,3 +419,83 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 func strPtr(v string) *string {
 	return &v
 }
+
+// TestPendingApproval_StalledExecutingRecovery proves that a row stranded in
+// 'executing' (the daemon-crash scenario) is detectable via
+// ListStalledExecutingApprovals once the lease elapses, and that the row's
+// continued presence does NOT block recovery — the user is no longer locked
+// out. This is the regression guard for the "executing forever" bug.
+func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "stall@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	requestID := "req-stall-1"
+	pa := &store.PendingApproval{
+		UserID:      user.ID,
+		RequestID:   requestID,
+		AuditID:     "audit-stall-1",
+		RequestBlob: []byte(`{"request_id":"req-stall-1"}`),
+		Status:      "pending",
+		ExpiresAt:   time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	// Promote pending → approved → executing (the legitimate hot path).
+	if err := st.UpdatePendingApprovalStatus(ctx, requestID, "approved"); err != nil {
+		t.Fatalf("UpdatePendingApprovalStatus(approved): %v", err)
+	}
+	claimed, err := st.ClaimPendingApprovalForExecution(ctx, requestID)
+	if err != nil {
+		t.Fatalf("ClaimPendingApprovalForExecution: %v", err)
+	}
+	if !claimed {
+		t.Fatal("expected claim to succeed")
+	}
+
+	// A short lease should not yet flag the row as stalled.
+	stalled, err := st.ListStalledExecutingApprovals(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ListStalledExecutingApprovals(fresh): %v", err)
+	}
+	if len(stalled) != 0 {
+		t.Fatalf("expected no stalled rows under generous lease, got %d", len(stalled))
+	}
+
+	// A lease shorter than the time since claim must surface the row. Sleep
+	// > 2s so executing_since is firmly past the 1-second cutoff at sqlite's
+	// second-granularity timestamp resolution.
+	time.Sleep(2200 * time.Millisecond)
+	stalled, err = st.ListStalledExecutingApprovals(ctx, time.Second)
+	if err != nil {
+		t.Fatalf("ListStalledExecutingApprovals(stalled): %v", err)
+	}
+	if len(stalled) != 1 || stalled[0].RequestID != requestID {
+		t.Fatalf("expected stalled row %q, got %+v", requestID, stalled)
+	}
+
+	// Recovery: deleting the stale row frees the user to re-issue the request.
+	if err := st.DeletePendingApproval(ctx, requestID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	stalled, err = st.ListStalledExecutingApprovals(ctx, time.Second)
+	if err != nil {
+		t.Fatalf("ListStalledExecutingApprovals(after delete): %v", err)
+	}
+	if len(stalled) != 0 {
+		t.Fatalf("expected zero stalled rows after recovery, got %d", len(stalled))
+	}
+}

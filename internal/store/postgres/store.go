@@ -1441,11 +1441,28 @@ func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, stat
 
 func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE pending_approvals SET status = 'executing' WHERE request_id = $1 AND status = 'approved'`, requestID)
+		`UPDATE pending_approvals SET status = 'executing', executing_since = NOW()
+		 WHERE request_id = $1 AND status = 'approved'`, requestID)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ListStalledExecutingApprovals returns rows that were claimed for execution
+// but never completed within leaseTTL. This is the recovery hook for daemon
+// crashes that strand a row in 'executing' — without it, the user would be
+// permanently locked out of re-approving the same request.
+func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
+	cutoff := time.Now().UTC().Add(-leaseTTL)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
+		FROM pending_approvals WHERE status = 'executing' AND executing_since IS NOT NULL AND executing_since < $1`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPendingApprovals(rows)
 }
 
 // ── Canonical Approval Records ───────────────────────────────────────────────

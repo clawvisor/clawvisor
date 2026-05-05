@@ -392,6 +392,12 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	return result, outcome, errMsg
 }
 
+// executingLeaseTTL is how long a row may sit in 'executing' before the
+// expiry sweeper assumes the executor crashed and recovers it. Five minutes
+// comfortably covers the slowest synchronous adapter call (typically <60s)
+// while still freeing the user to retry within a single sweep cycle.
+const executingLeaseTTL = 5 * time.Minute
+
 // RunExpiryCleanup runs in a background goroutine to expire timed-out approvals.
 // Call as: go handler.RunExpiryCleanup(ctx)
 func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
@@ -412,6 +418,18 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	if err != nil {
 		h.logger.Warn("expiry cleanup: list failed", "err", err)
 		return
+	}
+	// Recover rows stranded in 'executing' by a daemon crash. Without this
+	// they would stay in the table forever, blocking the user from re-issuing
+	// the request because GetPendingApproval still returns the stale row.
+	stalled, err := h.st.ListStalledExecutingApprovals(ctx, executingLeaseTTL)
+	if err != nil {
+		h.logger.Warn("expiry cleanup: stalled-executing list failed", "err", err)
+	} else {
+		for _, pa := range stalled {
+			h.logger.Warn("recovering stalled executing approval", "request_id", pa.RequestID, "user_id", pa.UserID)
+			expired = append(expired, pa)
+		}
 	}
 	for _, pa := range expired {
 		h.resolveCanonicalApproval(ctx, pa, "deny", "expired")

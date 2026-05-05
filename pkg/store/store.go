@@ -121,6 +121,9 @@ type Store interface {
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").
 	ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error)
+	// ListStalledExecutingApprovals returns rows stuck in "executing" beyond
+	// leaseTTL — the recovery hook for daemon crashes mid-execution.
+	ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*PendingApproval, error)
 
 	// Canonical approval records
 	CreateApprovalRecord(ctx context.Context, rec *ApprovalRecord) error
