@@ -22,6 +22,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -299,8 +301,17 @@ func (a *IMessageAdapter) queryHelperVersion(helperPath string) (string, error) 
 }
 
 // downloadHelper downloads the helper .app bundle from the GitHub release
-// matching the current clawvisor version.
+// matching the current clawvisor version. The tarball is verified against
+// the SHA-256 baked into this clawvisor binary at build time before any
+// bytes are extracted or executed — protecting against tampered or
+// substituted release artifacts.
 func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
+	osArch := runtime.GOOS + "/" + runtime.GOARCH
+	expectedSHA := version.IMessageHelperSHA(osArch)
+	if expectedSHA == "" {
+		return "", fmt.Errorf("no pinned helper SHA for %s in this build — refusing unverified download (build a release binary or side-load the helper into PATH)", osArch)
+	}
+
 	tag := "v" + version.Version
 	assetName := fmt.Sprintf("clawvisor-imessage-helper-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s",
@@ -316,6 +327,16 @@ func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 		return "", fmt.Errorf("download: HTTP %d from %s", resp.StatusCode, url)
 	}
 
+	tarball, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("download: %w", err)
+	}
+	sum := sha256.Sum256(tarball)
+	gotSHA := hex.EncodeToString(sum[:])
+	if !strings.EqualFold(gotSHA, expectedSHA) {
+		return "", fmt.Errorf("helper integrity check failed for %s: expected sha256 %s, got %s — refusing to install", assetName, expectedSHA, gotSHA)
+	}
+
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		return "", err
 	}
@@ -327,7 +348,7 @@ func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 	}
 	defer os.RemoveAll(tmpDir) // clean up on failure
 
-	if err := extractTarGz(resp.Body, tmpDir); err != nil {
+	if err := extractTarGz(bytes.NewReader(tarball), tmpDir); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
 	}
 

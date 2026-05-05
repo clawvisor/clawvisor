@@ -21,12 +21,47 @@ fi
 
 MODULE="github.com/clawvisor/clawvisor/pkg/version"
 BUILD_DATE=$(date -u +%Y-%m-%d)
-LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
 PLATFORMS="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 rm -rf dist
 mkdir -p dist
+
+# Build the iMessage helper FIRST so we can hash its tarballs and embed those
+# SHAs into the clawvisor binary via -ldflags. The adapter refuses to install
+# any helper whose hash doesn't match this baked-in pin, blocking tampered or
+# substituted release artifacts.
+HELPER_APP="Clawvisor iMessage Helper.app"
+HELPER_PLATFORMS="darwin/arm64 darwin/amd64"
+HELPER_LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
+HELPER_SHAS=""
+for PLATFORM in $HELPER_PLATFORMS; do
+  GOOS="${PLATFORM%/*}"
+  GOARCH="${PLATFORM#*/}"
+  TARBALL="dist/clawvisor-imessage-helper-${GOOS}-${GOARCH}.tar.gz"
+
+  echo "Building ${TARBALL}..."
+  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+    go build -ldflags="$HELPER_LDFLAGS" -o "dist/.helper-tmp" ./cmd/imessage-helper
+
+  mkdir -p "dist/${HELPER_APP}/Contents/MacOS"
+  mv "dist/.helper-tmp" "dist/${HELPER_APP}/Contents/MacOS/clawvisor-imessage-helper"
+  cp cmd/imessage-helper/Info.plist "dist/${HELPER_APP}/Contents/Info.plist"
+  tar -czf "$TARBALL" -C dist "${HELPER_APP}"
+  rm -rf "dist/${HELPER_APP}"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
+  else
+    SHA=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
+  fi
+  if [ -n "$HELPER_SHAS" ]; then
+    HELPER_SHAS="${HELPER_SHAS},"
+  fi
+  HELPER_SHAS="${HELPER_SHAS}${PLATFORM}=${SHA}"
+done
+
+LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE} -X ${MODULE}.IMessageHelperSHA256=${HELPER_SHAS}"
 
 for PLATFORM in $PLATFORMS; do
   GOOS="${PLATFORM%/*}"
@@ -57,28 +92,6 @@ for PLATFORM in $PLATFORMS; do
     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
       go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
   fi
-done
-
-# Build the iMessage helper .app bundle for macOS only. This is a separate,
-# stable binary that holds Full Disk Access so users don't need to re-grant
-# FDA on every clawvisor update. The .app bundle structure lets macOS read
-# Info.plist for the display name in FDA settings, no CGO required.
-HELPER_APP="Clawvisor iMessage Helper.app"
-HELPER_PLATFORMS="darwin/arm64 darwin/amd64"
-for PLATFORM in $HELPER_PLATFORMS; do
-  GOOS="${PLATFORM%/*}"
-  GOARCH="${PLATFORM#*/}"
-  TARBALL="dist/clawvisor-imessage-helper-${GOOS}-${GOARCH}.tar.gz"
-
-  echo "Building ${TARBALL}..."
-  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -ldflags="$LDFLAGS" -o "dist/.helper-tmp" ./cmd/imessage-helper
-
-  mkdir -p "dist/${HELPER_APP}/Contents/MacOS"
-  mv "dist/.helper-tmp" "dist/${HELPER_APP}/Contents/MacOS/clawvisor-imessage-helper"
-  cp cmd/imessage-helper/Info.plist "dist/${HELPER_APP}/Contents/Info.plist"
-  tar -czf "$TARBALL" -C dist "${HELPER_APP}"
-  rm -rf "dist/${HELPER_APP}"
 done
 
 echo "Generating checksums..."

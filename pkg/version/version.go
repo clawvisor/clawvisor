@@ -14,6 +14,29 @@ import (
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Version=0.3.0"
 var Version = "dev"
 
+// IMessageHelperSHA256 is a comma-separated list of "os/arch=sha256" entries
+// pinning the expected SHA-256 of each iMessage helper tarball in this
+// release. Populated at build time via -ldflags so a tampered or substituted
+// helper download fails verification before installation. Empty in dev
+// builds; the imessage adapter refuses to download unless this is set, but
+// developers can side-load via PATH or the standard install location.
+var IMessageHelperSHA256 = ""
+
+// IMessageHelperSHA returns the expected SHA-256 for the helper tarball that
+// matches osArch (e.g. "darwin/arm64"), or empty string if not pinned.
+func IMessageHelperSHA(osArch string) string {
+	for _, pair := range strings.Split(IMessageHelperSHA256, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(k) == osArch {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // SkillPublishedAt is set at build time via -ldflags. It records the date (YYYY-MM-DD)
 // the release was built so the skill can display when it was last updated.
 var SkillPublishedAt = "dev"
