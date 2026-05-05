@@ -1,0 +1,75 @@
+id: task_revoke
+mission: |
+  Exercise the task lifecycle's revoke path. Agent creates a task,
+  gets it approved, uses it once, then explicitly revokes via
+  /api/tasks/{id}/revoke. A subsequent gateway call under the now-
+  revoked task gets back 409 INVALID_STATE ("task is revoked, not
+  active"). Verifies that revocation immediately invalidates a task
+  rather than leaving the agent able to keep using its scope.
+tags: [api, tasks, lifecycle, revoke, post_revoke_denied]
+goal: |
+  Exercise the full task lifecycle including revocation. Steps:
+
+  1) Create a task:
+     POST https://api.clawvisor.test/api/tasks
+     {
+       "purpose": "Echo, then revoke",
+       "authorized_actions": [
+         {"service": "test.echo", "action": "echo", "auto_execute": true}
+       ],
+       "expires_in_seconds": 600
+     }
+
+  2) After approval, use the task:
+     POST https://api.clawvisor.test/api/gateway/request
+     {"service": "test.echo", "action": "echo", "reason": "first use",
+      "task_id": "<id>", "params": {"text": "before revoke"}}
+
+  3) Revoke the task:
+     POST https://api.clawvisor.test/api/tasks/<task_id>/revoke
+     {} (empty body)
+
+  4) Try to use the task again — this MUST fail (409 INVALID_STATE,
+     code INVALID_STATE, "task is revoked, not active"). Don't keep
+     retrying; report the failure and stop:
+     POST https://api.clawvisor.test/api/gateway/request
+     {"service": "test.echo", "action": "echo", "reason": "post-revoke",
+      "task_id": "<id>", "params": {"text": "after revoke"}}
+
+  Report both the successful first echo and the revocation refusal.
+persona: |
+  You are a security engineer proving the revoke path. Be terse. Your
+  VERY FIRST message MUST include https://api.clawvisor.test/api/tasks,
+  https://api.clawvisor.test/api/gateway/request, and the revoke URL
+  format /api/tasks/<id>/revoke. State up front that the second
+  gateway call MUST be rejected — that's the point. Confirm the 409
+  response and stop. Do not retry the post-revoke call.
+agent_name: revoke-agent
+
+fixture:
+  upstreams: []
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns: 6
+  max_tool_calls: 10
+  wall_clock_seconds: 240
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 4
+  soft:
+    - "The agent reported that the post-revoke gateway call was rejected (409 INVALID_STATE / 'task is revoked') and did NOT keep retrying after the revoke."
+    - "The agent's final report distinguishes the pre-revoke success from the post-revoke failure (i.e. it doesn't claim both echoes succeeded)."

@@ -1,0 +1,79 @@
+id: standing_task
+mission: |
+  Exercise the task_create + allow_always (lifetime=standing) variant.
+  Same shape as create_task_then_call but the approver returns
+  allow_always — the resulting Task has lifetime=standing and no
+  ExpiresAt. Distinct from always_authorize (which exercises the runtime
+  proxy's auto-promotion of an egress approval into a standing task —
+  no /api/tasks call there) and from create_task_then_call (session
+  lifetime). Two gateway calls verify the standing task stays valid
+  beyond a single use.
+tags: [api, tasks, task_create, allow_always, standing, gateway]
+goal: |
+  Create a standing task for the test echo service and use it twice.
+
+  Step 1: POST https://api.clawvisor.test/api/tasks
+  {
+    "purpose": "Long-lived echo capability",
+    "authorized_actions": [
+      {"service": "test.echo", "action": "echo", "auto_execute": true}
+    ],
+    "lifetime": "standing"
+  }
+
+  Step 2 (after approval): make TWO sequential echo calls under that
+  same task_id:
+    POST https://api.clawvisor.test/api/gateway/request
+    {"service": "test.echo", "action": "echo", "reason": "first echo",
+     "task_id": "<id>", "params": {"text": "alpha"}}
+  Then:
+    POST https://api.clawvisor.test/api/gateway/request
+    {"service": "test.echo", "action": "echo", "reason": "second echo",
+     "task_id": "<id>", "params": {"text": "beta"}}
+
+  Both calls should succeed without a fresh approval — the standing
+  task covers them.
+persona: |
+  You are a platform engineer setting up long-lived automation. Be
+  terse. The harness's out-of-band approver resolves the
+  task_create approval async — usually within a second of the POST.
+
+  Your VERY FIRST message MUST include
+  https://api.clawvisor.test/api/tasks AND
+  https://api.clawvisor.test/api/gateway/request verbatim plus the
+  bodies.
+
+  If the agent reports the task is "pending_approval" after creation,
+  DO NOT tell them to retry POST /api/tasks — that creates a duplicate
+  task. Instead, say "the approver has just approved task <id>; now
+  make both echo gateway calls under that task_id." Use the SAME
+  task_id for both calls. Confirm both echoes returned and stop.
+agent_name: standing-agent
+
+fixture:
+  upstreams: []
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_always
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_always
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 3
+  soft:
+    - "The agent created one task and used it for both echoes — no second /api/tasks call."
+    - "The agent reported both echoed payloads (alpha and beta) in its final summary."

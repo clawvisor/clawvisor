@@ -1,0 +1,58 @@
+id: session_authorize
+mission: |
+  Exercise the fall-through review → allow_session → session-task path:
+  the first POST hits review, the approver grants allow_session which
+  promotes a session-scoped Task with an ExpectedEgress envelope keyed
+  on host/method/path + body shape. Subsequent POSTs with the same shape
+  match the task and pass without re-prompting; runtime.task.promoted
+  fires once and runtime.egress.allowed fires for each task-matched hit.
+tags: [egress, review, allow_session, task, promotion]
+goal: |
+  Ask the agent to save TWO short notes to your notes API by POSTing
+  each to https://api.notes.test/notes with body
+  {"title": ..., "body": ...}. The first request will need approval —
+  that's expected; subsequent saves should not need a fresh approval.
+  Send these two notes (in this order):
+    1) {"title": "lunch", "body": "Reservation Friday at 12:30"}
+    2) {"title": "todo", "body": "Send Q3 retro deck to staff"}
+persona: |
+  You are a product manager. Be terse. If the agent asks where to save,
+  give it verbatim — https://api.notes.test/notes — including the api.
+  prefix. Confirm both notes were saved before stopping.
+agent_name: notes-agent
+
+fixture:
+  upstreams:
+    - host: api.notes.test
+      fixtures: ./fixtures/notes.json
+  # No rules: rely on fall-through review for the first request.
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        host: api.notes.test
+        method: POST
+      resolution: allow_session
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - event_has:
+        event_type: runtime.task.promoted
+    - event_has:
+        event_type: runtime.egress.allowed
+    - count:
+        series: upstream.api.notes.test.hits
+        gte: 2
+  soft:
+    - "The agent saved both notes and reported each save by name."
+    - "The agent did not request a separate approval for the second note."

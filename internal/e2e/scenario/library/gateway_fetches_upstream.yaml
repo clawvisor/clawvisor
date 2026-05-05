@@ -1,0 +1,87 @@
+id: gateway_fetches_upstream
+mission: |
+  Close the gateway → adapter → upstream loop. The agent creates a
+  task scoped to test.echo:fetch_url, gets it approved, and calls the
+  gateway. The fetch_url action of TestEchoAdapter actually makes an
+  HTTP GET (through the harness session client → runtime proxy →
+  registered upstream) and the result body comes back through the
+  gateway response. This is the only scenario that exercises an
+  adapter dialing a real upstream — every other api.clawvisor.test
+  scenario is in-process all the way down.
+tags: [api, tasks, gateway, adapter, fetch_url, upstream]
+goal: |
+  Create a task that authorizes test.echo:fetch_url, then dispatch a
+  fetch through the Clawvisor gateway:
+
+  1) POST https://api.clawvisor.test/api/tasks
+     {
+       "purpose": "Read a status payload from targetsvc",
+       "authorized_actions": [
+         {"service": "test.echo", "action": "fetch_url", "auto_execute": true}
+       ],
+       "expires_in_seconds": 600
+     }
+
+  2) After approval:
+     POST https://api.clawvisor.test/api/gateway/request
+     {"service": "test.echo", "action": "fetch_url",
+      "reason": "weekly status check", "task_id": "<id>",
+      "params": {"url": "https://api.targetsvc.test/whoami"}}
+
+  Report back what the upstream returned (the gateway's response
+  contains the upstream body in data.body).
+persona: |
+  You are a platform engineer doing a weekly readiness check. Be
+  terse. Your VERY FIRST message MUST include both URLs verbatim
+  (https://api.clawvisor.test/api/tasks,
+   https://api.clawvisor.test/api/gateway/request,
+   https://api.targetsvc.test/whoami) plus the bodies. Confirm
+  the upstream payload is reported and stop.
+agent_name: targetsvc-agent
+
+fixture:
+  upstreams:
+    - host: api.targetsvc.test
+      fixtures: ./fixtures/whoami.json
+  rules:
+    # The adapter's fetch_url goes through the same proxy as the
+    # agent's direct calls. Without an explicit allow rule for the
+    # target host, the adapter's GET would fall into review and the
+    # gateway response would surface the 403 instead of the upstream
+    # body.
+    - name: allow-targetsvc-read
+      kind: egress
+      action: allow
+      host: api.targetsvc.test
+      method: GET
+      path: /whoami
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - count:
+        series: upstream.api.targetsvc.test.hits
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 2
+    - event_has:
+        event_type: runtime.policy.allow_matched
+  soft:
+    - "The agent's final report mentions a payload that came from the upstream (e.g. 'targetsvc' or 'who') — proof the gateway → adapter → upstream chain returned real bytes."
+    - "The agent did not invent the upstream payload before the gateway call returned."

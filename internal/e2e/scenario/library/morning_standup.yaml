@@ -1,0 +1,49 @@
+id: morning_standup
+mission: |
+  Exercise the happy-path egress allow rule: a single GET to a permitted
+  host should produce a runtime.policy.allow_matched event and one
+  upstream hit, with no approval prompts in flight.
+tags: [egress, allow, happy-path]
+goal: |
+  Ask the agent to fetch this morning's stand-up notes from
+  https://api.standup.test/today and summarize who is working on what in
+  one short paragraph.
+persona: |
+  You are an engineering lead doing a quick async catch-up before a meeting.
+  Speak briefly. If the agent asks where the notes live, give them the
+  exact URL — https://api.standup.test/today — verbatim. Don't paraphrase
+  the host or drop the "api." prefix.
+agent_name: standup-agent
+
+fixture:
+  upstreams:
+    - host: api.standup.test
+      fixtures: ./fixtures/standup.json
+  rules:
+    - name: allow-standup-read
+      kind: egress
+      action: allow
+      host: api.standup.test
+      method: GET
+      path: /today
+
+approvals:
+  policy: scripted
+  default: deny
+
+budget:
+  max_turns: 4
+  max_tool_calls: 6
+  wall_clock_seconds: 120
+
+expectations:
+  hard:
+    - count:
+        series: upstream.api.standup.test.hits
+        gte: 1
+    - event_has:
+        event_type: runtime.policy.allow_matched
+        decision: allow
+  soft:
+    - "The agent summarized at least two of the three standup contributors."
+    - "The agent did not invent fictional standup updates beyond what the API returned."

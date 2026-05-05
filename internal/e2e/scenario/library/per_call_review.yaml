@@ -1,0 +1,79 @@
+id: per_call_review
+mission: |
+  Exercise the auto_execute=false gate on an *active* task. Agent
+  creates a task whose authorized action has auto_execute=false. The
+  task is approved (allow_session). The next gateway call (with the
+  task_id) is NOT auto-executed — the gateway returns 202 pending with
+  a request_once / execute_pending_request approval. Approver allow_once,
+  agent calls /execute. Distinct from gateway_without_task (no task at
+  all), and from create_task_then_call (auto_execute=true → no per-call
+  gate). Verifies the per-call review knob actually engages even when
+  scope is already authorized.
+tags: [api, tasks, auto_execute_false, request_once, allow_once, two_phase]
+goal: |
+  Create a task whose echo action is gated per call (auto_execute:
+  false), then make a gated call.
+
+  1) POST https://api.clawvisor.test/api/tasks
+     {
+       "purpose": "Echo, but require review on every call",
+       "authorized_actions": [
+         {"service": "test.echo", "action": "echo", "auto_execute": false}
+       ],
+       "expires_in_seconds": 600
+     }
+     Wait for task_create approval.
+
+  2) POST https://api.clawvisor.test/api/gateway/request
+     {"service": "test.echo", "action": "echo",
+      "reason": "audited echo",
+      "task_id": "<id>",
+      "params": {"text": "review me"}}
+     This returns 202 pending with a request_id (NOT 200) — that is
+     the point of auto_execute:false.
+
+  3) Wait for the per-call approval. Then claim:
+     POST https://api.clawvisor.test/api/gateway/request/{request_id}/execute
+     (empty body)
+
+  Report the echoed payload that comes back.
+persona: |
+  You are a security engineer auditing per-call gating. Be terse.
+  Your VERY FIRST message MUST include all three URLs verbatim, the
+  task body, and the gateway body. Stress that auto_execute is FALSE.
+  Confirm the echoed payload and stop.
+agent_name: per-call-agent
+
+fixture:
+  upstreams: []
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+    - match:
+        kind: request_once
+      resolution: allow_once
+
+budget:
+  max_turns: 8
+  max_tool_calls: 12
+  wall_clock_seconds: 240
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - count:
+        series: approvals.allow_once
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 3
+  soft:
+    - "The agent observed the 202-pending response from the gateway call (it did NOT receive 200 immediately) and explicitly waited / called /execute after the per-call approval."
+    - "The echoed payload (containing 'review me') appears in the agent's final report."

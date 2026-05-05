@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "service": "targetsvc",
+  "version": "1.0.0",
+  "who": "test upstream"
+}

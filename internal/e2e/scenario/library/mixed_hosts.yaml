@@ -1,0 +1,67 @@
+id: mixed_hosts
+mission: |
+  Exercise multi-host policy: one host has an explicit allow rule (read
+  path goes straight through with runtime.policy.allow_matched), a
+  second host has no rule (write path falls into review and is granted
+  allow_once). Verifies that policy is per-host and that the agent can
+  thread two hosts in one task.
+tags: [egress, multi-host, allow, review, allow_once]
+goal: |
+  Ask the agent to (1) GET the open-issues list from
+  https://api.issues.test/issues, then (2) POST a one-line summary to
+  https://api.chat.test/post with body
+  {"channel": "#triage", "text": <a one-sentence summary>}.
+  The chat post may need approval — that's expected.
+persona: |
+  You are an engineering manager triaging incoming bugs. Be terse.
+  If the agent asks for either URL, give it verbatim — keep both api.
+  prefixes — and clarify that it should fetch first, summarize, then
+  post. Confirm when both succeed.
+agent_name: triage-agent
+
+fixture:
+  upstreams:
+    - host: api.issues.test
+      fixtures: ./fixtures/issues.json
+    - host: api.chat.test
+      fixtures: ./fixtures/post_to_chat.json
+  rules:
+    - name: allow-issues-read
+      kind: egress
+      action: allow
+      host: api.issues.test
+      method: GET
+      path: /issues
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        host: api.chat.test
+        method: POST
+      resolution: allow_once
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - event_has:
+        event_type: runtime.policy.allow_matched
+    - event_has:
+        event_type: runtime.egress.review_required
+    - count:
+        series: approvals.allow_once
+        gte: 1
+    - count:
+        series: upstream.api.issues.test.hits
+        gte: 1
+    - count:
+        series: upstream.api.chat.test.hits
+        gte: 1
+  soft:
+    - "The agent fetched the issues list and posted a summary that referenced at least one issue from the response."
+    - "The agent did not invent issues that were not in the response."

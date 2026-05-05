@@ -1,0 +1,72 @@
+id: gateway_without_task
+mission: |
+  Exercise the gateway's no-task auto-classification path. Agent POSTs
+  /api/gateway/request without a task_id; with RuntimeProxy.Enabled
+  (true in the harness) the handler classifies as "needs new task" /
+  "one-off", routes to a request_once ApprovalRecord (transport=
+  execute_pending_request, distinct from the runtime proxy's
+  consume_one_off_retry), and returns 202 pending with a request_id.
+  After the approver allow_once's it, the agent POSTs
+  /api/gateway/request/{request_id}/execute to claim the result.
+  Distinct from notify_with_review (proxy review path, not gateway
+  route) and from create_task_then_call (no /api/tasks at all here).
+tags: [api, gateway, request_once, allow_once, no_task, two_phase]
+goal: |
+  Use the Clawvisor gateway WITHOUT pre-creating a task. Steps:
+
+  1) Submit the request:
+     POST https://api.clawvisor.test/api/gateway/request
+     {"service": "test.echo", "action": "echo",
+      "reason": "ad-hoc echo, no task pre-declared",
+      "params": {"hello": "world"}}
+     The response is 202 with status="pending" and a request_id.
+
+  2) Wait for an approver. Once approved, claim the result:
+     POST https://api.clawvisor.test/api/gateway/request/{request_id}/execute
+     (empty body)
+
+  Report the echoed payload that comes back from /execute.
+persona: |
+  You are a developer testing the gateway flow. The harness has an
+  out-of-band approver that will resolve the pending approval async.
+  Your job is just to relay status updates to the agent.
+
+  Your VERY FIRST message MUST include the URL
+  https://api.clawvisor.test/api/gateway/request verbatim AND the
+  request body. Be terse.
+
+  After the agent gets back 202 with a request_id and reports it,
+  reply with: "The approver has just approved request_id <id>. Now
+  POST to https://api.clawvisor.test/api/gateway/request/<id>/execute
+  with an empty body to claim the result." DO NOT ask the agent to
+  approve anything itself — the approver is a separate role. Confirm
+  the echoed result and stop.
+agent_name: gateway-noask-agent
+
+fixture:
+  upstreams: []
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: request_once
+      resolution: allow_once
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_once
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 2
+  soft:
+    - "The agent submitted, waited for approval, then called /execute (or /execute equivalent) to claim the result — did not retry the bare /api/gateway/request endpoint repeatedly."
+    - "The echoed payload (containing 'hello' or 'world') appears in the agent's final report."

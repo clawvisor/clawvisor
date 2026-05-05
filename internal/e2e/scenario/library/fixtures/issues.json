@@ -1,0 +1,7 @@
+{
+  "issues": [
+    {"id": "ISS-101", "title": "Auth token rotation flake", "owner": "riley"},
+    {"id": "ISS-102", "title": "Webhook retries double-fire", "owner": "casey"},
+    {"id": "ISS-103", "title": "Plan picker layout shift", "owner": "jordan"}
+  ]
+}

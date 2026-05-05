@@ -1,0 +1,56 @@
+id: always_authorize
+mission: |
+  Exercise the fall-through review → allow_always → standing-task path:
+  the first GET hits review, the approver grants allow_always which
+  promotes a *standing* (lifetime=standing, no ExpiresAt) Task. The
+  promoted task envelope matches subsequent reads of the same metric so
+  no further approval is needed. Distinct from allow_session in that
+  the resulting task has no expiry and is reusable across sessions.
+tags: [egress, review, allow_always, standing-task, promotion]
+goal: |
+  Ask the agent to read a few daily metrics from
+  https://api.metrics.test/metrics/deploys.daily — fetch the value once,
+  then again to confirm it didn't change while you were drafting your
+  weekly note. The first read may need approval; subsequent reads
+  shouldn't.
+persona: |
+  You are an engineering director. Be terse. If the agent asks for the
+  URL, give it verbatim — https://api.metrics.test/metrics/deploys.daily
+  — including the api. prefix. Once both reads have come back, accept
+  the result and stop.
+agent_name: metrics-agent
+
+fixture:
+  upstreams:
+    - host: api.metrics.test
+      fixtures: ./fixtures/metrics.json
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        host: api.metrics.test
+        method: GET
+      resolution: allow_always
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_always
+        gte: 1
+    - event_has:
+        event_type: runtime.task.promoted
+    - event_has:
+        event_type: runtime.egress.allowed
+    - count:
+        series: upstream.api.metrics.test.hits
+        gte: 2
+  soft:
+    - "The agent reported the metric value at least once."
+    - "The agent did not request a separate approval for the second read."

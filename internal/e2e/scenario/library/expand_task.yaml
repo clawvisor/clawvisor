@@ -1,0 +1,90 @@
+id: expand_task
+mission: |
+  Exercise the task_expand approval kind. Agent creates a task scoped
+  only to test.echo:echo, gets it approved (allow_session), then later
+  needs the fetch_url action and POSTs /api/tasks/{id}/expand. The
+  server creates a kind=task_expand ApprovalRecord (only allow_session
+  or deny are valid resolutions for this kind). The approver grants
+  allow_session and the agent then uses the expanded scope through the
+  gateway. Distinct from create_task_then_call (one approval cycle) —
+  this is two cycles, second of a different kind.
+tags: [api, tasks, task_expand, allow_session, gateway]
+goal: |
+  Use the Clawvisor task API in two phases: first authorize the basic
+  echo action, then expand the same task to also authorize fetch_url.
+
+  Phase 1 — create + first echo:
+    POST https://api.clawvisor.test/api/tasks
+    {
+      "purpose": "Echo and (later) fetch a URL",
+      "authorized_actions": [
+        {"service": "test.echo", "action": "echo", "auto_execute": true}
+      ],
+      "expires_in_seconds": 600
+    }
+    Wait for the approver. Once active, call the echo gateway:
+    POST https://api.clawvisor.test/api/gateway/request
+    {"service": "test.echo", "action": "echo", "reason": "phase 1 echo",
+     "task_id": "<id>", "params": {"text": "phase one"}}
+
+  Phase 2 — expand the same task to add fetch_url:
+    POST https://api.clawvisor.test/api/tasks/<task_id>/expand
+    {"service": "test.echo", "action": "fetch_url",
+     "auto_execute": true, "reason": "need to fetch a url too"}
+    Wait for the (second) approval. Then exercise the new action:
+    POST https://api.clawvisor.test/api/gateway/request
+    {"service": "test.echo", "action": "fetch_url",
+     "reason": "phase 2 fetch", "task_id": "<id>",
+     "params": {"url": "https://api.targetsvc.test/who"}}
+
+  Report when both phases complete.
+persona: |
+  You are an automation engineer iterating on a workflow. Be terse.
+  Your VERY FIRST message MUST include both URLs verbatim, the
+  initial task body, AND the eventual /expand body — do not drop the
+  api. prefix. If the agent reports both phases succeeded, accept it
+  and stop.
+agent_name: expand-agent
+
+fixture:
+  upstreams:
+    - host: api.targetsvc.test
+      fixtures: ./fixtures/whoami.json
+  rules:
+    - name: allow-targetsvc-read
+      kind: egress
+      action: allow
+      host: api.targetsvc.test
+      method: GET
+      path: /who
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    - match:
+        kind: task_create
+      resolution: allow_session
+    - match:
+        kind: task_expand
+      resolution: allow_session
+
+budget:
+  max_turns: 8
+  max_tool_calls: 14
+  wall_clock_seconds: 300
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 2
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 4
+    - count:
+        series: upstream.api.targetsvc.test.hits
+        gte: 1
+  soft:
+    - "The agent expanded the task (POST /expand) instead of creating a second task or trying fetch_url before the expansion was approved."
+    - "Both the echo result (phase 1) and the fetched payload (phase 2) appear in the agent's final report."

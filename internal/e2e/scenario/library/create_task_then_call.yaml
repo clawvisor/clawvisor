@@ -1,0 +1,88 @@
+id: create_task_then_call
+mission: |
+  Exercise the explicit task-creation + gateway adapter chain end-to-end.
+  Agent POSTs /api/tasks (kind=task_create approval), the approver grants
+  allow_session promoting the task to active, then the agent POSTs
+  /api/gateway/request with task_id — the gateway dispatches to the
+  test.echo adapter which returns the echoed params. Distinct from
+  notify_with_review (no /api/tasks call there) and from session_authorize
+  (auto-promoted task without explicit /api/tasks creation).
+tags: [api, tasks, gateway, adapter, task_create, allow_session]
+goal: |
+  Use the Clawvisor task + gateway API to echo a short message via the
+  test service. Two HTTP calls in order:
+
+  1. Create a task scoped to the echo action:
+     POST https://api.clawvisor.test/api/tasks
+     {
+       "purpose": "Echo a one-line greeting via the test service",
+       "authorized_actions": [
+         {"service": "test.echo", "action": "echo", "auto_execute": true}
+       ],
+       "expires_in_seconds": 600
+     }
+     The response includes a task_id. The task starts in
+     pending_approval — wait for an approval to come through, then retry
+     reading the task or just proceed when the previous response said so.
+
+  2. Once approved, dispatch the echo through the gateway:
+     POST https://api.clawvisor.test/api/gateway/request
+     {
+       "service": "test.echo",
+       "action": "echo",
+       "reason": "Demonstrate the create→approve→gateway chain",
+       "task_id": "<task_id from step 1>",
+       "params": {"text": "hello from the harness"}
+     }
+
+  Report the echoed payload back when done.
+persona: |
+  You are an automation engineer wiring up a new service. Be terse.
+  The harness's out-of-band approver resolves the task_create
+  approval async — usually within a second of the POST.
+
+  Your VERY FIRST message MUST include both URLs verbatim —
+  https://api.clawvisor.test/api/tasks and
+  https://api.clawvisor.test/api/gateway/request — and the JSON
+  bodies (both the create-task body and the gateway-request body),
+  so the agent never has to guess the host or the param shape.
+  Do not paraphrase the host or drop the api. prefix.
+
+  If the agent reports the task is "pending_approval", say "the
+  approver has just approved it; proceed with the gateway call using
+  the same task_id." Do NOT tell the agent to retry POST /api/tasks
+  or to try alternative param names — the body shape is correct as
+  given. Accept whatever data field the gateway returns and stop.
+agent_name: tasks-api-agent
+
+fixture:
+  upstreams: []
+  # No external upstreams — every call goes to the harness's in-process
+  # /api/* mux, which is auto-allowed by scenario.Apply.
+
+approvals:
+  policy: scripted
+  default: deny
+  rules:
+    # task_create: allow_once is invalid for this kind — must be
+    # allow_session, allow_always, or deny.
+    - match:
+        kind: task_create
+      resolution: allow_session
+
+budget:
+  max_turns: 5
+  max_tool_calls: 8
+  wall_clock_seconds: 180
+
+expectations:
+  hard:
+    - count:
+        series: approvals.allow_session
+        gte: 1
+    - count:
+        series: upstream.api.clawvisor.test.hits
+        gte: 2
+  soft:
+    - "The agent created a task, waited for it to be approved, and then made the gateway call within that task scope."
+    - "The agent reported the echoed payload (the gateway should return the params back) and did not invent a result before the gateway responded."

@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"author": "Riley", "text": "Shipped the runtime proxy hooks; today: write integration tests."},
+    {"author": "Casey", "text": "Untangled the approval cache; today: redis flake retry."},
+    {"author": "Jordan", "text": "Drafted the policy starter profiles; today: review feedback."}
+  ]
+}
