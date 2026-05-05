@@ -13,7 +13,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"

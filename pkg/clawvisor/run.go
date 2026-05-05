@@ -17,7 +17,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/llm"
 	runtimeleases "github.com/clawvisor/clawvisor/internal/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	runtimeproxy "github.com/clawvisor/clawvisor/internal/runtime/proxy"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/internal/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
