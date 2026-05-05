@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/elazarl/goproxy"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 func (s *Server) InstallSessionGuard(auth *Authenticator) {
@@ -19,6 +21,7 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 		ctx.Req.Header.Del(internalBypassHeader)
 		st := EnsureState(ctx)
 		st.Session = sess
+		ctx.Req = withSessionAgent(ctx.Req, sess)
 		ctx.Req = s.attachTimingRecorder(ctx.Req, st)
 		s.recordTimingSpan(ctx.Req, "session_guard.auth", t0)
 		return goproxy.MitmConnect, host
@@ -27,6 +30,7 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 		st := StateOf(ctx)
 		if st != nil && st.Session != nil && st.Session.ID != "" {
 			req.Header.Del(internalBypassHeader)
+			req = withSessionAgent(req, st.Session)
 			req = s.attachTimingRecorder(req, st)
 			if ctx != nil && ctx.Req != nil {
 				ctx.Req = req
@@ -44,6 +48,7 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 		}
 		st = EnsureState(ctx)
 		st.Session = sess
+		req = withSessionAgent(req, sess)
 		req = s.attachTimingRecorder(req, st)
 		s.recordTimingSpan(req, "session_guard.auth", t0)
 		if ctx != nil && ctx.Req != nil {
@@ -51,6 +56,26 @@ func (s *Server) InstallSessionGuard(auth *Authenticator) {
 		}
 		return req, nil
 	})
+}
+
+// withSessionAgent attaches a minimal Agent value to the request context so
+// downstream OrgAwareVault.Resolve (and any other store.AgentFromContext
+// reader) can resolve org-scoped state without an extra DB lookup. The
+// synthesized Agent carries IDs only — other fields are intentionally empty.
+func withSessionAgent(req *http.Request, sess *store.RuntimeSession) *http.Request {
+	if req == nil || sess == nil {
+		return req
+	}
+	ctx := req.Context()
+	if store.AgentFromContext(ctx) != nil {
+		return req
+	}
+	agent := &store.Agent{
+		ID:     sess.AgentID,
+		UserID: sess.UserID,
+		OrgID:  sess.OrgID,
+	}
+	return req.WithContext(store.WithAgent(ctx, agent))
 }
 
 func authRequiredResponse(req *http.Request, err error) *http.Response {

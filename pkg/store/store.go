@@ -503,6 +503,7 @@ type RuntimeSession struct {
 	ID                    string          `json:"id"`
 	UserID                string          `json:"user_id"`
 	AgentID               string          `json:"agent_id"`
+	OrgID                 string          `json:"org_id,omitempty"`
 	Mode                  string          `json:"mode"`
 	ProxyBearerSecretHash string          `json:"proxy_bearer_secret_hash"`
 	ObservationMode       bool            `json:"observation_mode"`

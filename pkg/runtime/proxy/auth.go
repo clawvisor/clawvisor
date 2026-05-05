@@ -197,6 +197,7 @@ func (a *Authenticator) getOrCreateAgentRuntimeSession(ctx context.Context, agen
 		ID:                    uuid.NewString(),
 		UserID:                agent.UserID,
 		AgentID:               agent.ID,
+		OrgID:                 agent.OrgID,
 		Mode:                  "proxy",
 		ProxyBearerSecretHash: HashProxyBearerSecret(secret),
 		ObservationMode:       wantObservation,

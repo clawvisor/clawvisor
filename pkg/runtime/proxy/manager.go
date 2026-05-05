@@ -38,9 +38,12 @@ type CreateSessionResult struct {
 	ObservationMode bool                  `json:"observation_mode"`
 }
 
-func (m *Manager) CreateRuntimeSession(ctx context.Context, agentID, userID string, req CreateSessionRequest) (*CreateSessionResult, error) {
+func (m *Manager) CreateRuntimeSession(ctx context.Context, agent *store.Agent, req CreateSessionRequest) (*CreateSessionResult, error) {
 	if m.Config == nil {
 		return nil, fmt.Errorf("runtime config is unavailable")
+	}
+	if agent == nil {
+		return nil, fmt.Errorf("agent is required")
 	}
 	if req.Mode == "" {
 		req.Mode = "proxy"
@@ -66,8 +69,9 @@ func (m *Manager) CreateRuntimeSession(ctx context.Context, agentID, userID stri
 	}
 	session := &store.RuntimeSession{
 		ID:                    uuid.NewString(),
-		UserID:                userID,
-		AgentID:               agentID,
+		UserID:                agent.UserID,
+		AgentID:               agent.ID,
+		OrgID:                 agent.OrgID,
 		Mode:                  req.Mode,
 		ProxyBearerSecretHash: HashProxyBearerSecret(secret),
 		ObservationMode:       observation,

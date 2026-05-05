@@ -1566,30 +1566,30 @@ func (s *Store) CreateRuntimeSession(ctx context.Context, sess *store.RuntimeSes
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO runtime_sessions (
-			id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, revoked_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, sess.ID, sess.UserID, sess.AgentID, sess.Mode, sess.ProxyBearerSecretHash, sess.ObservationMode,
+			id, user_id, agent_id, org_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, revoked_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, sess.ID, sess.UserID, sess.AgentID, sess.OrgID, sess.Mode, sess.ProxyBearerSecretHash, sess.ObservationMode,
 		rawJSONOrDefaultBytes(sess.MetadataJSON, "{}"), sess.ExpiresAt, sess.RevokedAt)
 	return err
 }
 
 func (s *Store) GetRuntimeSession(ctx context.Context, id string) (*store.RuntimeSession, error) {
 	return s.getRuntimeSession(ctx, `
-		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		SELECT id, user_id, agent_id, org_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
 		FROM runtime_sessions WHERE id = $1
 	`, id)
 }
 
 func (s *Store) GetRuntimeSessionByProxyBearerSecretHash(ctx context.Context, secretHash string) (*store.RuntimeSession, error) {
 	return s.getRuntimeSession(ctx, `
-		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		SELECT id, user_id, agent_id, org_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
 		FROM runtime_sessions WHERE proxy_bearer_secret_hash = $1
 	`, secretHash)
 }
 
 func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) ([]*store.RuntimeSession, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		SELECT id, user_id, agent_id, org_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
 		FROM runtime_sessions WHERE agent_id = $1 ORDER BY created_at DESC
 	`, agentID)
 	if err != nil {
@@ -1609,7 +1609,7 @@ func (s *Store) ListRuntimeSessionsByAgent(ctx context.Context, agentID string) 
 
 func (s *Store) ListRuntimeSessionsByAgentAndLaunchID(ctx context.Context, agentID, launchID string) ([]*store.RuntimeSession, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, agent_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
+		SELECT id, user_id, agent_id, org_id, mode, proxy_bearer_secret_hash, observation_mode, metadata_json, expires_at, created_at, revoked_at
 		FROM runtime_sessions
 		WHERE agent_id = $1
 		  AND COALESCE(metadata_json->>'launch_id', '') = $2
@@ -1919,7 +1919,7 @@ func (s *Store) getRuntimeSession(ctx context.Context, query string, arg any) (*
 func scanRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.RuntimeSession, error) {
 	sess := &store.RuntimeSession{}
 	var metadataJSON []byte
-	if err := scanner.Scan(&sess.ID, &sess.UserID, &sess.AgentID, &sess.Mode, &sess.ProxyBearerSecretHash,
+	if err := scanner.Scan(&sess.ID, &sess.UserID, &sess.AgentID, &sess.OrgID, &sess.Mode, &sess.ProxyBearerSecretHash,
 		&sess.ObservationMode, &metadataJSON, &sess.ExpiresAt, &sess.CreatedAt, &sess.RevokedAt); err != nil {
 		return nil, err
 	}

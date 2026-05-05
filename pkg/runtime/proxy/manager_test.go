@@ -55,7 +55,7 @@ func TestManagerCreateRuntimeSession(t *testing.T) {
 		Config: cfg,
 		Proxy:  srv,
 	}
-	result, err := manager.CreateRuntimeSession(ctx, agent.ID, user.ID, CreateSessionRequest{})
+	result, err := manager.CreateRuntimeSession(ctx, agent, CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateRuntimeSession: %v", err)
 	}

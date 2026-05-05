@@ -23,7 +23,7 @@ import (
 )
 
 type RuntimeManager interface {
-	CreateRuntimeSession(ctx context.Context, agentID, userID string, req runtimeproxy.CreateSessionRequest) (*runtimeproxy.CreateSessionResult, error)
+	CreateRuntimeSession(ctx context.Context, agent *store.Agent, req runtimeproxy.CreateSessionRequest) (*runtimeproxy.CreateSessionResult, error)
 	ListRuntimeSessionsForUser(ctx context.Context, userID string) ([]*store.RuntimeSession, error)
 	RevokeRuntimeSession(ctx context.Context, sessionID string) error
 	ProxyURL() string
@@ -70,7 +70,7 @@ func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		req.ObservationMode = &observe
 	}
 	req.Metadata = mergeRuntimeSessionMetadata(req.Metadata, *settings)
-	result, err := h.manager.CreateRuntimeSession(r.Context(), agent.ID, agent.UserID, runtimeproxy.CreateSessionRequest{
+	result, err := h.manager.CreateRuntimeSession(r.Context(), agent, runtimeproxy.CreateSessionRequest{
 		Mode:            req.Mode,
 		ObservationMode: req.ObservationMode,
 		TTLSeconds:      req.TTLSeconds,
