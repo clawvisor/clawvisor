@@ -32,7 +32,7 @@ func TestRenderHeldToolUsePromptPlacesSubjectOnOwnLine(t *testing.T) {
 		},
 	}
 
-	got := renderHeldToolUsePrompt(held, cfg)
+	got := renderHeldToolUsePrompt(held, nil, cfg)
 	if !strings.Contains(got, "Clawvisor paused:\n\nBash python3 /tmp/hello_world.py") {
 		t.Fatalf("expected paused subject on its own line, got %q", got)
 	}

@@ -714,7 +714,7 @@ func (s *Server) ensureHeldToolUseApprovalWithKind(ctx context.Context, hooks To
 			TaskID:              taskIDPtr(reviewTask),
 			SessionID:           &session.ID,
 			Status:              "pending",
-			Surface:             approvalSurface(hooks.Config),
+			Surface:             approvalSurface(session, hooks.Config),
 			SummaryJSON:         summaryJSON,
 			PayloadJSON:         payloadJSON,
 			ResolutionTransport: "release_held_tool_use",
@@ -726,10 +726,10 @@ func (s *Server) ensureHeldToolUseApprovalWithKind(ctx context.Context, hooks To
 
 	held, ok := hooks.ReviewCache.Hold(session.ID, rec.ID, taskIDOrEmpty(reviewTask), tu.ID, tu.Name, input, reason)
 	if ok {
-		return rec, held, renderHeldToolUsePrompt(held, hooks.Config)
+		return rec, held, renderHeldToolUsePrompt(held, session, hooks.Config)
 	}
 	existing := hooks.ReviewCache.GetByApprovalRecord(session.ID, rec.ID)
-	return rec, existing, renderExistingHeldPrompt(existing, hooks.Config)
+	return rec, existing, renderExistingHeldPrompt(existing, session, hooks.Config)
 }
 
 func loadRuntimeCandidateTasks(ctx context.Context, st store.Store, session *store.RuntimeSession) ([]*store.Task, error) {
@@ -804,26 +804,26 @@ func decodeToolInput(raw json.RawMessage) map[string]any {
 	return out
 }
 
-func renderHeldToolUsePrompt(held *review.HeldApproval, cfg *config.Config) string {
+func renderHeldToolUsePrompt(held *review.HeldApproval, session *store.RuntimeSession, cfg *config.Config) string {
 	if held == nil {
 		return "Tool use requires runtime approval in Clawvisor before it can run."
 	}
 	subject := summarizeToolUse(held.ToolName, held.ToolInput)
-	if cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled {
+	if sessionInlineApprovalEnabled(session, cfg) {
 		return "Clawvisor paused:\n\n" + subject + "\n\nReply `approve` to run it or `deny` to block it. You can also approve it from the Clawvisor dashboard."
 	}
 	return "Clawvisor paused:\n\n" + subject + "\n\nPending approval in the dashboard.\nApproval ID: " + held.ID
 }
 
-func renderExistingHeldPrompt(held *review.HeldApproval, cfg *config.Config) string {
+func renderExistingHeldPrompt(held *review.HeldApproval, session *store.RuntimeSession, cfg *config.Config) string {
 	if held == nil {
 		return "Clawvisor already has a pending runtime approval for this session."
 	}
-	return renderHeldToolUsePrompt(held, cfg)
+	return renderHeldToolUsePrompt(held, session, cfg)
 }
 
-func approvalSurface(cfg *config.Config) string {
-	if cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled {
+func approvalSurface(session *store.RuntimeSession, cfg *config.Config) string {
+	if sessionInlineApprovalEnabled(session, cfg) {
 		return "inline"
 	}
 	return "dashboard"

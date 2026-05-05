@@ -20,9 +20,17 @@ type sessionRuntimeSettings struct {
 	// only from cfg.RuntimePolicy. Cloud realizes these from per-org
 	// policy at session-create time; daemon mode leaves them zero and
 	// the accessors fall back to the global cfg value.
-	InlineApprovalEnabled   *bool    `json:"inline_approval_enabled,omitempty"`
-	ToolLeaseTimeoutSeconds int      `json:"tool_lease_timeout_seconds,omitempty"`
-	HarnessAllowlist        []string `json:"harness_allowlist,omitempty"`
+	//
+	// HarnessAllowlist uses *[]string so a tenant can explicitly express
+	// "empty allowlist" — i.e. the override is `[]`, which means only
+	// the built-in defaults (api.anthropic.com etc.) and cfg.LLM.Endpoint
+	// pass. A `nil` pointer means "no override; use cfg." Without the
+	// pointer, an empty slice is indistinguishable from absent in JSON
+	// round-trips, and the allowlist override silently degrades to the
+	// global cfg.
+	InlineApprovalEnabled   *bool     `json:"inline_approval_enabled,omitempty"`
+	ToolLeaseTimeoutSeconds int       `json:"tool_lease_timeout_seconds,omitempty"`
+	HarnessAllowlist        *[]string `json:"harness_allowlist,omitempty"`
 }
 
 func mergedAgentRuntimeSettings(agent *store.Agent, cfg *config.Config) sessionRuntimeSettings {
@@ -77,7 +85,7 @@ func sessionRuntimeSettingsFromMetadata(session *store.RuntimeSession, cfg *conf
 	if parsed.ToolLeaseTimeoutSeconds > 0 {
 		settings.ToolLeaseTimeoutSeconds = parsed.ToolLeaseTimeoutSeconds
 	}
-	if len(parsed.HarnessAllowlist) > 0 {
+	if parsed.HarnessAllowlist != nil {
 		settings.HarnessAllowlist = parsed.HarnessAllowlist
 	}
 	return settings
@@ -122,11 +130,13 @@ func sessionToolLeaseTTL(session *store.RuntimeSession, cfg *config.Config) time
 }
 
 // sessionHarnessAllowlist returns the harness allowlist for this session.
-// Per-session override (non-empty) wins; otherwise falls back to cfg.
+// A non-nil per-session override wins (including an explicit empty list,
+// which means "deny everything except the built-in defaults"). A nil
+// override falls back to cfg.RuntimePolicy.HarnessAllowlist.
 func sessionHarnessAllowlist(session *store.RuntimeSession, cfg *config.Config) []string {
 	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
-	if len(settings.HarnessAllowlist) > 0 {
-		return settings.HarnessAllowlist
+	if settings.HarnessAllowlist != nil {
+		return *settings.HarnessAllowlist
 	}
 	if cfg == nil {
 		return nil
