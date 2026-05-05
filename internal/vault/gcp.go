@@ -56,7 +56,7 @@ func (v *GCPVault) secretName(userID, serviceID string) string {
 }
 
 func (v *GCPVault) Set(ctx context.Context, userID, serviceID string, credential []byte) error {
-	encrypted, iv, authTag, err := v.localVault.encrypt(credential)
+	encrypted, iv, authTag, err := v.localVault.encrypt(credential, rowAAD(userID, serviceID))
 	if err != nil {
 		return fmt.Errorf("gcp vault encrypt: %w", err)
 	}
@@ -120,7 +120,16 @@ func (v *GCPVault) Get(ctx context.Context, userID, serviceID string) ([]byte, e
 	}
 	encrypted, iv, authTag = parts[0], parts[1], parts[2]
 
-	return v.localVault.decrypt(encrypted, iv, authTag)
+	aad := rowAAD(userID, serviceID)
+	plaintext, err := v.localVault.decrypt(encrypted, iv, authTag, aad)
+	if err == nil {
+		return plaintext, nil
+	}
+	// Lazy migration for rows written before AAD-binding shipped.
+	if legacy, legacyErr := v.localVault.decrypt(encrypted, iv, authTag, nil); legacyErr == nil {
+		return legacy, nil
+	}
+	return nil, err
 }
 
 func (v *GCPVault) Delete(ctx context.Context, userID, serviceID string) error {

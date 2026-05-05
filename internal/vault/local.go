@@ -56,7 +56,7 @@ func (v *LocalVault) ph(n int) string {
 }
 
 func (v *LocalVault) Set(ctx context.Context, userID, serviceID string, credential []byte) error {
-	encrypted, iv, authTag, err := v.encrypt(credential)
+	encrypted, iv, authTag, err := v.encrypt(credential, rowAAD(userID, serviceID))
 	if err != nil {
 		return fmt.Errorf("vault encrypt: %w", err)
 	}
@@ -99,7 +99,18 @@ func (v *LocalVault) Get(ctx context.Context, userID, serviceID string) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("vault get: %w", err)
 	}
-	return v.decrypt(encrypted, iv, authTag)
+	plaintext, err := v.decrypt(encrypted, iv, authTag, rowAAD(userID, serviceID))
+	if err == nil {
+		return plaintext, nil
+	}
+	// Lazy migration: rows written before AAD-binding shipped were sealed with
+	// empty AAD. Retry once so existing deployments don't lock users out. The
+	// next Set rewrites the row with the bound AAD.
+	legacy, legacyErr := v.decrypt(encrypted, iv, authTag, nil)
+	if legacyErr == nil {
+		return legacy, nil
+	}
+	return nil, err
 }
 
 func (v *LocalVault) Delete(ctx context.Context, userID, serviceID string) error {
@@ -133,17 +144,24 @@ func (v *LocalVault) List(ctx context.Context, userID string) ([]string, error) 
 	return services, rows.Err()
 }
 
-// Encrypt and Decrypt are exported so GCPVault can reuse the AES logic.
-
-func (v *LocalVault) Encrypt(plaintext []byte) (encrypted, iv, authTag string, err error) {
-	return v.encrypt(plaintext)
+// rowAAD binds an AES-GCM seal to its (user_id, service_id) row coordinates so
+// a DB-write attacker can't shuffle ciphertexts between rows undetected.
+func rowAAD(userID, serviceID string) []byte {
+	return []byte(userID + "|" + serviceID)
 }
 
-func (v *LocalVault) Decrypt(encrypted, iv, authTag string) ([]byte, error) {
-	return v.decrypt(encrypted, iv, authTag)
+// Encrypt and Decrypt are exported so GCPVault can reuse the AES logic. The
+// aad parameter MUST be the same on both sides or Open returns an auth error.
+
+func (v *LocalVault) Encrypt(plaintext, aad []byte) (encrypted, iv, authTag string, err error) {
+	return v.encrypt(plaintext, aad)
 }
 
-func (v *LocalVault) encrypt(plaintext []byte) (encrypted, iv, authTag string, err error) {
+func (v *LocalVault) Decrypt(encrypted, iv, authTag string, aad []byte) ([]byte, error) {
+	return v.decrypt(encrypted, iv, authTag, aad)
+}
+
+func (v *LocalVault) encrypt(plaintext, aad []byte) (encrypted, iv, authTag string, err error) {
 	block, err := aes.NewCipher(v.key)
 	if err != nil {
 		return "", "", "", err
@@ -157,7 +175,7 @@ func (v *LocalVault) encrypt(plaintext []byte) (encrypted, iv, authTag string, e
 		return "", "", "", err
 	}
 	// Seal appends auth tag after ciphertext
-	sealed := gcm.Seal(nil, nonce, plaintext, nil)
+	sealed := gcm.Seal(nil, nonce, plaintext, aad)
 	tagSize := gcm.Overhead()
 	cipherBytes := sealed[:len(sealed)-tagSize]
 	tagBytes := sealed[len(sealed)-tagSize:]
@@ -168,7 +186,7 @@ func (v *LocalVault) encrypt(plaintext []byte) (encrypted, iv, authTag string, e
 		nil
 }
 
-func (v *LocalVault) decrypt(encrypted, iv, authTag string) ([]byte, error) {
+func (v *LocalVault) decrypt(encrypted, iv, authTag string, aad []byte) ([]byte, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext: %w", err)
@@ -190,7 +208,7 @@ func (v *LocalVault) decrypt(encrypted, iv, authTag string) ([]byte, error) {
 		return nil, err
 	}
 	sealed := append(ciphertext, tag...) //nolint:gocritic
-	plaintext, err := gcm.Open(nil, nonce, sealed, nil)
+	plaintext, err := gcm.Open(nil, nonce, sealed, aad)
 	if err != nil {
 		return nil, fmt.Errorf("vault decrypt (tampered data?): %w", err)
 	}

@@ -37,11 +37,12 @@ func TestLocalVault_EncryptDecryptRoundTrip(t *testing.T) {
 		[]byte(`{"token":"sk_test_abcdef"}`),
 	}
 	for _, plaintext := range cases {
-		enc, iv, tag, err := v.Encrypt(plaintext)
+		aad := []byte("u|svc")
+		enc, iv, tag, err := v.Encrypt(plaintext, aad)
 		if err != nil {
 			t.Fatalf("Encrypt: %v", err)
 		}
-		got, err := v.Decrypt(enc, iv, tag)
+		got, err := v.Decrypt(enc, iv, tag, aad)
 		if err != nil {
 			t.Fatalf("Decrypt: %v", err)
 		}
@@ -57,11 +58,12 @@ func TestLocalVault_EncryptUsesFreshNonce(t *testing.T) {
 		t.Fatalf("NewLocalVaultFromKey: %v", err)
 	}
 	plaintext := []byte("same plaintext, different ciphertexts please")
-	_, iv1, _, err := v.Encrypt(plaintext)
+	aad := []byte("u|svc")
+	_, iv1, _, err := v.Encrypt(plaintext, aad)
 	if err != nil {
 		t.Fatalf("Encrypt 1: %v", err)
 	}
-	_, iv2, _, err := v.Encrypt(plaintext)
+	_, iv2, _, err := v.Encrypt(plaintext, aad)
 	if err != nil {
 		t.Fatalf("Encrypt 2: %v", err)
 	}
@@ -75,7 +77,8 @@ func TestLocalVault_TamperedCiphertextFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalVaultFromKey: %v", err)
 	}
-	enc, iv, tag, err := v.Encrypt([]byte("secret"))
+	aad := []byte("u|svc")
+	enc, iv, tag, err := v.Encrypt([]byte("secret"), aad)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
@@ -88,7 +91,7 @@ func TestLocalVault_TamperedCiphertextFails(t *testing.T) {
 	}
 	raw[0] ^= 0x01
 	tampered := base64.StdEncoding.EncodeToString(raw)
-	if _, err := v.Decrypt(tampered, iv, tag); err == nil {
+	if _, err := v.Decrypt(tampered, iv, tag, aad); err == nil {
 		t.Fatalf("expected decrypt error for tampered ciphertext")
 	}
 }
@@ -98,7 +101,8 @@ func TestLocalVault_TamperedAuthTagFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalVaultFromKey: %v", err)
 	}
-	enc, iv, tag, err := v.Encrypt([]byte("secret"))
+	aad := []byte("u|svc")
+	enc, iv, tag, err := v.Encrypt([]byte("secret"), aad)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
@@ -108,7 +112,7 @@ func TestLocalVault_TamperedAuthTagFails(t *testing.T) {
 	}
 	raw[0] ^= 0x01
 	bad := base64.StdEncoding.EncodeToString(raw)
-	if _, err := v.Decrypt(enc, iv, bad); err == nil {
+	if _, err := v.Decrypt(enc, iv, bad, aad); err == nil {
 		t.Fatalf("expected decrypt error for tampered auth tag")
 	}
 }
@@ -127,11 +131,12 @@ func TestLocalVault_WrongKeyFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vault B: %v", err)
 	}
-	enc, iv, tag, err := a.Encrypt(plaintext)
+	aad := []byte("u|svc")
+	enc, iv, tag, err := a.Encrypt(plaintext, aad)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if _, err := b.Decrypt(enc, iv, tag); err == nil {
+	if _, err := b.Decrypt(enc, iv, tag, aad); err == nil {
 		t.Fatalf("expected decrypt to fail under a different key")
 	}
 }
@@ -283,5 +288,118 @@ func TestLocalVault_DBBacked_RoundTrip(t *testing.T) {
 	}
 	if _, err := v.Get(ctx, "u1", "calendar"); err != pkgvault.ErrNotFound {
 		t.Fatalf("after delete expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestLocalVault_CrossRowSwapFails proves that a DB-write attacker who copies
+// (encrypted, iv, auth_tag) from user A's row into user B's row cannot trick
+// Get into returning A's plaintext. The AAD binding makes the swap detectable.
+func TestLocalVault_CrossRowSwapFails(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE vault_entries (
+			id         TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			service_id TEXT NOT NULL,
+			encrypted  TEXT NOT NULL,
+			iv         TEXT NOT NULL,
+			auth_tag   TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, service_id)
+		);
+	`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	v, err := NewLocalVaultFromKeyWithDB(newKey(t), db, "sqlite")
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+
+	if err := v.Set(ctx, "alice", "gmail", []byte("alice-token")); err != nil {
+		t.Fatalf("Set alice: %v", err)
+	}
+	if err := v.Set(ctx, "bob", "gmail", []byte("bob-token")); err != nil {
+		t.Fatalf("Set bob: %v", err)
+	}
+
+	// Simulate a privileged-DB attacker copying alice's ciphertext into bob's row.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE vault_entries
+		   SET encrypted = (SELECT encrypted FROM vault_entries WHERE user_id = 'alice' AND service_id = 'gmail'),
+		       iv        = (SELECT iv        FROM vault_entries WHERE user_id = 'alice' AND service_id = 'gmail'),
+		       auth_tag  = (SELECT auth_tag  FROM vault_entries WHERE user_id = 'alice' AND service_id = 'gmail')
+		 WHERE user_id = 'bob' AND service_id = 'gmail'
+	`); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+
+	// Bob's Get must now fail rather than return alice's plaintext.
+	got, err := v.Get(ctx, "bob", "gmail")
+	if err == nil {
+		t.Fatalf("expected swap to fail decryption; got plaintext %q", got)
+	}
+	if bytes.Equal(got, []byte("alice-token")) {
+		t.Fatalf("AAD binding broken: bob's Get returned alice's plaintext")
+	}
+}
+
+// TestLocalVault_LegacyRowMigratesLazily simulates a row written before the
+// AAD binding shipped (sealed with empty AAD) and proves Get still resolves it
+// so existing deployments don't lock users out.
+func TestLocalVault_LegacyRowMigratesLazily(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE vault_entries (
+			id         TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			service_id TEXT NOT NULL,
+			encrypted  TEXT NOT NULL,
+			iv         TEXT NOT NULL,
+			auth_tag   TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, service_id)
+		);
+	`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	v, err := NewLocalVaultFromKeyWithDB(newKey(t), db, "sqlite")
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+
+	// Encrypt with empty AAD to mimic a pre-fix row.
+	enc, iv, tag, err := v.Encrypt([]byte("legacy-secret"), nil)
+	if err != nil {
+		t.Fatalf("Encrypt legacy: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO vault_entries (id, user_id, service_id, encrypted, iv, auth_tag) VALUES (?, ?, ?, ?, ?, ?)`,
+		"legacy-id", "alice", "gmail", enc, iv, tag,
+	); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	got, err := v.Get(ctx, "alice", "gmail")
+	if err != nil {
+		t.Fatalf("Get legacy: %v", err)
+	}
+	if !bytes.Equal(got, []byte("legacy-secret")) {
+		t.Fatalf("legacy plaintext mismatch: %q", got)
 	}
 }
