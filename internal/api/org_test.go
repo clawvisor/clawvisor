@@ -12,7 +12,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )

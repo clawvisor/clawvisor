@@ -8,7 +8,7 @@ import (
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	pkgvault "github.com/clawvisor/clawvisor/pkg/vault"
+
 	"google.golang.org/api/iterator"
 
 	"google.golang.org/grpc/codes"
@@ -20,8 +20,8 @@ import (
 // is a second layer, not the primary encryption.
 // Secret naming: clawvisor-{userID}-{serviceID}
 type GCPVault struct {
-	client    *secretmanager.Client
-	project   string
+	client     *secretmanager.Client
+	project    string
 	localVault *LocalVault // for encryption/decryption
 }
 
@@ -106,7 +106,7 @@ func (v *GCPVault) Get(ctx context.Context, userID, serviceID string) ([]byte, e
 	})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return nil, pkgvault.ErrNotFound
+			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("accessing secret: %w", err)
 	}

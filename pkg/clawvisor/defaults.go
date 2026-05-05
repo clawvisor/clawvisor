@@ -42,7 +42,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/relay"
 	pgstore "github.com/clawvisor/clawvisor/pkg/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"

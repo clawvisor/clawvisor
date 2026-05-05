@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
-
-	pkgvault "github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 func newKey(t *testing.T) []byte {
@@ -268,7 +266,7 @@ func TestLocalVault_DBBacked_RoundTrip(t *testing.T) {
 	// Cross-user isolation.
 	if _, err := v.Get(ctx, "u2", "gmail"); err == nil {
 		t.Fatalf("expected ErrNotFound for other user, got nil")
-	} else if err != pkgvault.ErrNotFound {
+	} else if err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
@@ -286,7 +284,7 @@ func TestLocalVault_DBBacked_RoundTrip(t *testing.T) {
 	if err := v.Delete(ctx, "u1", "calendar"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := v.Get(ctx, "u1", "calendar"); err != pkgvault.ErrNotFound {
+	if _, err := v.Get(ctx, "u1", "calendar"); err != ErrNotFound {
 		t.Fatalf("after delete expected ErrNotFound, got %v", err)
 	}
 }

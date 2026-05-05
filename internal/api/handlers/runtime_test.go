@@ -15,7 +15,7 @@ import (
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/google/uuid"

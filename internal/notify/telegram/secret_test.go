@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/internal/vault"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // TestSaveTelegramConfig_EncryptsBotToken verifies that when a vault is
