@@ -566,7 +566,7 @@ func mergeExtractionResults(
 		seen[k] = true
 	}
 
-	appendFact := func(factType, factValue string) {
+	appendFact := func(factType, factValue, source string) {
 		key := factType + "|" + factValue
 		if seen[key] {
 			return
@@ -581,9 +581,11 @@ func mergeExtractionResults(
 			Action:    req.Action,
 			FactType:  factType,
 			FactValue: factValue,
+			Source:    source,
 		})
 	}
 
+	// Direct facts come from the LLM's explicit "facts" array.
 	for _, ef := range directFacts {
 		if ef.FactType == "" || ef.FactValue == "" {
 			dropped++
@@ -593,13 +595,19 @@ func mergeExtractionResults(
 			dropped++
 			continue
 		}
-		appendFact(ef.FactType, ef.FactValue)
+		appendFact(ef.FactType, ef.FactValue, "llm_direct")
 	}
 
+	// Regex matches inherit their source from the originating pattern
+	// (builtin or llm_regex).
 	if len(patterns) > 0 {
 		regexFacts := runExtractionPatterns(patterns, req.Result, logger, req.TaskID)
 		for _, rf := range regexFacts {
-			appendFact(rf.factType, rf.factValue)
+			source := rf.source
+			if source == "" {
+				source = "unknown"
+			}
+			appendFact(rf.factType, rf.factValue, source)
 		}
 	}
 
@@ -617,6 +625,11 @@ type extractedFact struct {
 type extractionPattern struct {
 	FactType string `json:"fact_type"`
 	Regex    string `json:"regex"`
+	// Source identifies which extractor produced this pattern. Set to
+	// "builtin" for hardcoded per-service patterns and "llm_regex" for
+	// patterns parsed out of an LLM response. Skipped on JSON marshal so
+	// it doesn't leak into LLM responses or get clobbered by parsing.
+	Source string `json:"-"`
 }
 
 // extractFirstJSONValue returns the first complete JSON object or array
@@ -677,6 +690,8 @@ func extractFirstJSONValue(s string) string {
 
 // parseExtractionResponse handles both the new object format
 // {"facts": [...], "patterns": [...]} and the legacy array format [...].
+// Every returned pattern has Source="llm_regex" so facts captured by these
+// patterns are distinguishable from builtin-pattern facts in chain_facts.
 func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]extractedFact, []extractionPattern) {
 	// Try new format first.
 	var obj struct {
@@ -684,10 +699,13 @@ func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]
 		Patterns []extractionPattern `json:"patterns"`
 	}
 	if err := json.Unmarshal([]byte(raw), &obj); err == nil && (len(obj.Facts) > 0 || len(obj.Patterns) > 0) {
+		for i := range obj.Patterns {
+			obj.Patterns[i].Source = "llm_regex"
+		}
 		return obj.Facts, obj.Patterns
 	}
 
-	// Fall back to legacy array format.
+	// Fall back to legacy array format (no patterns in this format).
 	var arr []extractedFact
 	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
 		logger.Warn("chain context extraction parse failed", "err", err, "task_id", taskID)
@@ -699,6 +717,7 @@ func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]
 type regexMatch struct {
 	factType  string
 	factValue string
+	source    string // "builtin" or "llm_regex"
 }
 
 // runExtractionPatterns compiles and runs LLM-emitted regex patterns against
@@ -740,7 +759,7 @@ func runExtractionPatterns(patterns []extractionPattern, fullResult string, logg
 			if val == "" {
 				continue
 			}
-			matches = append(matches, regexMatch{factType: p.FactType, factValue: val})
+			matches = append(matches, regexMatch{factType: p.FactType, factValue: val, source: p.Source})
 		}
 	}
 
@@ -751,8 +770,19 @@ func runExtractionPatterns(patterns []extractionPattern, fullResult string, logg
 // result structures. These run on every extraction call alongside any
 // patterns the LLM emitted, providing defense-in-depth so common ID and
 // email shapes are always captured. Dedupe in mergeExtractionResults
-// handles overlap with LLM-emitted facts.
+// handles overlap with LLM-emitted facts. Every returned pattern has
+// Source="builtin" so facts produced by these patterns are auditable.
 func builtinPatterns(service, action string) []extractionPattern {
+	patterns := builtinPatternsRaw(service, action)
+	for i := range patterns {
+		patterns[i].Source = "builtin"
+	}
+	return patterns
+}
+
+// builtinPatternsRaw returns the per-service patterns without setting a
+// Source — the public builtinPatterns wrapper handles that uniformly.
+func builtinPatternsRaw(service, action string) []extractionPattern {
 	// Generic patterns that apply to most JSON API responses. Includes a
 	// permissive entity_id catch for any "id" field with an 8+ char value;
 	// service-specific patterns below typically also extract these values

@@ -487,6 +487,52 @@ func TestMergeExtractionResults_PreSeenSuppressesDuplicates(t *testing.T) {
 	}
 }
 
+func TestMergeExtractionResults_SourceAttribution(t *testing.T) {
+	// Builtin patterns produce facts tagged "builtin"; LLM-direct facts
+	// are tagged "llm_direct"; LLM-regex patterns are tagged "llm_regex".
+	// Verify all three sources appear with the expected fact_values.
+	result := `{"messages":[
+		{"id":"aabbccddee112233","from":"alice@co.com","subject":"hi"},
+		{"id":"ffeeddccbb998877","from":"bob@co.com"}]}`
+
+	// Direct LLM facts (e.g. a person name the regex doesn't catch).
+	direct := []extractedFact{
+		{FactType: "person_name", FactValue: "Alice"},
+	}
+	// LLM-emitted regex (subject capture; the pattern source must be set
+	// to mirror what parseExtractionResponse does).
+	llmPattern := extractionPattern{
+		FactType: "subject_text",
+		Regex:    `"subject":\s*"([^"]+)"`,
+		Source:   "llm_regex",
+	}
+	// Builtin Gmail patterns capture message_id and email_address.
+	patterns := append(builtinPatterns("google.gmail", "list_messages"), llmPattern)
+
+	// Inject "Alice" into the result so substringMatch passes for the
+	// direct fact.
+	resultWithAlice := result + ` {"name":"Alice"}`
+
+	facts, _ := mergeExtractionResults(direct, patterns, nil, makeMergeReq(resultWithAlice), slog.Default())
+
+	bySource := make(map[string]int)
+	for _, f := range facts {
+		bySource[f.Source]++
+	}
+	if bySource["builtin"] == 0 {
+		t.Errorf("expected at least one builtin fact, got sources=%v", bySource)
+	}
+	if bySource["llm_direct"] == 0 {
+		t.Errorf("expected at least one llm_direct fact, got sources=%v", bySource)
+	}
+	if bySource["llm_regex"] == 0 {
+		t.Errorf("expected at least one llm_regex fact, got sources=%v", bySource)
+	}
+	if bySource[""] != 0 || bySource["unknown"] != 0 {
+		t.Errorf("unexpected unset/unknown sources: %v", bySource)
+	}
+}
+
 func TestExtractBuiltins_RunsWithoutLLM(t *testing.T) {
 	// ExtractBuiltins should produce facts using only builtin patterns —
 	// no LLM call, no health/config dependency. A stub extractor with a
