@@ -12,6 +12,19 @@ export default function Settings() {
   const { features } = useAuth()
   const passwordAuth = features?.password_auth ?? false
 
+  const billingEnabled = features?.billing ?? false
+  const { data: billingStatus } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => api.billing.status(),
+    enabled: billingEnabled,
+  })
+  const PAID_PLANS = ['pro', 'enterprise', 'grandfathered']
+  const ACTIVE_STATUSES = ['active', 'past_due']
+  const onPaidPlan = !billingEnabled || (
+    PAID_PLANS.includes(billingStatus?.plan ?? '') &&
+    ACTIVE_STATUSES.includes(billingStatus?.status ?? '')
+  )
+
   return (
     <div className="p-4 sm:p-8 space-y-10">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
@@ -19,7 +32,7 @@ export default function Settings() {
       {!features?.multi_tenant && <LLMSection />}
       {!features?.multi_tenant && <OAuthCredentialsSection />}
       {features?.mobile_pairing && <DevicePairing />}
-      {features?.local_daemon && <LocalDaemonPairing />}
+      {features?.local_daemon && onPaidPlan && <LocalDaemonPairing />}
       <TelegramSetupSection />
       {passwordAuth && <PasswordSection />}
       {passwordAuth && <DangerZone />}
