@@ -69,7 +69,8 @@ type ChatMessage struct {
 	CacheControl bool `json:"-"`
 }
 
-// Client calls either an OpenAI-compatible, Anthropic, or Vertex AI chat endpoint.
+// Client calls either an OpenAI-compatible, Anthropic, Vertex AI Anthropic,
+// or Vertex AI Gemini chat endpoint.
 type Client struct {
 	provider          string
 	endpoint          string
@@ -80,6 +81,10 @@ type Client struct {
 	tokenSource       oauth2.TokenSource // for Vertex AI (ADC)
 	maxTokens         int                // 0 → use default (maxTokens const)
 	fallbackEndpoints []string           // Vertex AI: additional region endpoints to try on failure
+
+	// Gemini-specific settings.
+	geminiThinkingLevel string       // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
+	geminiCacheNameFn   func() string // returns current Gemini cachedContents resource name; "" = uncached path
 }
 
 // WithMaxTokens returns a shallow copy of the client with a custom max_tokens limit.
@@ -101,6 +106,29 @@ func (c *Client) WithTokenSource(ts oauth2.TokenSource) *Client {
 	c2 := *c
 	c2.tokenSource = ts
 	return &c2
+}
+
+// WithGeminiThinkingLevel returns a copy with a custom thinking-level
+// override. Valid values: "MINIMAL", "LOW", "MEDIUM", "HIGH". Empty → MINIMAL.
+func (c *Client) WithGeminiThinkingLevel(level string) *Client {
+	c2 := *c
+	c2.geminiThinkingLevel = level
+	return &c2
+}
+
+// Endpoint returns the resolved endpoint URL the client posts to.
+// Exposed primarily for tests that verify the endpoint construction logic.
+func (c *Client) Endpoint() string {
+	return c.endpoint
+}
+
+// AttachGeminiCacheNameFn registers a function the client calls on every
+// Gemini request to discover the current cachedContents resource name. The
+// function returning "" causes the client to fall through to the uncached
+// path (inlining systemInstruction). Mutates the receiver — the cache
+// manager only needs to register once at app startup.
+func (c *Client) AttachGeminiCacheNameFn(fn func() string) {
+	c.geminiCacheNameFn = fn
 }
 
 // NewClient builds a Client from a provider config.
@@ -154,6 +182,32 @@ func NewClient(cfg config.LLMProviderConfig) *Client {
 		}
 	}
 
+	if provider == "gemini" {
+		ts, err := google.DefaultTokenSource(context.Background(),
+			"https://www.googleapis.com/auth/cloud-platform",
+		)
+		if err == nil {
+			c.tokenSource = ts
+		}
+		c.geminiThinkingLevel = cfg.GeminiThinkingLevel
+		// Build the :generateContent URL from project/region/model when
+		// Endpoint isn't explicitly set. "global" uses the unprefixed
+		// aiplatform.googleapis.com host; regional locations prefix it.
+		if c.endpoint == "" {
+			project := cfg.Project
+			region := cfg.Region
+			if region == "" {
+				region = "global"
+			}
+			host := region + "-aiplatform.googleapis.com"
+			if region == "global" {
+				host = "aiplatform.googleapis.com"
+			}
+			c.endpoint = fmt.Sprintf("https://%s/v1/projects/%s/locations/%s/publishers/google/models/%s:generateContent",
+				host, project, region, cfg.Model)
+		}
+	}
+
 	return c
 }
 
@@ -194,6 +248,8 @@ func (c *Client) CompleteWithUsage(ctx context.Context, messages []ChatMessage) 
 		return c.completeAnthropic(ctx, messages)
 	case "vertex":
 		return c.completeVertex(ctx, messages)
+	case "gemini":
+		return c.completeGemini(ctx, messages)
 	default:
 		return c.completeOpenAI(ctx, messages) // "openai", "ollama", "groq" use OpenAI-compatible API
 	}
