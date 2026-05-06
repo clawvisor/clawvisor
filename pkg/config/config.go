@@ -149,33 +149,12 @@ type ApprovalConfig struct {
 // LLMProviderConfig holds settings for one LLM provider endpoint.
 type LLMProviderConfig struct {
 	Enabled        bool   `yaml:"enabled"`
-	Provider       string `yaml:"provider"` // "openai" (default) | "anthropic" | "vertex" | "gemini"
-	Endpoint       string `yaml:"endpoint"` // Base URL. Optional for "gemini" when Project+Region are set (built from those).
+	Provider       string `yaml:"provider"` // "openai" (default) | "anthropic"
+	Endpoint       string `yaml:"endpoint"` // Base URL, e.g. https://api.anthropic.com/v1
 	APIKey         string `yaml:"api_key"`  // Overridable via env
 	Model          string `yaml:"model"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	SkipReadonly   bool   `yaml:"skip_readonly"` // Safety only: skip check for read actions
-
-	// Vertex / Gemini settings. For "gemini" provider, Project and Region
-	// are required (Endpoint is built from them) unless Endpoint is set
-	// explicitly to override.
-	Project string `yaml:"project,omitempty"`
-	Region  string `yaml:"region,omitempty"` // "global" (preview models) | regional ID like "us-central1"
-
-	// Gemini-only knobs.
-	GeminiThinkingLevel string             `yaml:"gemini_thinking_level,omitempty"` // MINIMAL | LOW | MEDIUM | HIGH; default MINIMAL
-	GeminiCache         *GeminiCacheConfig `yaml:"gemini_cache,omitempty"`
-}
-
-// GeminiCacheConfig configures the explicit context cache lifecycle for a
-// Gemini provider. When enabled, a cachedContents resource is created at
-// app startup and refreshed before TTL expiry; the client references it on
-// every request. Set Enabled=false (or omit the block) to use uncached
-// generateContent calls.
-type GeminiCacheConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	Region     string `yaml:"region,omitempty"`      // defaults to LLMProviderConfig.Region
-	TTLSeconds int    `yaml:"ttl_seconds,omitempty"` // default 1800 (30 min)
 }
 
 // VerificationConfig holds settings for intent verification.

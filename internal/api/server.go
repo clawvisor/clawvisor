@@ -57,12 +57,6 @@ type Server struct {
 	logger     *slog.Logger
 	http       *http.Server
 
-	// closers run in order during graceful shutdown — used for sub-component
-	// teardown (Gemini cache manager, etc.) that needs to happen before
-	// store.Close. Each entry should be safe to call once and tolerate
-	// re-invocation defensively.
-	closers []func()
-
 	magicStore pkgauth.MagicTokenStore
 
 	// Extension points for open-core customization.
@@ -424,36 +418,6 @@ func (s *Server) routes() http.Handler {
 		v := intent.NewLLMVerifier(s.llmHealth, s.logger)
 		if s.verdictCache != nil {
 			v.SetVerdictCache(s.verdictCache)
-		}
-		// Start Gemini explicit context cache when configured. The cache
-		// holds the verification system prompt; per-request clients
-		// reference it via the function the verifier registers internally.
-		// On failure we log loudly but proceed — the verifier still works
-		// uncached, just slower and more expensive per call.
-		if vc := s.llmCfg.Verification; vc.Provider == "gemini" && vc.GeminiCache != nil && vc.GeminiCache.Enabled {
-			cacheRegion := vc.GeminiCache.Region
-			if cacheRegion == "" {
-				cacheRegion = vc.Region
-			}
-			ttl := time.Duration(vc.GeminiCache.TTLSeconds) * time.Second
-			cacheCfg := llm.GeminiCacheManagerConfig{
-				Project: vc.Project,
-				Region:  cacheRegion,
-				Model:   vc.Model,
-				TTL:     ttl,
-				Logger:  s.logger,
-			}
-			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := v.StartGeminiCache(startCtx, cacheCfg); err != nil {
-				s.logger.Error("gemini verifier cache start failed; running uncached",
-					"err", err)
-			}
-			startCancel()
-			s.closers = append(s.closers, func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer stopCancel()
-				v.StopGeminiCache(stopCtx)
-			})
 		}
 		verifier = v
 	}
@@ -1203,12 +1167,6 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
-		}
-		// Run sub-component closers (e.g. Gemini cache delete) before
-		// closing the store. They're best-effort — log on failure but
-		// continue shutdown so we don't strand the process.
-		for _, closer := range s.closers {
-			closer()
 		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {
