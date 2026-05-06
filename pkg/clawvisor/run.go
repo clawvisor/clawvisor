@@ -20,6 +20,7 @@ import (
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // RunWithContext starts the Clawvisor server using the provided context for
@@ -243,6 +244,45 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.FeedbackHooks != nil {
 		apiOpts = append(apiOpts, api.WithFeedbackHooks(&api.FeedbackHooks{
 			AfterBugReport: opts.FeedbackHooks.AfterBugReport,
+		}))
+	}
+
+	if opts.FeaturesHook != nil {
+		hook := opts.FeaturesHook
+		apiOpts = append(apiOpts, api.WithFeaturesHook(func(ctx context.Context, user *store.User, fs api.FeatureSet) api.FeatureSet {
+			modified := hook(ctx, user, FeatureSet{
+				MultiTenant:       fs.MultiTenant,
+				EmailVerification: fs.EmailVerification,
+				Passkeys:          fs.Passkeys,
+				SSO:               fs.SSO,
+				Teams:             fs.Teams,
+				UsageMetering:     fs.UsageMetering,
+				PasswordAuth:      fs.PasswordAuth,
+				Billing:           fs.Billing,
+				LocalDaemon:       fs.LocalDaemon,
+				RuntimeProxy:      fs.RuntimeProxy,
+				SecretVault:       fs.SecretVault,
+				RuntimePolicyUI:   fs.RuntimePolicyUI,
+				RuntimeActivity:   fs.RuntimeActivity,
+				AgentLiveSessions: fs.AgentLiveSessions,
+				ServicePresets:    fs.ServicePresets,
+			})
+			fs.MultiTenant = modified.MultiTenant
+			fs.EmailVerification = modified.EmailVerification
+			fs.Passkeys = modified.Passkeys
+			fs.SSO = modified.SSO
+			fs.Teams = modified.Teams
+			fs.UsageMetering = modified.UsageMetering
+			fs.PasswordAuth = modified.PasswordAuth
+			fs.Billing = modified.Billing
+			fs.LocalDaemon = modified.LocalDaemon
+			fs.RuntimeProxy = modified.RuntimeProxy
+			fs.SecretVault = modified.SecretVault
+			fs.RuntimePolicyUI = modified.RuntimePolicyUI
+			fs.RuntimeActivity = modified.RuntimeActivity
+			fs.AgentLiveSessions = modified.AgentLiveSessions
+			fs.ServicePresets = modified.ServicePresets
+			return fs
 		}))
 	}
 

@@ -68,6 +68,37 @@ func RequireUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) ht
 	}
 }
 
+// OptionalUser is middleware that validates a user JWT if present and injects
+// the user into the request context. Unlike RequireUser it never rejects the
+// request: missing, invalid, or purpose-restricted tokens cause the handler
+// to run without a user in context. Use this for routes that must be reachable
+// pre-login but want to vary their response when a user is authenticated
+// (e.g. /api/features for per-user feature gating).
+func OptionalUser(jwtSvc auth.TokenService, st store.Store) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := bearerToken(r)
+			if token == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, err := jwtSvc.ValidateToken(token)
+			if err != nil || claims.Purpose != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			user, err := st.GetUserByID(r.Context(), claims.UserID)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			AddLogField(ctx, "user_id", user.ID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // RequireUserOrTicket is middleware that first tries JWT auth (via Authorization
 // header), then falls back to a single-use ticket query parameter. This is used
 // for SSE endpoints where EventSource cannot set custom headers.

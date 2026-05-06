@@ -42,6 +42,13 @@ type FeedbackHooks struct {
 	AfterBugReport func(report *store.FeedbackReport)
 }
 
+// FeaturesHook lets cloud/enterprise layers override the FeatureSet returned
+// by /api/features on a per-user basis (e.g. gating features by billing plan).
+// `user` is non-nil when the request carries a valid JWT and nil for the
+// pre-login bootstrap call. Hooks should return the unmodified set when
+// `user` is nil.
+type FeaturesHook func(ctx context.Context, user *store.User, fs FeatureSet) FeatureSet
+
 // ServerOptions holds everything needed to start a Clawvisor server.
 // Use DefaultOptions to get the standard open-source defaults, then
 // selectively override fields before passing to Run.
@@ -110,6 +117,11 @@ type ServerOptions struct {
 	// FeedbackHooks allows cloud/enterprise layers to react to feedback events
 	// (e.g. sending Slack alerts on bug reports).
 	FeedbackHooks *FeedbackHooks
+
+	// FeaturesHook overrides the FeatureSet returned by /api/features on a
+	// per-user basis. Set by the cloud layer for plan-based gating; nil in
+	// self-hosted mode.
+	FeaturesHook FeaturesHook
 
 	// LocalServiceProvider supplies local daemon services for the agent catalog.
 	// Set by the cloud layer; nil in self-hosted mode.

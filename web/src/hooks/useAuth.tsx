@@ -111,6 +111,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Promise.all([configPromise, featuresPromise, authPromise]).finally(() => setIsLoading(false))
   }, [])
 
+  // Refetch features whenever the authenticated user changes. The bootstrap
+  // call above runs anonymously; once auth resolves (refresh-on-mount or
+  // login), we re-fetch so the server can return per-user feature gates
+  // (e.g. plan-based gating). On logout (user → null), this refetch returns
+  // to the deployment defaults.
+  useEffect(() => {
+    if (!didInit.current) return
+    api.features.get()
+      .then((f) => setFeatures(f))
+      .catch((e) => console.warn('useAuth: failed to refetch features', e))
+  }, [user])
+
   // Register a refresh callback so the API client can silently handle 401s on
   // data endpoints (expired access token) without logging the user out.
   useEffect(() => {

@@ -82,6 +82,7 @@ type Server struct {
 	decisionBus          notify.DecisionBus            // cross-instance decision delivery; may be nil
 	gatewayHooks         *GatewayHooks                 // cloud-injected gateway authorization hooks; may be nil
 	feedbackHooks        *FeedbackHooks                // cloud-injected feedback event hooks; may be nil
+	featuresHook         FeaturesHook                  // cloud-injected per-user feature overrides; may be nil
 	localServiceProvider handlers.LocalServiceProvider // cloud-injected local daemon service provider; may be nil
 	localServiceExecutor handlers.LocalServiceExecutor // cloud-injected local service executor; may be nil
 
@@ -149,6 +150,14 @@ type FeedbackHooks struct {
 	// AfterBugReport is called after a bug report is successfully saved.
 	AfterBugReport func(report *store.FeedbackReport)
 }
+
+// FeaturesHook lets cloud/enterprise layers override the FeatureSet returned
+// by /api/features on a per-user basis (e.g. gating features by billing plan).
+// The /api/features route runs OptionalUser middleware before the hook, so
+// `user` is non-nil when the request carries a valid JWT and nil otherwise
+// (the pre-login bootstrap call). Hooks should return the unmodified set when
+// `user` is nil.
+type FeaturesHook func(ctx context.Context, user *store.User, fs FeatureSet) FeatureSet
 
 // ServerOption configures optional behavior on the Server.
 type ServerOption func(*Server)
@@ -235,6 +244,12 @@ func WithGatewayHooks(hooks *GatewayHooks) ServerOption {
 // WithFeedbackHooks injects callbacks for feedback events (e.g. bug reports).
 func WithFeedbackHooks(hooks *FeedbackHooks) ServerOption {
 	return func(s *Server) { s.feedbackHooks = hooks }
+}
+
+// WithFeaturesHook registers a hook that may override the FeatureSet returned
+// by /api/features on a per-user basis.
+func WithFeaturesHook(hook FeaturesHook) ServerOption {
+	return func(s *Server) { s.featuresHook = hook }
 }
 
 // WithLocalServiceProvider injects a provider of local daemon services into
@@ -578,8 +593,11 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("DELETE /api/me", user(authHandler.DeleteMe))
 	}
 
-	// Features endpoint (always registered, returns the active FeatureSet)
-	mux.HandleFunc("GET /api/features", s.handleFeatures)
+	// Features endpoint (always registered, returns the active FeatureSet).
+	// OptionalUser populates the request user if a valid token is present so
+	// the FeaturesHook can return a per-user FeatureSet; pre-login callers see
+	// the deployment-level set.
+	mux.Handle("GET /api/features", middleware.OptionalUser(s.jwtSvc, s.store)(http.HandlerFunc(s.handleFeatures)))
 
 	// Restrictions (rate-limited writes)
 	mux.Handle("GET /api/restrictions", user(restrictionsHandler.List))
@@ -1001,8 +1019,12 @@ func (s *Server) routes() http.Handler {
 
 // handleFeatures returns the active feature set as JSON.
 func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
+	fs := s.features
+	if s.featuresHook != nil {
+		fs = s.featuresHook(r.Context(), middleware.UserFromContext(r.Context()), fs)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.features)
+	json.NewEncoder(w).Encode(fs)
 }
 
 // handleClawvisorKeys returns the daemon's public keys for E2E encryption.
