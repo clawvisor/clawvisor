@@ -183,6 +183,50 @@ func TestBuiltinPatterns_Drive(t *testing.T) {
 	}
 }
 
+func TestBuiltinPatterns_Calendar(t *testing.T) {
+	patterns := builtinPatterns("google.calendar", "list_events")
+	// list_events response with a mix of plain, leading-underscore, and
+	// recurring-instance event IDs — exactly the shape that triggered the
+	// chain-context miss in production.
+	result := `{"data":[
+		{"id":"1pj4096shhq40g6hkl995jrqfo","summary":"a"},
+		{"id":"_c9gn8or8bsrjedpp81h6urrbcpgm6p9ef5hmurb2d5n62t3fe8n66rrd","summary":"b"},
+		{"id":"0k17pu3tvj4mmvfg7k4jlh9ivg_20260511T010000Z","summary":"c"}]}`
+	matches := runExtractionPatterns(patterns, result, slog.Default(), "test")
+
+	found := make(map[string]bool)
+	for _, m := range matches {
+		found[m.factType+"|"+m.factValue] = true
+	}
+	for _, want := range []string{
+		"event_id|1pj4096shhq40g6hkl995jrqfo",
+		"event_id|_c9gn8or8bsrjedpp81h6urrbcpgm6p9ef5hmurb2d5n62t3fe8n66rrd",
+		"event_id|0k17pu3tvj4mmvfg7k4jlh9ivg_20260511T010000Z",
+	} {
+		if !found[want] {
+			t.Errorf("missing expected match: %s", want)
+		}
+	}
+}
+
+func TestBuiltinPatterns_GenericEntityIDFallback(t *testing.T) {
+	// Unknown service: the cross-service generic block should still emit an
+	// entity_id pattern that catches any "id" field with an 8+ char value.
+	patterns := builtinPatterns("some.new.saas", "list_things")
+	result := `{"things":[{"id":"thing_abc12345"},{"id":"42"}]}`
+	matches := runExtractionPatterns(patterns, result, slog.Default(), "test")
+	found := make(map[string]bool)
+	for _, m := range matches {
+		found[m.factType+"|"+m.factValue] = true
+	}
+	if !found["entity_id|thing_abc12345"] {
+		t.Error("expected entity_id thing_abc12345 from generic fallback")
+	}
+	if found["entity_id|42"] {
+		t.Error("entity_id 42 should NOT be captured (under 8-char minimum)")
+	}
+}
+
 func TestBuiltinPatterns_InstanceSuffix(t *testing.T) {
 	// Service with instance suffix (e.g. "google.gmail:personal") should still match.
 	patterns := builtinPatterns("google.gmail:personal", "list_messages")

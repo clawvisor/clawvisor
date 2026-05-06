@@ -220,24 +220,27 @@ Patterns must:
   - use Go RE2 syntax (no lookahead/lookbehind, no backreferences);
   - have EXACTLY ONE capture group around the value;
   - anchor on JSON structure (a key prefix like "id":) where possible
-    to avoid catching the value inside body text or quoted email content;
-  - be specific to the canonical fact_type — do NOT write a single
-    catch-all pattern.
+    to avoid catching the value inside body text or quoted email content.
+
+Prefer permissive patterns over narrow ones when entity values vary in
+shape. A pattern like "\"id\":\\s*\"([^\"]+)\"" that captures any quoted
+value after an "id" key is fine — it catches recurring instance IDs,
+opaque tokens, and unusual formats that a tighter regex would miss. The
+runtime caps each pattern at 200 matches, so over-broad capture is
+self-limiting; missing identifiers is the failure mode that costs us.
 
 Examples of good patterns:
   email_address: "\"(?:email|emailAddress|address)\":\\s*\"([^\"]+@[^\"]+\\.[^\"]+)\""
   message_id (Gmail): "\"(?:id|message_id)\":\\s*\"([a-f0-9]{16})\""
   phone_number: "\"(?:phone|phoneNumber|number)\":\\s*\"(\\+?[0-9][0-9 ()-]{6,})\""
   file_id (Drive): "\"(?:id|fileId)\":\\s*\"([a-zA-Z0-9_-]{20,})\""
-  event_id (Calendar): "\"id\":\\s*\"([a-z0-9_]+_[0-9]{8}[A-Z0-9]*)\""
+  event_id (Calendar): "\"id\":\\s*\"([^\"]+)\""  (catches both plain
+    alphanumeric IDs and recurring-instance "<base>_<UTC_datetime>Z" form)
 
 DO NOT:
   - match across the entire JSON without a key anchor — e.g. the bare
     pattern "([^\"]+@[^\"]+)" matches every email-shaped substring,
     including addresses inside quoted email body content;
-  - use overly broad patterns that match >50 results per page (the
-    extractor caps at 200 matches per pattern, but a flood drowns
-    legitimate facts);
   - include the surrounding key in the capture group — capture only
     the value.
 
@@ -435,14 +438,13 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 		}
 	}
 
-	// When the LLM failed or returned no patterns, fall back to builtin
-	// patterns for the service so extraction still works without an LLM.
-	if len(directFacts) == 0 && len(patterns) == 0 {
-		patterns = builtinPatterns(req.Service, req.Action)
-		if len(patterns) > 0 {
-			e.logger.Debug("using builtin extraction patterns", "task_id", req.TaskID, "service", req.Service, "patterns", len(patterns))
-		}
-	}
+	// Always merge builtin patterns alongside whatever the LLM produced.
+	// The LLM may emit narrow patterns tuned to the visible portion of the
+	// result; builtins provide defense-in-depth so common ID shapes are
+	// always captured. Dedupe in mergeExtractionResults handles overlap.
+	// On LLM failure (llmFailed == true), this is also the only source of
+	// patterns, so extraction still works without an LLM.
+	patterns = append(patterns, builtinPatterns(req.Service, req.Action)...)
 
 	facts, dropped := mergeExtractionResults(directFacts, patterns, req, e.logger)
 
@@ -658,12 +660,18 @@ func runExtractionPatterns(patterns []extractionPattern, fullResult string, logg
 }
 
 // builtinPatterns returns hardcoded extraction patterns for known service
-// result structures. These serve as a fallback when the LLM is unavailable
-// (e.g. requests routed through a proxy that rejects extraction prompts).
+// result structures. These run on every extraction call alongside any
+// patterns the LLM emitted, providing defense-in-depth so common ID and
+// email shapes are always captured. Dedupe in mergeExtractionResults
+// handles overlap with LLM-emitted facts.
 func builtinPatterns(service, action string) []extractionPattern {
-	// Generic patterns that apply to most JSON API responses.
+	// Generic patterns that apply to most JSON API responses. Includes a
+	// permissive entity_id catch for any "id" field with an 8+ char value;
+	// service-specific patterns below typically also extract these values
+	// under more precise fact_types, and dedupe handles the overlap.
 	generic := []extractionPattern{
 		{FactType: "email_address", Regex: `"(?:email|emailAddress|from|to|sender|recipient)":\s*"([^"]+@[^"]+)"`},
+		{FactType: "entity_id", Regex: `"id":\s*"([^"]{8,})"`},
 	}
 
 	svc := strings.SplitN(service, ":", 2)[0] // strip instance suffix
@@ -681,8 +689,14 @@ func builtinPatterns(service, action string) []extractionPattern {
 			extractionPattern{FactType: "email_address", Regex: `"emailAddress":\s*"([^"]+@[^"]+)"`},
 		)
 	case "google.calendar":
+		// Google Calendar event IDs are lowercase base32 (5-1024 chars),
+		// optionally prefixed with "_" for imported events, with an optional
+		// "_<UTC_datetime>Z" suffix for recurring instances. Tight to avoid
+		// labeling calendar IDs (e.g. "primary", "x@group.calendar.google.com")
+		// as event_ids; those still get captured by the generic entity_id
+		// fallback in the shared block above.
 		return append(generic,
-			extractionPattern{FactType: "event_id", Regex: `"id":\s*"([^"]+)"`},
+			extractionPattern{FactType: "event_id", Regex: `"id":\s*"(_?[a-z0-9]+(?:_[0-9]{8}T[0-9]{6}Z)?)"`},
 			extractionPattern{FactType: "email_address", Regex: `"email":\s*"([^"]+@[^"]+)"`},
 		)
 	case "google.contacts":
@@ -716,10 +730,10 @@ func builtinPatterns(service, action string) []extractionPattern {
 			extractionPattern{FactType: "phone_number", Regex: `"(?:handle|sender|recipient)":\s*"(\+?[\d]{10,})"`},
 		)
 	default:
-		// For unknown services, try generic ID and email patterns.
-		return append(generic,
-			extractionPattern{FactType: "entity_id", Regex: `"id":\s*"([^"]+)"`},
-		)
+		// Unknown service: rely entirely on the generic block, which already
+		// emits an entity_id pattern with an 8+ char minimum and the email
+		// pattern. No service-specific additions.
+		return generic
 	}
 }
 
