@@ -80,6 +80,14 @@ func TestEvalExtraction_Gemini(t *testing.T) {
 
 	// Build the Gemini-backed LLM client. Endpoint is constructed by
 	// NewClient from project/region/model since Endpoint is left empty.
+	//
+	// Bump max_tokens above the package default (1024) — Gemini's response
+	// for the large-list cases (regex_large_gmail_inbox, regex_large_drive_listing)
+	// exceeds 1024 and finishes with MAX_TOKENS otherwise. Haiku is more
+	// compact and stays under 1024 on the same cases, which is why the
+	// production default works for it. Worth flagging as a production
+	// concern if Gemini becomes the extractor: LLMExtractor will need
+	// WithMaxTokens too, or the default raised.
 	client := llm.NewClient(config.LLMProviderConfig{
 		Provider:            "gemini",
 		Project:             project,
@@ -87,7 +95,7 @@ func TestEvalExtraction_Gemini(t *testing.T) {
 		Model:               model,
 		TimeoutSeconds:      30,
 		GeminiThinkingLevel: thinkingLevel,
-	})
+	}).WithMaxTokens(8192)
 
 	// Optional explicit caching — same lifecycle as production wiring.
 	cacheName := ""
