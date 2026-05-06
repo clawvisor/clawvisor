@@ -1036,9 +1036,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						h.extractTrack.MarkDone(doneCtx, req.TaskID, chainSessionID, auditID)
 						doneCancel()
 					}()
-					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer extractCancel()
-					facts, err := h.extractor.Extract(extractCtx, intent.ExtractRequest{
+					extractReq := intent.ExtractRequest{
 						TaskPurpose:       task.Purpose,
 						AuthorizedActions: task.AuthorizedActions,
 						Service:           req.Service,
@@ -1047,17 +1045,35 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						TaskID:            req.TaskID,
 						SessionID:         chainSessionID,
 						AuditID:           auditID,
-					})
+					}
+
+					// Phase 1: builtin regex (fast, ~ms). Save immediately so
+					// downstream verifications targeting these IDs pass without
+					// waiting on the LLM round trip.
+					builtinFacts := h.extractor.ExtractBuiltins(extractReq)
+					if len(builtinFacts) > 0 {
+						saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
+						if err := h.store.SaveChainFacts(saveCtx, builtinFacts); err != nil {
+							h.logger.Warn("chain facts (builtin) save failed", "err", err, "task_id", req.TaskID)
+						}
+						saveCancel()
+					}
+
+					// Phase 2: LLM (slower, seconds). Returns only NEW facts
+					// beyond what builtins captured.
+					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer extractCancel()
+					llmFacts, err := h.extractor.ExtractLLM(extractCtx, extractReq, builtinFacts)
 					if err != nil {
-						h.logger.Warn("chain context extraction failed", "err", err, "task_id", req.TaskID)
+						h.logger.Warn("chain context LLM extraction failed", "err", err, "task_id", req.TaskID)
 						return
 					}
-					if len(facts) > 0 {
+					if len(llmFacts) > 0 {
 						saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
-						defer saveCancel()
-						if err := h.store.SaveChainFacts(saveCtx, facts); err != nil {
-							h.logger.Warn("chain facts save failed", "err", err, "task_id", req.TaskID)
+						if err := h.store.SaveChainFacts(saveCtx, llmFacts); err != nil {
+							h.logger.Warn("chain facts (llm) save failed", "err", err, "task_id", req.TaskID)
 						}
+						saveCancel()
 					}
 				}()
 			}

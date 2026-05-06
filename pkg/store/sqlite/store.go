@@ -2793,10 +2793,14 @@ func (s *Store) SaveChainFacts(ctx context.Context, facts []*store.ChainFact) er
 		if f.ID == "" {
 			f.ID = uuid.New().String()
 		}
+		source := f.Source
+		if source == "" {
+			source = "unknown"
+		}
 		_, err := s.db.ExecContext(ctx, `
-			INSERT INTO chain_facts (id, task_id, session_id, audit_id, service, action, fact_type, fact_value)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, f.ID, f.TaskID, f.SessionID, f.AuditID, f.Service, f.Action, f.FactType, f.FactValue)
+			INSERT INTO chain_facts (id, task_id, session_id, audit_id, service, action, fact_type, fact_value, source)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, f.ID, f.TaskID, f.SessionID, f.AuditID, f.Service, f.Action, f.FactType, f.FactValue, source)
 		if err != nil {
 			return err
 		}
@@ -2806,7 +2810,7 @@ func (s *Store) SaveChainFacts(ctx context.Context, facts []*store.ChainFact) er
 
 func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*store.ChainFact, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, task_id, session_id, audit_id, service, action, fact_type, fact_value, created_at
+		SELECT id, task_id, session_id, audit_id, service, action, fact_type, fact_value, source, created_at
 		FROM chain_facts WHERE task_id = ? AND session_id = ? ORDER BY created_at ASC LIMIT ?
 	`, taskID, sessionID, limit)
 	if err != nil {
@@ -2819,7 +2823,7 @@ func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, li
 		f := &store.ChainFact{}
 		var createdAt string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.SessionID, &f.AuditID,
-			&f.Service, &f.Action, &f.FactType, &f.FactValue, &createdAt); err != nil {
+			&f.Service, &f.Action, &f.FactType, &f.FactValue, &f.Source, &createdAt); err != nil {
 			return nil, err
 		}
 		f.CreatedAt = parseTime(createdAt)

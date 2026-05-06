@@ -27,7 +27,24 @@ const maxExtractResultLen = 4096
 const maxExtractedFacts = 500
 
 // Extractor extracts structural chain facts from adapter results.
+//
+// Implementations support two-phase extraction so the gateway can persist
+// builtin-regex facts immediately (sub-millisecond) and then add LLM-derived
+// facts asynchronously. Extract is retained for callers that want both
+// phases combined; gateway code should prefer ExtractBuiltins + ExtractLLM
+// to minimize the window where downstream verifications race the LLM call.
 type Extractor interface {
+	// ExtractBuiltins runs only the builtin regex patterns against the full
+	// result. Synchronous and fast (~ms). Safe to save the result immediately.
+	ExtractBuiltins(req ExtractRequest) []*store.ChainFact
+
+	// ExtractLLM calls the LLM extractor and returns facts beyond what was
+	// already captured. `existing` is typically the output of ExtractBuiltins
+	// for the same request and is used to dedupe so the returned slice
+	// contains only NEW facts.
+	ExtractLLM(ctx context.Context, req ExtractRequest, existing []*store.ChainFact) ([]*store.ChainFact, error)
+
+	// Extract is the convenience combined call: ExtractBuiltins + ExtractLLM.
 	Extract(ctx context.Context, req ExtractRequest) ([]*store.ChainFact, error)
 }
 
@@ -45,6 +62,12 @@ type ExtractRequest struct {
 
 // NoopExtractor returns nil (extraction not configured).
 type NoopExtractor struct{}
+
+func (NoopExtractor) ExtractBuiltins(_ ExtractRequest) []*store.ChainFact { return nil }
+
+func (NoopExtractor) ExtractLLM(_ context.Context, _ ExtractRequest, _ []*store.ChainFact) ([]*store.ChainFact, error) {
+	return nil, nil
+}
 
 func (NoopExtractor) Extract(_ context.Context, _ ExtractRequest) ([]*store.ChainFact, error) {
 	return nil, nil
@@ -76,6 +99,21 @@ Two extraction tracks run on every result:
 Both tracks are required for every non-empty result. Do not skip
 patterns just because you found facts in the truncated view — the
 result may be much larger than what you see.
+
+You complement a builtin regex pass.
+The system runs builtin regex patterns over the FULL untruncated result
+BEFORE this LLM call and saves those facts independently. Builtins
+already capture common ID shapes for known services (e.g. Gmail 16-hex
+message_id and threadId, Slack channel_id, Stripe charge_id/customer_id,
+Linear issue_id, Calendar event_id including recurring instances, plus
+a generic 8+ char "id" catch-all). You don't need to focus your output
+on those; the system has them covered. Spend your direct-fact budget
+and your custom regex patterns on the LONG TAIL: emails, person names,
+dates, URLs, novel ID shapes that the generic patterns wouldn't match,
+and any service-specific identifiers that don't follow an obvious
+convention. If you do emit overlapping facts the system dedupes them,
+so duplicates are harmless — but redirecting your effort to the long
+tail makes your contribution more valuable.
 
 OUTPUT FORMAT — strict.
 Output a single raw JSON object only. The very first character of your
@@ -402,7 +440,34 @@ const maxRegexRuntime = 2 * time.Second
 // message_id) can fully populate chain context for a large list response.
 const maxRegexMatches = 500
 
-func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*store.ChainFact, error) {
+// ExtractBuiltins runs only the builtin regex patterns against the full
+// result. No LLM call. Returns immediately (microseconds to milliseconds).
+// Safe to call before LLM extraction so high-confidence facts (Gmail
+// 16-hex message_ids, Slack channel_ids, Stripe charge/customer prefixes,
+// etc.) land in chain_facts without waiting for the LLM round trip.
+func (e *LLMExtractor) ExtractBuiltins(req ExtractRequest) []*store.ChainFact {
+	patterns := builtinPatterns(req.Service, req.Action)
+	if len(patterns) == 0 {
+		return nil
+	}
+	facts, _ := mergeExtractionResults(nil, patterns, nil, req, e.logger)
+	if len(facts) > 0 {
+		e.logger.Debug("chain context builtin extraction complete",
+			"task_id", req.TaskID,
+			"service", req.Service,
+			"action", req.Action,
+			"facts", len(facts),
+		)
+	}
+	return facts
+}
+
+// ExtractLLM calls the LLM extractor and returns ONLY the facts that are
+// new relative to `existing` (typically the output of ExtractBuiltins for
+// the same request). On LLM failure returns nil (no error) — the builtin
+// pass already saved high-confidence facts, so failure here just means we
+// miss long-tail entities (emails, person names, novel IDs) for this call.
+func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, existing []*store.ChainFact) ([]*store.ChainFact, error) {
 	result := req.Result
 	truncated := len(result) > maxExtractResultLen
 	if truncated {
@@ -419,56 +484,69 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 	}
 
 	raw, usage, err := client.CompleteWithUsage(ctx, messages)
-	llmFailed := err != nil
-	if llmFailed {
+	if err != nil {
 		if errors.Is(err, llm.ErrSpendCapExhausted) {
 			e.health.SetSpendCapExhausted()
 		}
-		e.logger.Warn("chain context extraction LLM call failed, using builtin patterns", "err", err, "task_id", req.TaskID)
-	} else {
-		llm.LogUsage(e.logger, "chain_context_extraction", cfg.Model, usage)
+		e.logger.Warn("chain context extraction LLM call failed", "err", err, "task_id", req.TaskID)
+		return nil, nil
+	}
+	llm.LogUsage(e.logger, "chain_context_extraction", cfg.Model, usage)
+
+	// Parse response — supports both old format (array) and new format
+	// (object with facts+patterns). Models often wrap JSON in markdown fences
+	// or add trailing prose; extract the first complete JSON value via
+	// brace-matching to avoid those failure modes.
+	extracted := extractFirstJSONValue(raw)
+	if extracted == "" {
+		e.logger.Warn("chain context extraction: no JSON value found in response", "task_id", req.TaskID)
+		return nil, nil
+	}
+	directFacts, patterns := parseExtractionResponse(extracted, e.logger, req.TaskID)
+
+	// Pre-seed seen with anything ExtractBuiltins already produced so this
+	// pass returns only NEW facts and the gateway can save them with a
+	// straight INSERT (no need for upsert semantics).
+	seen := make(map[string]bool, len(existing))
+	for _, f := range existing {
+		seen[f.FactType+"|"+f.FactValue] = true
 	}
 
-	var directFacts []extractedFact
-	var patterns []extractionPattern
+	facts, dropped := mergeExtractionResults(directFacts, patterns, seen, req, e.logger)
 
-	if !llmFailed {
-		// Parse response — supports both old format (array) and new format (object with facts+patterns).
-		// Models often wrap JSON in markdown fences or add trailing prose; extract the first
-		// complete JSON value via brace-matching to avoid those failure modes.
-		extracted := extractFirstJSONValue(raw)
-		if extracted == "" {
-			e.logger.Warn("chain context extraction: no JSON value found in response", "task_id", req.TaskID)
-		} else {
-			directFacts, patterns = parseExtractionResponse(extracted, e.logger, req.TaskID)
-		}
-	}
-
-	// Always merge builtin patterns alongside whatever the LLM produced.
-	// The LLM may emit narrow patterns tuned to the visible portion of the
-	// result; builtins provide defense-in-depth so common ID shapes are
-	// always captured. Dedupe in mergeExtractionResults handles overlap.
-	// On LLM failure (llmFailed == true), this is also the only source of
-	// patterns, so extraction still works without an LLM.
-	patterns = append(patterns, builtinPatterns(req.Service, req.Action)...)
-
-	facts, dropped := mergeExtractionResults(directFacts, patterns, req, e.logger)
-
-	e.logger.Debug("chain context extraction complete",
+	e.logger.Debug("chain context LLM extraction complete",
 		"task_id", req.TaskID,
 		"direct_facts", len(directFacts)-dropped,
 		"dropped", dropped,
 		"patterns", len(patterns),
-		"total_facts", len(facts),
+		"new_facts", len(facts),
+		"existing_facts", len(existing),
 		"truncated", truncated,
-		"llm_failed", llmFailed,
 	)
 
 	return facts, nil
 }
 
+// Extract is a convenience wrapper that calls both phases and returns the
+// combined result. Callers that want the latency benefit (saving builtin
+// facts before the LLM call returns) should call ExtractBuiltins and
+// ExtractLLM directly.
+func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*store.ChainFact, error) {
+	builtinFacts := e.ExtractBuiltins(req)
+	llmFacts, err := e.ExtractLLM(ctx, req, builtinFacts)
+	if err != nil {
+		return builtinFacts, err
+	}
+	return append(builtinFacts, llmFacts...), nil
+}
+
 // mergeExtractionResults validates direct facts against the full result and
 // augments them with regex-pattern matches, deduped by (fact_type, fact_value).
+//
+// `preSeen` is an optional pre-seeded dedupe set; pass non-nil to suppress
+// facts already produced by an earlier extraction phase (e.g. ExtractLLM
+// passes the keys of facts emitted by ExtractBuiltins). Pass nil for a
+// fresh dedupe.
 //
 // Regex always runs when patterns exist. An earlier version gated regex on
 // "truncated || llm_failed || no direct facts", but that caused silent
@@ -479,12 +557,16 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*stor
 func mergeExtractionResults(
 	directFacts []extractedFact,
 	patterns []extractionPattern,
+	preSeen map[string]bool,
 	req ExtractRequest,
 	logger *slog.Logger,
 ) (facts []*store.ChainFact, dropped int) {
-	seen := make(map[string]bool)
+	seen := make(map[string]bool, len(preSeen))
+	for k := range preSeen {
+		seen[k] = true
+	}
 
-	appendFact := func(factType, factValue string) {
+	appendFact := func(factType, factValue, source string) {
 		key := factType + "|" + factValue
 		if seen[key] {
 			return
@@ -499,9 +581,11 @@ func mergeExtractionResults(
 			Action:    req.Action,
 			FactType:  factType,
 			FactValue: factValue,
+			Source:    source,
 		})
 	}
 
+	// Direct facts come from the LLM's explicit "facts" array.
 	for _, ef := range directFacts {
 		if ef.FactType == "" || ef.FactValue == "" {
 			dropped++
@@ -511,13 +595,19 @@ func mergeExtractionResults(
 			dropped++
 			continue
 		}
-		appendFact(ef.FactType, ef.FactValue)
+		appendFact(ef.FactType, ef.FactValue, "llm_direct")
 	}
 
+	// Regex matches inherit their source from the originating pattern
+	// (builtin or llm_regex).
 	if len(patterns) > 0 {
 		regexFacts := runExtractionPatterns(patterns, req.Result, logger, req.TaskID)
 		for _, rf := range regexFacts {
-			appendFact(rf.factType, rf.factValue)
+			source := rf.source
+			if source == "" {
+				source = "unknown"
+			}
+			appendFact(rf.factType, rf.factValue, source)
 		}
 	}
 
@@ -535,6 +625,11 @@ type extractedFact struct {
 type extractionPattern struct {
 	FactType string `json:"fact_type"`
 	Regex    string `json:"regex"`
+	// Source identifies which extractor produced this pattern. Set to
+	// "builtin" for hardcoded per-service patterns and "llm_regex" for
+	// patterns parsed out of an LLM response. Skipped on JSON marshal so
+	// it doesn't leak into LLM responses or get clobbered by parsing.
+	Source string `json:"-"`
 }
 
 // extractFirstJSONValue returns the first complete JSON object or array
@@ -595,6 +690,8 @@ func extractFirstJSONValue(s string) string {
 
 // parseExtractionResponse handles both the new object format
 // {"facts": [...], "patterns": [...]} and the legacy array format [...].
+// Every returned pattern has Source="llm_regex" so facts captured by these
+// patterns are distinguishable from builtin-pattern facts in chain_facts.
 func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]extractedFact, []extractionPattern) {
 	// Try new format first.
 	var obj struct {
@@ -602,10 +699,13 @@ func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]
 		Patterns []extractionPattern `json:"patterns"`
 	}
 	if err := json.Unmarshal([]byte(raw), &obj); err == nil && (len(obj.Facts) > 0 || len(obj.Patterns) > 0) {
+		for i := range obj.Patterns {
+			obj.Patterns[i].Source = "llm_regex"
+		}
 		return obj.Facts, obj.Patterns
 	}
 
-	// Fall back to legacy array format.
+	// Fall back to legacy array format (no patterns in this format).
 	var arr []extractedFact
 	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
 		logger.Warn("chain context extraction parse failed", "err", err, "task_id", taskID)
@@ -617,6 +717,7 @@ func parseExtractionResponse(raw string, logger *slog.Logger, taskID string) ([]
 type regexMatch struct {
 	factType  string
 	factValue string
+	source    string // "builtin" or "llm_regex"
 }
 
 // runExtractionPatterns compiles and runs LLM-emitted regex patterns against
@@ -658,7 +759,7 @@ func runExtractionPatterns(patterns []extractionPattern, fullResult string, logg
 			if val == "" {
 				continue
 			}
-			matches = append(matches, regexMatch{factType: p.FactType, factValue: val})
+			matches = append(matches, regexMatch{factType: p.FactType, factValue: val, source: p.Source})
 		}
 	}
 
@@ -669,8 +770,19 @@ func runExtractionPatterns(patterns []extractionPattern, fullResult string, logg
 // result structures. These run on every extraction call alongside any
 // patterns the LLM emitted, providing defense-in-depth so common ID and
 // email shapes are always captured. Dedupe in mergeExtractionResults
-// handles overlap with LLM-emitted facts.
+// handles overlap with LLM-emitted facts. Every returned pattern has
+// Source="builtin" so facts produced by these patterns are auditable.
 func builtinPatterns(service, action string) []extractionPattern {
+	patterns := builtinPatternsRaw(service, action)
+	for i := range patterns {
+		patterns[i].Source = "builtin"
+	}
+	return patterns
+}
+
+// builtinPatternsRaw returns the per-service patterns without setting a
+// Source — the public builtinPatterns wrapper handles that uniformly.
+func builtinPatternsRaw(service, action string) []extractionPattern {
 	// Generic patterns that apply to most JSON API responses. Includes a
 	// permissive entity_id catch for any "id" field with an 8+ char value;
 	// service-specific patterns below typically also extract these values

@@ -1,0 +1,13 @@
+-- Track the provenance of each chain fact so we can:
+--   1. Audit which extractor produced a given chain reference (debugging
+--      bad facts, attributing chain-context blocks).
+--   2. Empirically measure whether the LLM extraction phase still adds
+--      value beyond what builtin regex patterns already capture.
+--
+-- Values:
+--   builtin    — captured by a builtin per-service or generic regex pattern.
+--   llm_direct — emitted by the LLM as a "direct fact".
+--   llm_regex  — captured by a regex pattern emitted by the LLM, run against
+--                the full untruncated result.
+--   unknown    — pre-existing rows from before this column was added.
+ALTER TABLE chain_facts ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown';

@@ -732,6 +732,12 @@ type ActivityBucket struct {
 
 // ChainFact is a structural reference extracted from an adapter result for
 // chain context verification in multi-step tasks.
+//
+// Source records which extractor produced the fact:
+//   - "builtin"    — captured by a builtin per-service or generic regex pattern.
+//   - "llm_direct" — emitted by the LLM as a "direct fact".
+//   - "llm_regex"  — captured by an LLM-emitted regex against the full result.
+//   - "unknown"    — legacy rows from before the column was added.
 type ChainFact struct {
 	ID        string    `json:"id"`
 	TaskID    string    `json:"task_id"`
@@ -741,6 +747,7 @@ type ChainFact struct {
 	Action    string    `json:"action"`
 	FactType  string    `json:"fact_type"`
 	FactValue string    `json:"fact_value"`
+	Source    string    `json:"source"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

@@ -304,7 +304,7 @@ func TestMergeExtractionResults_DirectFactsOnly(t *testing.T) {
 		{FactType: "message_id", FactValue: "ffee112233445566"},
 	}
 
-	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	facts, dropped := mergeExtractionResults(direct, nil, nil, makeMergeReq(result), slog.Default())
 	if dropped != 0 {
 		t.Errorf("expected 0 dropped, got %d", dropped)
 	}
@@ -332,7 +332,7 @@ func TestMergeExtractionResults_RegexFillsInMissedIDs(t *testing.T) {
 		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
 	}
 
-	facts, _ := mergeExtractionResults(direct, patterns, makeMergeReq(result), slog.Default())
+	facts, _ := mergeExtractionResults(direct, patterns, nil, makeMergeReq(result), slog.Default())
 	got := factValues(facts, "message_id")
 	if len(got) != 3 {
 		t.Fatalf("expected all 3 message_ids after regex fill-in, got %d: %v", len(got), got)
@@ -362,7 +362,7 @@ func TestMergeExtractionResults_DedupOverlap(t *testing.T) {
 		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
 	}
 
-	facts, _ := mergeExtractionResults(direct, patterns, makeMergeReq(result), slog.Default())
+	facts, _ := mergeExtractionResults(direct, patterns, nil, makeMergeReq(result), slog.Default())
 	got := factValues(facts, "message_id")
 	if len(got) != 2 {
 		t.Fatalf("expected 2 unique message_ids after dedup, got %d: %v", len(got), got)
@@ -379,7 +379,7 @@ func TestMergeExtractionResults_SubstringValidationDrops(t *testing.T) {
 		{FactType: "message_id", FactValue: "deadbeefdeadbeef"},  // hallucinated
 	}
 
-	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	facts, dropped := mergeExtractionResults(direct, nil, nil, makeMergeReq(result), slog.Default())
 	if dropped != 1 {
 		t.Errorf("expected 1 dropped (hallucinated value), got %d", dropped)
 	}
@@ -412,7 +412,7 @@ func TestMergeExtractionResults_CapsAtMaxExtractedFacts(t *testing.T) {
 		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
 	}
 
-	facts, _ := mergeExtractionResults(nil, patterns, makeMergeReq(string(result)), slog.Default())
+	facts, _ := mergeExtractionResults(nil, patterns, nil, makeMergeReq(string(result)), slog.Default())
 	if len(facts) != maxExtractedFacts {
 		t.Errorf("expected exactly %d facts at the cap, got %d", maxExtractedFacts, len(facts))
 	}
@@ -427,7 +427,7 @@ func TestMergeExtractionResults_SkipsEmptyFields(t *testing.T) {
 	}
 	result := `{"id":"aabbccddee112233"}`
 
-	facts, dropped := mergeExtractionResults(direct, nil, makeMergeReq(result), slog.Default())
+	facts, dropped := mergeExtractionResults(direct, nil, nil, makeMergeReq(result), slog.Default())
 	if dropped != 2 {
 		t.Errorf("expected 2 dropped (empty fields), got %d", dropped)
 	}
@@ -444,7 +444,7 @@ func TestMergeExtractionResults_PatternsOnly(t *testing.T) {
 		{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
 	}
 
-	facts, dropped := mergeExtractionResults(nil, patterns, makeMergeReq(result), slog.Default())
+	facts, dropped := mergeExtractionResults(nil, patterns, nil, makeMergeReq(result), slog.Default())
 	if dropped != 0 {
 		t.Errorf("expected 0 dropped, got %d", dropped)
 	}
@@ -456,7 +456,7 @@ func TestMergeExtractionResults_PatternsOnly(t *testing.T) {
 
 func TestMergeExtractionResults_NoPatternsNoDirect(t *testing.T) {
 	// Empty inputs → empty output, no panic.
-	facts, dropped := mergeExtractionResults(nil, nil, makeMergeReq("irrelevant"), slog.Default())
+	facts, dropped := mergeExtractionResults(nil, nil, nil, makeMergeReq("irrelevant"), slog.Default())
 	if dropped != 0 {
 		t.Errorf("expected 0 dropped, got %d", dropped)
 	}
@@ -464,3 +464,93 @@ func TestMergeExtractionResults_NoPatternsNoDirect(t *testing.T) {
 		t.Errorf("expected 0 facts, got %d", len(facts))
 	}
 }
+
+func TestMergeExtractionResults_PreSeenSuppressesDuplicates(t *testing.T) {
+	// Phase 2 (LLM) passes pre-seeded seen from Phase 1 (builtins) so the
+	// returned slice contains only NEW facts. Verify an already-seen
+	// (fact_type, fact_value) pair is suppressed even when the LLM emits it.
+	preSeen := map[string]bool{
+		"message_id|aabbccddee112233": true,
+	}
+	direct := []extractedFact{
+		{FactType: "message_id", FactValue: "aabbccddee112233"}, // dup
+		{FactType: "message_id", FactValue: "ffee887766554433"}, // new
+	}
+	result := `{"id":"aabbccddee112233"}{"id":"ffee887766554433"}`
+	facts, _ := mergeExtractionResults(direct, nil, preSeen, makeMergeReq(result), slog.Default())
+
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 new fact (dup suppressed), got %d: %v", len(facts), factValues(facts, "message_id"))
+	}
+	if facts[0].FactValue != "ffee887766554433" {
+		t.Errorf("expected new fact value ffee887766554433, got %q", facts[0].FactValue)
+	}
+}
+
+func TestMergeExtractionResults_SourceAttribution(t *testing.T) {
+	// Builtin patterns produce facts tagged "builtin"; LLM-direct facts
+	// are tagged "llm_direct"; LLM-regex patterns are tagged "llm_regex".
+	// Verify all three sources appear with the expected fact_values.
+	result := `{"messages":[
+		{"id":"aabbccddee112233","from":"alice@co.com","subject":"hi"},
+		{"id":"ffeeddccbb998877","from":"bob@co.com"}]}`
+
+	// Direct LLM facts (e.g. a person name the regex doesn't catch).
+	direct := []extractedFact{
+		{FactType: "person_name", FactValue: "Alice"},
+	}
+	// LLM-emitted regex (subject capture; the pattern source must be set
+	// to mirror what parseExtractionResponse does).
+	llmPattern := extractionPattern{
+		FactType: "subject_text",
+		Regex:    `"subject":\s*"([^"]+)"`,
+		Source:   "llm_regex",
+	}
+	// Builtin Gmail patterns capture message_id and email_address.
+	patterns := append(builtinPatterns("google.gmail", "list_messages"), llmPattern)
+
+	// Inject "Alice" into the result so substringMatch passes for the
+	// direct fact.
+	resultWithAlice := result + ` {"name":"Alice"}`
+
+	facts, _ := mergeExtractionResults(direct, patterns, nil, makeMergeReq(resultWithAlice), slog.Default())
+
+	bySource := make(map[string]int)
+	for _, f := range facts {
+		bySource[f.Source]++
+	}
+	if bySource["builtin"] == 0 {
+		t.Errorf("expected at least one builtin fact, got sources=%v", bySource)
+	}
+	if bySource["llm_direct"] == 0 {
+		t.Errorf("expected at least one llm_direct fact, got sources=%v", bySource)
+	}
+	if bySource["llm_regex"] == 0 {
+		t.Errorf("expected at least one llm_regex fact, got sources=%v", bySource)
+	}
+	if bySource[""] != 0 || bySource["unknown"] != 0 {
+		t.Errorf("unexpected unset/unknown sources: %v", bySource)
+	}
+}
+
+func TestExtractBuiltins_RunsWithoutLLM(t *testing.T) {
+	// ExtractBuiltins should produce facts using only builtin patterns —
+	// no LLM call, no health/config dependency. A stub extractor with a
+	// nil health pointer is sufficient since this method doesn't touch it.
+	e := &LLMExtractor{logger: slog.Default()}
+	req := ExtractRequest{
+		Service: "google.gmail",
+		Action:  "list_messages",
+		Result:  `{"messages":[{"id":"aabbccddee112233","from":"alice@co.com"}]}`,
+		TaskID:  "test-task",
+	}
+	facts := e.ExtractBuiltins(req)
+	found := make(map[string]bool)
+	for _, f := range facts {
+		found[f.FactType+"|"+f.FactValue] = true
+	}
+	if !found["message_id|aabbccddee112233"] {
+		t.Errorf("expected message_id from gmail builtin, got %v", facts)
+	}
+}
+

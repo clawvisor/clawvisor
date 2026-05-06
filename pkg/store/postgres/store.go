@@ -1309,10 +1309,14 @@ func (s *Store) SaveChainFacts(ctx context.Context, facts []*store.ChainFact) er
 		if f.ID == "" {
 			f.ID = uuid.New().String()
 		}
+		source := f.Source
+		if source == "" {
+			source = "unknown"
+		}
 		_, err := s.pool.Exec(ctx, `
-			INSERT INTO chain_facts (id, task_id, session_id, audit_id, service, action, fact_type, fact_value)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, f.ID, f.TaskID, f.SessionID, f.AuditID, f.Service, f.Action, f.FactType, f.FactValue)
+			INSERT INTO chain_facts (id, task_id, session_id, audit_id, service, action, fact_type, fact_value, source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, f.ID, f.TaskID, f.SessionID, f.AuditID, f.Service, f.Action, f.FactType, f.FactValue, source)
 		if err != nil {
 			return err
 		}
@@ -1322,7 +1326,7 @@ func (s *Store) SaveChainFacts(ctx context.Context, facts []*store.ChainFact) er
 
 func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, limit int) ([]*store.ChainFact, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, task_id, session_id, audit_id, service, action, fact_type, fact_value, created_at
+		SELECT id, task_id, session_id, audit_id, service, action, fact_type, fact_value, source, created_at
 		FROM chain_facts WHERE task_id = $1 AND session_id = $2 ORDER BY created_at ASC LIMIT $3
 	`, taskID, sessionID, limit)
 	if err != nil {
@@ -1334,7 +1338,7 @@ func (s *Store) ListChainFacts(ctx context.Context, taskID, sessionID string, li
 	for rows.Next() {
 		f := &store.ChainFact{}
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.SessionID, &f.AuditID,
-			&f.Service, &f.Action, &f.FactType, &f.FactValue, &f.CreatedAt); err != nil {
+			&f.Service, &f.Action, &f.FactType, &f.FactValue, &f.Source, &f.CreatedAt); err != nil {
 			return nil, err
 		}
 		facts = append(facts, f)
