@@ -429,6 +429,14 @@ func (s *Server) routes() http.Handler {
 			if cacheRegion == "" {
 				cacheRegion = vc.Region
 			}
+			if cacheRegion != "" && vc.Region != "" && cacheRegion != vc.Region {
+				// Cross-region caching works for some Vertex models (notably
+				// global-only preview models with the cache pinned to a real
+				// region) but isn't broadly documented. Log a warning so the
+				// configuration is visible if requests start failing.
+				s.logger.Warn("gemini verifier cache region differs from inference region",
+					"cache_region", cacheRegion, "inference_region", vc.Region)
+			}
 			ttl := time.Duration(vc.GeminiCache.TTLSeconds) * time.Second
 			cacheCfg := llm.GeminiCacheManagerConfig{
 				Project: vc.Project,
@@ -464,6 +472,10 @@ func (s *Server) routes() http.Handler {
 			cacheRegion := cc.GeminiCache.Region
 			if cacheRegion == "" {
 				cacheRegion = cc.Region
+			}
+			if cacheRegion != "" && cc.Region != "" && cacheRegion != cc.Region {
+				s.logger.Warn("gemini extractor cache region differs from inference region",
+					"cache_region", cacheRegion, "inference_region", cc.Region)
 			}
 			ttl := time.Duration(cc.GeminiCache.TTLSeconds) * time.Second
 			cacheCfg := llm.GeminiCacheManagerConfig{

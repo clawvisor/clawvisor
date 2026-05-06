@@ -192,6 +192,83 @@ func TestClient_Gemini_ConvertsAssistantToModelRole(t *testing.T) {
 	}
 }
 
+func TestClient_Gemini_404OnCachedRequest_RetriesWithInlineSystem(t *testing.T) {
+	// First request references cachedContent and gets a 404 (cache TTL
+	// elapsed server-side or refresh is failing). Client should retry once
+	// with systemInstruction inlined, succeeding the second attempt.
+	var bodies []map[string]any
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(bodies) == 1 {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"code":404,"message":"cached content gone"}}`))
+			return
+		}
+		w.Write(geminiResponse("recovered", 0))
+	})
+
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	client.AttachGeminiCacheNameFn(func() string {
+		return "projects/p/locations/global/cachedContents/abc"
+	})
+
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "system text"},
+		{Role: "user", Content: "user text"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "recovered" {
+		t.Errorf("got %q, want recovered", got)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 requests (cached attempt + inline retry), got %d", len(bodies))
+	}
+	// First request must have used cachedContent.
+	if _, has := bodies[0]["cachedContent"]; !has {
+		t.Error("first request should have set cachedContent")
+	}
+	if _, has := bodies[0]["systemInstruction"]; has {
+		t.Error("first request should NOT have set systemInstruction")
+	}
+	// Second request must have inlined systemInstruction and dropped cachedContent.
+	if _, has := bodies[1]["cachedContent"]; has {
+		t.Error("retry should NOT have set cachedContent")
+	}
+	if _, has := bodies[1]["systemInstruction"]; !has {
+		t.Error("retry should have inlined systemInstruction")
+	}
+}
+
+func TestClient_Gemini_404Uncached_NoRetry(t *testing.T) {
+	// 404 on a request that was already uncached should NOT retry — there's
+	// nothing to fall back to. The error surfaces to the caller.
+	calls := 0
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":{"code":404,"message":"model not found"}}`))
+	})
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	// No AttachGeminiCacheNameFn — uncached path.
+
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err == nil {
+		t.Fatal("expected 404 error to surface")
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 call (no retry), got %d", calls)
+	}
+}
+
 func TestClient_Gemini_NewClient_BuildsEndpointFromProjectAndRegion(t *testing.T) {
 	cfg := config.LLMProviderConfig{
 		Provider: "gemini",

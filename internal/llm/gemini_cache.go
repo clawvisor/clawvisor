@@ -120,11 +120,20 @@ func (m *GeminiCacheManager) CacheName() string {
 }
 
 // Stop signals the refresh loop to exit and best-effort-deletes the
-// current cache. Safe to call multiple times.
+// current cache. Honors ctx — if the caller's deadline elapses before
+// the refresh goroutine drains, Stop returns early without waiting or
+// deleting. The cache will auto-expire by TTL on Vertex's side, so
+// abandoning cleanup on context cancellation is safe.
+//
+// Safe to call multiple times.
 func (m *GeminiCacheManager) Stop(ctx context.Context) {
 	m.stopOnce.Do(func() {
 		close(m.stopCh)
-		<-m.doneCh
+		select {
+		case <-m.doneCh:
+		case <-ctx.Done():
+			return
+		}
 		if name, _ := m.cacheName.Load().(string); name != "" {
 			m.cacheName.Store("")
 			if err := m.delete(ctx, name); err != nil {
@@ -137,11 +146,14 @@ func (m *GeminiCacheManager) Stop(ctx context.Context) {
 
 // refreshLoop recreates the cache before its TTL expires. Refresh failures
 // don't tear down the existing cache — clients keep using it until it
-// server-side-expires, at which point CacheName() effectively becomes
-// invalid and the next request will get a 404 (which the client treats as
-// a transient error and retries; if the second attempt also fails, the
-// caller's retry logic handles it). To avoid that race we refresh well
-// before TTL expires (TTL - 5min, or 80% of TTL for short TTLs).
+// server-side-expires, at which point CacheName() returns the now-stale
+// name and requests start getting 404s. completeGemini detects 404 from a
+// cache reference (ErrGeminiCacheNotFound) and retries once with the
+// system prompt inlined, so a TTL race or sustained refresh failure doesn't
+// surface to callers — they just lose the cache discount until the next
+// successful refresh repopulates the name. To minimize the uncached window
+// we refresh well before TTL elapses (TTL - 5min, or 80% of TTL for short
+// TTLs).
 func (m *GeminiCacheManager) refreshLoop() {
 	defer close(m.doneCh)
 	refreshAt := m.cfg.TTL - 5*time.Minute

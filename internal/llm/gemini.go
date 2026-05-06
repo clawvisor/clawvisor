@@ -14,10 +14,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 )
+
+// ErrGeminiCacheNotFound is wrapped by doGeminiRequest when Vertex returns
+// status 404 on a request that referenced a cachedContent resource. The
+// caller (completeGemini) treats it as a signal to retry once with the
+// system prompt inlined, so a server-side cache eviction (TTL elapsed,
+// resource manually deleted, refresh failure) doesn't turn into a
+// user-visible error. Cache manager refresh continues independently.
+var ErrGeminiCacheNotFound = errors.New("gemini: cached content not found")
 
 // completeGemini sends generateContent to Vertex Gemini and returns text + usage.
 //
@@ -48,6 +57,29 @@ func (c *Client) completeGemini(ctx context.Context, messages []ChatMessage) (st
 		convo = append(convo, m)
 	}
 
+	cacheName := ""
+	if c.geminiCacheNameFn != nil {
+		cacheName = c.geminiCacheNameFn()
+	}
+
+	text, usage, err := c.doGeminiRequest(ctx, system, convo, cacheName)
+	if err != nil && cacheName != "" && errors.Is(err, ErrGeminiCacheNotFound) {
+		// The cached resource is gone server-side — TTL elapsed before our
+		// next refresh tick succeeded, or the manager's refresh has been
+		// failing. Retry once with the system prompt inlined; the next
+		// successful refresh will repopulate the cache and subsequent
+		// calls go back to the cached path.
+		return c.doGeminiRequest(ctx, system, convo, "")
+	}
+	return text, usage, err
+}
+
+// doGeminiRequest performs a single generateContent call. When cacheName
+// is non-empty the request body references it (and omits systemInstruction);
+// when empty, systemInstruction is inlined. Returns ErrGeminiCacheNotFound
+// (wrapped) when status 404 is received with cacheName set, so the caller
+// can decide whether to retry uncached.
+func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []ChatMessage, cacheName string) (string, *Usage, error) {
 	thinkingLevel := c.geminiThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = "MINIMAL"
@@ -62,11 +94,6 @@ func (c *Client) completeGemini(ctx context.Context, messages []ChatMessage) (st
 				"thinkingLevel": thinkingLevel,
 			},
 		},
-	}
-
-	var cacheName string
-	if c.geminiCacheNameFn != nil {
-		cacheName = c.geminiCacheNameFn()
 	}
 	if cacheName != "" {
 		body["cachedContent"] = cacheName
@@ -102,6 +129,9 @@ func (c *Client) completeGemini(ctx context.Context, messages []ChatMessage) (st
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound && cacheName != "" {
+			return "", nil, fmt.Errorf("%w: %s", ErrGeminiCacheNotFound, respBody)
+		}
 		return "", nil, c.statusError(resp.StatusCode, respBody)
 	}
 
