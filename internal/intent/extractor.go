@@ -19,8 +19,12 @@ import (
 // maxExtractResultLen is the maximum length of the adapter result passed to the LLM.
 const maxExtractResultLen = 4096
 
-// maxExtractedFacts caps the number of facts per extraction.
-const maxExtractedFacts = 50
+// maxExtractedFacts caps the number of facts persisted per extraction call.
+// Set generously so a single list response (typically 50–200 items) doesn't
+// have its tail truncated — that was a major source of chain-context misses.
+// chain_facts rows are deleted on task completion, so per-task storage is
+// bounded by the task's lifetime, not the cap.
+const maxExtractedFacts = 500
 
 // Extractor extracts structural chain facts from adapter results.
 type Extractor interface {
@@ -64,7 +68,7 @@ verify that an agent targeting an entity (a message_id, file_id, email,
 etc.) is operating within scope of what was previously discovered.
 
 Two extraction tracks run on every result:
-  1. "facts": up to 20 entity values you observe directly in the
+  1. "facts": up to 50 entity values you observe directly in the
      truncated view of the result.
   2. "patterns": Go/RE2 regex patterns (one capture group) that we run
      against the FULL untruncated result to catch entities the
@@ -393,8 +397,10 @@ For every result:
 const maxRegexRuntime = 2 * time.Second
 
 // maxRegexMatches caps the number of matches per regex pattern to prevent
-// runaway extraction from overly broad patterns.
-const maxRegexMatches = 200
+// runaway extraction from overly broad patterns. Sized to match
+// maxExtractedFacts so a single tight pattern (e.g. Gmail's 16-hex
+// message_id) can fully populate chain context for a large list response.
+const maxRegexMatches = 500
 
 func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]*store.ChainFact, error) {
 	result := req.Result

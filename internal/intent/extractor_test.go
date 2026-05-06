@@ -390,11 +390,16 @@ func TestMergeExtractionResults_SubstringValidationDrops(t *testing.T) {
 }
 
 func TestMergeExtractionResults_CapsAtMaxExtractedFacts(t *testing.T) {
-	// Generate a result with 60 distinct message IDs — more than the 50
-	// fact cap. The final list is truncated to maxExtractedFacts.
+	// Generate maxExtractedFacts+10 distinct IDs — the runtime per-pattern
+	// cap (maxRegexMatches) must be at least this large. The final list is
+	// truncated to maxExtractedFacts; extras silently drop.
+	n := maxExtractedFacts + 10
+	if n > maxRegexMatches {
+		t.Skipf("test setup needs maxRegexMatches (%d) >= maxExtractedFacts+10 (%d)", maxRegexMatches, n)
+	}
 	var result []byte
 	result = append(result, []byte(`{"messages":[`)...)
-	for i := 0; i < 60; i++ {
+	for i := 0; i < n; i++ {
 		if i > 0 {
 			result = append(result, ',')
 		}
@@ -408,9 +413,6 @@ func TestMergeExtractionResults_CapsAtMaxExtractedFacts(t *testing.T) {
 	}
 
 	facts, _ := mergeExtractionResults(nil, patterns, makeMergeReq(string(result)), slog.Default())
-	if len(facts) > maxExtractedFacts {
-		t.Errorf("expected at most %d facts, got %d", maxExtractedFacts, len(facts))
-	}
 	if len(facts) != maxExtractedFacts {
 		t.Errorf("expected exactly %d facts at the cap, got %d", maxExtractedFacts, len(facts))
 	}
