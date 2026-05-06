@@ -461,7 +461,38 @@ func (s *Server) routes() http.Handler {
 	// Construct chain context extractor (noop if disabled).
 	var extractor intent.Extractor = intent.NoopExtractor{}
 	if s.llmCfg.ChainContext.Enabled {
-		extractor = intent.NewLLMExtractor(s.llmHealth, s.logger)
+		ext := intent.NewLLMExtractor(s.llmHealth, s.logger)
+		// Start Gemini explicit context cache when configured. The cache
+		// holds the extraction system prompt; per-request clients reference
+		// it via the function the extractor registers internally. On
+		// failure we log loudly but proceed — the extractor still works
+		// uncached, just slower and more expensive per call.
+		if cc := s.llmCfg.ChainContext; cc.Provider == "gemini" && cc.GeminiCache != nil && cc.GeminiCache.Enabled {
+			cacheRegion := cc.GeminiCache.Region
+			if cacheRegion == "" {
+				cacheRegion = cc.Region
+			}
+			ttl := time.Duration(cc.GeminiCache.TTLSeconds) * time.Second
+			cacheCfg := llm.GeminiCacheManagerConfig{
+				Project: cc.Project,
+				Region:  cacheRegion,
+				Model:   cc.Model,
+				TTL:     ttl,
+				Logger:  s.logger,
+			}
+			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := ext.StartGeminiCache(startCtx, cacheCfg); err != nil {
+				s.logger.Error("gemini extractor cache start failed; running uncached",
+					"err", err)
+			}
+			startCancel()
+			s.closers = append(s.closers, func() {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stopCancel()
+				ext.StopGeminiCache(stopCtx)
+			})
+		}
+		extractor = ext
 	}
 
 	gatewayHandler := handlers.NewGatewayHandler(

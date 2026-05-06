@@ -215,6 +215,13 @@ type LLMConfig struct {
 	Model          string `yaml:"model"`           // Shared default: "claude-haiku-4-5-20251001"
 	TimeoutSeconds int    `yaml:"timeout_seconds"` // Shared default: 10
 
+	// Shared defaults for the "gemini" provider. Sub-block (verification/
+	// task_risk/chain_context) values override; absent values inherit
+	// from these via inheritLLMDefaults.
+	Project             string `yaml:"project,omitempty"`
+	Region              string `yaml:"region,omitempty"`
+	GeminiThinkingLevel string `yaml:"gemini_thinking_level,omitempty"`
+
 	Verification   VerificationConfig   `yaml:"verification"`    // Intent verification (runtime)
 	TaskRisk       TaskRiskConfig       `yaml:"task_risk"`       // Task risk assessment (creation time)
 	ChainContext   ChainContextConfig   `yaml:"chain_context"`   // Chain context extraction (multi-step tasks)
@@ -717,6 +724,18 @@ func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	}
 	if sub.TimeoutSeconds == 0 {
 		sub.TimeoutSeconds = shared.TimeoutSeconds
+	}
+	// Gemini-specific fields. Shared defaults live on LLMConfig (sourced
+	// from the top-level llm: block) so users can set Project/Region once
+	// and have all sub-blocks inherit. Sub-block overrides win.
+	if sub.Project == "" {
+		sub.Project = shared.Project
+	}
+	if sub.Region == "" {
+		sub.Region = shared.Region
+	}
+	if sub.GeminiThinkingLevel == "" {
+		sub.GeminiThinkingLevel = shared.GeminiThinkingLevel
 	}
 }
 
