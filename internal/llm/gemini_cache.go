@@ -14,6 +14,8 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
 // GeminiCacheManager owns the lifecycle of a single Vertex cachedContents
@@ -270,4 +272,111 @@ func truncate1k(s string) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// ── Gemini cache binding helpers ─────────────────────────────────────────────
+//
+// These let any LLM-backed service (verifier, extractor, future task risk
+// assessor, etc.) participate in Gemini explicit context caching with
+// minimal boilerplate:
+//
+//   1. Embed GeminiCacheBinder in the service struct.
+//   2. Implement AttachGeminiCache by filling in cfg.SystemPrompt and
+//      delegating to the embedded binder's AttachGeminiCacheRaw.
+//   3. CloseGeminiCache and the cache-name reader come for free from
+//      the embed.
+//   4. At startup, call StartGeminiCacheIfConfigured(service, providerCfg,
+//      logger) — that handles the "is gemini caching configured? if so
+//      build the manager config and start it, else no-op" plumbing.
+
+// GeminiCacheBinder owns the lifecycle of a single GeminiCacheManager and
+// is meant to be embedded in service structs that participate in Gemini
+// caching. The zero value is usable: GeminiCacheName returns "" and
+// CloseGeminiCache is a no-op until AttachGeminiCacheRaw has been called.
+type GeminiCacheBinder struct {
+	mgr atomic.Pointer[GeminiCacheManager]
+}
+
+// AttachGeminiCacheRaw constructs and starts a cache manager. cfg.SystemPrompt
+// must already be set by the caller — the binder doesn't know the prompt.
+// Service-level wrappers (e.g., LLMVerifier.AttachGeminiCache) are expected
+// to fill SystemPrompt in before delegating here.
+func (b *GeminiCacheBinder) AttachGeminiCacheRaw(ctx context.Context, cfg GeminiCacheManagerConfig) error {
+	mgr, err := NewGeminiCacheManager(cfg)
+	if err != nil {
+		return err
+	}
+	if err := mgr.Start(ctx); err != nil {
+		return err
+	}
+	b.mgr.Store(mgr)
+	return nil
+}
+
+// GeminiCacheName returns the current cache resource name, or "" if no
+// cache is registered. Safe to use as the function passed to
+// Client.AttachGeminiCacheNameFn — when the binder is empty it returns ""
+// and the client falls through to the uncached path.
+func (b *GeminiCacheBinder) GeminiCacheName() string {
+	if mgr := b.mgr.Load(); mgr != nil {
+		return mgr.CacheName()
+	}
+	return ""
+}
+
+// CloseGeminiCache stops the cache manager and best-effort-deletes the
+// cache resource. Safe to call when no cache was attached.
+func (b *GeminiCacheBinder) CloseGeminiCache(ctx context.Context) {
+	if mgr := b.mgr.Swap(nil); mgr != nil {
+		mgr.Stop(ctx)
+	}
+}
+
+// GeminiCacheable is the interface a service must implement to participate
+// in StartGeminiCacheIfConfigured wiring. Embedding GeminiCacheBinder
+// satisfies CloseGeminiCache for free; AttachGeminiCache is the per-service
+// hook where the implementation injects its system prompt before delegating
+// to the binder.
+type GeminiCacheable interface {
+	AttachGeminiCache(ctx context.Context, cfg GeminiCacheManagerConfig) error
+	CloseGeminiCache(ctx context.Context)
+}
+
+// StartGeminiCacheIfConfigured starts a Gemini explicit context cache for
+// `target` when `cfg` indicates the gemini provider with caching enabled.
+// Returns a closer the caller should register for shutdown, or nil if no
+// cache was started (provider isn't gemini, GeminiCache is nil/disabled,
+// or the cache create failed). Failure is logged at Error level but is
+// non-fatal — the service runs uncached.
+//
+// `cfg` is the LLMProviderConfig for the service's call site (e.g.,
+// llmCfg.Verification.LLMProviderConfig). It carries Project, Region,
+// Model, and the GeminiCache sub-block.
+func StartGeminiCacheIfConfigured(
+	target GeminiCacheable,
+	cfg config.LLMProviderConfig,
+	logger *slog.Logger,
+) func(context.Context) {
+	if cfg.Provider != "gemini" || cfg.GeminiCache == nil || !cfg.GeminiCache.Enabled {
+		return nil
+	}
+	cacheRegion := cfg.GeminiCache.Region
+	if cacheRegion == "" {
+		cacheRegion = cfg.Region
+	}
+	ttl := time.Duration(cfg.GeminiCache.TTLSeconds) * time.Second
+	cacheCfg := GeminiCacheManagerConfig{
+		Project: cfg.Project,
+		Region:  cacheRegion,
+		Model:   cfg.Model,
+		TTL:     ttl,
+		Logger:  logger,
+	}
+	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startCancel()
+	if err := target.AttachGeminiCache(startCtx, cacheCfg); err != nil {
+		logger.Error("gemini cache start failed; running uncached", "err", err)
+		return nil
+	}
+	return target.CloseGeminiCache
 }
