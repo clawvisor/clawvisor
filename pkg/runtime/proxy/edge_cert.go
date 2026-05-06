@@ -44,6 +44,14 @@ type FileEdgeCertProvider struct {
 	current  atomic.Pointer[tls.Certificate]
 	stop     chan struct{}
 	closed   atomic.Bool
+
+	// Stat baseline for the periodic reload loop. Written once during
+	// construction before the goroutine starts, then owned exclusively
+	// by run().
+	lastCertMod  time.Time
+	lastCertSize int64
+	lastKeyMod   time.Time
+	lastKeySize  int64
 }
 
 // NewFileEdgeCertProvider loads the initial cert+key pair and starts a
@@ -63,6 +71,17 @@ func NewFileEdgeCertProvider(certPath, keyPath string, reloadEvery time.Duration
 	}
 	if err := p.reload(); err != nil {
 		return nil, fmt.Errorf("initial edge cert load: %w", err)
+	}
+	// Capture the baseline stat synchronously so a slow goroutine start
+	// can't race with a writer and adopt the post-write mtime/size as
+	// "no change."
+	if certInfo, err := os.Stat(p.certPath); err == nil {
+		p.lastCertMod = certInfo.ModTime()
+		p.lastCertSize = certInfo.Size()
+	}
+	if keyInfo, err := os.Stat(p.keyPath); err == nil {
+		p.lastKeyMod = keyInfo.ModTime()
+		p.lastKeySize = keyInfo.Size()
 	}
 	go p.run(reloadEvery)
 	return p, nil
@@ -89,16 +108,6 @@ func (p *FileEdgeCertProvider) Close() error {
 func (p *FileEdgeCertProvider) run(every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
-	var lastCertMod, lastKeyMod time.Time
-	var lastCertSize, lastKeySize int64
-	if certInfo, err := os.Stat(p.certPath); err == nil {
-		lastCertMod = certInfo.ModTime()
-		lastCertSize = certInfo.Size()
-	}
-	if keyInfo, err := os.Stat(p.keyPath); err == nil {
-		lastKeyMod = keyInfo.ModTime()
-		lastKeySize = keyInfo.Size()
-	}
 	for {
 		select {
 		case <-p.stop:
@@ -112,10 +121,10 @@ func (p *FileEdgeCertProvider) run(every time.Duration) {
 			if err != nil {
 				continue
 			}
-			changed := !certInfo.ModTime().Equal(lastCertMod) ||
-				!keyInfo.ModTime().Equal(lastKeyMod) ||
-				certInfo.Size() != lastCertSize ||
-				keyInfo.Size() != lastKeySize
+			changed := !certInfo.ModTime().Equal(p.lastCertMod) ||
+				!keyInfo.ModTime().Equal(p.lastKeyMod) ||
+				certInfo.Size() != p.lastCertSize ||
+				keyInfo.Size() != p.lastKeySize
 			if !changed {
 				continue
 			}
@@ -123,10 +132,10 @@ func (p *FileEdgeCertProvider) run(every time.Duration) {
 				// Don't update lastMod — we want to retry next tick.
 				continue
 			}
-			lastCertMod = certInfo.ModTime()
-			lastCertSize = certInfo.Size()
-			lastKeyMod = keyInfo.ModTime()
-			lastKeySize = keyInfo.Size()
+			p.lastCertMod = certInfo.ModTime()
+			p.lastCertSize = certInfo.Size()
+			p.lastKeyMod = keyInfo.ModTime()
+			p.lastKeySize = keyInfo.Size()
 		}
 	}
 }
