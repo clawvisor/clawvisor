@@ -1,0 +1,101 @@
+service:
+  id: microsoft.teams
+  display_name: Teams
+  description: "Send and receive messages, list channels and teams in Microsoft Teams."
+  setup_url: "https://developer.microsoft.com/en-us/graph/graph-explorer"
+  key_hint: "Microsoft Graph access token"
+  icon_url: "/logos/microsoft-teams.svg"
+  identity:
+    endpoint: "https://graph.microsoft.com/v1.0/me"
+    field: "displayName"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+
+api:
+  base_url: "https://graph.microsoft.com/v1.0"
+  type: rest
+
+verification_hints: |
+  Microsoft Teams actions operate within the user's joined teams.
+  Channel and message access is scoped to teams the user belongs to.
+  Sending messages posts on behalf of the authenticated user.
+
+actions:
+  list_teams:
+    display_name: "List joined teams"
+    risk: { category: read, sensitivity: low, description: "List Teams the user has joined" }
+    method: GET
+    path: "/me/joinedTeams"
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: displayName, rename: name }
+        - { name: description }
+      summary: "{{len .Data}} team(s)"
+
+  list_channels:
+    display_name: "List channels"
+    risk: { category: read, sensitivity: low, description: "List channels in a Team" }
+    method: GET
+    path: "/teams/{{.team_id}}/channels"
+    params:
+      team_id:
+        type: string
+        required: true
+        location: path
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: displayName, rename: name }
+        - { name: description }
+        - { name: membershipType }
+      summary: "{{len .Data}} channel(s)"
+
+  list_messages:
+    display_name: "List messages"
+    risk: { category: read, sensitivity: low, description: "List messages in a Teams channel" }
+    method: GET
+    path: "/teams/{{.team_id}}/channels/{{.channel_id}}/messages"
+    params:
+      team_id:
+        type: string
+        required: true
+        location: path
+      channel_id:
+        type: string
+        required: true
+        location: path
+      top:
+        type: int
+        default: 25
+        max: 50
+        location: query
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: from, path: "from.user.displayName" }
+        - { name: body, path: "body.content", sanitize: true }
+        - { name: createdDateTime, rename: timestamp }
+      summary: "{{len .Data}} message(s)"
+
+  send_message:
+    display_name: "Send message"
+    risk: { category: write, sensitivity: medium, description: "Send a message in a Teams channel" }
+    override: go
+    params:
+      team_id:
+        type: string
+        required: true
+      channel_id:
+        type: string
+        required: true
+      content:
+        type: string
+        required: true
+        description: "Message content (plain text or HTML)"

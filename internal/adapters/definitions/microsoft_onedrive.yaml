@@ -1,0 +1,114 @@
+service:
+  id: microsoft.onedrive
+  display_name: OneDrive
+  description: "List, search, upload, and download files in Microsoft OneDrive."
+  setup_url: "https://developer.microsoft.com/en-us/graph/graph-explorer"
+  key_hint: "Microsoft Graph access token"
+  icon_url: "/logos/microsoft-onedrive.svg"
+  identity:
+    endpoint: "https://graph.microsoft.com/v1.0/me"
+    field: "mail"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+
+api:
+  base_url: "https://graph.microsoft.com/v1.0"
+  type: rest
+
+verification_hints: |
+  OneDrive actions operate on the user's personal or organizational file storage.
+  File paths use /me/drive/root:/path: syntax. Item IDs are also accepted.
+  Destructive operations (delete, move) are permanent.
+
+actions:
+  list_files:
+    display_name: "List files"
+    risk: { category: read, sensitivity: low, description: "List files in a OneDrive folder" }
+    method: GET
+    path: "/me/drive/root/children"
+    params:
+      folder_path:
+        type: string
+        description: "Folder path (leave empty for root). If provided, path changes to /me/drive/root:/path:/children"
+      top:
+        type: int
+        default: 25
+        max: 200
+        location: query
+      select:
+        type: string
+        location: query
+        default: "id,name,size,lastModifiedDateTime,folder,file"
+    # NOTE: Needs Go override to handle dynamic path construction
+    override: go
+
+  get_file:
+    display_name: "Get file metadata"
+    risk: { category: read, sensitivity: low, description: "Get metadata for a file or folder in OneDrive" }
+    method: GET
+    path: "/me/drive/items/{{.item_id}}"
+    params:
+      item_id:
+        type: string
+        required: true
+        location: path
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: size }
+        - { name: lastModifiedDateTime, rename: modified }
+        - { name: webUrl, rename: web_url }
+      summary: "{{.name}}"
+
+  download_file:
+    display_name: "Download file"
+    risk: { category: read, sensitivity: low, description: "Download a file's content from OneDrive" }
+    override: go
+    params:
+      item_id:
+        type: string
+        required: true
+        description: "OneDrive item ID"
+
+  upload_file:
+    display_name: "Upload file"
+    risk: { category: write, sensitivity: medium, description: "Upload a file to OneDrive" }
+    override: go
+    params:
+      path:
+        type: string
+        required: true
+        description: "Destination path in OneDrive (e.g. /Documents/report.txt)"
+      content:
+        type: string
+        required: true
+        description: "File content to upload"
+
+  search_files:
+    display_name: "Search files"
+    risk: { category: search, sensitivity: low, description: "Search for files in OneDrive" }
+    method: GET
+    path: "/me/drive/root/search(q='{{.query}}')"
+    params:
+      query:
+        type: string
+        required: true
+        location: path
+      top:
+        type: int
+        default: 25
+        max: 200
+        location: query
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: size }
+        - { name: webUrl, rename: web_url }
+        - { name: lastModifiedDateTime, rename: modified }
+      summary: "{{len .Data}} result(s)"

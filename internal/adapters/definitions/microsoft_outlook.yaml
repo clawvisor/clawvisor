@@ -1,0 +1,186 @@
+service:
+  id: microsoft.outlook
+  display_name: Outlook
+  description: "Read, search, send, and manage emails and calendar events in Microsoft 365 Outlook."
+  setup_url: "https://developer.microsoft.com/en-us/graph/graph-explorer"
+  key_hint: "Microsoft Graph access token"
+  icon_url: "/logos/microsoft-outlook.svg"
+  identity:
+    endpoint: "https://graph.microsoft.com/v1.0/me"
+    field: "mail"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  header_prefix: "Bearer "
+
+api:
+  base_url: "https://graph.microsoft.com/v1.0"
+  type: rest
+
+verification_hints: |
+  Microsoft Outlook actions operate on the user's Microsoft 365 mailbox and calendar.
+  Email actions use the /me/messages endpoint. Calendar actions use /me/events.
+  send_message creates and sends an email — this is a destructive/write operation.
+
+actions:
+  list_messages:
+    display_name: "List messages"
+    risk: { category: read, sensitivity: low, description: "List email messages from Outlook inbox" }
+    method: GET
+    path: "/me/messages"
+    params:
+      top:
+        type: int
+        default: 10
+        max: 50
+        location: query
+        description: "Number of messages to return"
+      filter:
+        type: string
+        location: query
+        description: "OData filter expression (e.g. isRead eq false)"
+      search:
+        type: string
+        location: query
+        description: "Search query string"
+      select:
+        type: string
+        location: query
+        default: "id,subject,from,receivedDateTime,isRead,bodyPreview"
+        description: "Comma-separated fields to return"
+      skip:
+        type: int
+        location: query
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: subject, sanitize: true }
+        - { name: from, path: "from.emailAddress.address" }
+        - { name: from_name, path: "from.emailAddress.name" }
+        - { name: receivedDateTime, rename: timestamp }
+        - { name: isRead, rename: is_read }
+        - { name: bodyPreview, rename: snippet, sanitize: true }
+      meta:
+        - { name: "@odata.nextLink", rename: next_link }
+      summary: "{{len .Data}} message(s)"
+
+  get_message:
+    display_name: "Get message"
+    risk: { category: read, sensitivity: low, description: "Read a specific email message" }
+    method: GET
+    path: "/me/messages/{{.message_id}}"
+    params:
+      message_id:
+        type: string
+        required: true
+        location: path
+    response:
+      fields:
+        - { name: id }
+        - { name: subject, sanitize: true }
+        - { name: from, path: "from.emailAddress.address" }
+        - { name: toRecipients }
+        - { name: receivedDateTime, rename: timestamp }
+        - { name: isRead, rename: is_read }
+        - { name: body, path: "body.content", sanitize: true }
+      summary: "Email from {{.from}}: {{.subject}}"
+
+  send_message:
+    display_name: "Send message"
+    risk: { category: write, sensitivity: high, description: "Send email as the user via Outlook" }
+    method: POST
+    path: "/me/sendMail"
+    params:
+      to:
+        type: string
+        required: true
+        description: "Recipient email address"
+      subject:
+        type: string
+        required: true
+      body:
+        type: string
+        required: true
+        description: "Email body content (plain text)"
+    # NOTE: This action needs a Go override because the request body
+    # must be structured as { message: { subject, body: { content, contentType }, toRecipients: [...] } }
+    override: go
+
+  list_events:
+    display_name: "List calendar events"
+    risk: { category: read, sensitivity: low, description: "List calendar events from Outlook" }
+    method: GET
+    path: "/me/events"
+    params:
+      top:
+        type: int
+        default: 10
+        max: 50
+        location: query
+      filter:
+        type: string
+        location: query
+      select:
+        type: string
+        location: query
+        default: "id,subject,start,end,location,organizer,isAllDay"
+    response:
+      data_path: "value"
+      fields:
+        - { name: id }
+        - { name: subject, sanitize: true }
+        - { name: start, path: "start.dateTime" }
+        - { name: end, path: "end.dateTime" }
+        - { name: location, path: "location.displayName" }
+        - { name: isAllDay, rename: is_all_day }
+      summary: "{{len .Data}} event(s)"
+
+  get_event:
+    display_name: "Get calendar event"
+    risk: { category: read, sensitivity: low, description: "Read a specific calendar event" }
+    method: GET
+    path: "/me/events/{{.event_id}}"
+    params:
+      event_id:
+        type: string
+        required: true
+        location: path
+    response:
+      fields:
+        - { name: id }
+        - { name: subject, sanitize: true }
+        - { name: start, path: "start.dateTime" }
+        - { name: end, path: "end.dateTime" }
+        - { name: location, path: "location.displayName" }
+        - { name: body, path: "body.content", sanitize: true }
+        - { name: attendees }
+      summary: "Event: {{.subject}}"
+
+  create_event:
+    display_name: "Create calendar event"
+    risk: { category: write, sensitivity: medium, description: "Create a new calendar event" }
+    override: go
+    params:
+      subject:
+        type: string
+        required: true
+      start:
+        type: string
+        required: true
+        description: "Start datetime in ISO 8601 (e.g. 2026-01-15T09:00:00)"
+      end:
+        type: string
+        required: true
+        description: "End datetime in ISO 8601"
+      timezone:
+        type: string
+        default: "UTC"
+      location:
+        type: string
+      body:
+        type: string
+      attendees:
+        type: string
+        description: "Comma-separated attendee email addresses"

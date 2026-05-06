@@ -25,6 +25,9 @@ import (
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	onedriveadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/onedrive"
+	outlookadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/outlook"
+	teamsadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/teams"
 	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
 	sqladapter "github.com/clawvisor/clawvisor/internal/adapters/sql"
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
@@ -176,6 +179,19 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 
 	pplx := perplexityadapter.New()
 	goOverrides["perplexity:chat"] = pplx.Execute
+
+	outlook := outlookadapter.New()
+	for _, action := range []string{"send_message", "create_event"} {
+		goOverrides["microsoft.outlook:"+action] = outlook.Execute
+	}
+
+	onedrive := onedriveadapter.New()
+	for _, action := range []string{"list_files", "download_file", "upload_file"} {
+		goOverrides["microsoft.onedrive:"+action] = onedrive.Execute
+	}
+
+	teams := teamsadapter.New()
+	goOverrides["microsoft.teams:send_message"] = teams.Execute
 
 	// Build adapter loading source (for startup) and generator factory (for per-request use).
 	var adapterSource yamlloader.UserAdapterSource
