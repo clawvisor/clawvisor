@@ -16,6 +16,9 @@ const baseService = (s: string) => {
   return i >= 0 ? s.slice(0, i) : s
 }
 
+const isLocalHost = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+
 // ── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
@@ -860,7 +863,7 @@ function AutoApprovalPanel({ rationale }: { rationale: ApprovalRationale }) {
         <div className="px-3 py-2.5 space-y-1.5">
           <p className="text-sm text-text-secondary">{rationale.explanation}</p>
           <div className="text-[10px] font-mono text-text-tertiary pt-0.5">
-            {rationale.confidence} confidence &middot; {rationale.model} &middot; {rationale.latency_ms}ms
+            {rationale.confidence} confidence{isLocalHost ? ` · ${rationale.model}` : ''} &middot; {rationale.latency_ms}ms
           </div>
         </div>
       </div>
@@ -930,7 +933,7 @@ function RiskPanel({ risk, level }: { risk: RiskAssessment; level: string }) {
             </div>
           )}
 
-          <div className="text-[10px] font-mono text-text-tertiary pt-1">{risk.model} &middot; {risk.latency_ms}ms</div>
+          <div className="text-[10px] font-mono text-text-tertiary pt-1">{isLocalHost ? `${risk.model} · ` : ''}{risk.latency_ms}ms</div>
         </div>
       </div>
     </div>
@@ -1019,7 +1022,7 @@ function ActivityRow({ entry }: { entry: AuditEntry }) {
                 }`}>reason: {entry.verification.reason_coherence}</span>
               </div>
               <p className="text-xs text-text-secondary">{entry.verification.explanation}</p>
-              <div className="text-[10px] font-mono text-text-tertiary">{entry.verification.model} &middot; {entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
+              <div className="text-[10px] font-mono text-text-tertiary">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms{entry.duration_ms ? ` · executed in ${entry.duration_ms}ms` : ''}</div>
             </div>
           )}
           {entry.error_msg && (
