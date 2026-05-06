@@ -418,39 +418,78 @@ func (s *Server) routes() http.Handler {
 		groupValidator = gv
 	}
 	notificationsHandler := handlers.NewNotificationsHandler(s.store, s.notifier, pairer, groupObs, groupDetector, agentPairer, groupValidator, baseURL)
-	// Construct intent verifier (noop if disabled). When the verifier is
-	// configured for the gemini provider with caching enabled,
-	// llm.StartGeminiCacheIfConfigured starts an explicit context cache
-	// resource for the verifier's system prompt and returns a closer.
-	// Failures inside that helper are logged and non-fatal — the verifier
-	// runs uncached when the cache can't start.
+	// Construct intent verifier (noop if disabled).
 	var verifier intent.Verifier = intent.NoopVerifier{}
 	if s.llmCfg.Verification.Enabled {
 		v := intent.NewLLMVerifier(s.llmHealth, s.logger)
 		if s.verdictCache != nil {
 			v.SetVerdictCache(s.verdictCache)
 		}
-		if closer := llm.StartGeminiCacheIfConfigured(v, s.llmCfg.Verification.LLMProviderConfig, s.logger); closer != nil {
+		// Start Gemini explicit context cache when configured. The cache
+		// holds the verification system prompt; per-request clients
+		// reference it via the function the verifier registers internally.
+		// On failure we log loudly but proceed — the verifier still works
+		// uncached, just slower and more expensive per call.
+		if vc := s.llmCfg.Verification; vc.Provider == "gemini" && vc.GeminiCache != nil && vc.GeminiCache.Enabled {
+			cacheRegion := vc.GeminiCache.Region
+			if cacheRegion == "" {
+				cacheRegion = vc.Region
+			}
+			ttl := time.Duration(vc.GeminiCache.TTLSeconds) * time.Second
+			cacheCfg := llm.GeminiCacheManagerConfig{
+				Project: vc.Project,
+				Region:  cacheRegion,
+				Model:   vc.Model,
+				TTL:     ttl,
+				Logger:  s.logger,
+			}
+			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := v.StartGeminiCache(startCtx, cacheCfg); err != nil {
+				s.logger.Error("gemini verifier cache start failed; running uncached",
+					"err", err)
+			}
+			startCancel()
 			s.closers = append(s.closers, func() {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				closer(stopCtx)
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stopCancel()
+				v.StopGeminiCache(stopCtx)
 			})
 		}
 		verifier = v
 	}
 
-	// Construct chain context extractor (noop if disabled). Same pattern as
-	// the verifier above: a single helper handles "is gemini caching
-	// configured? if so start it, register a closer for shutdown".
+	// Construct chain context extractor (noop if disabled).
 	var extractor intent.Extractor = intent.NoopExtractor{}
 	if s.llmCfg.ChainContext.Enabled {
 		ext := intent.NewLLMExtractor(s.llmHealth, s.logger)
-		if closer := llm.StartGeminiCacheIfConfigured(ext, s.llmCfg.ChainContext.LLMProviderConfig, s.logger); closer != nil {
+		// Start Gemini explicit context cache when configured. The cache
+		// holds the extraction system prompt; per-request clients reference
+		// it via the function the extractor registers internally. On
+		// failure we log loudly but proceed — the extractor still works
+		// uncached, just slower and more expensive per call.
+		if cc := s.llmCfg.ChainContext; cc.Provider == "gemini" && cc.GeminiCache != nil && cc.GeminiCache.Enabled {
+			cacheRegion := cc.GeminiCache.Region
+			if cacheRegion == "" {
+				cacheRegion = cc.Region
+			}
+			ttl := time.Duration(cc.GeminiCache.TTLSeconds) * time.Second
+			cacheCfg := llm.GeminiCacheManagerConfig{
+				Project: cc.Project,
+				Region:  cacheRegion,
+				Model:   cc.Model,
+				TTL:     ttl,
+				Logger:  s.logger,
+			}
+			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := ext.StartGeminiCache(startCtx, cacheCfg); err != nil {
+				s.logger.Error("gemini extractor cache start failed; running uncached",
+					"err", err)
+			}
+			startCancel()
 			s.closers = append(s.closers, func() {
-				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				closer(stopCtx)
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stopCancel()
+				ext.StopGeminiCache(stopCtx)
 			})
 		}
 		extractor = ext

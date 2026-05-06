@@ -75,10 +75,17 @@ func (NoopExtractor) Extract(_ context.Context, _ ExtractRequest) ([]*store.Chai
 
 // LLMExtractor uses an LLM to extract structural facts from adapter results.
 type LLMExtractor struct {
-	llm.GeminiCacheBinder // embeds CloseGeminiCache and GeminiCacheName for free
-
 	health *llm.Health
 	logger *slog.Logger
+
+	// geminiCacheNameFn returns the current Gemini cachedContents resource
+	// name, or "" when no cache is registered. Set via StartGeminiCache.
+	// Attached to every per-call llm.Client so the cache is referenced on
+	// Gemini provider requests.
+	geminiCacheNameFn func() string
+	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
+	// used. Nil when no cache was set up.
+	geminiCacheMgr *llm.GeminiCacheManager
 }
 
 // NewLLMExtractor creates an LLM-backed chain context extractor.
@@ -86,18 +93,34 @@ func NewLLMExtractor(health *llm.Health, logger *slog.Logger) *LLMExtractor {
 	return &LLMExtractor{health: health, logger: logger}
 }
 
-// AttachGeminiCache implements llm.GeminiCacheable. Fills in the extractor's
-// system prompt and delegates to the embedded GeminiCacheBinder. Use
-// llm.StartGeminiCacheIfConfigured to wire this from app startup.
-func (e *LLMExtractor) AttachGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
+// StartGeminiCache initializes the Gemini explicit context cache for the
+// extractor's system prompt and registers it so per-request clients
+// reference it automatically. cfg.SystemPrompt is filled in by the
+// extractor and should be left empty by callers. On creation failure the
+// extractor proceeds without caching (slower, but functional).
+func (e *LLMExtractor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
 	cfg.SystemPrompt = extractionSystemPrompt
 	if cfg.Logger == nil {
 		cfg.Logger = e.logger
 	}
-	if err := e.GeminiCacheBinder.AttachGeminiCacheRaw(ctx, cfg); err != nil {
+	mgr, err := llm.NewGeminiCacheManager(cfg)
+	if err != nil {
 		return fmt.Errorf("extractor gemini cache: %w", err)
 	}
+	if err := mgr.Start(ctx); err != nil {
+		return fmt.Errorf("extractor gemini cache start: %w", err)
+	}
+	e.geminiCacheMgr = mgr
+	e.geminiCacheNameFn = mgr.CacheName
 	return nil
+}
+
+// StopGeminiCache deletes the cache and stops the refresh goroutine.
+// Safe to call when no cache is running.
+func (e *LLMExtractor) StopGeminiCache(ctx context.Context) {
+	if e.geminiCacheMgr != nil {
+		e.geminiCacheMgr.Stop(ctx)
+	}
 }
 
 const extractionSystemPrompt = `You extract structural references from API results for a security system.
@@ -500,9 +523,9 @@ func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, exist
 	// per fact emitted. Sized at 8192 — enough for any reasonable list
 	// response without wasting tokens.
 	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(8192)
-	// Read cache name on every call — embedded binder returns "" when no
-	// cache is attached, which the client correctly handles.
-	client.AttachGeminiCacheNameFn(e.GeminiCacheName)
+	if e.geminiCacheNameFn != nil {
+		client.AttachGeminiCacheNameFn(e.geminiCacheNameFn)
+	}
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: extractionSystemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},
