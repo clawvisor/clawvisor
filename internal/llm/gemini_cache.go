@@ -112,6 +112,24 @@ func (m *GeminiCacheManager) Start(ctx context.Context) error {
 	return nil
 }
 
+// StartCachedSystemPrompt is a convenience constructor that fills cfg's
+// SystemPrompt, builds a GeminiCacheManager, and starts it in one call.
+// Returns the manager (for shutdown control if needed) and a function
+// that returns the current cache resource name (suitable for passing to
+// Client.AttachGeminiCacheNameFn). Used by service-level Start helpers
+// to deduplicate the build-and-start dance.
+func StartCachedSystemPrompt(ctx context.Context, cfg GeminiCacheManagerConfig, systemPrompt string) (*GeminiCacheManager, func() string, error) {
+	cfg.SystemPrompt = systemPrompt
+	mgr, err := NewGeminiCacheManager(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := mgr.Start(ctx); err != nil {
+		return nil, nil, err
+	}
+	return mgr, mgr.CacheName, nil
+}
+
 // CacheName returns the current cache resource name, or "" if no cache is
 // currently registered. Safe for concurrent use; non-blocking.
 func (m *GeminiCacheManager) CacheName() string {

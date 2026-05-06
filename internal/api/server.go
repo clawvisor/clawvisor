@@ -419,43 +419,7 @@ func (s *Server) routes() http.Handler {
 		if s.verdictCache != nil {
 			v.SetVerdictCache(s.verdictCache)
 		}
-		// Start Gemini explicit context cache when configured. The cache
-		// holds the verification system prompt; per-request clients
-		// reference it via the function the verifier registers internally.
-		// On failure we log loudly but proceed — the verifier still works
-		// uncached, just slower and more expensive per call.
-		if vc := s.llmCfg.Verification; vc.Provider == "gemini" && vc.GeminiCache != nil && vc.GeminiCache.Enabled {
-			cacheRegion := vc.GeminiCache.Region
-			if cacheRegion == "" {
-				cacheRegion = vc.Region
-			}
-			if cacheRegion != "" && vc.Region != "" && cacheRegion != vc.Region {
-				// Cross-region caching works for some Vertex models (notably
-				// global-only preview models with the cache pinned to a real
-				// region) but isn't broadly documented. Log a warning so the
-				// configuration is visible if requests start failing.
-				s.logger.Warn("gemini verifier cache region differs from inference region",
-					"cache_region", cacheRegion, "inference_region", vc.Region)
-			}
-			ttl := time.Duration(vc.GeminiCache.TTLSeconds) * time.Second
-			cacheCfg := llm.GeminiCacheManagerConfig{
-				Project: vc.Project,
-				Region:  cacheRegion,
-				Model:   vc.Model,
-				TTL:     ttl,
-				Logger:  s.logger,
-			}
-			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := v.StartGeminiCache(startCtx, cacheCfg); err != nil {
-				s.logger.Error("gemini verifier cache start failed; running uncached",
-					"err", err)
-			}
-			startCancel()
-			// No shutdown hook — the cache resource auto-expires by TTL on
-			// Vertex's side (typically 30 min). Eager deletion would save
-			// a few cents/year of storage and wouldn't change correctness;
-			// the refresh goroutine dies with the process.
-		}
+		startGeminiCacheIfConfigured(s.llmCfg.Verification.LLMProviderConfig, s.logger, "verifier", v.StartGeminiCache)
 		verifier = v
 	}
 
@@ -463,36 +427,7 @@ func (s *Server) routes() http.Handler {
 	var extractor intent.Extractor = intent.NoopExtractor{}
 	if s.llmCfg.ChainContext.Enabled {
 		ext := intent.NewLLMExtractor(s.llmHealth, s.logger)
-		// Start Gemini explicit context cache when configured. The cache
-		// holds the extraction system prompt; per-request clients reference
-		// it via the function the extractor registers internally. On
-		// failure we log loudly but proceed — the extractor still works
-		// uncached, just slower and more expensive per call.
-		if cc := s.llmCfg.ChainContext; cc.Provider == "gemini" && cc.GeminiCache != nil && cc.GeminiCache.Enabled {
-			cacheRegion := cc.GeminiCache.Region
-			if cacheRegion == "" {
-				cacheRegion = cc.Region
-			}
-			if cacheRegion != "" && cc.Region != "" && cacheRegion != cc.Region {
-				s.logger.Warn("gemini extractor cache region differs from inference region",
-					"cache_region", cacheRegion, "inference_region", cc.Region)
-			}
-			ttl := time.Duration(cc.GeminiCache.TTLSeconds) * time.Second
-			cacheCfg := llm.GeminiCacheManagerConfig{
-				Project: cc.Project,
-				Region:  cacheRegion,
-				Model:   cc.Model,
-				TTL:     ttl,
-				Logger:  s.logger,
-			}
-			startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := ext.StartGeminiCache(startCtx, cacheCfg); err != nil {
-				s.logger.Error("gemini extractor cache start failed; running uncached",
-					"err", err)
-			}
-			startCancel()
-			// No shutdown hook — see verifier comment above.
-		}
+		startGeminiCacheIfConfigured(s.llmCfg.ChainContext.LLMProviderConfig, s.logger, "extractor", ext.StartGeminiCache)
 		extractor = ext
 	}
 
@@ -1264,4 +1199,45 @@ func relayHostFromCfg(cfgURL string) string {
 		u = version.RelayURL()
 	}
 	return strings.TrimPrefix(strings.TrimPrefix(u, "wss://"), "ws://")
+}
+
+// startGeminiCacheIfConfigured runs the Gemini explicit-context-cache start
+// dance for an LLM-backed component (verifier, extractor, etc.). No-op
+// unless the provider is "gemini" and a cache is configured. Failures are
+// logged and swallowed — the caller continues uncached. The cache resource
+// auto-expires by TTL on Vertex's side, so no shutdown hook is needed.
+func startGeminiCacheIfConfigured(
+	cfg config.LLMProviderConfig,
+	logger *slog.Logger,
+	label string,
+	start func(context.Context, llm.GeminiCacheManagerConfig) error,
+) {
+	if cfg.Provider != "gemini" || cfg.GeminiCache == nil || !cfg.GeminiCache.Enabled {
+		return
+	}
+	cacheRegion := cfg.GeminiCache.Region
+	if cacheRegion == "" {
+		cacheRegion = cfg.Region
+	}
+	if cacheRegion != "" && cfg.Region != "" && cacheRegion != cfg.Region {
+		// Cross-region caching works for some Vertex models (notably
+		// global-only preview models with the cache pinned to a real
+		// region) but isn't broadly documented. Log a warning so the
+		// configuration is visible if requests start failing.
+		logger.Warn("gemini "+label+" cache region differs from inference region",
+			"cache_region", cacheRegion, "inference_region", cfg.Region)
+	}
+	cacheCfg := llm.GeminiCacheManagerConfig{
+		Project: cfg.Project,
+		Region:  cacheRegion,
+		Model:   cfg.Model,
+		TTL:     time.Duration(cfg.GeminiCache.TTLSeconds) * time.Second,
+		Logger:  logger,
+	}
+	startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := start(startCtx, cacheCfg); err != nil {
+		logger.Error("gemini "+label+" cache start failed; running uncached",
+			"err", err)
+	}
 }

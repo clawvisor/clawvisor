@@ -125,8 +125,9 @@ func (c *Client) Endpoint() string {
 // AttachGeminiCacheNameFn registers a function the client calls on every
 // Gemini request to discover the current cachedContents resource name. The
 // function returning "" causes the client to fall through to the uncached
-// path (inlining systemInstruction). Mutates the receiver — the cache
-// manager only needs to register once at app startup.
+// path (inlining systemInstruction). Mutates the receiver. Callers that
+// build a fresh Client per request (e.g. verifier.Verify, extractor.ExtractLLM)
+// must call this on each new instance.
 func (c *Client) AttachGeminiCacheNameFn(fn func() string) {
 	c.geminiCacheNameFn = fn
 }

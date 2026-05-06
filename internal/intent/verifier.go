@@ -110,19 +110,15 @@ func (v *LLMVerifier) SetGeminiCacheNameFn(fn func() string) {
 // verifier and should be left empty by callers. On creation failure the
 // verifier proceeds without caching (slower, but functional).
 func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
-	cfg.SystemPrompt = verificationSystemPrompt
 	if cfg.Logger == nil {
 		cfg.Logger = v.logger
 	}
-	mgr, err := llm.NewGeminiCacheManager(cfg)
+	mgr, nameFn, err := llm.StartCachedSystemPrompt(ctx, cfg, verificationSystemPrompt)
 	if err != nil {
 		return fmt.Errorf("verifier gemini cache: %w", err)
 	}
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("verifier gemini cache start: %w", err)
-	}
 	v.geminiCacheMgr = mgr
-	v.geminiCacheNameFn = mgr.CacheName
+	v.geminiCacheNameFn = nameFn
 	return nil
 }
 

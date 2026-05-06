@@ -737,6 +737,10 @@ func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	if sub.GeminiThinkingLevel == "" {
 		sub.GeminiThinkingLevel = shared.GeminiThinkingLevel
 	}
+	// GeminiCache is intentionally NOT inherited. Each sub-block caches a
+	// different system prompt (verification vs. extraction vs. ...) and may
+	// want different TTLs or even cache only on a subset of components, so
+	// the cache config must be set explicitly per sub-block.
 }
 
 // Validate checks for configuration errors that should prevent startup.

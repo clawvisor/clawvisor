@@ -99,19 +99,15 @@ func NewLLMExtractor(health *llm.Health, logger *slog.Logger) *LLMExtractor {
 // extractor and should be left empty by callers. On creation failure the
 // extractor proceeds without caching (slower, but functional).
 func (e *LLMExtractor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheManagerConfig) error {
-	cfg.SystemPrompt = extractionSystemPrompt
 	if cfg.Logger == nil {
 		cfg.Logger = e.logger
 	}
-	mgr, err := llm.NewGeminiCacheManager(cfg)
+	mgr, nameFn, err := llm.StartCachedSystemPrompt(ctx, cfg, extractionSystemPrompt)
 	if err != nil {
 		return fmt.Errorf("extractor gemini cache: %w", err)
 	}
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("extractor gemini cache start: %w", err)
-	}
 	e.geminiCacheMgr = mgr
-	e.geminiCacheNameFn = mgr.CacheName
+	e.geminiCacheNameFn = nameFn
 	return nil
 }
 
