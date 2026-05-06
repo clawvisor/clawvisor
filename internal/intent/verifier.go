@@ -126,14 +126,6 @@ func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheM
 	return nil
 }
 
-// StopGeminiCache deletes the cache and stops the refresh goroutine.
-// Safe to call when no cache is running.
-func (v *LLMVerifier) StopGeminiCache(ctx context.Context) {
-	if v.geminiCacheMgr != nil {
-		v.geminiCacheMgr.Stop(ctx)
-	}
-}
-
 func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*VerificationVerdict, error) {
 	cfg := v.health.VerificationConfig()
 	if !cfg.Enabled {

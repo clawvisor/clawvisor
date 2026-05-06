@@ -115,14 +115,6 @@ func (e *LLMExtractor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCache
 	return nil
 }
 
-// StopGeminiCache deletes the cache and stops the refresh goroutine.
-// Safe to call when no cache is running.
-func (e *LLMExtractor) StopGeminiCache(ctx context.Context) {
-	if e.geminiCacheMgr != nil {
-		e.geminiCacheMgr.Stop(ctx)
-	}
-}
-
 const extractionSystemPrompt = `You extract structural references from API results for a security system.
 These references become "chain context" — facts that future requests in
 the same task can reference. The chain-context check uses these facts to

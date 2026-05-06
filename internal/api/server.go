@@ -57,12 +57,6 @@ type Server struct {
 	logger     *slog.Logger
 	http       *http.Server
 
-	// closers run in order during graceful shutdown — used for sub-component
-	// teardown (Gemini cache manager, etc.) that needs to happen before
-	// store.Close. Each entry should be safe to call once and tolerate
-	// re-invocation defensively.
-	closers []func()
-
 	magicStore pkgauth.MagicTokenStore
 
 	// Extension points for open-core customization.
@@ -449,11 +443,10 @@ func (s *Server) routes() http.Handler {
 					"err", err)
 			}
 			startCancel()
-			s.closers = append(s.closers, func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer stopCancel()
-				v.StopGeminiCache(stopCtx)
-			})
+			// No shutdown hook — the cache resource auto-expires by TTL on
+			// Vertex's side (typically 30 min). Eager deletion would save
+			// a few cents/year of storage and wouldn't change correctness;
+			// the refresh goroutine dies with the process.
 		}
 		verifier = v
 	}
@@ -486,11 +479,7 @@ func (s *Server) routes() http.Handler {
 					"err", err)
 			}
 			startCancel()
-			s.closers = append(s.closers, func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer stopCancel()
-				ext.StopGeminiCache(stopCtx)
-			})
+			// No shutdown hook — see verifier comment above.
 		}
 		extractor = ext
 	}
@@ -1234,12 +1223,6 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
-		}
-		// Run sub-component closers (e.g. Gemini cache delete) before
-		// closing the store. They're best-effort — log on failure but
-		// continue shutdown so we don't strand the process.
-		for _, closer := range s.closers {
-			closer()
 		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {
