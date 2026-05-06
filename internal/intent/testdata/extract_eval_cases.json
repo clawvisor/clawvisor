@@ -117,7 +117,7 @@
     "expected": {
       "min_facts": 3,
       "must_include_types": [
-        "amount"
+        "charge_id"
       ],
       "must_include_values": [
         "ch_3RfV7nK2mP9xQ4wL"
@@ -162,7 +162,7 @@
       "min_facts": 6,
       "must_include_types": [
         "email_address",
-        "amount"
+        "charge_id"
       ],
       "must_include_values": [
         "ch_3RfV7nK2mP9xQ4wL",
@@ -657,6 +657,449 @@
         "file_0039_dk"
       ],
       "must_exclude_values": []
+    }
+  },
+  {
+    "name": "canonical_message_id_no_rfc5322_header",
+    "category": "canonical_vocabulary",
+    "request": {
+      "task_purpose": "Read full email content for knowledge base",
+      "service": "google.gmail",
+      "action": "get_message",
+      "result": "{\"data\":{\"id\":\"1a4f7e2c9d3b8e51\",\"thread_id\":\"1a4f7e2c9d3b8e50\",\"from\":\"alerts@vendor.example\",\"to\":\"j.watson@meridian.io\",\"subject\":\"Status update\",\"date\":\"2026-04-22T08:00:00Z\",\"headers\":{\"Message-ID\":\"<aB3kF9zQ7xR2nM5pY8tW@mail.gmail.com>\",\"In-Reply-To\":\"<vT7nJ2pQ8mK5xR3yL1wH@geopod-relay-3>\"}}}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "message_id_header",
+        "email_message_id",
+        "email_id"
+      ],
+      "must_include_values": [
+        "1a4f7e2c9d3b8e51",
+        "alerts@vendor.example",
+        "j.watson@meridian.io"
+      ],
+      "must_exclude_values": [
+        "<aB3kF9zQ7xR2nM5pY8tW@mail.gmail.com>",
+        "<vT7nJ2pQ8mK5xR3yL1wH@geopod-relay-3>",
+        "Status update"
+      ]
+    }
+  },
+  {
+    "name": "content_calendar_summary_dropped",
+    "category": "content_filtering",
+    "request": {
+      "task_purpose": "Daily briefing \u2014 list today's calendar events",
+      "service": "google.calendar",
+      "action": "list_events",
+      "result": "{\"data\":[{\"id\":\"7kn2p4m8q1r6s3t9\",\"summary\":\"Friday Coffee Sync\",\"start\":\"2026-04-22T09:00:00Z\",\"end\":\"2026-04-22T10:00:00Z\",\"organizer\":\"j.watson@meridian.io\"},{\"id\":\"9bx4v6w2y8z1a5c3\",\"summary\":\"Renew Building Garage Pass\",\"start\":\"2026-04-22T14:00:00Z\",\"end\":\"2026-04-22T14:30:00Z\"},{\"id\":\"3px8mn4qr1jk5wv7\",\"summary\":\"Property Review Sync\",\"start\":\"2026-04-22T16:00:00Z\",\"end\":\"2026-04-22T17:00:00Z\",\"location\":\"Conference Room 3B\"}]}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "event_id"
+      ],
+      "must_exclude_types": [
+        "event_summary",
+        "calendar_summary",
+        "summary",
+        "title",
+        "location_name"
+      ],
+      "must_include_values": [
+        "7kn2p4m8q1r6s3t9",
+        "9bx4v6w2y8z1a5c3",
+        "3px8mn4qr1jk5wv7"
+      ],
+      "must_exclude_values": [
+        "Friday Coffee Sync",
+        "Renew Building Garage Pass",
+        "Property Review Sync",
+        "Conference Room 3B"
+      ]
+    }
+  },
+  {
+    "name": "content_gmail_subject_dropped",
+    "category": "content_filtering",
+    "request": {
+      "task_purpose": "Read message content for inbox triage",
+      "service": "google.gmail",
+      "action": "get_message",
+      "result": "{\"data\":{\"id\":\"18de3f7a2b4c6d90\",\"thread_id\":\"18de3f7a2b4c6d8e\",\"from\":\"j.watson@meridian.io\",\"to\":\"team@meridian.io\",\"subject\":\"Q3 Budget Review \u2014 Action Required\",\"date\":\"2026-04-22T09:14:00Z\",\"snippet\":\"Please review the attached Q3 budget proposal before our meeting on Friday.\"}}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "subject",
+        "email_subject",
+        "title"
+      ],
+      "must_include_values": [
+        "18de3f7a2b4c6d90",
+        "j.watson@meridian.io"
+      ],
+      "must_exclude_values": [
+        "Q3 Budget Review \u2014 Action Required",
+        "Please review the attached Q3 budget proposal before our meeting on Friday."
+      ]
+    }
+  },
+  {
+    "name": "content_gmail_labels_dropped",
+    "category": "content_filtering",
+    "request": {
+      "task_purpose": "List recent unread messages",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"data\":[{\"id\":\"18de3f7a2b4c6d90\",\"thread_id\":\"18de3f7a2b4c6d8e\",\"from\":\"alerts@vendor.example\",\"labels\":[\"UNREAD\",\"CATEGORY_UPDATES\",\"INBOX\"],\"is_unread\":true},{\"id\":\"18de2c5b1a3d8e74\",\"thread_id\":\"18de2c5b1a3d8e70\",\"from\":\"k.tanaka@vantagepoint.co\",\"labels\":[\"UNREAD\",\"IMPORTANT\",\"INBOX\"],\"is_unread\":true}]}"
+    },
+    "expected": {
+      "min_facts": 4,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "label",
+        "labels",
+        "category"
+      ],
+      "must_include_values": [
+        "18de3f7a2b4c6d90",
+        "alerts@vendor.example"
+      ],
+      "must_exclude_values": [
+        "UNREAD",
+        "CATEGORY_UPDATES",
+        "INBOX",
+        "IMPORTANT",
+        "\"UNREAD\",\"CATEGORY_UPDATES\",\"INBOX\""
+      ]
+    }
+  },
+  {
+    "name": "content_status_field_dropped",
+    "category": "content_filtering",
+    "request": {
+      "task_purpose": "Triage current sprint backlog",
+      "service": "linear",
+      "action": "list_issues",
+      "result": "{\"data\":[{\"id\":\"LIN-5102\",\"title\":\"Investigate webhook timeouts\",\"state\":\"In Progress\",\"priority\":\"high\",\"assignee\":\"j.watson@meridian.io\",\"url\":\"https://linear.app/meridian/issue/LIN-5102\"},{\"id\":\"LIN-5098\",\"title\":\"SSO config docs\",\"state\":\"Todo\",\"priority\":\"medium\",\"assignee\":\"priya.nair@luminatech.dev\",\"url\":\"https://linear.app/meridian/issue/LIN-5098\"}]}"
+    },
+    "expected": {
+      "min_facts": 4,
+      "must_include_types": [
+        "issue_id",
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "state",
+        "status",
+        "priority"
+      ],
+      "must_include_values": [
+        "LIN-5102",
+        "LIN-5098"
+      ],
+      "must_exclude_values": [
+        "In Progress",
+        "Todo",
+        "high",
+        "medium"
+      ]
+    }
+  },
+  {
+    "name": "content_postal_address_dropped",
+    "category": "content_filtering",
+    "request": {
+      "task_purpose": "Find vendor contact details",
+      "service": "google.contacts",
+      "action": "list_contacts",
+      "result": "{\"data\":[{\"resource_name\":\"people/c8374629105\",\"name\":\"Marissa Delgado\",\"email\":\"m.delgado@vantagepoint.co\",\"phone\":\"+14158827394\",\"address\":{\"street\":\"1200 Birchwood Ave\",\"city\":\"Springvale\",\"state\":\"CA\",\"postal_code\":\"94288\",\"country\":\"US\"}}]}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "email_address",
+        "phone_number"
+      ],
+      "must_exclude_types": [
+        "address",
+        "physical_address",
+        "postal_code",
+        "zip_code",
+        "street_address",
+        "city",
+        "country"
+      ],
+      "must_include_values": [
+        "m.delgado@vantagepoint.co",
+        "+14158827394"
+      ],
+      "must_exclude_values": [
+        "1200 Birchwood Ave",
+        "94288",
+        "Springvale",
+        "US",
+        "CA"
+      ]
+    }
+  },
+  {
+    "name": "pagination_calendar_next_page_token_dropped",
+    "category": "pagination_filtering",
+    "request": {
+      "task_purpose": "List all calendars across the workspace",
+      "service": "google.calendar",
+      "action": "list_calendars",
+      "result": "{\"items\":[{\"id\":\"primary\",\"summary\":\"My Calendar\"},{\"id\":\"family24685397102468530975@group.calendar.google.com\",\"summary\":\"Family\"}],\"nextPageToken\":\"QXk1NjJhYmM3ZGVmMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU=\"}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "calendar_id"
+      ],
+      "must_exclude_types": [
+        "page_token",
+        "next_page_token",
+        "pagination_token",
+        "cursor",
+        "sync_token",
+        "calendar_summary",
+        "calendar_name"
+      ],
+      "must_include_values": [
+        "primary",
+        "family24685397102468530975@group.calendar.google.com"
+      ],
+      "must_exclude_values": [
+        "QXk1NjJhYmM3ZGVmMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU=",
+        "My Calendar",
+        "Family"
+      ]
+    }
+  },
+  {
+    "name": "pagination_slack_cursor_dropped",
+    "category": "pagination_filtering",
+    "request": {
+      "task_purpose": "List Slack channels for posting updates",
+      "service": "slack",
+      "action": "list_channels",
+      "result": "{\"channels\":[{\"id\":\"C0K8L2M5N7Q\",\"name\":\"team-engineering\",\"is_archived\":false},{\"id\":\"C0R3S5T7U9X\",\"name\":\"project-cascade\",\"is_archived\":false}],\"response_metadata\":{\"next_cursor\":\"cGFnZTpiOWUyZjNkNGE1Yg==\"}}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "channel_id"
+      ],
+      "must_exclude_types": [
+        "cursor",
+        "next_cursor",
+        "page_token"
+      ],
+      "must_include_values": [
+        "C0K8L2M5N7Q",
+        "C0R3S5T7U9X"
+      ],
+      "must_exclude_values": [
+        "cGFnZTpiOWUyZjNkNGE1Yg=="
+      ]
+    }
+  },
+  {
+    "name": "sensitive_verification_code_dropped",
+    "category": "sensitive_filtering",
+    "request": {
+      "task_purpose": "Read email content for inbox triage",
+      "service": "google.gmail",
+      "action": "get_message",
+      "result": "{\"data\":{\"id\":\"19dd6e3e6f111111\",\"thread_id\":\"19dd6e3e6f111110\",\"from\":\"noreply@securebank.example\",\"to\":\"j.watson@meridian.io\",\"subject\":\"Verify your account\",\"date\":\"2026-04-22T10:00:00Z\",\"body\":\"Hello, your verification code is 438172. It expires in 10 minutes. Do not share this code with anyone.\"}}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "verification_code",
+        "otp",
+        "auth_code",
+        "code"
+      ],
+      "must_include_values": [
+        "noreply@securebank.example",
+        "j.watson@meridian.io"
+      ],
+      "must_exclude_values": [
+        "438172",
+        "Verify your account",
+        "Hello, your verification code is 438172. It expires in 10 minutes. Do not share this code with anyone."
+      ]
+    }
+  },
+  {
+    "name": "sensitive_zoom_passcode_dropped",
+    "category": "sensitive_filtering",
+    "request": {
+      "task_purpose": "Get details for the team meeting",
+      "service": "google.calendar",
+      "action": "get_event",
+      "result": "{\"data\":{\"id\":\"7kn2p4m8q1r6s3t9\",\"summary\":\"Quarterly Review\",\"start\":\"2026-04-22T15:00:00Z\",\"end\":\"2026-04-22T16:00:00Z\",\"organizer\":\"s.patel@fieldstone.com\",\"conference_data\":{\"join_url\":\"https://zoom.us/j/12903847562\",\"meeting_id\":\"12903847562\",\"passcode\":\"815273\",\"phone_dial_in\":\"+15551042384\",\"phone_passcode\":\"604192\"}}}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "event_id",
+        "email_address",
+        "url"
+      ],
+      "must_exclude_types": [
+        "passcode",
+        "zoom_passcode",
+        "phone_passcode",
+        "pin",
+        "pin_code",
+        "access_code",
+        "meeting_id"
+      ],
+      "must_include_values": [
+        "7kn2p4m8q1r6s3t9",
+        "s.patel@fieldstone.com",
+        "https://zoom.us/j/12903847562"
+      ],
+      "must_exclude_values": [
+        "815273",
+        "604192",
+        "12903847562"
+      ]
+    }
+  },
+  {
+    "name": "sensitive_routing_number_dropped",
+    "category": "sensitive_filtering",
+    "request": {
+      "task_purpose": "Review payout details",
+      "service": "stripe",
+      "action": "get_payout",
+      "result": "{\"data\":{\"id\":\"po_1RfV7nK2mP9xQ4wL\",\"amount\":75000,\"currency\":\"usd\",\"destination\":\"ba_1N2mK4pR7vW9xQ3\",\"bank_account\":{\"routing_number\":\"999000999\",\"last4\":\"6789\",\"account_holder_email\":\"finance@meridian.io\"}}}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_exclude_types": [
+        "routing_number",
+        "bank_routing_number",
+        "account_number",
+        "bank_account_number",
+        "card_last_four",
+        "swift_code"
+      ],
+      "must_include_values": [
+        "finance@meridian.io"
+      ],
+      "must_exclude_values": [
+        "999000999",
+        "6789"
+      ]
+    }
+  },
+  {
+    "name": "format_json_keys_not_extracted_as_values",
+    "category": "format_compliance",
+    "request": {
+      "task_purpose": "List recent inbox messages",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"data\":[{\"id\":\"18de3f7a2b4c6d90\",\"thread_id\":\"18de3f7a2b4c6d8e\",\"from\":\"j.watson@meridian.io\",\"to\":\"team@meridian.io\",\"reply_to\":\"j.watson@meridian.io\",\"subject\":\"Status\"},{\"id\":\"18de2c5b1a3d8e74\",\"thread_id\":\"18de2c5b1a3d8e70\",\"from\":\"priya.nair@luminatech.dev\",\"to\":\"team@meridian.io\",\"reply_to\":\"priya.nair@luminatech.dev\",\"subject\":\"Deploy fix\"}]}"
+    },
+    "expected": {
+      "min_facts": 4,
+      "must_include_types": [
+        "message_id",
+        "email_address"
+      ],
+      "must_include_values": [
+        "j.watson@meridian.io",
+        "team@meridian.io",
+        "18de3f7a2b4c6d90"
+      ],
+      "must_exclude_values": [
+        "to",
+        "from",
+        "reply_to",
+        "id",
+        "thread_id",
+        "subject"
+      ]
+    }
+  },
+  {
+    "name": "format_partial_email_dropped",
+    "category": "format_compliance",
+    "request": {
+      "task_purpose": "List recent inbox messages",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"data\":[{\"id\":\"18de3f7a2b4c6d90\",\"from\":\"alice@example.com\"},{\"id\":\"18de2c5b1a3d8e74\",\"from\":\"kira@\"},{\"id\":\"18de1a4e0c2b7f63\",\"from\":\"noor@\"},{\"id\":\"18de0a4e0c2b7f64\",\"from\":\"bob@example.com\"}]}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "email_address",
+        "message_id"
+      ],
+      "must_include_values": [
+        "alice@example.com",
+        "bob@example.com"
+      ],
+      "must_exclude_values": [
+        "kira@",
+        "noor@"
+      ]
+    }
+  },
+  {
+    "name": "format_combined_emails_split_into_separate_facts",
+    "category": "format_compliance",
+    "request": {
+      "task_purpose": "Read message thread",
+      "service": "google.gmail",
+      "action": "get_message",
+      "result": "{\"data\":{\"id\":\"18de3f7a2b4c6d90\",\"thread_id\":\"18de3f7a2b4c6d8e\",\"from\":\"Chris Aldwin <chris@pylon-ai.example>\",\"to\":\"Danny Reyes <danny@orchard-cloud.example>, Felipe Marsden <felipe@graphlattice.example>\",\"subject\":\"Re: integration plan\"}}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "email_address",
+        "person_name"
+      ],
+      "must_include_values": [
+        "chris@pylon-ai.example",
+        "danny@orchard-cloud.example",
+        "felipe@graphlattice.example"
+      ],
+      "must_exclude_values": [
+        "Chris Aldwin <chris@pylon-ai.example>",
+        "Danny Reyes <danny@orchard-cloud.example>, Felipe Marsden <felipe@graphlattice.example>",
+        "<chris@pylon-ai.example>",
+        "Re: integration plan"
+      ]
     }
   }
 ]

@@ -85,67 +85,28 @@ is wasted.
 ============================================================
 WHAT TO EXTRACT — canonical fact_type vocabulary
 ============================================================
-Use these EXACT names. Do not invent variants. Pick the closest match;
-if nothing matches and you're tempted to invent a new fact_type, OMIT
-the value instead.
+Cost asymmetry: an extra fact stored is cheap; a missed identifier blocks
+a legitimate downstream request. Lean toward extracting any value that
+looks like a routable identifier, even if it doesn't match a known name.
 
-Identifier types (value is a service-internal ID or address):
-  email_address    full email "alice@example.com" (must contain @ and TLD)
-  phone_number     E.164 ("+15551234567") or display ("+1 (555) 123-4567")
-  message_id       service-internal API message ID (Gmail: 16 hex chars;
-                    iMessage: GUID; etc.). NOT the RFC 5322 "Message-ID:"
-                    header — those are a different identifier; drop them.
-  thread_id        service-internal thread ID
-  file_id          Drive / Dropbox / etc. file ID
-  event_id         Calendar event ID
-  contact_id       Contacts / CRM contact ID
-  calendar_id      Google Calendar calendar ID (e.g. "primary",
-                    "...@group.calendar.google.com")
-  channel_id       Slack / Discord / etc. channel ID
-  channel_name     Slack / Discord / etc. channel name (without "#" prefix);
-                    extract for services where channels are routed by name
-                    (e.g. "team-engineering" alongside its channel_id)
-  user_id          service user ID
-  charge_id        Stripe charge ID (ch_...)
-  payment_intent_id  Stripe payment intent ID (pi_...) — distinct from charge_id
-  customer_id      Stripe / CRM customer ID (cus_...)
-  issue_id         Linear / Jira / GitHub issue ID or identifier
-  pr_id            GitHub pull request ID/number
-  commit_hash      Git commit SHA
+Common fact_type names — use these where they fit, snake_case:
+  email_address, phone_number, person_name, url, domain, date,
+  message_id, thread_id, file_id, event_id, contact_id, calendar_id,
+  channel_id, channel_name, user_id, customer_id, issue_id, pr_id,
+  commit_hash
 
-Address & web:
-  url              full URL with scheme ("https://...")
-  domain           bare domain ("example.com")
+If a service emits an identifier that doesn't fit any of those, invent a
+descriptive snake_case name and use it. Don't drop a routable ID just
+because it lacks a canonical entry. The name should describe the entity
+type, not the source field name (use "issue_id" over "issueIdentifier").
 
-Person / time / value:
-  person_name      full name of an individual ("Alice Chen")
-  date             ISO date ("2026-04-22") or canonical date string
-  amount           money amount with currency ("USD 50.00", "$5,000"). When
-                    the source has separate amount + currency fields (e.g.
-                    Stripe: amount=5000, currency="usd"), combine them and
-                    convert minor units to major units → "USD 50.00".
-
-When in doubt between two near-matches, prefer the more specific name
-(e.g. "issue_id" over a generic "entity_id"). NEVER use a custom variant
-of a name on this list. Forbidden synonyms and their canonical replacements:
-  email_id, email_message_id, message_id_header  → message_id
-    AND drop RFC 5322 "<...@...>" header values entirely — those are
-    not the service-internal message_id.
-  pull_request_id, pull_request_number, pr_number,
-  github_pr_number                                → pr_id
-  issue_number, issue_identifier                  → issue_id
-  repository_name, github_repository, github_repo → omit (use url)
-  zip_code, postal_code, pin_code (postal sense)  → omit
-  confirmation_number, confirmation_code,
-  booking_reference, booking_code, booking_number,
-  reservation_number, reservation_code,
-  airline_confirmation                            → omit
-  start_time, end_time, event_date, timestamp,
-  time                                            → date (ISO date only;
-    NEVER extract a bare time-of-day fragment like "10:00:00" — that is
-    a value, not an entity)
-  username, github_username                       → user_id
-  charge_email, stripe_email_id                   → email_address
+Specific mappings the system depends on (these ARE load-bearing):
+  - message_id is the SERVICE-INTERNAL API ID (Gmail 16-hex, iMessage
+    GUID, etc.). NOT the RFC 5322 "<...@...>" header — drop those.
+  - date is an ISO date (YYYY-MM-DD or full RFC 3339); NEVER a bare
+    time-of-day ("10:00:00", "3:30 PM") — that's a value, not an entity.
+  - Drop confirmation/booking/reservation codes, postal codes, and money
+    amounts — these are values, not chain-routable references.
 
 ============================================================
 WHAT NOT TO EXTRACT — content vs. structural references
@@ -339,12 +300,13 @@ Output:
      {"fact_type":"charge_id","fact_value":"ch_3NqBrpJ2eZvKYo4C"},
      {"fact_type":"customer_id","fact_value":"cus_QYr1oFZdhWB2c"},
      {"fact_type":"email_address","fact_value":"customer@example.com"},
-     {"fact_type":"person_name","fact_value":"Jane Doe"},
-     {"fact_type":"amount","fact_value":"USD 50.00"}],
+     {"fact_type":"person_name","fact_value":"Jane Doe"}],
    "patterns":[
      {"fact_type":"charge_id","regex":"\"id\":\\s*\"(ch_[A-Za-z0-9]+)\""},
      {"fact_type":"customer_id","regex":"\"customer\":\\s*\"(cus_[A-Za-z0-9]+)\""}]}
-  Note: address is dropped. Amount converted to canonical "USD 50.00".
+  Note: amount and address are dropped — they're values, not routable
+  references. charge_id and customer_id are good names for the ch_* and
+  cus_* prefixed identifiers Stripe uses.
 
 E4. Slack list_channels (paginated). Result snippet:
   {"channels":[
