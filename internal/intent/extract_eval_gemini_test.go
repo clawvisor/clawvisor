@@ -175,7 +175,7 @@ func TestEvalExtraction_Gemini(t *testing.T) {
 			extracted := extractFirstJSONValue(raw)
 			directFacts, llmPatterns := parseExtractionResponse(extracted, slog.Default(), req.TaskID)
 			patterns := append(llmPatterns, builtinPatterns(req.Service, req.Action)...)
-			facts, _ := mergeExtractionResults(directFacts, patterns, req, slog.Default())
+			facts, _ := mergeExtractionResults(directFacts, patterns, nil, req, slog.Default())
 
 			// Same comparison logic as TestEvalExtraction.
 			var mismatches []string
