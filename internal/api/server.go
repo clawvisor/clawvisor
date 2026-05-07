@@ -76,6 +76,7 @@ type Server struct {
 	tasksHandler       *handlers.TasksHandler
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
+	llmVerifier        *intent.LLMVerifier // verdict cache cleanup target; nil when verification disabled
 
 	pushNotifier         *push.Notifier                // concrete push notifier; may be nil
 	msgBuffer            groupchat.Buffer              // group chat message buffer; may be nil
@@ -439,6 +440,7 @@ func (s *Server) routes() http.Handler {
 			v.SetVerdictCache(s.verdictCache)
 		}
 		startGeminiCacheIfConfigured(s.llmCfg.Verification.LLMProviderConfig, s.logger, "verifier", v.StartGeminiCache)
+		s.llmVerifier = v
 		verifier = v
 	}
 
@@ -1101,6 +1103,12 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
+
+	// Start verdict-cache cleanup so the in-memory cache evicts expired
+	// entries on a schedule rather than only on-access.
+	if s.llmVerifier != nil {
+		go s.llmVerifier.RunCleanup(ctx)
+	}
 
 	// Start SSE ticket store cleanup.
 	if s.ticketStore != nil {

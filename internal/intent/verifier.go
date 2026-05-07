@@ -96,6 +96,24 @@ func (v *LLMVerifier) SetVerdictCache(c VerdictCacher) {
 	v.cache = c
 }
 
+// RunCleanup periodically calls the verdict cache's Cleanup hook so expired
+// entries don't accumulate forever in long-running processes. Without this
+// the cache only evicts on Get of an expired key, so cold keys leak memory.
+func (v *LLMVerifier) RunCleanup(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if v.cache != nil {
+				v.cache.Cleanup()
+			}
+		}
+	}
+}
+
 // SetGeminiCacheNameFn registers a function the verifier calls (per-request,
 // via the llm.Client) to discover the current Gemini cachedContents
 // resource name. Pass nil to disable cache attachment. No effect when the
