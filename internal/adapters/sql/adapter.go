@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -53,6 +54,54 @@ func (a *Adapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 	return nil, fmt.Errorf("sql: no token exchange — uses connection string")
 }
 
+// CredentialFromAPIKey converts a single pasted DSN into the {driver, dsn}
+// credential JSON. Drivers are sniffed from the URI scheme:
+//   - "postgres://" or "postgresql://" → postgres
+//   - "mysql://"                       → mysql
+//   - "sqlite:" prefix or a bare path  → sqlite
+//
+// The pasted string may also already be a {driver, dsn} JSON object, in which
+// case it's passed through after validation.
+func (a *Adapter) CredentialFromAPIKey(token string) ([]byte, error) {
+	s := strings.TrimSpace(token)
+	if s == "" {
+		return nil, fmt.Errorf("sql: connection string is required")
+	}
+
+	// Pass-through: caller pasted a full {driver, dsn} JSON object.
+	if strings.HasPrefix(s, "{") {
+		var c credential
+		if err := json.Unmarshal([]byte(s), &c); err == nil && c.Driver != "" && c.DSN != "" {
+			return []byte(s), nil
+		}
+	}
+
+	driver, dsn, err := sniffDriver(s)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(credential{Driver: driver, DSN: dsn})
+}
+
+// sniffDriver inspects a connection string and returns the matching driver name
+// plus the DSN to hand to database/sql. Each driver expects its own native form:
+//   - postgres: pgx accepts the postgres:// URI as-is.
+//   - mysql:   go-sql-driver wants user:pass@tcp(host:port)/db (no URI scheme).
+//   - sqlite:  a file path (or :memory:); the "sqlite:" prefix is stripped.
+func sniffDriver(s string) (driver, dsn string, err error) {
+	switch {
+	case strings.HasPrefix(s, "postgres://"), strings.HasPrefix(s, "postgresql://"):
+		return "postgres", s, nil
+	case strings.HasPrefix(s, "sqlite://"):
+		return "sqlite", strings.TrimPrefix(s, "sqlite://"), nil
+	case strings.HasPrefix(s, "sqlite:"):
+		return "sqlite", strings.TrimPrefix(s, "sqlite:"), nil
+	case strings.Contains(s, "@tcp("), strings.Contains(s, "@unix("):
+		return "mysql", s, nil
+	}
+	return "", "", fmt.Errorf("sql: cannot determine driver — expected postgres://…, sqlite:…, or user:pass@tcp(host:port)/db (mysql)")
+}
+
 func (a *Adapter) ValidateCredential(credBytes []byte) error {
 	var c credential
 	if err := json.Unmarshal(credBytes, &c); err != nil {
@@ -73,8 +122,11 @@ func (a *Adapter) ValidateCredential(credBytes []byte) error {
 func (a *Adapter) ServiceMetadata() adapters.ServiceMetadata {
 	maxRowsVal := maxRows
 	return adapters.ServiceMetadata{
-		DisplayName: "SQL Database",
-		Description: "Query and modify SQL databases (PostgreSQL, MySQL, SQLite)",
+		DisplayName:    "SQL Database",
+		Description:    "Query and modify SQL databases (PostgreSQL, MySQL, SQLite)",
+		KeyDisplayName: "Connection string",
+		KeyDescription: "Paste a connection string. The driver is detected automatically:\n• PostgreSQL — postgres://user:pass@host:5432/db\n• SQLite     — sqlite:/absolute/path/to.db\n• MySQL      — user:pass@tcp(host:3306)/db",
+		KeyHint:        "postgres://user:pass@host:5432/db",
 		ActionMeta: map[string]adapters.ActionMeta{
 			"query": {
 				DisplayName: "Run query",
@@ -511,8 +563,9 @@ func init() {
 
 // Ensure interface compliance at compile time.
 var (
-	_ adapters.Adapter            = (*Adapter)(nil)
-	_ adapters.MetadataProvider   = (*Adapter)(nil)
-	_ adapters.VerificationHinter = (*Adapter)(nil)
+	_ adapters.Adapter                = (*Adapter)(nil)
+	_ adapters.MetadataProvider       = (*Adapter)(nil)
+	_ adapters.VerificationHinter     = (*Adapter)(nil)
+	_ adapters.APIKeyCredentialBuilder = (*Adapter)(nil)
 )
 

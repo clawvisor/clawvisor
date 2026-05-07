@@ -23,7 +23,9 @@ type ServiceMetadata struct {
 	DisplayName       string
 	Description       string
 	SetupURL          string
-	KeyHint           string
+	KeyHint           string // placeholder text for the credential input
+	KeyDisplayName    string // label rendered above the credential input (e.g. "Connection string")
+	KeyDescription    string // helper text shown under the label; supports newlines
 	IconSVG           string                // inline SVG markup for the service icon (mutually exclusive with IconURL)
 	IconURL           string                // absolute or site-relative URL to the service icon (e.g. "/logos/github.svg")
 	VaultKey          string                // shared vault key (e.g. "google" for all google.* services); empty = use service ID
@@ -151,6 +153,18 @@ type AvailabilityChecker interface {
 // If CheckPermissions returns an error, the activation is rejected with that message.
 type ActivationChecker interface {
 	CheckPermissions() error
+}
+
+// APIKeyCredentialBuilder is an optional interface adapters can implement to
+// transform a single pasted string from the API-key activation flow into the
+// adapter's preferred credential JSON. Adapters that need a structured
+// credential (e.g. the SQL adapter, which expects {driver, dsn}) implement this
+// to keep the single-input UX while emitting the right vault payload. When not
+// implemented, the activation handler stores the default {"type":"api_key","token":...} envelope.
+type APIKeyCredentialBuilder interface {
+	// CredentialFromAPIKey converts a user-supplied string (e.g. a connection
+	// string) into the credential bytes that ValidateCredential will accept.
+	CredentialFromAPIKey(token string) ([]byte, error)
 }
 
 // VerificationHinter is an optional interface adapters can implement to provide

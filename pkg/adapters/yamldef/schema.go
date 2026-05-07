@@ -25,8 +25,10 @@ type ServiceInfo struct {
 	ID          string       `yaml:"id"`
 	DisplayName string       `yaml:"display_name"`
 	Description string       `yaml:"description"`
-	SetupURL    string       `yaml:"setup_url,omitempty"`
-	KeyHint     string       `yaml:"key_hint,omitempty"`
+	SetupURL       string `yaml:"setup_url,omitempty"`
+	KeyHint        string `yaml:"key_hint,omitempty"`         // placeholder text inside the credential input
+	KeyDisplayName string `yaml:"key_display_name,omitempty"` // label rendered above the credential input
+	KeyDescription string `yaml:"key_description,omitempty"`  // helper text under the label; newlines preserved
 	IconSVG     string       `yaml:"icon_svg,omitempty"` // optional: inline SVG markup (mutually exclusive with icon_url)
 	IconURL     string       `yaml:"icon_url,omitempty"` // optional: absolute or site-relative URL to the icon (e.g. "/logos/github.svg")
 	Identity    *IdentityDef `yaml:"identity,omitempty"`

@@ -490,23 +490,34 @@ function ActiveServiceRow({ svc }: { svc: ServiceInfo }) {
       )}
 
       {showKeyInput && (
-        <div className="flex gap-2 px-5 pb-4 ml-16">
-          <input
-            type="password"
-            value={apiKeyInput}
-            onChange={e => setApiKeyInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-            placeholder={svc.key_hint || "Paste your token…"}
-            className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-            autoFocus
-          />
-          <button
-            onClick={handleSaveKey}
-            disabled={saving || !apiKeyInput.trim()}
-            className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+        <div className="px-5 pb-4 ml-16 space-y-1.5">
+          {svc.key_display_name && (
+            <label className="block text-xs text-text-secondary">
+              {svc.key_display_name}
+              <span className="text-danger ml-0.5">*</span>
+            </label>
+          )}
+          {svc.key_description && (
+            <p className="text-[10px] text-text-tertiary whitespace-pre-line">{svc.key_description}</p>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKeyInput}
+              onChange={e => setApiKeyInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+              placeholder={svc.key_hint || "Paste your token…"}
+              className="flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              autoFocus
+            />
+            <button
+              onClick={handleSaveKey}
+              disabled={saving || !apiKeyInput.trim()}
+              className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -532,6 +543,8 @@ interface ServiceType {
   description: string
   setupUrl?: string
   keyHint?: string
+  keyDisplayName?: string
+  keyDescription?: string
 }
 
 function AddServiceModal({
@@ -635,6 +648,8 @@ function AddServiceModal({
         description: svc.description || serviceDescription(svc.id),
         setupUrl: svc.setup_url,
         keyHint: svc.key_hint,
+        keyDisplayName: svc.key_display_name,
+        keyDescription: svc.key_description,
       })
     }
   }
@@ -992,15 +1007,26 @@ function AddServiceModal({
                             />
                           </div>
                         ))}
-                        <input
-                          type="password"
-                          value={keyValue}
-                          onChange={e => setKeyValue(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
-                          placeholder={st.keyHint || "Paste your token…"}
-                          className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
-                          autoFocus={!st.variables || st.variables.length === 0}
-                        />
+                        <div>
+                          {st.keyDisplayName && (
+                            <label className="block text-xs text-text-secondary mb-0.5">
+                              {st.keyDisplayName}
+                              <span className="text-danger ml-0.5">*</span>
+                            </label>
+                          )}
+                          {st.keyDescription && (
+                            <p className="text-[10px] text-text-tertiary mb-1 whitespace-pre-line">{st.keyDescription}</p>
+                          )}
+                          <input
+                            type="password"
+                            value={keyValue}
+                            onChange={e => setKeyValue(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+                            placeholder={st.keyHint || "Paste your token…"}
+                            className="w-full text-xs px-2.5 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                            autoFocus={!st.variables || st.variables.length === 0}
+                          />
+                        </div>
                         <div className="flex gap-2">
                           <button
                             onClick={handleSaveKey}

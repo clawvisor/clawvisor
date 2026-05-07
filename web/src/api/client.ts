@@ -303,6 +303,8 @@ export interface ServiceInfo {
   activated_at?: string
   setup_url?: string
   key_hint?: string
+  key_display_name?: string
+  key_description?: string
 }
 
 export interface VariableMeta {

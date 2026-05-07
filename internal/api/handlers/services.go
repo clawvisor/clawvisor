@@ -228,13 +228,15 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		ActivatedAt          *time.Time              `json:"activated_at,omitempty"`
 		SetupURL             string                  `json:"setup_url,omitempty"`
 		KeyHint              string                  `json:"key_hint,omitempty"`
+		KeyDisplayName       string                  `json:"key_display_name,omitempty"`
+		KeyDescription       string                  `json:"key_description,omitempty"`
 	}
 
 	// buildEntry creates a serviceEntry from an adapter, using MetadataProvider when available.
 	buildEntry := func(a adapters.Adapter) serviceEntry {
 		name := display.ServiceName(a.ServiceID())
 		desc := display.ServiceDescription(a.ServiceID())
-		var setupURL, oauthEndpoint, iconSVG, iconURL, keyHint string
+		var setupURL, oauthEndpoint, iconSVG, iconURL, keyHint, keyDisplayName, keyDescription string
 		var variables []adapters.VariableMeta
 		actionNames := map[string]adapters.ActionMeta{}
 
@@ -251,6 +253,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			iconURL = meta.IconURL
 			oauthEndpoint = meta.OAuthEndpoint
 			keyHint = meta.KeyHint
+			keyDisplayName = meta.KeyDisplayName
+			keyDescription = meta.KeyDescription
 			actionNames = meta.ActionMeta
 			variables = meta.Variables
 		}
@@ -301,6 +305,8 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			Variables:            variables,
 			SetupURL:             setupURL,
 			KeyHint:              keyHint,
+			KeyDisplayName:       keyDisplayName,
+			KeyDescription:       keyDescription,
 		}
 	}
 
@@ -922,11 +928,25 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build and validate the credential bytes.
-	credBytes, err := json.Marshal(map[string]string{"type": "api_key", "token": body.Token})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to encode credential")
-		return
+	// Build and validate the credential bytes. Adapters that need a structured
+	// credential (e.g. SQL: {driver, dsn}) can opt into APIKeyCredentialBuilder
+	// to convert the pasted string into their preferred shape.
+	var (
+		credBytes []byte
+		err       error
+	)
+	if b, ok := adapter.(adapters.APIKeyCredentialBuilder); ok {
+		credBytes, err = b.CredentialFromAPIKey(body.Token)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_CREDENTIAL", err.Error())
+			return
+		}
+	} else {
+		credBytes, err = json.Marshal(map[string]string{"type": "api_key", "token": body.Token})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to encode credential")
+			return
+		}
 	}
 	if err := adapter.ValidateCredential(credBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_CREDENTIAL", err.Error())

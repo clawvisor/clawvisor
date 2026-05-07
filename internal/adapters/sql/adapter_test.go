@@ -90,6 +90,51 @@ func TestValidateCredential(t *testing.T) {
 	}
 }
 
+func TestCredentialFromAPIKey(t *testing.T) {
+	a := New()
+
+	tests := []struct {
+		name       string
+		input      string
+		wantDriver string
+		wantDSN    string
+		wantErr    bool
+	}{
+		{"postgres uri", "postgres://u:p@host:5432/db", "postgres", "postgres://u:p@host:5432/db", false},
+		{"postgresql uri", "postgresql://u:p@host/db", "postgres", "postgresql://u:p@host/db", false},
+		{"mysql tcp dsn", "u:p@tcp(host:3306)/db", "mysql", "u:p@tcp(host:3306)/db", false},
+		{"mysql unix dsn", "u:p@unix(/tmp/mysql.sock)/db", "mysql", "u:p@unix(/tmp/mysql.sock)/db", false},
+		{"sqlite scheme", "sqlite:/tmp/test.db", "sqlite", "/tmp/test.db", false},
+		{"sqlite double-slash", "sqlite:///tmp/test.db", "sqlite", "/tmp/test.db", false},
+		{"trims whitespace", "  postgres://localhost/db  ", "postgres", "postgres://localhost/db", false},
+		{"passthrough json", `{"driver":"postgres","dsn":"postgres://localhost/db"}`, "postgres", "postgres://localhost/db", false},
+		{"empty", "", "", "", true},
+		{"unknown form", "just-a-token", "", "", true},
+		{"mysql uri rejected", "mysql://u:p@host:3306/db", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := a.CredentialFromAPIKey(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			var c credential
+			if err := json.Unmarshal(out, &c); err != nil {
+				t.Fatalf("output is not valid JSON: %v (%s)", err, out)
+			}
+			if c.Driver != tt.wantDriver || c.DSN != tt.wantDSN {
+				t.Errorf("got {%q, %q}, want {%q, %q}", c.Driver, c.DSN, tt.wantDriver, tt.wantDSN)
+			}
+			if err := a.ValidateCredential(out); err != nil {
+				t.Errorf("ValidateCredential rejected output: %v", err)
+			}
+		})
+	}
+}
+
 func TestQuery(t *testing.T) {
 	cred := setupTestDB(t)
 	a := New()
