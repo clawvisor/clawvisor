@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.3](https://github.com/clawvisor/clawvisor/compare/v0.9.2...v0.9.3) (2026-05-07)
+
+
+### Features
+
+* **intent:** two-phase chain context extraction + chain_facts provenance ([#343](https://github.com/clawvisor/clawvisor/issues/343)) ([1c254e0](https://github.com/clawvisor/clawvisor/commit/1c254e0612e52a1365f1853cddf7b2dd8db5cc4b))
+* **llm:** Anthropic prompt caching for verification, risk, and chain context ([#342](https://github.com/clawvisor/clawvisor/issues/342)) ([5d7dc5e](https://github.com/clawvisor/clawvisor/commit/5d7dc5e08b0ea49a771486e02f99e31e2519b1ae))
+* **llm:** Gemini provider with explicit context caching ([#345](https://github.com/clawvisor/clawvisor/issues/345)) ([46bba30](https://github.com/clawvisor/clawvisor/commit/46bba30f79c3f950d4b11a6075e9d64d5679b1b5))
+
+
+### Bug Fixes
+
+* **mcp:** drop top-level anyOf from create_task schema ([#340](https://github.com/clawvisor/clawvisor/issues/340)) ([a6f42da](https://github.com/clawvisor/clawvisor/commit/a6f42daa3422b2265967ba1a6005ee4d7b29b6ac))
+* **proxy:** snapshot edge cert stat baseline before reload goroutine starts ([#349](https://github.com/clawvisor/clawvisor/issues/349)) ([8a2e753](https://github.com/clawvisor/clawvisor/commit/8a2e75389a44522e5071380a1a03d6013137ca78))
+* **settings:** hide local daemon section for non-paid plans ([#347](https://github.com/clawvisor/clawvisor/issues/347)) ([7362c8c](https://github.com/clawvisor/clawvisor/commit/7362c8cfe2e85ee9192e80c8ea7b1adc5bd2f3e7))
+
 ## [0.9.2](https://github.com/clawvisor/clawvisor/compare/v0.9.1...v0.9.2) (2026-05-05)
 
 
