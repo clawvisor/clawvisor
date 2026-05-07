@@ -576,11 +576,24 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				for _, a := range req.AuthorizedActions {
 					actionStrs = append(actionStrs, a.Service+":"+a.Action)
 				}
+				// Resolve the user's authorized Telegram user_id from their
+				// notification config. The DM chat_id captured at pairing
+				// time IS the user's Telegram user_id (Telegram DMs use
+				// user-to-bot, where chat_id == sender id). Anyone else's
+				// messages are filtered out by CheckApproval before the
+				// LLM sees them — closing the display-name spoofing surface.
+				var authorizedSenderIDs []string
+				if cs, ok := h.notifier.(notify.TelegramConfigStore); ok {
+					if _, chatID, err := cs.TelegramConfig(ctx, agent.UserID); err == nil && chatID != "" {
+						authorizedSenderIDs = []string{chatID}
+					}
+				}
 				result, err := intent.CheckApproval(ctx, h.llmHealth, intent.ApprovalCheckRequest{
-					Messages:    messages,
-					TaskPurpose: req.Purpose,
-					TaskActions: actionStrs,
-					AgentName:   agent.Name,
+					Messages:            messages,
+					AuthorizedSenderIDs: authorizedSenderIDs,
+					TaskPurpose:         req.Purpose,
+					TaskActions:         actionStrs,
+					AgentName:           agent.Name,
 				})
 				if err != nil {
 					h.logger.Warn("group chat approval check failed", "err", err, "user_id", agent.UserID)

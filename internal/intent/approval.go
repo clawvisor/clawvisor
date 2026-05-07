@@ -15,10 +15,20 @@ import (
 // ApprovalCheckRequest contains the data needed to determine if a user
 // pre-approved a task via group chat conversation.
 type ApprovalCheckRequest struct {
-	Messages    []groupchat.BufferedMessage
-	TaskPurpose string
-	TaskActions []string // e.g. "google.calendar:list_events"
-	AgentName   string
+	Messages []groupchat.BufferedMessage
+	// AuthorizedSenderIDs is the allowlist of Telegram user IDs whose
+	// messages may count as approvals. Anyone else's messages — including
+	// other group members and the bot itself — are filtered out before the
+	// LLM ever sees them, eliminating the display-name spoofing surface
+	// where any group member could fake a "yes go ahead" signal.
+	//
+	// When empty (e.g. legacy callers that haven't been updated yet),
+	// CheckApproval returns "not approved" without calling the LLM, so the
+	// fail-safe is no-bypass.
+	AuthorizedSenderIDs []string
+	TaskPurpose         string
+	TaskActions         []string // e.g. "google.calendar:list_events"
+	AgentName           string
 }
 
 // ApprovalCheckResult is the LLM's verdict on whether the user approved the task.
@@ -81,6 +91,34 @@ func CheckApproval(ctx context.Context, health *llm.Health, req ApprovalCheckReq
 	if len(req.Messages) == 0 {
 		return nil, nil
 	}
+	// Without an authorized-sender allowlist any group member could spoof an
+	// approval just by having a matching display name. Refuse to consult the
+	// LLM at all — the safe fall-through is "no approval found".
+	if len(req.AuthorizedSenderIDs) == 0 {
+		return &ApprovalCheckResult{
+			Approved:    false,
+			Confidence:  "low",
+			Explanation: "no authorized sender IDs configured for group approval",
+		}, nil
+	}
+	authorized := make(map[string]struct{}, len(req.AuthorizedSenderIDs))
+	for _, id := range req.AuthorizedSenderIDs {
+		authorized[id] = struct{}{}
+	}
+	filtered := req.Messages[:0:len(req.Messages)]
+	for _, m := range req.Messages {
+		if _, ok := authorized[m.SenderID]; ok {
+			filtered = append(filtered, m)
+		}
+	}
+	if len(filtered) == 0 {
+		return &ApprovalCheckResult{
+			Approved:    false,
+			Confidence:  "low",
+			Explanation: "no recent messages from authorized senders",
+		}, nil
+	}
+	req.Messages = filtered
 
 	start := time.Now()
 	client := llm.NewClient(cfg.LLMProviderConfig)
