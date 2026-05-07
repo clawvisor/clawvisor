@@ -838,61 +838,73 @@ function ClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
 }
 
 function ClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (text: string) => void }) {
-  const pluginName = isLocal ? 'clawvisor-local@cowork-plugins' : 'clawvisor@cowork-plugins'
-  const marketplaceCmd = 'claude plugin marketplace add clawvisor/cowork-plugins'
-  const installCmd = `/plugin install ${pluginName}`
+  const marketplaceSlug = 'clawvisor/cowork-plugins'
+  const pluginLabel = isLocal ? 'Clawvisor Local' : 'Clawvisor'
 
   return (
     <div className="space-y-5">
       <p className="text-sm text-text-secondary">
         {isLocal
-          ? 'Connect Claude Desktop to your local Clawvisor instance via the Cowork plugin.'
-          : 'Connect Claude Desktop to your Clawvisor cloud account via the Cowork plugin.'}
+          ? 'Connect Claude Cowork to your local Clawvisor instance via the Cowork plugin.'
+          : 'Connect Claude Cowork to your Clawvisor cloud account via the Cowork plugin.'}
       </p>
 
       <div className="flex items-start gap-3">
         <StepNumber n={1} />
         <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Add the marketplace</p>
+          <p className="text-sm font-medium text-text-primary">Open the plugin manager</p>
           <p className="text-xs text-text-tertiary">
-            Run this in your terminal:
+            In Claude Desktop, navigate to <strong>Claude Cowork</strong>, click{' '}
+            <strong>Customize</strong> in the sidebar, then press the <strong>+</strong> next to{' '}
+            <strong>Personal plugins</strong>.
           </p>
-          <CodeBlock onCopy={() => onCopy(marketplaceCmd)}>{marketplaceCmd}</CodeBlock>
         </div>
       </div>
 
       <div className="flex items-start gap-3">
         <StepNumber n={2} />
         <div className="space-y-1.5 min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">Install the plugin</p>
+          <p className="text-sm font-medium text-text-primary">Add the marketplace</p>
           <p className="text-xs text-text-tertiary">
-            From within Claude Desktop:
+            Under <strong>Create plugin</strong>, select <strong>Add marketplace</strong> and paste:
           </p>
-          <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
+          <CodeBlock onCopy={() => onCopy(marketplaceSlug)}>{marketplaceSlug}</CodeBlock>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Install the {pluginLabel} plugin</p>
+          <p className="text-xs text-text-tertiary">
+            Open the <strong>Personal</strong> tab, switch to the <strong>cowork-plugins</strong> tab,
+            then select <strong>{pluginLabel}</strong> to install.
+          </p>
         </div>
       </div>
 
       {!isLocal && (
         <div className="flex items-start gap-3">
-          <StepNumber n={3} />
+          <StepNumber n={4} />
           <div className="space-y-1.5 min-w-0 flex-1">
-            <p className="text-sm font-medium text-text-primary">Authenticate</p>
+            <p className="text-sm font-medium text-text-primary">Connect the Clawvisor connector</p>
             <p className="text-xs text-text-tertiary">
-              The first time Claude uses a Clawvisor tool, you'll be prompted to authenticate via OAuth.
-              Follow the link in your terminal to sign in and connect Claude Desktop to your Clawvisor cloud account.
+              Under the <strong>Clawvisor</strong> plugin, select <strong>Connectors</strong>, click the{' '}
+              <strong>clawvisor</strong> connector, and connect. Authorize Claude Cowork in your browser
+              when prompted.
             </p>
           </div>
         </div>
       )}
 
       <div className="flex items-start gap-3">
-        <StepNumber n={isLocal ? 3 : 4} />
+        <StepNumber n={isLocal ? 4 : 5} />
         <div className="space-y-1.5 min-w-0 flex-1">
           <p className="text-sm font-medium text-text-primary">Start using it</p>
           <p className="text-xs text-text-tertiary">
-            Ask Claude to do something that requires an external service — e.g. "check my Gmail" or
-            "list my GitHub issues." Claude will create a task, ask you to approve, and execute through
-            Clawvisor.{' '}
+            Create a new Claude Cowork session and ask your agent to use a connected account via
+            Clawvisor — e.g. "check my Gmail" or "list my GitHub issues." Claude will create a task,
+            ask you to approve, and execute through Clawvisor.{' '}
             {isLocal &&
               <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
             }
@@ -908,7 +920,7 @@ function OpenClawGuide({ setupURL, copied, onCopy }: {
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
 
   return (
     <div className="space-y-5">
@@ -922,7 +934,7 @@ function OpenClawGuide({ setupURL, copied, onCopy }: {
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
             <div className="relative group bg-surface-0 border border-brand/20 rounded overflow-hidden">
-              <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+              <pre className="px-3 py-2.5 sm:pr-16 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-words">
                 {prompt}
               </pre>
               <button
@@ -978,7 +990,7 @@ function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
   copied: boolean
   onCopy: (text: string) => void
 }) {
-  const prompt = `I'd like to set up Clawvisor as the trusted gateway for using data and services. Please follow the instructions at:\n${setupURL}`
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
 
   return (
     <div className="space-y-5">
@@ -993,7 +1005,7 @@ function OtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
           <div className="space-y-1.5 min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
             <div className="relative group bg-surface-0 border border-brand/20 rounded overflow-hidden">
-              <pre className="px-3 py-2.5 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">
+              <pre className="px-3 py-2.5 sm:pr-16 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-words">
                 {prompt}
               </pre>
               <button

@@ -1,26 +1,14 @@
 # Clawvisor — Claude Cowork Integration Guide
 
 You are helping a user connect Claude Desktop (Cowork) to a running Clawvisor
-server via MCP. This gives Claude access to gated API requests (Gmail,
-Calendar, Drive, GitHub, Slack, etc.) with task-scoped authorization and human
-approval. Follow these instructions step by step. Ask the user for
-clarification when the environment is ambiguous — do not guess silently.
+server via the Cowork plugin marketplace. This gives Claude access to gated
+API requests (Gmail, Calendar, Drive, GitHub, Slack, etc.) with task-scoped
+authorization and human approval. Follow these instructions step by step.
+Ask the user for clarification when the environment is ambiguous — do not
+guess silently.
 
 **Prerequisite:** Clawvisor must be running. If it isn't, set it up first —
 see [SETUP.md](SETUP.md).
-
----
-
-## Quick Setup
-
-The fastest way to connect Claude Desktop is:
-
-```bash
-clawvisor connect-agent claude-desktop
-```
-
-This configures the MCP connection automatically. If you prefer manual setup
-or the command isn't available, follow the steps below.
 
 ---
 
@@ -29,10 +17,10 @@ or the command isn't available, follow the steps below.
 When setup is complete, the user should have:
 
 1. Clawvisor running (locally or in the cloud)
-2. The Clawvisor cowork plugin installed in Claude Desktop
-3. The MCP server configured to point to their Clawvisor instance
-4. OAuth authorization completed (agent token created automatically)
-5. Claude Desktop able to make gateway requests via MCP tools
+2. The `clawvisor/cowork-plugins` marketplace added in Claude Desktop
+3. The **Clawvisor** plugin (or **Clawvisor Local**) installed
+4. The Clawvisor connector connected and authorized
+5. Claude Desktop able to make gateway requests via Clawvisor MCP tools
 
 ---
 
@@ -40,7 +28,7 @@ When setup is complete, the user should have:
 
 Ask the user if Clawvisor is running and where:
 - **Locally** — default URL is `http://localhost:25297`
-- **Remote server** — get the instance URL (e.g. `https://your-instance.run.app`)
+- **Remote / cloud** — get the instance URL (e.g. `https://your-instance.run.app`)
 
 If Clawvisor is not set up yet, point them to [SETUP.md](SETUP.md).
 
@@ -48,72 +36,52 @@ Do not proceed until the user confirms Clawvisor is reachable.
 
 ---
 
-## Step 2: Install the Clawvisor plugin
+## Step 2: Open the plugin manager
 
-Direct the user to install the cowork plugin in Claude Desktop:
+Direct the user to:
 
-1. Download the plugin zip:
-   [clawvisor/cowork-plugin](https://github.com/clawvisor/cowork-plugin/archive/refs/heads/main.zip)
-
-2. In Claude Desktop, go to **Settings** → **Plugins** → **Install from local source**
-
-3. Drag the downloaded zip file into the upload area
+1. Open **Claude Desktop**
+2. Navigate to **Claude Cowork**
+3. Click **Customize** in the sidebar
+4. Press the **+** next to **Personal plugins** on the left
 
 ---
 
-## Step 3: Configure the MCP server
+## Step 3: Add the marketplace
 
-The plugin points to the hosted Clawvisor instance by default. Determine how
-the user is running Clawvisor and configure accordingly:
+Under **Create plugin**, have the user select **Add marketplace** and paste:
 
-### Local server
-
-If Clawvisor is running locally, add the MCP server to Claude Desktop's
-config. The user will need to give you access to edit the file:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-  (the `Library` folder is hidden by default — the user may need to press
-  **Cmd+Shift+.** in Finder to reveal it, then grant access)
-
-Add the Clawvisor MCP server to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "clawvisor-local": {
-      "command": "npx",
-      "args": ["mcp-remote", "http://localhost:25297/mcp"]
-    }
-  }
-}
+```
+clawvisor/cowork-plugins
 ```
 
-3. Restart Claude Desktop to pick up the new config.
+---
 
-### Remote server
+## Step 4: Install the Clawvisor plugin
 
-If Clawvisor is running on a remote server (Cloud Run, etc.), update the
-plugin to point to the user's instance:
-
-1. Go to **Settings** → **Plugins** → **Manage Plugins** → **Clawvisor** → **Customize**
-2. Update the MCP server URL to the user's instance
-   (e.g. `https://your-instance.run.app/mcp`)
+1. Switch to the **Personal** tab
+2. Switch to the **cowork-plugins** tab
+3. Select the plugin to install:
+   - **Clawvisor** — for the hosted Clawvisor cloud account
+   - **Clawvisor Local** — for a Clawvisor instance running on `localhost:25297`
 
 ---
 
-## Step 4: Authorize Claude
+## Step 5: Connect the Clawvisor connector
 
-When Claude Desktop first connects to the MCP server, it triggers an OAuth
-2.1 authorization flow:
+For the cloud (**Clawvisor**) plugin, the connector handles OAuth:
 
-1. Claude Desktop registers itself as an OAuth client with Clawvisor
-2. A browser window opens showing the Clawvisor consent page
-3. The user logs in and approves access
-4. Claude Desktop receives an agent token and is ready to use
+1. Under the **Clawvisor** plugin, select **Connectors**
+2. Click the **clawvisor** connector and choose **Connect**
+3. A browser window opens to the Clawvisor consent page
+4. The user logs in and approves access
 
 The agent appears in the Clawvisor dashboard under **Agents** (named
-"Claude Desktop (MCP)" or similar). The user can revoke access there at any
-time.
+"Claude Desktop (Cowork)" or similar). The user can revoke access there at
+any time.
+
+For **Clawvisor Local**, no browser authorization is needed — the plugin
+talks directly to the local daemon.
 
 If the OAuth flow does not complete:
 - Verify the user has a Clawvisor account (run `make setup` if needed)
@@ -122,7 +90,7 @@ If the OAuth flow does not complete:
 
 ---
 
-## Step 5: Connect services
+## Step 6: Connect services
 
 Before Claude can use a service, it must be activated in Clawvisor. Direct
 the user to:
@@ -135,16 +103,22 @@ Each service has its own OAuth flow or API key configuration.
 
 ---
 
-## Step 6: Verify
+## Step 7: Verify
 
-Use the `fetch_catalog` MCP tool to confirm the connection is working. It
-should return the list of available services. If it returns an auth error, the
-OAuth flow needs to be repeated. If it fails to connect, the MCP server URL
-is wrong or Clawvisor isn't running — ask the user to check.
+Have the user create a new **Claude Cowork** session and ask the agent to use
+a connected account via Clawvisor — e.g. "check my Gmail" or "list my GitHub
+issues." Claude should create a task, prompt for approval, and execute
+through Clawvisor.
+
+You can also call the `fetch_catalog` MCP tool directly to confirm the
+connection is working. It should return the list of available services. If
+it returns an auth error, repeat Step 5. If it fails to connect, the
+connector points at the wrong instance or Clawvisor isn't running — ask the
+user to check.
 
 ---
 
-## Step 7: Summary
+## Step 8: Summary
 
 Present the user with:
 
@@ -152,8 +126,7 @@ Present the user with:
 Clawvisor + Claude Cowork Setup Complete
 ────────────────────────────────────────
 Clawvisor:  <CLAWVISOR_URL>
-Plugin:     clawvisor (cowork)
-MCP:        <MCP server URL>
+Plugin:     Clawvisor (cowork-plugins)
 ```
 
 Explain how it works:
