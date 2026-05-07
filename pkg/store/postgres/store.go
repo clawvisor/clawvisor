@@ -423,6 +423,23 @@ func (s *Store) GetSession(ctx context.Context, tokenHash string) (*store.Sessio
 	return sess, err
 }
 
+// ConsumeSession is the atomic Get+Delete used by refresh-token rotation.
+func (s *Store) ConsumeSession(ctx context.Context, tokenHash string) (*store.Session, error) {
+	sess := &store.Session{}
+	err := s.pool.QueryRow(ctx,
+		`DELETE FROM sessions WHERE token_hash = $1
+		 RETURNING id, user_id, token_hash, expires_at, created_at`,
+		tokenHash,
+	).Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &sess.ExpiresAt, &sess.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM sessions WHERE token_hash = $1`,

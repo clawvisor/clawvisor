@@ -497,6 +497,27 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+// ConsumeSession is the atomic Get+Delete used by refresh-token rotation.
+// modernc.org/sqlite supports DELETE ... RETURNING since SQLite 3.35.
+func (s *Store) ConsumeSession(ctx context.Context, tokenHash string) (*store.Session, error) {
+	sess := &store.Session{}
+	var expiresAt, createdAt string
+	err := s.db.QueryRowContext(ctx,
+		`DELETE FROM sessions WHERE token_hash = ?
+		 RETURNING id, user_id, token_hash, expires_at, created_at`,
+		tokenHash,
+	).Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &expiresAt, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sess.ExpiresAt = parseTime(expiresAt)
+	sess.CreatedAt = parseTime(createdAt)
+	return sess, nil
+}
+
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	return err

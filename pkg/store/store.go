@@ -62,6 +62,12 @@ type Store interface {
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (*Session, error)
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+	// ConsumeSession atomically deletes the session row matching tokenHash
+	// and returns the row that was deleted. ErrNotFound means another caller
+	// already consumed it (or the token never existed). Use this on the
+	// refresh path so a stolen refresh token replayed concurrently can
+	// produce at most one new token pair.
+	ConsumeSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteUserSessions(ctx context.Context, userID string) error
 
 	// Service credentials metadata (vault stores the actual bytes)

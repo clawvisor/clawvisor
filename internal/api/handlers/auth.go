@@ -152,13 +152,15 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenHash := auth.HashToken(body.RefreshToken)
-	sess, err := h.st.GetSession(r.Context(), tokenHash)
+	// Atomic delete-and-return so a stolen refresh token replayed
+	// concurrently produces at most one new token pair: the second caller
+	// gets ErrNotFound because the first deleted the row first.
+	sess, err := h.st.ConsumeSession(r.Context(), tokenHash)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "invalid or expired refresh token")
 		return
 	}
 	if time.Now().After(sess.ExpiresAt) {
-		_ = h.st.DeleteSession(r.Context(), tokenHash)
 		writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "refresh token has expired")
 		return
 	}
@@ -168,9 +170,6 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "USER_NOT_FOUND", "user no longer exists")
 		return
 	}
-
-	// Invalidate old session before issuing new one (rotation)
-	_ = h.st.DeleteSession(r.Context(), tokenHash)
 
 	resp, err := h.issueTokens(r, user)
 	if err != nil {

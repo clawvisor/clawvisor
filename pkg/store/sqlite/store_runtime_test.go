@@ -550,6 +550,44 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 }
 
+// TestConsumeSession_AtomicSingleWinner asserts that two concurrent
+// refresh-token consumers can't both succeed against the same row. This is
+// the regression guard for the replayable-rotation bug — a stolen refresh
+// token replayed in a race window must produce at most one new token pair.
+func TestConsumeSession_AtomicSingleWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "consume@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	_, err = st.CreateSession(ctx, user.ID, "tok-hash", time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// First consume wins.
+	sess, err := st.ConsumeSession(ctx, "tok-hash")
+	if err != nil {
+		t.Fatalf("first ConsumeSession: %v", err)
+	}
+	if sess.UserID != user.ID {
+		t.Fatalf("returned wrong user_id: got %q want %q", sess.UserID, user.ID)
+	}
+
+	// Second consume must fail with ErrNotFound — row is gone.
+	_, err = st.ConsumeSession(ctx, "tok-hash")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second ConsumeSession: got %v, want store.ErrNotFound", err)
+	}
+}
+
 // TestTask_StatusCASBlocksConcurrentResolution confirms the same atomicity
 // for tasks: a concurrent ApproveTask and DenyTask race resolves to one
 // state, not both.
