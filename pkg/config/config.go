@@ -165,6 +165,15 @@ type LLMProviderConfig struct {
 	// Gemini-only knobs.
 	GeminiThinkingLevel string             `yaml:"gemini_thinking_level,omitempty"` // MINIMAL | LOW | MEDIUM | HIGH; default MINIMAL
 	GeminiCache         *GeminiCacheConfig `yaml:"gemini_cache,omitempty"`
+
+	// HedgeDelayMS, if > 0, fires a second (hedge) request after the primary
+	// has been outstanding for this many milliseconds without returning.
+	// Whichever completes successfully first wins; the loser's context is
+	// cancelled. Trades ~tail-rate × 2 LLM spend for tighter p99 — best
+	// applied to hot, latency-critical paths (intent verification) and not
+	// to one-shot calls like adapter generation. Per-sub-block; not
+	// inherited from the top-level llm: block.
+	HedgeDelayMS int `yaml:"hedge_delay_ms,omitempty"`
 }
 
 // GeminiCacheConfig configures the explicit context cache lifecycle for a
@@ -529,6 +538,16 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_FAIL_CLOSED"); v != "" {
 		cfg.LLM.Verification.FailClosed = v == "true" || v == "1"
 	}
+	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.Verification.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_HEDGE_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.Verification.HedgeDelayMS = n
+		}
+	}
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_GEMINI_CACHE_ENABLED"); v != "" {
 		ensureGeminiCache(&cfg.LLM.Verification.GeminiCache).Enabled = v == "true" || v == "1"
 	}
@@ -556,6 +575,16 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_MODEL"); v != "" {
 		cfg.LLM.TaskRisk.Model = v
 	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.TaskRisk.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_HEDGE_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.TaskRisk.HedgeDelayMS = n
+		}
+	}
 
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_ENABLED"); v != "" {
 		cfg.LLM.ChainContext.Enabled = v == "true" || v == "1"
@@ -571,6 +600,16 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_MODEL"); v != "" {
 		cfg.LLM.ChainContext.Model = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.ChainContext.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_HEDGE_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.ChainContext.HedgeDelayMS = n
+		}
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_GEMINI_CACHE_ENABLED"); v != "" {
 		ensureGeminiCache(&cfg.LLM.ChainContext.GeminiCache).Enabled = v == "true" || v == "1"
@@ -599,6 +638,16 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_MODEL"); v != "" {
 		cfg.LLM.AdapterGen.Model = v
 	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.AdapterGen.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_HEDGE_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.AdapterGen.HedgeDelayMS = n
+		}
+	}
 
 	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_ENABLED"); v != "" {
 		cfg.LLM.FeedbackReview.Enabled = v == "true" || v == "1"
@@ -614,6 +663,16 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_MODEL"); v != "" {
 		cfg.LLM.FeedbackReview.Model = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.FeedbackReview.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_FEEDBACK_REVIEW_HEDGE_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.LLM.FeedbackReview.HedgeDelayMS = n
+		}
 	}
 
 	if v := os.Getenv("CLAWVISOR_NPS_SAMPLE_PERCENT"); v != "" {
