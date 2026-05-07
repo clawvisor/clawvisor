@@ -11,8 +11,10 @@ service:
   id: <string>           # unique lowercase identifier (e.g. "jira", "stripe")
   display_name: <string> # human-readable name
   description: <string>  # one-line description
-  setup_url: <string>    # optional: link to API key / OAuth app setup page
-  key_hint: <string>     # optional: placeholder text for API key input (e.g. "Stripe secret key (sk_...)")
+  setup_url: <string>          # optional: link to API key / OAuth app setup page
+  key_hint: <string>           # optional: placeholder text for API key input (e.g. "Stripe secret key (sk_...)")
+  key_display_name: <string>   # optional: label rendered above the API key input (e.g. "Connection string"). Defaults to no label.
+  key_description: <string>    # optional: helper text rendered under the label. Newlines are preserved, so multi-line guidance is fine.
   icon_svg: <string>     # optional: inline SVG markup (good for small, self-contained glyphs)
   icon_url: <string>     # optional: URL to the icon (absolute or site-relative, e.g. "/logos/stripe.svg"). Prefer this for larger official brand assets already served as static files. If both are set, icon_url takes precedence.
   identity:              # optional: auto-detect account identity after activation

@@ -37,6 +37,7 @@ From the API reference, extract:
 - If the API uses API keys or Bearer tokens, use `type: api_key`
 - Include `setup_url` pointing to the API key creation page or OAuth app setup page
 - Include `key_hint` with a short description of the expected token format (e.g. `"Acme API key (ak_...)"`) — this is shown as placeholder text in the key input field
+- For richer prompts, also set `key_display_name` (a label rendered above the input, e.g. `"API key"`) and `key_description` (multi-line helper text under the label, e.g. format examples or where to find the value). Both are optional; use them when the placeholder isn't enough context.
 
 ### Step 4: Generate the YAML
 
