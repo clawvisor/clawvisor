@@ -160,6 +160,14 @@ type Param struct {
 	Transform   string `yaml:"transform,omitempty"`     // expr expression applied to the resolved value
 	DefaultExpr string `yaml:"default_expr,omitempty"` // expr expression for dynamic default (e.g. "rfc3339(now())")
 
+	// Spread: for query params, expand an object value into separate
+	// key=value pairs (e.g. PostgREST filters: ?id=eq.5&status=eq.active).
+	Spread bool `yaml:"spread,omitempty"`
+	// BodyRoot: for body params, send the value as the entire request body
+	// (no JSON wrapping). Useful for APIs that expect a bare array or that
+	// want a single object as the root.
+	BodyRoot bool `yaml:"body_root,omitempty"`
+
 	// GraphQL-specific
 	GraphQLVar bool   `yaml:"graphql_var,omitempty"` // pass as a top-level GraphQL variable
 	FilterPath string `yaml:"filter_path,omitempty"` // e.g. "team.id.eq" — builds nested filter object

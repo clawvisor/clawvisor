@@ -305,6 +305,8 @@ actions:
 | `min` / `max` | int | Constraints for int params |
 | `transform` | string | Expr-lang expression to transform value before sending |
 | `default_expr` | string | Expr-lang expression for dynamic default (e.g. `"rfc3339(now())"`) |
+| `spread` | bool | For `query` params: expand an object value into separate `key=value` pairs (e.g. PostgREST `?id=eq.5&status=eq.active`) |
+| `body_root` | bool | For `body` params: send the value as the entire request body (no JSON wrapping). Useful for APIs that expect a bare array or single object as the root. |
 
 ### GraphQL-Specific Parameter Fields
 

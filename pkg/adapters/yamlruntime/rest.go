@@ -47,6 +47,8 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	// Separate params by location.
 	queryParams := url.Values{}
 	bodyParams := map[string]any{}
+	var bodyRoot any
+	bodyRootSet := false
 
 	for name, paramDef := range action.Params {
 		val, provided := resolveParamWithExpr(params, name, paramDef, ca)
@@ -64,8 +66,21 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 		}
 		switch paramDef.Location {
 		case "query":
+			if paramDef.Spread {
+				if m, ok := val.(map[string]any); ok {
+					for k, v := range m {
+						queryParams.Set(k, fmt.Sprintf("%v", v))
+					}
+					continue
+				}
+			}
 			queryParams.Set(apiKey, fmt.Sprintf("%v", val))
 		case "body":
+			if paramDef.BodyRoot {
+				bodyRoot = val
+				bodyRootSet = true
+				continue
+			}
 			bodyParams[apiKey] = val
 		case "path":
 			// Already handled above.
@@ -79,14 +94,18 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 	// Build request body.
 	var bodyReader io.Reader
 	var contentType string
-	if action.Method != "GET" && action.Method != "DELETE" && len(bodyParams) > 0 {
+	if action.Method != "GET" && action.Method != "DELETE" && (bodyRootSet || len(bodyParams) > 0) {
 		encoding := action.Encoding
 		if encoding == "" {
 			encoding = "json"
 		}
 		switch encoding {
 		case "json":
-			b, err := json.Marshal(bodyParams)
+			payload := any(bodyParams)
+			if bodyRootSet {
+				payload = bodyRoot
+			}
+			b, err := json.Marshal(payload)
 			if err != nil {
 				return nil, fmt.Errorf("marshaling request body: %w", err)
 			}

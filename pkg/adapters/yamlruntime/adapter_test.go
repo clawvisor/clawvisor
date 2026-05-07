@@ -3,8 +3,10 @@ package yamlruntime
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -1554,4 +1556,118 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestYAMLAdapter_QuerySpread(t *testing.T) {
+	var receivedQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"query": {
+				Method: "GET", Path: "/items",
+				Params: map[string]yamldef.Param{
+					"limit":   {Type: "int", Location: "query"},
+					"filters": {Type: "object", Location: "query", Spread: true},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "query",
+		Params: map[string]any{
+			"limit": 50,
+			"filters": map[string]any{
+				"id":     "eq.5",
+				"status": "eq.active",
+			},
+		},
+		Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if got := receivedQuery.Get("id"); got != "eq.5" {
+		t.Errorf("expected id=eq.5, got %q", got)
+	}
+	if got := receivedQuery.Get("status"); got != "eq.active" {
+		t.Errorf("expected status=eq.active, got %q", got)
+	}
+	if got := receivedQuery.Get("limit"); got != "50" {
+		t.Errorf("expected limit=50, got %q", got)
+	}
+	if got := receivedQuery.Get("filters"); got != "" {
+		t.Errorf("filters should not appear as a literal query param, got %q", got)
+	}
+}
+
+func TestYAMLAdapter_BodyRoot(t *testing.T) {
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"insert": {
+				Method: "POST", Path: "/items",
+				Params: map[string]yamldef.Param{
+					"rows": {Type: "array", Required: true, Location: "body", BodyRoot: true},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "insert",
+		Params: map[string]any{
+			"rows": []any{
+				map[string]any{"name": "alpha"},
+				map[string]any{"name": "beta"},
+			},
+		},
+		Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Body should be a JSON array, NOT wrapped in {"rows": [...]}.
+	var parsed any
+	if err := json.Unmarshal(receivedBody, &parsed); err != nil {
+		t.Fatalf("body is not valid JSON: %v (body=%s)", err, receivedBody)
+	}
+	arr, ok := parsed.([]any)
+	if !ok {
+		t.Fatalf("body should be a JSON array, got %T: %s", parsed, receivedBody)
+	}
+	if len(arr) != 2 {
+		t.Errorf("expected 2 items, got %d", len(arr))
+	}
 }
