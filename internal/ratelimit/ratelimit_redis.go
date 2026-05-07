@@ -73,14 +73,28 @@ func (rl *RedisKeyedLimiter) AllowN(key string, n int) (allowed bool, remaining 
 	}
 
 	count := int(result[0])
-	ttl := time.Duration(result[1]) * time.Second
 	allowed = result[2] == 1
 	remaining = rl.burst - count
 	if remaining < 0 {
 		remaining = 0
 	}
-	resetTime = time.Now().Add(ttl)
+	resetTime = time.Now().Add(normalizeRedisTTL(result[1], rl.window))
 	return
+}
+
+// normalizeRedisTTL converts a raw Redis TTL response into a sensible
+// duration relative to the rate-limit window. Redis returns -1 when the
+// key exists but has no expiry, and -2 when the key is missing. Both can
+// surface here on the deny path (key set without EXPIRE by some other
+// producer; key just expired between our GET and the TTL call). Falling
+// through with a negative TTL would produce X-RateLimit-Reset pointing
+// into the past — meaningless to clients and confusing in dashboards.
+// Falls back to the full window, which is always a safe upper bound.
+func normalizeRedisTTL(ttlSecs int64, window time.Duration) time.Duration {
+	if ttlSecs > 0 {
+		return time.Duration(ttlSecs) * time.Second
+	}
+	return window
 }
 
 // Stop is a no-op for Redis-backed limiter.
