@@ -523,17 +523,33 @@ func TestGateway_Callback_NoCallbackURL_NoDelivery(t *testing.T) {
 	}
 }
 
+// TestAgentCreate_DefaultsToSignedCallbacks asserts the default-on signing
+// behavior: an agent created without setting with_callback_secret should
+// receive a callback_secret in the response so callbacks are signed by
+// default. This is the regression guard for the previous "default off"
+// posture that left callbacks forgable to anyone learning the URL.
+func TestAgentCreate_DefaultsToSignedCallbacks(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+	resp := s.do("POST", "/api/agents", map[string]any{"name": "default-secret-test"})
+	body := mustStatus(t, resp, http.StatusCreated)
+	if _, ok := body["callback_secret"]; !ok {
+		t.Fatal("expected callback_secret in agent-create response by default")
+	}
+}
+
 func TestGateway_Callback_Unsigned_WhenNoSecret(t *testing.T) {
-	// When an agent has NOT registered a callback secret, the callback should
-	// still be delivered but with an empty X-Clawvisor-Signature header.
+	// When an agent explicitly opts out (with_callback_secret=false at agent
+	// creation) and no secret is registered after the fact, the callback
+	// should still be delivered but with an empty X-Clawvisor-Signature
+	// header. New agents now default to opt-in (signed callbacks); this
+	// path is the regression guard for the explicit opt-out branch.
 	adapter := newMockAdapter("mock.cb-nosec", "run").withResult("nosec-ok", nil)
 	env := newTestEnv(t, adapter)
-	sc := newScenario(t, env, "cb-nosec")
+	sc := newScenarioOptingOutOfSignedCallbacks(t, env)
 	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.cb-nosec", []byte("cred")); err != nil {
 		t.Fatalf("vault seed: %v", err)
 	}
-
-	// Do NOT register a callback secret
 
 	taskID := sc.createApprovedTask(t, env, "mock.cb-nosec", "run", true)
 
