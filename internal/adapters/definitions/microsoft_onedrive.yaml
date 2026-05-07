@@ -2,7 +2,7 @@ service:
   id: microsoft.onedrive
   display_name: OneDrive
   description: "List, search, upload, and download files in Microsoft OneDrive."
-  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md"
+  setup_url: "https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
   icon_url: "/logos/microsoft-onedrive.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"

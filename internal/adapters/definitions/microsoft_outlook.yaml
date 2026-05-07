@@ -2,7 +2,7 @@ service:
   id: microsoft.outlook
   display_name: Outlook
   description: "Read, search, send, and manage emails and calendar events in Microsoft 365 Outlook."
-  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md"
+  setup_url: "https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
   icon_url: "/logos/microsoft-outlook.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
