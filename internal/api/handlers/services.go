@@ -61,9 +61,40 @@ type oauthStateEntry struct {
 	Config       map[string]string // per-service variable values (may be nil)
 	TokenPath    string            // JSON path to access token in token response (e.g. "authed_user.access_token")
 	ExpiresAt    time.Time
+	// OpenerOrigin is the browser origin that initiated the OAuth popup —
+	// captured from the Origin or Referer header of the init request and
+	// used as the target origin of postMessage in the callback page. Empty
+	// when neither header was present (treat as "skip postMessage").
+	OpenerOrigin string
 }
 
 var errEmptyAccessToken = errors.New("oauth token response missing access token")
+
+// originFromRequest returns the browser origin that initiated the request
+// (e.g. "https://app.clawvisor.com"). Prefers the Origin header (always
+// present on cross-origin POSTs and most modern same-origin POSTs); falls
+// back to parsing the scheme+host from Referer for GET-init flows.
+//
+// Returns "" when neither header is present or parseable. The caller is
+// expected to treat empty as "do not postMessage" rather than falling back
+// to "*", which would let any page in any origin observe the success
+// signal of a framejacked popup.
+func originFromRequest(r *http.Request) string {
+	if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" {
+		// Origin is already in the "scheme://host[:port]" format.
+		u, err := url.Parse(o)
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	if ref := strings.TrimSpace(r.Header.Get("Referer")); ref != "" {
+		u, err := url.Parse(ref)
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	return ""
+}
 
 // validAliasRe matches safe alias values: alphanumeric, underscores, hyphens,
 // dots, spaces, and @ (to support auto-detected identities like emails and workspace names).
@@ -483,6 +514,7 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
 		TokenPath:    adapterTokenPath(adapter),
+		OpenerOrigin: originFromRequest(r),
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
 
@@ -553,6 +585,7 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 		Config:       flowConfig,
 		Scopes:       mergedScopes,
 		TokenPath:    adapterTokenPath(adapter),
+		OpenerOrigin: originFromRequest(r),
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
 
@@ -571,23 +604,23 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	code := r.URL.Query().Get("code")
 
 	if state == "" || code == "" {
-		oauthPopupClose(w, "Missing OAuth parameters.", "")
+		oauthPopupClose(w, "Missing OAuth parameters.", "", "")
 		return
 	}
 
 	entry, ok := h.oauthStore.LoadAndDeleteOAuth(state)
 	if !ok {
-		oauthPopupClose(w, "Invalid or expired OAuth state. Please try again.", "")
+		oauthPopupClose(w, "Invalid or expired OAuth state. Please try again.", "", "")
 		return
 	}
 	if time.Now().After(entry.ExpiresAt) {
-		oauthPopupClose(w, "OAuth session expired. Please try again.", "")
+		oauthPopupClose(w, "OAuth session expired. Please try again.", "", "")
 		return
 	}
 
 	adapter, ok := h.adapterReg.Get(entry.ServiceID)
 	if !ok {
-		oauthPopupClose(w, "Service not found.", "")
+		oauthPopupClose(w, "Service not found.", "", entry.OpenerOrigin)
 		return
 	}
 
@@ -616,12 +649,12 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
 			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+			oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 			return
 		}
 		tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", oauthCfg.Endpoint.TokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
-			oauthPopupClose(w, "Failed to build token request.", "")
+			oauthPopupClose(w, "Failed to build token request.", "", entry.OpenerOrigin)
 			return
 		}
 		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -630,14 +663,14 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Token exchange with provider failed.", "")
+			oauthPopupClose(w, "Token exchange with provider failed.", "", entry.OpenerOrigin)
 			return
 		}
 		defer resp.Body.Close()
 
 		var rawResp map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&rawResp); err != nil {
-			oauthPopupClose(w, "Invalid response from token endpoint.", "")
+			oauthPopupClose(w, "Invalid response from token endpoint.", "", entry.OpenerOrigin)
 			return
 		}
 		if errVal, ok := rawResp["error"].(string); ok && errVal != "" {
@@ -646,7 +679,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 				desc = errVal
 			}
 			h.logger.Warn("oauth token exchange: provider error", "service", entry.ServiceID, "error", errVal, "desc", desc)
-			oauthPopupClose(w, "Authorization failed: "+desc, "")
+			oauthPopupClose(w, "Authorization failed: "+desc, "", entry.OpenerOrigin)
 			return
 		}
 
@@ -659,25 +692,25 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			if errors.Is(err, errEmptyAccessToken) {
 				h.logger.Warn("oauth token exchange: empty access token", "service", entry.ServiceID, "token_path", entry.TokenPath)
-				oauthPopupClose(w, "Provider returned empty access token.", "")
+				oauthPopupClose(w, "Provider returned empty access token.", "", entry.OpenerOrigin)
 				return
 			}
 			h.logger.Warn("credential from token_path response failed", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Failed to process credential.", "")
+			oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 			return
 		}
 	} else {
 		// Standard OAuth2 token exchange — route through the SSRF-safe client.
 		if err := validateTokenEndpoint(oauthCfg.Endpoint.TokenURL); err != nil {
 			h.logger.Warn("oauth token exchange: invalid token_url", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+			oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 			return
 		}
 		exchangeCtx := context.WithValue(r.Context(), oauth2.HTTPClient, ssrfSafeOAuthClient)
 		token, err := oauthCfg.Exchange(exchangeCtx, code)
 		if err != nil {
 			h.logger.Warn("oauth token exchange failed", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Token exchange with provider failed.", "")
+			oauthPopupClose(w, "Token exchange with provider failed.", "", entry.OpenerOrigin)
 			return
 		}
 
@@ -709,7 +742,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		credBytes, err = credential.FromToken(token, scopes, scopesGranted)
 		if err != nil {
 			h.logger.Warn("credential from token failed", "service", entry.ServiceID, "err", err)
-			oauthPopupClose(w, "Failed to process credential.", "")
+			oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 			return
 		}
 	}
@@ -720,7 +753,7 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("vault set failed", "service", entry.ServiceID, "err", err)
-		oauthPopupClose(w, "Failed to store credential in vault.", "")
+		oauthPopupClose(w, "Failed to store credential in vault.", "", entry.OpenerOrigin)
 		return
 	}
 
@@ -739,22 +772,45 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		go h.reactivatePendingRequest(context.Background(), entry.UserID, entry.PendingReqID)
 	}
 
-	oauthPopupClose(w, "", entry.CLICallback)
+	oauthPopupClose(w, "", entry.CLICallback, entry.OpenerOrigin)
 }
 
 // oauthPopupClose serves a minimal HTML page that closes the OAuth popup window.
 // On success (errMsg == "") it posts a message to the opener so the dashboard can
 // refresh its services list. On error it shows the message and auto-closes after 5s.
 // If cliCallback is set, the success page also pings that URL to notify the TUI.
-func oauthPopupClose(w http.ResponseWriter, errMsg, cliCallback string) {
+// popupNonce returns a base64-encoded random nonce for one-shot CSP-bound
+// inline script execution.
+func popupNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return base64.RawStdEncoding.EncodeToString(b[:])
+}
+
+// oauthPopupClose writes the popup-close HTML page used at the end of an
+// OAuth flow. It tightens two surfaces from the previous implementation:
+//
+//  1. CSP no longer permits 'unsafe-inline' for script. Instead a per-
+//     response random nonce is generated and the lone <script> tag carries
+//     it; the policy is "script-src 'nonce-XXX'". A future XSS via
+//     error_description thus can't inject additional scripts.
+//
+//  2. The postMessage target origin is the opener's origin (captured at
+//     OAuth init time and threaded in via openerOrigin) instead of '*'.
+//     A framejacked opener in a different origin therefore can't observe
+//     the success signal as an oracle.
+//
+// When openerOrigin is empty (caller had no Origin/Referer at init) the
+// page simply closes itself without postMessage. The dashboard can poll
+// for state changes — losing the postMessage signal is preferable to
+// broadcasting it to '*'.
+func oauthPopupClose(w http.ResponseWriter, errMsg, cliCallback, openerOrigin string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Override the global CSP set by security middleware. This page uses
-	// inline scripts (postMessage, window.close, fetch to TUI callback)
-	// which are blocked by the default "script-src 'self'" policy.
-	// connect-src http://localhost:* allows the fetch to the TUI's local
-	// one-shot server when cli_callback is provided.
+	nonce := popupNonce()
 	w.Header().Set("Content-Security-Policy",
-		"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src http://localhost:* http://127.0.0.1:*")
+		"default-src 'self'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; connect-src http://localhost:* http://127.0.0.1:*")
 	if errMsg != "" {
 		fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error – Clawvisor</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
@@ -765,20 +821,28 @@ h2{color:#dc2626;margin:0 0 8px}p{color:#6b7280;margin:4px 0;font-size:14px}</st
 			html.EscapeString(errMsg))
 		return
 	}
-	// Build the CLI callback fetch snippet if a callback URL was provided.
+	// Targeted postMessage when we know the opener origin; otherwise
+	// skip messaging entirely. cliCallback fetch is sandboxed to
+	// localhost via connect-src.
+	postMessageSnippet := ""
+	if openerOrigin != "" {
+		postMessageSnippet = fmt.Sprintf(
+			`if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},%q)}catch(e){}}`,
+			openerOrigin,
+		)
+	}
 	cliCallbackSnippet := ""
 	if cliCallback != "" {
-		cliCallbackSnippet = fmt.Sprintf("fetch(%q).catch(function(){});", cliCallback)
+		cliCallbackSnippet = fmt.Sprintf(`fetch(%q).catch(function(){});`, cliCallback)
 	}
 	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authorized – Clawvisor</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
 .card{background:#fff;border-radius:8px;padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:320px}
 h2{color:#16a34a;margin:0 0 8px}p{color:#6b7280;margin:0;font-size:14px}</style></head>
 <body><div class="card"><h2>&#10003; Authorized</h2><p>Service activated. You can close this tab.</p></div>
-<script>
-if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},'*')}catch(e){}}
-%sif(window.opener){try{window.close()}catch(e){}}else{window.location.href='/dashboard/services'}
-</script></body></html>`, cliCallbackSnippet)
+<script nonce="%s">
+%s%sif(window.opener){try{window.close()}catch(e){}}else{window.location.href='/dashboard/services'}
+</script></body></html>`, nonce, postMessageSnippet, cliCallbackSnippet)
 }
 
 // Activate is a unified activation endpoint.
@@ -845,6 +909,7 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 			ServiceID:    serviceID,
 			Alias:        alias,
 			PendingReqID: body.PendingRequestID,
+			OpenerOrigin: originFromRequest(r),
 			Config:       body.Config,
 			Scopes:       mergedScopes,
 			TokenPath:    adapterTokenPath(adapter),
@@ -1784,6 +1849,7 @@ type pkceFlowEntry struct {
 	TokenPath    string // JSON path to access token (e.g. "authed_user.access_token")
 	ClientID     string
 	RedirectURI  string
+	OpenerOrigin string // see oauthStateEntry.OpenerOrigin
 	ExpiresAt    time.Time
 }
 
@@ -1917,6 +1983,7 @@ func (h *ServicesHandler) PKCEFlowStart(w http.ResponseWriter, r *http.Request) 
 		TokenPath:    pfCfg.TokenPath,
 		ClientID:     clientID,
 		RedirectURI:  redirectURI,
+		OpenerOrigin: originFromRequest(r),
 		ExpiresAt:    time.Now().Add(10 * time.Minute),
 	})
 
@@ -1953,23 +2020,23 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	code := r.URL.Query().Get("code")
 
 	if state == "" || code == "" {
-		oauthPopupClose(w, "Missing PKCE callback parameters.", "")
+		oauthPopupClose(w, "Missing PKCE callback parameters.", "", "")
 		return
 	}
 
 	entry, ok := h.oauthStore.LoadAndDeletePKCE(state)
 	if !ok {
-		oauthPopupClose(w, "Invalid or expired PKCE state. Please try again.", "")
+		oauthPopupClose(w, "Invalid or expired PKCE state. Please try again.", "", "")
 		return
 	}
 	if time.Now().After(entry.ExpiresAt) {
-		oauthPopupClose(w, "PKCE session expired. Please try again.", "")
+		oauthPopupClose(w, "PKCE session expired. Please try again.", "", "")
 		return
 	}
 
 	adapter, ok := h.adapterReg.Get(entry.ServiceID)
 	if !ok {
-		oauthPopupClose(w, "Service not found.", "")
+		oauthPopupClose(w, "Service not found.", "", entry.OpenerOrigin)
 		return
 	}
 	alias := entry.Alias
@@ -1987,12 +2054,12 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	}
 	if err := validateTokenEndpoint(entry.TokenURL); err != nil {
 		h.logger.Warn("pkce flow: invalid token_url", "service", entry.ServiceID, "err", err)
-		oauthPopupClose(w, "Provider token endpoint is not allowed.", "")
+		oauthPopupClose(w, "Provider token endpoint is not allowed.", "", entry.OpenerOrigin)
 		return
 	}
 	tokenReq, err := http.NewRequestWithContext(r.Context(), "POST", entry.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		oauthPopupClose(w, "Failed to build token request.", "")
+		oauthPopupClose(w, "Failed to build token request.", "", entry.OpenerOrigin)
 		return
 	}
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -2001,14 +2068,14 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	resp, err := ssrfSafeOAuthClient.Do(tokenReq)
 	if err != nil {
 		h.logger.Warn("pkce flow: token exchange failed", "err", err)
-		oauthPopupClose(w, "Failed to contact token endpoint.", "")
+		oauthPopupClose(w, "Failed to contact token endpoint.", "", entry.OpenerOrigin)
 		return
 	}
 	defer resp.Body.Close()
 
 	var rawResp map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&rawResp); err != nil {
-		oauthPopupClose(w, "Invalid response from token endpoint.", "")
+		oauthPopupClose(w, "Invalid response from token endpoint.", "", entry.OpenerOrigin)
 		return
 	}
 
@@ -2019,7 +2086,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 			desc = errVal
 		}
 		h.logger.Warn("pkce flow: provider returned error", "error", errVal, "desc", desc)
-		oauthPopupClose(w, "Authorization failed: "+desc, "")
+		oauthPopupClose(w, "Authorization failed: "+desc, "", entry.OpenerOrigin)
 		return
 	}
 
@@ -2033,11 +2100,11 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if errors.Is(err, errEmptyAccessToken) {
 			h.logger.Warn("pkce flow: empty access token in response", "service", entry.ServiceID, "token_path", entry.TokenPath)
-			oauthPopupClose(w, "Provider returned empty access token.", "")
+			oauthPopupClose(w, "Provider returned empty access token.", "", entry.OpenerOrigin)
 			return
 		}
 		h.logger.Warn("pkce flow: failed to process token response", "service", entry.ServiceID, "err", err)
-		oauthPopupClose(w, "Failed to process credential.", "")
+		oauthPopupClose(w, "Failed to process credential.", "", entry.OpenerOrigin)
 		return
 	}
 
@@ -2047,7 +2114,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	vKey := h.adapterReg.VaultKeyWithAlias(entry.ServiceID, alias)
 	if err := h.vault.Set(r.Context(), entry.UserID, vKey, credBytes); err != nil {
 		h.logger.Warn("pkce flow: vault set failed", "err", err)
-		oauthPopupClose(w, "Failed to store credential.", "")
+		oauthPopupClose(w, "Failed to store credential.", "", entry.OpenerOrigin)
 		return
 	}
 	_ = h.st.UpsertServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias, time.Now())
@@ -2057,7 +2124,7 @@ func (h *ServicesHandler) PKCEFlowCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.logger.Info("service activated via PKCE flow", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
-	oauthPopupClose(w, "", entry.CLICallback)
+	oauthPopupClose(w, "", entry.CLICallback, entry.OpenerOrigin)
 }
 
 // extractTokenFromPath navigates a nested map using a dot-separated path
