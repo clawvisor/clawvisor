@@ -779,7 +779,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 				vMode := verificationModeFor(match.MatchedAction)
-				if matchedPlannedCall != nil {
+				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
@@ -802,6 +802,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						Explanation:     "Skipped: verification mode is off for this action category",
 					}
 				} else {
+					if matchedPlannedCall != nil {
+						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+							"task_id", req.TaskID, "risk_level", task.RiskLevel)
+					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
@@ -855,7 +859,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 
 				vMode := verificationModeFor(match.MatchedAction)
-				if matchedPlannedCall != nil {
+				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
@@ -878,6 +882,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						Explanation:     "Skipped: verification mode is off for this action category",
 					}
 				} else {
+					if matchedPlannedCall != nil {
+						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+							"task_id", req.TaskID, "risk_level", task.RiskLevel)
+					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				// Chain context fallback: if the LLM flagged a missing entity,
@@ -1691,6 +1699,22 @@ func (h *GatewayHandler) runVerification(
 // for the matched authorized action. Falls back to "strict" when the matched
 // action has no override set. Callers should pass the alias-aware match from
 // CheckTaskScope so that scope-specific overrides are honored.
+// plannedCallBypassEligible reports whether a task's risk assessment ran
+// successfully enough to make planned-call exact-match a safe bypass for
+// LLM intent verification. The bypass is justified by "the call was
+// evaluated during task risk assessment" — that justification only holds
+// when an actual risk verdict landed. RiskLevel="" or "unknown" means the
+// assessment was skipped or errored, and we MUST run the per-request
+// verifier instead, otherwise an adversarial agent can front-load future
+// ops into planned_calls during task creation and slip past both gates.
+func plannedCallBypassEligible(riskLevel string) bool {
+	switch riskLevel {
+	case "low", "medium", "high", "critical":
+		return true
+	}
+	return false
+}
+
 func verificationModeFor(matched *store.TaskAction) string {
 	if matched != nil && matched.Verification != "" {
 		return matched.Verification

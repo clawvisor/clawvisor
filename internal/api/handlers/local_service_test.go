@@ -417,6 +417,10 @@ func TestGateway_LocalService_PlannedCall_SkipsVerification(t *testing.T) {
 	st := newLocalTestStore()
 	st.tasks["task-1"] = &store.Task{
 		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		// RiskLevel must be set for the planned-call bypass to be eligible —
+		// the bypass is justified by "the call was evaluated during task
+		// risk assessment", which only holds when a verdict actually landed.
+		RiskLevel: "low",
 		AuthorizedActions: []store.TaskAction{
 			{Service: "local.files", Action: "read_file", AutoExecute: true},
 		},
@@ -453,6 +457,52 @@ func TestGateway_LocalService_PlannedCall_SkipsVerification(t *testing.T) {
 	// Verifier should NOT have been called (planned call bypasses it).
 	if verifier.called {
 		t.Fatal("verifier should not be called when planned call matches")
+	}
+}
+
+// TestGateway_LocalService_PlannedCall_NoRiskAssessment_RunsVerifier is the
+// regression guard for the planned-call bypass: when the task's RiskLevel is
+// empty (assessment skipped) or "unknown" (LLM errored), the bypass must
+// not fire. Otherwise an adversarial agent can front-load arbitrary future
+// ops into planned_calls during task creation and slip past both the risk
+// and intent gates.
+func TestGateway_LocalService_PlannedCall_NoRiskAssessment_RunsVerifier(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		// RiskLevel intentionally empty — risk assessment did not run.
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+		PlannedCalls: []store.PlannedCall{
+			{Service: "local.files", Action: "read_file", Params: map[string]any{"path": "/etc/hosts"}, Reason: "Read hosts file"},
+		},
+	}
+
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	// Verifier returns Allow=true so the request still succeeds — the
+	// assertion is that the verifier was *called* despite the planned-call
+	// match.
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	w := makeGatewayRequest(t, h, map[string]any{
+		"service": "local.files",
+		"action":  "read_file",
+		"reason":  "Read hosts file",
+		"task_id": "task-1",
+		"params":  map[string]any{"path": "/etc/hosts"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !verifier.called {
+		t.Fatal("verifier MUST be called when RiskLevel is empty, even with planned call match")
 	}
 }
 
