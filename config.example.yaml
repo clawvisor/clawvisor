@@ -120,7 +120,7 @@ mcp:
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 rate_limit:
   gateway:                   # per agent
-    limit: 60                # requests per window
+    limit: 200               # requests per window
     window: 60               # seconds
   oauth:                     # per user
     limit: 5

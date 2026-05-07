@@ -387,7 +387,7 @@ func Default() *Config {
 			ServicePresets: false,
 		},
 		RateLimit: RateLimitConfig{
-			Gateway:   RateLimitBucket{Limit: 60, Window: 60},
+			Gateway:   RateLimitBucket{Limit: 200, Window: 60},
 			OAuth:     RateLimitBucket{Limit: 5, Window: 60},
 			PolicyAPI: RateLimitBucket{Limit: 30, Window: 60},
 			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},
