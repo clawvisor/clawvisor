@@ -1062,6 +1062,34 @@ func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt tim
 	return nil
 }
 
+// UpdateTaskStatusFrom is the CAS variant of UpdateTaskStatus.
+func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET status = $1 WHERE id = $2 AND status = $3`,
+		toStatus, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved.
+func (s *Store) UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []store.TaskAction) (bool, error) {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return false, err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET status = 'active', approved_at = NOW(), expires_at = $1,
+			authorized_actions = $2
+		WHERE id = $3 AND status = $4
+	`, expiresAt, actionsJSON, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {
@@ -1441,6 +1469,17 @@ func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, stat
 	_, err := s.pool.Exec(ctx,
 		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = 'pending'`, status, requestID)
 	return err
+}
+
+// UpdatePendingApprovalStatusFrom is the CAS variant.
+func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = $3`,
+		toStatus, requestID, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {

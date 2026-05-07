@@ -1040,8 +1040,15 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
 
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, actions); err != nil {
+	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, actions)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
+		return
+	}
+	if !won {
+		// Concurrent approve/deny race or already-resolved task — refuse to
+		// repeat the side effects below (callback, audit).
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer pending approval")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
@@ -1234,8 +1241,15 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
+		return
+	}
+	if !won {
+		// Concurrent approve/deny race or already-resolved task — refuse to
+		// repeat side effects (callback, chain-facts cleanup, audit).
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer pending")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
@@ -1699,8 +1713,12 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	} else {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, task.AuthorizedActions); err != nil {
+	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, task.AuthorizedActions)
+	if err != nil {
 		return err
+	}
+	if !won {
+		return fmt.Errorf("task is no longer pending approval")
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
@@ -1731,8 +1749,12 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 		return fmt.Errorf("task is not pending")
 	}
 
-	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
+	if err != nil {
 		return err
+	}
+	if !won {
+		return fmt.Errorf("task is no longer pending")
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 

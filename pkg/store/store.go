@@ -102,6 +102,16 @@ type Store interface {
 	ListTasks(ctx context.Context, userID string, filter TaskFilter) ([]*Task, int, error)
 	UpdateTaskStatus(ctx context.Context, id, status string) error
 	UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time, authorizedActions []TaskAction) error
+	// UpdateTaskStatusFrom atomically transitions a task from fromStatus to
+	// toStatus. Returns true if the caller won the race, false if the row
+	// was not in fromStatus (already approved/denied/expired by another
+	// caller). Use this for any approve/deny/expand path that can be raced
+	// across UI, Telegram, and API channels.
+	UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error)
+	// UpdateTaskApprovedFrom atomically promotes a task from fromStatus to
+	// "active" with approved_at/expires_at/authorized_actions set, returning
+	// true on win. Replaces UpdateTaskApproved for race-prone code paths.
+	UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []TaskAction) (bool, error)
 	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
@@ -117,6 +127,11 @@ type Store interface {
 	DeletePendingApproval(ctx context.Context, requestID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
 	UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error
+	// UpdatePendingApprovalStatusFrom atomically transitions a pending
+	// approval from fromStatus to toStatus. Returns true if the caller won
+	// the race, false if the row was not in fromStatus. Use this for any
+	// approve/deny path that can be raced across UI/Telegram/API.
+	UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error)
 	// ClaimPendingApprovalForExecution atomically transitions a pending approval
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").

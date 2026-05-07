@@ -499,3 +499,106 @@ func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
 		t.Fatalf("expected zero stalled rows after recovery, got %d", len(stalled))
 	}
 }
+
+// TestPendingApproval_StatusCASBlocksConcurrentResolution confirms that
+// UpdatePendingApprovalStatusFrom prevents two concurrent resolution paths
+// (e.g. Approve via UI and Deny via Telegram) from both succeeding. Only
+// the first transition wins; subsequent attempts return won=false and the
+// row is left in the winning state.
+func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "cas@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-cas-1", AuditID: "audit-cas-1",
+		RequestBlob: []byte(`{}`), Status: "pending",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	// First transition wins.
+	won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "approved")
+	if err != nil || !won {
+		t.Fatalf("first CAS approve: won=%v err=%v", won, err)
+	}
+
+	// Concurrent attempt to deny the same row must lose, leaving status="approved".
+	won, err = st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "denied")
+	if err != nil {
+		t.Fatalf("second CAS: %v", err)
+	}
+	if won {
+		t.Fatal("expected second CAS to lose, got won=true")
+	}
+	got, err := st.GetPendingApproval(ctx, "req-cas-1")
+	if err != nil {
+		t.Fatalf("GetPendingApproval: %v", err)
+	}
+	if got.Status != "approved" {
+		t.Fatalf("expected status=approved after losing CAS, got %q", got.Status)
+	}
+}
+
+// TestTask_StatusCASBlocksConcurrentResolution confirms the same atomicity
+// for tasks: a concurrent ApproveTask and DenyTask race resolves to one
+// state, not both.
+func TestTask_StatusCASBlocksConcurrentResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "task-cas@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "task-cas-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	task := &store.Task{
+		ID: "task-cas-1", UserID: user.ID, AgentID: agent.ID,
+		Purpose: "p", Status: "pending_approval", Lifetime: "session",
+		ExpiresInSeconds: 60,
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// First win: approve.
+	won, err := st.UpdateTaskApprovedFrom(ctx, task.ID, "pending_approval",
+		time.Now().UTC().Add(time.Minute), nil)
+	if err != nil || !won {
+		t.Fatalf("first CAS approve: won=%v err=%v", won, err)
+	}
+
+	// Second attempt: deny. Must lose.
+	won, err = st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "denied")
+	if err != nil {
+		t.Fatalf("second CAS: %v", err)
+	}
+	if won {
+		t.Fatal("expected second CAS to lose, got won=true")
+	}
+	got, err := st.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != "active" {
+		t.Fatalf("expected status=active after losing CAS, got %q", got.Status)
+	}
+}

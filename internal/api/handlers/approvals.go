@@ -182,25 +182,35 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 // markApproved transitions a pending approval to the "approved" state without
 // executing it. The agent is expected to call HandleExecuteApproved to claim
 // the result. If a callback URL is registered, a notification is sent.
+//
+// The status update is a CAS from "pending" → "approved", so a concurrent
+// Deny against the same request_id can't co-resolve to both states (which
+// previously caused the agent to receive both an "approved" and a "denied"
+// callback for the same request).
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval, resolution string) (*store.Task, error) {
-	if err := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, "approved"); err != nil {
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "pending", "approved")
+	if err != nil {
 		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
 		return nil, err
 	}
+	if !won {
+		// Another caller (Deny via Telegram, expiry sweep, retry) already
+		// resolved this request. Refuse the second resolution.
+		return nil, fmt.Errorf("approval %s is no longer pending", pa.RequestID)
+	}
 	var promotedTask *store.Task
-	var err error
 	switch resolution {
 	case "allow_session", "allow_always":
 		promotedTask, err = h.promotePendingApprovalToTask(ctx, pa, resolution)
 		if err != nil {
-			if revertErr := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, pa.Status); revertErr != nil {
+			if _, revertErr := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status); revertErr != nil {
 				h.logger.Error("failed to revert approval status after task promotion error", "request_id", pa.RequestID, "err", revertErr)
 			}
 			return nil, err
 		}
 	case "allow_once":
 	default:
-		if revertErr := h.st.UpdatePendingApprovalStatus(ctx, pa.RequestID, pa.Status); revertErr != nil {
+		if _, revertErr := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status); revertErr != nil {
 			h.logger.Error("failed to revert approval status after invalid resolution", "request_id", pa.RequestID, "err", revertErr)
 		}
 		return nil, fmt.Errorf("unsupported approval resolution %q", resolution)
@@ -247,6 +257,10 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 
 // DenyByRequestID is the core deny logic, callable from both the HTTP handler
 // and the Telegram callback decision consumer.
+//
+// The status update is a CAS from "pending" → "denied", so a concurrent
+// Approve against the same request_id can't co-resolve. If the row has
+// already been resolved (approved, denied, or executing), this is a no-op.
 func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userID string) error {
 	pa, err := h.st.GetPendingApproval(ctx, requestID)
 	if err != nil {
@@ -254,6 +268,16 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	}
 	if pa.UserID != userID {
 		return errors.New("not your approval")
+	}
+
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, requestID, "pending", "denied")
+	if err != nil {
+		return err
+	}
+	if !won {
+		// Already resolved by a peer — refuse to repeat the side effects
+		// (callback, notifier update, audit) and report no-op to the caller.
+		return fmt.Errorf("approval %s is no longer pending", requestID)
 	}
 
 	var denyBlob pendingRequestBlob
@@ -308,6 +332,18 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 
 	if pa.UserID != user.ID {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
+		return
+	}
+
+	won, err := h.st.UpdatePendingApprovalStatusFrom(r.Context(), requestID, "pending", "denied")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update approval")
+		return
+	}
+	if !won {
+		// Concurrent approve/deny race or already-resolved row — refuse to
+		// repeat the side effects below.
+		writeError(w, http.StatusConflict, "CONFLICT", "approval is no longer pending")
 		return
 	}
 

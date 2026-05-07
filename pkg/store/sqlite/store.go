@@ -1313,6 +1313,42 @@ func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt tim
 	return nil
 }
 
+// UpdateTaskStatusFrom is the CAS variant of UpdateTaskStatus. The status
+// transition only happens when the row is currently in fromStatus, which
+// blocks concurrent approve/deny pairs from both succeeding.
+func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = ? WHERE id = ? AND status = ?`,
+		toStatus, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved. The
+// promotion to "active" only happens when the row is currently in
+// fromStatus, so two concurrent approvals can't both win.
+func (s *Store) UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []store.TaskAction) (bool, error) {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	exp := expiresAt.UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'active', approved_at = ?, expires_at = ?,
+			authorized_actions = ?
+		WHERE id = ? AND status = ?
+	`, now, exp, string(actionsJSON), id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {
@@ -1573,6 +1609,24 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE pending_approvals SET status = 'executing', executing_since = CURRENT_TIMESTAMP
 		 WHERE request_id = ? AND status = 'approved'`, requestID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// UpdatePendingApprovalStatusFrom is the CAS variant of
+// UpdatePendingApprovalStatus. The transition only happens when the row is
+// currently in fromStatus, so concurrent approve/deny pairs from UI vs
+// Telegram vs API can no longer both succeed.
+func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pending_approvals SET status = ? WHERE request_id = ? AND status = ?`,
+		toStatus, requestID, fromStatus)
 	if err != nil {
 		return false, err
 	}
