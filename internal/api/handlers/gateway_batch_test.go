@@ -168,6 +168,65 @@ func TestBatch_RateLimitChargesPerSubRequest(t *testing.T) {
 	}
 }
 
+// TestBatch_RateLimitChargesAreAtomic is the regression guard for the
+// non-atomic per-token loop bug: a 5-request batch hitting a bucket with
+// only 2 tokens left used to consume those 2 tokens AND then 429 — the
+// caller was billed for tokens that bought zero work. AllowN(N-1) is
+// atomic: either all the fan-out tokens are taken (we proceed) or none
+// are (we 429 and the bucket is unchanged).
+func TestBatch_RateLimitChargesAreAtomic(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+	}
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	// Bucket = 3 tokens. Drain 1 (envelope already taken). Bucket has 2 left.
+	limiter := ratelimit.NewKeyedLimiter(rate.Limit(0.0001), 3)
+	h.SetGatewayRateLimiter(limiter, func(*http.Request) string { return "agent-1" })
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatalf("setup: envelope token unavailable")
+	}
+
+	// Fire a 5-request batch (would need 4 more tokens; only 2 available).
+	reqs := make([]map[string]any, 5)
+	for i := range reqs {
+		reqs[i] = map[string]any{
+			"service": "local.files", "action": "read_file", "reason": "r",
+			"task_id": "task-1", "request_id": "r" + string(rune('a'+i)),
+		}
+	}
+	w := makeBatchRequest(t, h, map[string]any{"requests": reqs})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Critical: the bucket still has 2 tokens. A non-atomic implementation
+	// would have drained them during partial fan-out charging.
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatal("bucket was wrongly drained by failed batch — AllowN was not atomic")
+	}
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatal("bucket was partially drained by failed batch — AllowN was not atomic")
+	}
+	// After taking those two, a third should fail.
+	if allowed, _, _ := limiter.Allow("agent-1"); allowed {
+		t.Fatal("expected bucket to be exhausted after taking 2 leftover tokens")
+	}
+
+	if executor.called {
+		t.Fatal("executor must not have been called when batch was rate-limited")
+	}
+}
+
 // TestBatch_RateLimitHeaderReflectsFanOut is the regression guard for the
 // observability gap I shipped in the original H31 fix: the route-level
 // middleware writes X-RateLimit-Remaining BEFORE HandleBatch runs, so

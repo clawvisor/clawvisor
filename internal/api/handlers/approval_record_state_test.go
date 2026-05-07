@@ -68,6 +68,37 @@ func TestValidateApprovalRecordTransition(t *testing.T) {
 			status:     "approved",
 			wantErr:    true,
 		},
+		// Regression guards: deny resolution requires "denied" or "expired"
+		// as the status, NOT a free-form reason string. processExpired
+		// Approval and revertOrTerminate previously passed reasons like
+		// "stranded" / "promotion_failed" here, which silently failed the
+		// transition validator and left the canonical record pending forever.
+		{
+			name:       "deny+denied accepted (revertOrTerminate after race-loss)",
+			record:     &store.ApprovalRecord{ID: "r-deny", Kind: "request_once", Status: "pending"},
+			resolution: "deny",
+			status:     "denied",
+		},
+		{
+			name:       "deny+expired accepted (processExpiredApproval)",
+			record:     &store.ApprovalRecord{ID: "r-exp", Kind: "request_once", Status: "pending"},
+			resolution: "deny",
+			status:     "expired",
+		},
+		{
+			name:       "deny+stranded rejected (regression: was passed by stalled-recovery sweep)",
+			record:     &store.ApprovalRecord{ID: "r-strand", Kind: "request_once", Status: "pending"},
+			resolution: "deny",
+			status:     "stranded",
+			wantErr:    true,
+		},
+		{
+			name:       "deny+promotion_failed rejected (regression: was passed by revertOrTerminate)",
+			record:     &store.ApprovalRecord{ID: "r-promo", Kind: "request_once", Status: "pending"},
+			resolution: "deny",
+			status:     "promotion_failed",
+			wantErr:    true,
+		},
 	}
 
 	for _, tt := range tests {

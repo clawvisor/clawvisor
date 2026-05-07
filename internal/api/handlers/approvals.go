@@ -138,6 +138,14 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	promotedTask, err := h.markApproved(r.Context(), pa, resolution)
 	if err != nil {
+		if errors.Is(err, errApprovalAlreadyResolved) {
+			// The row was resolved by a different actor (Telegram deny,
+			// expiry sweep, retry) between our load and our CAS. This is
+			// a race outcome, not an internal failure — surface a 409 so
+			// the dashboard can refresh instead of showing a 500.
+			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "this approval is no longer pending — refresh to see the current state")
+			return
+		}
 		h.logger.Error("failed to approve pending request", "request_id", requestID, "resolution", resolution, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve pending request")
 		return
@@ -187,6 +195,10 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 // that; instead, force-resolve the canonical approval record so the user
 // dashboard doesn't sit "pending" forever, and let the lease-recovery
 // sweeper reclaim the now-orphan 'executing' row on its next pass.
+//
+// reason is logged for diagnostics; it is NOT passed as the canonical
+// approval status (which must be one of "denied" / "expired" — see
+// validateApprovalRecordTransition).
 func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.PendingApproval, reason string) {
 	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status)
 	if err != nil {
@@ -199,13 +211,19 @@ func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.Pend
 	}
 	// Lost the revert CAS — another actor moved past 'approved' (almost
 	// always /execute claiming as 'executing'). Force the canonical
-	// approval to a terminal "deny" state so it doesn't stay pending in
+	// approval to a terminal "denied" state so it doesn't stay pending in
 	// the dashboard. The pending_approvals row itself will be cleaned up
 	// by the lease-recovery sweeper.
 	h.logger.Warn("approval revert lost CAS; forcing canonical resolution",
 		"request_id", pa.RequestID, "reason", reason)
-	h.resolveCanonicalApproval(ctx, pa, "deny", reason)
+	h.resolveCanonicalApproval(ctx, pa, "deny", "denied")
 }
+
+// errApprovalAlreadyResolved is returned by markApproved when the CAS to
+// 'approved' loses to a concurrent resolver (Deny via Telegram, expiry
+// sweep, etc.). HTTP callers should map this to 409 Conflict — it is a
+// race outcome, not an internal failure.
+var errApprovalAlreadyResolved = errors.New("approval is no longer pending")
 
 // markApproved transitions a pending approval to the "approved" state without
 // executing it. The agent is expected to call HandleExecuteApproved to claim
@@ -215,6 +233,9 @@ func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.Pend
 // Deny against the same request_id can't co-resolve to both states (which
 // previously caused the agent to receive both an "approved" and a "denied"
 // callback for the same request).
+//
+// Returns errApprovalAlreadyResolved if the row was resolved by another
+// caller before our CAS landed; HTTP handlers translate that to 409.
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval, resolution string) (*store.Task, error) {
 	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "pending", "approved")
 	if err != nil {
@@ -222,9 +243,7 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 		return nil, err
 	}
 	if !won {
-		// Another caller (Deny via Telegram, expiry sweep, retry) already
-		// resolved this request. Refuse the second resolution.
-		return nil, fmt.Errorf("approval %s is no longer pending", pa.RequestID)
+		return nil, errApprovalAlreadyResolved
 	}
 	var promotedTask *store.Task
 	switch resolution {
@@ -486,10 +505,12 @@ func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
 // notification + callback work for a pending_approvals row that has either
 // timed out (caller already deleted the row) or been recovered from a
 // stalled 'executing' state (CAS DELETE already happened). reason is
-// passed to the canonical-approval resolver so the dashboard distinguishes
-// between "user never replied" and "executor crashed mid-execution".
+// included in the structured log so the operator can distinguish
+// "user never replied" from "executor crashed mid-execution"; it is NOT
+// passed as the canonical status (which must be "expired" — see
+// validateApprovalRecordTransition).
 func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store.PendingApproval, reason, telegramMsg string) {
-	h.resolveCanonicalApproval(ctx, pa, "deny", reason)
+	h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
 	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
 	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, telegramMsg)
 	// For the regular expired path the caller relies on us to delete the

@@ -60,43 +60,37 @@ func (h *GatewayHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Charge one rate-limit token per sub-request beyond the first. The
-	// route-level middleware already consumed one token for the batch
-	// envelope; without this loop a single token would buy N adapter calls
-	// + N LLM verifications + N audit writes.
+	// Charge the additional fan-out tokens atomically. The route-level
+	// middleware already consumed 1 token for the batch envelope; we need
+	// N-1 more to cover each sub-request's downstream cost (adapter call
+	// + LLM verification + audit write).
 	//
-	// The middleware already wrote X-RateLimit-Remaining reflecting only
-	// the envelope's 1 token. Overwrite it after our internal charges so
-	// the caller can actually see how much budget the batch consumed —
-	// otherwise the header always reports remaining=limit-1 regardless of
-	// batch size, hiding the real burn rate.
-	if h.gatewayRL != nil && h.gatewayRLKey != nil {
+	// The previous per-token loop was non-atomic: a 5-request batch with
+	// 3 tokens left would consume 3 (envelope + 2) and then 429 — billing
+	// the caller for tokens that bought no work. AllowN takes either all
+	// N-1 or none.
+	//
+	// We also overwrite X-RateLimit-Remaining after this charge so the
+	// header reflects actual consumption (otherwise it always reads
+	// limit-1 regardless of batch size).
+	if h.gatewayRL != nil && h.gatewayRLKey != nil && len(batch.Requests) > 1 {
 		if key := h.gatewayRLKey(r); key != "" {
-			var lastRemaining int
-			var lastResetTime time.Time
-			for i := 1; i < len(batch.Requests); i++ {
-				allowed, remaining, resetTime := h.gatewayRL.Allow(key)
-				lastRemaining = remaining
-				lastResetTime = resetTime
-				if !allowed {
-					retryAfter := time.Until(resetTime).Seconds()
-					if retryAfter < 1 {
-						retryAfter = 1
-					}
-					w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter))
-					w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
-					w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
-					writeDetailedError(w, http.StatusTooManyRequests, apiErrorDetail{
-						Error: "rate limit exceeded for batch fan-out",
-						Code:  "RATE_LIMITED",
-						Hint:  "The batch's sub-requests would exceed the per-agent rate limit. Wait and retry, or send fewer sub-requests per batch.",
-					})
-					return
+			extra := len(batch.Requests) - 1
+			allowed, remaining, resetTime := h.gatewayRL.AllowN(key, extra)
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
+			if !allowed {
+				retryAfter := time.Until(resetTime).Seconds()
+				if retryAfter < 1 {
+					retryAfter = 1
 				}
-			}
-			if len(batch.Requests) > 1 {
-				w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(lastRemaining))
-				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(lastResetTime.Unix(), 10))
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter))
+				writeDetailedError(w, http.StatusTooManyRequests, apiErrorDetail{
+					Error: "rate limit exceeded for batch fan-out",
+					Code:  "RATE_LIMITED",
+					Hint:  "The batch's sub-requests would exceed the per-agent rate limit. Wait and retry, or send fewer sub-requests per batch.",
+				})
+				return
 			}
 		}
 	}

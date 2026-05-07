@@ -123,8 +123,12 @@ func TestHandleRequest_ClientIPSetsRemoteAddr(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotRemoteAddr := ""
+			var (
+				handlerCalled bool
+				gotRemoteAddr string
+			)
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
 				gotRemoteAddr = r.RemoteAddr
 				w.WriteHeader(http.StatusOK)
 			})
@@ -135,6 +139,12 @@ func TestHandleRequest_ClientIPSetsRemoteAddr(t *testing.T) {
 				Headers:  map[string][]string{},
 				ClientIP: tc.clientIP,
 			})
+			// Always assert the handler ran. For rejection cases (want="")
+			// the handler-skip path would have left gotRemoteAddr=="" too,
+			// producing a false pass — handlerCalled is the actual signal.
+			if !handlerCalled {
+				t.Fatalf("handler was not called (clientIP=%q)", tc.clientIP)
+			}
 			if gotRemoteAddr != tc.want {
 				t.Fatalf("RemoteAddr=%q, want %q (clientIP=%q)", gotRemoteAddr, tc.want, tc.clientIP)
 			}
