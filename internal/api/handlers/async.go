@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/callback"
@@ -52,6 +53,14 @@ type CallbackDispatcher struct {
 	logger *slog.Logger
 	stop   chan struct{}
 	done   chan struct{}
+	// closeMu protects against the send-on-closed-channel panic during
+	// shutdown. Submit takes the read-lock around the channel send; Stop
+	// takes the write-lock to flip closed and close the channel atomically
+	// w.r.t. concurrent Submits. Daemon shutdown ordering doesn't track
+	// every long-lived goroutine that might call Submit (notifier consumer,
+	// expiry sweeper, etc.), so the dispatcher has to be self-protective.
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 type callbackJob struct {
@@ -115,9 +124,18 @@ func (d *CallbackDispatcher) Start(workers int) {
 // Submit enqueues a callback for delivery. Returns immediately; the caller
 // never blocks for delivery. If the queue is full the callback is dropped
 // and a warning is logged — backpressure is preferred over unbounded
-// goroutine growth when the downstream is slow.
+// goroutine growth when the downstream is slow. Safe to call concurrently
+// with Stop: the lock prevents the send-on-closed-channel panic.
 func (d *CallbackDispatcher) Submit(url string, payload *callback.Payload, signingKey string) {
 	if d == nil || payload == nil || url == "" {
+		return
+	}
+	d.closeMu.RLock()
+	defer d.closeMu.RUnlock()
+	if d.closed {
+		// Post-shutdown — drop silently rather than panic. Loss is
+		// preferable to crashing the daemon during graceful shutdown
+		// when a background goroutine submits one final callback.
 		return
 	}
 	job := callbackJob{url: url, payload: payload, signingKey: signingKey}
@@ -134,12 +152,18 @@ func (d *CallbackDispatcher) Submit(url string, payload *callback.Payload, signi
 	}
 }
 
-// Stop signals workers to drain and exit. Safe to call once; further
-// Submit calls after Stop will block until queue space is available
-// (none, since workers are exiting) and may panic if the queue is closed.
-// Callers should ensure no Submits race a Stop.
+// Stop signals workers to drain and exit. Safe to call once. Concurrent
+// Submits during/after Stop are dropped silently rather than panicking on
+// a closed channel.
 func (d *CallbackDispatcher) Stop() {
-	close(d.stop)
+	d.closeMu.Lock()
+	if d.closed {
+		d.closeMu.Unlock()
+		return
+	}
+	d.closed = true
 	close(d.queue)
+	d.closeMu.Unlock()
+	close(d.stop)
 	<-d.done
 }
