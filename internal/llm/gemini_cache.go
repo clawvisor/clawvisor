@@ -68,6 +68,9 @@ func NewGeminiCacheManager(cfg GeminiCacheManagerConfig) (*GeminiCacheManager, e
 	if cfg.SystemPrompt == "" {
 		return nil, fmt.Errorf("gemini cache: SystemPrompt is required")
 	}
+	if cfg.TTL < 0 {
+		return nil, fmt.Errorf("gemini cache: TTL must be non-negative (got %s)", cfg.TTL)
+	}
 	if cfg.TTL == 0 {
 		cfg.TTL = 30 * time.Minute
 	}

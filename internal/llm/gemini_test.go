@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -296,5 +297,50 @@ func TestClient_Gemini_NewClient_GlobalRegionUsesUnprefixedHost(t *testing.T) {
 	want := "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
 	if got != want {
 		t.Errorf("global endpoint:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
+func TestNewGeminiCacheManager_RejectsNegativeTTL(t *testing.T) {
+	// Regression: negative TTL would propagate to time.NewTicker in the
+	// refresh goroutine and panic the process. Constructor must reject it.
+	_, err := llm.NewGeminiCacheManager(llm.GeminiCacheManagerConfig{
+		Project:      "p",
+		Region:       "global",
+		Model:        "gemini-test",
+		SystemPrompt: "sys",
+		TTL:          -1 * time.Second,
+		TokenSource:  staticToken{},
+	})
+	if err == nil {
+		t.Fatal("expected error for negative TTL, got nil")
+	}
+	if !strings.Contains(err.Error(), "TTL") {
+		t.Errorf("error should mention TTL, got: %v", err)
+	}
+}
+
+func TestClient_Gemini_LargeSuccessResponse_ReadInFull(t *testing.T) {
+	// Regression: an earlier version capped resp body reads at 64KB even on
+	// success, so long extraction outputs (8192-token cap, plus per-part
+	// thoughtSignature blobs) silently truncated mid-JSON and the decoder
+	// returned a parse error on otherwise valid responses. The success path
+	// must read the entire body.
+	const partLen = 200 * 1024 // 200KB of text — well past the old 64KB cap
+	largeText := strings.Repeat("x", partLen)
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(geminiResponse(largeText, 0))
+	})
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(got) != partLen {
+		t.Errorf("text length: got %d bytes, want %d (response was truncated)", len(got), partLen)
 	}
 }

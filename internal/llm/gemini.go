@@ -127,8 +127,10 @@ func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []Cha
 		return "", nil, err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
+		// Limit only error responses — they're small JSON and we don't
+		// want to slurp a multi-MB body just to format an error message.
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		if resp.StatusCode == http.StatusNotFound && cacheName != "" {
 			return "", nil, fmt.Errorf("%w: url=%s body_len=%d server=%q via=%q content_type=%q body=%s",
 				ErrGeminiCacheNotFound, c.endpoint, len(respBody),
@@ -141,7 +143,14 @@ func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []Cha
 			resp.Header.Get("Server"), resp.Header.Get("Via"),
 			resp.Header.Get("Content-Type"))
 	}
-
+	// Successful responses can be arbitrarily large depending on
+	// maxOutputTokens (extractor uses 8192) plus per-part thoughtSignature
+	// blobs. Read in full to avoid mid-document truncation that would crash
+	// the JSON decoder on otherwise valid responses.
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, fmt.Errorf("llm: read gemini response: %w", err)
+	}
 	return decodeGeminiResponse(respBody)
 }
 

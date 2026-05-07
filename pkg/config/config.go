@@ -500,6 +500,15 @@ func Load(path string) (*Config, error) {
 			cfg.LLM.TimeoutSeconds = n
 		}
 	}
+	if v := os.Getenv("CLAWVISOR_LLM_PROJECT"); v != "" {
+		cfg.LLM.Project = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_REGION"); v != "" {
+		cfg.LLM.Region = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_GEMINI_THINKING_LEVEL"); v != "" {
+		cfg.LLM.GeminiThinkingLevel = v
+	}
 
 	// Per-subsection overrides (take precedence over shared)
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_ENABLED"); v != "" {
@@ -519,6 +528,17 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_FAIL_CLOSED"); v != "" {
 		cfg.LLM.Verification.FailClosed = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_GEMINI_CACHE_ENABLED"); v != "" {
+		ensureGeminiCache(&cfg.LLM.Verification.GeminiCache).Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_GEMINI_CACHE_REGION"); v != "" {
+		ensureGeminiCache(&cfg.LLM.Verification.GeminiCache).Region = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_VERIFICATION_GEMINI_CACHE_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			ensureGeminiCache(&cfg.LLM.Verification.GeminiCache).TTLSeconds = n
+		}
 	}
 
 	if v := os.Getenv("CLAWVISOR_LLM_TASK_RISK_ENABLED"); v != "" {
@@ -551,6 +571,17 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_MODEL"); v != "" {
 		cfg.LLM.ChainContext.Model = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_GEMINI_CACHE_ENABLED"); v != "" {
+		ensureGeminiCache(&cfg.LLM.ChainContext.GeminiCache).Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_GEMINI_CACHE_REGION"); v != "" {
+		ensureGeminiCache(&cfg.LLM.ChainContext.GeminiCache).Region = v
+	}
+	if v := os.Getenv("CLAWVISOR_LLM_CHAIN_CONTEXT_GEMINI_CACHE_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			ensureGeminiCache(&cfg.LLM.ChainContext.GeminiCache).TTLSeconds = n
+		}
 	}
 
 	if v := os.Getenv("CLAWVISOR_LLM_ADAPTER_GEN_ENABLED"); v != "" {
@@ -686,17 +717,6 @@ func Load(path string) (*Config, error) {
 		cfg.Telemetry.Endpoint = v
 	}
 
-	// Clear the Anthropic-default Endpoint when the user picks a non-Anthropic
-	// provider in YAML. Without this, the Default()'s Anthropic URL ("https://
-	// api.anthropic.com/v1") gets inherited by every sub-block, and providers
-	// that build their own endpoint from project/region/model (gemini, vertex)
-	// see a non-empty Endpoint and skip the URL builder, then POST their
-	// provider-shaped JSON to Anthropic's API and get an empty-body 404.
-	if cfg.LLM.Provider != "" && cfg.LLM.Provider != "anthropic" &&
-		cfg.LLM.Endpoint == "https://api.anthropic.com/v1" {
-		cfg.LLM.Endpoint = ""
-	}
-
 	// Inherit: fill empty subsection fields from shared LLM config.
 	inheritLLMDefaults(&cfg.LLM.Verification.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.TaskRisk.LLMProviderConfig, &cfg.LLM)
@@ -719,13 +739,32 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// ensureGeminiCache lazily allocates a sub-block's GeminiCache and returns
+// the pointer for chained field assignment from env-var overrides.
+func ensureGeminiCache(p **GeminiCacheConfig) *GeminiCacheConfig {
+	if *p == nil {
+		*p = &GeminiCacheConfig{}
+	}
+	return *p
+}
+
 // inheritLLMDefaults fills empty fields in sub with the shared LLM-level defaults.
 func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	if sub.Provider == "" {
 		sub.Provider = shared.Provider
 	}
 	if sub.Endpoint == "" {
-		sub.Endpoint = shared.Endpoint
+		// Don't inherit the Anthropic-default endpoint when this sub-block's
+		// effective provider is non-Anthropic. Default() bakes
+		// Endpoint="https://api.anthropic.com/v1" so existing Anthropic users
+		// don't have to set it; but if a sub-block runs on gemini/vertex,
+		// inheriting that URL would cause provider-shaped JSON to POST to
+		// Anthropic's API (Cloudflare empty-body 404). Leaving Endpoint empty
+		// lets the per-provider URL builder in NewClient kick in. Covers both
+		// "top-level switched to gemini" and "mixed providers" configs.
+		if sub.Provider == "anthropic" || shared.Endpoint != "https://api.anthropic.com/v1" {
+			sub.Endpoint = shared.Endpoint
+		}
 	}
 	if sub.APIKey == "" {
 		sub.APIKey = shared.APIKey
