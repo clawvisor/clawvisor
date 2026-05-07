@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"net"
 	"net/http"
 	"net/http/httptest"
 )
@@ -46,10 +47,10 @@ func (c *Client) handleRequest(ctx context.Context, id string, payload HTTPReque
 	}
 	// Attribute the synthesized request to the originating client IP so
 	// per-IP rate limits and audit logs aren't all coalesced under an
-	// empty RemoteAddr. Format must include a port for net.SplitHostPort
-	// to round-trip correctly downstream.
+	// empty RemoteAddr. JoinHostPort handles IPv6 bracketing — bare
+	// "addr:0" concatenation breaks for "::1" and any other IPv6 literal.
 	if payload.ClientIP != "" {
-		req.RemoteAddr = payload.ClientIP + ":0"
+		req.RemoteAddr = net.JoinHostPort(payload.ClientIP, "0")
 	}
 
 	rec := httptest.NewRecorder()

@@ -407,8 +407,13 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 }
 
 func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	// Refuse rotation for agents whose tokens are bounded by an expiry
+	// (MCP OAuth, relay-pairing). Otherwise the rotated token would inherit
+	// the original expiry — possibly already in the past — silently giving
+	// the user a token that won't work. They must re-pair through the same
+	// flow that issued the original to get a fresh expiry.
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET token_hash = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		`UPDATE agents SET token_hash = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND token_expires_at IS NULL`,
 		newTokenHash, id, userID,
 	)
 	if err != nil {
@@ -416,6 +421,16 @@ func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash s
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// Distinguish "not found" from "exists but has expiry" so the
+		// handler can return the right HTTP code with a useful hint.
+		var hasExpiry bool
+		row := s.db.QueryRowContext(ctx,
+			`SELECT token_expires_at IS NOT NULL FROM agents WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			id, userID,
+		)
+		if scanErr := row.Scan(&hasExpiry); scanErr == nil && hasExpiry {
+			return store.ErrConflict
+		}
 		return store.ErrNotFound
 	}
 	return nil

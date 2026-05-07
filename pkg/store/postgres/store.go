@@ -339,14 +339,24 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 }
 
 func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	// See sqlite.Store.RotateAgentToken — refuse rotation for expiry-bound
+	// agents because the rotated token would inherit a possibly-past expiry.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE agents SET token_hash = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+		`UPDATE agents SET token_hash = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL AND token_expires_at IS NULL`,
 		newTokenHash, id, userID,
 	)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var hasExpiry bool
+		row := s.pool.QueryRow(ctx,
+			`SELECT token_expires_at IS NOT NULL FROM agents WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			id, userID,
+		)
+		if scanErr := row.Scan(&hasExpiry); scanErr == nil && hasExpiry {
+			return store.ErrConflict
+		}
 		return store.ErrNotFound
 	}
 	return nil

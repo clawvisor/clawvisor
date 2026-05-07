@@ -309,7 +309,7 @@ type Agent struct {
 	Description string `json:"description,omitempty"`
 	TokenHash   string `json:"-"`
 	OrgID       string `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt   time.Time
+	CreatedAt   time.Time `json:"created_at"`
 	// TokenExpiresAt bounds the lifetime of a leaked bearer token. nil
 	// means no expiry — preserved for legacy POST /api/agents tokens that
 	// the user owns end-to-end. MCP OAuth and relay-pairing flows write a

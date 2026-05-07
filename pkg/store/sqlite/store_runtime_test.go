@@ -550,6 +550,50 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 }
 
+// TestRotateAgentToken_RejectsExpiringAgents is the regression guard
+// against silently re-issuing tokens that inherit a (possibly past)
+// expiry. Agents minted with a bounded lifetime — MCP/relay flows —
+// must re-pair to refresh; the generic rotate endpoint refuses them
+// with ErrConflict so the handler can return a 409 with a useful hint.
+func TestRotateAgentToken_RejectsExpiringAgents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "rotate@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Long-lived agent: rotation succeeds.
+	long, err := st.CreateAgent(ctx, user.ID, "long-lived", "tok-long")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.RotateAgentToken(ctx, long.ID, user.ID, "tok-long-rotated"); err != nil {
+		t.Fatalf("rotate(long-lived): unexpected err %v", err)
+	}
+
+	// Bounded-expiry agent: rotation refused with ErrConflict.
+	exp := time.Now().UTC().Add(24 * time.Hour)
+	scoped, err := st.CreateAgentWithExpiry(ctx, user.ID, "scoped", "tok-scoped", exp)
+	if err != nil {
+		t.Fatalf("CreateAgentWithExpiry: %v", err)
+	}
+	if err := st.RotateAgentToken(ctx, scoped.ID, user.ID, "tok-scoped-rotated"); err != store.ErrConflict {
+		t.Fatalf("rotate(scoped): expected ErrConflict, got %v", err)
+	}
+
+	// Unknown agent ID still surfaces as ErrNotFound.
+	if err := st.RotateAgentToken(ctx, "no-such-id", user.ID, "tok-x"); err != store.ErrNotFound {
+		t.Fatalf("rotate(missing): expected ErrNotFound, got %v", err)
+	}
+}
+
 // TestAgentTokenExpiry_RoundTrip verifies that an agent created with a
 // finite token expiry surfaces TokenExpiresAt back through GetAgentByToken,
 // and that an agent created via the legacy no-expiry constructor reports

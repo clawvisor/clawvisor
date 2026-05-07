@@ -103,23 +103,34 @@ func TestHandleRequest(t *testing.T) {
 // a ClientIP, the synthesized request must surface it as r.RemoteAddr so
 // per-IP rate limits and audit logs apply correctly.
 func TestHandleRequest_ClientIPSetsRemoteAddr(t *testing.T) {
-	gotRemoteAddr := ""
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotRemoteAddr = r.RemoteAddr
-		w.WriteHeader(http.StatusOK)
-	})
-	c := &Client{handler: handler, logger: slog.Default()}
-
-	payload := HTTPRequestPayload{
-		Method:   "GET",
-		Path:     "/api/health",
-		Headers:  map[string][]string{},
-		Body:     "",
-		ClientIP: "203.0.113.7",
+	cases := []struct {
+		name     string
+		clientIP string
+		want     string
+	}{
+		{"ipv4", "203.0.113.7", "203.0.113.7:0"},
+		// IPv6 literals must be bracketed so net.SplitHostPort downstream
+		// (and ipKeyFn / audit logs) parses them correctly.
+		{"ipv6", "2001:db8::1", "[2001:db8::1]:0"},
+		{"ipv6 loopback", "::1", "[::1]:0"},
 	}
-	c.handleRequest(context.Background(), "test-id", payload)
-
-	if gotRemoteAddr != "203.0.113.7:0" {
-		t.Fatalf("expected RemoteAddr=203.0.113.7:0, got %q", gotRemoteAddr)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotRemoteAddr := ""
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotRemoteAddr = r.RemoteAddr
+				w.WriteHeader(http.StatusOK)
+			})
+			c := &Client{handler: handler, logger: slog.Default()}
+			c.handleRequest(context.Background(), "test-id", HTTPRequestPayload{
+				Method:   "GET",
+				Path:     "/api/health",
+				Headers:  map[string][]string{},
+				ClientIP: tc.clientIP,
+			})
+			if gotRemoteAddr != tc.want {
+				t.Fatalf("RemoteAddr=%q, want %q", gotRemoteAddr, tc.want)
+			}
+		})
 	}
 }

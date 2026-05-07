@@ -233,6 +233,14 @@ func (h *AgentsHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
 			return
 		}
+		if err == store.ErrConflict {
+			// Agent was issued by an MCP/relay flow that bounds the
+			// token's lifetime. Rotation here would silently re-issue a
+			// token with the same (possibly past) expiry.
+			writeError(w, http.StatusConflict, "ROTATION_NOT_ALLOWED",
+				"this agent's token has a bounded expiry; re-pair through the original MCP or relay flow to get a fresh token")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not rotate token")
 		return
 	}
