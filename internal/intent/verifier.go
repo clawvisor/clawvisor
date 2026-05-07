@@ -137,7 +137,12 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	start := time.Now()
 
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	if v.geminiCacheNameFn != nil {
+	// Lenient mode appends a per-call addendum to the system prompt. The
+	// Gemini cached system instruction holds only the strict base prompt,
+	// and Gemini drops systemInstruction when cachedContent is set, so a
+	// cached lenient call would silently revert to strict. Bypass the
+	// cache so the full system prompt is inlined.
+	if v.geminiCacheNameFn != nil && !req.Lenient {
 		client.AttachGeminiCacheNameFn(v.geminiCacheNameFn)
 	}
 	userMsg := buildVerificationUserMessage(req)
