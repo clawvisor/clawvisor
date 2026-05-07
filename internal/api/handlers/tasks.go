@@ -59,6 +59,28 @@ type TasksHandler struct {
 	llmHealth        *llm.Health             // may be nil; needed for approval check LLM calls
 	agentPairer      notify.AgentGroupPairer // may be nil; set via SetGroupApproval
 	localSvcProvider LocalServiceProvider    // may be nil; set via SetLocalServiceProvider
+	cbDispatch       *CallbackDispatcher     // bounded callback delivery; may be nil
+}
+
+// SetCallbackDispatcher wires a bounded callback delivery pool. When unset,
+// callback delivery falls back to a safeGo-wrapped inline goroutine.
+func (h *TasksHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
+	h.cbDispatch = d
+}
+
+// dispatchCallback enqueues a payload for delivery via the bounded
+// dispatcher when available, or spawns a panic-safe goroutine otherwise.
+func (h *TasksHandler) dispatchCallback(url string, payload *callback.Payload, signingKey string) {
+	if url == "" || payload == nil {
+		return
+	}
+	if h.cbDispatch != nil {
+		h.cbDispatch.Submit(url, payload, signingKey)
+		return
+	}
+	safeGo(h.logger, "callback delivery (inline)", func() {
+		_ = callback.DeliverResult(context.Background(), url, payload, signingKey)
+	})
 }
 
 // SetLocalServiceProvider configures the local daemon service provider for
@@ -612,13 +634,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// Deliver callback to agent if configured.
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
 			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-			go func() {
-				_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-					Type:   "task",
-					TaskID: task.ID,
-					Status: "approved",
-				}, cbKey)
-			}()
+			h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+				Type:   "task",
+				TaskID: task.ID,
+				Status: "approved",
+			}, cbKey)
 		}
 
 		h.publishTasksAndQueue(agent.UserID)
@@ -1029,13 +1049,11 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "approved",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "approved",
+		}, cbKey)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -1230,13 +1248,11 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "denied",
+		}, cbKey)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1575,13 +1591,11 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expanded",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expanded",
+		}, cbKey)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -1651,13 +1665,11 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expansion_denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expansion_denied",
+		}, cbKey)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1697,13 +1709,11 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "approved",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "approved",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1732,13 +1742,11 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "denied",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1774,13 +1782,11 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expanded",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expanded",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1821,13 +1827,11 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expansion_denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expansion_denied",
+		}, cbKey)
 	}
 	return nil
 }

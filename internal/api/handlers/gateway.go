@@ -84,6 +84,7 @@ type GatewayHandler struct {
 	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
 	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
 	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
+	cbDispatch       *CallbackDispatcher  // bounded callback delivery; may be nil
 }
 
 func NewGatewayHandler(
@@ -135,6 +136,30 @@ func (h *GatewayHandler) SetLocalServiceExecutor(e LocalServiceExecutor) {
 // request-time action validation.
 func (h *GatewayHandler) SetLocalServiceProvider(p LocalServiceProvider) {
 	h.localSvcProvider = p
+}
+
+// SetCallbackDispatcher wires a bounded callback delivery pool. When unset,
+// callback delivery falls back to a safeGo-wrapped inline goroutine — still
+// panic-safe but with no concurrency cap.
+func (h *GatewayHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
+	h.cbDispatch = d
+}
+
+// dispatchCallback enqueues a payload for delivery via the bounded
+// dispatcher when available, or spawns a panic-safe goroutine otherwise.
+func (h *GatewayHandler) dispatchCallback(url string, payload *callback.Payload, signingKey string) {
+	if url == "" || payload == nil {
+		return
+	}
+	if h.cbDispatch != nil {
+		h.cbDispatch.Submit(url, payload, signingKey)
+		return
+	}
+	safeGo(h.logger, "callback delivery (inline)", func() {
+		cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = callback.DeliverResult(cbCtx, url, payload, signingKey)
+	})
 }
 
 // HandleRequest is the main gateway entry point.
@@ -984,13 +1009,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				if req.Context.CallbackURL != "" {
 					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-					go func() {
-						cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-							Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
-						}, cbKey)
-					}()
+					h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
+						Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
+					}, cbKey)
 				}
 				resp := map[string]any{
 					"status":     "error",
@@ -1030,7 +1051,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				markCtx, markCancel := context.WithTimeout(context.Background(), 2*time.Second)
 				h.extractTrack.MarkPending(markCtx, req.TaskID, chainSessionID, auditID)
 				markCancel()
-				go func() {
+				safeGo(h.logger, "chain context extraction", func() {
 					defer func() {
 						doneCtx, doneCancel := context.WithTimeout(context.Background(), 2*time.Second)
 						h.extractTrack.MarkDone(doneCtx, req.TaskID, chainSessionID, auditID)
@@ -1075,18 +1096,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						}
 						saveCancel()
 					}
-				}()
+				})
 			}
 
 			if req.Context.CallbackURL != "" {
 				cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-				go func() {
-					cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-						Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
-					}, cbKey)
-				}()
+				h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
+					Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
+				}, cbKey)
 			}
 			resp := map[string]any{
 				"status":     "executed",

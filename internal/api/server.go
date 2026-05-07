@@ -76,7 +76,8 @@ type Server struct {
 	tasksHandler       *handlers.TasksHandler
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
-	llmVerifier        *intent.LLMVerifier // verdict cache cleanup target; nil when verification disabled
+	llmVerifier        *intent.LLMVerifier          // verdict cache cleanup target; nil when verification disabled
+	cbDispatcher       *handlers.CallbackDispatcher // bounded callback delivery pool
 
 	pushNotifier         *push.Notifier                // concrete push notifier; may be nil
 	msgBuffer            groupchat.Buffer              // group chat message buffer; may be nil
@@ -452,10 +453,19 @@ func (s *Server) routes() http.Handler {
 		extractor = ext
 	}
 
+	// Bounded callback delivery pool — shared across all handlers that
+	// dispatch agent callbacks, so a slow downstream agent can't flood
+	// the daemon with goroutines.
+	if s.cbDispatcher == nil {
+		s.cbDispatcher = handlers.NewCallbackDispatcher(16, 1024, s.logger)
+		s.cbDispatcher.Start(16)
+	}
+
 	gatewayHandler := handlers.NewGatewayHandler(
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	gatewayHandler.SetCallbackDispatcher(s.cbDispatcher)
 	if s.llmCfg.Verification.Enabled {
 		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
 	}
@@ -492,10 +502,12 @@ func (s *Server) routes() http.Handler {
 		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
+	approvalsHandler.SetCallbackDispatcher(s.cbDispatcher)
 	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
+	tasksHandler.SetCallbackDispatcher(s.cbDispatcher)
 	if s.dedupCache != nil {
 		tasksHandler.SetDedupCache(s.dedupCache)
 	}
@@ -1204,6 +1216,12 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		// Drain in-flight callback deliveries before closing the store so
+		// the dispatcher's worker context still has a usable backend if it
+		// races into a final delivery attempt.
+		if s.cbDispatcher != nil {
+			s.cbDispatcher.Stop()
 		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {

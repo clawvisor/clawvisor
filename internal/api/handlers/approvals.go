@@ -34,6 +34,7 @@ type ApprovalsHandler struct {
 	assessor   taskrisk.Assessor
 	logger     *slog.Logger
 	eventHub   events.EventHub
+	cbDispatch *CallbackDispatcher // bounded callback delivery; may be nil (falls back to inline panic-safe goroutines)
 }
 
 func NewApprovalsHandler(st store.Store, v vault.Vault, adapterReg *adapters.Registry, notifier notify.Notifier, cfg config.Config, assessor taskrisk.Assessor, logger *slog.Logger, eventHub events.EventHub) *ApprovalsHandler {
@@ -47,6 +48,30 @@ func NewApprovalsHandler(st store.Store, v vault.Vault, adapterReg *adapters.Reg
 		logger:     logger,
 		eventHub:   eventHub,
 	}
+}
+
+// SetCallbackDispatcher wires a bounded callback delivery pool into the
+// handler. When unset, callback delivery falls back to a safeGo-wrapped
+// inline goroutine — still panic-safe but with no concurrency cap.
+func (h *ApprovalsHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
+	h.cbDispatch = d
+}
+
+// dispatchCallback enqueues a payload for delivery via the bounded
+// dispatcher when available, or spawns a panic-safe goroutine otherwise.
+func (h *ApprovalsHandler) dispatchCallback(url string, payload *callback.Payload, signingKey string) {
+	if url == "" || payload == nil {
+		return
+	}
+	if h.cbDispatch != nil {
+		h.cbDispatch.Submit(url, payload, signingKey)
+		return
+	}
+	safeGo(h.logger, "callback delivery (inline)", func() {
+		cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = callback.DeliverResult(cbCtx, url, payload, signingKey)
+	})
 }
 
 // List returns pending approvals for the authenticated user.
@@ -209,17 +234,13 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 		if promotedTask != nil {
 			taskID = promotedTask.ID
 		}
-		go func() {
-			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = callback.DeliverResult(cbCtx, callbackURL, &callback.Payload{
-				Type:      "request",
-				RequestID: requestID,
-				TaskID:    taskID,
-				Status:    "approved",
-				AuditID:   auditID,
-			}, cbKey)
-		}()
+		h.dispatchCallback(callbackURL, &callback.Payload{
+			Type:      "request",
+			RequestID: requestID,
+			TaskID:    taskID,
+			Status:    "approved",
+			AuditID:   auditID,
+		}, cbKey)
 	}
 	return promotedTask, nil
 }
@@ -252,16 +273,12 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, denyBlob.AgentID)
-		go func() {
-			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
-				Type:      "request",
-				RequestID: requestID,
-				Status:    "denied",
-				AuditID:   pa.AuditID,
-			}, cbKey)
-		}()
+		h.dispatchCallback(*pa.CallbackURL, &callback.Payload{
+			Type:      "request",
+			RequestID: requestID,
+			Status:    "denied",
+			AuditID:   pa.AuditID,
+		}, cbKey)
 	}
 
 	return nil
@@ -311,16 +328,12 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(r.Context(), denyBlob.AgentID)
-		go func() {
-			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
-				Type:      "request",
-				RequestID: requestID,
-				Status:    "denied",
-				AuditID:   pa.AuditID,
-			}, cbKey)
-		}()
+		h.dispatchCallback(*pa.CallbackURL, &callback.Payload{
+			Type:      "request",
+			RequestID: requestID,
+			Status:    "denied",
+			AuditID:   pa.AuditID,
+		}, cbKey)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -375,18 +388,14 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 		cbErr := errMsg
 		requestID := pa.RequestID
 		auditID := pa.AuditID
-		go func() {
-			cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = callback.DeliverResult(cbCtx, *pa.CallbackURL, &callback.Payload{
-				Type:      "request",
-				RequestID: requestID,
-				Status:    outcome,
-				Result:    cbResult,
-				Error:     cbErr,
-				AuditID:   auditID,
-			}, cbKey)
-		}()
+		h.dispatchCallback(*pa.CallbackURL, &callback.Payload{
+			Type:      "request",
+			RequestID: requestID,
+			Status:    outcome,
+			Result:    cbResult,
+			Error:     cbErr,
+			AuditID:   auditID,
+		}, cbKey)
 	}
 
 	return result, outcome, errMsg
