@@ -64,16 +64,28 @@ func (h *GatewayHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
 	// route-level middleware already consumed one token for the batch
 	// envelope; without this loop a single token would buy N adapter calls
 	// + N LLM verifications + N audit writes.
+	//
+	// The middleware already wrote X-RateLimit-Remaining reflecting only
+	// the envelope's 1 token. Overwrite it after our internal charges so
+	// the caller can actually see how much budget the batch consumed —
+	// otherwise the header always reports remaining=limit-1 regardless of
+	// batch size, hiding the real burn rate.
 	if h.gatewayRL != nil && h.gatewayRLKey != nil {
 		if key := h.gatewayRLKey(r); key != "" {
+			var lastRemaining int
+			var lastResetTime time.Time
 			for i := 1; i < len(batch.Requests); i++ {
-				allowed, _, resetTime := h.gatewayRL.Allow(key)
+				allowed, remaining, resetTime := h.gatewayRL.Allow(key)
+				lastRemaining = remaining
+				lastResetTime = resetTime
 				if !allowed {
 					retryAfter := time.Until(resetTime).Seconds()
 					if retryAfter < 1 {
 						retryAfter = 1
 					}
 					w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter))
+					w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+					w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
 					writeDetailedError(w, http.StatusTooManyRequests, apiErrorDetail{
 						Error: "rate limit exceeded for batch fan-out",
 						Code:  "RATE_LIMITED",
@@ -81,6 +93,10 @@ func (h *GatewayHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
 					})
 					return
 				}
+			}
+			if len(batch.Requests) > 1 {
+				w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(lastRemaining))
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(lastResetTime.Unix(), 10))
 			}
 		}
 	}
