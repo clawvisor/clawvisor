@@ -364,9 +364,13 @@ func New(
 	mux := s.routes()
 
 	s.http = &http.Server{
-		Addr:        cfg.Server.Addr(),
-		Handler:     mux,
-		ReadTimeout: 30 * time.Second,
+		Addr:    cfg.Server.Addr(),
+		Handler: mux,
+		// ReadHeaderTimeout caps how long a client may take to send the
+		// request line + headers. Without it, slowloris attacks can hold
+		// connections open indefinitely with one byte per second of headers.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		// WriteTimeout and IdleTimeout must exceed the long-poll cap
 		// (parseLongPollTimeout) and MCP SSE idle gaps. Otherwise the
 		// connection is torn down mid-handler and Cloud Run reports a 503.
