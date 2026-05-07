@@ -537,12 +537,21 @@ func (s *Server) routes() http.Handler {
 	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
 	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
 
-	ipKeyFn := func(r *http.Request) string {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
+	// Parse trusted-proxy CIDRs once. When r.RemoteAddr falls inside any of
+	// these networks, ipKeyFn honors X-Forwarded-For — otherwise the rate
+	// limiter would collapse to a single bucket on hosted deployments
+	// (e.g. Cloud Run) where every request appears to come from one IP.
+	trustedProxyNets := make([]*net.IPNet, 0, len(s.cfg.Server.TrustedProxies))
+	for _, cidr := range s.cfg.Server.TrustedProxies {
+		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return r.RemoteAddr
+			s.logger.Warn("ignoring invalid trusted_proxies CIDR", "cidr", cidr, "err", err)
+			continue
 		}
-		return host
+		trustedProxyNets = append(trustedProxyNets, n)
+	}
+	ipKeyFn := func(r *http.Request) string {
+		return clientIPFromRequest(r, trustedProxyNets)
 	}
 	agentKeyFn := func(r *http.Request) string {
 		if a := middleware.AgentFromContext(r.Context()); a != nil {
