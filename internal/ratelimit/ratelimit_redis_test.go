@@ -19,7 +19,11 @@ func TestNormalizeRedisTTL(t *testing.T) {
 		{"normal positive ttl", 42, 42 * time.Second},
 		{"key has no expiry (-1) → fall back to window", -1, window},
 		{"key missing (-2) → fall back to window", -2, window},
-		{"zero ttl → fall back to window", 0, window},
+		// 0 is "expires within the current second" — a valid value.
+		// Overriding it with the full window would tell clients to wait
+		// 60s when the bucket actually refills in <1s, defeating the
+		// purpose of the header.
+		{"zero ttl (sub-second to refill) preserved", 0, 0},
 		{"absurdly negative → fall back to window", -1000, window},
 	}
 	for _, tc := range cases {
