@@ -2179,6 +2179,48 @@ func (h *ServicesHandler) SetGoogleOAuthConfig(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// GetMicrosoftOAuthConfig checks whether Microsoft OAuth app credentials are configured.
+//
+// GET /api/system/microsoft-oauth
+// Auth: user JWT
+// Response: {"configured": true} or {"configured": false}
+func (h *ServicesHandler) GetMicrosoftOAuthConfig(w http.ResponseWriter, r *http.Request) {
+	clientID, _ := adapters.GetMicrosoftOAuthCredentials(r.Context(), h.vault)
+	writeJSON(w, http.StatusOK, map[string]any{"configured": clientID != ""})
+}
+
+// SetMicrosoftOAuthConfig stores Microsoft OAuth app credentials in the system vault.
+// Once stored, Microsoft adapters will immediately start returning OAuth configs
+// (no restart required).
+//
+// POST /api/system/microsoft-oauth
+// Auth: user JWT
+// Body: {"client_id": "...", "client_secret": "..."}
+// Response: {"ok": true}
+func (h *ServicesHandler) SetMicrosoftOAuthConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.ClientID == "" || body.ClientSecret == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "client_id and client_secret are required")
+		return
+	}
+
+	if err := adapters.SetMicrosoftOAuthCredentials(r.Context(), h.vault, body.ClientID, body.ClientSecret); err != nil {
+		h.logger.Error("failed to store Microsoft OAuth credentials", "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
+		return
+	}
+
+	h.logger.Info("Microsoft OAuth credentials stored in system vault")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // ListPKCECredentials returns all configured PKCE client IDs.
 //
 // GET /api/system/pkce-credentials

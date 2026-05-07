@@ -703,7 +703,7 @@ func gmailGET(ctx context.Context, client *http.Client, url string, out any) err
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("gmail API %s: %d: %s", url, resp.StatusCode, truncate(string(body), 200))
+		return fmt.Errorf("gmail API %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
 }
@@ -725,7 +725,7 @@ func gmailPOST(ctx context.Context, client *http.Client, url string, payload any
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("gmail API POST %s: %d: %s", url, resp.StatusCode, truncate(string(body), 200))
+		return fmt.Errorf("gmail API POST %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
 }
@@ -1202,9 +1202,3 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	return 0, false
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
-	}
-	return s
-}

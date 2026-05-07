@@ -155,6 +155,9 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// Reads credentials lazily — supports adding OAuth creds without restart.
 	oauthProvider := adapters.NewVaultOAuthProvider(v)
 
+	// Create a vault-backed OAuth provider for Microsoft services.
+	msOAuthProvider := adapters.NewMicrosoftVaultOAuthProvider(v)
+
 	// Build Go action overrides for Google services that need complex logic
 	// (MIME encoding, multipart uploads, dual API calls) beyond what YAML
 	// expressions can handle. Calendar, Contacts, and Drive search_files
@@ -180,17 +183,17 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	pplx := perplexityadapter.New()
 	goOverrides["perplexity:chat"] = pplx.Execute
 
-	outlook := outlookadapter.New()
+	outlook := outlookadapter.New(msOAuthProvider)
 	for _, action := range []string{"send_message", "create_event"} {
 		goOverrides["microsoft.outlook:"+action] = outlook.Execute
 	}
 
-	onedrive := onedriveadapter.New()
+	onedrive := onedriveadapter.New(msOAuthProvider)
 	for _, action := range []string{"list_files", "download_file", "upload_file"} {
 		goOverrides["microsoft.onedrive:"+action] = onedrive.Execute
 	}
 
-	teams := teamsadapter.New()
+	teams := teamsadapter.New(msOAuthProvider)
 	goOverrides["microsoft.teams:send_message"] = teams.Execute
 
 	// Build adapter loading source (for startup) and generator factory (for per-request use).
@@ -230,6 +233,9 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		meta := ya.ServiceMetadata()
 		if meta.OAuthEndpoint == "google" {
 			ya.SetOAuthProvider(oauthProvider)
+		}
+		if meta.OAuthEndpoint == "microsoft" {
+			ya.SetOAuthProvider(msOAuthProvider)
 		}
 		adapterReg.Register(ya)
 	}

@@ -354,8 +354,8 @@ func activatePKCEFlowOrAPIKey(apiClient *client.Client, svc client.ServiceInfo) 
 }
 
 // activateOAuthService handles OAuth activation. For services using the
-// Google OAuth endpoint, if app credentials aren't configured yet, it
-// collects them and stores them in the system vault (no restart required).
+// Google or Microsoft OAuth endpoint, if app credentials aren't configured
+// yet, it collects them and stores them in the system vault (no restart required).
 func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {
 	// Google OAuth requires app credentials (client_id/secret) in the system vault.
 	// If they're absent, collect them via prompt and store via the API.
@@ -370,6 +370,23 @@ func activateOAuthService(apiClient *client.Client, svc client.ServiceInfo, data
 			}
 			// Re-check — user may have left fields blank.
 			configured, _ = apiClient.GoogleOAuthConfigured()
+			if !configured {
+				return nil // user skipped, back to menu
+			}
+		}
+	}
+
+	// Microsoft OAuth requires app credentials (client_id/secret) in the system vault.
+	if svc.OAuthEndpoint == "microsoft" {
+		configured, err := apiClient.MicrosoftOAuthConfigured()
+		if err != nil {
+			return fmt.Errorf("checking Microsoft OAuth config: %w", err)
+		}
+		if !configured {
+			if err := collectAndStoreMicrosoftCreds(apiClient, svc.Name); err != nil {
+				return err
+			}
+			configured, _ = apiClient.MicrosoftOAuthConfigured()
 			if !configured {
 				return nil // user skipped, back to menu
 			}
@@ -462,6 +479,50 @@ func collectAndStoreGoogleCreds(apiClient *client.Client, serviceName string) er
 	return nil
 }
 
+// collectAndStoreMicrosoftCreds prompts for Microsoft OAuth client_id/secret
+// and stores them in the system vault via the API.
+func collectAndStoreMicrosoftCreds(apiClient *client.Client, serviceName string) error {
+	fmt.Println()
+	fmt.Println(dim.Padding(0, 2).Render(fmt.Sprintf(
+		"  %s requires Microsoft OAuth credentials (client_id and client_secret).",
+		serviceName,
+	)))
+	fmt.Println(dim.Padding(0, 2).Render(
+		"  Register an app at: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps",
+	))
+	fmt.Println(dim.Padding(0, 2).Render(
+		"  Guide: https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md",
+	))
+	fmt.Println()
+
+	var clientID, clientSecret string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Microsoft OAuth Application (client) ID").
+				Value(&clientID),
+			huh.NewInput().
+				Title("Microsoft OAuth Client Secret").
+				EchoMode(huh.EchoModePassword).
+				Value(&clientSecret),
+		),
+	).Run(); err != nil {
+		return err
+	}
+
+	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
+	if clientID == "" || clientSecret == "" {
+		return nil
+	}
+
+	if err := apiClient.SetMicrosoftOAuthConfig(clientID, clientSecret); err != nil {
+		return fmt.Errorf("storing Microsoft OAuth credentials: %w", err)
+	}
+
+	fmt.Printf("  %s Microsoft OAuth credentials saved.\n\n", green.Render("✓"))
+	return nil
+}
 // manageConnectedService shows options for an already-connected service:
 // add another account, disconnect, or go back.
 func manageConnectedService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {

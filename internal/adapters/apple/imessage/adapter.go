@@ -37,6 +37,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/version"
 )
@@ -518,15 +519,9 @@ func (a *IMessageAdapter) execHelper(ctx context.Context, reqBody []byte) ([]byt
 
 	cmd := exec.CommandContext(ctx, "open", "-W", "-g", "-j", "-i", stdinFile.Name(), "-o", stdoutFile.Name(), appDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("%w — %s", err, truncate(string(out), 200))
+		return nil, fmt.Errorf("%w — %s", err, format.Truncate(string(out), 200))
 	}
 
 	return os.ReadFile(stdoutFile.Name())
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
-	}
-	return s
-}

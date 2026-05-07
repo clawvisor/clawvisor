@@ -2,17 +2,24 @@ service:
   id: microsoft.onedrive
   display_name: OneDrive
   description: "List, search, upload, and download files in Microsoft OneDrive."
-  setup_url: "https://developer.microsoft.com/en-us/graph/graph-explorer"
-  key_hint: "Microsoft Graph access token"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md"
   icon_url: "/logos/microsoft-onedrive.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
     field: "mail"
 
 auth:
-  type: api_key
-  header: "Authorization"
-  header_prefix: "Bearer "
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://graph.microsoft.com/Files.ReadWrite"
+      - "https://graph.microsoft.com/User.Read"
+      - "offline_access"
+    endpoint: microsoft
+    vault_key: microsoft
+    scope_merge: true
+    authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
 api:
   base_url: "https://graph.microsoft.com/v1.0"
@@ -27,6 +34,7 @@ actions:
   list_files:
     display_name: "List files"
     risk: { category: read, sensitivity: low, description: "List files in a OneDrive folder" }
+    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
     method: GET
     path: "/me/drive/root/children"
     params:
@@ -48,6 +56,7 @@ actions:
   get_file:
     display_name: "Get file metadata"
     risk: { category: read, sensitivity: low, description: "Get metadata for a file or folder in OneDrive" }
+    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
     method: GET
     path: "/me/drive/items/{{.item_id}}"
     params:
@@ -67,6 +76,7 @@ actions:
   download_file:
     display_name: "Download file"
     risk: { category: read, sensitivity: low, description: "Download a file's content from OneDrive" }
+    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
     override: go
     params:
       item_id:
@@ -77,6 +87,7 @@ actions:
   upload_file:
     display_name: "Upload file"
     risk: { category: write, sensitivity: medium, description: "Upload a file to OneDrive" }
+    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
     override: go
     params:
       path:
@@ -91,6 +102,7 @@ actions:
   search_files:
     display_name: "Search files"
     risk: { category: search, sensitivity: low, description: "Search for files in OneDrive" }
+    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
     method: GET
     path: "/me/drive/root/search(q='{{.query}}')"
     params:

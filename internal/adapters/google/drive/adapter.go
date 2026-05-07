@@ -270,7 +270,7 @@ func (a *DriveAdapter) downloadFile(ctx context.Context, client *http.Client, pa
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("drive download_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("drive download_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 
 	result := map[string]any{
@@ -327,7 +327,7 @@ func (a *DriveAdapter) exportFile(ctx context.Context, client *http.Client, para
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("drive export_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 
 	result := map[string]any{
@@ -392,7 +392,7 @@ func (a *DriveAdapter) createFile(ctx context.Context, client *http.Client, para
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("drive create_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("drive create_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	var created struct {
 		ID   string `json:"id"`
@@ -443,7 +443,7 @@ func (a *DriveAdapter) updateFile(ctx context.Context, client *http.Client, para
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("drive update_file: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("drive update_file: status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	return &adapters.Result{
 		Summary: format.Summary("Updated file: %s", meta.Name),
@@ -477,7 +477,7 @@ func apiGET(ctx context.Context, client *http.Client, apiURL string, out any) er
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
 }
@@ -498,9 +498,3 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	return 0, false
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
-	}
-	return s
-}

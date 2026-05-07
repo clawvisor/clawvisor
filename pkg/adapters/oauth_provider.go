@@ -73,6 +73,77 @@ func GetGoogleOAuthCredentials(ctx context.Context, v vault.Vault) (clientID, cl
 	return cred.ClientID, cred.ClientSecret
 }
 
+// ── Microsoft OAuth provider ────────────────────────────────────────────────
+
+// microsoftOAuthCred is the JSON structure stored in the vault for Microsoft OAuth app credentials.
+type microsoftOAuthCred struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// MicrosoftVaultOAuthProvider reads Microsoft OAuth app credentials from the
+// vault under the system user. Falls back to env vars (MICROSOFT_CLIENT_ID,
+// MICROSOFT_CLIENT_SECRET) for backward compatibility with Docker Compose
+// deployments.
+type MicrosoftVaultOAuthProvider struct {
+	vault vault.Vault
+}
+
+// NewMicrosoftVaultOAuthProvider creates a provider that reads Microsoft OAuth
+// creds from the vault.
+func NewMicrosoftVaultOAuthProvider(v vault.Vault) *MicrosoftVaultOAuthProvider {
+	return &MicrosoftVaultOAuthProvider{vault: v}
+}
+
+func (p *MicrosoftVaultOAuthProvider) OAuthClientCredentials() (clientID, clientSecret string) {
+	// Check env vars first (backward compat for Docker/CI).
+	if id := os.Getenv("MICROSOFT_CLIENT_ID"); id != "" {
+		return id, os.Getenv("MICROSOFT_CLIENT_SECRET")
+	}
+
+	// Read from vault.
+	data, err := p.vault.Get(context.Background(), SystemUserID, SystemVaultKeyMicrosoftOAuth)
+	if err != nil || len(data) == 0 {
+		return "", ""
+	}
+
+	var cred microsoftOAuthCred
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return "", ""
+	}
+
+	return cred.ClientID, cred.ClientSecret
+}
+
+// SetMicrosoftOAuthCredentials stores Microsoft OAuth app credentials in the
+// system vault.
+func SetMicrosoftOAuthCredentials(ctx context.Context, v vault.Vault, clientID, clientSecret string) error {
+	data, err := json.Marshal(microsoftOAuthCred{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+	})
+	if err != nil {
+		return err
+	}
+	return v.Set(ctx, SystemUserID, SystemVaultKeyMicrosoftOAuth, data)
+}
+
+// GetMicrosoftOAuthCredentials reads Microsoft OAuth app credentials from the
+// system vault. Returns empty strings if not configured.
+func GetMicrosoftOAuthCredentials(ctx context.Context, v vault.Vault) (clientID, clientSecret string) {
+	data, err := v.Get(ctx, SystemUserID, SystemVaultKeyMicrosoftOAuth)
+	if err != nil || len(data) == 0 {
+		return "", ""
+	}
+	var cred microsoftOAuthCred
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return "", ""
+	}
+	return cred.ClientID, cred.ClientSecret
+}
+
+// ── PKCE client ID management ───────────────────────────────────────────────
+
 // pkceClientIDCred is the JSON structure stored in the vault for per-service PKCE client IDs.
 type pkceClientIDCred struct {
 	ClientID string `json:"client_id"`

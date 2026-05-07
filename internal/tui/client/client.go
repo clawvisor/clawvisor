@@ -491,6 +491,29 @@ func (c *Client) SetGoogleOAuthConfig(clientID, clientSecret string) error {
 	return c.post("/api/system/google-oauth", body, &resp)
 }
 
+// MicrosoftOAuthConfigured checks whether Microsoft OAuth app credentials are stored.
+func (c *Client) MicrosoftOAuthConfigured() (bool, error) {
+	var resp struct {
+		Configured bool `json:"configured"`
+	}
+	if err := c.get("/api/system/microsoft-oauth", nil, &resp); err != nil {
+		return false, err
+	}
+	return resp.Configured, nil
+}
+
+// SetMicrosoftOAuthConfig stores Microsoft OAuth app credentials in the system vault.
+func (c *Client) SetMicrosoftOAuthConfig(clientID, clientSecret string) error {
+	body := map[string]string{
+		"client_id":     clientID,
+		"client_secret": clientSecret,
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	return c.post("/api/system/microsoft-oauth", body, &resp)
+}
+
 // ── Agents ──────────────────────────────────────────────────────────────────
 
 func (c *Client) GetAgents() ([]Agent, error) {

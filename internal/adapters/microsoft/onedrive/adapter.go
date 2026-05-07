@@ -17,29 +17,36 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
-type Adapter struct{}
+// Adapter handles Go override actions for Microsoft OneDrive.
+type Adapter struct {
+	oauthProvider adapters.OAuthCredentialProvider
+}
 
-func New() *Adapter { return &Adapter{} }
+// New creates a OneDrive adapter with the given OAuth credential provider
+// for automatic token refresh.
+func New(provider adapters.OAuthCredentialProvider) *Adapter {
+	return &Adapter{oauthProvider: provider}
+}
 
 func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	token, err := microsoft.ExtractToken(req.Credential)
+	client, err := microsoft.HTTPClient(ctx, req.Credential, a.oauthProvider)
 	if err != nil {
 		return nil, fmt.Errorf("onedrive: %w", err)
 	}
 
 	switch req.Action {
 	case "list_files":
-		return a.listFiles(ctx, token, req.Params)
+		return a.listFiles(ctx, client, req.Params)
 	case "download_file":
-		return a.downloadFile(ctx, token, req.Params)
+		return a.downloadFile(ctx, client, req.Params)
 	case "upload_file":
-		return a.uploadFile(ctx, token, req.Params)
+		return a.uploadFile(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("onedrive: unsupported action %q", req.Action)
 	}
 }
 
-func (a *Adapter) listFiles(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) listFiles(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	folderPath, _ := params["folder_path"].(string)
 	top := 25
 	if t, ok := params["top"].(float64); ok {
@@ -67,7 +74,7 @@ func (a *Adapter) listFiles(ctx context.Context, token string, params map[string
 		Value []map[string]any `json:"value"`
 	}
 
-	if err := microsoft.GraphGET(ctx, token, endpoint, &out); err != nil {
+	if err := microsoft.GraphGET(ctx, client, endpoint, &out); err != nil {
 		return nil, fmt.Errorf("onedrive list_files: %w", err)
 	}
 
@@ -96,7 +103,7 @@ func (a *Adapter) listFiles(ctx context.Context, token string, params map[string
 	}, nil
 }
 
-func (a *Adapter) downloadFile(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	itemID, _ := params["item_id"].(string)
 	if itemID == "" {
 		return nil, fmt.Errorf("onedrive download_file: item_id is required")
@@ -108,19 +115,18 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	}
-	if err := microsoft.GraphGET(ctx, token, metaEndpoint, &meta); err != nil {
+	if err := microsoft.GraphGET(ctx, client, metaEndpoint, &meta); err != nil {
 		return nil, fmt.Errorf("onedrive download_file: metadata: %w", err)
 	}
 
 	downloadEndpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/content", itemID)
-	
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("onedrive download_file: %w", err)
 	}
@@ -156,10 +162,10 @@ func (a *Adapter) downloadFile(ctx context.Context, token string, params map[str
 	}, nil
 }
 
-func (a *Adapter) uploadFile(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	path, _ := params["path"].(string)
 	content, _ := params["content"].(string)
-	
+
 	if path == "" {
 		return nil, fmt.Errorf("onedrive upload_file: path is required")
 	}
@@ -174,10 +180,9 @@ func (a *Adapter) uploadFile(ctx context.Context, token string, params map[strin
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("onedrive upload_file: %w", err)
 	}

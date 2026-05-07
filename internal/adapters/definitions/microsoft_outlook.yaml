@@ -2,17 +2,26 @@ service:
   id: microsoft.outlook
   display_name: Outlook
   description: "Read, search, send, and manage emails and calendar events in Microsoft 365 Outlook."
-  setup_url: "https://developer.microsoft.com/en-us/graph/graph-explorer"
-  key_hint: "Microsoft Graph access token"
+  setup_url: "https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md"
   icon_url: "/logos/microsoft-outlook.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
     field: "mail"
 
 auth:
-  type: api_key
-  header: "Authorization"
-  header_prefix: "Bearer "
+  type: oauth2
+  oauth:
+    scopes:
+      - "https://graph.microsoft.com/Mail.Read"
+      - "https://graph.microsoft.com/Mail.Send"
+      - "https://graph.microsoft.com/Calendars.ReadWrite"
+      - "https://graph.microsoft.com/User.Read"
+      - "offline_access"
+    endpoint: microsoft
+    vault_key: microsoft
+    scope_merge: true
+    authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
 api:
   base_url: "https://graph.microsoft.com/v1.0"
@@ -27,6 +36,7 @@ actions:
   list_messages:
     display_name: "List messages"
     risk: { category: read, sensitivity: low, description: "List email messages from Outlook inbox" }
+    scopes: ["https://graph.microsoft.com/Mail.Read"]
     method: GET
     path: "/me/messages"
     params:
@@ -69,6 +79,7 @@ actions:
   get_message:
     display_name: "Get message"
     risk: { category: read, sensitivity: low, description: "Read a specific email message" }
+    scopes: ["https://graph.microsoft.com/Mail.Read"]
     method: GET
     path: "/me/messages/{{.message_id}}"
     params:
@@ -90,6 +101,7 @@ actions:
   send_message:
     display_name: "Send message"
     risk: { category: write, sensitivity: high, description: "Send email as the user via Outlook" }
+    scopes: ["https://graph.microsoft.com/Mail.Send"]
     method: POST
     path: "/me/sendMail"
     params:
@@ -111,6 +123,7 @@ actions:
   list_events:
     display_name: "List calendar events"
     risk: { category: read, sensitivity: low, description: "List calendar events from Outlook" }
+    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
     method: GET
     path: "/me/events"
     params:
@@ -140,6 +153,7 @@ actions:
   get_event:
     display_name: "Get calendar event"
     risk: { category: read, sensitivity: low, description: "Read a specific calendar event" }
+    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
     method: GET
     path: "/me/events/{{.event_id}}"
     params:
@@ -161,6 +175,7 @@ actions:
   create_event:
     display_name: "Create calendar event"
     risk: { category: write, sensitivity: medium, description: "Create a new calendar event" }
+    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
     override: go
     params:
       subject:

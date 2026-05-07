@@ -3,6 +3,7 @@ package outlook
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
@@ -10,27 +11,34 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
-type Adapter struct{}
+// Adapter handles Go override actions for Microsoft Outlook.
+type Adapter struct {
+	oauthProvider adapters.OAuthCredentialProvider
+}
 
-func New() *Adapter { return &Adapter{} }
+// New creates an Outlook adapter with the given OAuth credential provider
+// for automatic token refresh.
+func New(provider adapters.OAuthCredentialProvider) *Adapter {
+	return &Adapter{oauthProvider: provider}
+}
 
 func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	token, err := microsoft.ExtractToken(req.Credential)
+	client, err := microsoft.HTTPClient(ctx, req.Credential, a.oauthProvider)
 	if err != nil {
 		return nil, fmt.Errorf("outlook: %w", err)
 	}
 
 	switch req.Action {
 	case "send_message":
-		return a.sendMessage(ctx, token, req.Params)
+		return a.sendMessage(ctx, client, req.Params)
 	case "create_event":
-		return a.createEvent(ctx, token, req.Params)
+		return a.createEvent(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("outlook: unsupported action %q", req.Action)
 	}
 }
 
-func (a *Adapter) sendMessage(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
 	subject, _ := params["subject"].(string)
 	body, _ := params["body"].(string)
@@ -62,7 +70,7 @@ func (a *Adapter) sendMessage(ctx context.Context, token string, params map[stri
 		"saveToSentItems": "true",
 	}
 
-	if err := microsoft.GraphPOST(ctx, token, "https://graph.microsoft.com/v1.0/me/sendMail", payload, nil); err != nil {
+	if err := microsoft.GraphPOST(ctx, client, "https://graph.microsoft.com/v1.0/me/sendMail", payload, nil); err != nil {
 		return nil, fmt.Errorf("outlook send_message: %w", err)
 	}
 
@@ -75,7 +83,7 @@ func (a *Adapter) sendMessage(ctx context.Context, token string, params map[stri
 	}, nil
 }
 
-func (a *Adapter) createEvent(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) createEvent(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	subject, _ := params["subject"].(string)
 	start, _ := params["start"].(string)
 	end, _ := params["end"].(string)
@@ -144,7 +152,7 @@ func (a *Adapter) createEvent(ctx context.Context, token string, params map[stri
 		ID string `json:"id"`
 	}
 
-	if err := microsoft.GraphPOST(ctx, token, "https://graph.microsoft.com/v1.0/me/events", payload, &out); err != nil {
+	if err := microsoft.GraphPOST(ctx, client, "https://graph.microsoft.com/v1.0/me/events", payload, &out); err != nil {
 		return nil, fmt.Errorf("outlook create_event: %w", err)
 	}
 

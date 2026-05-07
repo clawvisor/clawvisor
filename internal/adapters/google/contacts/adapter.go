@@ -358,7 +358,7 @@ func apiGET(ctx context.Context, client *http.Client, apiURL string, out any) er
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, format.Truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
 }
@@ -379,9 +379,3 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	return 0, false
 }
 
-func truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
-	}
-	return s
-}

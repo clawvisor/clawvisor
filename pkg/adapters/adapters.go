@@ -107,6 +107,9 @@ const SystemUserID = "__system__"
 // SystemVaultKeyGoogleOAuth is the vault key for Google OAuth app credentials.
 const SystemVaultKeyGoogleOAuth = "google.oauth"
 
+// SystemVaultKeyMicrosoftOAuth is the vault key for Microsoft OAuth app credentials.
+const SystemVaultKeyMicrosoftOAuth = "microsoft.oauth"
+
 // SystemVaultKeyPKCEPrefix is the vault key prefix for per-service PKCE client IDs.
 // Stored as "__system__" / "pkce.{serviceID}" → {"client_id": "..."}.
 const SystemVaultKeyPKCEPrefix = "pkce."

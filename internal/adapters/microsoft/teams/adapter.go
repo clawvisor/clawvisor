@@ -3,31 +3,39 @@ package teams
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/microsoft"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
-type Adapter struct{}
+// Adapter handles Go override actions for Microsoft Teams.
+type Adapter struct {
+	oauthProvider adapters.OAuthCredentialProvider
+}
 
-func New() *Adapter { return &Adapter{} }
+// New creates a Teams adapter with the given OAuth credential provider
+// for automatic token refresh.
+func New(provider adapters.OAuthCredentialProvider) *Adapter {
+	return &Adapter{oauthProvider: provider}
+}
 
 func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.Result, error) {
-	token, err := microsoft.ExtractToken(req.Credential)
+	client, err := microsoft.HTTPClient(ctx, req.Credential, a.oauthProvider)
 	if err != nil {
 		return nil, fmt.Errorf("teams: %w", err)
 	}
 
 	switch req.Action {
 	case "send_message":
-		return a.sendMessage(ctx, token, req.Params)
+		return a.sendMessage(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("teams: unsupported action %q", req.Action)
 	}
 }
 
-func (a *Adapter) sendMessage(ctx context.Context, token string, params map[string]any) (*adapters.Result, error) {
+func (a *Adapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	teamID, _ := params["team_id"].(string)
 	channelID, _ := params["channel_id"].(string)
 	content, _ := params["content"].(string)
@@ -55,7 +63,7 @@ func (a *Adapter) sendMessage(ctx context.Context, token string, params map[stri
 		ID string `json:"id"`
 	}
 
-	if err := microsoft.GraphPOST(ctx, token, endpoint, payload, &out); err != nil {
+	if err := microsoft.GraphPOST(ctx, client, endpoint, payload, &out); err != nil {
 		return nil, fmt.Errorf("teams send_message: %w", err)
 	}
 

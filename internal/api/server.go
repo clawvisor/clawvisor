@@ -740,6 +740,8 @@ func (s *Server) routes() http.Handler {
 	// System-level OAuth config (user JWT)
 	mux.Handle("GET /api/system/google-oauth", user(servicesHandler.GetGoogleOAuthConfig))
 	mux.Handle("POST /api/system/google-oauth", user(servicesHandler.SetGoogleOAuthConfig))
+	mux.Handle("GET /api/system/microsoft-oauth", user(servicesHandler.GetMicrosoftOAuthConfig))
+	mux.Handle("POST /api/system/microsoft-oauth", user(servicesHandler.SetMicrosoftOAuthConfig))
 	mux.Handle("GET /api/system/pkce-credentials", user(servicesHandler.ListPKCECredentials))
 	mux.Handle("POST /api/system/pkce-credentials", user(servicesHandler.SetPKCECredential))
 	mux.Handle("DELETE /api/system/pkce-credentials/{service_id}", user(servicesHandler.DeletePKCECredential))
