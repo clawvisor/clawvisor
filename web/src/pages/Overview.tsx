@@ -6,6 +6,7 @@ import { filterLiveRuntimeApprovals, isActiveRuntimeSession } from './Runtime'
 import { useAuth } from '../hooks/useAuth'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { serviceName, actionName } from '../lib/services'
+import { isLocalHost } from '../lib/env'
 import CountdownTimer from '../components/CountdownTimer'
 import TaskCard from '../components/TaskCard'
 import VerificationIcon from '../components/VerificationIcon'
@@ -720,7 +721,7 @@ function VerificationPanel({ verification: v }: { verification: VerificationVerd
             }`}>reason: {v.reason_coherence}</span>
           </div>
           {v.explanation && <p className="text-xs text-text-secondary">{v.explanation}</p>}
-          <div className="text-[10px] font-mono text-text-tertiary">{v.model} &middot; {v.latency_ms}ms</div>
+          <div className="text-[10px] font-mono text-text-tertiary">{isLocalHost ? `${v.model} · ` : ''}{v.latency_ms}ms</div>
         </div>
       </div>
     </div>

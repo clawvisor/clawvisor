@@ -5,6 +5,7 @@ import { api, type ActivityMute, type Agent, type AuditEntry } from '../api/clie
 import { useAuth } from '../hooks/useAuth'
 import { formatDistanceToNow, format } from 'date-fns'
 import { actionName, formatServiceAction, serviceName } from '../lib/services'
+import { isLocalHost } from '../lib/env'
 import type { RuleDraft } from './Runtime'
 
 function escapeCsvField(value: string): string {
@@ -636,7 +637,7 @@ function AuditRow({
                       )}
                     </div>
                     <div className="text-text-secondary">{entry.verification.explanation}</div>
-                    <div className="text-text-tertiary text-[10px]">{entry.verification.model} &middot; {entry.verification.latency_ms}ms</div>
+                    <div className="text-text-tertiary text-[10px]">{isLocalHost ? `${entry.verification.model} · ` : ''}{entry.verification.latency_ms}ms</div>
                   </div>
                 )}
                 {(entry.session_id || entry.approval_id || entry.lease_id || entry.matched_task_id || entry.lease_task_id) && (

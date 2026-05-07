@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Task, type TaskAction, type AuditEntry, type RiskAssessment, type ApprovalRationale, type ScopeOverride, type PlannedCall, type ExpectedTool, type ExpectedEgress } from '../api/client'
 import { format } from 'date-fns'
 import { serviceName, actionName } from '../lib/services'
+import { isLocalHost } from '../lib/env'
 import CountdownTimer from './CountdownTimer'
 import VerificationIcon from './VerificationIcon'
 import ScopePill, { type ScopePillValue } from './ScopePill'
@@ -15,9 +16,6 @@ const baseService = (s: string) => {
   const i = s.indexOf(':')
   return i >= 0 ? s.slice(0, i) : s
 }
-
-const isLocalHost = typeof window !== 'undefined' &&
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
