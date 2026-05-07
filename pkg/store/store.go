@@ -33,6 +33,11 @@ type Store interface {
 	// Agents
 	CreateAgent(ctx context.Context, userID, name, tokenHash string) (*Agent, error)
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
+	// CreateAgentWithExpiry creates an agent whose token expires at the
+	// given time. Used by the MCP OAuth and relay-pairing flows so leaked
+	// tokens have finite blast radius. Pass a zero time to mean "no expiry"
+	// (equivalent to CreateAgent).
+	CreateAgentWithExpiry(ctx context.Context, userID, name, tokenHash string, expiresAt time.Time) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
@@ -298,13 +303,19 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID              string                `json:"id"`
-	UserID          string                `json:"user_id"`
-	Name            string                `json:"name"`
-	Description     string                `json:"description,omitempty"`
-	TokenHash       string                `json:"-"`
-	OrgID           string                `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt       time.Time             `json:"created_at"`
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	TokenHash   string `json:"-"`
+	OrgID       string `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt   time.Time
+	// TokenExpiresAt bounds the lifetime of a leaked bearer token. nil
+	// means no expiry — preserved for legacy POST /api/agents tokens that
+	// the user owns end-to-end. MCP OAuth and relay-pairing flows write a
+	// non-nil value so a leaked token has finite blast radius. RequireAgent
+	// rejects tokens whose expiry has passed.
+	TokenExpiresAt  *time.Time            `json:"token_expires_at,omitempty"`
 	ActiveTaskCount int                   `json:"active_task_count"`
 	LastTaskAt      *time.Time            `json:"last_task_at,omitempty"`
 	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`

@@ -1,0 +1,14 @@
+-- Bound the blast radius of a leaked agent bearer token.
+--
+-- Existing agents created via POST /api/agents have NULL token_expires_at
+-- (no expiry — preserves prior behavior; long-lived tokens are intentional
+-- for daemon agents that the user controls end-to-end).
+--
+-- New tokens issued by MCP OAuth and relay-pairing flows are short-lived
+-- and write a non-NULL value. RequireAgent middleware refuses tokens whose
+-- expiry has elapsed, so a token leaked via logs / desktop cache / relay
+-- has a bounded lifetime.
+--
+-- Stored as TEXT (ISO 8601) to match the project's other timestamp columns
+-- under the modernc sqlite driver.
+ALTER TABLE agents ADD COLUMN token_expires_at TEXT;

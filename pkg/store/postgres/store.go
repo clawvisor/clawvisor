@@ -222,18 +222,40 @@ func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash,
 	return s.getAgentByID(ctx, a.ID)
 }
 
+// CreateAgentWithExpiry creates an agent whose token expires at the given
+// time. A zero time means no expiry — equivalent to CreateAgent.
+func (s *Store) CreateAgentWithExpiry(ctx context.Context, userID, name, tokenHash string, expiresAt time.Time) (*store.Agent, error) {
+	id := uuid.New().String()
+	var expiry any
+	if !expiresAt.IsZero() {
+		expiry = expiresAt.UTC()
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, token_expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, userID, name, "", tokenHash, expiry,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var orgID *string
+	var tokenExpiresAt *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if tokenExpiresAt != nil {
+		a.TokenExpiresAt = tokenExpiresAt
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings

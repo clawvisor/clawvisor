@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -30,6 +31,15 @@ func (m *mockStore) GetUserByEmail(_ context.Context, email string) (*store.User
 
 func (m *mockStore) CreateAgent(_ context.Context, userID, name, tokenHash string) (*store.Agent, error) {
 	m.agent = &store.Agent{ID: "agent-1", UserID: userID, Name: name, TokenHash: tokenHash}
+	return m.agent, nil
+}
+
+func (m *mockStore) CreateAgentWithExpiry(_ context.Context, userID, name, tokenHash string, expiresAt time.Time) (*store.Agent, error) {
+	a := &store.Agent{ID: "agent-1", UserID: userID, Name: name, TokenHash: tokenHash}
+	if !expiresAt.IsZero() {
+		a.TokenExpiresAt = &expiresAt
+	}
+	m.agent = a
 	return m.agent, nil
 }
 

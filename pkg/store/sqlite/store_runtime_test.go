@@ -550,6 +550,70 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 }
 
+// TestAgentTokenExpiry_RoundTrip verifies that an agent created with a
+// finite token expiry surfaces TokenExpiresAt back through GetAgentByToken,
+// and that an agent created via the legacy no-expiry constructor reports
+// nil. RequireAgent middleware refuses tokens whose expiry has passed —
+// this test covers the store-layer round-trip the middleware relies on.
+func TestAgentTokenExpiry_RoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "exp@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Legacy CreateAgent → no expiry.
+	legacy, err := st.CreateAgent(ctx, user.ID, "legacy", "tok-legacy")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	got, err := st.GetAgentByToken(ctx, "tok-legacy")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(legacy): %v", err)
+	}
+	if got.TokenExpiresAt != nil {
+		t.Fatalf("legacy agent should have nil TokenExpiresAt, got %v", *got.TokenExpiresAt)
+	}
+	_ = legacy
+
+	// CreateAgentWithExpiry with a future expiry.
+	exp := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	scoped, err := st.CreateAgentWithExpiry(ctx, user.ID, "scoped", "tok-scoped", exp)
+	if err != nil {
+		t.Fatalf("CreateAgentWithExpiry: %v", err)
+	}
+	got, err = st.GetAgentByToken(ctx, "tok-scoped")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(scoped): %v", err)
+	}
+	if got.TokenExpiresAt == nil {
+		t.Fatal("scoped agent should have non-nil TokenExpiresAt")
+	}
+	if !got.TokenExpiresAt.Equal(exp) {
+		t.Fatalf("expected TokenExpiresAt=%s, got %s", exp, *got.TokenExpiresAt)
+	}
+	_ = scoped
+
+	// Zero-time → no expiry (equivalent to CreateAgent).
+	if _, err := st.CreateAgentWithExpiry(ctx, user.ID, "no-exp", "tok-noexp", time.Time{}); err != nil {
+		t.Fatalf("CreateAgentWithExpiry(zero): %v", err)
+	}
+	got, err = st.GetAgentByToken(ctx, "tok-noexp")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(noexp): %v", err)
+	}
+	if got.TokenExpiresAt != nil {
+		t.Fatalf("zero-expiry agent should have nil TokenExpiresAt, got %v", *got.TokenExpiresAt)
+	}
+}
+
 // TestConsumeSession_AtomicSingleWinner asserts that two concurrent
 // refresh-token consumers can't both succeed against the same row. This is
 // the regression guard for the replayable-rotation bug — a stolen refresh
