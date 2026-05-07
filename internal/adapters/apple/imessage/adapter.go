@@ -300,19 +300,18 @@ func (a *IMessageAdapter) queryHelperVersion(helperPath string) (string, error) 
 	return resp.Data.ProtocolVersion, nil
 }
 
-// downloadHelper downloads the helper .app bundle from the GitHub release
-// matching the current clawvisor version. The tarball is verified against
-// the SHA-256 baked into this clawvisor binary at build time before any
-// bytes are extracted or executed — protecting against tampered or
-// substituted release artifacts.
+// downloadHelper downloads the helper .app bundle from the pinned GitHub
+// release. The tarball is verified against the SHA-256 pinned in source
+// (pkg/version.IMessageHelperSHAs) before any bytes are extracted or
+// executed — protecting against tampered or substituted release artifacts.
 func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 	osArch := runtime.GOOS + "/" + runtime.GOARCH
 	expectedSHA := version.IMessageHelperSHA(osArch)
 	if expectedSHA == "" {
-		return "", fmt.Errorf("no pinned helper SHA for %s in this build — refusing unverified download (build a release binary or side-load the helper into PATH)", osArch)
+		return "", fmt.Errorf("no pinned helper SHA for %s — iMessage helper is only published for darwin/arm64 and darwin/amd64", osArch)
 	}
 
-	tag := "v" + version.Version
+	tag := version.IMessageHelperReleaseTag
 	assetName := fmt.Sprintf("clawvisor-imessage-helper-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s",
 		githubOwner, githubRepo, tag, assetName)

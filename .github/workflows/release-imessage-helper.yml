@@ -1,0 +1,177 @@
+name: Release iMessage Helper
+
+# Builds and releases the iMessage helper, and opens a PR updating the
+# source-pinned tag + SHAs in pkg/version/imessage_helper.go.
+#
+# Manual trigger only — every helper release forces all users to re-grant
+# Full Disk Access, so we want a human gate. The job additionally short-
+# circuits when the helper's ProtocolVersion hasn't changed since the
+# currently-pinned tag, unless `force` is set.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Helper release tag (e.g. v0.10.0)"
+        required: true
+      force:
+        description: "Build even if ProtocolVersion is unchanged"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  protocol-check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compare ProtocolVersion against pinned tag
+        id: check
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -eu
+          PINNED_TAG=$(grep '^const IMessageHelperReleaseTag' pkg/version/imessage_helper.go | cut -d'"' -f2)
+          CURRENT_PV=$(grep '^const ProtocolVersion' cmd/imessage-helper/main.go | cut -d'"' -f2)
+
+          if ! git rev-parse --verify "refs/tags/${PINNED_TAG}" >/dev/null 2>&1; then
+            echo "Pinned tag ${PINNED_TAG} not found locally — proceeding (treating as changed)"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "reason=pinned tag ${PINNED_TAG} not in repo history" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PINNED_PV=$(git show "${PINNED_TAG}:cmd/imessage-helper/main.go" | grep '^const ProtocolVersion' | cut -d'"' -f2)
+          echo "Current ProtocolVersion: ${CURRENT_PV}"
+          echo "Pinned (${PINNED_TAG}) ProtocolVersion: ${PINNED_PV}"
+
+          if [ "$CURRENT_PV" != "$PINNED_PV" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "reason=ProtocolVersion ${PINNED_PV} → ${CURRENT_PV}" >> "$GITHUB_OUTPUT"
+          elif [ "$FORCE" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "reason=force=true (ProtocolVersion unchanged at ${CURRENT_PV})" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "reason=ProtocolVersion unchanged at ${CURRENT_PV}; pass force=true to override" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        run: |
+          echo "should_build = ${{ steps.check.outputs.should_build }}"
+          echo "reason       = ${{ steps.check.outputs.reason }}"
+
+  build-and-release:
+    needs: protocol-check
+    if: needs.protocol-check.outputs.should_build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Helper builds are not bit-reproducible (Mach-O timestamps + build IDs),
+      # so re-running this workflow against a tag that already has helper
+      # assets would silently rewrite their bytes and SHAs — invalidating any
+      # clawvisor binary already in the wild that pinned the old SHA. Refuse
+      # before we even build, and recover via "delete-and-redo" rather than
+      # clobber-in-place.
+      - name: Refuse if helper assets already exist on tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release ${TAG} does not exist yet — will be created."
+            exit 0
+          fi
+          EXISTING=$(gh release view "$TAG" --json assets --jq '.assets[].name' \
+            | grep '^clawvisor-imessage-helper-.*\.tar\.gz$' || true)
+          if [ -n "$EXISTING" ]; then
+            echo "::error::Release ${TAG} already has helper assets attached:"
+            echo "$EXISTING" | sed 's/^/  - /'
+            echo "::error::Refusing to overwrite — clawvisor builds in the wild may pin the existing SHAs."
+            echo "To redo this release: delete the assets (gh release delete-asset ${TAG} <name>) or pick a new tag, then re-run."
+            exit 1
+          fi
+          echo "Release ${TAG} exists but has no helper assets — safe to upload."
+
+      - name: Build helper tarballs and rewrite pin
+        run: scripts/release-imessage-helper.sh "${{ inputs.tag }}"
+
+      - name: Create GitHub release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if ! gh release view "${{ inputs.tag }}" > /dev/null 2>&1; then
+            prerelease_flag=""
+            case "${{ inputs.tag }}" in
+              *-*) prerelease_flag="--prerelease" ;;
+            esac
+            gh release create "${{ inputs.tag }}" \
+              --title "${{ inputs.tag }} (iMessage helper)" \
+              --notes "iMessage helper release. Pinned in \`pkg/version/imessage_helper.go\`. Reason: ${{ needs.protocol-check.outputs.reason }}" \
+              $prerelease_flag
+          fi
+
+      - name: Upload helper tarballs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.tag }}" dist/clawvisor-imessage-helper-*.tar.gz
+
+      - name: Open PR with pin rewrite
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          REASON: ${{ needs.protocol-check.outputs.reason }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          BRANCH="release/imessage-helper-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add pkg/version/imessage_helper.go
+
+          COMMIT_MSG=$(printf 'chore(imessage): pin helper to %s\n\n%s\n' "$TAG" "$REASON")
+          git commit -m "$COMMIT_MSG"
+          git push -u origin "$BRANCH"
+
+          PR_BODY=$(cat <<EOF
+          Pins the iMessage helper to [\`${TAG}\`](https://github.com/${REPO}/releases/tag/${TAG}), whose tarballs were just uploaded by the \`Release iMessage Helper\` workflow.
+
+          **Reason:** ${REASON}
+
+          Merging this PR makes \`go install\`, source builds, and future clawvisor releases fetch and verify the new helper. Users will need to re-grant Full Disk Access on next iMessage use.
+          EOF
+          )
+          gh pr create \
+            --title "chore(imessage): pin helper to ${TAG}" \
+            --body "$PR_BODY" \
+            --base main \
+            --head "$BRANCH"
+
+  skipped:
+    needs: protocol-check
+    if: needs.protocol-check.outputs.should_build != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip notice
+        run: |
+          echo "Skipping helper release: ${{ needs.protocol-check.outputs.reason }}"
+          echo "Re-run with force=true to build anyway."

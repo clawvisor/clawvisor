@@ -62,14 +62,14 @@ func TestFindHelper_CachedPath(t *testing.T) {
 	}
 }
 
-// TestDownloadHelper_RefusesWithoutPinnedSHA proves that a clawvisor binary
-// without an embedded helper SHA (i.e. a dev build) refuses to download
-// before it ever opens a network connection. This is the regression guard
-// against running an unverified helper as the user.
+// TestDownloadHelper_RefusesWithoutPinnedSHA proves that downloads for
+// platforms without a pinned helper SHA are refused before any network
+// connection is opened. This is the regression guard against running an
+// unverified helper as the user.
 func TestDownloadHelper_RefusesWithoutPinnedSHA(t *testing.T) {
-	prev := version.IMessageHelperSHA256
-	version.IMessageHelperSHA256 = ""
-	t.Cleanup(func() { version.IMessageHelperSHA256 = prev })
+	prev := version.IMessageHelperSHAs
+	version.IMessageHelperSHAs = map[string]string{}
+	t.Cleanup(func() { version.IMessageHelperSHAs = prev })
 
 	a := &IMessageAdapter{}
 	_, err := a.downloadHelper(t.TempDir())
@@ -81,11 +81,14 @@ func TestDownloadHelper_RefusesWithoutPinnedSHA(t *testing.T) {
 	}
 }
 
-func TestIMessageHelperSHA_ParsesEmbeddedList(t *testing.T) {
-	prev := version.IMessageHelperSHA256
-	t.Cleanup(func() { version.IMessageHelperSHA256 = prev })
+func TestIMessageHelperSHA_ReadsPinnedMap(t *testing.T) {
+	prev := version.IMessageHelperSHAs
+	t.Cleanup(func() { version.IMessageHelperSHAs = prev })
 
-	version.IMessageHelperSHA256 = "darwin/arm64=abc,darwin/amd64=def"
+	version.IMessageHelperSHAs = map[string]string{
+		"darwin/arm64": "abc",
+		"darwin/amd64": "def",
+	}
 	if got := version.IMessageHelperSHA("darwin/arm64"); got != "abc" {
 		t.Errorf("darwin/arm64: got %q want abc", got)
 	}
@@ -94,6 +97,20 @@ func TestIMessageHelperSHA_ParsesEmbeddedList(t *testing.T) {
 	}
 	if got := version.IMessageHelperSHA("linux/amd64"); got != "" {
 		t.Errorf("linux/amd64 should be unset, got %q", got)
+	}
+}
+
+// TestIMessageHelperPin_PopulatedForDarwin proves the source-pinned values
+// are present for the platforms iMessage actually supports — a guard against
+// an empty pin sneaking past code review and breaking self-host installs.
+func TestIMessageHelperPin_PopulatedForDarwin(t *testing.T) {
+	if version.IMessageHelperReleaseTag == "" {
+		t.Fatal("IMessageHelperReleaseTag is empty — set it in pkg/version/imessage_helper.go")
+	}
+	for _, osArch := range []string{"darwin/arm64", "darwin/amd64"} {
+		if got := version.IMessageHelperSHA(osArch); got == "" {
+			t.Errorf("no pinned SHA for %s", osArch)
+		}
 	}
 }
 
