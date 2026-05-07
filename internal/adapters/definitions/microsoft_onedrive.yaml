@@ -46,9 +46,11 @@ actions:
         default: 25
         max: 200
         location: query
+        map_to: "$top"
       select:
         type: string
         location: query
+        map_to: "$select"
         default: "id,name,size,lastModifiedDateTime,folder,file"
     # NOTE: Needs Go override to handle dynamic path construction
     override: go

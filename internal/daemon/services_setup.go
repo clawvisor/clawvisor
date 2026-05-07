@@ -491,7 +491,7 @@ func collectAndStoreMicrosoftCreds(apiClient *client.Client, serviceName string)
 		"  Register an app at: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps",
 	))
 	fmt.Println(dim.Padding(0, 2).Render(
-		"  Guide: https://github.com/clawvisor/clawvisor/blob/main/docs/MICROSOFT_OAUTH_SETUP.md",
+		"  Guide: https://github.com/clawvisor/clawvisor/blob/main/docs/SETUP.md",
 	))
 	fmt.Println()
 

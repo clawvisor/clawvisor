@@ -63,8 +63,12 @@ func TruncateSlice[T any](items []T, max int) []T {
 
 // Truncate returns a string truncated to max characters with "..." appended if truncated.
 func Truncate(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "..."
+	if max <= 0 {
+		return s
+	}
+	if utf8.RuneCountInString(s) > max {
+		runes := []rune(s)
+		return string(runes[:max]) + "..."
 	}
 	return s
 }

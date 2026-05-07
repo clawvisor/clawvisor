@@ -6,7 +6,7 @@ service:
   icon_url: "/logos/microsoft-teams.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
-    field: "displayName"
+    field: "id"
 
 auth:
   type: oauth2

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/microsoft"
@@ -50,7 +51,7 @@ func (a *Adapter) sendMessage(ctx context.Context, client *http.Client, params m
 		return nil, fmt.Errorf("teams send_message: content is required")
 	}
 
-	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/teams/%s/channels/%s/messages", teamID, channelID)
+	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/teams/%s/channels/%s/messages", url.PathEscape(teamID), url.PathEscape(channelID))
 
 	payload := map[string]any{
 		"body": map[string]string{

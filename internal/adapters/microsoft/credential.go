@@ -152,7 +152,10 @@ func GraphGET(ctx context.Context, client *http.Client, url string, out any) err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("graph API GET read body: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("graph API GET %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
 	}
@@ -181,7 +184,10 @@ func GraphPOST(ctx context.Context, client *http.Client, url string, payload any
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("graph API POST read body: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("graph API POST %s: %d: %s", url, resp.StatusCode, format.Truncate(string(body), 200))
 	}

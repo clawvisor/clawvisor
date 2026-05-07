@@ -64,7 +64,7 @@ func (a *Adapter) listFiles(ctx context.Context, client *http.Client, params map
 		// Clean up path
 		folderPath = strings.TrimPrefix(folderPath, "/")
 		if folderPath != "" {
-			endpoint = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:/%s:/children", url.PathEscape(folderPath))
+			endpoint = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:/%s:/children", escapePath(folderPath))
 		}
 	}
 
@@ -174,7 +174,7 @@ func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params ma
 	}
 
 	path = strings.TrimPrefix(path, "/")
-	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:/%s:/content", url.PathEscape(path))
+	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:/%s:/content", escapePath(path))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, strings.NewReader(content))
 	if err != nil {
@@ -216,4 +216,12 @@ func isTextContent(contentType string) bool {
 	return strings.HasPrefix(contentType, "text/") ||
 		contentType == "application/json" ||
 		contentType == "application/xml"
+}
+
+func escapePath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }

@@ -132,15 +132,19 @@ actions:
         default: 10
         max: 50
         location: query
+        map_to: "$top"
       filter:
         type: string
         location: query
+        map_to: "$filter"
       select:
         type: string
         location: query
+        map_to: "$select"
         default: "id,subject,start,end,location,organizer,isAllDay"
     response:
       data_path: "value"
+      next_page_url_path: "@odata.nextLink"
       fields:
         - { name: id }
         - { name: subject, sanitize: true }
