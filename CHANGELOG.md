@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.4](https://github.com/clawvisor/clawvisor/compare/v0.9.3...v0.9.4) (2026-05-07)
+
+
+### Features
+
+* **adapters:** SQL connect via pasted DSN + richer credential prompt ([#354](https://github.com/clawvisor/clawvisor/issues/354)) ([d057196](https://github.com/clawvisor/clawvisor/commit/d0571962440e7f818042bdb3238f74d3963a2c08))
+* **api:** per-user FeaturesHook for plan-based feature gating ([#351](https://github.com/clawvisor/clawvisor/issues/351)) ([79c9fba](https://github.com/clawvisor/clawvisor/commit/79c9fba818651533622a1b6f2806ffc8c5414316))
+* **imessage:** pin helper SHA in source so go install can install it ([#356](https://github.com/clawvisor/clawvisor/issues/356)) ([e795881](https://github.com/clawvisor/clawvisor/commit/e79588138b3af791cb01dc026a6b883586a97b69))
+* **llm,config:** per-sub-block timeout + opt-in request hedging ([#355](https://github.com/clawvisor/clawvisor/issues/355)) ([a4bed58](https://github.com/clawvisor/clawvisor/commit/a4bed584b1c114d348a175c03032f02745270af1))
+
 ## [0.9.3](https://github.com/clawvisor/clawvisor/compare/v0.9.2...v0.9.3) (2026-05-07)
 
 
