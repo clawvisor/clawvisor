@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -85,6 +86,8 @@ type GatewayHandler struct {
 	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
 	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
 	cbDispatch       *CallbackDispatcher  // bounded callback delivery; may be nil
+	gatewayRL        ratelimit.Limiter    // gateway-bucket limiter for per-sub-request charging in HandleBatch; may be nil
+	gatewayRLKey     func(*http.Request) string
 }
 
 func NewGatewayHandler(
@@ -143,6 +146,15 @@ func (h *GatewayHandler) SetLocalServiceProvider(p LocalServiceProvider) {
 // panic-safe but with no concurrency cap.
 func (h *GatewayHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
 	h.cbDispatch = d
+}
+
+// SetGatewayRateLimiter wires the gateway rate limiter into the handler so
+// HandleBatch can charge one token per fan-out sub-request rather than
+// letting an N-request batch consume only the single token already taken
+// by route-level middleware. Pass nil to disable per-sub-request charging.
+func (h *GatewayHandler) SetGatewayRateLimiter(limiter ratelimit.Limiter, agentKey func(*http.Request) string) {
+	h.gatewayRL = limiter
+	h.gatewayRLKey = agentKey
 }
 
 // dispatchCallback enqueues a payload for delivery via the bounded

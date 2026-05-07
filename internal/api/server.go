@@ -557,6 +557,11 @@ func (s *Server) routes() http.Handler {
 		return ""
 	}
 
+	// Wire the gateway limiter into the handler so HandleBatch can charge
+	// one token per fan-out sub-request rather than letting one batch token
+	// buy N adapter calls + N LLM verifications + N audit writes.
+	gatewayHandler.SetGatewayRateLimiter(gatewayRL, agentKeyFn)
+
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
 	userOAuthRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(oauthRL, userKeyFn, rlCfg.OAuth.Limit)(h))

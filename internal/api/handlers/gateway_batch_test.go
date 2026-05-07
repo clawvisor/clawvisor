@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/time/rate"
+
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -108,6 +111,60 @@ func TestBatch_TooLarge(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["code"] != gateway.CodeBatchTooLarge {
 		t.Fatalf("expected BATCH_TOO_LARGE, got %v", resp["code"])
+	}
+}
+
+// TestBatch_RateLimitChargesPerSubRequest is the regression guard for the
+// "one token buys 20 sub-requests" bug. The route-level middleware already
+// consumed one token for the batch envelope; HandleBatch must charge the
+// remaining N-1 tokens before fanning out.
+func TestBatch_RateLimitChargesPerSubRequest(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+	}
+
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	// Limiter with bucket=2 — enough for the route-level token and one
+	// sub-request, but a 3-request batch (1 envelope + 2 extras) must be
+	// rejected because charging the 2nd extra exhausts the bucket.
+	limiter := ratelimit.NewKeyedLimiter(rate.Limit(0.0001), 2)
+	keyFn := func(r *http.Request) string { return "agent-1" }
+	h.SetGatewayRateLimiter(limiter, keyFn)
+
+	// Drain the bucket as the route-level middleware would: take 1 for the
+	// batch envelope itself.
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatalf("setup: expected envelope token to be available")
+	}
+
+	reqs := make([]map[string]any, 3)
+	for i := range reqs {
+		reqs[i] = map[string]any{
+			"service":    "local.files",
+			"action":     "read_file",
+			"reason":     "r",
+			"task_id":    "task-1",
+			"request_id": "r" + string(rune('a'+i)),
+		}
+	}
+	w := makeBatchRequest(t, h, map[string]any{"requests": reqs})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 when batch fan-out exceeds bucket, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if executor.called {
+		t.Fatal("executor must not have been called when batch was rate-limited")
 	}
 }
 

@@ -3,10 +3,12 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
@@ -56,6 +58,31 @@ func (h *GatewayHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
 			Hint:  "Split the batch into smaller chunks. Each batch may contain at most " + strconv.Itoa(maxBatchSize) + " sub-requests.",
 		})
 		return
+	}
+
+	// Charge one rate-limit token per sub-request beyond the first. The
+	// route-level middleware already consumed one token for the batch
+	// envelope; without this loop a single token would buy N adapter calls
+	// + N LLM verifications + N audit writes.
+	if h.gatewayRL != nil && h.gatewayRLKey != nil {
+		if key := h.gatewayRLKey(r); key != "" {
+			for i := 1; i < len(batch.Requests); i++ {
+				allowed, _, resetTime := h.gatewayRL.Allow(key)
+				if !allowed {
+					retryAfter := time.Until(resetTime).Seconds()
+					if retryAfter < 1 {
+						retryAfter = 1
+					}
+					w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter))
+					writeDetailedError(w, http.StatusTooManyRequests, apiErrorDetail{
+						Error: "rate limit exceeded for batch fan-out",
+						Code:  "RATE_LIMITED",
+						Hint:  "The batch's sub-requests would exceed the per-agent rate limit. Wait and retry, or send fewer sub-requests per batch.",
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Preserve caller-provided wait/timeout query params so each sub-request
