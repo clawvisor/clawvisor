@@ -1700,6 +1700,10 @@ func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, 
 // but never completed within leaseTTL. This is the recovery hook for daemon
 // crashes that strand a row in 'executing' — without it, the user would be
 // permanently locked out of re-approving the same request.
+//
+// IMPORTANT: this is a *list* operation, not a claim. A row returned here may
+// finish via the executor between this call and the caller's processing —
+// pair with ClaimStalledExecutingApprovalForRecovery to gate side-effects.
 func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
 	leaseSeconds := int64(leaseTTL.Seconds())
 	if leaseSeconds < 0 {
@@ -1715,6 +1719,30 @@ func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time
 	}
 	defer rows.Close()
 	return scanSQLitePendingApprovals(rows)
+}
+
+// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+// 'executing' row only if it is still in 'executing' status and still past
+// the lease cutoff. The DELETE's WHERE clause is the CAS — a concurrent
+// executor that finishes between list and claim has already DELETE'd the
+// row, so RowsAffected is 0 and the sweeper moves on without dispatching
+// a duplicate "timeout" callback.
+func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error) {
+	leaseSeconds := int64(leaseTTL.Seconds())
+	if leaseSeconds < 0 {
+		leaseSeconds = 0
+	}
+	modifier := fmt.Sprintf("-%d seconds", leaseSeconds)
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM pending_approvals
+		WHERE request_id = ? AND status = 'executing'
+		  AND executing_since IS NOT NULL AND executing_since < datetime('now', ?)`,
+		requestID, modifier)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // ── Canonical Approval Records ───────────────────────────────────────────────

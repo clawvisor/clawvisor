@@ -179,6 +179,34 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 	return nil
 }
 
+// revertOrTerminate is the cleanup path for markApproved when post-CAS work
+// (task promotion, validation) fails after we already moved status to
+// 'approved'. The intuitive "revert to pa.Status" only works when no other
+// actor has touched the row since — concurrent /execute can have already
+// CAS'd 'approved' → 'executing'. When the revert CAS misses we can't undo
+// that; instead, force-resolve the canonical approval record so the user
+// dashboard doesn't sit "pending" forever, and let the lease-recovery
+// sweeper reclaim the now-orphan 'executing' row on its next pass.
+func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.PendingApproval, reason string) {
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status)
+	if err != nil {
+		h.logger.Error("failed to revert approval status",
+			"request_id", pa.RequestID, "reason", reason, "err", err)
+		return
+	}
+	if won {
+		return
+	}
+	// Lost the revert CAS — another actor moved past 'approved' (almost
+	// always /execute claiming as 'executing'). Force the canonical
+	// approval to a terminal "deny" state so it doesn't stay pending in
+	// the dashboard. The pending_approvals row itself will be cleaned up
+	// by the lease-recovery sweeper.
+	h.logger.Warn("approval revert lost CAS; forcing canonical resolution",
+		"request_id", pa.RequestID, "reason", reason)
+	h.resolveCanonicalApproval(ctx, pa, "deny", reason)
+}
+
 // markApproved transitions a pending approval to the "approved" state without
 // executing it. The agent is expected to call HandleExecuteApproved to claim
 // the result. If a callback URL is registered, a notification is sent.
@@ -203,16 +231,12 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 	case "allow_session", "allow_always":
 		promotedTask, err = h.promotePendingApprovalToTask(ctx, pa, resolution)
 		if err != nil {
-			if _, revertErr := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status); revertErr != nil {
-				h.logger.Error("failed to revert approval status after task promotion error", "request_id", pa.RequestID, "err", revertErr)
-			}
+			h.revertOrTerminate(ctx, pa, "promotion_failed")
 			return nil, err
 		}
 	case "allow_once":
 	default:
-		if _, revertErr := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status); revertErr != nil {
-			h.logger.Error("failed to revert approval status after invalid resolution", "request_id", pa.RequestID, "err", revertErr)
-		}
+		h.revertOrTerminate(ctx, pa, "unsupported_resolution")
 		return nil, fmt.Errorf("unsupported approval resolution %q", resolution)
 	}
 	h.resolveCanonicalApproval(ctx, pa, resolution, "approved")
@@ -458,47 +482,70 @@ func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
 	}
 }
 
+// processExpiredApproval performs the canonical-resolution + audit-update +
+// notification + callback work for a pending_approvals row that has either
+// timed out (caller already deleted the row) or been recovered from a
+// stalled 'executing' state (CAS DELETE already happened). reason is
+// passed to the canonical-approval resolver so the dashboard distinguishes
+// between "user never replied" and "executor crashed mid-execution".
+func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store.PendingApproval, reason, telegramMsg string) {
+	h.resolveCanonicalApproval(ctx, pa, "deny", reason)
+	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
+	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, telegramMsg)
+	// For the regular expired path the caller relies on us to delete the
+	// row; for the stranded path the CAS DELETE already happened, so the
+	// best-effort DELETE here is a no-op (zero rows affected).
+	_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
+	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
+		var blob pendingRequestBlob
+		_ = json.Unmarshal(pa.RequestBlob, &blob)
+		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, blob.AgentID)
+		_ = callback.DeliverResult(ctx, *pa.CallbackURL, &callback.Payload{
+			Type:      "request",
+			RequestID: pa.RequestID,
+			Status:    "timeout",
+			AuditID:   pa.AuditID,
+		}, cbKey)
+	}
+	h.decrementNotifierPolling(pa.UserID)
+	h.publishQueueAndAudit(pa.UserID, pa.AuditID)
+	h.logger.Info("pending approval expired", "request_id", pa.RequestID, "reason", reason)
+}
+
 func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 	expired, err := h.st.ListExpiredPendingApprovals(ctx)
 	if err != nil {
 		h.logger.Warn("expiry cleanup: list failed", "err", err)
 		return
 	}
-	// Recover rows stranded in 'executing' by a daemon crash. Without this
-	// they would stay in the table forever, blocking the user from re-issuing
-	// the request because GetPendingApproval still returns the stale row.
+	for _, pa := range expired {
+		h.processExpiredApproval(ctx, pa, "expired", "⏰ <b>Timed out</b> — approval window expired.")
+	}
+	// Stranded 'executing' rows: claim each via a CAS DELETE before
+	// dispatching the timeout callback, otherwise a slow-but-not-crashed
+	// executor that finishes between our list and our delete would cause
+	// the agent to receive both an "executed" and a "timeout" callback for
+	// the same request_id. The CAS WHERE clause guarantees exactly one
+	// resolver wins.
 	stalled, err := h.st.ListStalledExecutingApprovals(ctx, executingLeaseTTL)
 	if err != nil {
 		h.logger.Warn("expiry cleanup: stalled-executing list failed", "err", err)
 	} else {
 		for _, pa := range stalled {
-			h.logger.Warn("recovering stalled executing approval", "request_id", pa.RequestID, "user_id", pa.UserID)
-			expired = append(expired, pa)
+			won, err := h.st.ClaimStalledExecutingApprovalForRecovery(ctx, pa.RequestID, executingLeaseTTL)
+			if err != nil {
+				h.logger.Warn("expiry cleanup: stalled-executing claim failed", "request_id", pa.RequestID, "err", err)
+				continue
+			}
+			if !won {
+				// The executor finished between list and claim — it has
+				// already delivered an "executed" callback. Do nothing.
+				h.logger.Debug("stalled approval finished before recovery sweep", "request_id", pa.RequestID)
+				continue
+			}
+			h.logger.Warn("recovered stalled executing approval", "request_id", pa.RequestID, "user_id", pa.UserID)
+			h.processExpiredApproval(ctx, pa, "stranded", "⏰ <b>Recovered</b> — execution lease expired.")
 		}
-	}
-	for _, pa := range expired {
-		h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
-		_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
-
-		// Update the Telegram message before deleting the pending approval.
-		h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, "⏰ <b>Timed out</b> — approval window expired.")
-
-		_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
-
-		if pa.CallbackURL != nil && *pa.CallbackURL != "" {
-			var expiryBlob pendingRequestBlob
-			_ = json.Unmarshal(pa.RequestBlob, &expiryBlob)
-			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, expiryBlob.AgentID)
-			_ = callback.DeliverResult(ctx, *pa.CallbackURL, &callback.Payload{
-				Type:      "request",
-				RequestID: pa.RequestID,
-				Status:    "timeout",
-				AuditID:   pa.AuditID,
-			}, cbKey)
-		}
-		h.decrementNotifierPolling(pa.UserID)
-		h.publishQueueAndAudit(pa.UserID, pa.AuditID)
-		h.logger.Info("pending approval expired", "request_id", pa.RequestID)
 	}
 
 	// Expire timed-out tasks.

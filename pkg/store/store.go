@@ -150,6 +150,13 @@ type Store interface {
 	// ListStalledExecutingApprovals returns rows stuck in "executing" beyond
 	// leaseTTL — the recovery hook for daemon crashes mid-execution.
 	ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*PendingApproval, error)
+	// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+	// 'executing' row only if it is still in 'executing' status and still
+	// past the lease cutoff. Returns true if the recovery sweeper won —
+	// callers must dispatch the timeout callback only on true. Returns
+	// false (no error) when the executor finished between list and claim
+	// or another sweep already won the race.
+	ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error)
 
 	// CreateApprovalRecordWithPending writes the canonical approval record
 	// and its corresponding pending approval row in a single transaction.

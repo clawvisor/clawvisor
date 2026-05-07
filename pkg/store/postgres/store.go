@@ -1542,9 +1542,9 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 }
 
 // ListStalledExecutingApprovals returns rows that were claimed for execution
-// but never completed within leaseTTL. This is the recovery hook for daemon
-// crashes that strand a row in 'executing' — without it, the user would be
-// permanently locked out of re-approving the same request.
+// but never completed within leaseTTL. See sqlite.Store.ListStalledExecuting
+// — this is a list, NOT a claim; pair with ClaimStalledExecutingApprovalFor
+// Recovery to gate side-effects.
 func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
 	cutoff := time.Now().UTC().Add(-leaseTTL)
 	rows, err := s.pool.Query(ctx, `
@@ -1555,6 +1555,23 @@ func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time
 	}
 	defer rows.Close()
 	return scanPendingApprovals(rows)
+}
+
+// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+// 'executing' row only if it is still in 'executing' status and still past
+// the lease cutoff. The DELETE's WHERE clause is the CAS — see sqlite
+// counterpart for the rationale.
+func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error) {
+	cutoff := time.Now().UTC().Add(-leaseTTL)
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM pending_approvals
+		WHERE request_id = $1 AND status = 'executing'
+		  AND executing_since IS NOT NULL AND executing_since < $2`,
+		requestID, cutoff)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // ── Canonical Approval Records ───────────────────────────────────────────────

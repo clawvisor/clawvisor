@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -547,6 +549,191 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 	if got.Status != "approved" {
 		t.Fatalf("expected status=approved after losing CAS, got %q", got.Status)
+	}
+}
+
+// TestPendingApproval_ConcurrentResolution_ExactlyOneWinner is the real
+// race test for the status CAS — it fans out N goroutines that all attempt
+// to resolve the same pending row from "pending" to a different terminal
+// state, then asserts exactly one won. A non-atomic SELECT-then-UPDATE
+// implementation would let multiple writers each see status="pending" and
+// each issue an UPDATE, ending with two "winners" and the database in
+// whichever-write-landed-last state. Sequential tests don't catch that.
+func TestPendingApproval_ConcurrentResolution_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "race@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-race-1", AuditID: "audit-race-1",
+		RequestBlob: []byte(`{}`), Status: "pending",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+		errs        atomic.Int64
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		// Half try to approve, half try to deny — every winner is "first".
+		target := "approved"
+		if i%2 == 0 {
+			target = "denied"
+		}
+		go func(t string) {
+			defer wg.Done()
+			<-start
+			won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-race-1", "pending", t)
+			if err != nil {
+				errs.Add(1)
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}(target)
+	}
+	close(start)
+	wg.Wait()
+
+	if errs.Load() != 0 {
+		t.Fatalf("expected zero errors, got %d", errs.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning CAS across %d racers, got %d",
+			goroutines, got)
+	}
+}
+
+// TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner is
+// the same shape but for the executor-claim CAS that gates request
+// execution. Two simultaneous /execute calls for the same request_id must
+// not both see "approved" and both run the adapter.
+func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "exec-race@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-exec-1", AuditID: "audit-exec-1",
+		RequestBlob: []byte(`{}`), Status: "approved",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			won, err := st.ClaimPendingApprovalForExecution(ctx, "req-exec-1")
+			if err != nil {
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning execution claim across %d racers, got %d",
+			goroutines, got)
+	}
+}
+
+// TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner is the
+// regression guard against duplicate "timeout" callbacks. The recovery
+// sweeper races against itself in multi-instance deployments and against a
+// slow-but-finishing executor in single-instance deployments. The CAS
+// DELETE WHERE status='executing' AND executing_since<cutoff must guarantee
+// exactly one resolver wins per stranded row.
+func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "stalled@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-stalled-1", AuditID: "audit-stalled-1",
+		RequestBlob: []byte(`{}`), Status: "approved",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+	if won, err := st.ClaimPendingApprovalForExecution(ctx, "req-stalled-1"); err != nil || !won {
+		t.Fatalf("seed claim: won=%v err=%v", won, err)
+	}
+	// Sleep long enough that the lease cutoff (-1s) treats this as stale.
+	time.Sleep(1500 * time.Millisecond)
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			won, err := st.ClaimStalledExecutingApprovalForRecovery(ctx, "req-stalled-1", time.Second)
+			if err != nil {
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning recovery claim across %d racers, got %d",
+			goroutines, got)
 	}
 }
 
