@@ -1671,3 +1671,62 @@ func TestYAMLAdapter_BodyRoot(t *testing.T) {
 		t.Errorf("expected 2 items, got %d", len(arr))
 	}
 }
+
+func TestYAMLAdapter_DeleteWithBody(t *testing.T) {
+	var receivedMethod string
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization", HeaderPrefix: "Bearer "},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"delete_files": {
+				Method: "DELETE", Path: "/object/{{.bucket}}",
+				Params: map[string]yamldef.Param{
+					"bucket":   {Type: "string", Required: true, Location: "path"},
+					"prefixes": {Type: "array", Required: true, Location: "body"},
+				},
+				Response: yamldef.ResponseDef{Summary: "done"},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	_, err = adapter.Execute(context.Background(), adapters.Request{
+		Action: "delete_files",
+		Params: map[string]any{
+			"bucket":   "photos",
+			"prefixes": []any{"a.png", "b.png"},
+		},
+		Credential: testCred("test"),
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if receivedMethod != "DELETE" {
+		t.Errorf("expected DELETE method, got %q", receivedMethod)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(receivedBody, &parsed); err != nil {
+		t.Fatalf("body is not valid JSON: %v (body=%s)", err, receivedBody)
+	}
+	prefixes, ok := parsed["prefixes"].([]any)
+	if !ok {
+		t.Fatalf("body should contain prefixes array, got: %s", receivedBody)
+	}
+	if len(prefixes) != 2 {
+		t.Errorf("expected 2 prefixes, got %d", len(prefixes))
+	}
+}

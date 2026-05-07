@@ -91,10 +91,11 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 		fullURL += "?" + queryParams.Encode()
 	}
 
-	// Build request body.
+	// Build request body. GET requests never carry a body; DELETE may, since
+	// some APIs (e.g. Supabase storage object delete) require a body.
 	var bodyReader io.Reader
 	var contentType string
-	if action.Method != "GET" && action.Method != "DELETE" && (bodyRootSet || len(bodyParams) > 0) {
+	if action.Method != "GET" && (bodyRootSet || len(bodyParams) > 0) {
 		encoding := action.Encoding
 		if encoding == "" {
 			encoding = "json"
@@ -112,6 +113,9 @@ func executeREST(ctx context.Context, client *http.Client, baseURL string, actio
 			bodyReader = bytes.NewReader(b)
 			contentType = "application/json"
 		case "form":
+			if bodyRootSet {
+				return nil, fmt.Errorf("body_root is not supported with encoding: form")
+			}
 			form := url.Values{}
 			for k, v := range bodyParams {
 				form.Set(k, fmt.Sprintf("%v", v))
