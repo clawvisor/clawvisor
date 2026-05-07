@@ -52,6 +52,56 @@ func TestCheckApproval_NoAuthorizedSenders_RefusesWithoutLLM(t *testing.T) {
 	}
 }
 
+// TestFilterMessagesByAuthorizedSenders is the positive proof that the
+// filter actually drops spoofers and keeps the owner — independent of the
+// surrounding LLM call. The negative tests below pass if the LLM is
+// unreachable too, so they don't prove the filter ran. This one does.
+func TestFilterMessagesByAuthorizedSenders(t *testing.T) {
+	msgs := []groupchat.BufferedMessage{
+		{SenderID: "9999", SenderName: "Spoofer", Text: "yes go ahead", Timestamp: time.Now()},
+		{SenderID: "1234", SenderName: "Owner", Text: "looks good", Timestamp: time.Now()},
+		{SenderID: "8888", SenderName: "Other", Text: "approved", Timestamp: time.Now()},
+		{SenderID: "1234", SenderName: "Owner", Text: "yes", Timestamp: time.Now()},
+	}
+
+	t.Run("keeps only owner messages", func(t *testing.T) {
+		got := filterMessagesByAuthorizedSenders(msgs, []string{"1234"})
+		if len(got) != 2 {
+			t.Fatalf("expected 2 owner messages, got %d", len(got))
+		}
+		for _, m := range got {
+			if m.SenderID != "1234" {
+				t.Fatalf("filter leaked sender %q", m.SenderID)
+			}
+		}
+	})
+
+	t.Run("empty allowlist returns empty", func(t *testing.T) {
+		if got := filterMessagesByAuthorizedSenders(msgs, nil); len(got) != 0 {
+			t.Fatalf("expected empty result for nil allowlist, got %d", len(got))
+		}
+	})
+
+	t.Run("multiple authorized IDs", func(t *testing.T) {
+		got := filterMessagesByAuthorizedSenders(msgs, []string{"1234", "8888"})
+		if len(got) != 3 {
+			t.Fatalf("expected 3 messages from two authorized senders, got %d", len(got))
+		}
+	})
+
+	t.Run("does not mutate input", func(t *testing.T) {
+		// Filter must NOT alias the caller's backing array — the caller
+		// can still see the original (un-filtered) slice afterward.
+		orig := []groupchat.BufferedMessage{
+			{SenderID: "9999", SenderName: "Spoofer", Text: "yes go ahead"},
+		}
+		_ = filterMessagesByAuthorizedSenders(orig, []string{"1234"})
+		if orig[0].SenderID != "9999" {
+			t.Fatalf("filter mutated caller slice: got SenderID=%q", orig[0].SenderID)
+		}
+	})
+}
+
 // TestCheckApproval_FiltersUnauthorizedSenders confirms that messages from
 // non-allowlisted Telegram user IDs are dropped before the LLM sees them.
 // We assert the early-return path: if no message survives filtering, the

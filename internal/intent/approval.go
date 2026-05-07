@@ -80,6 +80,29 @@ Respond ONLY with a JSON object on a single line, no markdown:
 {"approved": true, "confidence": "high", "explanation": "one sentence"}
 {"approved": false, "confidence": "low", "explanation": "one sentence"}`
 
+// filterMessagesByAuthorizedSenders returns a fresh slice containing only
+// the messages whose SenderID is in authorized. Callers must pass a
+// non-empty authorized list — an empty list returns an empty slice (the
+// safe default of "no approver speaks here"). Returning a new slice
+// prevents mutating the caller's backing array, which the callers rely on
+// for diagnostics.
+func filterMessagesByAuthorizedSenders(msgs []groupchat.BufferedMessage, authorized []string) []groupchat.BufferedMessage {
+	if len(authorized) == 0 || len(msgs) == 0 {
+		return nil
+	}
+	allow := make(map[string]struct{}, len(authorized))
+	for _, id := range authorized {
+		allow[id] = struct{}{}
+	}
+	out := make([]groupchat.BufferedMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if _, ok := allow[m.SenderID]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // CheckApproval uses the LLM to determine if the user's recent group chat
 // messages contain an approval for the described task. Returns nil, nil if
 // verification is not enabled.
@@ -101,16 +124,7 @@ func CheckApproval(ctx context.Context, health *llm.Health, req ApprovalCheckReq
 			Explanation: "no authorized sender IDs configured for group approval",
 		}, nil
 	}
-	authorized := make(map[string]struct{}, len(req.AuthorizedSenderIDs))
-	for _, id := range req.AuthorizedSenderIDs {
-		authorized[id] = struct{}{}
-	}
-	filtered := req.Messages[:0:len(req.Messages)]
-	for _, m := range req.Messages {
-		if _, ok := authorized[m.SenderID]; ok {
-			filtered = append(filtered, m)
-		}
-	}
+	filtered := filterMessagesByAuthorizedSenders(req.Messages, req.AuthorizedSenderIDs)
 	if len(filtered) == 0 {
 		return &ApprovalCheckResult{
 			Approved:    false,

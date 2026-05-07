@@ -47,10 +47,17 @@ func (c *Client) handleRequest(ctx context.Context, id string, payload HTTPReque
 	}
 	// Attribute the synthesized request to the originating client IP so
 	// per-IP rate limits and audit logs aren't all coalesced under an
-	// empty RemoteAddr. JoinHostPort handles IPv6 bracketing — bare
-	// "addr:0" concatenation breaks for "::1" and any other IPv6 literal.
+	// empty RemoteAddr. Validate the relay-supplied value with
+	// net.ParseIP — a misbehaving or compromised relay must not be able
+	// to inject CRLF, hostnames, or unbracketed IPv6 garbage into the
+	// audit trail or rate-limit key. JoinHostPort handles IPv6 bracketing.
 	if payload.ClientIP != "" {
-		req.RemoteAddr = net.JoinHostPort(payload.ClientIP, "0")
+		if ip := net.ParseIP(payload.ClientIP); ip != nil {
+			req.RemoteAddr = net.JoinHostPort(ip.String(), "0")
+		} else {
+			c.logger.Warn("relay: rejecting non-IP client_ip from envelope",
+				"id", id, "client_ip", payload.ClientIP)
+		}
 	}
 
 	rec := httptest.NewRecorder()

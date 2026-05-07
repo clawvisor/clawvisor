@@ -460,6 +460,37 @@ func TestGateway_LocalService_PlannedCall_SkipsVerification(t *testing.T) {
 	}
 }
 
+func TestPlannedCallBypassEligible(t *testing.T) {
+	cases := []struct {
+		risk string
+		want bool
+	}{
+		// The four valid LLM verdicts are the only eligible bypass triggers.
+		{"low", true},
+		{"medium", true},
+		{"high", true},
+		{"critical", true},
+		// Sentinels for "assessment did not run" / "LLM errored" — must NOT bypass.
+		{"", false},
+		{"unknown", false},
+		// Case sensitivity: the assessor returns canonical lower-case;
+		// anything off-shape is treated as "did not run".
+		{"Low", false},
+		{"HIGH", false},
+		{"  low  ", false}, // whitespace must NOT be normalized away
+		// Garbage values must fail closed.
+		{"garbage", false},
+		{"low ", false},
+	}
+	for _, tc := range cases {
+		t.Run("risk="+tc.risk, func(t *testing.T) {
+			if got := plannedCallBypassEligible(tc.risk); got != tc.want {
+				t.Fatalf("plannedCallBypassEligible(%q)=%v want=%v", tc.risk, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestGateway_LocalService_PlannedCall_NoRiskAssessment_RunsVerifier is the
 // regression guard for the planned-call bypass: when the task's RiskLevel is
 // empty (assessment skipped) or "unknown" (LLM errored), the bypass must

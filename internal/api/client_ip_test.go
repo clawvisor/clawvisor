@@ -78,6 +78,47 @@ func TestClientIPFromRequest(t *testing.T) {
 			trusted:    trusted,
 			want:       "203.0.113.7",
 		},
+		// IPv6 coverage. Bracketed IPv6 RemoteAddr must round-trip and match
+		// IPv6 trusted CIDRs the same way IPv4 does.
+		{
+			name:       "ipv6 trusted peer with ipv6 XFF — pick rightmost untrusted",
+			remoteAddr: "[::1]:443",
+			xff:        "2001:db8::42, ::1",
+			trusted: []*net.IPNet{
+				mustCIDR(t, "::1/128"),
+			},
+			want: "2001:db8::42",
+		},
+		{
+			name:       "ipv6 untrusted peer ignores XFF",
+			remoteAddr: "[2001:db8::99]:443",
+			xff:        "10.0.0.5",
+			trusted: []*net.IPNet{
+				mustCIDR(t, "10.0.0.0/8"),
+			},
+			want: "2001:db8::99",
+		},
+		// Spoofing surface: an attacker on the public internet sets
+		// X-Forwarded-For: 10.0.0.1 hoping the daemon honors it. With a
+		// trusted-proxies set defined but the peer NOT in it, the header
+		// is ignored. Without this the rate-limit key would be forgable.
+		{
+			name:       "untrusted public peer cannot spoof XFF",
+			remoteAddr: "203.0.113.99:443",
+			xff:        "10.0.0.1",
+			trusted:    trusted,
+			want:       "203.0.113.99",
+		},
+		// IPv4-mapped IPv6 (::ffff:10.0.0.5) commonly appears behind
+		// dual-stack proxies. A CIDR matching the IPv4 form should still
+		// recognize the mapped form.
+		{
+			name:       "ipv4-mapped ipv6 in XFF is honored",
+			remoteAddr: "10.0.0.5:443",
+			xff:        "::ffff:203.0.113.7",
+			trusted:    trusted,
+			want:       "::ffff:203.0.113.7",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
