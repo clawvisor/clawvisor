@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -266,9 +268,15 @@ func loadOrCreateKey(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
 		// Validate file permissions — the key file should not be readable by
-		// group or others. Skip the check on Windows where Unix permissions
-		// don't apply (FileMode always reports 0666).
-		if info, statErr := os.Stat(path); statErr == nil {
+		// group or others. The check is meaningful on POSIX; on Windows the
+		// FileMode bits are synthesized (typically 0666) and don't reflect
+		// the actual ACL, so the check would either spuriously reject or
+		// give a false sense of security. We skip it there and emit a single
+		// warning to stderr so the operator knows the key file's protection
+		// must be verified by other means.
+		if runtime.GOOS == "windows" {
+			warnVaultKeyPermsUnchecked(path)
+		} else if info, statErr := os.Stat(path); statErr == nil {
 			if perm := info.Mode().Perm(); perm&0077 != 0 {
 				return nil, fmt.Errorf("vault key file %s has insecure permissions %04o (expected 0600)", path, perm)
 			}
@@ -294,4 +302,20 @@ func loadOrCreateKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("writing vault key file: %w", err)
 	}
 	return key, nil
+}
+
+// warnVaultKeyPermsUnchecked is invoked once per process per vault.key path
+// on Windows to surface that the file's protection cannot be verified by
+// looking at FileMode bits. The warning is intentionally noisy because a
+// world-readable key file there would silently strip the cryptographic
+// safeguard the rest of the vault relies on.
+var warnedVaultKeyPaths sync.Map
+
+func warnVaultKeyPermsUnchecked(path string) {
+	if _, loaded := warnedVaultKeyPaths.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"vault: cannot verify permissions on %s (windows); ensure the file's ACL grants access only to the daemon's user\n",
+		path)
 }
