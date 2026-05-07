@@ -651,6 +651,8 @@ func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *te
 		wg          sync.WaitGroup
 		start       = make(chan struct{})
 		winnerCount atomic.Int64
+		errCount    atomic.Int64
+		firstErr    atomic.Pointer[error]
 	)
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
@@ -659,6 +661,8 @@ func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *te
 			<-start
 			won, err := st.ClaimPendingApprovalForExecution(ctx, "req-exec-1")
 			if err != nil {
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
 				return
 			}
 			if won {
@@ -669,6 +673,12 @@ func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *te
 	close(start)
 	wg.Wait()
 
+	// Any racer error means the CAS isn't truly atomic for our purposes —
+	// the test would otherwise silently pass when 49 goroutines errored
+	// and 1 happened to "win" through that error.
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero racer errors, got %d (first: %v)", n, *firstErr.Load())
+	}
 	if got := winnerCount.Load(); got != 1 {
 		t.Fatalf("expected exactly 1 winning execution claim across %d racers, got %d",
 			goroutines, got)
@@ -716,6 +726,8 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 		wg          sync.WaitGroup
 		start       = make(chan struct{})
 		winnerCount atomic.Int64
+		errCount    atomic.Int64
+		firstErr    atomic.Pointer[error]
 	)
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
@@ -724,6 +736,8 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 			<-start
 			won, err := st.ClaimStalledExecutingApprovalForRecovery(ctx, "req-stalled-1", time.Second)
 			if err != nil {
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
 				return
 			}
 			if won {
@@ -734,6 +748,9 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 	close(start)
 	wg.Wait()
 
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero racer errors, got %d (first: %v)", n, *firstErr.Load())
+	}
 	if got := winnerCount.Load(); got != 1 {
 		t.Fatalf("expected exactly 1 winning recovery claim across %d racers, got %d",
 			goroutines, got)
@@ -848,10 +865,15 @@ func TestAgentTokenExpiry_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestConsumeSession_AtomicSingleWinner asserts that two concurrent
-// refresh-token consumers can't both succeed against the same row. This is
-// the regression guard for the replayable-rotation bug — a stolen refresh
-// token replayed in a race window must produce at most one new token pair.
+// TestConsumeSession_AtomicSingleWinner is the regression guard for the
+// replayable-refresh-token-rotation bug: a stolen refresh token replayed
+// in a race window must produce at most one new token pair, not multiply
+// access. 50 goroutines race ConsumeSession on the same row; exactly one
+// must return the row, the rest must each see store.ErrNotFound.
+//
+// A non-atomic SELECT-then-DELETE implementation would let multiple
+// callers each see the row, then race the DELETEs — multiple "winners"
+// observed before the row vanished. This test catches that.
 func TestConsumeSession_AtomicSingleWinner(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -865,24 +887,51 @@ func TestConsumeSession_AtomicSingleWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	_, err = st.CreateSession(ctx, user.ID, "tok-hash", time.Now().UTC().Add(time.Hour))
-	if err != nil {
+	if _, err := st.CreateSession(ctx, user.ID, "tok-hash", time.Now().UTC().Add(time.Hour)); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	// First consume wins.
-	sess, err := st.ConsumeSession(ctx, "tok-hash")
-	if err != nil {
-		t.Fatalf("first ConsumeSession: %v", err)
+	const goroutines = 50
+	var (
+		wg            sync.WaitGroup
+		start         = make(chan struct{})
+		winnerCount   atomic.Int64
+		notFoundCount atomic.Int64
+		errCount      atomic.Int64
+		firstErr      atomic.Pointer[error]
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			sess, err := st.ConsumeSession(ctx, "tok-hash")
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					notFoundCount.Add(1)
+					return
+				}
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
+				return
+			}
+			if sess != nil && sess.UserID == user.ID {
+				winnerCount.Add(1)
+			}
+		}()
 	}
-	if sess.UserID != user.ID {
-		t.Fatalf("returned wrong user_id: got %q want %q", sess.UserID, user.ID)
-	}
+	close(start)
+	wg.Wait()
 
-	// Second consume must fail with ErrNotFound — row is gone.
-	_, err = st.ConsumeSession(ctx, "tok-hash")
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("second ConsumeSession: got %v, want store.ErrNotFound", err)
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero non-NotFound errors, got %d (first: %v)", n, *firstErr.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning ConsumeSession across %d racers, got %d",
+			goroutines, got)
+	}
+	if got := notFoundCount.Load(); got != goroutines-1 {
+		t.Fatalf("expected %d ErrNotFound across losers, got %d", goroutines-1, got)
 	}
 }
 

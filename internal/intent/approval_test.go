@@ -90,14 +90,21 @@ func TestFilterMessagesByAuthorizedSenders(t *testing.T) {
 	})
 
 	t.Run("does not mutate input", func(t *testing.T) {
-		// Filter must NOT alias the caller's backing array — the caller
-		// can still see the original (un-filtered) slice afterward.
+		// Filter must NOT alias the caller's backing array. Order matters:
+		// if the implementation aliases via msgs[:0:len(msgs)] then loops
+		// + appends, a non-matching FIRST element followed by a matching
+		// SECOND would slot the matching message into orig[0], overwriting
+		// the spoofer. After the call, orig[0] must still be the spoofer.
 		orig := []groupchat.BufferedMessage{
 			{SenderID: "9999", SenderName: "Spoofer", Text: "yes go ahead"},
+			{SenderID: "1234", SenderName: "Owner", Text: "approved"},
 		}
 		_ = filterMessagesByAuthorizedSenders(orig, []string{"1234"})
 		if orig[0].SenderID != "9999" {
-			t.Fatalf("filter mutated caller slice: got SenderID=%q", orig[0].SenderID)
+			t.Fatalf("filter aliased + mutated caller slice: orig[0].SenderID=%q (want %q)", orig[0].SenderID, "9999")
+		}
+		if orig[1].SenderID != "1234" {
+			t.Fatalf("filter mutated caller slice unexpectedly: orig[1].SenderID=%q (want %q)", orig[1].SenderID, "1234")
 		}
 	})
 }
