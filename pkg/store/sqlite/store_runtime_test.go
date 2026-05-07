@@ -705,8 +705,11 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 	if won, err := st.ClaimPendingApprovalForExecution(ctx, "req-stalled-1"); err != nil || !won {
 		t.Fatalf("seed claim: won=%v err=%v", won, err)
 	}
-	// Sleep long enough that the lease cutoff (-1s) treats this as stale.
-	time.Sleep(1500 * time.Millisecond)
+	// SQLite CURRENT_TIMESTAMP and datetime('now') round to whole seconds,
+	// so we need >= 2s of clearance between executing_since and the
+	// -1s cutoff to avoid a flake when both round into the same second
+	// (executing_since=12:00:00, now=12:00:01, cutoff=12:00:00, no rows).
+	time.Sleep(2500 * time.Millisecond)
 
 	const goroutines = 50
 	var (

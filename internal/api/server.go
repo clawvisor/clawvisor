@@ -745,8 +745,11 @@ func (s *Server) routes() http.Handler {
 		e2e(http.HandlerFunc(gatewayHandler.HandleGet)))))
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
-	// Batch endpoint: N sub-requests in one round-trip. Rate-limited like the
-	// single-request endpoint (each batch consumes one token).
+	// Batch endpoint: N sub-requests in one round-trip. The route-level
+	// middleware consumes one token for the batch envelope; HandleBatch
+	// then charges one additional token per fan-out sub-request via the
+	// limiter wired in by SetGatewayRateLimiter, so a 20-request batch
+	// consumes 20 tokens — not 1. See TestBatch_RateLimitChargesPerSubRequest.
 	mux.Handle("POST /api/gateway/batch", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleBatch)))))
 

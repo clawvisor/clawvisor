@@ -266,8 +266,15 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 		a.OrgID = *orgID
 	}
 	if tokenExpiresAt != nil && *tokenExpiresAt != "" {
-		t := parseTime(*tokenExpiresAt)
-		a.TokenExpiresAt = &t
+		// Guard against parseTime returning the zero value (year 0001).
+		// Without this an unparseable string would silently land as a
+		// "way past" expiry, and RequireAgent would 401 every legitimate
+		// request with TOKEN_EXPIRED. Today the writer is always RFC3339,
+		// but a future migration / hand-edit / driver change would make
+		// this a silent agent-wide outage.
+		if t := parseTime(*tokenExpiresAt); !t.IsZero() {
+			a.TokenExpiresAt = &t
+		}
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings

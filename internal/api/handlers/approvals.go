@@ -500,7 +500,12 @@ func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store
 		var blob pendingRequestBlob
 		_ = json.Unmarshal(pa.RequestBlob, &blob)
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, blob.AgentID)
-		_ = callback.DeliverResult(ctx, *pa.CallbackURL, &callback.Payload{
+		// Route through the bounded dispatcher (same as every other
+		// resolution path in this handler) instead of calling DeliverResult
+		// synchronously. With N expired rows and slow agent endpoints the
+		// synchronous version serialized into N × 30s, starving the next
+		// sweep tick and the stranded-executing recovery pass.
+		h.dispatchCallback(*pa.CallbackURL, &callback.Payload{
 			Type:      "request",
 			RequestID: pa.RequestID,
 			Status:    "timeout",
@@ -561,7 +566,9 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
 			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-			_ = callback.DeliverResult(ctx, *task.CallbackURL, &callback.Payload{
+			// See processExpiredApproval — same reason for using the
+			// bounded dispatcher instead of synchronous DeliverResult.
+			h.dispatchCallback(*task.CallbackURL, &callback.Payload{
 				Type:   "task",
 				TaskID: task.ID,
 				Status: "expired",

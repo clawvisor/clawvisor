@@ -91,27 +91,25 @@ func NewCallbackDispatcher(workers, queueSize int, logger *slog.Logger) *Callbac
 // Start launches the worker goroutines. Each worker pulls from the queue
 // and delivers the callback with a 30s timeout. Workers exit when the
 // queue is closed by Stop.
+//
+// Recovery is per-iteration: a panic inside callback.DeliverResult is
+// caught for that single job, the worker logs it, and the for-range loop
+// continues on the next job. Wrapping the whole loop in safeGo would
+// instead drop the worker permanently after one panic — repeated panics
+// would silently shrink the pool to zero workers, and Submit would start
+// dropping every subsequent callback.
 func (d *CallbackDispatcher) Start(workers int) {
 	if workers < 1 {
 		workers = 1
 	}
 	finished := make(chan struct{}, workers)
 	for i := 0; i < workers; i++ {
-		safeGo(d.logger, "callback dispatcher worker", func() {
+		go func() {
 			defer func() { finished <- struct{}{} }()
 			for job := range d.queue {
-				cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				if err := callback.DeliverResult(cbCtx, job.url, job.payload, job.signingKey); err != nil && d.logger != nil {
-					d.logger.Warn("callback delivery failed",
-						"url", job.url,
-						"request_id", job.payload.RequestID,
-						"task_id", job.payload.TaskID,
-						"err", err,
-					)
-				}
-				cancel()
+				d.deliverOne(job)
 			}
-		})
+		}()
 	}
 	go func() {
 		for i := 0; i < workers; i++ {
@@ -119,6 +117,42 @@ func (d *CallbackDispatcher) Start(workers int) {
 		}
 		close(d.done)
 	}()
+}
+
+// deliverOne invokes callback.DeliverResult for a single job with panic
+// recovery scoped to this iteration. A panic here logs and returns; the
+// worker survives and processes the next job.
+func (d *CallbackDispatcher) deliverOne(job callbackJob) {
+	defer func() {
+		if r := recover(); r != nil && d.logger != nil {
+			// Payload may be nil if the panic source was an upstream
+			// programming error that bypassed Submit's guard — read
+			// fields defensively so the recovery handler doesn't itself
+			// panic and crash the worker.
+			var requestID, taskID string
+			if job.payload != nil {
+				requestID = job.payload.RequestID
+				taskID = job.payload.TaskID
+			}
+			d.logger.Error("callback delivery panicked",
+				"url", job.url,
+				"request_id", requestID,
+				"task_id", taskID,
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+		}
+	}()
+	cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := callback.DeliverResult(cbCtx, job.url, job.payload, job.signingKey); err != nil && d.logger != nil {
+		d.logger.Warn("callback delivery failed",
+			"url", job.url,
+			"request_id", job.payload.RequestID,
+			"task_id", job.payload.TaskID,
+			"err", err,
+		)
+	}
 }
 
 // Submit enqueues a callback for delivery. Returns immediately; the caller
