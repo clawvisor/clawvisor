@@ -15,10 +15,20 @@ import (
 // ApprovalCheckRequest contains the data needed to determine if a user
 // pre-approved a task via group chat conversation.
 type ApprovalCheckRequest struct {
-	Messages    []groupchat.BufferedMessage
-	TaskPurpose string
-	TaskActions []string // e.g. "google.calendar:list_events"
-	AgentName   string
+	Messages []groupchat.BufferedMessage
+	// AuthorizedSenderIDs is the allowlist of Telegram user IDs whose
+	// messages may count as approvals. Anyone else's messages — including
+	// other group members and the bot itself — are filtered out before the
+	// LLM ever sees them, eliminating the display-name spoofing surface
+	// where any group member could fake a "yes go ahead" signal.
+	//
+	// When empty (e.g. legacy callers that haven't been updated yet),
+	// CheckApproval returns "not approved" without calling the LLM, so the
+	// fail-safe is no-bypass.
+	AuthorizedSenderIDs []string
+	TaskPurpose         string
+	TaskActions         []string // e.g. "google.calendar:list_events"
+	AgentName           string
 }
 
 // ApprovalCheckResult is the LLM's verdict on whether the user approved the task.
@@ -70,6 +80,29 @@ Respond ONLY with a JSON object on a single line, no markdown:
 {"approved": true, "confidence": "high", "explanation": "one sentence"}
 {"approved": false, "confidence": "low", "explanation": "one sentence"}`
 
+// filterMessagesByAuthorizedSenders returns a fresh slice containing only
+// the messages whose SenderID is in authorized. Callers must pass a
+// non-empty authorized list — an empty list returns an empty slice (the
+// safe default of "no approver speaks here"). Returning a new slice
+// prevents mutating the caller's backing array, which the callers rely on
+// for diagnostics.
+func filterMessagesByAuthorizedSenders(msgs []groupchat.BufferedMessage, authorized []string) []groupchat.BufferedMessage {
+	if len(authorized) == 0 || len(msgs) == 0 {
+		return nil
+	}
+	allow := make(map[string]struct{}, len(authorized))
+	for _, id := range authorized {
+		allow[id] = struct{}{}
+	}
+	out := make([]groupchat.BufferedMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if _, ok := allow[m.SenderID]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // CheckApproval uses the LLM to determine if the user's recent group chat
 // messages contain an approval for the described task. Returns nil, nil if
 // verification is not enabled.
@@ -81,6 +114,25 @@ func CheckApproval(ctx context.Context, health *llm.Health, req ApprovalCheckReq
 	if len(req.Messages) == 0 {
 		return nil, nil
 	}
+	// Without an authorized-sender allowlist any group member could spoof an
+	// approval just by having a matching display name. Refuse to consult the
+	// LLM at all — the safe fall-through is "no approval found".
+	if len(req.AuthorizedSenderIDs) == 0 {
+		return &ApprovalCheckResult{
+			Approved:    false,
+			Confidence:  "low",
+			Explanation: "no authorized sender IDs configured for group approval",
+		}, nil
+	}
+	filtered := filterMessagesByAuthorizedSenders(req.Messages, req.AuthorizedSenderIDs)
+	if len(filtered) == 0 {
+		return &ApprovalCheckResult{
+			Approved:    false,
+			Confidence:  "low",
+			Explanation: "no recent messages from authorized senders",
+		}, nil
+	}
+	req.Messages = filtered
 
 	start := time.Now()
 	client := llm.NewClient(cfg.LLMProviderConfig)

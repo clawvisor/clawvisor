@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -17,8 +18,9 @@ import (
 // relay_pairing are implemented. Calling anything else panics.
 type mockStore struct {
 	store.Store
-	user  *store.User
-	agent *store.Agent
+	user          *store.User
+	agent         *store.Agent
+	lastExpiresAt time.Time // captured by CreateAgentWithExpiry for test assertion
 }
 
 func (m *mockStore) GetUserByEmail(_ context.Context, email string) (*store.User, error) {
@@ -30,6 +32,16 @@ func (m *mockStore) GetUserByEmail(_ context.Context, email string) (*store.User
 
 func (m *mockStore) CreateAgent(_ context.Context, userID, name, tokenHash string) (*store.Agent, error) {
 	m.agent = &store.Agent{ID: "agent-1", UserID: userID, Name: name, TokenHash: tokenHash}
+	return m.agent, nil
+}
+
+func (m *mockStore) CreateAgentWithExpiry(_ context.Context, userID, name, tokenHash string, expiresAt time.Time) (*store.Agent, error) {
+	a := &store.Agent{ID: "agent-1", UserID: userID, Name: name, TokenHash: tokenHash}
+	if !expiresAt.IsZero() {
+		a.TokenExpiresAt = &expiresAt
+	}
+	m.agent = a
+	m.lastExpiresAt = expiresAt
 	return m.agent, nil
 }
 
@@ -75,7 +87,28 @@ func TestRelayPairingSuccess(t *testing.T) {
 	if !strings.Contains(body, "test-daemon") {
 		t.Error("response should contain daemon_id")
 	}
+
+	// Regression guard for the 30-day TTL — without an assertion the
+	// CreateAgentWithExpiry mock could silently receive a zero time
+	// (= no expiry), defeating the entire H45 fix.
+	st := p.st.(*mockStore)
+	if st.lastExpiresAt.IsZero() {
+		t.Fatal("relay_pairing must set a non-zero token expiry")
+	}
+	wantTTL := 30 * 24 * time.Hour
+	gotTTL := time.Until(st.lastExpiresAt)
+	if gotTTL < wantTTL-time.Minute || gotTTL > wantTTL+time.Minute {
+		t.Fatalf("relay_pairing token expiry should be ~30d from now; got %s (want %s)", gotTTL, wantTTL)
+	}
 }
+
+// NOTE: there is no test for the authorization_code grant's expiry
+// because the existing mockStore (embedding store.Store) doesn't model
+// OAuthClient / OAuthAuthCode storage and building it out is more
+// scaffolding than this regression deserves. Both grant paths share the
+// same constant `30 * 24 * time.Hour` in provider.go, so the relay_pairing
+// assertion above is the canary; if someone breaks it for both paths the
+// build catches it.
 
 func TestRelayPairingMissingCode(t *testing.T) {
 	p := newTestProvider(func(string) bool { return true })

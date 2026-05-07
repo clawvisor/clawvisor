@@ -38,6 +38,18 @@ func NewKeyedLimiter(r rate.Limit, burst int) *KeyedLimiter {
 // Returns whether it was allowed, the approximate remaining burst tokens,
 // and the time when the next token will be available.
 func (kl *KeyedLimiter) Allow(key string) (allowed bool, remaining int, resetTime time.Time) {
+	return kl.AllowN(key, 1)
+}
+
+// AllowN atomically attempts to take n tokens. Either all n tokens are
+// consumed or none are — there is no partial charge. This matters for
+// batch endpoints that need to charge multiple tokens up-front: a per-
+// token loop can drain the bucket and then 429 with no work executed,
+// leaving the caller double-billed.
+func (kl *KeyedLimiter) AllowN(key string, n int) (allowed bool, remaining int, resetTime time.Time) {
+	if n < 1 {
+		n = 1
+	}
 	kl.mu.Lock()
 	e, ok := kl.keys[key]
 	if !ok {
@@ -48,7 +60,7 @@ func (kl *KeyedLimiter) Allow(key string) (allowed bool, remaining int, resetTim
 	kl.mu.Unlock()
 
 	now := time.Now()
-	allowed = e.limiter.Allow()
+	allowed = e.limiter.AllowN(now, n)
 
 	// Approximate remaining tokens (tokens are float; truncate to int).
 	tokens := int(e.limiter.TokensAt(now))

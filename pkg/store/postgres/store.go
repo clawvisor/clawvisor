@@ -222,18 +222,40 @@ func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash,
 	return s.getAgentByID(ctx, a.ID)
 }
 
+// CreateAgentWithExpiry creates an agent whose token expires at the given
+// time. A zero time means no expiry — equivalent to CreateAgent.
+func (s *Store) CreateAgentWithExpiry(ctx context.Context, userID, name, tokenHash string, expiresAt time.Time) (*store.Agent, error) {
+	id := uuid.New().String()
+	var expiry any
+	if !expiresAt.IsZero() {
+		expiry = expiresAt.UTC()
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, token_expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, userID, name, "", tokenHash, expiry,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var orgID *string
+	var tokenExpiresAt *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE token_hash = $1 AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if tokenExpiresAt != nil {
+		a.TokenExpiresAt = tokenExpiresAt
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings
@@ -317,14 +339,24 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 }
 
 func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	// See sqlite.Store.RotateAgentToken — refuse rotation for expiry-bound
+	// agents because the rotated token would inherit a possibly-past expiry.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE agents SET token_hash = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL`,
+		`UPDATE agents SET token_hash = $1 WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL AND token_expires_at IS NULL`,
 		newTokenHash, id, userID,
 	)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var hasExpiry bool
+		row := s.pool.QueryRow(ctx,
+			`SELECT token_expires_at IS NOT NULL FROM agents WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			id, userID,
+		)
+		if scanErr := row.Scan(&hasExpiry); scanErr == nil && hasExpiry {
+			return store.ErrConflict
+		}
 		return store.ErrNotFound
 	}
 	return nil
@@ -421,6 +453,23 @@ func (s *Store) GetSession(ctx context.Context, tokenHash string) (*store.Sessio
 		return nil, store.ErrNotFound
 	}
 	return sess, err
+}
+
+// ConsumeSession is the atomic Get+Delete used by refresh-token rotation.
+func (s *Store) ConsumeSession(ctx context.Context, tokenHash string) (*store.Session, error) {
+	sess := &store.Session{}
+	err := s.pool.QueryRow(ctx,
+		`DELETE FROM sessions WHERE token_hash = $1
+		 RETURNING id, user_id, token_hash, expires_at, created_at`,
+		tokenHash,
+	).Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &sess.ExpiresAt, &sess.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sess, nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
@@ -1062,6 +1111,34 @@ func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt tim
 	return nil
 }
 
+// UpdateTaskStatusFrom is the CAS variant of UpdateTaskStatus.
+func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE tasks SET status = $1 WHERE id = $2 AND status = $3`,
+		toStatus, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved.
+func (s *Store) UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []store.TaskAction) (bool, error) {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return false, err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks SET status = 'active', approved_at = NOW(), expires_at = $1,
+			authorized_actions = $2
+		WHERE id = $3 AND status = $4
+	`, expiresAt, actionsJSON, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {
@@ -1443,6 +1520,17 @@ func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, stat
 	return err
 }
 
+// UpdatePendingApprovalStatusFrom is the CAS variant.
+func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = $3`,
+		toStatus, requestID, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE pending_approvals SET status = 'executing', executing_since = NOW()
@@ -1454,9 +1542,9 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 }
 
 // ListStalledExecutingApprovals returns rows that were claimed for execution
-// but never completed within leaseTTL. This is the recovery hook for daemon
-// crashes that strand a row in 'executing' — without it, the user would be
-// permanently locked out of re-approving the same request.
+// but never completed within leaseTTL. See sqlite.Store.ListStalledExecuting
+// — this is a list, NOT a claim; pair with ClaimStalledExecutingApprovalFor
+// Recovery to gate side-effects.
 func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
 	cutoff := time.Now().UTC().Add(-leaseTTL)
 	rows, err := s.pool.Query(ctx, `
@@ -1467,6 +1555,23 @@ func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time
 	}
 	defer rows.Close()
 	return scanPendingApprovals(rows)
+}
+
+// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+// 'executing' row only if it is still in 'executing' status and still past
+// the lease cutoff. The DELETE's WHERE clause is the CAS — see sqlite
+// counterpart for the rationale.
+func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error) {
+	cutoff := time.Now().UTC().Add(-leaseTTL)
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM pending_approvals
+		WHERE request_id = $1 AND status = 'executing'
+		  AND executing_since IS NOT NULL AND executing_since < $2`,
+		requestID, cutoff)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // ── Canonical Approval Records ───────────────────────────────────────────────
@@ -1484,6 +1589,46 @@ func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRec
 		rec.Surface, rawJSONOrDefaultBytes(rec.SummaryJSON, "{}"), rawJSONOrDefaultBytes(rec.PayloadJSON, "{}"),
 		rec.ResolutionTransport, rec.ExpiresAt, rec.ResolvedAt, rec.Resolution)
 	return err
+}
+
+// CreateApprovalRecordWithPending wraps both inserts in one transaction.
+func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.ApprovalRecord, pa *store.PendingApproval) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	if pa.ID == "" {
+		pa.ID = uuid.New().String()
+	}
+	if pa.Status == "" {
+		pa.Status = "pending"
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefaultBytes(rec.SummaryJSON, "{}"), rawJSONOrDefaultBytes(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, rec.ExpiresAt, rec.ResolvedAt, rec.Resolution); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
+		pa.CallbackURL, pa.Status, pa.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {

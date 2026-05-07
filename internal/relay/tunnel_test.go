@@ -97,3 +97,57 @@ func TestHandleRequest(t *testing.T) {
 	_ = c
 	_ = captured
 }
+
+// TestHandleRequest_ClientIPSetsRemoteAddr is the regression guard for the
+// "relay traffic has empty RemoteAddr" bug. When the relay envelope carries
+// a ClientIP, the synthesized request must surface it as r.RemoteAddr so
+// per-IP rate limits and audit logs apply correctly.
+func TestHandleRequest_ClientIPSetsRemoteAddr(t *testing.T) {
+	cases := []struct {
+		name     string
+		clientIP string
+		want     string // "" means "RemoteAddr left empty (rejected)"
+	}{
+		{"ipv4", "203.0.113.7", "203.0.113.7:0"},
+		// IPv6 literals must be bracketed so net.SplitHostPort downstream
+		// (and ipKeyFn / audit logs) parses them correctly.
+		{"ipv6", "2001:db8::1", "[2001:db8::1]:0"},
+		{"ipv6 loopback", "::1", "[::1]:0"},
+		// Garbage from a misbehaving/compromised relay must not poison
+		// RemoteAddr — the validator drops it and leaves RemoteAddr empty.
+		{"hostname rejected", "evil.example.com", ""},
+		{"crlf injection rejected", "1.2.3.4\r\nX-Foo: bar", ""},
+		// 2001:db8::1:8080 IS a valid IPv6 literal (last group is 0x8080),
+		// so it round-trips through bracketing — not a rejection case.
+		{"valid ipv6 with hex-looking suffix", "2001:db8::1:8080", "[2001:db8::1:8080]:0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				handlerCalled bool
+				gotRemoteAddr string
+			)
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+				gotRemoteAddr = r.RemoteAddr
+				w.WriteHeader(http.StatusOK)
+			})
+			c := &Client{handler: handler, logger: slog.Default()}
+			c.handleRequest(context.Background(), "test-id", HTTPRequestPayload{
+				Method:   "GET",
+				Path:     "/api/health",
+				Headers:  map[string][]string{},
+				ClientIP: tc.clientIP,
+			})
+			// Always assert the handler ran. For rejection cases (want="")
+			// the handler-skip path would have left gotRemoteAddr=="" too,
+			// producing a false pass — handlerCalled is the actual signal.
+			if !handlerCalled {
+				t.Fatalf("handler was not called (clientIP=%q)", tc.clientIP)
+			}
+			if gotRemoteAddr != tc.want {
+				t.Fatalf("RemoteAddr=%q, want %q (clientIP=%q)", gotRemoteAddr, tc.want, tc.clientIP)
+			}
+		})
+	}
+}

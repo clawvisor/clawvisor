@@ -59,6 +59,28 @@ type TasksHandler struct {
 	llmHealth        *llm.Health             // may be nil; needed for approval check LLM calls
 	agentPairer      notify.AgentGroupPairer // may be nil; set via SetGroupApproval
 	localSvcProvider LocalServiceProvider    // may be nil; set via SetLocalServiceProvider
+	cbDispatch       *CallbackDispatcher     // bounded callback delivery; may be nil
+}
+
+// SetCallbackDispatcher wires a bounded callback delivery pool. When unset,
+// callback delivery falls back to a safeGo-wrapped inline goroutine.
+func (h *TasksHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
+	h.cbDispatch = d
+}
+
+// dispatchCallback enqueues a payload for delivery via the bounded
+// dispatcher when available, or spawns a panic-safe goroutine otherwise.
+func (h *TasksHandler) dispatchCallback(url string, payload *callback.Payload, signingKey string) {
+	if url == "" || payload == nil {
+		return
+	}
+	if h.cbDispatch != nil {
+		h.cbDispatch.Submit(url, payload, signingKey)
+		return
+	}
+	safeGo(h.logger, "callback delivery (inline)", func() {
+		_ = callback.DeliverResult(context.Background(), url, payload, signingKey)
+	})
 }
 
 // SetLocalServiceProvider configures the local daemon service provider for
@@ -554,11 +576,24 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				for _, a := range req.AuthorizedActions {
 					actionStrs = append(actionStrs, a.Service+":"+a.Action)
 				}
+				// Resolve the user's authorized Telegram user_id from their
+				// notification config. The DM chat_id captured at pairing
+				// time IS the user's Telegram user_id (Telegram DMs use
+				// user-to-bot, where chat_id == sender id). Anyone else's
+				// messages are filtered out by CheckApproval before the
+				// LLM sees them — closing the display-name spoofing surface.
+				var authorizedSenderIDs []string
+				if cs, ok := h.notifier.(notify.TelegramConfigStore); ok {
+					if _, chatID, err := cs.TelegramConfig(ctx, agent.UserID); err == nil && chatID != "" {
+						authorizedSenderIDs = []string{chatID}
+					}
+				}
 				result, err := intent.CheckApproval(ctx, h.llmHealth, intent.ApprovalCheckRequest{
-					Messages:    messages,
-					TaskPurpose: req.Purpose,
-					TaskActions: actionStrs,
-					AgentName:   agent.Name,
+					Messages:            messages,
+					AuthorizedSenderIDs: authorizedSenderIDs,
+					TaskPurpose:         req.Purpose,
+					TaskActions:         actionStrs,
+					AgentName:           agent.Name,
 				})
 				if err != nil {
 					h.logger.Warn("group chat approval check failed", "err", err, "user_id", agent.UserID)
@@ -612,13 +647,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// Deliver callback to agent if configured.
 		if task.CallbackURL != nil && *task.CallbackURL != "" {
 			cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-			go func() {
-				_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-					Type:   "task",
-					TaskID: task.ID,
-					Status: "approved",
-				}, cbKey)
-			}()
+			h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+				Type:   "task",
+				TaskID: task.ID,
+				Status: "approved",
+			}, cbKey)
 		}
 
 		h.publishTasksAndQueue(agent.UserID)
@@ -1020,8 +1053,15 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
 
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, actions); err != nil {
+	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, actions)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
+		return
+	}
+	if !won {
+		// Concurrent approve/deny race or already-resolved task — refuse to
+		// repeat the side effects below (callback, audit).
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer pending approval")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
@@ -1029,13 +1069,11 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "approved",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "approved",
+		}, cbKey)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -1216,8 +1254,15 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not deny task")
+		return
+	}
+	if !won {
+		// Concurrent approve/deny race or already-resolved task — refuse to
+		// repeat side effects (callback, chain-facts cleanup, audit).
+		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer pending")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
@@ -1230,13 +1275,11 @@ func (h *TasksHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "denied",
+		}, cbKey)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1575,13 +1618,11 @@ func (h *TasksHandler) ExpandApprove(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expanded",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expanded",
+		}, cbKey)
 	}
 
 	h.publishTasksAndQueue(user.ID)
@@ -1651,13 +1692,11 @@ func (h *TasksHandler) ExpandDeny(w http.ResponseWriter, r *http.Request) {
 	// Deliver callback if set.
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expansion_denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expansion_denied",
+		}, cbKey)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1687,8 +1726,12 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	} else {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
-	if err := h.st.UpdateTaskApproved(ctx, taskID, expiresAt, task.AuthorizedActions); err != nil {
+	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, task.AuthorizedActions)
+	if err != nil {
 		return err
+	}
+	if !won {
+		return fmt.Errorf("task is no longer pending approval")
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 
@@ -1697,13 +1740,11 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "approved",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "approved",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1721,8 +1762,12 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 		return fmt.Errorf("task is not pending")
 	}
 
-	if err := h.st.UpdateTaskStatus(ctx, taskID, "denied"); err != nil {
+	won, err := h.st.UpdateTaskStatusFrom(ctx, taskID, task.Status, "denied")
+	if err != nil {
 		return err
+	}
+	if !won {
+		return fmt.Errorf("task is no longer pending")
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, canonicalTaskApprovalKind(task), "deny", "denied")
 
@@ -1732,13 +1777,11 @@ func (h *TasksHandler) DenyByTaskID(ctx context.Context, taskID, userID string) 
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "denied",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1774,13 +1817,11 @@ func (h *TasksHandler) ExpandApproveByTaskID(ctx context.Context, taskID, userID
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expanded",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expanded",
+		}, cbKey)
 	}
 	return nil
 }
@@ -1821,13 +1862,11 @@ func (h *TasksHandler) ExpandDenyByTaskID(ctx context.Context, taskID, userID st
 
 	if task.CallbackURL != nil && *task.CallbackURL != "" {
 		cbKey, _ := h.st.GetAgentCallbackSecret(ctx, task.AgentID)
-		go func() {
-			_ = callback.DeliverResult(context.Background(), *task.CallbackURL, &callback.Payload{
-				Type:   "task",
-				TaskID: taskID,
-				Status: "scope_expansion_denied",
-			}, cbKey)
-		}()
+		h.dispatchCallback(*task.CallbackURL, &callback.Payload{
+			Type:   "task",
+			TaskID: taskID,
+			Status: "scope_expansion_denied",
+		}, cbKey)
 	}
 	return nil
 }

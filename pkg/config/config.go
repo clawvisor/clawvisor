@@ -118,6 +118,13 @@ type ServerConfig struct {
 	AuthMode    string `yaml:"auth_mode"`  // "magic_link", "password", or "" (auto-detect from IsLocal)
 	LogFormat   string `yaml:"log_format"` // "json", "text", or "" (auto: json in prod, text in dev)
 	LogLevel    string `yaml:"log_level"`  // "debug", "info", "warn", "error" (default: "info")
+	// TrustedProxies is the list of CIDR ranges whose r.RemoteAddr is treated
+	// as a reverse proxy. When a request arrives from one of these networks,
+	// the right-most non-trusted entry of X-Forwarded-For is used as the
+	// rate-limit key instead of r.RemoteAddr. Leave empty in self-host /
+	// direct-exposed mode to keep the previous (RemoteAddr-only) behavior.
+	// Example: ["10.0.0.0/8", "127.0.0.1/32"] for Cloud Run behind GCLB.
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 type DatabaseConfig struct {
@@ -380,7 +387,7 @@ func Default() *Config {
 			ServicePresets: false,
 		},
 		RateLimit: RateLimitConfig{
-			Gateway:   RateLimitBucket{Limit: 60, Window: 60},
+			Gateway:   RateLimitBucket{Limit: 200, Window: 60},
 			OAuth:     RateLimitBucket{Limit: 5, Window: 60},
 			PolicyAPI: RateLimitBucket{Limit: 30, Window: 60},
 			ReviewRun: RateLimitBucket{Limit: 5, Window: 3600},

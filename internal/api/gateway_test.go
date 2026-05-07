@@ -787,6 +787,31 @@ func TestApprovals_Approve_WithMockAdapter(t *testing.T) {
 	}
 }
 
+// TestApprovals_DoubleApprove_Returns409 is the regression guard against
+// a lost-CAS approve race surfacing as 500 INTERNAL_ERROR. The second
+// approve call has nothing legitimate to do — the row is already
+// resolved — but it's a normal race outcome (two dashboard tabs, etc.),
+// not an internal failure. Must be 409 ALREADY_RESOLVED.
+func TestApprovals_DoubleApprove_Returns409(t *testing.T) {
+	adapter := newMockAdapter("mock.dbl", "run").withResult("done", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "dbl")
+	taskID := sc.createApprovedTask(t, env, "mock.dbl", "run", false)
+	reqID := fmt.Sprintf("req-dbl-%s", randSuffix())
+	sc.gatewayRequestWithTask(env, reqID, "mock.dbl", "run", taskID)
+
+	// First approve → 200.
+	resp := sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Second approve → 409 ALREADY_RESOLVED, not 500 INTERNAL_ERROR.
+	resp = sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/approve", reqID), nil)
+	body := mustStatus(t, resp, http.StatusConflict)
+	if code, _ := body["code"].(string); code != "ALREADY_RESOLVED" {
+		t.Fatalf("expected code=ALREADY_RESOLVED, got %q (body=%v)", code, body)
+	}
+}
+
 func TestApprovals_Approve_WrongUser_Forbidden(t *testing.T) {
 	env := newTestEnv(t, newMockAdapter("mock.forbidden", "run"))
 	sc1 := newScenario(t, env, "bot1")

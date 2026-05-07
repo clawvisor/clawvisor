@@ -76,6 +76,8 @@ type Server struct {
 	tasksHandler       *handlers.TasksHandler
 	connectionsHandler *handlers.ConnectionsHandler
 	devicesHandler     *handlers.DevicesHandler
+	llmVerifier        *intent.LLMVerifier          // verdict cache cleanup target; nil when verification disabled
+	cbDispatcher       *handlers.CallbackDispatcher // bounded callback delivery pool
 
 	pushNotifier         *push.Notifier                // concrete push notifier; may be nil
 	msgBuffer            groupchat.Buffer              // group chat message buffer; may be nil
@@ -364,9 +366,13 @@ func New(
 	mux := s.routes()
 
 	s.http = &http.Server{
-		Addr:        cfg.Server.Addr(),
-		Handler:     mux,
-		ReadTimeout: 30 * time.Second,
+		Addr:    cfg.Server.Addr(),
+		Handler: mux,
+		// ReadHeaderTimeout caps how long a client may take to send the
+		// request line + headers. Without it, slowloris attacks can hold
+		// connections open indefinitely with one byte per second of headers.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		// WriteTimeout and IdleTimeout must exceed the long-poll cap
 		// (parseLongPollTimeout) and MCP SSE idle gaps. Otherwise the
 		// connection is torn down mid-handler and Cloud Run reports a 503.
@@ -435,6 +441,7 @@ func (s *Server) routes() http.Handler {
 			v.SetVerdictCache(s.verdictCache)
 		}
 		startGeminiCacheIfConfigured(s.llmCfg.Verification.LLMProviderConfig, s.logger, "verifier", v.StartGeminiCache)
+		s.llmVerifier = v
 		verifier = v
 	}
 
@@ -446,10 +453,19 @@ func (s *Server) routes() http.Handler {
 		extractor = ext
 	}
 
+	// Bounded callback delivery pool — shared across all handlers that
+	// dispatch agent callbacks, so a slow downstream agent can't flood
+	// the daemon with goroutines.
+	if s.cbDispatcher == nil {
+		s.cbDispatcher = handlers.NewCallbackDispatcher(16, 1024, s.logger)
+		s.cbDispatcher.Start(16)
+	}
+
 	gatewayHandler := handlers.NewGatewayHandler(
 		s.store, s.vault, s.adapterReg,
 		s.notifier, verifier, extractor, *s.cfg, s.logger, baseURL, s.eventHub,
 	)
+	gatewayHandler.SetCallbackDispatcher(s.cbDispatcher)
 	if s.llmCfg.Verification.Enabled {
 		gatewayHandler.SetGatewayRequestResolver(runtimepolicy.NewLLMGatewayRequestResolver(s.llmHealth, s.logger))
 	}
@@ -486,10 +502,12 @@ func (s *Server) routes() http.Handler {
 		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
+	approvalsHandler.SetCallbackDispatcher(s.cbDispatcher)
 	s.approvalsHandler = approvalsHandler
 
 	tasksHandler := handlers.NewTasksHandler(s.store, s.vault, s.adapterReg,
 		s.notifier, *s.cfg, s.logger, baseURL, s.eventHub, assessor)
+	tasksHandler.SetCallbackDispatcher(s.cbDispatcher)
 	if s.dedupCache != nil {
 		tasksHandler.SetDedupCache(s.dedupCache)
 	}
@@ -519,12 +537,21 @@ func (s *Server) routes() http.Handler {
 	policyRL := newKeyedLimiterFromBucket(rlCfg.PolicyAPI)
 	authRL := newKeyedLimiterFromBucket(rlCfg.Auth)
 
-	ipKeyFn := func(r *http.Request) string {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
+	// Parse trusted-proxy CIDRs once. When r.RemoteAddr falls inside any of
+	// these networks, ipKeyFn honors X-Forwarded-For — otherwise the rate
+	// limiter would collapse to a single bucket on hosted deployments
+	// (e.g. Cloud Run) where every request appears to come from one IP.
+	trustedProxyNets := make([]*net.IPNet, 0, len(s.cfg.Server.TrustedProxies))
+	for _, cidr := range s.cfg.Server.TrustedProxies {
+		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return r.RemoteAddr
+			s.logger.Warn("ignoring invalid trusted_proxies CIDR", "cidr", cidr, "err", err)
+			continue
 		}
-		return host
+		trustedProxyNets = append(trustedProxyNets, n)
+	}
+	ipKeyFn := func(r *http.Request) string {
+		return clientIPFromRequest(r, trustedProxyNets)
 	}
 	agentKeyFn := func(r *http.Request) string {
 		if a := middleware.AgentFromContext(r.Context()); a != nil {
@@ -538,6 +565,11 @@ func (s *Server) routes() http.Handler {
 		}
 		return ""
 	}
+
+	// Wire the gateway limiter into the handler so HandleBatch can charge
+	// one token per fan-out sub-request rather than letting one batch token
+	// buy N adapter calls + N LLM verifications + N audit writes.
+	gatewayHandler.SetGatewayRateLimiter(gatewayRL, agentKeyFn)
 
 	user := func(h http.HandlerFunc) http.Handler { return requireUser(h) }
 	userOAuthRL := func(h http.HandlerFunc) http.Handler {
@@ -713,8 +745,11 @@ func (s *Server) routes() http.Handler {
 		e2e(http.HandlerFunc(gatewayHandler.HandleGet)))))
 	mux.Handle("POST /api/gateway/request/{request_id}/execute", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleExecuteApproved)))))
-	// Batch endpoint: N sub-requests in one round-trip. Rate-limited like the
-	// single-request endpoint (each batch consumes one token).
+	// Batch endpoint: N sub-requests in one round-trip. The route-level
+	// middleware consumes one token for the batch envelope; HandleBatch
+	// then charges one additional token per fan-out sub-request via the
+	// limiter wired in by SetGatewayRateLimiter, so a 20-request batch
+	// consumes 20 tokens — not 1. See TestBatch_RateLimitChargesPerSubRequest.
 	mux.Handle("POST /api/gateway/batch", requireAgent(middleware.RateLimit(gatewayRL, agentKeyFn, rlCfg.Gateway.Limit)(
 		e2e(http.HandlerFunc(gatewayHandler.HandleBatch)))))
 
@@ -1098,6 +1133,12 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start background expiry cleanup.
 	go s.approvalsHandler.RunExpiryCleanup(ctx)
 
+	// Start verdict-cache cleanup so the in-memory cache evicts expired
+	// entries on a schedule rather than only on-access.
+	if s.llmVerifier != nil {
+		go s.llmVerifier.RunCleanup(ctx)
+	}
+
 	// Start SSE ticket store cleanup.
 	if s.ticketStore != nil {
 		go func() {
@@ -1192,6 +1233,12 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		if err := s.http.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		// Drain in-flight callback deliveries before closing the store so
+		// the dispatcher's worker context still has a usable backend if it
+		// races into a final delivery attempt.
+		if s.cbDispatcher != nil {
+			s.cbDispatcher.Stop()
 		}
 		s.store.Close()
 		if !s.cfg.Server.IsLocal() {

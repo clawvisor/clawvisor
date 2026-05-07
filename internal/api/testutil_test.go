@@ -418,6 +418,27 @@ func newScenario(t *testing.T, env *testEnv, _ string) *scenario {
 	}
 }
 
+// newScenarioOptingOutOfSignedCallbacks is the variant used by tests that
+// need an agent without a callback signing secret (e.g. asserting unsigned
+// delivery still works for explicit opt-out clients).
+func newScenarioOptingOutOfSignedCallbacks(t *testing.T, env *testEnv) *scenario {
+	t.Helper()
+	s := newSession(t, env)
+	resp := s.do("POST", "/api/agents", map[string]any{
+		"name":                 "test-agent-nosec",
+		"with_callback_secret": false,
+	})
+	agentBody := mustStatus(t, resp, http.StatusCreated)
+	if _, ok := agentBody["callback_secret"]; ok {
+		t.Fatal("opt-out agent must not receive a callback_secret in response")
+	}
+	return &scenario{
+		session:    s,
+		AgentToken: str(t, agentBody, "token"),
+		AgentID:    str(t, agentBody, "id"),
+	}
+}
+
 // activateService seeds a dummy vault credential so the service passes activation checks.
 func (sc *scenario) activateService(t *testing.T, env *testEnv, service string) {
 	t.Helper()

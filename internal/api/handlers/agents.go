@@ -37,9 +37,16 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Description        string `json:"description"`
-		Name               string `json:"name"`
-		WithCallbackSecret bool   `json:"with_callback_secret"`
+		Description string `json:"description"`
+		Name        string `json:"name"`
+		// WithCallbackSecret is a *bool so we can distinguish:
+		//   nil   → field absent — default to true (mint a secret).
+		//   true  → explicit opt-in (same as default).
+		//   false → explicit opt-out — no secret minted.
+		// The default flipped from off to on once unsigned callbacks were
+		// recognized as a forgery surface: anyone learning the callback URL
+		// could impersonate a "result" to the agent.
+		WithCallbackSecret *bool `json:"with_callback_secret"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -77,7 +84,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"token":       rawToken,
 	}
 
-	if body.WithCallbackSecret {
+	wantSecret := body.WithCallbackSecret == nil || *body.WithCallbackSecret
+	if wantSecret {
 		secret, err := auth.GenerateCallbackSecret()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate callback secret")
@@ -223,6 +231,14 @@ func (h *AgentsHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 	if err := h.st.RotateAgentToken(r.Context(), id, user.ID, auth.HashToken(rawToken)); err != nil {
 		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
+		if err == store.ErrConflict {
+			// Agent was issued by an MCP/relay flow that bounds the
+			// token's lifetime. Rotation here would silently re-issue a
+			// token with the same (possibly past) expiry.
+			writeError(w, http.StatusConflict, "ROTATION_NOT_ALLOWED",
+				"this agent's token has a bounded expiry; re-pair through the original MCP or relay flow to get a fresh token")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not rotate token")

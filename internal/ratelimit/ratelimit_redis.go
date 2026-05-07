@@ -29,37 +29,79 @@ func NewRedisKeyedLimiter(rdb *redis.Client, r float64, burst int, window time.D
 // fixed-window counter in Redis. Returns the same signature as KeyedLimiter
 // for drop-in compatibility.
 func (rl *RedisKeyedLimiter) Allow(key string) (allowed bool, remaining int, resetTime time.Time) {
+	return rl.AllowN(key, 1)
+}
+
+// AllowN atomically attempts to take n tokens. Either all n are consumed
+// or none — see KeyedLimiter.AllowN. The Lua script reads-checks-INCRBY in
+// one atomic Redis operation so a partial charge is impossible even under
+// concurrent callers.
+func (rl *RedisKeyedLimiter) AllowN(key string, n int) (allowed bool, remaining int, resetTime time.Time) {
+	if n < 1 {
+		n = 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	rkey := redisRateLimitPrefix + key
 
-	// Lua script: INCR + conditional EXPIRE, returns [count, ttl].
+	// Read current count; if count+n would exceed burst, take nothing and
+	// return denial. Otherwise INCRBY n in the same atomic script. If the
+	// key is fresh, set the window TTL.
 	script := redis.NewScript(`
-		local count = redis.call('INCR', KEYS[1])
-		if count == 1 then
+		local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+		local n = tonumber(ARGV[2])
+		local burst = tonumber(ARGV[3])
+		if current + n > burst then
+			return {current, redis.call('TTL', KEYS[1]), 0}
+		end
+		local newCount = redis.call('INCRBY', KEYS[1], n)
+		if current == 0 then
 			redis.call('EXPIRE', KEYS[1], ARGV[1])
 		end
-		local ttl = redis.call('TTL', KEYS[1])
-		return {count, ttl}
+		return {newCount, redis.call('TTL', KEYS[1]), 1}
 	`)
 
-	result, err := script.Run(ctx, rl.rdb, []string{rkey}, int(rl.window.Seconds())).Int64Slice()
+	result, err := script.Run(ctx, rl.rdb,
+		[]string{rkey},
+		int(rl.window.Seconds()), n, rl.burst,
+	).Int64Slice()
 	if err != nil {
-		// On Redis error, allow the request (fail-open).
+		// On Redis error, allow the request (fail-open) — same posture as
+		// the single-token path.
 		return true, rl.burst, time.Now().Add(rl.window)
 	}
 
 	count := int(result[0])
-	ttl := time.Duration(result[1]) * time.Second
-
-	allowed = count <= rl.burst
+	allowed = result[2] == 1
 	remaining = rl.burst - count
 	if remaining < 0 {
 		remaining = 0
 	}
-	resetTime = time.Now().Add(ttl)
+	resetTime = time.Now().Add(normalizeRedisTTL(result[1], rl.window))
 	return
+}
+
+// normalizeRedisTTL converts a raw Redis TTL response into a sensible
+// duration relative to the rate-limit window.
+//
+// Redis TTL semantics:
+//   - positive N: N whole seconds remaining (rounded down).
+//   - 0:          key expires within the current second — a valid value.
+//   - -1:         key exists but has no expiry set.
+//   - -2:         key does not exist.
+//
+// Only the two negative values are sentinels; both can surface on the
+// deny path (key set without EXPIRE by some other producer, or key just
+// expired between our GET and the TTL call). For those, fall back to the
+// configured window so X-RateLimit-Reset isn't a past timestamp. TTL=0
+// is preserved verbatim — overriding it would overstate the reset time
+// by a full window for keys that are about to refill.
+func normalizeRedisTTL(ttlSecs int64, window time.Duration) time.Duration {
+	if ttlSecs >= 0 {
+		return time.Duration(ttlSecs) * time.Second
+	}
+	return window
 }
 
 // Stop is a no-op for Redis-backed limiter.
@@ -68,6 +110,11 @@ func (rl *RedisKeyedLimiter) Stop() {}
 // Limiter is the interface satisfied by both KeyedLimiter and RedisKeyedLimiter.
 type Limiter interface {
 	Allow(key string) (allowed bool, remaining int, resetTime time.Time)
+	// AllowN atomically takes n tokens. Either n are consumed or none —
+	// the limiter must not partially charge on denial. Required by
+	// callers (e.g. /api/gateway/batch) that fan out N sub-requests per
+	// HTTP call and need to know up-front whether the whole fan-out fits.
+	AllowN(key string, n int) (allowed bool, remaining int, resetTime time.Time)
 	Stop()
 }
 

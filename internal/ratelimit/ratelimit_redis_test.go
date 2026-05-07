@@ -1,0 +1,36 @@
+package ratelimit
+
+import (
+	"testing"
+	"time"
+)
+
+// TestNormalizeRedisTTL is the regression guard against past-timestamp
+// X-RateLimit-Reset values. Redis returns -1 / -2 for "no TTL" / "key
+// missing" — we must NOT pass those through verbatim, otherwise resetTime
+// = now + (-1s) = a past second, and clients see a meaningless header.
+func TestNormalizeRedisTTL(t *testing.T) {
+	const window = 60 * time.Second
+	cases := []struct {
+		name string
+		raw  int64
+		want time.Duration
+	}{
+		{"normal positive ttl", 42, 42 * time.Second},
+		{"key has no expiry (-1) → fall back to window", -1, window},
+		{"key missing (-2) → fall back to window", -2, window},
+		// 0 is "expires within the current second" — a valid value.
+		// Overriding it with the full window would tell clients to wait
+		// 60s when the bucket actually refills in <1s, defeating the
+		// purpose of the header.
+		{"zero ttl (sub-second to refill) preserved", 0, 0},
+		{"absurdly negative → fall back to window", -1000, window},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeRedisTTL(tc.raw, window); got != tc.want {
+				t.Fatalf("normalizeRedisTTL(%d, %s) = %s, want %s", tc.raw, window, got, tc.want)
+			}
+		})
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -497,5 +499,491 @@ func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
 	}
 	if len(stalled) != 0 {
 		t.Fatalf("expected zero stalled rows after recovery, got %d", len(stalled))
+	}
+}
+
+// TestPendingApproval_StatusCASBlocksConcurrentResolution confirms that
+// UpdatePendingApprovalStatusFrom prevents two concurrent resolution paths
+// (e.g. Approve via UI and Deny via Telegram) from both succeeding. Only
+// the first transition wins; subsequent attempts return won=false and the
+// row is left in the winning state.
+func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "cas@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-cas-1", AuditID: "audit-cas-1",
+		RequestBlob: []byte(`{}`), Status: "pending",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	// First transition wins.
+	won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "approved")
+	if err != nil || !won {
+		t.Fatalf("first CAS approve: won=%v err=%v", won, err)
+	}
+
+	// Concurrent attempt to deny the same row must lose, leaving status="approved".
+	won, err = st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "denied")
+	if err != nil {
+		t.Fatalf("second CAS: %v", err)
+	}
+	if won {
+		t.Fatal("expected second CAS to lose, got won=true")
+	}
+	got, err := st.GetPendingApproval(ctx, "req-cas-1")
+	if err != nil {
+		t.Fatalf("GetPendingApproval: %v", err)
+	}
+	if got.Status != "approved" {
+		t.Fatalf("expected status=approved after losing CAS, got %q", got.Status)
+	}
+}
+
+// TestPendingApproval_ConcurrentResolution_ExactlyOneWinner is the real
+// race test for the status CAS — it fans out N goroutines that all attempt
+// to resolve the same pending row from "pending" to a different terminal
+// state, then asserts exactly one won. A non-atomic SELECT-then-UPDATE
+// implementation would let multiple writers each see status="pending" and
+// each issue an UPDATE, ending with two "winners" and the database in
+// whichever-write-landed-last state. Sequential tests don't catch that.
+func TestPendingApproval_ConcurrentResolution_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "race@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-race-1", AuditID: "audit-race-1",
+		RequestBlob: []byte(`{}`), Status: "pending",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+		errs        atomic.Int64
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		// Half try to approve, half try to deny — every winner is "first".
+		target := "approved"
+		if i%2 == 0 {
+			target = "denied"
+		}
+		go func(t string) {
+			defer wg.Done()
+			<-start
+			won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-race-1", "pending", t)
+			if err != nil {
+				errs.Add(1)
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}(target)
+	}
+	close(start)
+	wg.Wait()
+
+	if errs.Load() != 0 {
+		t.Fatalf("expected zero errors, got %d", errs.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning CAS across %d racers, got %d",
+			goroutines, got)
+	}
+}
+
+// TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner is
+// the same shape but for the executor-claim CAS that gates request
+// execution. Two simultaneous /execute calls for the same request_id must
+// not both see "approved" and both run the adapter.
+func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "exec-race@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-exec-1", AuditID: "audit-exec-1",
+		RequestBlob: []byte(`{}`), Status: "approved",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+		errCount    atomic.Int64
+		firstErr    atomic.Pointer[error]
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			won, err := st.ClaimPendingApprovalForExecution(ctx, "req-exec-1")
+			if err != nil {
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	// Any racer error means the CAS isn't truly atomic for our purposes —
+	// the test would otherwise silently pass when 49 goroutines errored
+	// and 1 happened to "win" through that error.
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero racer errors, got %d (first: %v)", n, *firstErr.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning execution claim across %d racers, got %d",
+			goroutines, got)
+	}
+}
+
+// TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner is the
+// regression guard against duplicate "timeout" callbacks. The recovery
+// sweeper races against itself in multi-instance deployments and against a
+// slow-but-finishing executor in single-instance deployments. The CAS
+// DELETE WHERE status='executing' AND executing_since<cutoff must guarantee
+// exactly one resolver wins per stranded row.
+func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "stalled@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	pa := &store.PendingApproval{
+		UserID: user.ID, RequestID: "req-stalled-1", AuditID: "audit-stalled-1",
+		RequestBlob: []byte(`{}`), Status: "approved",
+		ExpiresAt: time.Now().UTC().Add(30 * time.Minute),
+	}
+	if err := st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+	if won, err := st.ClaimPendingApprovalForExecution(ctx, "req-stalled-1"); err != nil || !won {
+		t.Fatalf("seed claim: won=%v err=%v", won, err)
+	}
+	// SQLite CURRENT_TIMESTAMP and datetime('now') round to whole seconds,
+	// so we need >= 2s of clearance between executing_since and the
+	// -1s cutoff to avoid a flake when both round into the same second
+	// (executing_since=12:00:00, now=12:00:01, cutoff=12:00:00, no rows).
+	time.Sleep(2500 * time.Millisecond)
+
+	const goroutines = 50
+	var (
+		wg          sync.WaitGroup
+		start       = make(chan struct{})
+		winnerCount atomic.Int64
+		errCount    atomic.Int64
+		firstErr    atomic.Pointer[error]
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			won, err := st.ClaimStalledExecutingApprovalForRecovery(ctx, "req-stalled-1", time.Second)
+			if err != nil {
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
+				return
+			}
+			if won {
+				winnerCount.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero racer errors, got %d (first: %v)", n, *firstErr.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning recovery claim across %d racers, got %d",
+			goroutines, got)
+	}
+}
+
+// TestRotateAgentToken_RejectsExpiringAgents is the regression guard
+// against silently re-issuing tokens that inherit a (possibly past)
+// expiry. Agents minted with a bounded lifetime — MCP/relay flows —
+// must re-pair to refresh; the generic rotate endpoint refuses them
+// with ErrConflict so the handler can return a 409 with a useful hint.
+func TestRotateAgentToken_RejectsExpiringAgents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "rotate@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Long-lived agent: rotation succeeds.
+	long, err := st.CreateAgent(ctx, user.ID, "long-lived", "tok-long")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.RotateAgentToken(ctx, long.ID, user.ID, "tok-long-rotated"); err != nil {
+		t.Fatalf("rotate(long-lived): unexpected err %v", err)
+	}
+
+	// Bounded-expiry agent: rotation refused with ErrConflict.
+	exp := time.Now().UTC().Add(24 * time.Hour)
+	scoped, err := st.CreateAgentWithExpiry(ctx, user.ID, "scoped", "tok-scoped", exp)
+	if err != nil {
+		t.Fatalf("CreateAgentWithExpiry: %v", err)
+	}
+	if err := st.RotateAgentToken(ctx, scoped.ID, user.ID, "tok-scoped-rotated"); err != store.ErrConflict {
+		t.Fatalf("rotate(scoped): expected ErrConflict, got %v", err)
+	}
+
+	// Unknown agent ID still surfaces as ErrNotFound.
+	if err := st.RotateAgentToken(ctx, "no-such-id", user.ID, "tok-x"); err != store.ErrNotFound {
+		t.Fatalf("rotate(missing): expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestAgentTokenExpiry_RoundTrip verifies that an agent created with a
+// finite token expiry surfaces TokenExpiresAt back through GetAgentByToken,
+// and that an agent created via the legacy no-expiry constructor reports
+// nil. RequireAgent middleware refuses tokens whose expiry has passed —
+// this test covers the store-layer round-trip the middleware relies on.
+func TestAgentTokenExpiry_RoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "exp@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Legacy CreateAgent → no expiry.
+	legacy, err := st.CreateAgent(ctx, user.ID, "legacy", "tok-legacy")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	got, err := st.GetAgentByToken(ctx, "tok-legacy")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(legacy): %v", err)
+	}
+	if got.TokenExpiresAt != nil {
+		t.Fatalf("legacy agent should have nil TokenExpiresAt, got %v", *got.TokenExpiresAt)
+	}
+	_ = legacy
+
+	// CreateAgentWithExpiry with a future expiry.
+	exp := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	scoped, err := st.CreateAgentWithExpiry(ctx, user.ID, "scoped", "tok-scoped", exp)
+	if err != nil {
+		t.Fatalf("CreateAgentWithExpiry: %v", err)
+	}
+	got, err = st.GetAgentByToken(ctx, "tok-scoped")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(scoped): %v", err)
+	}
+	if got.TokenExpiresAt == nil {
+		t.Fatal("scoped agent should have non-nil TokenExpiresAt")
+	}
+	if !got.TokenExpiresAt.Equal(exp) {
+		t.Fatalf("expected TokenExpiresAt=%s, got %s", exp, *got.TokenExpiresAt)
+	}
+	_ = scoped
+
+	// Zero-time → no expiry (equivalent to CreateAgent).
+	if _, err := st.CreateAgentWithExpiry(ctx, user.ID, "no-exp", "tok-noexp", time.Time{}); err != nil {
+		t.Fatalf("CreateAgentWithExpiry(zero): %v", err)
+	}
+	got, err = st.GetAgentByToken(ctx, "tok-noexp")
+	if err != nil {
+		t.Fatalf("GetAgentByToken(noexp): %v", err)
+	}
+	if got.TokenExpiresAt != nil {
+		t.Fatalf("zero-expiry agent should have nil TokenExpiresAt, got %v", *got.TokenExpiresAt)
+	}
+}
+
+// TestConsumeSession_AtomicSingleWinner is the regression guard for the
+// replayable-refresh-token-rotation bug: a stolen refresh token replayed
+// in a race window must produce at most one new token pair, not multiply
+// access. 50 goroutines race ConsumeSession on the same row; exactly one
+// must return the row, the rest must each see store.ErrNotFound.
+//
+// A non-atomic SELECT-then-DELETE implementation would let multiple
+// callers each see the row, then race the DELETEs — multiple "winners"
+// observed before the row vanished. This test catches that.
+func TestConsumeSession_AtomicSingleWinner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "consume@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := st.CreateSession(ctx, user.ID, "tok-hash", time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	const goroutines = 50
+	var (
+		wg            sync.WaitGroup
+		start         = make(chan struct{})
+		winnerCount   atomic.Int64
+		notFoundCount atomic.Int64
+		errCount      atomic.Int64
+		firstErr      atomic.Pointer[error]
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			sess, err := st.ConsumeSession(ctx, "tok-hash")
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					notFoundCount.Add(1)
+					return
+				}
+				errCount.Add(1)
+				firstErr.CompareAndSwap(nil, &err)
+				return
+			}
+			if sess != nil && sess.UserID == user.ID {
+				winnerCount.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if n := errCount.Load(); n > 0 {
+		t.Fatalf("expected zero non-NotFound errors, got %d (first: %v)", n, *firstErr.Load())
+	}
+	if got := winnerCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 winning ConsumeSession across %d racers, got %d",
+			goroutines, got)
+	}
+	if got := notFoundCount.Load(); got != goroutines-1 {
+		t.Fatalf("expected %d ErrNotFound across losers, got %d", goroutines-1, got)
+	}
+}
+
+// TestTask_StatusCASBlocksConcurrentResolution confirms the same atomicity
+// for tasks: a concurrent ApproveTask and DenyTask race resolves to one
+// state, not both.
+func TestTask_StatusCASBlocksConcurrentResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "task-cas@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "task-cas-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	task := &store.Task{
+		ID: "task-cas-1", UserID: user.ID, AgentID: agent.ID,
+		Purpose: "p", Status: "pending_approval", Lifetime: "session",
+		ExpiresInSeconds: 60,
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// First win: approve.
+	won, err := st.UpdateTaskApprovedFrom(ctx, task.ID, "pending_approval",
+		time.Now().UTC().Add(time.Minute), nil)
+	if err != nil || !won {
+		t.Fatalf("first CAS approve: won=%v err=%v", won, err)
+	}
+
+	// Second attempt: deny. Must lose.
+	won, err = st.UpdateTaskStatusFrom(ctx, task.ID, "pending_approval", "denied")
+	if err != nil {
+		t.Fatalf("second CAS: %v", err)
+	}
+	if won {
+		t.Fatal("expected second CAS to lose, got won=true")
+	}
+	got, err := st.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != "active" {
+		t.Fatalf("expected status=active after losing CAS, got %q", got.Status)
 	}
 }

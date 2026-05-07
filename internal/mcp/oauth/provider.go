@@ -299,7 +299,13 @@ func (p *Provider) Token(w http.ResponseWriter, r *http.Request) {
 		agentName = client.ClientName + " (MCP)"
 	}
 
-	_, err = p.st.CreateAgent(r.Context(), authCode.UserID, agentName, auth.HashToken(rawToken))
+	// Tokens issued via MCP OAuth are short-lived (30 days) so a leaked
+	// token via logs/desktop cache/relay has bounded blast radius.
+	// Clients re-authorize through the OAuth flow on expiry; raw cvis_
+	// tokens with no expiry are reserved for first-party POST /api/agents.
+	const mcpTokenTTL = 30 * 24 * time.Hour
+	_, err = p.st.CreateAgentWithExpiry(r.Context(), authCode.UserID, agentName,
+		auth.HashToken(rawToken), time.Now().UTC().Add(mcpTokenTTL))
 	if err != nil {
 		p.logger.Error("failed to create agent for oauth token", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to create agent")
@@ -358,7 +364,10 @@ func (p *Provider) handleRelayPairing(w http.ResponseWriter, r *http.Request) {
 	tokenHash := auth.HashToken(token)
 	agentName := "mcp-relay-agent"
 
-	if _, err := p.st.CreateAgent(r.Context(), user.ID, agentName, tokenHash); err != nil {
+	// Same 30-day cap as authorization_code grant — see comment above.
+	const relayTokenTTL = 30 * 24 * time.Hour
+	if _, err := p.st.CreateAgentWithExpiry(r.Context(), user.ID, agentName, tokenHash,
+		time.Now().UTC().Add(relayTokenTTL)); err != nil {
 		p.logger.Error("relay_pairing: failed to create agent", "err", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to create agent")
 		return

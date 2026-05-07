@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/time/rate"
+
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/gateway"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -108,6 +111,177 @@ func TestBatch_TooLarge(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["code"] != gateway.CodeBatchTooLarge {
 		t.Fatalf("expected BATCH_TOO_LARGE, got %v", resp["code"])
+	}
+}
+
+// TestBatch_RateLimitChargesPerSubRequest is the regression guard for the
+// "one token buys 20 sub-requests" bug. The route-level middleware already
+// consumed one token for the batch envelope; HandleBatch must charge the
+// remaining N-1 tokens before fanning out.
+func TestBatch_RateLimitChargesPerSubRequest(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+	}
+
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	// Limiter with bucket=2 — enough for the route-level token and one
+	// sub-request, but a 3-request batch (1 envelope + 2 extras) must be
+	// rejected because charging the 2nd extra exhausts the bucket.
+	limiter := ratelimit.NewKeyedLimiter(rate.Limit(0.0001), 2)
+	keyFn := func(r *http.Request) string { return "agent-1" }
+	h.SetGatewayRateLimiter(limiter, keyFn)
+
+	// Drain the bucket as the route-level middleware would: take 1 for the
+	// batch envelope itself.
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatalf("setup: expected envelope token to be available")
+	}
+
+	reqs := make([]map[string]any, 3)
+	for i := range reqs {
+		reqs[i] = map[string]any{
+			"service":    "local.files",
+			"action":     "read_file",
+			"reason":     "r",
+			"task_id":    "task-1",
+			"request_id": "r" + string(rune('a'+i)),
+		}
+	}
+	w := makeBatchRequest(t, h, map[string]any{"requests": reqs})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 when batch fan-out exceeds bucket, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if executor.called {
+		t.Fatal("executor must not have been called when batch was rate-limited")
+	}
+}
+
+// TestBatch_RateLimitChargesAreAtomic is the regression guard for the
+// non-atomic per-token loop bug: a 5-request batch hitting a bucket with
+// only 2 tokens left used to consume those 2 tokens AND then 429 — the
+// caller was billed for tokens that bought zero work. AllowN(N-1) is
+// atomic: either all the fan-out tokens are taken (we proceed) or none
+// are (we 429 and the bucket is unchanged).
+func TestBatch_RateLimitChargesAreAtomic(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+	}
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	// Bucket = 3 tokens. Drain 1 (envelope already taken). Bucket has 2 left.
+	limiter := ratelimit.NewKeyedLimiter(rate.Limit(0.0001), 3)
+	h.SetGatewayRateLimiter(limiter, func(*http.Request) string { return "agent-1" })
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatalf("setup: envelope token unavailable")
+	}
+
+	// Fire a 5-request batch (would need 4 more tokens; only 2 available).
+	reqs := make([]map[string]any, 5)
+	for i := range reqs {
+		reqs[i] = map[string]any{
+			"service": "local.files", "action": "read_file", "reason": "r",
+			"task_id": "task-1", "request_id": "r" + string(rune('a'+i)),
+		}
+	}
+	w := makeBatchRequest(t, h, map[string]any{"requests": reqs})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Critical: the bucket still has 2 tokens. A non-atomic implementation
+	// would have drained them during partial fan-out charging.
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatal("bucket was wrongly drained by failed batch — AllowN was not atomic")
+	}
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatal("bucket was partially drained by failed batch — AllowN was not atomic")
+	}
+	// After taking those two, a third should fail.
+	if allowed, _, _ := limiter.Allow("agent-1"); allowed {
+		t.Fatal("expected bucket to be exhausted after taking 2 leftover tokens")
+	}
+
+	if executor.called {
+		t.Fatal("executor must not have been called when batch was rate-limited")
+	}
+}
+
+// TestBatch_RateLimitHeaderReflectsFanOut is the regression guard for the
+// observability gap I shipped in the original H31 fix: the route-level
+// middleware writes X-RateLimit-Remaining BEFORE HandleBatch runs, so
+// without this fix the header always reported "limit-1" regardless of
+// batch size — agents couldn't tell from headers that a 20-request batch
+// burned 20 tokens. HandleBatch must overwrite the header after its
+// internal charges so the reported value matches what was actually
+// consumed.
+func TestBatch_RateLimitHeaderReflectsFanOut(t *testing.T) {
+	st := newLocalTestStore()
+	st.tasks["task-1"] = &store.Task{
+		ID: "task-1", UserID: "user-1", AgentID: "agent-1", Status: "active",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "local.files", Action: "read_file", AutoExecute: true},
+		},
+	}
+
+	provider := &mockLocalProvider{services: testServices()}
+	executor := &mockLocalExecutor{result: &adapters.Result{Summary: "ok"}}
+	verifier := &mockVerifier{
+		verdict: &intent.VerificationVerdict{Allow: true, ParamScope: "ok", ReasonCoherence: "ok"},
+	}
+
+	h := newTestGatewayHandler(st, provider, executor, verifier)
+
+	// 60-token bucket — same defaults as production.
+	limiter := ratelimit.NewKeyedLimiter(rate.Limit(1), 60)
+	h.SetGatewayRateLimiter(limiter, func(*http.Request) string { return "agent-1" })
+
+	// Drain the envelope token (mid-route middleware would do this).
+	if allowed, _, _ := limiter.Allow("agent-1"); !allowed {
+		t.Fatalf("setup: expected envelope token to be available")
+	}
+
+	// 5-request batch — HandleBatch should charge 4 more tokens internally.
+	reqs := make([]map[string]any, 5)
+	for i := range reqs {
+		reqs[i] = map[string]any{
+			"service":    "local.files",
+			"action":     "read_file",
+			"reason":     "r",
+			"task_id":    "task-1",
+			"request_id": "r" + string(rune('a'+i)),
+		}
+	}
+	w := makeBatchRequest(t, h, map[string]any{"requests": reqs})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// After: envelope (1) + fan-out charges (4) = 5 consumed of 60.
+	// The header must report 60 - 5 = 55 remaining, NOT 59.
+	got := w.Header().Get("X-RateLimit-Remaining")
+	if got != "55" {
+		t.Fatalf("expected X-RateLimit-Remaining=55 after 5-request batch, got %q", got)
 	}
 }
 

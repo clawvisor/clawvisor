@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -38,6 +39,15 @@ func RequireAgent(st store.Store) func(http.Handler) http.Handler {
 					// was revoked.
 					http.Error(w, `{"error":"temporary service error, please retry","code":"SERVICE_UNAVAILABLE"}`, http.StatusServiceUnavailable)
 				}
+				return
+			}
+			// Bound the lifetime of leaked tokens. Agents created via
+			// POST /api/agents have nil TokenExpiresAt (no expiry — the
+			// user owns those tokens end-to-end). MCP OAuth and relay-
+			// pairing flows set a finite expiry so a leaked token has
+			// finite blast radius. Treat expired same as not-found.
+			if agent.TokenExpiresAt != nil && time.Now().After(*agent.TokenExpiresAt) {
+				http.Error(w, `{"error":"agent token has expired","code":"TOKEN_EXPIRED"}`, http.StatusUnauthorized)
 				return
 			}
 

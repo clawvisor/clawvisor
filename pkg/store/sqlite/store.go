@@ -228,14 +228,33 @@ func (s *Store) CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash,
 	return s.getAgentByID(ctx, id)
 }
 
+// CreateAgentWithExpiry creates an agent whose token expires at the given
+// time. A zero time means no expiry — equivalent to CreateAgent.
+func (s *Store) CreateAgentWithExpiry(ctx context.Context, userID, name, tokenHash string, expiresAt time.Time) (*store.Agent, error) {
+	id := uuid.New().String()
+	var expiry any
+	if !expiresAt.IsZero() {
+		expiry = expiresAt.UTC().Format(time.RFC3339)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO agents (id, user_id, name, description, token_hash, token_expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, userID, name, "", tokenHash, expiry,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var createdAt string
 	var orgID *string
+	var tokenExpiresAt *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE token_hash = ? AND deleted_at IS NULL`,
 		tokenHash,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID, &tokenExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -245,6 +264,17 @@ func (s *Store) GetAgentByToken(ctx context.Context, tokenHash string) (*store.A
 	a.CreatedAt = parseTime(createdAt)
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if tokenExpiresAt != nil && *tokenExpiresAt != "" {
+		// Guard against parseTime returning the zero value (year 0001).
+		// Without this an unparseable string would silently land as a
+		// "way past" expiry, and RequireAgent would 401 every legitimate
+		// request with TOKEN_EXPIRED. Today the writer is always RFC3339,
+		// but a future migration / hand-edit / driver change would make
+		// this a silent agent-wide outage.
+		if t := parseTime(*tokenExpiresAt); !t.IsZero() {
+			a.TokenExpiresAt = &t
+		}
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings
@@ -384,8 +414,13 @@ func (s *Store) DeleteAgent(ctx context.Context, id, userID string) error {
 }
 
 func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash string) error {
+	// Refuse rotation for agents whose tokens are bounded by an expiry
+	// (MCP OAuth, relay-pairing). Otherwise the rotated token would inherit
+	// the original expiry — possibly already in the past — silently giving
+	// the user a token that won't work. They must re-pair through the same
+	// flow that issued the original to get a fresh expiry.
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET token_hash = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		`UPDATE agents SET token_hash = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND token_expires_at IS NULL`,
 		newTokenHash, id, userID,
 	)
 	if err != nil {
@@ -393,6 +428,16 @@ func (s *Store) RotateAgentToken(ctx context.Context, id, userID, newTokenHash s
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// Distinguish "not found" from "exists but has expiry" so the
+		// handler can return the right HTTP code with a useful hint.
+		var hasExpiry bool
+		row := s.db.QueryRowContext(ctx,
+			`SELECT token_expires_at IS NOT NULL FROM agents WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			id, userID,
+		)
+		if scanErr := row.Scan(&hasExpiry); scanErr == nil && hasExpiry {
+			return store.ErrConflict
+		}
 		return store.ErrNotFound
 	}
 	return nil
@@ -495,6 +540,27 @@ func (s *Store) GetSession(ctx context.Context, tokenHash string) (*store.Sessio
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
 	return err
+}
+
+// ConsumeSession is the atomic Get+Delete used by refresh-token rotation.
+// modernc.org/sqlite supports DELETE ... RETURNING since SQLite 3.35.
+func (s *Store) ConsumeSession(ctx context.Context, tokenHash string) (*store.Session, error) {
+	sess := &store.Session{}
+	var expiresAt, createdAt string
+	err := s.db.QueryRowContext(ctx,
+		`DELETE FROM sessions WHERE token_hash = ?
+		 RETURNING id, user_id, token_hash, expires_at, created_at`,
+		tokenHash,
+	).Scan(&sess.ID, &sess.UserID, &sess.TokenHash, &expiresAt, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sess.ExpiresAt = parseTime(expiresAt)
+	sess.CreatedAt = parseTime(createdAt)
+	return sess, nil
 }
 
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
@@ -1313,6 +1379,42 @@ func (s *Store) UpdateTaskApproved(ctx context.Context, id string, expiresAt tim
 	return nil
 }
 
+// UpdateTaskStatusFrom is the CAS variant of UpdateTaskStatus. The status
+// transition only happens when the row is currently in fromStatus, which
+// blocks concurrent approve/deny pairs from both succeeding.
+func (s *Store) UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status = ? WHERE id = ? AND status = ?`,
+		toStatus, id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// UpdateTaskApprovedFrom is the CAS variant of UpdateTaskApproved. The
+// promotion to "active" only happens when the row is currently in
+// fromStatus, so two concurrent approvals can't both win.
+func (s *Store) UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []store.TaskAction) (bool, error) {
+	actionsJSON, err := json.Marshal(authorizedActions)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	exp := expiresAt.UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'active', approved_at = ?, expires_at = ?,
+			authorized_actions = ?
+		WHERE id = ? AND status = ?
+	`, now, exp, string(actionsJSON), id, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *Store) UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []store.TaskAction) error {
 	actionsJSON, err := json.Marshal(actions)
 	if err != nil {
@@ -1583,10 +1685,32 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 	return n > 0, nil
 }
 
+// UpdatePendingApprovalStatusFrom is the CAS variant of
+// UpdatePendingApprovalStatus. The transition only happens when the row is
+// currently in fromStatus, so concurrent approve/deny pairs from UI vs
+// Telegram vs API can no longer both succeed.
+func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pending_approvals SET status = ? WHERE request_id = ? AND status = ?`,
+		toStatus, requestID, fromStatus)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // ListStalledExecutingApprovals returns rows that were claimed for execution
 // but never completed within leaseTTL. This is the recovery hook for daemon
 // crashes that strand a row in 'executing' — without it, the user would be
 // permanently locked out of re-approving the same request.
+//
+// IMPORTANT: this is a *list* operation, not a claim. A row returned here may
+// finish via the executor between this call and the caller's processing —
+// pair with ClaimStalledExecutingApprovalForRecovery to gate side-effects.
 func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
 	leaseSeconds := int64(leaseTTL.Seconds())
 	if leaseSeconds < 0 {
@@ -1604,6 +1728,30 @@ func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time
 	return scanSQLitePendingApprovals(rows)
 }
 
+// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+// 'executing' row only if it is still in 'executing' status and still past
+// the lease cutoff. The DELETE's WHERE clause is the CAS — a concurrent
+// executor that finishes between list and claim has already DELETE'd the
+// row, so RowsAffected is 0 and the sweeper moves on without dispatching
+// a duplicate "timeout" callback.
+func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error) {
+	leaseSeconds := int64(leaseTTL.Seconds())
+	if leaseSeconds < 0 {
+		leaseSeconds = 0
+	}
+	modifier := fmt.Sprintf("-%d seconds", leaseSeconds)
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM pending_approvals
+		WHERE request_id = ? AND status = 'executing'
+		  AND executing_since IS NOT NULL AND executing_since < datetime('now', ?)`,
+		requestID, modifier)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // ── Canonical Approval Records ───────────────────────────────────────────────
 
 func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRecord) error {
@@ -1619,6 +1767,48 @@ func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRec
 		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
 		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution)
 	return err
+}
+
+// CreateApprovalRecordWithPending writes both rows in one transaction so a
+// failure on the second insert can't leave an orphan canonical approval
+// (visible in /api/approvals but with no executable pending request).
+func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.ApprovalRecord, pa *store.PendingApproval) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	if pa.ID == "" {
+		pa.ID = uuid.New().String()
+	}
+	if pa.Status == "" {
+		pa.Status = "pending"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, string(pa.RequestBlob),
+		pa.CallbackURL, pa.Status, pa.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {

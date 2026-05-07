@@ -33,6 +33,11 @@ type Store interface {
 	// Agents
 	CreateAgent(ctx context.Context, userID, name, tokenHash string) (*Agent, error)
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
+	// CreateAgentWithExpiry creates an agent whose token expires at the
+	// given time. Used by the MCP OAuth and relay-pairing flows so leaked
+	// tokens have finite blast radius. Pass a zero time to mean "no expiry"
+	// (equivalent to CreateAgent).
+	CreateAgentWithExpiry(ctx context.Context, userID, name, tokenHash string, expiresAt time.Time) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
@@ -62,6 +67,12 @@ type Store interface {
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (*Session, error)
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+	// ConsumeSession atomically deletes the session row matching tokenHash
+	// and returns the row that was deleted. ErrNotFound means another caller
+	// already consumed it (or the token never existed). Use this on the
+	// refresh path so a stolen refresh token replayed concurrently can
+	// produce at most one new token pair.
+	ConsumeSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteUserSessions(ctx context.Context, userID string) error
 
 	// Service credentials metadata (vault stores the actual bytes)
@@ -102,6 +113,16 @@ type Store interface {
 	ListTasks(ctx context.Context, userID string, filter TaskFilter) ([]*Task, int, error)
 	UpdateTaskStatus(ctx context.Context, id, status string) error
 	UpdateTaskApproved(ctx context.Context, id string, expiresAt time.Time, authorizedActions []TaskAction) error
+	// UpdateTaskStatusFrom atomically transitions a task from fromStatus to
+	// toStatus. Returns true if the caller won the race, false if the row
+	// was not in fromStatus (already approved/denied/expired by another
+	// caller). Use this for any approve/deny/expand path that can be raced
+	// across UI, Telegram, and API channels.
+	UpdateTaskStatusFrom(ctx context.Context, id, fromStatus, toStatus string) (bool, error)
+	// UpdateTaskApprovedFrom atomically promotes a task from fromStatus to
+	// "active" with approved_at/expires_at/authorized_actions set, returning
+	// true on win. Replaces UpdateTaskApproved for race-prone code paths.
+	UpdateTaskApprovedFrom(ctx context.Context, id, fromStatus string, expiresAt time.Time, authorizedActions []TaskAction) (bool, error)
 	UpdateTaskAuthorizedActions(ctx context.Context, id string, actions []TaskAction) error
 	UpdateTaskActions(ctx context.Context, id string, actions []TaskAction, expiresAt time.Time) error
 	IncrementTaskRequestCount(ctx context.Context, id string) error
@@ -117,6 +138,11 @@ type Store interface {
 	DeletePendingApproval(ctx context.Context, requestID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
 	UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error
+	// UpdatePendingApprovalStatusFrom atomically transitions a pending
+	// approval from fromStatus to toStatus. Returns true if the caller won
+	// the race, false if the row was not in fromStatus. Use this for any
+	// approve/deny path that can be raced across UI/Telegram/API.
+	UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error)
 	// ClaimPendingApprovalForExecution atomically transitions a pending approval
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").
@@ -124,6 +150,21 @@ type Store interface {
 	// ListStalledExecutingApprovals returns rows stuck in "executing" beyond
 	// leaseTTL — the recovery hook for daemon crashes mid-execution.
 	ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*PendingApproval, error)
+	// ClaimStalledExecutingApprovalForRecovery atomically deletes a stalled
+	// 'executing' row only if it is still in 'executing' status and still
+	// past the lease cutoff. Returns true if the recovery sweeper won —
+	// callers must dispatch the timeout callback only on true. Returns
+	// false (no error) when the executor finished between list and claim
+	// or another sweep already won the race.
+	ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error)
+
+	// CreateApprovalRecordWithPending writes the canonical approval record
+	// and its corresponding pending approval row in a single transaction.
+	// Both rows commit together or neither commits — preventing the
+	// orphan-canonical-record bug where the second insert failed and the
+	// approval was visible in /api/approvals but had no executable pending
+	// request to back it.
+	CreateApprovalRecordWithPending(ctx context.Context, rec *ApprovalRecord, pa *PendingApproval) error
 
 	// Canonical approval records
 	CreateApprovalRecord(ctx context.Context, rec *ApprovalRecord) error
@@ -269,13 +310,19 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID              string                `json:"id"`
-	UserID          string                `json:"user_id"`
-	Name            string                `json:"name"`
-	Description     string                `json:"description,omitempty"`
-	TokenHash       string                `json:"-"`
-	OrgID           string                `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
-	CreatedAt       time.Time             `json:"created_at"`
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	TokenHash   string `json:"-"`
+	OrgID       string `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	CreatedAt   time.Time `json:"created_at"`
+	// TokenExpiresAt bounds the lifetime of a leaked bearer token. nil
+	// means no expiry — preserved for legacy POST /api/agents tokens that
+	// the user owns end-to-end. MCP OAuth and relay-pairing flows write a
+	// non-nil value so a leaked token has finite blast radius. RequireAgent
+	// rejects tokens whose expiry has passed.
+	TokenExpiresAt  *time.Time            `json:"token_expires_at,omitempty"`
 	ActiveTaskCount int                   `json:"active_task_count"`
 	LastTaskAt      *time.Time            `json:"last_task_at,omitempty"`
 	RuntimeSettings *AgentRuntimeSettings `json:"runtime_settings,omitempty"`

@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -84,6 +85,9 @@ type GatewayHandler struct {
 	gatewayHooks     *GatewayHooks        // cloud-injected authorization hooks; may be nil
 	localExec        LocalServiceExecutor // cloud-injected local service executor; may be nil
 	localSvcProvider LocalServiceProvider // cloud-injected local service catalog; may be nil
+	cbDispatch       *CallbackDispatcher  // bounded callback delivery; may be nil
+	gatewayRL        ratelimit.Limiter    // gateway-bucket limiter for per-sub-request charging in HandleBatch; may be nil
+	gatewayRLKey     func(*http.Request) string
 }
 
 func NewGatewayHandler(
@@ -135,6 +139,39 @@ func (h *GatewayHandler) SetLocalServiceExecutor(e LocalServiceExecutor) {
 // request-time action validation.
 func (h *GatewayHandler) SetLocalServiceProvider(p LocalServiceProvider) {
 	h.localSvcProvider = p
+}
+
+// SetCallbackDispatcher wires a bounded callback delivery pool. When unset,
+// callback delivery falls back to a safeGo-wrapped inline goroutine — still
+// panic-safe but with no concurrency cap.
+func (h *GatewayHandler) SetCallbackDispatcher(d *CallbackDispatcher) {
+	h.cbDispatch = d
+}
+
+// SetGatewayRateLimiter wires the gateway rate limiter into the handler so
+// HandleBatch can charge one token per fan-out sub-request rather than
+// letting an N-request batch consume only the single token already taken
+// by route-level middleware. Pass nil to disable per-sub-request charging.
+func (h *GatewayHandler) SetGatewayRateLimiter(limiter ratelimit.Limiter, agentKey func(*http.Request) string) {
+	h.gatewayRL = limiter
+	h.gatewayRLKey = agentKey
+}
+
+// dispatchCallback enqueues a payload for delivery via the bounded
+// dispatcher when available, or spawns a panic-safe goroutine otherwise.
+func (h *GatewayHandler) dispatchCallback(url string, payload *callback.Payload, signingKey string) {
+	if url == "" || payload == nil {
+		return
+	}
+	if h.cbDispatch != nil {
+		h.cbDispatch.Submit(url, payload, signingKey)
+		return
+	}
+	safeGo(h.logger, "callback delivery (inline)", func() {
+		cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = callback.DeliverResult(cbCtx, url, payload, signingKey)
+	})
 }
 
 // HandleRequest is the main gateway entry point.
@@ -754,7 +791,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 				vMode := verificationModeFor(match.MatchedAction)
-				if matchedPlannedCall != nil {
+				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
@@ -777,6 +814,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						Explanation:     "Skipped: verification mode is off for this action category",
 					}
 				} else {
+					if matchedPlannedCall != nil {
+						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+							"task_id", req.TaskID, "risk_level", task.RiskLevel)
+					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				if verdict != nil && !verdict.Allow && verdict.ParamScope == "violation" && len(verdict.MissingChainValues) > 0 {
@@ -830,7 +871,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				matchedPlannedCall := matchPlannedCall(task.PlannedCalls, req.Service, req.Action, req.Params, chainFacts)
 
 				vMode := verificationModeFor(match.MatchedAction)
-				if matchedPlannedCall != nil {
+				if matchedPlannedCall != nil && plannedCallBypassEligible(task.RiskLevel) {
 					h.logger.Info("request matches planned call — skipping intent verification",
 						"task_id", req.TaskID,
 						"service", req.Service,
@@ -853,6 +894,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						Explanation:     "Skipped: verification mode is off for this action category",
 					}
 				} else {
+					if matchedPlannedCall != nil {
+						h.logger.Info("planned call match present but risk assessment did not run; running verifier anyway",
+							"task_id", req.TaskID, "risk_level", task.RiskLevel)
+					}
 					verdict = h.runVerification(ctx, task, match.MatchedAction, req, serviceType, agent.UserID, chainFacts, vMode == "lenient")
 				}
 				// Chain context fallback: if the LLM flagged a missing entity,
@@ -984,13 +1029,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				if req.Context.CallbackURL != "" {
 					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-					go func() {
-						cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-							Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
-						}, cbKey)
-					}()
+					h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
+						Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
+					}, cbKey)
 				}
 				resp := map[string]any{
 					"status":     "error",
@@ -1030,7 +1071,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				markCtx, markCancel := context.WithTimeout(context.Background(), 2*time.Second)
 				h.extractTrack.MarkPending(markCtx, req.TaskID, chainSessionID, auditID)
 				markCancel()
-				go func() {
+				safeGo(h.logger, "chain context extraction", func() {
 					defer func() {
 						doneCtx, doneCancel := context.WithTimeout(context.Background(), 2*time.Second)
 						h.extractTrack.MarkDone(doneCtx, req.TaskID, chainSessionID, auditID)
@@ -1075,18 +1116,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						}
 						saveCancel()
 					}
-				}()
+				})
 			}
 
 			if req.Context.CallbackURL != "" {
 				cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
-				go func() {
-					cbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					_ = callback.DeliverResult(cbCtx, req.Context.CallbackURL, &callback.Payload{
-						Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
-					}, cbKey)
-				}()
+				h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
+					Type: "request", RequestID: req.RequestID, Status: "executed", Result: result, AuditID: auditID,
+				}, cbKey)
 			}
 			resp := map[string]any{
 				"status":     "executed",
@@ -1674,6 +1711,22 @@ func (h *GatewayHandler) runVerification(
 // for the matched authorized action. Falls back to "strict" when the matched
 // action has no override set. Callers should pass the alias-aware match from
 // CheckTaskScope so that scope-specific overrides are honored.
+// plannedCallBypassEligible reports whether a task's risk assessment ran
+// successfully enough to make planned-call exact-match a safe bypass for
+// LLM intent verification. The bypass is justified by "the call was
+// evaluated during task risk assessment" — that justification only holds
+// when an actual risk verdict landed. RiskLevel="" or "unknown" means the
+// assessment was skipped or errored, and we MUST run the per-request
+// verifier instead, otherwise an adversarial agent can front-load future
+// ops into planned_calls during task creation and slip past both gates.
+func plannedCallBypassEligible(riskLevel string) bool {
+	switch riskLevel {
+	case "low", "medium", "high", "critical":
+		return true
+	}
+	return false
+}
+
 func verificationModeFor(matched *store.TaskAction) string {
 	if matched != nil && matched.Verification != "" {
 		return matched.Verification
@@ -1997,9 +2050,6 @@ func (h *GatewayHandler) routeToApproval(
 		ResolutionTransport: "execute_pending_request",
 		ExpiresAt:           &expiresAt,
 	}
-	if err := h.store.CreateApprovalRecord(ctx, approvalRecord); err != nil {
-		return fmt.Errorf("create approval record: %w", err)
-	}
 	pa := &store.PendingApproval{
 		ID:               uuid.New().String(),
 		UserID:           userID,
@@ -2012,8 +2062,11 @@ func (h *GatewayHandler) routeToApproval(
 	if callbackURL != "" {
 		pa.CallbackURL = &callbackURL
 	}
-	if err := h.store.SavePendingApproval(ctx, pa); err != nil {
-		return fmt.Errorf("save pending approval: %w", err)
+	// Atomically commit both rows. Without this, a failure on the second
+	// insert would leave a canonical approval visible in /api/approvals
+	// with no executable pending request to back it.
+	if err := h.store.CreateApprovalRecordWithPending(ctx, approvalRecord, pa); err != nil {
+		return fmt.Errorf("create approval + pending: %w", err)
 	}
 
 	if h.notifier == nil {
