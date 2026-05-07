@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,6 +298,131 @@ func TestClient_Gemini_NewClient_GlobalRegionUsesUnprefixedHost(t *testing.T) {
 	want := "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
 	if got != want {
 		t.Errorf("global endpoint:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
+func TestClient_Hedge_FastPrimary_NoHedgeFires(t *testing.T) {
+	// When the primary returns within hedgeDelay, no hedge is fired and
+	// the server sees exactly one request.
+	var calls int32
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(geminiResponse("primary", 0))
+	})
+	client := llm.NewClient(cfg).
+		WithTokenSource(staticToken{}).
+		WithHedgeDelay(500 * time.Millisecond)
+
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "primary" {
+		t.Errorf("got %q, want primary", got)
+	}
+	// Brief sleep so any erroneously-fired hedge would have time to land.
+	time.Sleep(50 * time.Millisecond)
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected 1 server call (no hedge), got %d", c)
+	}
+}
+
+func TestClient_Hedge_SlowPrimary_HedgeWins(t *testing.T) {
+	// Primary stalls past hedgeDelay → hedge fires and returns first.
+	var calls int32
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// Primary: stall well past hedgeDelay so the hedge wins.
+			// httptest doesn't reliably propagate client-side cancellation
+			// to r.Context(), so cap with a short fallback timer.
+			select {
+			case <-r.Context().Done():
+			case <-time.After(300 * time.Millisecond):
+			}
+			return
+		}
+		// Hedge: return immediately.
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(geminiResponse("hedge", 0))
+	})
+	client := llm.NewClient(cfg).
+		WithTokenSource(staticToken{}).
+		WithHedgeDelay(50 * time.Millisecond)
+
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "hedge" {
+		t.Errorf("got %q, want hedge", got)
+	}
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 server calls, got %d", c)
+	}
+}
+
+func TestClient_Hedge_PrimaryFailsFast_NoHedge(t *testing.T) {
+	// Primary returns an error before hedgeDelay elapses. Hedge should NOT
+	// fire — there's no point hedging against a deterministic failure.
+	var calls int32
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	})
+	client := llm.NewClient(cfg).
+		WithTokenSource(staticToken{}).
+		WithHedgeDelay(500 * time.Millisecond)
+
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err == nil {
+		t.Fatal("expected error from 500 response")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected 1 server call (no hedge after fast failure), got %d", c)
+	}
+}
+
+func TestClient_Hedge_BothFail_ReturnsError(t *testing.T) {
+	// Primary stalls past hedgeDelay then fails; hedge also fails.
+	// Caller should see an error (not a hang).
+	var calls int32
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			// Stall just long enough to let hedge fire, then return 500.
+			time.Sleep(100 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	})
+	client := llm.NewClient(cfg).
+		WithTokenSource(staticToken{}).
+		WithHedgeDelay(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := client.Complete(ctx, []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err == nil {
+		t.Fatal("expected error when both primary and hedge fail")
+	}
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 server calls, got %d", c)
 	}
 }
 

@@ -81,6 +81,7 @@ type Client struct {
 	tokenSource       oauth2.TokenSource // for Vertex AI (ADC)
 	maxTokens         int                // 0 → use default (maxTokens const)
 	fallbackEndpoints []string           // Vertex AI: additional region endpoints to try on failure
+	hedgeDelay        time.Duration      // 0 → no hedge; otherwise fire a second request after this delay
 
 	// Gemini-specific settings.
 	geminiThinkingLevel string       // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
@@ -105,6 +106,15 @@ func (c *Client) WithFallbackEndpoints(endpoints []string) *Client {
 func (c *Client) WithTokenSource(ts oauth2.TokenSource) *Client {
 	c2 := *c
 	c2.tokenSource = ts
+	return &c2
+}
+
+// WithHedgeDelay returns a shallow copy with the given hedge delay. Pass 0
+// to disable hedging. Used by tests; production wiring reads HedgeDelayMS
+// from LLMProviderConfig in NewClient.
+func (c *Client) WithHedgeDelay(d time.Duration) *Client {
+	c2 := *c
+	c2.hedgeDelay = d
 	return &c2
 }
 
@@ -144,12 +154,13 @@ func NewClient(cfg config.LLMProviderConfig) *Client {
 	}
 
 	c := &Client{
-		provider: provider,
-		endpoint: strings.TrimRight(cfg.Endpoint, "/"),
-		apiKey:   cfg.APIKey,
-		model:    cfg.Model,
-		timeout:  timeout,
-		http:     &http.Client{Timeout: timeout + 2*time.Second},
+		provider:   provider,
+		endpoint:   strings.TrimRight(cfg.Endpoint, "/"),
+		apiKey:     cfg.APIKey,
+		model:      cfg.Model,
+		timeout:    timeout,
+		http:       &http.Client{Timeout: timeout + 2*time.Second},
+		hedgeDelay: time.Duration(cfg.HedgeDelayMS) * time.Millisecond,
 	}
 
 	if provider == "vertex" {
@@ -244,6 +255,15 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage) (string, 
 
 // CompleteWithUsage is like Complete but also returns provider usage info.
 func (c *Client) CompleteWithUsage(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
+	if c.hedgeDelay <= 0 {
+		return c.completeOnce(ctx, messages)
+	}
+	return c.completeWithHedge(ctx, messages)
+}
+
+// completeOnce dispatches a single request to the configured provider.
+// Wrapped by completeWithHedge when hedgeDelay > 0.
+func (c *Client) completeOnce(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
 	switch c.provider {
 	case "anthropic":
 		return c.completeAnthropic(ctx, messages)
@@ -254,6 +274,73 @@ func (c *Client) CompleteWithUsage(ctx context.Context, messages []ChatMessage) 
 	default:
 		return c.completeOpenAI(ctx, messages) // "openai", "ollama", "groq" use OpenAI-compatible API
 	}
+}
+
+// completeWithHedge fires a primary request and, if it hasn't returned
+// after hedgeDelay, fires a second (hedge) request. Whichever succeeds
+// first wins; the loser's context is cancelled.
+//
+// If the primary fails before the hedge fires, the error surfaces directly
+// — no point hedging against a deterministic failure (auth error, bad
+// model name, etc.). If both fail after racing, returns the most recent
+// error.
+func (c *Client) completeWithHedge(ctx context.Context, messages []ChatMessage) (string, *Usage, error) {
+	type result struct {
+		text  string
+		usage *Usage
+		err   error
+	}
+
+	primaryCtx, cancelPrimary := context.WithCancel(ctx)
+	defer cancelPrimary()
+	primaryCh := make(chan result, 1)
+	go func() {
+		text, usage, err := c.completeOnce(primaryCtx, messages)
+		primaryCh <- result{text, usage, err}
+	}()
+
+	timer := time.NewTimer(c.hedgeDelay)
+	defer timer.Stop()
+
+	select {
+	case r := <-primaryCh:
+		// Primary returned (success or failure) before hedge fired.
+		return r.text, r.usage, r.err
+	case <-ctx.Done():
+		return "", nil, ctx.Err()
+	case <-timer.C:
+		// Primary slow — fire hedge below.
+	}
+
+	hedgeCtx, cancelHedge := context.WithCancel(ctx)
+	defer cancelHedge()
+	hedgeCh := make(chan result, 1)
+	go func() {
+		text, usage, err := c.completeOnce(hedgeCtx, messages)
+		hedgeCh <- result{text, usage, err}
+	}()
+
+	// Race the two. First success wins; if one fails, wait for the other.
+	var lastErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-primaryCh:
+			if r.err == nil {
+				cancelHedge()
+				return r.text, r.usage, nil
+			}
+			lastErr = r.err
+		case r := <-hedgeCh:
+			if r.err == nil {
+				cancelPrimary()
+				return r.text, r.usage, nil
+			}
+			lastErr = r.err
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		}
+	}
+	return "", nil, lastErr
 }
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
