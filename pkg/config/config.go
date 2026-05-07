@@ -686,6 +686,17 @@ func Load(path string) (*Config, error) {
 		cfg.Telemetry.Endpoint = v
 	}
 
+	// Clear the Anthropic-default Endpoint when the user picks a non-Anthropic
+	// provider in YAML. Without this, the Default()'s Anthropic URL ("https://
+	// api.anthropic.com/v1") gets inherited by every sub-block, and providers
+	// that build their own endpoint from project/region/model (gemini, vertex)
+	// see a non-empty Endpoint and skip the URL builder, then POST their
+	// provider-shaped JSON to Anthropic's API and get an empty-body 404.
+	if cfg.LLM.Provider != "" && cfg.LLM.Provider != "anthropic" &&
+		cfg.LLM.Endpoint == "https://api.anthropic.com/v1" {
+		cfg.LLM.Endpoint = ""
+	}
+
 	// Inherit: fill empty subsection fields from shared LLM config.
 	inheritLLMDefaults(&cfg.LLM.Verification.LLMProviderConfig, &cfg.LLM)
 	inheritLLMDefaults(&cfg.LLM.TaskRisk.LLMProviderConfig, &cfg.LLM)

@@ -130,9 +130,16 @@ func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []Cha
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound && cacheName != "" {
-			return "", nil, fmt.Errorf("%w: %s", ErrGeminiCacheNotFound, respBody)
+			return "", nil, fmt.Errorf("%w: url=%s body_len=%d server=%q via=%q content_type=%q body=%s",
+				ErrGeminiCacheNotFound, c.endpoint, len(respBody),
+				resp.Header.Get("Server"), resp.Header.Get("Via"),
+				resp.Header.Get("Content-Type"), respBody)
 		}
-		return "", nil, c.statusError(resp.StatusCode, respBody)
+		return "", nil, fmt.Errorf("%w url=%s body_len=%d server=%q via=%q content_type=%q",
+			c.statusError(resp.StatusCode, respBody),
+			c.endpoint, len(respBody),
+			resp.Header.Get("Server"), resp.Header.Get("Via"),
+			resp.Header.Get("Content-Type"))
 	}
 
 	return decodeGeminiResponse(respBody)
