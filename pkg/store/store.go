@@ -146,6 +146,14 @@ type Store interface {
 	// leaseTTL — the recovery hook for daemon crashes mid-execution.
 	ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*PendingApproval, error)
 
+	// CreateApprovalRecordWithPending writes the canonical approval record
+	// and its corresponding pending approval row in a single transaction.
+	// Both rows commit together or neither commits — preventing the
+	// orphan-canonical-record bug where the second insert failed and the
+	// approval was visible in /api/approvals but had no executable pending
+	// request to back it.
+	CreateApprovalRecordWithPending(ctx context.Context, rec *ApprovalRecord, pa *PendingApproval) error
+
 	// Canonical approval records
 	CreateApprovalRecord(ctx context.Context, rec *ApprovalRecord) error
 	GetApprovalRecord(ctx context.Context, id string) (*ApprovalRecord, error)

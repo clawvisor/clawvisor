@@ -1696,6 +1696,48 @@ func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRec
 	return err
 }
 
+// CreateApprovalRecordWithPending writes both rows in one transaction so a
+// failure on the second insert can't leave an orphan canonical approval
+// (visible in /api/approvals but with no executable pending request).
+func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.ApprovalRecord, pa *store.PendingApproval) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	if pa.ID == "" {
+		pa.ID = uuid.New().String()
+	}
+	if pa.Status == "" {
+		pa.Status = "pending"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, string(pa.RequestBlob),
+		pa.CallbackURL, pa.Status, pa.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
 	return s.getApprovalRecord(ctx, `
 		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,

@@ -2014,9 +2014,6 @@ func (h *GatewayHandler) routeToApproval(
 		ResolutionTransport: "execute_pending_request",
 		ExpiresAt:           &expiresAt,
 	}
-	if err := h.store.CreateApprovalRecord(ctx, approvalRecord); err != nil {
-		return fmt.Errorf("create approval record: %w", err)
-	}
 	pa := &store.PendingApproval{
 		ID:               uuid.New().String(),
 		UserID:           userID,
@@ -2029,8 +2026,11 @@ func (h *GatewayHandler) routeToApproval(
 	if callbackURL != "" {
 		pa.CallbackURL = &callbackURL
 	}
-	if err := h.store.SavePendingApproval(ctx, pa); err != nil {
-		return fmt.Errorf("save pending approval: %w", err)
+	// Atomically commit both rows. Without this, a failure on the second
+	// insert would leave a canonical approval visible in /api/approvals
+	// with no executable pending request to back it.
+	if err := h.store.CreateApprovalRecordWithPending(ctx, approvalRecord, pa); err != nil {
+		return fmt.Errorf("create approval + pending: %w", err)
 	}
 
 	if h.notifier == nil {

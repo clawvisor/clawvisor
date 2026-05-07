@@ -1542,6 +1542,46 @@ func (s *Store) CreateApprovalRecord(ctx context.Context, rec *store.ApprovalRec
 	return err
 }
 
+// CreateApprovalRecordWithPending wraps both inserts in one transaction.
+func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.ApprovalRecord, pa *store.PendingApproval) error {
+	if rec.ID == "" {
+		rec.ID = uuid.New().String()
+	}
+	if pa.ID == "" {
+		pa.ID = uuid.New().String()
+	}
+	if pa.Status == "" {
+		pa.Status = "pending"
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO approval_records (
+			id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+			summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
+		rec.Surface, rawJSONOrDefaultBytes(rec.SummaryJSON, "{}"), rawJSONOrDefaultBytes(rec.PayloadJSON, "{}"),
+		rec.ResolutionTransport, rec.ExpiresAt, rec.ResolvedAt, rec.Resolution); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
+		pa.CallbackURL, pa.Status, pa.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
 	return s.getApprovalRecord(ctx, `
 		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
