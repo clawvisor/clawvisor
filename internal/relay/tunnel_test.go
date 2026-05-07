@@ -97,3 +97,29 @@ func TestHandleRequest(t *testing.T) {
 	_ = c
 	_ = captured
 }
+
+// TestHandleRequest_ClientIPSetsRemoteAddr is the regression guard for the
+// "relay traffic has empty RemoteAddr" bug. When the relay envelope carries
+// a ClientIP, the synthesized request must surface it as r.RemoteAddr so
+// per-IP rate limits and audit logs apply correctly.
+func TestHandleRequest_ClientIPSetsRemoteAddr(t *testing.T) {
+	gotRemoteAddr := ""
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRemoteAddr = r.RemoteAddr
+		w.WriteHeader(http.StatusOK)
+	})
+	c := &Client{handler: handler, logger: slog.Default()}
+
+	payload := HTTPRequestPayload{
+		Method:   "GET",
+		Path:     "/api/health",
+		Headers:  map[string][]string{},
+		Body:     "",
+		ClientIP: "203.0.113.7",
+	}
+	c.handleRequest(context.Background(), "test-id", payload)
+
+	if gotRemoteAddr != "203.0.113.7:0" {
+		t.Fatalf("expected RemoteAddr=203.0.113.7:0, got %q", gotRemoteAddr)
+	}
+}

@@ -44,6 +44,13 @@ func (c *Client) handleRequest(ctx context.Context, id string, payload HTTPReque
 			req.Header.Add(k, v)
 		}
 	}
+	// Attribute the synthesized request to the originating client IP so
+	// per-IP rate limits and audit logs aren't all coalesced under an
+	// empty RemoteAddr. Format must include a port for net.SplitHostPort
+	// to round-trip correctly downstream.
+	if payload.ClientIP != "" {
+		req.RemoteAddr = payload.ClientIP + ":0"
+	}
 
 	rec := httptest.NewRecorder()
 	c.handler.ServeHTTP(rec, req)
