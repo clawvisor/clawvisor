@@ -184,7 +184,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 		return
 	}
 
@@ -425,7 +425,7 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 	return candidateTasks, toolRules, egressRules
 }
 
-func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
 	verb, _ := liteApprovalReply(provider, body)
 	if verb == "" || h.PendingApprovals == nil {
 		return false
@@ -450,6 +450,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		*auditStatus = http.StatusOK
 		*auditDecide = "deny"
 		*auditOutcome = "approval_denied"
+		h.AuditEmitter.LogApprovalRelease(r.Context(), agent, requestID, pending, "deny", "denied", "denied inline by user")
 		writeLiteSynthetic(w, r, provider, body, false, pending.ToolUse.ID, pending.ToolUse.Name, nil)
 		return true
 	}
@@ -460,12 +461,14 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		*auditDecide = "deny"
 		*auditOutcome = "approval_release_blocked"
 		*auditReason = releaseErr.Error()
+		h.AuditEmitter.LogApprovalRelease(r.Context(), agent, requestID, pending, "deny", "blocked", releaseErr.Error())
 		writeLiteSynthetic(w, r, provider, body, false, pending.ToolUse.ID, pending.ToolUse.Name, nil)
 		return true
 	}
 	*auditStatus = http.StatusOK
 	*auditDecide = "allow"
 	*auditOutcome = "approval_released"
+	h.AuditEmitter.LogApprovalRelease(r.Context(), agent, requestID, pending, "allow", "released", "approved inline by user")
 	writeLiteSynthetic(w, r, provider, body, true, pending.ToolUse.ID, pending.ToolUse.Name, rewrittenInput)
 	return true
 }

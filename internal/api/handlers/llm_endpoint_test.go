@@ -371,6 +371,7 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	h.ResolverBaseURL = "https://clawvisor.example/proxy/v1"
+	h.AuditEmitter = llmproxy.NewAuditEmitter(st, slog.Default(), nil)
 	agent, err := st.GetAgentByToken(ctx, auth.HashToken(rawToken))
 	if err != nil {
 		t.Fatalf("GetAgentByToken: %v", err)
@@ -420,6 +421,20 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 	out := approveRec.Body.String()
 	if !strings.Contains(out, `"type":"tool_use"`) || !strings.Contains(out, "https://clawvisor.example/proxy/v1/repos/x/y/issues") {
 		t.Fatalf("approve response did not release rewritten tool_use: %s", out)
+	}
+	entries, _, err := st.ListAuditEntries(ctx, agent.UserID, store.AuditFilter{AgentID: agent.ID, Limit: 20})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	foundRelease := false
+	for _, entry := range entries {
+		if entry.Action == "lite_proxy.approval.release" && entry.Outcome == "released" {
+			foundRelease = true
+			break
+		}
+	}
+	if !foundRelease {
+		t.Fatalf("missing approval release audit row: %+v", entries)
 	}
 }
 

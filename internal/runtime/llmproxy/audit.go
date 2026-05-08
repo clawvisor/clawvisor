@@ -146,6 +146,45 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 	}
 }
 
+func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agent, requestID string, pending *PendingLiteApproval, decision, outcome, reason string) {
+	if e == nil || e.Store == nil || agent == nil || pending == nil {
+		return
+	}
+	params := map[string]any{
+		"event":             "lite_proxy.approval_released",
+		"approval_id":       pending.ID,
+		"provider":          string(pending.Provider),
+		"target_host":       pending.Inspector.Host,
+		"target_method":     pending.Inspector.Method,
+		"target_path":       pending.Inspector.Path,
+		"decision_source":   string(pending.Fingerprint.Source),
+		"build_sha":         buildSHA(),
+		"validator_prompt":  e.ValidatorPromptSHA,
+		"parser_version":    parserVersion(),
+		"clawvisor_version": version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	tu := pending.ToolUse.ID
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  &tu,
+		Timestamp:  time.Now().UTC(),
+		Service:    string(pending.Provider),
+		Action:     "lite_proxy.approval.release",
+		ParamsSafe: paramsJSON,
+		Decision:   decision,
+		Outcome:    outcome,
+		Reason:     nilIfEmpty(reason),
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: approval release audit failed",
+			"agent_id", agent.ID, "approval_id", pending.ID, "err", err.Error())
+	}
+}
+
 // LogResolverSwap records one credential swap at the resolver. Each row
 // links to the placeholder, target host, and upstream status.
 func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, requestID, placeholder, boundService, targetHost, targetPath, method string, statusCode int, decision, outcome, reason string, duration time.Duration) {
