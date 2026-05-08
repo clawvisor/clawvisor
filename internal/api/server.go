@@ -841,6 +841,14 @@ func (s *Server) routes() http.Handler {
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
 		llmHandler.AuditEmitter = auditEmitter
 
+		// Task-scope authorization: reverse-resolve (host, method, path)
+		// to (service, action) via the YAML adapter catalog, then check
+		// against the agent's active tasks before letting a tool_use
+		// rewrite proceed. The catalog is lazy so newly-registered or
+		// hot-reloaded adapters get picked up on first use.
+		llmHandler.Catalog = llmproxy.NewLazyServiceCatalog(llmproxy.DefsFromRegistry(s.adapterReg))
+		llmHandler.TaskScope = llmproxy.NewStoreTaskScopeChecker(s.store)
+
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks

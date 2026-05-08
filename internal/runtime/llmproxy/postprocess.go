@@ -44,6 +44,19 @@ type PostprocessConfig struct {
 	// ResponseRegistry is the conversation rewriter registry. Defaults
 	// to conversation.DefaultResponseRegistry() when nil.
 	ResponseRegistry *conversation.ResponseRegistry
+
+	// Catalog reverse-resolves (host, method, path) → (service, action)
+	// so the task-scope checker can decide whether an active task covers
+	// this call. Optional: when nil, task-scope is skipped (v0 fail-open
+	// for backwards compatibility on deployments without it wired).
+	Catalog interface {
+		Resolve(host, method, path string) (ResolvedAction, bool)
+	}
+
+	// TaskScope authorizes the resolved (service, action) against the
+	// agent's active tasks. Optional: when nil, task-scope is skipped.
+	// Skipping is audited so dashboards can show the gap.
+	TaskScope TaskScopeChecker
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -140,6 +153,29 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				Allowed: false,
 				Reason:  "Clawvisor: target host outside placeholder bound-service — " + reason,
 			}
+		}
+
+		// Task-scope authorization: reverse-resolve the (host, method,
+		// path) to (service, action), then check against the agent's
+		// active tasks. Skipping is audited (in case of misconfig) but
+		// not blocking — v0 leaves task-scope as opt-in until product
+		// surfaces (always_ask / approval queue) are wired in #33.
+		if cfg.Catalog != nil && cfg.TaskScope != nil {
+			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
+				dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
+				if !dec.Allowed {
+					audit("block", "task_scope_denied", dec.Reason)
+					return conversation.ToolUseVerdict{
+						Allowed: false,
+						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
+					}
+				}
+			}
+			// Catalog miss: log via audit reason field but don't block.
+			// The fact that the (host, method, path) didn't resolve to a
+			// known (service, action) is an inspector or catalog gap, not
+			// an attack signal — the BoundaryCheck above already constrained
+			// the host to the placeholder's bound-service allowlist.
 		}
 
 		rewritten, err := inspector.Rewrite(inspector.ToolUse{

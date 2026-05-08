@@ -205,19 +205,18 @@ func compilePathTemplate(template string) (*regexp.Regexp, int, bool) {
 	return re, staticScore, true
 }
 
-// NewServiceCatalogFromRegistry builds a catalog by introspecting the
-// shared adapter registry. Only YAML-driven REST adapters contribute
-// entries; Go-only adapters (iMessage, SQL) and GraphQL adapters are
-// silently skipped — the catalog is purely for HTTP path/method
-// reverse-mapping.
-func NewServiceCatalogFromRegistry(reg *adapters.Registry) *ServiceCatalog {
+// DefsFromRegistry extracts the YAML service definitions from the shared
+// adapter registry. Only YAML-driven REST adapters contribute entries;
+// Go-only adapters (iMessage, SQL) and GraphQL adapters are silently
+// skipped — the catalog is purely for HTTP path/method reverse-mapping.
+//
+// Useful for building a LazyServiceCatalog from server startup.
+func DefsFromRegistry(reg *adapters.Registry) []yamldef.ServiceDef {
 	if reg == nil {
-		return NewServiceCatalog(nil)
+		return nil
 	}
 	defs := make([]yamldef.ServiceDef, 0)
 	for _, a := range reg.All() {
-		// Prefer the *yamlruntime.YAMLAdapter exact type; fall back to the
-		// duck-typed interface so future adapter shapes can opt in.
 		if ya, ok := a.(*yamlruntime.YAMLAdapter); ok {
 			defs = append(defs, ya.Def())
 			continue
@@ -226,7 +225,13 @@ func NewServiceCatalogFromRegistry(reg *adapters.Registry) *ServiceCatalog {
 			defs = append(defs, d.Def())
 		}
 	}
-	return NewServiceCatalog(defs)
+	return defs
+}
+
+// NewServiceCatalogFromRegistry is a convenience over DefsFromRegistry +
+// NewServiceCatalog.
+func NewServiceCatalogFromRegistry(reg *adapters.Registry) *ServiceCatalog {
+	return NewServiceCatalog(DefsFromRegistry(reg))
 }
 
 // LazyServiceCatalog is a thread-safe wrapper that builds a ServiceCatalog

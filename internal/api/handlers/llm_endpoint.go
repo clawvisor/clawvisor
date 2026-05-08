@@ -45,6 +45,16 @@ type LLMEndpointHandler struct {
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
 
+	// Catalog reverse-resolves outbound (host, method, path) → (service,
+	// action) for the task-scope check. Optional: when nil, task-scope
+	// is not enforced for tool_use calls.
+	Catalog *llmproxy.LazyServiceCatalog
+
+	// TaskScope authorizes resolved (service, action) pairs against the
+	// agent's active task scopes. Optional: when nil, task-scope is not
+	// enforced.
+	TaskScope llmproxy.TaskScopeChecker
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -221,6 +231,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		opts := inspector.DefaultRewriteOpts(h.ResolverBaseURL)
 		opts.CallerToken = callerToken
 
+		var catalogIface interface {
+			Resolve(host, method, path string) (llmproxy.ResolvedAction, bool)
+		}
+		if h.Catalog != nil {
+			catalogIface = h.Catalog
+		}
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:   h.Inspector,
 			RewriteOpts: opts,
@@ -229,6 +245,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			AgentID:     agent.ID,
 			Audit:       h.AuditEmitter,
 			RequestID:   requestID,
+			Catalog:     catalogIface,
+			TaskScope:   h.TaskScope,
 		})
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")
