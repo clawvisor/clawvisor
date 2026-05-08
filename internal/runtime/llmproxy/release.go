@@ -28,6 +28,7 @@ type ReleaseRequest struct {
 	CandidateTasks  []*store.Task
 	ToolRules       []*store.RuntimePolicyRule
 	EgressRules     []*store.RuntimePolicyRule
+	Posture         runtimedecision.EvaluationPosture
 	IntentVerifier  IntentVerifier
 	PendingApproval PendingApprovalCache
 	Audit           *AuditEmitter
@@ -44,19 +45,23 @@ type ReleaseResult struct {
 }
 
 func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseResult {
-	verb, _ := conversation.ApprovalReplyForProvider(req.Provider, req.Body)
+	verb, approvalID := conversation.ApprovalReplyForProvider(req.Provider, req.Body)
 	if verb == "" || req.PendingApproval == nil || req.Agent == nil {
 		return ReleaseResult{}
 	}
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
-		UserID:   req.Agent.UserID,
-		AgentID:  req.Agent.ID,
-		Provider: req.Provider,
+		UserID:     req.Agent.UserID,
+		AgentID:    req.Agent.ID,
+		Provider:   req.Provider,
+		ApprovalID: approvalID,
 	})
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
 	}
 	if pending == nil {
+		if approvalID != "" {
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+		}
 		return ReleaseResult{}
 	}
 	if verb == "deny" {
@@ -82,6 +87,32 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 		Name:  pending.ToolUse.Name,
 		Input: pending.ToolUse.Input,
 	})
+	if verdict.Source == inspector.SourceTriggerMiss {
+		decisionInput := runtimedecision.AuthorizationInput{
+			ToolUse:           pending.ToolUse,
+			UserID:            req.Agent.UserID,
+			AgentID:           req.Agent.ID,
+			Posture:           req.Posture,
+			CandidateTasks:    req.CandidateTasks,
+			ToolRules:         req.ToolRules,
+			EgressRules:       req.EgressRules,
+			IntentVerifier:    releaseDecisionIntentVerifier{inner: req.IntentVerifier},
+			AllowMissingScope: true,
+		}
+		dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
+		if err != nil {
+			return nil, err
+		}
+		switch dec.Kind {
+		case runtimedecision.VerdictDeny:
+			return nil, errors.New(dec.Reason)
+		case runtimedecision.VerdictNeedsApproval:
+			if !runtimedecision.EquivalentFingerprint(pending.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
+				return nil, errors.New("held approval no longer matches current authorization decision")
+			}
+		}
+		return decodeToolUseInput(pending.ToolUse.Input), nil
+	}
 	if verdict.Ambiguous || !verdict.IsAPICall {
 		return nil, errors.New("held tool use no longer resolves to a credentialed API call")
 	}
@@ -96,6 +127,7 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 		ToolUse:        pending.ToolUse,
 		UserID:         req.Agent.UserID,
 		AgentID:        req.Agent.ID,
+		Posture:        req.Posture,
 		Target:         runtimedecision.TargetRequest{Host: verdict.Host, Method: verdict.Method, Path: verdict.Path},
 		Service:        resolved.ServiceID,
 		Action:         resolved.ActionID,
@@ -123,6 +155,17 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 	var input map[string]any
 	_ = json.Unmarshal(raw, &input)
 	return input, nil
+}
+
+func decodeToolUseInput(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil
+	}
+	return input
 }
 
 func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v inspector.Verdict) (string, bool) {

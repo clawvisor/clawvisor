@@ -37,10 +37,24 @@ func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testi
 		t.Fatalf("wrong user resolved approval: %+v", wrong)
 	}
 
+	wrongID, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-wrongid1234",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrongID != nil {
+		t.Fatalf("wrong ID resolved approval: %+v", wrongID)
+	}
+
 	resolved, err := cache.Resolve(ctx, ResolveRequest{
-		UserID:   "user-1",
-		AgentID:  "agent-1",
-		Provider: conversation.ProviderAnthropic,
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: held.Pending.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

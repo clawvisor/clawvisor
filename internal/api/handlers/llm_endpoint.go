@@ -15,6 +15,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/google/uuid"
@@ -266,6 +267,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Catalog:          catalogIface,
 			TaskScope:        h.TaskScope,
 			IntentVerifier:   h.IntentVerifier,
+			Posture:          liteProxyDecisionPosture(agent),
 			CandidateTasks:   candidateTasks,
 			ToolRules:        toolRules,
 			EgressRules:      egressRules,
@@ -447,6 +449,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		CandidateTasks:  candidateTasks,
 		ToolRules:       toolRules,
 		EgressRules:     egressRules,
+		Posture:         liteProxyDecisionPosture(agent),
 		IntentVerifier:  h.IntentVerifier,
 		PendingApproval: h.PendingApprovals,
 		Audit:           h.AuditEmitter,
@@ -467,6 +470,13 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	w.WriteHeader(result.HTTPStatus)
 	_, _ = io.Copy(w, bytes.NewReader(result.Body))
 	return true
+}
+
+func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPosture {
+	if agent != nil && agent.RuntimeSettings != nil && strings.EqualFold(agent.RuntimeSettings.RuntimeMode, "observe") {
+		return runtimedecision.PostureObserve
+	}
+	return runtimedecision.PostureEnforce
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's

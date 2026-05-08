@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var approvalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-[a-z0-9]{12})\b`)
+var approvalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-(?:[a-z0-9]{12}|[a-z0-9]{26}))\b`)
 var bareApprovalRE = regexp.MustCompile(`(?i)^\s*(approve|deny)\s*$`)
 
 // ParseApprovalReplyText extracts the most recent approval reply from a block

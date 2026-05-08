@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -78,6 +79,75 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	}
 	if string(got.Body) != string(body) {
 		t.Fatalf("body should be unchanged when nothing triggers")
+	}
+}
+
+func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
+	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-webfetch",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "WebFetch",
+			Reason:   "web fetch blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("tool deny rule should rewrite the tool_use to a refusal")
+	}
+	if !strings.Contains(string(got.Body), "web fetch blocked") {
+		t.Fatalf("refusal missing rule reason: %s", got.Body)
+	}
+}
+
+func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	body := anthropicJSONWithToolUse(input)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Posture:     runtimedecision.PostureObserve,
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-webfetch",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "WebFetch",
+			Reason:   "web fetch blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("observe mode should still rewrite credentialed calls")
+	}
+	if strings.Contains(string(got.Body), "web fetch blocked") {
+		t.Fatalf("observe mode should not block with rule reason: %s", got.Body)
+	}
+	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1/repos/x/y/issues") {
+		t.Fatalf("observe mode should allow rewrite through proxy: %s", got.Body)
 	}
 }
 

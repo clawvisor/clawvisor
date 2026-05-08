@@ -100,6 +100,7 @@ type PostprocessConfig struct {
 	// Postprocess authorizes through pkg/runtime/decision after inspector
 	// boundary validation. When all are nil, it falls back to the legacy
 	// Catalog/TaskScope flow for compatibility with older tests/configs.
+	Posture        runtimedecision.EvaluationPosture
 	CandidateTasks []*store.Task
 	ToolRules      []*store.RuntimePolicyRule
 	EgressRules    []*store.RuntimePolicyRule
@@ -174,13 +175,62 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu.ID, v, decision, outcome, reason)
 		}
 
-		// Inspector says trigger missed (no autovault placeholder),
-		// validator returned ambiguous, or it isn't an API call we should
-		// mediate — pass through unchanged.
+		// Inspector says trigger missed (no autovault placeholder). There
+		// is no credential rewrite to perform, but shared authorization
+		// still sees ordinary tool_use calls such as Bash/Read.
 		if v.Source == inspector.SourceTriggerMiss {
-			// Don't audit pass-through-no-trigger — most tool_uses go
-			// through this path and the row volume would dominate. Only
-			// audit when the inspector actually engaged.
+			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
+				decisionInput := runtimedecision.AuthorizationInput{
+					ToolUse:           tu,
+					UserID:            cfg.AgentUserID,
+					AgentID:           cfg.AgentID,
+					Posture:           cfg.Posture,
+					CandidateTasks:    cfg.CandidateTasks,
+					ToolRules:         cfg.ToolRules,
+					EgressRules:       cfg.EgressRules,
+					IntentVerifier:    decisionIntentVerifier{inner: cfg.IntentVerifier},
+					AllowMissingScope: true,
+				}
+				dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
+				if err != nil {
+					audit("block", "decision_error", err.Error())
+					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
+				}
+				switch dec.Kind {
+				case runtimedecision.VerdictAllow:
+					if dec.ObservationEffect != runtimedecision.ObservationNone {
+						audit("allow", string(dec.Source), dec.Reason)
+					}
+				case runtimedecision.VerdictDeny:
+					audit("block", string(dec.Source), dec.Reason)
+					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
+				case runtimedecision.VerdictNeedsApproval:
+					substitute := "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it."
+					if cfg.PendingApprovals != nil {
+						held, _ := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
+							UserID:      cfg.AgentUserID,
+							AgentID:     cfg.AgentID,
+							Provider:    rewriter.Name(),
+							ToolUse:     tu,
+							Inspector:   v,
+							Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
+							Reason:      dec.Reason,
+						})
+						if held.Evicted != nil {
+							audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
+						}
+					}
+					audit("block", string(dec.Source), dec.Reason)
+					return conversation.ToolUseVerdict{
+						Allowed:        false,
+						Reason:         "Clawvisor: approval required — " + dec.Reason,
+						SubstituteWith: substitute,
+					}
+				}
+			}
+			// Don't audit pass-through-no-trigger without a matching policy
+			// decision — most tool_uses go through this path and the row
+			// volume would dominate.
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		if v.Ambiguous || !v.IsAPICall {
@@ -203,15 +253,17 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			}
 		}
 
+		decisionHandled := false
 		if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
 			resolved := ResolvedAction{}
 			if cfg.Catalog != nil {
 				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
 			}
-			dec, err := runtimedecision.EvaluateAuthorization(req.Context(), runtimedecision.AuthorizationInput{
+			decisionInput := runtimedecision.AuthorizationInput{
 				ToolUse:        tu,
 				UserID:         cfg.AgentUserID,
 				AgentID:        cfg.AgentID,
+				Posture:        cfg.Posture,
 				Target:         runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
 				Service:        resolved.ServiceID,
 				Action:         resolved.ActionID,
@@ -219,7 +271,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				ToolRules:      cfg.ToolRules,
 				EgressRules:    cfg.EgressRules,
 				IntentVerifier: decisionIntentVerifier{inner: cfg.IntentVerifier},
-			})
+			}
+			dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
 			if err != nil {
 				audit("block", "decision_error", err.Error())
 				return conversation.ToolUseVerdict{
@@ -230,6 +283,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			switch dec.Kind {
 			case runtimedecision.VerdictAllow:
 				// Continue to credential rewrite below.
+				decisionHandled = true
 			case runtimedecision.VerdictDeny:
 				audit("block", string(dec.Source), dec.Reason)
 				return conversation.ToolUseVerdict{
@@ -238,15 +292,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				}
 			case runtimedecision.VerdictNeedsApproval:
 				if cfg.PendingApprovals != nil {
-					_, _ = cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
+					held, _ := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 						UserID:      cfg.AgentUserID,
 						AgentID:     cfg.AgentID,
 						Provider:    rewriter.Name(),
 						ToolUse:     tu,
 						Inspector:   v,
-						Fingerprint: runtimedecision.Fingerprint(dec, runtimedecision.AuthorizationInput{Target: runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path}, Service: resolved.ServiceID, Action: resolved.ActionID}),
+						Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
 						Reason:      dec.Reason,
 					})
+					if held.Evicted != nil {
+						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
+					}
 				}
 				audit("block", string(dec.Source), dec.Reason)
 				return conversation.ToolUseVerdict{
@@ -262,7 +319,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// active tasks. Skipping is audited (in case of misconfig) but
 		// not blocking — v0 leaves task-scope as opt-in until product
 		// surfaces (always_ask / approval queue) are wired in #33.
-		if cfg.Catalog != nil && cfg.TaskScope != nil {
+		if !decisionHandled && cfg.Catalog != nil && cfg.TaskScope != nil {
 			if resolved, ok := cfg.Catalog.Resolve(v.Host, v.Method, v.Path); ok {
 				dec := cfg.TaskScope.Check(req.Context(), cfg.AgentUserID, cfg.AgentID, resolved.ServiceID, resolved.ActionID)
 				if !dec.Allowed {

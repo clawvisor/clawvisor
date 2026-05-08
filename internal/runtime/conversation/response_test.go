@@ -178,13 +178,13 @@ func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 
 	responsesBody := []byte(`{
 	  "input":[
-	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdef123456"}]},
+	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdefghijklmnopqrstuvwxyz"}]},
 	    {"type":"function_call_output","call_id":"call_123","output":"ok"}
 	  ]
 	}`)
 	responsesReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
 	verb, id := OpenAIApprovalReply(responsesBody)
-	if verb != "approve" || id != "cv-abcdef123456" {
+	if verb != "approve" || id != "cv-abcdefghijklmnopqrstuvwxyz" {
 		t.Fatalf("unexpected responses approval reply: verb=%q id=%q", verb, id)
 	}
 	ids := OpenAIToolResultIDsFromRequest(responsesReq, responsesBody)

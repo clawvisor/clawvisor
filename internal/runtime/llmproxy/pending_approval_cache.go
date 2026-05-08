@@ -29,9 +29,10 @@ type PendingLiteApproval struct {
 }
 
 type ResolveRequest struct {
-	UserID   string
-	AgentID  string
-	Provider conversation.Provider
+	UserID     string
+	AgentID    string
+	Provider   conversation.Provider
+	ApprovalID string
 }
 
 type HoldResult struct {
@@ -111,6 +112,9 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 	}
 	if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(c.now().UTC()) {
 		delete(c.pending, key)
+		return nil, nil
+	}
+	if req.ApprovalID != "" && pending.ID != req.ApprovalID {
 		return nil, nil
 	}
 	delete(c.pending, key)

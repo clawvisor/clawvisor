@@ -118,7 +118,9 @@ func TestStoreTaskScopeChecker_RejectsUnresolvedAction(t *testing.T) {
 
 // stubCatalog lets us drive postprocess task-scope behavior without
 // loading real YAML defs.
-type stubCatalog struct{ resolve func(host, method, path string) (ResolvedAction, bool) }
+type stubCatalog struct {
+	resolve func(host, method, path string) (ResolvedAction, bool)
+}
 
 func (s stubCatalog) Resolve(host, method, path string) (ResolvedAction, bool) {
 	return s.resolve(host, method, path)
@@ -178,10 +180,10 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 	// The body should contain a Clawvisor refusal in place of the
 	// rewritten tool_use input. We accept either an unrewritten body
 	// (rewriter fell back to refusal) or a body without the resolver URL.
-	if strings.Contains(string(got.Body),"https://proxy.example/proxy/v1") {
+	if strings.Contains(string(got.Body), "https://proxy.example/proxy/v1") {
 		t.Fatalf("rewrite should NOT have happened — task scope denies github.create_issue:\n%s", got.Body)
 	}
-	if !strings.Contains(string(got.Body),"no active task scope") {
+	if !strings.Contains(string(got.Body), "no active task scope") {
 		t.Errorf("expected refusal message containing 'no active task scope':\n%s", got.Body)
 	}
 }
@@ -210,7 +212,7 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected rewrite when task scope allows")
 	}
-	if !strings.Contains(string(got.Body),"https://proxy.example/proxy/v1") {
+	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1") {
 		t.Errorf("rewritten body missing resolver URL:\n%s", got.Body)
 	}
 }
@@ -249,8 +251,10 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
-		TaskScope:   scope,
+		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
+			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		}},
+		TaskScope:      scope,
 		IntentVerifier: verifier,
 	})
 
@@ -288,8 +292,10 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
-		TaskScope:   scope,
+		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
+			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		}},
+		TaskScope:      scope,
 		IntentVerifier: verifier,
 	})
 
@@ -315,8 +321,10 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
-		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
-		TaskScope:   scope,
+		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
+			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		}},
+		TaskScope:      scope,
 		IntentVerifier: verifier,
 	})
 
@@ -358,3 +366,42 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 	}
 }
 
+func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	body := anthropicJSONWithToolUse(input)
+
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "legacy task scope should not run"}}
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Catalog: stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) {
+			return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true
+		}},
+		TaskScope: denyAll,
+		CandidateTasks: []*store.Task{{
+			ID:      "task-1",
+			UserID:  userID,
+			AgentID: agentID,
+			Status:  "active",
+			AuthorizedActions: []store.TaskAction{{
+				Service:      "github",
+				Action:       "create_issue",
+				Verification: "off",
+			}},
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("shared evaluator allow should skip legacy task scope, got body:\n%s", got.Body)
+	}
+	if strings.Contains(string(got.Body), "legacy task scope should not run") {
+		t.Fatalf("legacy task scope ran after evaluator allow: %s", got.Body)
+	}
+}

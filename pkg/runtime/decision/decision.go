@@ -101,6 +101,11 @@ type AuthorizationInput struct {
 	EgressRules    []*store.RuntimePolicyRule
 
 	IntentVerifier IntentVerifier
+
+	// AllowMissingScope returns allow when no rule or task scope matches.
+	// Use this only for rule-only evaluation paths where task scope is not
+	// available for the tool surface being checked.
+	AllowMissingScope bool
 }
 
 type AuthorizationDecision struct {
@@ -187,6 +192,13 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		}, nil
 	}
 
+	if in.AllowMissingScope {
+		return AuthorizationDecision{
+			Kind:   VerdictAllow,
+			Reason: "no matching rule",
+			Source: SourceTaskScopeMissing,
+		}, nil
+	}
 	return reviewDecision(posture, SourceTaskScopeMissing, "no matching task scope"), nil
 }
 
