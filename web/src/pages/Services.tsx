@@ -539,6 +539,7 @@ function AddServiceModal({
   onClose,
   onSuccess,
   googleOAuthMissing,
+  microsoftOAuthMissing,
   activeConnectionCount,
 }: {
   services: ServiceInfo[]
