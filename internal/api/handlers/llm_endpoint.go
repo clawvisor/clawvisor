@@ -204,14 +204,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	upstreamURL := ""
 	if h.Forwarder != nil {
-		if u, urlErr := h.Forwarder.Upstream.URL(provider, r.URL.RequestURI()); urlErr == nil {
+		if u, urlErr := h.Forwarder.Upstream.URL(provider, r.URL.Path); urlErr == nil {
+			u.RawQuery = r.URL.RawQuery
 			upstreamURL = u.String()
 		} else {
 			h.Logger.DebugContext(r.Context(), "lite-proxy upstream URL build failed",
 				"request_id", requestID,
 				"agent_id", agent.ID,
 				"provider", string(provider),
-				"path", r.URL.RequestURI(),
+				"path", r.URL.Path,
+				"query", r.URL.RawQuery,
 				"err", urlErr.Error(),
 			)
 		}

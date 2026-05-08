@@ -48,12 +48,14 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 	v := &stubVault{}
 	v.Set(context.Background(), "user1", "anthropic", []byte("sk-ant-real-key"))
 
-	var seenAuth, seenAPIKey, seenVersion string
+	var seenAuth, seenAPIKey, seenVersion, seenPath, seenQuery string
 	var seenBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAuth = r.Header.Get("Authorization")
 		seenAPIKey = r.Header.Get("x-api-key")
 		seenVersion = r.Header.Get("anthropic-version")
+		seenPath = r.URL.Path
+		seenQuery = r.URL.RawQuery
 		seenBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"msg_1"}`))
@@ -66,7 +68,7 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 		OpenAIBaseURL:    "",
 	}
 
-	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"model":"claude"}`)))
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages?beta=true", bytes.NewReader([]byte(`{"model":"claude"}`)))
 	inbound.Header.Set("Authorization", "Bearer cvis_xxx")
 	inbound.Header.Set("anthropic-beta", "beta1")
 
@@ -84,6 +86,9 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 	}
 	if seenVersion == "" {
 		t.Errorf("expected default anthropic-version header")
+	}
+	if seenPath != "/v1/messages" || seenQuery != "beta=true" {
+		t.Errorf("expected upstream path/query /v1/messages?beta=true, got %q?%q", seenPath, seenQuery)
 	}
 	if string(seenBody) != `{"model":"claude"}` {
 		t.Errorf("body mismatch: %q", string(seenBody))

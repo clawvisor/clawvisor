@@ -136,10 +136,11 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 		return nil, errors.New("llmproxy: inbound request is nil")
 	}
 
-	upstreamURL, err := f.Upstream.URL(provider, inbound.URL.RequestURI())
+	upstreamURL, err := f.Upstream.URL(provider, inbound.URL.Path)
 	if err != nil {
 		return nil, err
 	}
+	upstreamURL.RawQuery = inbound.URL.RawQuery
 
 	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
 	if err != nil {
