@@ -1,13 +1,44 @@
 package llmproxy
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// IntentVerifier matches the intent.Verifier contract. The lite-proxy
+// declares its own narrow interface to avoid pulling the LLM provider
+// dependency into this package.
+type IntentVerifier interface {
+	Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error)
+}
+
+// IntentVerifyRequest is the per-tool-use input to the verifier. Mirrors
+// the gateway's intent.VerifyRequest but stripped down to fields the
+// lite-proxy can populate from the inspector verdict + matched task.
+type IntentVerifyRequest struct {
+	TaskPurpose string
+	ExpectedUse string
+	Service     string
+	Action      string
+	Params      map[string]any
+	Reason      string
+	TaskID      string
+	Lenient     bool
+}
+
+// IntentVerdict mirrors intent.VerificationVerdict (Allow + Explanation
+// are the fields lite-proxy actually consumes).
+type IntentVerdict struct {
+	Allow       bool
+	Explanation string
+}
 
 // PostprocessConfig wires the inspector + rewriter into the LLM endpoint
 // handler's response path. The handler reads the upstream response body
@@ -57,6 +88,12 @@ type PostprocessConfig struct {
 	// agent's active tasks. Optional: when nil, task-scope is skipped.
 	// Skipping is audited so dashboards can show the gap.
 	TaskScope TaskScopeChecker
+
+	// IntentVerifier runs the LLM intent check against the matched
+	// TaskAction's expected_use whenever the matched action's
+	// Verification mode is "strict" (default) or "lenient". Optional:
+	// when nil, intent verification is skipped.
+	IntentVerifier IntentVerifier
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -170,6 +207,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						Reason:  "Clawvisor: no active task scope covers " + resolved.ServiceID + "." + resolved.ActionID + " — " + dec.Reason,
 					}
 				}
+				// Intent verification: when the matched TaskAction's
+				// Verification mode opts in (strict | lenient | empty)
+				// and an IntentVerifier is configured, the LLM compares
+				// the request's params + tool_use shape to the matched
+				// expected_use. Off mode and missing verifier skip silently.
+				if reason, ok := runIntentVerify(req.Context(), cfg, dec, resolved, tu); !ok {
+					audit("block", "intent_verification_failed", reason)
+					return conversation.ToolUseVerdict{
+						Allowed: false,
+						Reason:  "Clawvisor: intent verification refused " + resolved.ServiceID + "." + resolved.ActionID + " — " + reason,
+					}
+				}
 			}
 			// Catalog miss: log via audit reason field but don't block.
 			// The fact that the (host, method, path) didn't resolve to a
@@ -265,6 +314,59 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 		}
 	}
 	return "", true
+}
+
+// runIntentVerify runs LLM intent verification when the matched TaskAction
+// opts in. Returns (reason, ok). ok=false on a refusal verdict; ok=true when
+// the verifier was not consulted (off mode / missing dep) or returned Allow.
+//
+// Verification mode mapping (matches gateway behavior):
+//   - "off"             → skip verification, allow.
+//   - "lenient"         → call verifier with Lenient=true.
+//   - "strict" / empty  → call verifier with Lenient=false.
+//
+// On verifier error we fail-open (audit will record), matching the gateway's
+// behavior so a transient LLM outage doesn't block tool use; #37 will tighten
+// this to fail-closed once the circuit breaker is in place.
+func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDecision, resolved ResolvedAction, tu conversation.ToolUse) (string, bool) {
+	if cfg.IntentVerifier == nil || dec.MatchedAction == nil {
+		return "", true
+	}
+	mode := dec.MatchedAction.Verification
+	if mode == "off" {
+		return "", true
+	}
+	purpose := ""
+	if dec.MatchedTask != nil {
+		purpose = dec.MatchedTask.Purpose
+	}
+	var params map[string]any
+	if len(tu.Input) > 0 {
+		_ = json.Unmarshal(tu.Input, &params)
+	}
+	verdict, err := cfg.IntentVerifier.Verify(ctx, IntentVerifyRequest{
+		TaskPurpose: purpose,
+		ExpectedUse: dec.MatchedAction.ExpectedUse,
+		Service:     resolved.ServiceID,
+		Action:      resolved.ActionID,
+		Params:      params,
+		Reason:      "lite-proxy tool_use " + tu.Name,
+		TaskID:      dec.TaskID,
+		Lenient:     mode == "lenient",
+	})
+	if err != nil {
+		// Fail-open on verifier error to match gateway behavior; record
+		// in the reason for forensics.
+		return fmt.Sprintf("verifier_error: %s", err.Error()), true
+	}
+	if verdict == nil {
+		// Verifier disabled at config level — treat as off.
+		return "", true
+	}
+	if verdict.Allow {
+		return verdict.Explanation, true
+	}
+	return verdict.Explanation, false
 }
 
 // matchByRoute resolves the response rewriter that pairs with the inbound

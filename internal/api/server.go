@@ -849,6 +849,12 @@ func (s *Server) routes() http.Handler {
 		llmHandler.Catalog = llmproxy.NewLazyServiceCatalog(llmproxy.DefsFromRegistry(s.adapterReg))
 		llmHandler.TaskScope = llmproxy.NewStoreTaskScopeChecker(s.store)
 
+		// Intent verification reuses the gateway's existing verifier so
+		// prompts + caching + provider config stay consistent across
+		// runtime-proxy, MCP gateway, and lite-proxy. NoopVerifier
+		// returns nil verdicts → postprocess treats it as off-mode.
+		llmHandler.IntentVerifier = llmproxy.NewIntentVerifierAdapter(verifier)
+
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks

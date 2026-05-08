@@ -26,6 +26,16 @@ type TaskScopeDecision struct {
 	// request. v0 treats this as Allowed (the gateway has the same
 	// behavior), but the audit row records it for visibility.
 	Ambiguous bool
+
+	// MatchedTask is the *store.Task whose scope covered the request,
+	// when Allowed. Nil otherwise. Postprocess uses this to look up
+	// the task purpose for intent verification.
+	MatchedTask *store.Task
+
+	// MatchedAction is the specific TaskAction within MatchedTask whose
+	// (Service, Action) covered the request. Postprocess uses this to
+	// pull Verification mode + ExpectedUse for intent verification.
+	MatchedAction *store.TaskAction
 }
 
 // TaskScopeChecker authorizes a tool_use call against the calling agent's
@@ -70,14 +80,35 @@ func (c *StoreTaskScopeChecker) Check(ctx context.Context, userID, agentID, serv
 		return TaskScopeDecision{Reason: fmt.Sprintf("list_tasks_error: %s", err.Error())}
 	}
 	classification := policy.ClassifyGatewayRequest(tasks, agentID, serviceID, "", actionID)
-	return classifyToDecision(classification)
+	return classifyToDecision(classification, serviceID, actionID)
 }
 
-func classifyToDecision(c policy.GatewayRequestClassification) TaskScopeDecision {
+// findMatchingAction scans a task's AuthorizedActions and returns the one
+// whose (Service, Action) covers (serviceID, actionID). Wildcards (`*`)
+// in Action match any action. Returns nil when no entry matches.
+func findMatchingAction(task *store.Task, serviceID, actionID string) *store.TaskAction {
+	if task == nil {
+		return nil
+	}
+	for i, a := range task.AuthorizedActions {
+		if a.Service == serviceID && (a.Action == actionID || a.Action == "*") {
+			return &task.AuthorizedActions[i]
+		}
+	}
+	return nil
+}
+
+func classifyToDecision(c policy.GatewayRequestClassification, serviceID, actionID string) TaskScopeDecision {
 	switch c.Kind {
 	case policy.ClassificationBelongsToExistingTask:
 		if c.MatchedTask != nil {
-			return TaskScopeDecision{Allowed: true, TaskID: c.MatchedTask.ID, Reason: "matched task " + c.MatchedTask.ID}
+			return TaskScopeDecision{
+				Allowed:       true,
+				TaskID:        c.MatchedTask.ID,
+				Reason:        "matched task " + c.MatchedTask.ID,
+				MatchedTask:   c.MatchedTask,
+				MatchedAction: findMatchingAction(c.MatchedTask, serviceID, actionID),
+			}
 		}
 		return TaskScopeDecision{Allowed: true, Reason: "matched task (id missing)"}
 	case policy.ClassificationAmbiguous:
@@ -88,6 +119,8 @@ func classifyToDecision(c policy.GatewayRequestClassification) TaskScopeDecision
 		d := TaskScopeDecision{Allowed: true, Ambiguous: true, Reason: "ambiguous: multiple active tasks cover this action"}
 		if picked != nil {
 			d.TaskID = picked.ID
+			d.MatchedTask = picked
+			d.MatchedAction = findMatchingAction(picked, serviceID, actionID)
 		}
 		return d
 	case policy.ClassificationNeedsNewTask:

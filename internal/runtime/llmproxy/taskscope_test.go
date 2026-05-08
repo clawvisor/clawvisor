@@ -215,6 +215,119 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	}
 }
 
+// stubIntentVerifier produces a fixed verdict, capturing the request for assertions.
+type stubIntentVerifier struct {
+	verdict *IntentVerdict
+	err     error
+	called  bool
+	last    IntentVerifyRequest
+}
+
+func (s *stubIntentVerifier) Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error) {
+	s.called = true
+	s.last = req
+	return s.verdict, s.err
+}
+
+func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	body := anthropicJSONWithToolUse(input)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	// Task-scope returns a matched action with strict verification mode.
+	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "strict", ExpectedUse: "create issues for the bug-triage workflow"}
+	matchedTask := &store.Task{ID: "task-x", Purpose: "triage bugs"}
+	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, TaskID: "task-x", MatchedTask: matchedTask, MatchedAction: matchedAction}}
+
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "params violate scope"}}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
+		TaskScope:   scope,
+		IntentVerifier: verifier,
+	})
+
+	if !verifier.called {
+		t.Fatalf("verifier should have been called")
+	}
+	if !strings.Contains(string(got.Body), "intent verification refused") {
+		t.Errorf("expected refusal message, got body:\n%s", got.Body)
+	}
+	if verifier.last.Lenient {
+		t.Errorf("strict mode should pass Lenient=false")
+	}
+	if verifier.last.ExpectedUse != "create issues for the bug-triage workflow" {
+		t.Errorf("expected_use plumbing wrong: %q", verifier.last.ExpectedUse)
+	}
+	if verifier.last.TaskPurpose != "triage bugs" {
+		t.Errorf("task purpose plumbing wrong: %q", verifier.last.TaskPurpose)
+	}
+}
+
+func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	body := anthropicJSONWithToolUse(input)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "lenient"}
+	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+
+	_ = Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
+		TaskScope:   scope,
+		IntentVerifier: verifier,
+	})
+
+	if !verifier.last.Lenient {
+		t.Errorf("lenient mode should pass Lenient=true")
+	}
+}
+
+func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
+	input := `{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}`
+	body := anthropicJSONWithToolUse(input)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	matchedAction := &store.TaskAction{Service: "github", Action: "create_issue", Verification: "off"}
+	scope := stubTaskScope{decision: TaskScopeDecision{Allowed: true, MatchedTask: &store.Task{}, MatchedAction: matchedAction}}
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "should_not_be_called"}}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Catalog:     stubCatalog{resolve: func(host, method, path string) (ResolvedAction, bool) { return ResolvedAction{ServiceID: "github", ActionID: "create_issue"}, true }},
+		TaskScope:   scope,
+		IntentVerifier: verifier,
+	})
+
+	if verifier.called {
+		t.Errorf("verifier should NOT be called when mode=off")
+	}
+	if !got.Rewritten {
+		t.Errorf("rewrite should proceed when verification is off")
+	}
+}
+
 // When the catalog returns no match for (host, method, path) but task
 // scope is otherwise configured, postprocess falls back to allow (v0
 // fail-open for unmapped actions). The placeholder boundary check

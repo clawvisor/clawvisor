@@ -55,6 +55,12 @@ type LLMEndpointHandler struct {
 	// enforced.
 	TaskScope llmproxy.TaskScopeChecker
 
+	// IntentVerifier runs LLM intent verification against the matched
+	// TaskAction's expected_use when the action's Verification mode
+	// opts in (strict | lenient). Optional: when nil, intent verification
+	// is not enforced.
+	IntentVerifier llmproxy.IntentVerifier
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -238,15 +244,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			catalogIface = h.Catalog
 		}
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
-			Inspector:   h.Inspector,
-			RewriteOpts: opts,
-			Store:       h.Store,
-			AgentUserID: agent.UserID,
-			AgentID:     agent.ID,
-			Audit:       h.AuditEmitter,
-			RequestID:   requestID,
-			Catalog:     catalogIface,
-			TaskScope:   h.TaskScope,
+			Inspector:      h.Inspector,
+			RewriteOpts:    opts,
+			Store:          h.Store,
+			AgentUserID:    agent.UserID,
+			AgentID:        agent.ID,
+			Audit:          h.AuditEmitter,
+			RequestID:      requestID,
+			Catalog:        catalogIface,
+			TaskScope:      h.TaskScope,
+			IntentVerifier: h.IntentVerifier,
 		})
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")
