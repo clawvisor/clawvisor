@@ -145,16 +145,26 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 	}
 	toolInput := decodeToolInput(in.ToolUse.Input)
 
-	rule, err := selectPolicyRule(in, toolInput)
+	denyRule, fallbackRule, err := selectPolicyRules(in, toolInput)
 	if err != nil {
 		return AuthorizationDecision{}, err
 	}
-	if rule != nil {
-		return decisionForRule(rule, posture), nil
+	if denyRule != nil {
+		return decisionForRule(denyRule, posture), nil
 	}
 
 	if in.Service != "" && in.Action != "" {
-		return evaluateServiceActionScope(ctx, in, posture, toolInput)
+		decision, err := evaluateServiceActionScope(ctx, in, posture, toolInput)
+		if err != nil {
+			return AuthorizationDecision{}, err
+		}
+		if decision.Source != SourceTaskScopeMissing {
+			return decision, nil
+		}
+		if fallbackRule != nil {
+			return decisionForRule(fallbackRule, posture), nil
+		}
+		return decision, nil
 	}
 
 	if in.Target.Host != "" {
@@ -205,6 +215,10 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		}, nil
 	}
 
+	if fallbackRule != nil {
+		return decisionForRule(fallbackRule, posture), nil
+	}
+
 	if in.AllowMissingScope {
 		return AuthorizationDecision{
 			Kind:   VerdictAllow,
@@ -215,10 +229,10 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 	return reviewDecision(posture, SourceTaskScopeMissing, "no matching task scope"), nil
 }
 
-func selectPolicyRule(in AuthorizationInput, toolInput map[string]any) (*store.RuntimePolicyRule, error) {
+func selectPolicyRules(in AuthorizationInput, toolInput map[string]any) (*store.RuntimePolicyRule, *store.RuntimePolicyRule, error) {
 	toolRule, err := runtimepolicy.MatchRuntimePolicyTool(in.ToolRules, in.AgentID, in.ToolUse.Name, toolInput)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var egressRule *store.RuntimePolicyRule
 	if in.Target.Host != "" {
@@ -231,10 +245,30 @@ func selectPolicyRule(in AuthorizationInput, toolInput map[string]any) (*store.R
 			Headers: in.Target.Headers,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return stricterRule(toolRule, egressRule), nil
+	matched := []*store.RuntimePolicyRule{toolRule, egressRule}
+	return strictestRuleMatching(matched, isDenyRule), strictestRuleMatching(matched, isNonDenyRule), nil
+}
+
+func strictestRuleMatching(rules []*store.RuntimePolicyRule, keep func(*store.RuntimePolicyRule) bool) *store.RuntimePolicyRule {
+	var picked *store.RuntimePolicyRule
+	for _, rule := range rules {
+		if !keep(rule) {
+			continue
+		}
+		picked = stricterRule(picked, rule)
+	}
+	return picked
+}
+
+func isDenyRule(rule *store.RuntimePolicyRule) bool {
+	return rule != nil && strings.EqualFold(strings.TrimSpace(rule.Action), "deny")
+}
+
+func isNonDenyRule(rule *store.RuntimePolicyRule) bool {
+	return rule != nil && !strings.EqualFold(strings.TrimSpace(rule.Action), "deny")
 }
 
 func stricterRule(a, b *store.RuntimePolicyRule) *store.RuntimePolicyRule {

@@ -403,7 +403,7 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 		  "id":"msg_1",
 		  "type":"message",
 		  "role":"assistant",
-		  "content":[{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}}],
+		  "content":[{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{"url":"https://example.com/repos/x/y/issues","method":"POST"}}],
 		  "stop_reason":"tool_use"
 		}`))
 	}))
@@ -460,8 +460,8 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 		t.Fatalf("approve should not call upstream, got hits=%d", upstreamHits)
 	}
 	out := approveRec.Body.String()
-	if !strings.Contains(out, `"type":"tool_use"`) || !strings.Contains(out, "https://clawvisor.example/proxy/v1/repos/x/y/issues") {
-		t.Fatalf("approve response did not release rewritten tool_use: %s", out)
+	if !strings.Contains(out, `"type":"tool_use"`) || !strings.Contains(out, "https://example.com/repos/x/y/issues") {
+		t.Fatalf("approve response did not release held tool_use: %s", out)
 	}
 	entries, _, err := st.ListAuditEntries(ctx, agent.UserID, store.AuditFilter{AgentID: agent.ID, Limit: 20})
 	if err != nil {
