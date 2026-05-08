@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -94,6 +95,14 @@ type PostprocessConfig struct {
 	// Verification mode is "strict" (default) or "lenient". Optional:
 	// when nil, intent verification is skipped.
 	IntentVerifier IntentVerifier
+
+	// Shared decision evaluator inputs. When any of these are set,
+	// Postprocess authorizes through pkg/runtime/decision after inspector
+	// boundary validation. When all are nil, it falls back to the legacy
+	// Catalog/TaskScope flow for compatibility with older tests/configs.
+	CandidateTasks []*store.Task
+	ToolRules      []*store.RuntimePolicyRule
+	EgressRules    []*store.RuntimePolicyRule
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -192,6 +201,49 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			}
 		}
 
+		if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
+			resolved := ResolvedAction{}
+			if cfg.Catalog != nil {
+				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
+			}
+			dec, err := runtimedecision.EvaluateAuthorization(req.Context(), runtimedecision.AuthorizationInput{
+				ToolUse:        tu,
+				UserID:         cfg.AgentUserID,
+				AgentID:        cfg.AgentID,
+				Target:         runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
+				Service:        resolved.ServiceID,
+				Action:         resolved.ActionID,
+				CandidateTasks: cfg.CandidateTasks,
+				ToolRules:      cfg.ToolRules,
+				EgressRules:    cfg.EgressRules,
+				IntentVerifier: decisionIntentVerifier{inner: cfg.IntentVerifier},
+			})
+			if err != nil {
+				audit("block", "decision_error", err.Error())
+				return conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: authorization failed — " + err.Error(),
+				}
+			}
+			switch dec.Kind {
+			case runtimedecision.VerdictAllow:
+				// Continue to credential rewrite below.
+			case runtimedecision.VerdictDeny:
+				audit("block", string(dec.Source), dec.Reason)
+				return conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: " + dec.Reason,
+				}
+			case runtimedecision.VerdictNeedsApproval:
+				audit("block", string(dec.Source), dec.Reason)
+				return conversation.ToolUseVerdict{
+					Allowed:        false,
+					Reason:         "Clawvisor: approval required — " + dec.Reason,
+					SubstituteWith: "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it.",
+				}
+			}
+		}
+
 		// Task-scope authorization: reverse-resolve the (host, method,
 		// path) to (service, action), then check against the agent's
 		// active tasks. Skipping is audited (in case of misconfig) but
@@ -268,6 +320,33 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
 	}
+}
+
+type decisionIntentVerifier struct {
+	inner IntentVerifier
+}
+
+func (v decisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.IntentVerifyRequest) (*runtimedecision.IntentVerdict, error) {
+	if v.inner == nil {
+		return nil, nil
+	}
+	verdict, err := v.inner.Verify(ctx, IntentVerifyRequest{
+		TaskPurpose: req.TaskPurpose,
+		ExpectedUse: req.ExpectedUse,
+		Service:     req.Service,
+		Action:      req.Action,
+		Params:      req.Params,
+		Reason:      req.Reason,
+		TaskID:      req.TaskID,
+		Lenient:     req.Lenient,
+	})
+	if err != nil || verdict == nil {
+		return nil, err
+	}
+	return &runtimedecision.IntentVerdict{
+		Allow:       verdict.Allow,
+		Explanation: verdict.Explanation,
+	}, nil
 }
 
 // auditAgentForCfg builds a minimal *store.Agent for the audit emitter
@@ -391,4 +470,3 @@ func matchByRoute(req *http.Request, registry *conversation.ResponseRegistry) co
 	provider := parser.Name()
 	return registry.ForProvider(provider)
 }
-

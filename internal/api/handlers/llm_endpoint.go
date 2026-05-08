@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -243,6 +244,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if h.Catalog != nil {
 			catalogIface = h.Catalog
 		}
+		candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:      h.Inspector,
 			RewriteOpts:    opts,
@@ -254,6 +256,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Catalog:        catalogIface,
 			TaskScope:      h.TaskScope,
 			IntentVerifier: h.IntentVerifier,
+			CandidateTasks: candidateTasks,
+			ToolRules:      toolRules,
+			EgressRules:    egressRules,
 		})
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")
@@ -292,7 +297,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
 
 func isVaultMiss(err error) bool {
 	if err == nil {
@@ -366,6 +370,47 @@ func outcomeFromStatus(status int) string {
 		return "upstream_error"
 	}
 	return "unknown"
+}
+
+func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, agent *store.Agent) ([]*store.Task, []*store.RuntimePolicyRule, []*store.RuntimePolicyRule) {
+	if h == nil || h.Store == nil || agent == nil {
+		return nil, nil, nil
+	}
+	tasks, _, err := h.Store.ListTasks(ctx, agent.UserID, store.TaskFilter{ActiveOnly: true})
+	if err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy task load failed",
+			"agent_id", agent.ID, "err", err.Error())
+		return nil, nil, nil
+	}
+	candidateTasks := make([]*store.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task != nil && task.Status == "active" && task.AgentID == agent.ID {
+			candidateTasks = append(candidateTasks, task)
+		}
+	}
+
+	enabled := true
+	toolRules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: agent.ID,
+		Kind:    "tool",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy tool rule load failed",
+			"agent_id", agent.ID, "err", err.Error())
+		toolRules = nil
+	}
+	egressRules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: agent.ID,
+		Kind:    "egress",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy egress rule load failed",
+			"agent_id", agent.ID, "err", err.Error())
+		egressRules = nil
+	}
+	return candidateTasks, toolRules, egressRules
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's

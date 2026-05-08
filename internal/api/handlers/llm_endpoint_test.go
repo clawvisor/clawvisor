@@ -77,6 +77,20 @@ func newSeededHandler(t *testing.T, upstreamURL string) (*LLMEndpointHandler, st
 	}); err != nil {
 		t.Fatalf("CreateRuntimePlaceholder: %v", err)
 	}
+	if err := st.CreateTask(ctx, &store.Task{
+		UserID:  user.ID,
+		AgentID: agent.ID,
+		Purpose: "lite-proxy test github issue access",
+		Status:  "active",
+		AuthorizedActions: []store.TaskAction{{
+			Service:      "github",
+			Action:       "create_issue",
+			Verification: "off",
+		}},
+		ExpectedEgress: json.RawMessage(`[{"host":"api.github.com","method":"POST","path":"/repos/x/y/issues","why":"test github issue access"}]`),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
 
 	h := NewLLMEndpointHandler(st, v, slog.Default())
 	h.Forwarder = llmproxy.NewForwarder(v)
