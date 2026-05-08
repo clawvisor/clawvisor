@@ -478,6 +478,9 @@ export default function Policy() {
               busy={updateToolControlMut.isPending}
               onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
               onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
+              onEditAdvanced={(rule) => setEditingRule({ ...rule, scope: rule.agent_id ? 'agent' : 'global' })}
+              onToggleAdvanced={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+              onDeleteAdvanced={(rule) => deleteRuleMut.mutate(rule.id)}
             />
           }
           accounts={
@@ -577,12 +580,18 @@ function ProxyLiteToolControlsPanel({
   busy,
   onChange,
   onAdvanced,
+  onEditAdvanced,
+  onToggleAdvanced,
+  onDeleteAdvanced,
 }: {
   agentId: string
   controls: RuntimeToolControl[]
   busy: boolean
   onChange: (toolName: string, action: 'allow' | 'review' | 'deny') => void
   onAdvanced: (toolName: string) => void
+  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  onToggleAdvanced: (rule: RuntimePolicyRule) => void
+  onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   const needsAgent = agentId === 'all'
   return (
@@ -610,34 +619,107 @@ function ProxyLiteToolControlsPanel({
 
       {!needsAgent && controls.length > 0 && (
         <div className="divide-y divide-border-subtle rounded border border-border-subtle bg-surface-0">
-          {controls.map(control => (
-            <div key={control.tool_name} className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
-                  {control.advanced_rule_count > 0 && (
-                    <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
-                      {control.advanced_rule_count} advanced
-                    </span>
-                  )}
+          {controls.map(control => {
+            const advancedRules = control.advanced_rules ?? []
+            return (
+              <div key={control.tool_name} className="p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
+                      {advancedRules.length > 0 && (
+                        <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
+                          {advancedRules.length} advanced
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-text-tertiary">
+                      {control.last_seen_at ? `Last seen ${new Date(control.last_seen_at).toLocaleString()}` : 'Not seen yet'}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
+                    <button
+                      onClick={() => onAdvanced(control.tool_name)}
+                      className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
+                    >
+                      Advanced
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-text-tertiary">
-                  {control.last_seen_at ? `Last seen ${new Date(control.last_seen_at).toLocaleString()}` : 'Not seen yet'}
-                </div>
+
+                {advancedRules.length > 0 && (
+                  <div className="mt-3 space-y-2 border-l border-border-subtle pl-3">
+                    {advancedRules.map(rule => (
+                      <AdvancedToolRuleRow
+                        key={rule.id}
+                        rule={rule}
+                        busy={busy}
+                        onEdit={onEditAdvanced}
+                        onToggle={onToggleAdvanced}
+                        onDelete={onDeleteAdvanced}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
-                <button
-                  onClick={() => onAdvanced(control.tool_name)}
-                  className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
-                >
-                  Advanced
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
+    </div>
+  )
+}
+
+function AdvancedToolRuleRow({
+  rule,
+  busy,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  rule: RuntimePolicyRule
+  busy: boolean
+  onEdit: (rule: RuntimePolicyRule) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  const actionLabel = rule.action === 'review' ? 'ask' : rule.action
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+              rule.action === 'allow'
+                ? 'bg-success/15 text-success'
+                : rule.action === 'deny'
+                  ? 'bg-danger/15 text-danger'
+                  : 'bg-warning/15 text-warning'
+            }`}>
+              {actionLabel}
+            </span>
+            {!rule.enabled && (
+              <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-text-tertiary">disabled</span>
+            )}
+            <span className="text-xs text-text-secondary">
+              {rule.input_regex ? `when input matches ${rule.input_regex}` : 'custom input shape'}
+            </span>
+          </div>
+          {rule.reason && <div className="mt-1 text-xs text-text-tertiary">{rule.reason}</div>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button disabled={busy} onClick={() => onToggle(rule)} className="rounded border border-border-default px-2.5 py-1 text-xs text-text-secondary hover:bg-surface-2 disabled:opacity-50">
+            {rule.enabled ? 'Disable' : 'Enable'}
+          </button>
+          <button disabled={busy} onClick={() => onEdit(rule)} className="rounded border border-border-default px-2.5 py-1 text-xs text-text-secondary hover:bg-surface-2 disabled:opacity-50">
+            Edit
+          </button>
+          <button disabled={busy} onClick={() => onDelete(rule)} className="rounded border border-danger/20 px-2.5 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-50">
+            Delete
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

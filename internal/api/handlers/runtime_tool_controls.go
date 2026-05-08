@@ -14,13 +14,14 @@ import (
 )
 
 type runtimeToolControlResponse struct {
-	AgentID           string     `json:"agent_id"`
-	ToolName          string     `json:"tool_name"`
-	Action            string     `json:"action"`
-	RuleID            string     `json:"rule_id,omitempty"`
-	Source            string     `json:"source"`
-	LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
-	AdvancedRuleCount int        `json:"advanced_rule_count"`
+	AgentID           string                     `json:"agent_id"`
+	ToolName          string                     `json:"tool_name"`
+	Action            string                     `json:"action"`
+	RuleID            string                     `json:"rule_id,omitempty"`
+	Source            string                     `json:"source"`
+	LastSeenAt        *time.Time                 `json:"last_seen_at,omitempty"`
+	AdvancedRuleCount int                        `json:"advanced_rule_count"`
+	AdvancedRules     []*store.RuntimePolicyRule `json:"advanced_rules"`
 }
 
 func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +125,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		ctrl.AdvancedRuleCount++
+		ctrl.AdvancedRules = append(ctrl.AdvancedRules, rule)
 	}
 
 	out := make([]*runtimeToolControlResponse, 0, len(controls))

@@ -693,6 +693,7 @@ export interface RuntimeToolControl {
   source: 'default' | 'request' | 'observed' | 'rule'
   last_seen_at?: string
   advanced_rule_count: number
+  advanced_rules?: RuntimePolicyRule[]
 }
 
 export interface RuntimeRuleCandidate {
