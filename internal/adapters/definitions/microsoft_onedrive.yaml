@@ -6,7 +6,7 @@ service:
   icon_url: "/logos/microsoft-onedrive.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
-    field: "mail"
+    field: "userPrincipalName"
 
 auth:
   type: oauth2
@@ -117,6 +117,7 @@ actions:
         default: 25
         max: 200
         location: query
+        map_to: "$top"
     response:
       data_path: "value"
       fields:

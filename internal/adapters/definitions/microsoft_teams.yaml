@@ -6,7 +6,7 @@ service:
   icon_url: "/logos/microsoft-teams.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
-    field: "id"
+    field: "userPrincipalName"
 
 auth:
   type: oauth2
@@ -88,6 +88,7 @@ actions:
         default: 25
         max: 50
         location: query
+        map_to: "$top"
     response:
       data_path: "value"
       fields:

@@ -545,6 +545,7 @@ function AddServiceModal({
   onClose: () => void
   onSuccess: (serviceId: string) => void
   googleOAuthMissing: boolean
+  microsoftOAuthMissing: boolean
   activeConnectionCount: number
 }) {
   const qc = useQueryClient()
@@ -835,7 +836,7 @@ function AddServiceModal({
     handleActivatePKCE(st.baseId, pkceClientIdAlias, clientId)
   }
 
-  function confirmAlias(st: ServiceType) {
+  const confirmAlias = (st: ServiceType) => {
     const alias = aliasValue.trim() || undefined
     setAliasInputFor(null)
     setError(null)
@@ -843,6 +844,7 @@ function AddServiceModal({
   }
 
   const isGoogleService = (id: string) => id.startsWith('google.')
+  const isMicrosoftService = (id: string) => id.startsWith('microsoft.')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -914,7 +916,7 @@ function AddServiceModal({
                   <div className="mt-auto w-full">
                     {/* Action button — consistent style for all services */}
                     {!hasInlineUI && (
-                      isGoogleBlocked ? (
+                      (isGoogleBlocked || (microsoftOAuthMissing && isMicrosoftService(st.baseId))) ? (
                         <a
                           href="/dashboard/settings"
                           className="block w-full text-xs px-3 py-2 rounded-lg border border-border-strong text-text-tertiary hover:text-text-primary hover:bg-surface-2 text-center transition-colors"
@@ -1344,10 +1346,15 @@ export default function Services() {
     enabled: !orgId,
   })
 
-  // In single-tenant mode, check if Google OAuth credentials are configured.
+  // In single-tenant mode, check if Google/Microsoft OAuth credentials are configured.
   const { data: googleOAuth } = useQuery({
     queryKey: ['google-oauth-status'],
     queryFn: () => api.system.getGoogleOAuth(),
+    enabled: !features?.multi_tenant,
+  })
+  const { data: microsoftOAuth } = useQuery({
+    queryKey: ['microsoft-oauth-status'],
+    queryFn: () => api.system.getMicrosoftOAuth(),
     enabled: !features?.multi_tenant,
   })
   const { data: agents = [] } = useQuery({
@@ -1389,6 +1396,9 @@ export default function Services() {
     : []
   const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
+
+  const hasMicrosoftServices = allServices.some(s => s.id.startsWith('microsoft.'))
+  const microsoftOAuthMissing = !features?.multi_tenant && hasMicrosoftServices && microsoftOAuth != null && !microsoftOAuth.configured
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -1453,6 +1463,20 @@ export default function Services() {
         </div>
       )}
 
+      {microsoftOAuthMissing && (
+        <div className="flex items-start gap-3 p-4 rounded-md border border-yellow-500/30 bg-yellow-500/5">
+          <span className="text-yellow-600 text-lg leading-none mt-0.5">!</span>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Microsoft OAuth not configured</p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Microsoft services (Outlook, OneDrive, Teams) require OAuth credentials.{' '}
+              <a href="/dashboard/settings" className="text-brand hover:underline">Go to Settings</a>{' '}
+              to configure your Microsoft Client ID and Client Secret.
+            </p>
+          </div>
+        </div>
+      )}
+
       {isLoading && <div className="text-sm text-text-tertiary">Loading…</div>}
       {error && <div className="text-sm text-danger">Failed to load services.</div>}
 
@@ -1508,6 +1532,7 @@ export default function Services() {
           onClose={() => setShowModal(false)}
           onSuccess={handleConnectionSuccess}
           googleOAuthMissing={googleOAuthMissing}
+          microsoftOAuthMissing={microsoftOAuthMissing}
           activeConnectionCount={activeServices.length}
         />
       )}

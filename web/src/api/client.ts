@@ -1294,6 +1294,10 @@ export const api = {
       get<{ configured: boolean }>('/api/system/google-oauth'),
     setGoogleOAuth: (clientId: string, clientSecret: string) =>
       post<{ ok: boolean }>('/api/system/google-oauth', { client_id: clientId, client_secret: clientSecret }),
+    getMicrosoftOAuth: () =>
+      get<{ configured: boolean }>('/api/system/microsoft-oauth'),
+    setMicrosoftOAuth: (clientId: string, clientSecret: string) =>
+      post<{ ok: boolean }>('/api/system/microsoft-oauth', { client_id: clientId, client_secret: clientSecret }),
     listPKCECredentials: () =>
       get<{ service_id: string; client_id: string }[]>('/api/system/pkce-credentials'),
     setPKCECredential: (serviceId: string, clientId: string) =>

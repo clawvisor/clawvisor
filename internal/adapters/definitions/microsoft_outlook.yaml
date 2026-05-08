@@ -6,7 +6,7 @@ service:
   icon_url: "/logos/microsoft-outlook.svg"
   identity:
     endpoint: "https://graph.microsoft.com/v1.0/me"
-    field: "mail"
+    field: "userPrincipalName"
 
 auth:
   type: oauth2
@@ -45,23 +45,28 @@ actions:
         default: 10
         max: 50
         location: query
+        map_to: "$top"
         description: "Number of messages to return"
       filter:
         type: string
         location: query
+        map_to: "$filter"
         description: "OData filter expression (e.g. isRead eq false)"
       search:
         type: string
         location: query
+        map_to: "$search"
         description: "Search query string"
       select:
         type: string
         location: query
+        map_to: "$select"
         default: "id,subject,from,receivedDateTime,isRead,bodyPreview"
         description: "Comma-separated fields to return"
       skip:
         type: int
         location: query
+        map_to: "$skip"
     response:
       data_path: "value"
       fields:

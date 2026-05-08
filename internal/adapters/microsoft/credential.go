@@ -85,6 +85,10 @@ var MicrosoftEndpoint = oauth2.Endpoint{
 // Microsoft OAuth2 endpoint. This is the primary way Go overrides should
 // obtain an authenticated client.
 func HTTPClient(ctx context.Context, credBytes []byte, provider adapters.OAuthCredentialProvider) (*http.Client, error) {
+	if err := Validate(credBytes); err != nil {
+		return nil, fmt.Errorf("microsoft: %w", err)
+	}
+
 	cred, err := Parse(credBytes)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft: %w", err)

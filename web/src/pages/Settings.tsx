@@ -245,6 +245,11 @@ function OAuthCredentialsSection() {
     queryFn: () => api.system.getGoogleOAuth(),
   })
 
+  const { data: microsoftOAuth } = useQuery({
+    queryKey: ['microsoft-oauth'],
+    queryFn: () => api.system.getMicrosoftOAuth(),
+  })
+
   const { data: pkceCredentials } = useQuery({
     queryKey: ['pkce-credentials'],
     queryFn: () => api.system.listPKCECredentials(),
@@ -263,6 +268,19 @@ function OAuthCredentialsSection() {
       setClientSecretValue('')
       setError(null)
       qc.invalidateQueries({ queryKey: ['google-oauth'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const microsoftSaveMut = useMutation({
+    mutationFn: () => api.system.setMicrosoftOAuth(clientIdValue, clientSecretValue),
+    onSuccess: () => {
+      setEditingService(null)
+      setClientIdValue('')
+      setClientSecretValue('')
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['microsoft-oauth'] })
       qc.invalidateQueries({ queryKey: ['services'] })
     },
     onError: (err: Error) => setError(err.message),
@@ -295,6 +313,9 @@ function OAuthCredentialsSection() {
   // Check if any Google services exist
   const hasGoogle = serviceList?.some(s => s.id.startsWith('google.'))
 
+  // Check if any Microsoft services exist
+  const hasMicrosoft = serviceList?.some(s => s.id.startsWith('microsoft.'))
+
   // Find services that have PKCE flow (deduplicate by base ID)
   const pkceServices = new Map<string, string>()
   if (serviceList) {
@@ -314,7 +335,7 @@ function OAuthCredentialsSection() {
   }
 
   // Nothing to show if no OAuth services exist
-  if (!hasGoogle && pkceServices.size === 0) return null
+  if (!hasGoogle && !hasMicrosoft && pkceServices.size === 0) return null
 
   function startEditing(serviceId: string, currentClientId?: string) {
     setEditingService(serviceId)
@@ -403,6 +424,85 @@ function OAuthCredentialsSection() {
                     className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
                   >
                     {googleSaveMut.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => { setEditingService(null); setError(null) }}
+                    className="text-xs text-text-tertiary hover:text-text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Microsoft OAuth (client ID + secret, shared across all microsoft.* services) */}
+        {hasMicrosoft && (
+          <div className="bg-surface-1 border border-border-default rounded-md p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium text-text-primary">Microsoft</span>
+                <span className="text-xs text-text-tertiary ml-2">Outlook, OneDrive, Teams</span>
+              </div>
+              {editingService !== '__microsoft__' && (
+                <div className="flex items-center gap-2">
+                  {microsoftOAuth?.configured ? (
+                    <>
+                      <span className="text-xs text-success">Configured</span>
+                      <button
+                        onClick={() => startEditing('__microsoft__')}
+                        className="text-xs text-text-tertiary hover:text-text-primary"
+                      >
+                        Edit
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => startEditing('__microsoft__')}
+                      className="text-xs px-2.5 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+                    >
+                      Configure
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {editingService === '__microsoft__' && (
+              <div className="mt-3 space-y-2">
+                <div>
+                  <label className="text-xs font-medium text-text-tertiary">Client ID</label>
+                  <input
+                    type="text"
+                    value={clientIdValue}
+                    onChange={e => { setClientIdValue(e.target.value); setError(null) }}
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                    className={`mt-1 ${inputClass}`}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-text-tertiary">Client Secret</label>
+                  <input
+                    type="password"
+                    value={clientSecretValue}
+                    onChange={e => { setClientSecretValue(e.target.value); setError(null) }}
+                    placeholder="Secret value..."
+                    className={`mt-1 ${inputClass}`}
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      if (!clientIdValue || !clientSecretValue) { setError('Both fields are required'); return }
+                      setError(null)
+                      microsoftSaveMut.mutate()
+                    }}
+                    disabled={microsoftSaveMut.isPending || !clientIdValue || !clientSecretValue}
+                    className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                  >
+                    {microsoftSaveMut.isPending ? 'Saving…' : 'Save'}
                   </button>
                   <button
                     onClick={() => { setEditingService(null); setError(null) }}
