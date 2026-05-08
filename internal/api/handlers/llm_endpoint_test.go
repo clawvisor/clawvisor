@@ -352,6 +352,77 @@ data: {"type":"message_stop"}
 	}
 }
 
+func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
+	ctx := context.Background()
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		  "id":"msg_1",
+		  "type":"message",
+		  "role":"assistant",
+		  "content":[{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{"url":"https://api.github.com/repos/x/y/issues","method":"POST","headers":{"Authorization":"Bearer autovault_github_xxx"}}}],
+		  "stop_reason":"tool_use"
+		}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	h.ResolverBaseURL = "https://clawvisor.example/proxy/v1"
+	agent, err := st.GetAgentByToken(ctx, auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:       "review-webfetch",
+		UserID:   agent.UserID,
+		AgentID:  &agent.ID,
+		Kind:     "tool",
+		Action:   "review",
+		ToolName: "WebFetch",
+		Reason:   "review web fetch",
+		Source:   "test",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"create issue"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first response status = %d (%s)", firstRec.Code, firstRec.Body.String())
+	}
+	if !strings.Contains(firstRec.Body.String(), "Reply `approve`") {
+		t.Fatalf("first response missing approval prompt: %s", firstRec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("upstream hits after first request = %d, want 1", upstreamHits)
+	}
+
+	approve := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"approve"}]}`))
+	approve.Header.Set("Authorization", "Bearer "+rawToken)
+	approveRec := httptest.NewRecorder()
+	mux.ServeHTTP(approveRec, approve)
+	if approveRec.Code != http.StatusOK {
+		t.Fatalf("approve response status = %d (%s)", approveRec.Code, approveRec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("approve should not call upstream, got hits=%d", upstreamHits)
+	}
+	out := approveRec.Body.String()
+	if !strings.Contains(out, `"type":"tool_use"`) || !strings.Contains(out, "https://clawvisor.example/proxy/v1/repos/x/y/issues") {
+		t.Fatalf("approve response did not release rewritten tool_use: %s", out)
+	}
+}
+
 // TestLLMEndpoint_EmitsAuditRow proves a /v1/* call writes an audit_log
 // row that the dashboard picks up — visibility into "what did my agents
 // do via lite-proxy" is the trust feature gating production use.

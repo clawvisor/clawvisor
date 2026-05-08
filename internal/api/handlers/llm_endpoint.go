@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/google/uuid"
@@ -179,6 +181,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditOutcome = "malformed_request"
 		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+		return
+	}
+
+	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 		return
 	}
 
@@ -417,6 +423,269 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 		egressRules = nil
 	}
 	return candidateTasks, toolRules, egressRules
+}
+
+func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+	verb, _ := liteApprovalReply(provider, body)
+	if verb == "" || h.PendingApprovals == nil {
+		return false
+	}
+	pending, err := h.PendingApprovals.Resolve(r.Context(), llmproxy.ResolveRequest{
+		UserID:   agent.UserID,
+		AgentID:  agent.ID,
+		Provider: provider,
+	})
+	if err != nil {
+		*auditStatus = http.StatusServiceUnavailable
+		*auditDecide = "deny"
+		*auditOutcome = "approval_release_error"
+		*auditReason = err.Error()
+		writeJSONError(w, http.StatusServiceUnavailable, "APPROVAL_RELEASE_ERROR", "could not resolve pending approval")
+		return true
+	}
+	if pending == nil {
+		return false
+	}
+	if verb == "deny" {
+		*auditStatus = http.StatusOK
+		*auditDecide = "deny"
+		*auditOutcome = "approval_denied"
+		writeLiteSynthetic(w, r, provider, body, false, pending.ToolUse.ID, pending.ToolUse.Name, nil)
+		return true
+	}
+
+	rewrittenInput, releaseErr := h.rewriteApprovedLiteToolUse(r, agent, provider, body, pending)
+	if releaseErr != nil {
+		*auditStatus = http.StatusOK
+		*auditDecide = "deny"
+		*auditOutcome = "approval_release_blocked"
+		*auditReason = releaseErr.Error()
+		writeLiteSynthetic(w, r, provider, body, false, pending.ToolUse.ID, pending.ToolUse.Name, nil)
+		return true
+	}
+	*auditStatus = http.StatusOK
+	*auditDecide = "allow"
+	*auditOutcome = "approval_released"
+	writeLiteSynthetic(w, r, provider, body, true, pending.ToolUse.ID, pending.ToolUse.Name, rewrittenInput)
+	return true
+}
+
+func (h *LLMEndpointHandler) rewriteApprovedLiteToolUse(r *http.Request, agent *store.Agent, provider conversation.Provider, body []byte, pending *llmproxy.PendingLiteApproval) (map[string]any, error) {
+	if h.Inspector == nil || pending == nil {
+		return nil, errors.New("no pending approval")
+	}
+	verdict := h.Inspector.Inspect(r.Context(), inspector.ToolUse{
+		ID:    pending.ToolUse.ID,
+		Name:  pending.ToolUse.Name,
+		Input: pending.ToolUse.Input,
+	})
+	if verdict.Ambiguous || !verdict.IsAPICall {
+		return nil, errors.New("held tool use no longer resolves to a credentialed API call")
+	}
+	if reason, ok := h.boundaryCheckLiteVerdict(r.Context(), agent, verdict); !ok {
+		return nil, errors.New(reason)
+	}
+	candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	resolved := llmproxy.ResolvedAction{}
+	if h.Catalog != nil {
+		resolved, _ = h.Catalog.Resolve(verdict.Host, verdict.Method, verdict.Path)
+	}
+	decisionInput := runtimedecision.AuthorizationInput{
+		ToolUse:        pending.ToolUse,
+		UserID:         agent.UserID,
+		AgentID:        agent.ID,
+		Target:         runtimedecision.TargetRequest{Host: verdict.Host, Method: verdict.Method, Path: verdict.Path},
+		Service:        resolved.ServiceID,
+		Action:         resolved.ActionID,
+		CandidateTasks: candidateTasks,
+		ToolRules:      toolRules,
+		EgressRules:    egressRules,
+		IntentVerifier: liteDecisionIntentVerifier{inner: h.IntentVerifier},
+	}
+	dec, err := runtimedecision.EvaluateAuthorization(r.Context(), decisionInput)
+	if err != nil {
+		return nil, err
+	}
+	switch dec.Kind {
+	case runtimedecision.VerdictDeny:
+		return nil, errors.New(dec.Reason)
+	case runtimedecision.VerdictNeedsApproval:
+		if !runtimedecision.EquivalentFingerprint(pending.Fingerprint, runtimedecision.Fingerprint(dec, decisionInput)) {
+			return nil, errors.New("held approval no longer matches current authorization decision")
+		}
+	}
+	opts := inspector.DefaultRewriteOpts(h.ResolverBaseURL)
+	opts.CallerToken = inboundAgentToken(r)
+	raw, err := inspector.Rewrite(inspector.ToolUse{ID: pending.ToolUse.ID, Name: pending.ToolUse.Name, Input: pending.ToolUse.Input}, verdict, opts)
+	if err != nil {
+		return nil, err
+	}
+	var input map[string]any
+	_ = json.Unmarshal(raw, &input)
+	return input, nil
+}
+
+func (h *LLMEndpointHandler) boundaryCheckLiteVerdict(ctx context.Context, agent *store.Agent, v inspector.Verdict) (string, bool) {
+	if h.Store == nil {
+		return "no store configured for boundary check", false
+	}
+	if agent == nil {
+		return "no agent context for boundary check", false
+	}
+	if len(v.Placeholders) == 0 {
+		return "verdict missing placeholder for boundary lookup", false
+	}
+	for _, ph := range v.Placeholders {
+		rec, err := h.Store.GetRuntimePlaceholder(ctx, ph)
+		if err != nil {
+			return "placeholder lookup failed", false
+		}
+		if rec.UserID != agent.UserID || rec.AgentID != agent.ID {
+			return "placeholder owned by another agent", false
+		}
+		if ok, reason := inspector.BoundaryCheck(v, inspector.BoundServiceHosts(rec.ServiceID)); !ok {
+			return reason, false
+		}
+	}
+	return "", true
+}
+
+type liteDecisionIntentVerifier struct {
+	inner llmproxy.IntentVerifier
+}
+
+func (v liteDecisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.IntentVerifyRequest) (*runtimedecision.IntentVerdict, error) {
+	if v.inner == nil {
+		return nil, nil
+	}
+	verdict, err := v.inner.Verify(ctx, llmproxy.IntentVerifyRequest{
+		TaskPurpose: req.TaskPurpose,
+		ExpectedUse: req.ExpectedUse,
+		Service:     req.Service,
+		Action:      req.Action,
+		Params:      req.Params,
+		Reason:      req.Reason,
+		TaskID:      req.TaskID,
+		Lenient:     req.Lenient,
+	})
+	if err != nil || verdict == nil {
+		return nil, err
+	}
+	return &runtimedecision.IntentVerdict{Allow: verdict.Allow, Explanation: verdict.Explanation}, nil
+}
+
+func liteApprovalReply(provider conversation.Provider, body []byte) (verb, id string) {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return parseLiteAnthropicApprovalReply(body)
+	case conversation.ProviderOpenAI:
+		return conversation.OpenAIApprovalReply(body)
+	default:
+		return "", ""
+	}
+}
+
+func parseLiteAnthropicApprovalReply(body []byte) (verb, id string) {
+	var req struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", ""
+	}
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role != "user" {
+			continue
+		}
+		return conversation.ParseApprovalReplyText(flattenLiteAnthropicText(req.Messages[i].Content))
+	}
+	return "", ""
+}
+
+func flattenLiteAnthropicText(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, block := range blocks {
+		if block.Type == "text" {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(block.Text)
+		}
+	}
+	return b.String()
+}
+
+func writeLiteSynthetic(w http.ResponseWriter, r *http.Request, provider conversation.Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any) {
+	contentType := "application/json"
+	var body []byte
+	msg := "Approval denied. The requested tool call was not performed."
+	switch provider {
+	case conversation.ProviderAnthropic:
+		stream := conversation.AnthropicRequestWantsStream(requestBody)
+		if allow {
+			if stream {
+				contentType = "text/event-stream"
+				body = conversation.SynthAnthropicToolUseSSE("", "", "assistant", toolUseID, toolName, toolInput)
+			} else {
+				body = conversation.SynthAnthropicToolUseJSON("", "", "assistant", toolUseID, toolName, toolInput)
+			}
+		} else if stream {
+			contentType = "text/event-stream"
+			body = conversation.SynthAnthropicTextSSE("", "", "assistant", msg)
+		} else {
+			body = conversation.SynthAnthropicTextJSON("", "", "assistant", msg)
+		}
+	case conversation.ProviderOpenAI:
+		stream := conversation.OpenAIRequestWantsStream(requestBody)
+		if conversation.IsOpenAIChatCompletionsEndpoint(r) {
+			if allow {
+				if stream {
+					contentType = "text/event-stream"
+					body = conversation.SynthOpenAIChatToolCallSSE(toolUseID, toolName, toolInput)
+				} else {
+					body = conversation.SynthOpenAIChatToolCallJSON(toolUseID, toolName, toolInput)
+				}
+			} else if stream {
+				contentType = "text/event-stream"
+				body = conversation.SynthOpenAIChatTextSSE(msg)
+			} else {
+				body = conversation.SynthOpenAIChatTextJSON(msg)
+			}
+		} else if allow {
+			if stream {
+				contentType = "text/event-stream"
+				body = conversation.SynthOpenAIResponsesFunctionCallSSE(toolUseID, toolName, toolInput)
+			} else {
+				body = conversation.SynthOpenAIResponsesFunctionCallJSON(toolUseID, toolName, toolInput)
+			}
+		} else if stream {
+			contentType = "text/event-stream"
+			body = conversation.SynthOpenAIResponsesTextSSE(msg)
+		} else {
+			body = conversation.SynthOpenAIResponsesTextJSON(msg)
+		}
+	}
+	if len(body) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "APPROVAL_RELEASE_UNSUPPORTED", "unsupported approval release provider")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, bytes.NewReader(body))
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's
