@@ -70,7 +70,7 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 	inbound.Header.Set("Authorization", "Bearer cvis_xxx")
 	inbound.Header.Set("anthropic-beta", "beta1")
 
-	resp, err := f.Forward(context.Background(), "user1", conversation.ProviderAnthropic, inbound, []byte(`{"model":"claude"}`))
+	resp, err := f.Forward(context.Background(), "user1", "", conversation.ProviderAnthropic, inbound, []byte(`{"model":"claude"}`))
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestForward_OpenAIInjectsKey(t *testing.T) {
 	f.Upstream = UpstreamSelector{OpenAIBaseURL: upstream.URL}
 
 	inbound := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{}"))
-	resp, err := f.Forward(context.Background(), "user1", conversation.ProviderOpenAI, inbound, []byte("{}"))
+	resp, err := f.Forward(context.Background(), "user1", "", conversation.ProviderOpenAI, inbound, []byte("{}"))
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestForward_VaultMissing(t *testing.T) {
 	f.Upstream = UpstreamSelector{AnthropicBaseURL: "http://localhost"}
 
 	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
-	_, err := f.Forward(context.Background(), "user1", conversation.ProviderAnthropic, inbound, []byte("{}"))
+	_, err := f.Forward(context.Background(), "user1", "", conversation.ProviderAnthropic, inbound, []byte("{}"))
 	if err == nil {
 		t.Fatalf("expected error on missing vault key")
 	}
@@ -165,7 +165,7 @@ func TestForward_ForcesIdentityEncoding(t *testing.T) {
 	// Harness asks for gzip — forwarder should override with identity.
 	inbound.Header.Set("Accept-Encoding", "gzip, deflate, br")
 
-	resp, err := f.Forward(context.Background(), "user1", conversation.ProviderAnthropic, inbound, []byte("{}"))
+	resp, err := f.Forward(context.Background(), "user1", "", conversation.ProviderAnthropic, inbound, []byte("{}"))
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestForward_StripsXClawvisorPrefix(t *testing.T) {
 	inbound.Header.Set("X-Clawvisor-Custom", "leaked?")
 	inbound.Header.Set("X-Clawvisor-session", "abc")
 
-	resp, err := f.Forward(context.Background(), "user1", conversation.ProviderAnthropic, inbound, []byte("{}"))
+	resp, err := f.Forward(context.Background(), "user1", "", conversation.ProviderAnthropic, inbound, []byte("{}"))
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -205,6 +205,70 @@ func TestForward_StripsXClawvisorPrefix(t *testing.T) {
 		if strings.HasPrefix(strings.ToLower(name), "x-clawvisor-") {
 			t.Fatalf("X-Clawvisor-* leaked to upstream: %s", name)
 		}
+	}
+}
+
+// Per-agent vault keys: forwarder tries agent-scoped first, falls back
+// to user-scoped when the agent-specific key is absent.
+func TestForward_AgentScopedKeyTakesPrecedence(t *testing.T) {
+	v := &stubVault{}
+	// Both keys in vault — agent-scoped should win.
+	v.Set(context.Background(), "user1", "anthropic", []byte("sk-ant-USER-fallback"))
+	v.Set(context.Background(), "user1", "agent:agentA:anthropic", []byte("sk-ant-AGENT-A-key"))
+
+	var seenAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAPIKey = r.Header.Get("x-api-key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{AnthropicBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+	resp, err := f.Forward(context.Background(), "user1", "agentA", conversation.ProviderAnthropic, inbound, []byte("{}"))
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	defer resp.Body.Close()
+	if seenAPIKey != "sk-ant-AGENT-A-key" {
+		t.Errorf("agent-scoped key should win; got %q", seenAPIKey)
+	}
+}
+
+func TestForward_FallsBackToUserKeyWhenAgentKeyAbsent(t *testing.T) {
+	v := &stubVault{}
+	v.Set(context.Background(), "user1", "anthropic", []byte("sk-ant-USER-fallback"))
+	// Note: NO agent-scoped key.
+
+	var seenAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAPIKey = r.Header.Get("x-api-key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{AnthropicBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+	resp, err := f.Forward(context.Background(), "user1", "agentA", conversation.ProviderAnthropic, inbound, []byte("{}"))
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	defer resp.Body.Close()
+	if seenAPIKey != "sk-ant-USER-fallback" {
+		t.Errorf("user-scoped key should be the fallback; got %q", seenAPIKey)
+	}
+}
+
+func TestAgentScopedVaultServiceID(t *testing.T) {
+	if got := AgentScopedVaultServiceID("agentA", conversation.ProviderAnthropic); got != "agent:agentA:anthropic" {
+		t.Errorf("got %q, want agent:agentA:anthropic", got)
+	}
+	if got := AgentScopedVaultServiceID("", conversation.ProviderAnthropic); got != "" {
+		t.Errorf("empty agentID should return empty; got %q", got)
 	}
 }
 

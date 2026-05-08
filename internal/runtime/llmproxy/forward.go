@@ -61,8 +61,8 @@ func joinURL(base, path string) (*url.URL, error) {
 }
 
 // VaultServiceID returns the conventional vault service ID under which the
-// real upstream API key is stored for a given provider. The key is fetched
-// via vault.Get(userID, VaultServiceID(provider)).
+// real upstream API key is stored for a given provider, at user scope.
+// The key is fetched via vault.Get(userID, VaultServiceID(provider)).
 func VaultServiceID(provider conversation.Provider) string {
 	switch provider {
 	case conversation.ProviderAnthropic:
@@ -71,6 +71,21 @@ func VaultServiceID(provider conversation.Provider) string {
 		return "openai"
 	}
 	return ""
+}
+
+// AgentScopedVaultServiceID returns the vault service ID for a key bound
+// to a specific agent. The forwarder tries this first, then falls back
+// to the user-scoped key. Format: "agent:<id>:<provider>".
+//
+// Use case: different agents authenticated by the same user can hit
+// different upstream provider keys (different OpenAI orgs, different
+// rate-limit tiers, separate billing scopes).
+func AgentScopedVaultServiceID(agentID string, provider conversation.Provider) string {
+	base := VaultServiceID(provider)
+	if base == "" || agentID == "" {
+		return ""
+	}
+	return "agent:" + agentID + ":" + base
 }
 
 // Forwarder forwards lite-proxy requests to the real upstream after fetching
@@ -97,12 +112,20 @@ func NewForwarder(v vault.Vault) *Forwarder {
 	}
 }
 
-// Forward fetches the upstream API key for (userID, provider), builds an
-// upstream request mirroring the inbound one, injects the upstream auth
-// header per-provider, and dispatches via Client. The returned
-// *http.Response is the raw upstream response; the caller streams its body
-// to the harness.
-func (f *Forwarder) Forward(ctx context.Context, userID string, provider conversation.Provider, inbound *http.Request, body []byte) (*http.Response, error) {
+// Forward fetches the upstream API key for (userID, agentID, provider),
+// builds an upstream request mirroring the inbound one, injects the
+// upstream auth header per-provider, and dispatches via Client. The
+// returned *http.Response is the raw upstream response; the caller
+// streams its body to the harness.
+//
+// Vault key resolution order:
+//  1. agent-scoped: vault.Get(userID, "agent:<agentID>:<provider>")
+//  2. user-scoped:  vault.Get(userID, "<provider>")
+//
+// Pass an empty agentID to skip the agent-scoped lookup. ErrNotFound on
+// agent-scoped is silent (we fall through); ErrNotFound on user-scoped
+// is wrapped and returned so the handler can surface UPSTREAM_KEY_MISSING.
+func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provider conversation.Provider, inbound *http.Request, body []byte) (*http.Response, error) {
 	if f == nil {
 		return nil, errors.New("llmproxy: forwarder is nil")
 	}
@@ -118,18 +141,12 @@ func (f *Forwarder) Forward(ctx context.Context, userID string, provider convers
 		return nil, err
 	}
 
-	serviceID := VaultServiceID(provider)
-	if serviceID == "" {
-		return nil, fmt.Errorf("llmproxy: no vault service ID for provider %q", provider)
-	}
-	keyBytes, err := f.Vault.Get(ctx, userID, serviceID)
+	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
 	if err != nil {
-		if errors.Is(err, vault.ErrNotFound) {
-			return nil, fmt.Errorf("llmproxy: upstream credential not found in vault for service %q: %w", serviceID, vault.ErrNotFound)
-		}
-		return nil, fmt.Errorf("llmproxy: vault get: %w", err)
+		return nil, err
 	}
 	defer zeroBytes(keyBytes)
+	_ = serviceID // serviceID is recorded by the handler for audit; future hook
 
 	req, err := http.NewRequestWithContext(ctx, inbound.Method, upstreamURL.String(), bytes.NewReader(body))
 	if err != nil {
@@ -149,6 +166,37 @@ func (f *Forwarder) Forward(ctx context.Context, userID string, provider convers
 	}
 
 	return f.Client.Do(req)
+}
+
+// lookupVaultKey resolves the upstream API key with agent-scoped-first
+// fallback to user-scoped. Returns (key bytes, the serviceID actually
+// used, error). The serviceID is useful for audit so the row records
+// whether the agent-scoped or user-scoped key was used.
+func (f *Forwarder) lookupVaultKey(ctx context.Context, userID, agentID string, provider conversation.Provider) ([]byte, string, error) {
+	if agentID != "" {
+		if scoped := AgentScopedVaultServiceID(agentID, provider); scoped != "" {
+			key, err := f.Vault.Get(ctx, userID, scoped)
+			if err == nil {
+				return key, scoped, nil
+			}
+			if !errors.Is(err, vault.ErrNotFound) {
+				return nil, "", fmt.Errorf("llmproxy: vault get agent-scoped: %w", err)
+			}
+			// Fall through to user-scoped.
+		}
+	}
+	userServiceID := VaultServiceID(provider)
+	if userServiceID == "" {
+		return nil, "", fmt.Errorf("llmproxy: no vault service ID for provider %q", provider)
+	}
+	key, err := f.Vault.Get(ctx, userID, userServiceID)
+	if err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			return nil, userServiceID, fmt.Errorf("llmproxy: upstream credential not found in vault for service %q: %w", userServiceID, vault.ErrNotFound)
+		}
+		return nil, userServiceID, fmt.Errorf("llmproxy: vault get: %w", err)
+	}
+	return key, userServiceID, nil
 }
 
 // injectUpstreamAuth writes the upstream-specific auth header using the raw

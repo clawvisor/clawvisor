@@ -160,7 +160,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, provider, r, body)
+	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
 		if isVaultMiss(err) {
 			auditStatus = http.StatusUnauthorized
