@@ -62,6 +62,10 @@ type LLMEndpointHandler struct {
 	// is not enforced.
 	IntentVerifier llmproxy.IntentVerifier
 
+	// PendingApprovals buffers one proxy-lite tool_use awaiting a bare
+	// approve/deny reply per user/agent/provider.
+	PendingApprovals llmproxy.PendingApprovalCache
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -77,12 +81,13 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		logger = slog.Default()
 	}
 	return &LLMEndpointHandler{
-		Store:           st,
-		Vault:           v,
-		Forwarder:       llmproxy.NewForwarder(v),
-		Parsers:         conversation.DefaultRegistry(),
-		Logger:          logger,
-		MaxRequestBytes: 4 << 20,
+		Store:            st,
+		Vault:            v,
+		Forwarder:        llmproxy.NewForwarder(v),
+		Parsers:          conversation.DefaultRegistry(),
+		Logger:           logger,
+		PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		MaxRequestBytes:  4 << 20,
 	}
 }
 
@@ -246,19 +251,20 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
-			Inspector:      h.Inspector,
-			RewriteOpts:    opts,
-			Store:          h.Store,
-			AgentUserID:    agent.UserID,
-			AgentID:        agent.ID,
-			Audit:          h.AuditEmitter,
-			RequestID:      requestID,
-			Catalog:        catalogIface,
-			TaskScope:      h.TaskScope,
-			IntentVerifier: h.IntentVerifier,
-			CandidateTasks: candidateTasks,
-			ToolRules:      toolRules,
-			EgressRules:    egressRules,
+			Inspector:        h.Inspector,
+			RewriteOpts:      opts,
+			Store:            h.Store,
+			AgentUserID:      agent.UserID,
+			AgentID:          agent.ID,
+			Audit:            h.AuditEmitter,
+			RequestID:        requestID,
+			Catalog:          catalogIface,
+			TaskScope:        h.TaskScope,
+			IntentVerifier:   h.IntentVerifier,
+			CandidateTasks:   candidateTasks,
+			ToolRules:        toolRules,
+			EgressRules:      egressRules,
+			PendingApprovals: h.PendingApprovals,
 		})
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")

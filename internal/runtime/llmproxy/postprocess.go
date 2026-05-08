@@ -103,6 +103,8 @@ type PostprocessConfig struct {
 	CandidateTasks []*store.Task
 	ToolRules      []*store.RuntimePolicyRule
 	EgressRules    []*store.RuntimePolicyRule
+
+	PendingApprovals PendingApprovalCache
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -235,6 +237,17 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					Reason:  "Clawvisor: " + dec.Reason,
 				}
 			case runtimedecision.VerdictNeedsApproval:
+				if cfg.PendingApprovals != nil {
+					_, _ = cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
+						UserID:      cfg.AgentUserID,
+						AgentID:     cfg.AgentID,
+						Provider:    rewriter.Name(),
+						ToolUse:     tu,
+						Inspector:   v,
+						Fingerprint: runtimedecision.Fingerprint(dec, runtimedecision.AuthorizationInput{Target: runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path}, Service: resolved.ServiceID, Action: resolved.ActionID}),
+						Reason:      dec.Reason,
+					})
+				}
 				audit("block", string(dec.Source), dec.Reason)
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
