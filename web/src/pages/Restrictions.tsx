@@ -454,6 +454,9 @@ export default function Policy() {
           agents={agents}
           draft={editingRule}
           busy={createRuleMut.isPending || updateRuleMut.isPending}
+          allowedKinds={proxyLiteOnly ? ['tool'] : undefined}
+          defaultAgentId={proxyLiteOnly && agentFilter !== 'all' ? agentFilter : undefined}
+          toolNameOptions={proxyLiteOnly ? (toolControls?.entries ?? []).map(control => control.tool_name) : undefined}
           onCancel={() => setEditingRule(null)}
           onSave={(draft) => {
             if (draft.id) updateRuleMut.mutate(draft)
