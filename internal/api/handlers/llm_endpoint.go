@@ -571,9 +571,6 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 }
 
 func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPosture {
-	if agent != nil && agent.RuntimeSettings != nil && strings.EqualFold(agent.RuntimeSettings.RuntimeMode, "observe") {
-		return runtimedecision.PostureObserve
-	}
 	return runtimedecision.PostureEnforce
 }
 

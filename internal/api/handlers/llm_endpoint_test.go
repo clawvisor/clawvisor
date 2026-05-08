@@ -176,10 +176,10 @@ func TestLLMEndpoint_PassthroughAnthropic(t *testing.T) {
 	}
 }
 
-func TestLiteProxyDecisionPostureUsesAgentRuntimeMode(t *testing.T) {
+func TestLiteProxyDecisionPostureIsAlwaysEnforce(t *testing.T) {
 	agent := &store.Agent{RuntimeSettings: &store.AgentRuntimeSettings{RuntimeMode: "observe"}}
-	if got := liteProxyDecisionPosture(agent); got != "observe" {
-		t.Fatalf("posture = %q, want observe", got)
+	if got := liteProxyDecisionPosture(agent); got != "enforce" {
+		t.Fatalf("posture = %q, want enforce", got)
 	}
 	agent.RuntimeSettings.RuntimeMode = "strict"
 	if got := liteProxyDecisionPosture(agent); got != "enforce" {
