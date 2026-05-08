@@ -14,6 +14,11 @@ export default defineConfig({
       '/skill': backendURL,
       '/health': backendURL,
       '/ready': backendURL,
+      // Lite-proxy LLM endpoint (Anthropic + OpenAI compatible) and the
+      // resolver. Agents pointing ANTHROPIC_BASE_URL / OPENAI_BASE_URL
+      // at the dev server need these proxied through.
+      '/v1': backendURL,
+      '/proxy': backendURL,
       '/ws': {
         target: backendURL,
         ws: true,

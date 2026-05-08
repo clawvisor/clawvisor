@@ -13,6 +13,13 @@ type ToolUseVerdict struct {
 	Allowed        bool
 	Reason         string
 	SubstituteWith string
+
+	// RewriteInput, when non-nil and Allowed=true, replaces the tool_use's
+	// input field in-place. Used by the lite-proxy inspector to redirect
+	// the harness's eventual HTTP call at the resolver while preserving
+	// the original method/path/body. Per-block mutation; the assistant
+	// turn otherwise streams through unchanged.
+	RewriteInput json.RawMessage
 }
 
 type RewriteResult struct {
@@ -64,6 +71,21 @@ func (r *ResponseRegistry) Match(req *http.Request, resp *http.Response) Respons
 	}
 	for _, rewriter := range r.rewriters {
 		if rewriter.MatchesResponse(req, resp) {
+			return rewriter
+		}
+	}
+	return nil
+}
+
+// ForProvider returns the registered rewriter for a given provider. The
+// runtime proxy uses Match(req, resp) which keys off the upstream host;
+// the lite-proxy dispatches by route instead and needs an explicit lookup.
+func (r *ResponseRegistry) ForProvider(p Provider) ResponseRewriter {
+	if r == nil {
+		return nil
+	}
+	for _, rewriter := range r.rewriters {
+		if rewriter.Name() == p {
 			return rewriter
 		}
 	}

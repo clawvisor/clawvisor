@@ -30,6 +30,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	pkgauth "github.com/clawvisor/clawvisor/pkg/auth"
@@ -808,6 +809,62 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/audit/mutes", user(auditHandler.ListMutes))
 	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
 	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
+
+	// Lite-proxy LLM endpoint (opt-in via config). Agents set
+	// ANTHROPIC_BASE_URL / OPENAI_BASE_URL at this server and present
+	// their existing cvis_… token via Authorization: Bearer (OpenAI
+	// SDK convention) or x-api-key (Anthropic SDK convention).
+	if s.cfg.ProxyLite.Enabled {
+		llmHandler := handlers.NewLLMEndpointHandler(s.store, s.vault, s.logger)
+		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
+			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
+		}
+		if v := s.cfg.ProxyLite.OpenAIBaseURL; v != "" {
+			llmHandler.Forwarder.Upstream.OpenAIBaseURL = v
+		}
+
+		// Wire the inspector into the response leg so credentialed
+		// tool_uses get rewritten through the resolver. The validator
+		// reuses the daemon's own LLM credentials when configured —
+		// nil falls back to the AmbiguousValidator (deterministic-only
+		// mode), which is fine for most flows since structured fetch
+		// tools and clean curl Bash invocations all parse deterministically.
+		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+		if pub := s.cfg.Server.PublicURL; pub != "" {
+			llmHandler.ResolverBaseURL = strings.TrimRight(pub, "/") + "/proxy/v1"
+		}
+
+		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
+		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
+		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
+
+		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
+
+		// LLM endpoint accepts the agent token via Authorization or
+		// x-api-key (SDK conventions).
+		requireAgentLLM := middleware.RequireAgentLLM(s.store)
+
+		// Resolver expects the agent token in `X-Clawvisor-Caller` so the
+		// natural credential headers (Authorization, x-api-key) remain
+		// free to carry the placeholder being swapped.
+		requireAgentLLMCaller := middleware.RequireAgentLLMCaller(s.store)
+
+		mux.Handle("POST /v1/messages", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
+		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
+		mux.Handle("POST /v1/chat/completions", requireAgentLLM(http.HandlerFunc(llmHandler.ChatCompletions)))
+		mux.Handle("POST /v1/responses", requireAgentLLM(http.HandlerFunc(llmHandler.Responses)))
+
+		// Resolver — agent harness's outbound HTTPS calls land here so
+		// we can swap autovault placeholders in headers for real vault
+		// credentials before forwarding to the real upstream service.
+		mux.Handle("/proxy/v1/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))
+
+		// Upstream credential management (user JWT) — store the real
+		// sk-ant-… or sk-… in vault under (user_id, "anthropic"|"openai").
+		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Set))
+		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Delete))
+		mux.Handle("GET /api/runtime/llm-credentials", user(llmCredHandler.List))
+	}
 
 	// SSE event stream (user JWT or single-use ticket for EventSource)
 	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)

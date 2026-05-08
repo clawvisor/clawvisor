@@ -78,12 +78,13 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 		return RewriteResult{Body: body}, nil
 	}
 	var (
-		decisions  []ToolUseDecisionRecord
-		frags      []assistantFragment
-		anyBlocked bool
-		index      int
+		decisions    []ToolUseDecisionRecord
+		frags        []assistantFragment
+		anyBlocked   bool
+		anyRewritten bool
+		index        int
 	)
-	for _, item := range resp.Output {
+	for i, item := range resp.Output {
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
@@ -109,10 +110,23 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 			if !verdict.Allowed {
 				anyBlocked = true
 			}
-			frags = append(frags, assistantFragment{IsTool: true, ToolName: item.Name, ToolArgs: tu.Input})
+			finalArgs := tu.Input
+			if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+				resp.Output[i].Arguments = string(verdict.RewriteInput)
+				finalArgs = verdict.RewriteInput
+				anyRewritten = true
+			}
+			frags = append(frags, assistantFragment{IsTool: true, ToolName: item.Name, ToolArgs: finalArgs})
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		rewritten, err := json.Marshal(resp)
+		if err != nil {
+			return RewriteResult{}, fmt.Errorf("openai responses: marshal rewritten response: %w", err)
+		}
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -155,7 +169,12 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 	textByIndex := map[int]*strings.Builder{}
 	var decisions []ToolUseDecisionRecord
 	var frags []assistantFragment
+	// orderedItems preserves the order each output item completed in,
+	// with enough metadata to re-emit a synthesized SSE response if
+	// the rewriter mutates one or more function_call arguments.
+	var orderedItems []orderedResponsesItem
 	anyBlocked := false
+	anyRewritten := false
 	index := 0
 	for _, event := range events {
 		switch event.Event {
@@ -231,10 +250,19 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 			}
 			switch raw.Item.Type {
 			case "message":
-				if b := textByIndex[raw.OutputIndex]; b != nil && b.Len() > 0 {
-					frags = append(frags, assistantFragment{Text: b.String()})
+				txt := ""
+				if b := textByIndex[raw.OutputIndex]; b != nil {
+					txt = b.String()
 					delete(textByIndex, raw.OutputIndex)
 				}
+				if txt != "" {
+					frags = append(frags, assistantFragment{Text: txt})
+				}
+				orderedItems = append(orderedItems, orderedResponsesItem{
+					isText:      true,
+					outputIndex: raw.OutputIndex,
+					text:        txt,
+				})
 			case "function_call":
 				pc := pending[raw.Item.ID]
 				if pc == nil {
@@ -244,11 +272,12 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					pc.arguments.Reset()
 					pc.arguments.WriteString(args)
 				}
+				originalArgs := pc.arguments.String()
 				tu := ToolUse{
 					ID:    pc.callID,
 					Index: index,
 					Name:  pc.name,
-					Input: rawIfJSONOpenAI(pc.arguments.String()),
+					Input: rawIfJSONOpenAI(originalArgs),
 				}
 				index++
 				verdict := eval(tu)
@@ -260,12 +289,38 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				if !verdict.Allowed {
 					anyBlocked = true
 				}
-				frags = append(frags, assistantFragment{IsTool: true, ToolName: pc.name, ToolArgs: tu.Input})
+				finalArgs := originalArgs
+				fragArgs := tu.Input
+				if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+					finalArgs = string(verdict.RewriteInput)
+					fragArgs = verdict.RewriteInput
+					anyRewritten = true
+				}
+				frags = append(frags, assistantFragment{IsTool: true, ToolName: pc.name, ToolArgs: fragArgs})
+				orderedItems = append(orderedItems, orderedResponsesItem{
+					outputIndex: pc.outputIndex,
+					itemID:      pc.itemID,
+					callID:      pc.callID,
+					name:        pc.name,
+					arguments:   finalArgs,
+				})
 				delete(pending, raw.Item.ID)
 			}
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		// Emit a synthesized Responses-API SSE stream with the rewritten
+		// function_call arguments substituted in. Other items pass
+		// through verbatim.
+		out := buildOpenAIResponsesMultiSSE(orderedItems)
+		return RewriteResult{
+			Body:          out,
+			Decisions:     decisions,
+			Rewritten:     true,
+			AssistantTurn: turn,
+		}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -275,6 +330,110 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 		Rewritten:     true,
 		AssistantTurn: turn,
 	}, nil
+}
+
+// buildOpenAIResponsesMultiSSE emits a Responses-API SSE stream
+// containing the supplied output items in order. function_call items
+// carry their (possibly rewritten) arguments; text items carry their
+// accumulated content. Used by rewriteResponsesSSE when one or more
+// function_call args were mutated on the rewrite path.
+func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
+	var b strings.Builder
+	b.WriteString(sseEventBlock("response.created", map[string]any{
+		"type":     "response.created",
+		"response": map[string]any{"id": "resp_clawvisor_rewrite", "status": "in_progress"},
+	}))
+	for i, it := range items {
+		if it.isText {
+			itemID := fmt.Sprintf("msg_clawvisor_%d", i)
+			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
+				"type":         "response.output_item.added",
+				"output_index": i,
+				"item":         map[string]any{"id": itemID, "type": "message", "role": "assistant", "status": "in_progress"},
+			}))
+			if it.text != "" {
+				b.WriteString(sseEventBlock("response.output_text.delta", map[string]any{
+					"type":          "response.output_text.delta",
+					"item_id":       itemID,
+					"output_index":  i,
+					"content_index": 0,
+					"delta":         it.text,
+				}))
+				b.WriteString(sseEventBlock("response.output_text.done", map[string]any{
+					"type":          "response.output_text.done",
+					"item_id":       itemID,
+					"output_index":  i,
+					"content_index": 0,
+					"text":          it.text,
+				}))
+			}
+			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
+				"type":         "response.output_item.done",
+				"output_index": i,
+				"item":         map[string]any{"id": itemID, "type": "message", "role": "assistant", "status": "completed"},
+			}))
+			continue
+		}
+		// function_call item.
+		itemID := it.itemID
+		if itemID == "" {
+			itemID = "fc_" + it.callID
+		}
+		b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
+			"type":         "response.output_item.added",
+			"output_index": i,
+			"item": map[string]any{
+				"id":      itemID,
+				"type":    "function_call",
+				"status":  "in_progress",
+				"call_id": it.callID,
+				"name":    it.name,
+			},
+		}))
+		b.WriteString(sseEventBlock("response.function_call_arguments.delta", map[string]any{
+			"type":         "response.function_call_arguments.delta",
+			"item_id":      itemID,
+			"output_index": i,
+			"delta":        it.arguments,
+		}))
+		b.WriteString(sseEventBlock("response.function_call_arguments.done", map[string]any{
+			"type":         "response.function_call_arguments.done",
+			"item_id":      itemID,
+			"output_index": i,
+			"name":         it.name,
+			"arguments":    it.arguments,
+		}))
+		b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
+			"type":         "response.output_item.done",
+			"output_index": i,
+			"item": map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   it.callID,
+				"name":      it.name,
+				"arguments": it.arguments,
+			},
+		}))
+	}
+	b.WriteString(sseEventBlock("response.completed", map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{"id": "resp_clawvisor_rewrite", "status": "completed"},
+	}))
+	return []byte(b.String())
+}
+
+// orderedResponsesItem is the package-scoped type used by
+// buildOpenAIResponsesMultiSSE. Mirrors the local orderedItem in
+// rewriteResponsesSSE so the helper can be tested independently.
+type orderedResponsesItem struct {
+	isText      bool
+	outputIndex int
+	itemID      string
+	callID      string
+	name        string
+	arguments   string
+	text        string
 }
 
 type openAIChatCompletionsResponse struct {
@@ -315,16 +474,17 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 		return RewriteResult{Body: body}, nil
 	}
 	var (
-		decisions  []ToolUseDecisionRecord
-		frags      []assistantFragment
-		anyBlocked bool
-		index      int
+		decisions    []ToolUseDecisionRecord
+		frags        []assistantFragment
+		anyBlocked   bool
+		anyRewritten bool
+		index        int
 	)
-	for _, choice := range resp.Choices {
+	for ci, choice := range resp.Choices {
 		if text := flattenOpenAIContentFromAny(choice.Message.Content); text != "" {
 			frags = append(frags, assistantFragment{Text: text})
 		}
-		for _, call := range choice.Message.ToolCalls {
+		for ti, call := range choice.Message.ToolCalls {
 			tu := ToolUse{
 				ID:    firstNonEmpty(call.ID, fmt.Sprintf("chat-tool-%d", index)),
 				Index: index,
@@ -341,10 +501,23 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsJSON(body []byte, eval To
 			if !verdict.Allowed {
 				anyBlocked = true
 			}
-			frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Function.Name, ToolArgs: tu.Input})
+			finalArgs := tu.Input
+			if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+				resp.Choices[ci].Message.ToolCalls[ti].Function.Arguments = string(verdict.RewriteInput)
+				finalArgs = verdict.RewriteInput
+				anyRewritten = true
+			}
+			frags = append(frags, assistantFragment{IsTool: true, ToolName: call.Function.Name, ToolArgs: finalArgs})
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		rewritten, err := json.Marshal(resp)
+		if err != nil {
+			return RewriteResult{}, fmt.Errorf("openai chat: marshal rewritten response: %w", err)
+		}
+		return RewriteResult{Body: rewritten, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -379,6 +552,9 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 	var decisions []ToolUseDecisionRecord
 	var frags []assistantFragment
 	anyBlocked := false
+	anyRewritten := false
+	var orderedChatCalls []orderedChatToolCall
+	var streamID string
 	var text strings.Builder
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -390,10 +566,14 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 			continue
 		}
 		var event struct {
+			ID      string             `json:"id"`
 			Choices []openAIChatChoice `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
+		}
+		if event.ID != "" && streamID == "" {
+			streamID = event.ID
 		}
 		for _, choice := range event.Choices {
 			if txt := flattenOpenAIContentFromAny(choice.Delta.Content); txt != "" {
@@ -442,7 +622,20 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 					if !verdict.Allowed {
 						anyBlocked = true
 					}
-					frags = append(frags, assistantFragment{IsTool: true, ToolName: pc.name, ToolArgs: tu.Input})
+					finalArgs := pc.args.String()
+					fragArgs := tu.Input
+					if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+						finalArgs = string(verdict.RewriteInput)
+						fragArgs = verdict.RewriteInput
+						anyRewritten = true
+					}
+					orderedChatCalls = append(orderedChatCalls, orderedChatToolCall{
+						index:     toolCallIndex,
+						id:        pc.id,
+						name:      pc.name,
+						arguments: finalArgs,
+					})
+					frags = append(frags, assistantFragment{IsTool: true, ToolName: pc.name, ToolArgs: fragArgs})
 				}
 				pending = map[int]*pendingCall{}
 			}
@@ -452,6 +645,10 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 		frags = append(frags, assistantFragment{Text: text.String()})
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		out := buildOpenAIChatMultiSSE(streamID, text.String(), orderedChatCalls)
+		return RewriteResult{Body: out, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -461,6 +658,72 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 		Rewritten:     true,
 		AssistantTurn: turn,
 	}, nil
+}
+
+// orderedChatToolCall captures one tool_call in a Chat Completions
+// stream, in the order it completed. Used by buildOpenAIChatMultiSSE
+// to re-emit the assistant turn when one or more arguments were
+// rewritten.
+type orderedChatToolCall struct {
+	index     int
+	id        string
+	name      string
+	arguments string
+}
+
+// buildOpenAIChatMultiSSE emits a Chat-Completions-shaped SSE stream
+// containing the supplied tool_calls in order, plus any preceding
+// streamed text. Used when the rewriter mutated one or more
+// function.arguments values.
+func buildOpenAIChatMultiSSE(streamID, leadingText string, calls []orderedChatToolCall) []byte {
+	if streamID == "" {
+		streamID = "chatcmpl_clawvisor_rewrite"
+	}
+	var b strings.Builder
+	b.WriteString(chatCompletionSSEBlock(map[string]any{
+		"id":      streamID,
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil}},
+	}))
+	if leadingText != "" {
+		b.WriteString(chatCompletionSSEBlock(map[string]any{
+			"id":      streamID,
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]any{{"index": 0, "delta": map[string]any{"content": leadingText}, "finish_reason": nil}},
+		}))
+	}
+	if len(calls) > 0 {
+		toolCalls := make([]map[string]any, 0, len(calls))
+		for _, c := range calls {
+			toolCalls = append(toolCalls, map[string]any{
+				"index": c.index,
+				"id":    c.id,
+				"type":  "function",
+				"function": map[string]any{
+					"name":      c.name,
+					"arguments": c.arguments,
+				},
+			})
+		}
+		b.WriteString(chatCompletionSSEBlock(map[string]any{
+			"id":      streamID,
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]any{{"index": 0, "delta": map[string]any{"tool_calls": toolCalls}, "finish_reason": nil}},
+		}))
+		b.WriteString(chatCompletionSSEBlock(map[string]any{
+			"id":      streamID,
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+		}))
+	} else {
+		b.WriteString(chatCompletionSSEBlock(map[string]any{
+			"id":      streamID,
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+		}))
+	}
+	b.WriteString("data: [DONE]\n\n")
+	return []byte(b.String())
 }
 
 func SynthOpenAIResponsesTextJSON(text string) []byte {

@@ -54,8 +54,9 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 	var decisions []ToolUseDecisionRecord
 	var frags []assistantFragment
 	anyBlocked := false
+	anyRewritten := false
 	index := 0
-	for _, block := range resp.Content {
+	for i, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
@@ -78,15 +79,34 @@ func (rw AnthropicResponseRewriter) rewriteJSON(body []byte, eval ToolUseEvaluat
 			if !verdict.Allowed {
 				anyBlocked = true
 			}
+			finalInput := block.Input
+			if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+				resp.Content[i].Input = verdict.RewriteInput
+				finalInput = verdict.RewriteInput
+				anyRewritten = true
+			}
 			frags = append(frags, assistantFragment{
 				IsTool:   true,
 				ToolName: block.Name,
-				ToolArgs: block.Input,
+				ToolArgs: finalInput,
 			})
 		}
 	}
 
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		// Re-marshal the response with mutated tool_use inputs in place.
+		rewritten, err := json.Marshal(resp)
+		if err != nil {
+			return RewriteResult{}, fmt.Errorf("anthropic: marshal rewritten response: %w", err)
+		}
+		return RewriteResult{
+			Body:          rewritten,
+			Decisions:     decisions,
+			Rewritten:     true,
+			AssistantTurn: turn,
+		}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -119,18 +139,21 @@ type sseEvent struct {
 	Data  string
 }
 
+// pendingBlock buffers a single content block (text or tool_use) as SSE
+// events stream in. Lifted to package scope so the multi-block SSE
+// re-emitter can accept slices of them.
+type pendingBlock struct {
+	name  string
+	id    string
+	input bytes.Buffer
+	text  bytes.Buffer
+	isTU  bool
+}
+
 func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluator) (RewriteResult, error) {
 	events, err := parseSSEEvents(body)
 	if err != nil {
 		return RewriteResult{Body: body}, nil
-	}
-
-	type pendingBlock struct {
-		name  string
-		id    string
-		input bytes.Buffer
-		text  bytes.Buffer
-		isTU  bool
 	}
 
 	blocks := map[int]*pendingBlock{}
@@ -217,6 +240,8 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 
 	var decisions []ToolUseDecisionRecord
 	anyBlocked := false
+	anyRewritten := false
+	rewrittenInput := map[*pendingBlock]json.RawMessage{}
 	for i, pb := range orderedTUs {
 		var inputRaw json.RawMessage
 		if pb.input.Len() > 0 {
@@ -237,13 +262,19 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		if !verdict.Allowed {
 			anyBlocked = true
 		}
+		if verdict.Allowed && len(verdict.RewriteInput) > 0 {
+			rewrittenInput[pb] = verdict.RewriteInput
+			anyRewritten = true
+		}
 	}
 
 	frags := make([]assistantFragment, 0, len(orderedAll))
 	for _, pb := range orderedAll {
 		if pb.isTU {
 			var inputRaw json.RawMessage
-			if pb.input.Len() > 0 {
+			if rw, ok := rewrittenInput[pb]; ok {
+				inputRaw = rw
+			} else if pb.input.Len() > 0 {
 				inputRaw = json.RawMessage(pb.input.Bytes())
 			}
 			frags = append(frags, assistantFragment{
@@ -258,6 +289,17 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
+	if !anyBlocked && anyRewritten {
+		// Re-emit the entire turn as SSE with the rewritten input bytes
+		// substituted for the affected tool_use blocks.
+		assembled := buildAnthropicMultiBlockSSE(msgID, msgModel, msgRole, orderedAll, rewrittenInput)
+		return RewriteResult{
+			Body:          assembled,
+			Decisions:     decisions,
+			Rewritten:     true,
+			AssistantTurn: turn,
+		}, nil
+	}
 	if !anyBlocked {
 		return RewriteResult{Body: body, Decisions: decisions, AssistantTurn: turn}, nil
 	}
@@ -268,6 +310,121 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 		Rewritten:     true,
 		AssistantTurn: turn,
 	}, nil
+}
+
+// buildAnthropicMultiBlockSSE re-emits a buffered Anthropic streamed
+// response as SSE bytes, substituting the rewritten input bytes for any
+// tool_use blocks the inspector decided to redirect through the resolver.
+//
+// The output is a self-contained SSE message: message_start, then per
+// block content_block_start + delta(s) + content_block_stop, then
+// message_delta + message_stop. Block indices are 0..N-1 contiguous;
+// the upstream's original indices are not preserved (which is fine —
+// stop_reason and overall structure are what the harness cares about).
+func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlock, rewrittenInput map[*pendingBlock]json.RawMessage) []byte {
+	if msgID == "" {
+		msgID = "msg_clawvisor_rewrite"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	if role == "" {
+		role = "assistant"
+	}
+
+	var b bytes.Buffer
+	emit := func(name string, data any) {
+		raw, _ := json.Marshal(data)
+		b.WriteString("event: ")
+		b.WriteString(name)
+		b.WriteString("\ndata: ")
+		b.Write(raw)
+		b.WriteString("\n\n")
+	}
+
+	emit("message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":            msgID,
+			"type":          "message",
+			"role":          role,
+			"model":         model,
+			"content":       []any{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         map[string]int{"input_tokens": 0, "output_tokens": 0},
+		},
+	})
+
+	stopReason := "end_turn"
+	for i, pb := range blocks {
+		if pb.isTU {
+			stopReason = "tool_use"
+			emit("content_block_start", map[string]any{
+				"type":  "content_block_start",
+				"index": i,
+				"content_block": map[string]any{
+					"type":  "tool_use",
+					"id":    pb.id,
+					"name":  pb.name,
+					"input": map[string]any{},
+				},
+			})
+			input := pb.input.Bytes()
+			if rw, ok := rewrittenInput[pb]; ok {
+				input = rw
+			}
+			emit("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": i,
+				"delta": map[string]any{
+					"type":         "input_json_delta",
+					"partial_json": string(input),
+				},
+			})
+			emit("content_block_stop", map[string]any{
+				"type":  "content_block_stop",
+				"index": i,
+			})
+			continue
+		}
+		// Text block.
+		emit("content_block_start", map[string]any{
+			"type":  "content_block_start",
+			"index": i,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		})
+		if pb.text.Len() > 0 {
+			emit("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": i,
+				"delta": map[string]any{
+					"type": "text_delta",
+					"text": pb.text.String(),
+				},
+			})
+		}
+		emit("content_block_stop", map[string]any{
+			"type":  "content_block_stop",
+			"index": i,
+		})
+	}
+
+	emit("message_delta", map[string]any{
+		"type": "message_delta",
+		"delta": map[string]any{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]int{"output_tokens": 0},
+	})
+	emit("message_stop", map[string]any{
+		"type": "message_stop",
+	})
+	return b.Bytes()
 }
 
 func SynthAnthropicTextSSE(msgID, model, role, text string) []byte {

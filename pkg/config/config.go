@@ -32,6 +32,7 @@ type Config struct {
 	MCP           MCPConfig           `yaml:"mcp"`
 	RuntimeProxy  RuntimeProxyConfig  `yaml:"runtime_proxy"`
 	RuntimePolicy RuntimePolicyConfig `yaml:"runtime_policy"`
+	ProxyLite     ProxyLiteConfig     `yaml:"proxy_lite"`
 	Features      FeaturesConfig      `yaml:"features"`
 	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
 	Relay         RelayConfig         `yaml:"relay"`
@@ -266,6 +267,31 @@ type RuntimePolicyConfig struct {
 	OneOffTTLSeconds        int      `yaml:"one_off_ttl_seconds"`
 	AutovaultMode           string   `yaml:"autovault_mode"`
 	InjectStoredBearer      bool     `yaml:"inject_stored_bearer"`
+}
+
+// ProxyLiteConfig gates the lite-proxy LLM endpoint and resolver. The
+// agent harness sets ANTHROPIC_BASE_URL / OPENAI_BASE_URL at this server
+// and presents its existing cvis_… token; we forward to the real upstream
+// after swapping in the real API key from the vault.
+type ProxyLiteConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// AnthropicBaseURL overrides the upstream Anthropic host. Empty =
+	// use https://api.anthropic.com.
+	AnthropicBaseURL string `yaml:"anthropic_base_url"`
+
+	// OpenAIBaseURL overrides the upstream OpenAI host. Empty =
+	// use https://api.openai.com.
+	OpenAIBaseURL string `yaml:"openai_base_url"`
+
+	// SelfHostnames are the domains this deployment serves itself on.
+	// The resolver refuses target-host values matching any of these so
+	// agents can't read their own audit log via their own placeholders.
+	SelfHostnames []string `yaml:"self_hostnames"`
+
+	// AllowPrivateNetworks lets the resolver dial RFC1918 / loopback
+	// targets. Default false; flip in self-host development environments.
+	AllowPrivateNetworks bool `yaml:"allow_private_networks"`
 }
 
 // FeaturesConfig gates progressively enhanced UI and runtime surfaces.

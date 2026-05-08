@@ -1,0 +1,444 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/vault"
+)
+
+// ProxyResolverHandler is the lite-proxy reverse-proxy. The agent harness
+// makes its outbound HTTPS call to here; we authenticate the caller via
+// X-Clawvisor-Caller, swap any `autovault_…` header placeholders for real
+// credentials from the vault (matching ownership against the caller's
+// shadow-LLM-token), restore the original target host, and forward.
+//
+// v1 scope: header-credential placeholders only. Body / query / cookie
+// placeholder mutation is Phase 4.
+type ProxyResolverHandler struct {
+	Store  store.Store
+	Vault  vault.Vault
+	Client *http.Client
+	Logger *slog.Logger
+
+	// MaxRequestBytes caps the inbound body. Defaults to 8 MiB.
+	MaxRequestBytes int64
+
+	// SelfHostnames is the set of hosts this Clawvisor deployment serves
+	// itself on. The resolver MUST refuse `X-Clawvisor-Target-Host` values
+	// matching any of these — otherwise an agent could read its own audit
+	// log via its own placeholder. Defaults to the empty set; populate
+	// from config at construction time.
+	SelfHostnames []string
+
+	// AllowPrivateNetworks gates whether RFC1918 / loopback / link-local
+	// targets are reachable. Defaults to false; flip in self-host
+	// development environments.
+	AllowPrivateNetworks bool
+}
+
+// NewProxyResolverHandler builds the handler with sensible defaults. The
+// http.Client has no overall timeout (some upstreams stream) but the
+// transport caps response-header time so a slow attacker upstream can't
+// hold a goroutine indefinitely. The DialContext re-resolves and
+// re-validates each address at dial time, closing the DNS-rebinding
+// window between checkSSRF's preflight and Client.Do's actual dial.
+func NewProxyResolverHandler(st store.Store, v vault.Vault, logger *slog.Logger) *ProxyResolverHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &ProxyResolverHandler{
+		Store:           st,
+		Vault:           v,
+		Logger:          logger,
+		MaxRequestBytes: 8 << 20,
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.DialContext = h.safeDialContext
+	h.Client = &http.Client{Timeout: 0, Transport: transport}
+	return h
+}
+
+// safeDialContext re-resolves the dial address and refuses any private/
+// loopback/link-local IP unless AllowPrivateNetworks is set. Closes the
+// TOCTOU window between checkSSRF's preflight resolution and the
+// transport's own dial-time resolution: a short-TTL attacker domain that
+// returned a public IP at preflight cannot smuggle a private IP at dial.
+func (h *ProxyResolverHandler) safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if h.AllowPrivateNetworks {
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	// If the addr is already an IP literal, validate it directly.
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return nil, fmt.Errorf("dial blocked: %s resolves to private IP %s", host, ip)
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("dial blocked: resolve %s: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("dial blocked: no IPs for %s", host)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return nil, fmt.Errorf("dial blocked: %s resolves to private IP %s", host, ip)
+		}
+	}
+	// Dial the first validated IP directly so the dial uses the same
+	// resolution we just inspected. Preserves the host:port shape;
+	// SNI/Host the server gave us upstream is set elsewhere.
+	var d net.Dialer
+	return d.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+}
+
+// Forward handles ANY method on /proxy/v1/<path>. Path mapping: the request
+// path after `/proxy/v1/` becomes the upstream path verbatim.
+func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing agent token")
+		return
+	}
+
+	targetHost := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")))
+	if targetHost == "" {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_TARGET", "X-Clawvisor-Target-Host header required")
+		return
+	}
+	if h.isSelfHost(targetHost) {
+		writeJSONError(w, http.StatusForbidden, "SELF_TARGET", "target host points at the proxy itself")
+		return
+	}
+	if err := h.checkSSRF(targetHost); err != nil {
+		writeJSONError(w, http.StatusForbidden, "SSRF_BLOCKED", err.Error())
+		return
+	}
+
+	// Build the upstream URL. The path after `/proxy/v1/` is the upstream
+	// request path; query string is preserved.
+	upstreamPath := strings.TrimPrefix(r.URL.Path, "/proxy/v1")
+	if upstreamPath == "" {
+		upstreamPath = "/"
+	}
+	upstreamURL := &url.URL{
+		Scheme:   "https",
+		Host:     targetHost,
+		Path:     upstreamPath,
+		RawQuery: r.URL.RawQuery,
+	}
+
+	// Read the inbound body in full so we can replay it verbatim.
+	// (Body-embedded placeholder mutation is Phase 4.)
+	body, err := readLimited(r.Body, h.MaxRequestBytes)
+	if err != nil {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+		return
+	}
+
+	// Build outbound headers, swapping any header values that contain a
+	// shadow placeholder. The target host is the authoritative input to
+	// the bound-service host check: every placeholder swapped must allow
+	// `targetHost`.
+	outHeaders, replacedPlaceholders, err := h.swapHeaderPlaceholders(r, agent, targetHost)
+	if err != nil {
+		var apiErr *resolverAPIError
+		if errors.As(err, &apiErr) {
+			writeJSONError(w, apiErr.status, apiErr.code, apiErr.msg)
+			return
+		}
+		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: header swap failed",
+			"agent_id", agent.ID, "err", err.Error())
+		writeJSONError(w, http.StatusInternalServerError, "SWAP_ERROR", "credential swap failed")
+		return
+	}
+	if len(replacedPlaceholders) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "NO_PLACEHOLDER", "no autovault placeholder found in headers")
+		return
+	}
+
+	// Build and send the upstream request.
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(),
+		bytes.NewReader(body))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "FORWARD_ERROR", err.Error())
+		return
+	}
+	upstreamReq.Header = outHeaders
+	upstreamReq.Header.Del("X-Clawvisor-Target-Host")
+	upstreamReq.Host = targetHost
+
+	resp, err := h.Client.Do(upstreamReq)
+	if err != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: upstream call failed",
+			"agent_id", agent.ID, "host", targetHost, "err", err.Error())
+		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	for name, values := range resp.Header {
+		switch http.CanonicalHeaderKey(name) {
+		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(name, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if readErr == io.EOF {
+			return
+		}
+		if readErr != nil {
+			return
+		}
+	}
+}
+
+// resolverAPIError is an internal sentinel that swap routes can throw when
+// they want a specific HTTP status returned. Carrying it through error
+// values keeps the swap function's signature simple.
+type resolverAPIError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e *resolverAPIError) Error() string {
+	return fmt.Sprintf("%s: %s", e.code, e.msg)
+}
+
+// swapHeaderPlaceholders walks the inbound request's headers, replaces any
+// `autovault_…` substring with the corresponding vault credential, and
+// returns the resulting header map plus the list of placeholders that
+// were replaced (useful for audit + a "no placeholder => 400" guard).
+//
+// Ownership is enforced: a placeholder must belong to the same UserID +
+// AgentID as the agent authenticating the request. Mismatch throws a
+// 403 via resolverAPIError.
+//
+// Bound-service host check: every placeholder's `ServiceID` produces an
+// allowed-host set; the resolver's `targetHost` argument MUST be in that
+// set. Mismatch fails closed.
+//
+// Headers that contained the caller-auth (the agent token in
+// Authorization / x-api-key / X-Clawvisor-Caller) are stripped from
+// outbound — they are FOR US, not the upstream service. Headers that
+// carried a placeholder are forwarded with the swap applied.
+//
+// Caller-auth detection is value-shaped: a header value that begins with
+// `cvis_` (the agent token prefix) and does NOT contain an `autovault_…`
+// substring is treated as caller-auth. This means a user can cleanly send
+// `Authorization: Bearer cvis_…` for caller-auth AND
+// `X-API-Key: autovault_…` for the placeholder swap in the same request.
+func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *store.Agent, targetHost string) (http.Header, []string, error) {
+	out := make(http.Header, len(r.Header))
+	var allReplaced []string
+
+	resolve := func(placeholder string) (string, error) {
+		ph, err := h.Store.GetRuntimePlaceholder(r.Context(), placeholder)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return "", &resolverAPIError{
+					status: http.StatusUnauthorized,
+					code:   "UNKNOWN_PLACEHOLDER",
+					msg:    "placeholder not registered",
+				}
+			}
+			return "", err
+		}
+		if ph.UserID != agent.UserID || ph.AgentID != agent.ID {
+			return "", &resolverAPIError{
+				status: http.StatusForbidden,
+				code:   "PLACEHOLDER_OWNERSHIP",
+				msg:    "placeholder does not belong to the calling agent",
+			}
+		}
+		// Bound-service host check.
+		hosts := inspector.BoundServiceHosts(ph.ServiceID)
+		if len(hosts) == 0 {
+			return "", &resolverAPIError{
+				status: http.StatusForbidden,
+				code:   "BOUND_SERVICE_UNKNOWN",
+				msg:    fmt.Sprintf("no bound-service hosts for service %q", ph.ServiceID),
+			}
+		}
+		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: targetHost}, hosts); !ok {
+			return "", &resolverAPIError{
+				status: http.StatusForbidden,
+				code:   "TARGET_HOST_NOT_BOUND",
+				msg:    "target host not in placeholder's bound-service allowlist: " + reason,
+			}
+		}
+		raw, err := h.Vault.Get(r.Context(), ph.UserID, ph.ServiceID)
+		if err != nil {
+			if errors.Is(err, vault.ErrNotFound) {
+				return "", &resolverAPIError{
+					status: http.StatusUnauthorized,
+					code:   "VAULT_MISS",
+					msg:    "no vault credential bound to placeholder",
+				}
+			}
+			return "", err
+		}
+		extracted, err := autovault.ExtractCredentialValue(raw)
+		if err != nil {
+			return "", fmt.Errorf("extract credential: %w", err)
+		}
+		go func(id string) {
+			ctx := context.WithoutCancel(r.Context())
+			if err := h.Store.TouchRuntimePlaceholder(ctx, id, time.Now().UTC()); err != nil {
+				h.Logger.WarnContext(ctx, "lite-proxy resolver: touch placeholder failed",
+					"placeholder", id, "err", err.Error())
+			}
+		}(placeholder)
+		return extracted, nil
+	}
+
+	for name, values := range r.Header {
+		canonical := http.CanonicalHeaderKey(name)
+		// Strip every X-Clawvisor-* private header from the outbound
+		// request — they're for our edge, not the upstream service.
+		if strings.HasPrefix(canonical, "X-Clawvisor-") {
+			continue
+		}
+		swapped := make([]string, 0, len(values))
+		dropAll := false
+		for _, v := range values {
+			containsShadow := autovault.HeaderMaybeContainsShadow(v)
+			// Caller-auth detection: cvis_… token without a placeholder.
+			// Strip the entire header in that case.
+			if !containsShadow && looksLikeCallerAuthValue(v) {
+				dropAll = true
+				break
+			}
+			if !containsShadow {
+				swapped = append(swapped, v)
+				continue
+			}
+			replaced, hits, err := autovault.ReplaceHeaderValue(v, resolve)
+			if err != nil {
+				return nil, nil, err
+			}
+			swapped = append(swapped, replaced)
+			allReplaced = append(allReplaced, hits...)
+		}
+		if dropAll {
+			continue
+		}
+		out[canonical] = swapped
+	}
+	return out, allReplaced, nil
+}
+
+// looksLikeCallerAuthValue reports whether a header value carries the
+// Clawvisor agent caller-auth token. We strip those before forwarding so
+// a third-party upstream never sees the cvis_ token.
+func looksLikeCallerAuthValue(v string) bool {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "cvis_") {
+		return true
+	}
+	// Bearer cvis_ / Token cvis_ / etc.
+	if i := strings.IndexByte(v, ' '); i > 0 {
+		return strings.HasPrefix(strings.TrimSpace(v[i+1:]), "cvis_")
+	}
+	return false
+}
+
+// isSelfHost reports whether host is one of this deployment's own
+// hostnames. Used to refuse target-host values that would loop back
+// through Clawvisor itself. Strips an optional :port suffix before
+// comparing so `clawvisor.example:443` doesn't slip past the check.
+func (h *ProxyResolverHandler) isSelfHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return true
+	}
+	if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+		host = hostOnly
+	}
+	host = strings.TrimSuffix(host, ".")
+	for _, self := range h.SelfHostnames {
+		self = strings.TrimSpace(strings.ToLower(self))
+		if hostOnly, _, err := net.SplitHostPort(self); err == nil {
+			self = hostOnly
+		}
+		self = strings.TrimSuffix(self, ".")
+		if self == host {
+			return true
+		}
+	}
+	return false
+}
+
+// checkSSRF guards against RFC1918 / loopback / link-local destinations
+// unless AllowPrivateNetworks is set. Resolves DNS once.
+func (h *ProxyResolverHandler) checkSSRF(host string) error {
+	if h.AllowPrivateNetworks {
+		return nil
+	}
+	hostOnly := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostOnly = h
+	}
+	if ip := net.ParseIP(hostOnly); ip != nil {
+		if isPrivateIP(ip) {
+			return errors.New("target host resolves to private IP")
+		}
+		return nil
+	}
+	addrs, err := net.LookupIP(hostOnly)
+	if err != nil {
+		return fmt.Errorf("resolve target host: %w", err)
+	}
+	for _, ip := range addrs {
+		if isPrivateIP(ip) {
+			return errors.New("target host resolves to private IP")
+		}
+	}
+	return nil
+}
+
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
+}
+

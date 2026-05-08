@@ -1,0 +1,216 @@
+package llmproxy
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/store"
+)
+
+// PostprocessConfig wires the inspector + rewriter into the LLM endpoint
+// handler's response path. The handler reads the upstream response body
+// and calls Postprocess; the result is what the harness sees.
+type PostprocessConfig struct {
+	// Inspector decides whether each tool_use should be rewritten or
+	// passed through. Required.
+	Inspector *inspector.Inspector
+
+	// RewriteOpts controls how the rewriter produces the redirected
+	// tool_use input. Required when rewrite paths fire.
+	RewriteOpts inspector.RewriteOpts
+
+	// Store provides placeholder lookup for the boundary check. The
+	// validator's claimed Host is rebound to the placeholder's bound
+	// service host allowlist; mismatch fails closed. Required when
+	// rewrites are enabled.
+	Store store.Store
+
+	// AgentUserID + AgentID scope placeholder ownership to the calling
+	// agent. Required for the boundary check.
+	AgentUserID string
+	AgentID     string
+
+	// ResponseRegistry is the conversation rewriter registry. Defaults
+	// to conversation.DefaultResponseRegistry() when nil.
+	ResponseRegistry *conversation.ResponseRegistry
+}
+
+// PostprocessResult reports what happened during postprocess. The handler
+// uses it to log audit events and surface decisions.
+type PostprocessResult struct {
+	// Body is the post-processed response body to return to the harness.
+	// Identical to the input body when no rewrites applied.
+	Body []byte
+
+	// ContentType is the response Content-Type to return.
+	ContentType string
+
+	// Rewritten reports whether any tool_use was mutated.
+	Rewritten bool
+
+	// Decisions is the per-tool-use audit trail produced by the inspector.
+	Decisions []conversation.ToolUseDecisionRecord
+
+	// Skipped reports paths where rewrite logic was bypassed (e.g.
+	// streaming SSE in v0). Empty when the response was processed.
+	SkippedReason string
+}
+
+// Postprocess inspects an upstream response body and applies tool_use
+// rewrites where the inspector + boundary check allow. It honors the
+// existing block-or-pass evaluator semantics and adds the rewrite path.
+//
+// Both JSON and SSE Anthropic responses are handled; the SSE path
+// whole-buffers the upstream stream, parses it, and re-emits a
+// synthesized SSE turn with rewritten tool_use input bytes substituted
+// in. Streaming-while-rewriting (true block-by-block emit) is a future
+// optimization — the response shape the harness sees is identical.
+//
+// Returns the response body the handler should write to the harness.
+func Postprocess(req *http.Request, body []byte, contentType string, cfg PostprocessConfig) PostprocessResult {
+	if cfg.Inspector == nil {
+		return PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no inspector configured"}
+	}
+
+	registry := cfg.ResponseRegistry
+	if registry == nil {
+		registry = conversation.DefaultResponseRegistry()
+	}
+
+	// MatchesResponse on the existing rewriters checks the request's host;
+	// for the lite-proxy endpoint the host is `clawvisor.example`, not
+	// `api.anthropic.com`. Use the parser registry instead — it's
+	// route-keyed via ParserForRoute (added for lite-proxy).
+	rewriter := matchByRoute(req, registry)
+	if rewriter == nil {
+		return PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no rewriter for route"}
+	}
+
+	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
+		v := cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
+
+		// Inspector says trigger missed (no autovault placeholder),
+		// validator returned ambiguous, or it isn't an API call we should
+		// mediate — pass through unchanged.
+		if v.Source == inspector.SourceTriggerMiss {
+			return conversation.ToolUseVerdict{Allowed: true}
+		}
+		if v.Ambiguous || !v.IsAPICall {
+			// Ambiguous + autovault placeholder present == fail closed.
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: ambiguous credentialed call refused — " + v.Reason,
+			}
+		}
+
+		// Authorization boundary: the validator's `Host` is a candidate.
+		// The authoritative source is the placeholder's bound service
+		// host allowlist. Look it up and run BoundaryCheck. Mismatch =
+		// fail closed.
+		if reason, ok := boundaryCheckVerdict(req, cfg, v); !ok {
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: target host outside placeholder bound-service — " + reason,
+			}
+		}
+
+		rewritten, err := inspector.Rewrite(inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		}, v, cfg.RewriteOpts)
+		if err != nil {
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: rewriter refused — " + err.Error(),
+			}
+		}
+		return conversation.ToolUseVerdict{
+			Allowed:      true,
+			RewriteInput: rewritten,
+		}
+	}
+
+	result, err := rewriter.Rewrite(body, contentType, eval)
+	if err != nil {
+		// Fail closed: if the rewriter errored AFTER an autovault trigger
+		// fired (we won't know without inspecting input bodies, so we
+		// conservatively assume yes), the safe behavior is to refuse the
+		// response rather than pass it through with literal placeholders.
+		// Today's eval callback returns ambiguous-on-trigger-miss as
+		// Allowed:true; rewriter errors are mostly malformed-body cases.
+		// Caller decides how to surface; we mark as skipped so handlers
+		// can choose to 502 rather than write through unchanged.
+		return PostprocessResult{
+			Body:          body,
+			ContentType:   contentType,
+			SkippedReason: "rewriter error: " + err.Error(),
+		}
+	}
+	return PostprocessResult{
+		Body:        result.Body,
+		ContentType: contentType,
+		Rewritten:   result.Rewritten,
+		Decisions:   result.Decisions,
+	}
+}
+
+// boundaryCheckVerdict validates the inspector's claimed host against
+// the bound-service allowlist of every placeholder it found. Returns
+// (reason, ok). ok=false on any mismatch, ownership failure, or unknown
+// service — fail-closed by construction.
+func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.Verdict) (string, bool) {
+	if cfg.Store == nil {
+		return "no store configured for boundary check", false
+	}
+	if cfg.AgentUserID == "" || cfg.AgentID == "" {
+		return "no agent context for boundary check", false
+	}
+	if len(v.Placeholders) == 0 {
+		return "verdict missing placeholder for boundary lookup", false
+	}
+	for _, ph := range v.Placeholders {
+		rec, err := cfg.Store.GetRuntimePlaceholder(req.Context(), ph)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return "placeholder not registered", false
+			}
+			return "store error: " + err.Error(), false
+		}
+		if rec.UserID != cfg.AgentUserID || rec.AgentID != cfg.AgentID {
+			return "placeholder owned by another agent", false
+		}
+		hosts := inspector.BoundServiceHosts(rec.ServiceID)
+		if len(hosts) == 0 {
+			return "no bound-service hosts for service " + rec.ServiceID, false
+		}
+		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
+			return reason, false
+		}
+	}
+	return "", true
+}
+
+// matchByRoute resolves the response rewriter that pairs with the inbound
+// route. The conversation.ResponseRegistry's MatchesResponse depends on
+// the request's host (for runtime-proxy CONNECT use); for lite-proxy we
+// dispatch by route path instead.
+func matchByRoute(req *http.Request, registry *conversation.ResponseRegistry) conversation.ResponseRewriter {
+	if registry == nil || req == nil || req.URL == nil {
+		return nil
+	}
+	parsers := conversation.DefaultRegistry()
+	parser := parsers.ParserForRoute(req.URL.Path)
+	if parser == nil {
+		return nil
+	}
+	provider := parser.Name()
+	return registry.ForProvider(provider)
+}
+
