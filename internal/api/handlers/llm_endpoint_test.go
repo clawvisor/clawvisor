@@ -13,6 +13,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -37,6 +38,34 @@ func (s *stubVault) Get(ctx context.Context, userID, serviceID string) ([]byte, 
 }
 func (s *stubVault) Delete(ctx context.Context, userID, serviceID string) error { return nil }
 func (s *stubVault) List(ctx context.Context, userID string) ([]string, error)  { return nil, nil }
+
+func TestLiteProxyRequestDebugSummaryExtractsAvailableTools(t *testing.T) {
+	anthropic := liteProxyRequestDebugSummary(conversation.ProviderAnthropic, []byte(`{
+		"model":"claude-sonnet-4-6",
+		"stream":true,
+		"tools":[{"name":"Bash"},{"name":"Read"},{"name":"Bash"}]
+	}`))
+	if anthropic.Model != "claude-sonnet-4-6" || !anthropic.Stream {
+		t.Fatalf("unexpected anthropic summary: %+v", anthropic)
+	}
+	if strings.Join(anthropic.AvailableTools, ",") != "Bash,Read" {
+		t.Fatalf("unexpected anthropic tools: %+v", anthropic.AvailableTools)
+	}
+
+	openai := liteProxyRequestDebugSummary(conversation.ProviderOpenAI, []byte(`{
+		"model":"gpt-5.4",
+		"tools":[
+			{"type":"function","function":{"name":"shell"}},
+			{"type":"web_search","name":"web_search"}
+		]
+	}`))
+	if openai.Model != "gpt-5.4" {
+		t.Fatalf("unexpected openai summary: %+v", openai)
+	}
+	if strings.Join(openai.AvailableTools, ",") != "shell,web_search" {
+		t.Fatalf("unexpected openai tools: %+v", openai.AvailableTools)
+	}
+}
 
 func newSeededHandler(t *testing.T, upstreamURL string) (*LLMEndpointHandler, store.Store, string, string) {
 	t.Helper()

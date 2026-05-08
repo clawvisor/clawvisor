@@ -614,6 +614,7 @@ export interface ActivityBucket {
 
 export interface RuntimeStatus {
   enabled: boolean
+  proxy_lite_enabled?: boolean
   proxy_url: string
   observation_mode_default: boolean
   inline_approval_enabled: boolean
@@ -682,6 +683,16 @@ export interface RuntimePolicyRule {
   last_matched_at?: string
   created_at: string
   updated_at: string
+}
+
+export interface RuntimeToolControl {
+  agent_id: string
+  tool_name: string
+  action: 'allow' | 'review' | 'deny'
+  rule_id?: string
+  source: 'default' | 'request' | 'observed' | 'rule'
+  last_seen_at?: string
+  advanced_rule_count: number
 }
 
 export interface RuntimeRuleCandidate {
@@ -1220,6 +1231,10 @@ export const api = {
         agent_id: params?.agent_id,
         enabled: params?.enabled === undefined ? undefined : (params.enabled ? 'true' : 'false'),
       }),
+    listToolControls: (agentId: string) =>
+      get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
+    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) =>
+      put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),
     updateRule: (id: string, rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>

@@ -195,6 +195,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	auditParams["model"] = reqSummary.Model
 	auditParams["stream"] = reqSummary.Stream
 	auditParams["request_body_bytes"] = len(body)
+	auditParams["available_tools"] = reqSummary.AvailableTools
 	h.Logger.DebugContext(r.Context(), "lite-proxy request accepted",
 		"request_id", requestID,
 		"agent_id", agent.ID,
@@ -203,6 +204,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"path", r.URL.RequestURI(),
 		"model", reqSummary.Model,
 		"stream", reqSummary.Stream,
+		"available_tools", reqSummary.AvailableTools,
 		"auth_mode", liteProxyAuthMode(r),
 		"body_bytes", len(body),
 		"inspector_enabled", h.Inspector != nil,
@@ -576,8 +578,9 @@ func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPost
 }
 
 type liteProxyRequestSummary struct {
-	Model  string
-	Stream bool
+	Model          string
+	Stream         bool
+	AvailableTools []string
 }
 
 func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) liteProxyRequestSummary {
@@ -587,22 +590,51 @@ func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) l
 		var req struct {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`
+			Tools  []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
 		}
 		if err := json.Unmarshal(body, &req); err == nil {
 			summary.Model = req.Model
 			summary.Stream = req.Stream
+			for _, tool := range req.Tools {
+				summary.AvailableTools = appendToolName(summary.AvailableTools, tool.Name)
+			}
 		}
 	case conversation.ProviderOpenAI:
 		var req struct {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`
+			Tools  []struct {
+				Type     string `json:"type"`
+				Name     string `json:"name"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
 		}
 		if err := json.Unmarshal(body, &req); err == nil {
 			summary.Model = req.Model
 			summary.Stream = req.Stream
+			for _, tool := range req.Tools {
+				summary.AvailableTools = appendToolName(summary.AvailableTools, firstNonEmptyLog(tool.Name, tool.Function.Name))
+			}
 		}
 	}
 	return summary
+}
+
+func appendToolName(tools []string, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return tools
+	}
+	for _, existing := range tools {
+		if existing == name {
+			return tools
+		}
+	}
+	return append(tools, name)
 }
 
 func liteProxyAuthMode(r *http.Request) string {

@@ -174,6 +174,8 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.GetRule)))
 			mux.Handle("PUT /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.UpdateRule)))
 			mux.Handle("DELETE /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.DeleteRule)))
+			mux.Handle("GET /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.ListToolControls)))
+			mux.Handle("PUT /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.UpsertToolControl)))
 			mux.Handle("GET /api/runtime/starter-profiles", user(http.HandlerFunc(runtimeHandler.ListStarterProfiles)))
 			mux.Handle("POST /api/runtime/starter-profiles/{profile}/apply", user(http.HandlerFunc(runtimeHandler.ApplyStarterProfile)))
 			mux.Handle("GET /api/runtime/preset-decisions", user(http.HandlerFunc(runtimeHandler.GetPresetDecision)))

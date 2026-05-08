@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
@@ -122,6 +122,115 @@ func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
 	}
 	if decision.Decision != "always_skip" {
 		t.Fatalf("expected always_skip decision, got %+v", decision)
+	}
+}
+
+func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "claude-code", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.LogAudit(ctx, &store.AuditEntry{
+		ID:        "audit-tools-request",
+		UserID:    user.ID,
+		AgentID:   &agent.ID,
+		RequestID: "req-1",
+		Timestamp: time.Now().UTC(),
+		Service:   "anthropic",
+		Action:    "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{
+			"event":"lite_proxy.endpoint_call",
+			"available_tools":["Bash","Read"]
+		}`),
+		Decision: "allow",
+		Outcome:  "success",
+	}); err != nil {
+		t.Fatalf("LogAudit(endpoint): %v", err)
+	}
+	if err := st.LogAudit(ctx, &store.AuditEntry{
+		ID:        "audit-tool-use",
+		UserID:    user.ID,
+		AgentID:   &agent.ID,
+		RequestID: "req-2",
+		Timestamp: time.Now().UTC().Add(time.Second),
+		Service:   "runtime.tool_use",
+		Action:    "lite_proxy.tool_use.allow",
+		ParamsSafe: json.RawMessage(`{
+			"event":"lite_proxy.tool_use_inspected",
+			"tool_name":"Write"
+		}`),
+		Decision: "allow",
+		Outcome:  "task_scope_missing",
+	}); err != nil {
+		t.Fatalf("LogAudit(tool): %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	listReq = listReq.WithContext(context.WithValue(listReq.Context(), middleware.UserContextKey, user))
+	listRes := httptest.NewRecorder()
+	h.ListToolControls(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", listRes.Code, listRes.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+		Total   int                          `json:"total"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	if listed.Total != 3 {
+		t.Fatalf("expected 3 discovered tools, got %+v", listed)
+	}
+
+	upsertReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"action":"review"
+	}`)))
+	upsertReq = upsertReq.WithContext(context.WithValue(upsertReq.Context(), middleware.UserContextKey, user))
+	upsertRes := httptest.NewRecorder()
+	h.UpsertToolControl(upsertRes, upsertReq)
+	if upsertRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl status=%d body=%s", upsertRes.Code, upsertRes.Body.String())
+	}
+	rules, err := st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].ToolName != "Bash" || rules[0].Action != "review" {
+		t.Fatalf("expected one Bash review rule, got %+v", rules)
+	}
+
+	allowReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"action":"allow"
+	}`)))
+	allowReq = allowReq.WithContext(context.WithValue(allowReq.Context(), middleware.UserContextKey, user))
+	allowRes := httptest.NewRecorder()
+	h.UpsertToolControl(allowRes, allowReq)
+	if allowRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl allow status=%d body=%s", allowRes.Code, allowRes.Body.String())
+	}
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after allow: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("allow should remove broad tool-control rule, got %+v", rules)
 	}
 }
 

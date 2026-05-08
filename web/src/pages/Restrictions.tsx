@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type ServiceInfo } from '../api/client'
+import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type RuntimeToolControl, type ServiceInfo } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { serviceName, actionName } from '../lib/services'
 import {
@@ -309,10 +309,11 @@ export default function Policy() {
     queryFn: () => api.runtime.status(),
     enabled: runtimePolicyUI,
   })
+  const proxyLiteOnly = runtimePolicyUI && !!status?.proxy_lite_enabled && !status.enabled
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: runtimePolicyUI,
+    enabled: runtimePolicyUI && !proxyLiteOnly,
     refetchInterval: 15_000,
   })
   const { data: egressRules } = useQuery({
@@ -325,10 +326,15 @@ export default function Policy() {
     queryFn: () => api.runtime.listRules({ kind: 'tool', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
     enabled: runtimePolicyUI,
   })
+  const { data: toolControls } = useQuery({
+    queryKey: ['runtime-tool-controls', agentFilter],
+    queryFn: () => api.runtime.listToolControls(agentFilter),
+    enabled: proxyLiteOnly && agentFilter !== 'all',
+  })
   const { data: starterProfiles } = useQuery({
     queryKey: ['runtime-starter-profiles'],
     queryFn: () => api.runtime.listStarterProfiles(),
-    enabled: runtimePolicyUI,
+    enabled: runtimePolicyUI && !proxyLiteOnly,
   })
   const isLoading = servicesLoading || restrictionsLoading
   const allServices = servicesData?.services ?? []
@@ -340,6 +346,7 @@ export default function Policy() {
 
   const refreshRuntime = () => {
     qc.invalidateQueries({ queryKey: ['runtime-rules'] })
+    qc.invalidateQueries({ queryKey: ['runtime-tool-controls'] })
     qc.invalidateQueries({ queryKey: ['runtime-approvals'] })
     qc.invalidateQueries({ queryKey: ['runtime-sessions'] })
     qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -365,6 +372,10 @@ export default function Policy() {
     mutationFn: (ruleId: string) => api.runtime.deleteRule(ruleId),
     onSuccess: refreshRuntime,
   })
+  const updateToolControlMut = useMutation({
+    mutationFn: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) => api.runtime.updateToolControl(control),
+    onSuccess: refreshRuntime,
+  })
 
   const startCreateRule = (kind: 'egress' | 'tool') => {
     setEditingRule(kind === 'egress' ? emptyEgressRule() : emptyToolRule())
@@ -376,14 +387,22 @@ export default function Policy() {
     }
   }, [runtimePolicyUI, rulesTab])
 
+  useEffect(() => {
+    if (proxyLiteOnly && agentFilter === 'all' && agents.length > 0) {
+      setAgentFilter(agents[0].id)
+    }
+  }, [proxyLiteOnly, agentFilter, agents])
+
   return (
     <div className="p-4 sm:p-8 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Policy</h1>
           <p className="text-sm text-text-tertiary mt-1">
-            {runtimePolicyUI || servicePresetsUI
-              ? 'Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.'
+            {proxyLiteOnly
+              ? 'Choose how this harness may use LLM tools.'
+              : runtimePolicyUI || servicePresetsUI
+                ? 'Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.'
               : 'Configure service restrictions for your connected adapters and integrations.'}
           </p>
         </div>
@@ -404,14 +423,14 @@ export default function Policy() {
         )}
       </div>
 
-      {runtimePolicyUI && status && (
+      {runtimePolicyUI && status && !proxyLiteOnly && (
         <RuntimeStatusPanel
           status={status}
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
         />
       )}
 
-      {runtimePolicyUI && (
+      {runtimePolicyUI && !proxyLiteOnly && (
         <StarterProfilesPanel
           profiles={starterProfiles?.entries ?? []}
           agents={agents}
@@ -420,7 +439,7 @@ export default function Policy() {
         />
       )}
 
-      {servicePresetsUI && (
+      {servicePresetsUI && !proxyLiteOnly && (
         <ServicePresetsPanel
           agents={agents}
           agentFilter={agentFilter}
@@ -442,29 +461,152 @@ export default function Policy() {
         />
       )}
 
-      <PolicyRulesPanel
-        orgId={orgId}
-        rulesTab={rulesTab}
-        onTabChange={setRulesTab}
-        serviceRuleCount={allRestrictions.length}
-        egressRuleCount={egressRules?.entries?.length ?? 0}
-        toolRuleCount={toolRules?.entries?.length ?? 0}
-        runtimePolicyUI={runtimePolicyUI}
-        isLoading={isLoading}
-        allServices={allServices}
-        activated={activated}
-        unactivated={unactivated}
-        restrictions={allRestrictions}
-        showAll={showAll}
-        onToggleShowAll={() => setShowAll(s => !s)}
-        agents={agentMap}
-        egressRules={egressRules?.entries ?? []}
-        toolRules={toolRules?.entries ?? []}
-        onNewRule={startCreateRule}
-        onEditRule={setEditingRule}
-        onToggleRule={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-        onDeleteRule={(rule) => deleteRuleMut.mutate(rule.id)}
-      />
+      {proxyLiteOnly ? (
+        <ProxyLiteToolControlsPanel
+          agentId={agentFilter}
+          controls={toolControls?.entries ?? []}
+          busy={updateToolControlMut.isPending}
+          onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
+          onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
+        />
+      ) : (
+        <PolicyRulesPanel
+          orgId={orgId}
+          rulesTab={rulesTab}
+          onTabChange={setRulesTab}
+          serviceRuleCount={allRestrictions.length}
+          egressRuleCount={egressRules?.entries?.length ?? 0}
+          toolRuleCount={toolRules?.entries?.length ?? 0}
+          runtimePolicyUI={runtimePolicyUI}
+          isLoading={isLoading}
+          allServices={allServices}
+          activated={activated}
+          unactivated={unactivated}
+          restrictions={allRestrictions}
+          showAll={showAll}
+          onToggleShowAll={() => setShowAll(s => !s)}
+          agents={agentMap}
+          egressRules={egressRules?.entries ?? []}
+          toolRules={toolRules?.entries ?? []}
+          onNewRule={startCreateRule}
+          onEditRule={setEditingRule}
+          onToggleRule={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+          onDeleteRule={(rule) => deleteRuleMut.mutate(rule.id)}
+        />
+      )}
+    </div>
+  )
+}
+
+function ProxyLiteToolControlsPanel({
+  agentId,
+  controls,
+  busy,
+  onChange,
+  onAdvanced,
+}: {
+  agentId: string
+  controls: RuntimeToolControl[]
+  busy: boolean
+  onChange: (toolName: string, action: 'allow' | 'review' | 'deny') => void
+  onAdvanced: (toolName: string) => void
+}) {
+  const needsAgent = agentId === 'all'
+  return (
+    <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-text-primary">Tool Controls</h2>
+          <p className="text-sm text-text-tertiary mt-1">
+            Tools are detected from the harness request body and from recent tool calls.
+          </p>
+        </div>
+      </div>
+
+      {needsAgent && (
+        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+          Select an agent to configure its tool controls.
+        </div>
+      )}
+
+      {!needsAgent && controls.length === 0 && (
+        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+          No tools discovered yet. Run the harness once and this list will populate from its request.
+        </div>
+      )}
+
+      {!needsAgent && controls.length > 0 && (
+        <div className="divide-y divide-border-subtle rounded border border-border-subtle bg-surface-0">
+          {controls.map(control => (
+            <div key={control.tool_name} className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
+                  <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-text-tertiary">{control.source}</span>
+                  {control.advanced_rule_count > 0 && (
+                    <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
+                      {control.advanced_rule_count} advanced
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {control.last_seen_at ? `Last seen ${new Date(control.last_seen_at).toLocaleString()}` : 'Not seen yet'}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
+                <button
+                  onClick={() => onAdvanced(control.tool_name)}
+                  className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
+                >
+                  Advanced
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SegmentedToolAction({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: 'allow' | 'review' | 'deny'
+  disabled?: boolean
+  onChange: (action: 'allow' | 'review' | 'deny') => void
+}) {
+  const options: Array<{ value: 'allow' | 'review' | 'deny'; label: string }> = [
+    { value: 'allow', label: 'Allow' },
+    { value: 'review', label: 'Ask' },
+    { value: 'deny', label: 'Block' },
+  ]
+  return (
+    <div className="inline-flex rounded-md border border-border-default bg-surface-1 p-1">
+      {options.map(option => {
+        const active = value === option.value
+        return (
+          <button
+            key={option.value}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            className={`rounded px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+              active
+                ? option.value === 'allow'
+                  ? 'bg-success/15 text-success'
+                  : option.value === 'deny'
+                    ? 'bg-danger/15 text-danger'
+                    : 'bg-warning/15 text-warning'
+                : 'text-text-tertiary hover:text-text-primary'
+            }`}
+          >
+            {option.label}
+          </button>
+        )
+      })}
     </div>
   )
 }
