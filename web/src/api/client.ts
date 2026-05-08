@@ -1291,6 +1291,30 @@ export const api = {
     update: (provider: string, endpoint: string, apiKey: string, model: string) =>
       put<{ status: string; warning?: string }>('/api/llm', { provider, endpoint, api_key: apiKey, model }),
   },
+  // Lite-proxy upstream LLM credentials (separate from /api/llm which is
+  // the daemon's own intent verifier key). These keys are what the
+  // lite-proxy swaps in when forwarding /v1/messages and /v1/chat/completions
+  // to api.anthropic.com / api.openai.com. agent_id scopes the credential
+  // to a specific agent — when omitted, it's stored at the user level.
+  llmCredentials: {
+    list: (agentId?: string) =>
+      get<{ credentials: { provider: string; stored: boolean; agent_stored?: boolean; agent_id?: string }[] }>(
+        agentId ? `/api/runtime/llm-credentials?agent_id=${encodeURIComponent(agentId)}` : '/api/runtime/llm-credentials',
+      ),
+    set: (provider: string, apiKey: string, agentId?: string) =>
+      put<{ provider: string; service_id: string; status: string; agent_id?: string }>(
+        agentId
+          ? `/api/runtime/llm-credentials/${provider}?agent_id=${encodeURIComponent(agentId)}`
+          : `/api/runtime/llm-credentials/${provider}`,
+        { api_key: apiKey },
+      ),
+    delete: (provider: string, agentId?: string) =>
+      del<void>(
+        agentId
+          ? `/api/runtime/llm-credentials/${provider}?agent_id=${encodeURIComponent(agentId)}`
+          : `/api/runtime/llm-credentials/${provider}`,
+      ),
+  },
   system: {
     getGoogleOAuth: () =>
       get<{ configured: boolean }>('/api/system/google-oauth'),
