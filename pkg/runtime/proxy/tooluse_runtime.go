@@ -15,11 +15,12 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
+	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -324,29 +325,34 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		input := decodeToolInput(tu.Input)
 		key := toolDecisionKey(tu)
-		if matchedRule, err := runtimepolicy.MatchRuntimePolicyTool(rules, st.Session.AgentID, tu.Name, input); err == nil && matchedRule != nil {
+		ruleDecision, err := runtimedecision.EvaluateAuthorization(ctx.Req.Context(), runtimedecision.AuthorizationInput{
+			ToolUse:   tu,
+			UserID:    st.Session.UserID,
+			AgentID:   st.Session.AgentID,
+			Posture:   runtimeDecisionPosture(st.Session),
+			ToolRules: rules,
+		})
+		if err == nil && ruleDecision.Rule != nil {
+			matchedRule := ruleDecision.Rule
 			_ = hooks.Store.TouchRuntimePolicyRule(ctx.Req.Context(), matchedRule.ID, time.Now().UTC())
-			switch strings.ToLower(matchedRule.Action) {
-			case "allow":
+			switch ruleDecision.Source {
+			case runtimedecision.SourceRuleAllow:
 				decisionState[key] = toolDecisionState{Rule: matchedRule}
-				if st.Session.ObservationMode {
-					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime allow rule matched this tool call")}
-				}
-				return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "runtime allow rule matched this tool call")}
-			case "deny":
-				if st.Session.ObservationMode {
+				return conversation.ToolUseVerdict{Allowed: true, Reason: ruleDecision.Reason}
+			case runtimedecision.SourceRuleDeny:
+				if ruleDecision.ObservationEffect == runtimedecision.ObservationWouldBlock {
 					decisionState[key] = toolDecisionState{Rule: matchedRule, WouldBlock: true}
-					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime deny rule would block this tool call")}
+					return conversation.ToolUseVerdict{Allowed: true, Reason: ruleDecision.Reason}
 				}
 				decisionState[key] = toolDecisionState{Rule: matchedRule, DeniedByRule: true}
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
-					Reason:         firstNonEmpty(matchedRule.Reason, "runtime deny rule blocked this tool call"),
+					Reason:         ruleDecision.Reason,
 					SubstituteWith: "This tool call was blocked by Clawvisor runtime policy.",
 				}
-			case "review":
-				reviewReason := firstNonEmpty(matchedRule.Reason, "runtime review rule matched this tool call")
-				if st.Session.ObservationMode {
+			case runtimedecision.SourceRuleReview:
+				reviewReason := ruleDecision.Reason
+				if ruleDecision.ObservationEffect == runtimedecision.ObservationWouldReview {
 					decisionState[key] = toolDecisionState{
 						Rule:              matchedRule,
 						Task:              reviewTask,
@@ -675,6 +681,13 @@ type toolDecisionState struct {
 	DeniedByRule            bool
 	ApprovalCreateFailed    bool
 	FailureReason           string
+}
+
+func runtimeDecisionPosture(session *store.RuntimeSession) runtimedecision.EvaluationPosture {
+	if session != nil && session.ObservationMode {
+		return runtimedecision.PostureObserve
+	}
+	return runtimedecision.PostureEnforce
 }
 
 func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any) (*store.ApprovalRecord, *review.HeldApproval, string) {
