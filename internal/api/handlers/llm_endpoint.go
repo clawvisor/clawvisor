@@ -578,117 +578,19 @@ func (v liteDecisionIntentVerifier) Verify(ctx context.Context, req runtimedecis
 }
 
 func liteApprovalReply(provider conversation.Provider, body []byte) (verb, id string) {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return parseLiteAnthropicApprovalReply(body)
-	case conversation.ProviderOpenAI:
-		return conversation.OpenAIApprovalReply(body)
-	default:
-		return "", ""
-	}
-}
-
-func parseLiteAnthropicApprovalReply(body []byte) (verb, id string) {
-	var req struct {
-		Messages []struct {
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
-		} `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", ""
-	}
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role != "user" {
-			continue
-		}
-		return conversation.ParseApprovalReplyText(flattenLiteAnthropicText(req.Messages[i].Content))
-	}
-	return "", ""
-}
-
-func flattenLiteAnthropicText(raw json.RawMessage) string {
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, block := range blocks {
-		if block.Type == "text" {
-			if b.Len() > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString(block.Text)
-		}
-	}
-	return b.String()
+	return conversation.ApprovalReplyForProvider(provider, body)
 }
 
 func writeLiteSynthetic(w http.ResponseWriter, r *http.Request, provider conversation.Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any) {
-	contentType := "application/json"
-	var body []byte
-	msg := "Approval denied. The requested tool call was not performed."
-	switch provider {
-	case conversation.ProviderAnthropic:
-		stream := conversation.AnthropicRequestWantsStream(requestBody)
-		if allow {
-			if stream {
-				contentType = "text/event-stream"
-				body = conversation.SynthAnthropicToolUseSSE("", "", "assistant", toolUseID, toolName, toolInput)
-			} else {
-				body = conversation.SynthAnthropicToolUseJSON("", "", "assistant", toolUseID, toolName, toolInput)
-			}
-		} else if stream {
-			contentType = "text/event-stream"
-			body = conversation.SynthAnthropicTextSSE("", "", "assistant", msg)
-		} else {
-			body = conversation.SynthAnthropicTextJSON("", "", "assistant", msg)
-		}
-	case conversation.ProviderOpenAI:
-		stream := conversation.OpenAIRequestWantsStream(requestBody)
-		if conversation.IsOpenAIChatCompletionsEndpoint(r) {
-			if allow {
-				if stream {
-					contentType = "text/event-stream"
-					body = conversation.SynthOpenAIChatToolCallSSE(toolUseID, toolName, toolInput)
-				} else {
-					body = conversation.SynthOpenAIChatToolCallJSON(toolUseID, toolName, toolInput)
-				}
-			} else if stream {
-				contentType = "text/event-stream"
-				body = conversation.SynthOpenAIChatTextSSE(msg)
-			} else {
-				body = conversation.SynthOpenAIChatTextJSON(msg)
-			}
-		} else if allow {
-			if stream {
-				contentType = "text/event-stream"
-				body = conversation.SynthOpenAIResponsesFunctionCallSSE(toolUseID, toolName, toolInput)
-			} else {
-				body = conversation.SynthOpenAIResponsesFunctionCallJSON(toolUseID, toolName, toolInput)
-			}
-		} else if stream {
-			contentType = "text/event-stream"
-			body = conversation.SynthOpenAIResponsesTextSSE(msg)
-		} else {
-			body = conversation.SynthOpenAIResponsesTextJSON(msg)
-		}
-	}
-	if len(body) == 0 {
+	synth, ok := conversation.SyntheticApprovalToolUseResponse(r, provider, requestBody, allow, toolUseID, toolName, toolInput)
+	if !ok {
 		writeJSONError(w, http.StatusBadRequest, "APPROVAL_RELEASE_UNSUPPORTED", "unsupported approval release provider")
 		return
 	}
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", synth.ContentType)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, bytes.NewReader(body))
+	_, _ = io.Copy(w, bytes.NewReader(synth.Body))
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's
