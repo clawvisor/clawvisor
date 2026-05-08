@@ -173,6 +173,46 @@ func TestOpenAIResponseRewriterBlocksChatToolCallsSSE(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseRewriterBlocksResponsesFunctionCallSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := SynthOpenAIResponsesFunctionCallSSE("call_1", "exec_command", map[string]any{
+		"cmd": "cat /tmp/hello_world.sh",
+	})
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "Ask before running exec_command",
+			SubstituteWith: "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it.",
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE response")
+	}
+	out := string(result.Body)
+	if !strings.Contains(out, "Reply `approve`") {
+		t.Fatalf("expected inline approval prompt in SSE output, got %q", out)
+	}
+	if !strings.Contains(out, `"output_text":"Clawvisor paused this tool call`) {
+		t.Fatalf("expected final response.completed output_text for Codex clients, got %q", out)
+	}
+	if !strings.Contains(out, `"content":[{"text":"Clawvisor paused this tool call`) {
+		t.Fatalf("expected completed message item content for Codex clients, got %q", out)
+	}
+	if !strings.Contains(out, "data: [DONE]") {
+		t.Fatalf("expected [DONE] terminator, got %q", out)
+	}
+}
+
 func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 	t.Parallel()
 

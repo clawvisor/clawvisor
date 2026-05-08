@@ -49,22 +49,22 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletions(body []byte, contentType
 }
 
 type openAIResponsesJSON struct {
-	ID        string                     `json:"id,omitempty"`
-	Object    string                     `json:"object,omitempty"`
-	Model     string                     `json:"model,omitempty"`
-	Output    []openAIResponseOutputItem `json:"output,omitempty"`
-	OutputText string                    `json:"output_text,omitempty"`
+	ID         string                     `json:"id,omitempty"`
+	Object     string                     `json:"object,omitempty"`
+	Model      string                     `json:"model,omitempty"`
+	Output     []openAIResponseOutputItem `json:"output,omitempty"`
+	OutputText string                     `json:"output_text,omitempty"`
 }
 
 type openAIResponseOutputItem struct {
-	ID        string                    `json:"id,omitempty"`
-	Type      string                    `json:"type"`
-	Role      string                    `json:"role,omitempty"`
-	Status    string                    `json:"status,omitempty"`
-	CallID    string                    `json:"call_id,omitempty"`
-	Name      string                    `json:"name,omitempty"`
-	Arguments any                       `json:"arguments,omitempty"`
-	Content   []openAIResponseContent   `json:"content,omitempty"`
+	ID        string                  `json:"id,omitempty"`
+	Type      string                  `json:"type"`
+	Role      string                  `json:"role,omitempty"`
+	Status    string                  `json:"status,omitempty"`
+	CallID    string                  `json:"call_id,omitempty"`
+	Name      string                  `json:"name,omitempty"`
+	Arguments any                     `json:"arguments,omitempty"`
+	Content   []openAIResponseContent `json:"content,omitempty"`
 }
 
 type openAIResponseContent struct {
@@ -180,7 +180,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 		switch event.Event {
 		case "response.output_item.added":
 			var raw struct {
-				OutputIndex int                    `json:"output_index"`
+				OutputIndex int                      `json:"output_index"`
 				Item        openAIResponseOutputItem `json:"item"`
 			}
 			if err := json.Unmarshal([]byte(event.Data), &raw); err != nil {
@@ -242,7 +242,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 			b.WriteString(raw.Delta)
 		case "response.output_item.done":
 			var raw struct {
-				OutputIndex int                    `json:"output_index"`
+				OutputIndex int                      `json:"output_index"`
 				Item        openAIResponseOutputItem `json:"item"`
 			}
 			if err := json.Unmarshal([]byte(event.Data), &raw); err != nil {
@@ -437,17 +437,17 @@ type orderedResponsesItem struct {
 }
 
 type openAIChatCompletionsResponse struct {
-	ID      string                     `json:"id,omitempty"`
-	Object  string                     `json:"object,omitempty"`
-	Model   string                     `json:"model,omitempty"`
-	Choices []openAIChatChoice         `json:"choices,omitempty"`
+	ID      string             `json:"id,omitempty"`
+	Object  string             `json:"object,omitempty"`
+	Model   string             `json:"model,omitempty"`
+	Choices []openAIChatChoice `json:"choices,omitempty"`
 }
 
 type openAIChatChoice struct {
-	Index        int                 `json:"index"`
-	Message      openAIChatMessage   `json:"message"`
-	Delta        openAIChatMessage   `json:"delta"`
-	FinishReason string              `json:"finish_reason,omitempty"`
+	Index        int               `json:"index"`
+	Message      openAIChatMessage `json:"message"`
+	Delta        openAIChatMessage `json:"delta"`
+	FinishReason string            `json:"finish_reason,omitempty"`
 }
 
 type openAIChatMessage struct {
@@ -457,10 +457,10 @@ type openAIChatMessage struct {
 }
 
 type openAIChatToolCall struct {
-	Index    int                 `json:"index,omitempty"`
-	ID       string              `json:"id,omitempty"`
-	Type     string              `json:"type,omitempty"`
-	Function openAIChatFunction  `json:"function"`
+	Index    int                `json:"index,omitempty"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function openAIChatFunction `json:"function"`
 }
 
 type openAIChatFunction struct {
@@ -595,27 +595,27 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 					pc.args.WriteString(tc.Function.Arguments)
 				}
 			}
-				if choice.FinishReason == "tool_calls" {
-					if text.Len() > 0 {
-						frags = append(frags, assistantFragment{Text: text.String()})
-						text.Reset()
+			if choice.FinishReason == "tool_calls" {
+				if text.Len() > 0 {
+					frags = append(frags, assistantFragment{Text: text.String()})
+					text.Reset()
+				}
+				toolCallIndexes := make([]int, 0, len(pending))
+				for toolCallIndex := range pending {
+					toolCallIndexes = append(toolCallIndexes, toolCallIndex)
+				}
+				sort.Ints(toolCallIndexes)
+				for _, toolCallIndex := range toolCallIndexes {
+					pc := pending[toolCallIndex]
+					tu := ToolUse{
+						ID:    pc.id,
+						Index: toolCallIndex,
+						Name:  pc.name,
+						Input: rawIfJSONOpenAI(pc.args.String()),
 					}
-					toolCallIndexes := make([]int, 0, len(pending))
-					for toolCallIndex := range pending {
-						toolCallIndexes = append(toolCallIndexes, toolCallIndex)
-					}
-					sort.Ints(toolCallIndexes)
-					for _, toolCallIndex := range toolCallIndexes {
-						pc := pending[toolCallIndex]
-						tu := ToolUse{
-							ID:    pc.id,
-							Index: toolCallIndex,
-							Name:  pc.name,
-							Input: rawIfJSONOpenAI(pc.args.String()),
-						}
-						verdict := eval(tu)
-						decisions = append(decisions, ToolUseDecisionRecord{
-							ToolUse:          tu,
+					verdict := eval(tu)
+					decisions = append(decisions, ToolUseDecisionRecord{
+						ToolUse:          tu,
 						Verdict:          verdict,
 						ToolInputPreview: MakeToolInputPreview(tu.Input),
 					})
@@ -824,6 +824,16 @@ func SynthOpenAIChatToolCallSSE(toolUseID, toolName string, toolInput map[string
 
 func synthOpenAIResponsesTextSSE(text string) []byte {
 	var b strings.Builder
+	messageItem := map[string]any{
+		"id":     "msg_clawvisor_block",
+		"type":   "message",
+		"role":   "assistant",
+		"status": "completed",
+		"content": []map[string]any{{
+			"type": "output_text",
+			"text": text,
+		}},
+	}
 	b.WriteString(sseEventBlock("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_clawvisor_block", "status": "in_progress"}}))
 	b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
 		"type":         "response.output_item.added",
@@ -861,9 +871,18 @@ func synthOpenAIResponsesTextSSE(text string) []byte {
 	b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
 		"type":         "response.output_item.done",
 		"output_index": 0,
-		"item":         map[string]any{"id": "msg_clawvisor_block", "type": "message", "role": "assistant", "status": "completed"},
+		"item":         messageItem,
 	}))
-	b.WriteString(sseEventBlock("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_clawvisor_block", "status": "completed"}}))
+	b.WriteString(sseEventBlock("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":          "resp_clawvisor_block",
+			"status":      "completed",
+			"output":      []map[string]any{messageItem},
+			"output_text": text,
+		},
+	}))
+	b.WriteString("data: [DONE]\n\n")
 	return []byte(b.String())
 }
 
