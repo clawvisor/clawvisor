@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -76,11 +77,11 @@ func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testi
 	}
 }
 
-func TestMemoryPendingApprovalCacheHoldSupersedesSameScope(t *testing.T) {
+func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
 
-	first, err := cache.Hold(ctx, PendingLiteApproval{
+	_, err := cache.Hold(ctx, PendingLiteApproval{
 		ID:       "cv-first",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
@@ -89,7 +90,7 @@ func TestMemoryPendingApprovalCacheHoldSupersedesSameScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := cache.Hold(ctx, PendingLiteApproval{
+	_, err = cache.Hold(ctx, PendingLiteApproval{
 		ID:       "cv-second",
 		UserID:   "user-1",
 		AgentID:  "agent-1",
@@ -98,8 +99,87 @@ func TestMemoryPendingApprovalCacheHoldSupersedesSameScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Evicted == nil || second.Evicted.ID != first.Pending.ID {
-		t.Fatalf("evicted = %+v, want first", second.Evicted)
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != "cv-first" {
+		t.Fatalf("resolved = %+v, want first", resolved)
+	}
+	resolved, err = cache.Resolve(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != "cv-second" {
+		t.Fatalf("resolved = %+v, want second", resolved)
+	}
+}
+
+func TestMemoryPendingApprovalCacheExplicitIDResolvesMatchingPending(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	for _, id := range []string{"cv-first", "cv-second"} {
+		if _, err := cache.Hold(ctx, PendingLiteApproval{
+			ID:       id,
+			UserID:   "user-1",
+			AgentID:  "agent-1",
+			Provider: conversation.ProviderAnthropic,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != "cv-second" {
+		t.Fatalf("resolved = %+v, want second", resolved)
+	}
+	resolved, err = cache.Resolve(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != "cv-first" {
+		t.Fatalf("resolved = %+v, want first still pending", resolved)
+	}
+}
+
+func TestMemoryPendingApprovalCacheEvictsOldestOnOverflow(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	cache.max = 2
+	ctx := context.Background()
+
+	for _, id := range []string{"cv-first", "cv-second", "cv-third"} {
+		held, err := cache.Hold(ctx, PendingLiteApproval{
+			ID:       id,
+			UserID:   "user-1",
+			AgentID:  "agent-1",
+			Provider: conversation.ProviderAnthropic,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id == "cv-third" && (held.Evicted == nil || held.Evicted.ID != "cv-first") {
+			t.Fatalf("evicted = %+v, want first", held.Evicted)
+		}
 	}
 	resolved, err := cache.Resolve(ctx, ResolveRequest{
 		UserID:   "user-1",
@@ -140,5 +220,23 @@ func TestMemoryPendingApprovalCacheExpires(t *testing.T) {
 	}
 	if resolved != nil {
 		t.Fatalf("expired approval resolved: %+v", resolved)
+	}
+}
+
+func TestMemoryPendingApprovalCacheFailsClosedWhenIDGenerationFails(t *testing.T) {
+	old := liteApprovalRandRead
+	liteApprovalRandRead = func(_ []byte) (int, error) {
+		return 0, errors.New("no entropy")
+	}
+	t.Cleanup(func() { liteApprovalRandRead = old })
+
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	_, err := cache.Hold(context.Background(), PendingLiteApproval{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err == nil || !strings.Contains(err.Error(), "generate approval id") {
+		t.Fatalf("Hold error = %v, want ID generation error", err)
 	}
 }

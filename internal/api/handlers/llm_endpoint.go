@@ -64,8 +64,8 @@ type LLMEndpointHandler struct {
 	// is not enforced.
 	IntentVerifier llmproxy.IntentVerifier
 
-	// PendingApprovals buffers one proxy-lite tool_use awaiting a bare
-	// approve/deny reply per user/agent/provider.
+	// PendingApprovals buffers proxy-lite tool_uses awaiting bare
+	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.

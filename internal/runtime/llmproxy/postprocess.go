@@ -207,7 +207,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				case runtimedecision.VerdictNeedsApproval:
 					substitute := "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it."
 					if cfg.PendingApprovals != nil {
-						held, _ := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
+						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 							UserID:      cfg.AgentUserID,
 							AgentID:     cfg.AgentID,
 							Provider:    rewriter.Name(),
@@ -216,6 +216,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 							Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
 							Reason:      dec.Reason,
 						})
+						if err != nil {
+							audit("block", "approval_hold_error", err.Error())
+							return conversation.ToolUseVerdict{
+								Allowed: false,
+								Reason:  "Clawvisor: approval unavailable — " + err.Error(),
+							}
+						}
 						if held.Evicted != nil {
 							audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
 						}
@@ -292,7 +299,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				}
 			case runtimedecision.VerdictNeedsApproval:
 				if cfg.PendingApprovals != nil {
-					held, _ := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
+					held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 						UserID:      cfg.AgentUserID,
 						AgentID:     cfg.AgentID,
 						Provider:    rewriter.Name(),
@@ -301,6 +308,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
 						Reason:      dec.Reason,
 					})
+					if err != nil {
+						audit("block", "approval_hold_error", err.Error())
+						return conversation.ToolUseVerdict{
+							Allowed: false,
+							Reason:  "Clawvisor: approval unavailable — " + err.Error(),
+						}
+					}
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
 					}

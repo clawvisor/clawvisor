@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -49,7 +50,8 @@ type PendingApprovalCache interface {
 type MemoryPendingApprovalCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
-	pending map[pendingApprovalKey]PendingLiteApproval
+	max     int
+	pending map[pendingApprovalKey][]PendingLiteApproval
 	now     func() time.Time
 }
 
@@ -59,13 +61,16 @@ type pendingApprovalKey struct {
 	provider conversation.Provider
 }
 
+var liteApprovalRandRead = rand.Read
+
 func NewMemoryPendingApprovalCache(ttl time.Duration) *MemoryPendingApprovalCache {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
 	}
 	return &MemoryPendingApprovalCache{
 		ttl:     ttl,
-		pending: map[pendingApprovalKey]PendingLiteApproval{},
+		max:     10,
+		pending: map[pendingApprovalKey][]PendingLiteApproval{},
 		now:     time.Now,
 	}
 }
@@ -77,11 +82,15 @@ func (c *MemoryPendingApprovalCache) Hold(_ context.Context, pending PendingLite
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.pending == nil {
-		c.pending = map[pendingApprovalKey]PendingLiteApproval{}
+		c.pending = map[pendingApprovalKey][]PendingLiteApproval{}
 	}
 	now := c.now().UTC()
 	if pending.ID == "" {
-		pending.ID = newLiteApprovalID()
+		id, err := newLiteApprovalID()
+		if err != nil {
+			return HoldResult{}, err
+		}
+		pending.ID = id
 	}
 	if pending.CreatedAt.IsZero() {
 		pending.CreatedAt = now
@@ -91,11 +100,17 @@ func (c *MemoryPendingApprovalCache) Hold(_ context.Context, pending PendingLite
 	}
 	key := pending.key()
 	var evicted *PendingLiteApproval
-	if existing, ok := c.pending[key]; ok {
-		existingCopy := existing
-		evicted = &existingCopy
+	items := c.pruneExpiredLocked(key, now)
+	if c.max <= 0 {
+		c.max = 10
 	}
-	c.pending[key] = pending
+	for len(items) >= c.max {
+		existingCopy := items[0]
+		evicted = &existingCopy
+		items = items[1:]
+	}
+	items = append(items, pending)
+	c.pending[key] = items
 	return HoldResult{Pending: pending, Evicted: evicted}, nil
 }
 
@@ -106,18 +121,30 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
-	pending, ok := c.pending[key]
-	if !ok {
+	items := c.pruneExpiredLocked(key, c.now().UTC())
+	if len(items) == 0 {
 		return nil, nil
 	}
-	if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(c.now().UTC()) {
+	index := 0
+	if req.ApprovalID != "" {
+		index = -1
+		for i, pending := range items {
+			if pending.ID == req.ApprovalID {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return nil, nil
+		}
+	}
+	pending := items[index]
+	items = append(items[:index], items[index+1:]...)
+	if len(items) == 0 {
 		delete(c.pending, key)
-		return nil, nil
+	} else {
+		c.pending[key] = items
 	}
-	if req.ApprovalID != "" && pending.ID != req.ApprovalID {
-		return nil, nil
-	}
-	delete(c.pending, key)
 	return &pending, nil
 }
 
@@ -127,7 +154,23 @@ func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.pending, pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider})
+	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	if req.ApprovalID == "" {
+		delete(c.pending, key)
+		return nil
+	}
+	items := c.pending[key]
+	for i, pending := range items {
+		if pending.ID == req.ApprovalID {
+			items = append(items[:i], items[i+1:]...)
+			if len(items) == 0 {
+				delete(c.pending, key)
+			} else {
+				c.pending[key] = items
+			}
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -135,10 +178,29 @@ func (p PendingLiteApproval) key() pendingApprovalKey {
 	return pendingApprovalKey{userID: p.UserID, agentID: p.AgentID, provider: p.Provider}
 }
 
-func newLiteApprovalID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "cv-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano))))[:26]
+func (c *MemoryPendingApprovalCache) pruneExpiredLocked(key pendingApprovalKey, now time.Time) []PendingLiteApproval {
+	items := c.pending[key]
+	if len(items) == 0 {
+		return nil
 	}
-	return "cv-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]))
+	kept := items[:0]
+	for _, pending := range items {
+		if pending.ExpiresAt.IsZero() || pending.ExpiresAt.After(now) {
+			kept = append(kept, pending)
+		}
+	}
+	if len(kept) == 0 {
+		delete(c.pending, key)
+		return nil
+	}
+	c.pending[key] = kept
+	return kept
+}
+
+func newLiteApprovalID() (string, error) {
+	var b [16]byte
+	if _, err := liteApprovalRandRead(b[:]); err != nil {
+		return "", fmt.Errorf("generate approval id: %w", err)
+	}
+	return "cv-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])), nil
 }

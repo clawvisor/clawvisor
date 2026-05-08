@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -111,6 +113,54 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 	if !strings.Contains(string(got.Body), "web fetch blocked") {
 		t.Fatalf("refusal missing rule reason: %s", got.Body)
+	}
+}
+
+func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
+	body := []byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-haiku-4-5",
+		"content":[
+			{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{"url":"https://example.com/one"}},
+			{"type":"tool_use","id":"toolu_2","name":"WebFetch","input":{"url":"https://example.com/two"}}
+		],
+		"stop_reason":"tool_use"
+	}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		PendingApprovals: cache,
+		ResponseRegistry: conversation.DefaultResponseRegistry(),
+		CandidateTasks:   []*store.Task{},
+		ToolRules:        []*store.RuntimePolicyRule{{ID: "review-webfetch", UserID: userID, AgentID: &agentID, Kind: "tool", Action: "review", ToolName: "WebFetch", Reason: "review web fetch", Enabled: true}},
+		EgressRules:      []*store.RuntimePolicyRule{},
+	})
+	if !got.Rewritten {
+		t.Fatalf("expected approval prompts for reviewed tool calls")
+	}
+	first, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil || first.ToolUse.ID != "toolu_1" {
+		t.Fatalf("first resolved pending = %+v, want toolu_1", first)
+	}
+	second, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == nil || second.ToolUse.ID != "toolu_2" {
+		t.Fatalf("second resolved pending = %+v, want toolu_2", second)
 	}
 }
 
