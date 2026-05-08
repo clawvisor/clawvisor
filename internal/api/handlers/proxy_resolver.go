@@ -15,6 +15,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -33,6 +34,10 @@ type ProxyResolverHandler struct {
 	Vault  vault.Vault
 	Client *http.Client
 	Logger *slog.Logger
+
+	// AuditEmitter writes one audit_log row per resolver request +
+	// per placeholder swapped. nil disables audit logging.
+	AuditEmitter *llmproxy.AuditEmitter
 
 	// MaxRequestBytes caps the inbound body. Defaults to 8 MiB.
 	MaxRequestBytes int64
@@ -117,22 +122,62 @@ func (h *ProxyResolverHandler) safeDialContext(ctx context.Context, network, add
 // Forward handles ANY method on /proxy/v1/<path>. Path mapping: the request
 // path after `/proxy/v1/` becomes the upstream path verbatim.
 func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := r.Header.Get("X-Request-Id")
+
+	// Per-request audit state captured at every exit path.
+	var (
+		auditAgent       *store.Agent
+		auditPlaceholder string
+		auditService     string
+		auditTargetHost  string
+		auditTargetPath  string
+		auditStatus      int
+		auditDecide      = "allow"
+		auditOutcome     string
+		auditReason      string
+	)
+	defer func() {
+		if h.AuditEmitter == nil || auditAgent == nil {
+			return
+		}
+		h.AuditEmitter.LogResolverSwap(r.Context(), auditAgent, requestID,
+			auditPlaceholder, auditService, auditTargetHost, auditTargetPath,
+			r.Method, auditStatus, auditDecide, auditOutcome, auditReason,
+			time.Since(start))
+	}()
+
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
+		auditStatus = http.StatusUnauthorized
+		auditDecide = "deny"
+		auditOutcome = "unauthorized"
 		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing agent token")
 		return
 	}
+	auditAgent = agent
 
 	targetHost := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")))
 	if targetHost == "" {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "missing_target"
 		writeJSONError(w, http.StatusBadRequest, "MISSING_TARGET", "X-Clawvisor-Target-Host header required")
 		return
 	}
+	auditTargetHost = targetHost
 	if h.isSelfHost(targetHost) {
+		auditStatus = http.StatusForbidden
+		auditDecide = "deny"
+		auditOutcome = "self_target"
 		writeJSONError(w, http.StatusForbidden, "SELF_TARGET", "target host points at the proxy itself")
 		return
 	}
 	if err := h.checkSSRF(targetHost); err != nil {
+		auditStatus = http.StatusForbidden
+		auditDecide = "deny"
+		auditOutcome = "ssrf_blocked"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusForbidden, "SSRF_BLOCKED", err.Error())
 		return
 	}
@@ -149,11 +194,16 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		Path:     upstreamPath,
 		RawQuery: r.URL.RawQuery,
 	}
+	auditTargetPath = upstreamPath
 
 	// Read the inbound body in full so we can replay it verbatim.
 	// (Body-embedded placeholder mutation is Phase 4.)
 	body, err := readLimited(r.Body, h.MaxRequestBytes)
 	if err != nil {
+		auditStatus = http.StatusRequestEntityTooLarge
+		auditDecide = "deny"
+		auditOutcome = "request_too_large"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
 	}
@@ -166,17 +216,35 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var apiErr *resolverAPIError
 		if errors.As(err, &apiErr) {
+			auditStatus = apiErr.status
+			auditDecide = "deny"
+			auditOutcome = strings.ToLower(apiErr.code)
+			auditReason = apiErr.msg
 			writeJSONError(w, apiErr.status, apiErr.code, apiErr.msg)
 			return
 		}
 		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: header swap failed",
 			"agent_id", agent.ID, "err", err.Error())
+		auditStatus = http.StatusInternalServerError
+		auditDecide = "deny"
+		auditOutcome = "swap_error"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusInternalServerError, "SWAP_ERROR", "credential swap failed")
 		return
 	}
 	if len(replacedPlaceholders) == 0 {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "no_placeholder"
 		writeJSONError(w, http.StatusBadRequest, "NO_PLACEHOLDER", "no autovault placeholder found in headers")
 		return
+	}
+	if len(replacedPlaceholders) > 0 {
+		auditPlaceholder = replacedPlaceholders[0]
+		// Look up the bound service for the placeholder, for audit.
+		if ph, lerr := h.Store.GetRuntimePlaceholder(r.Context(), auditPlaceholder); lerr == nil {
+			auditService = ph.ServiceID
+		}
 	}
 
 	// Build and send the upstream request.
@@ -194,10 +262,16 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: upstream call failed",
 			"agent_id", agent.ID, "host", targetHost, "err", err.Error())
+		auditStatus = http.StatusBadGateway
+		auditDecide = "deny"
+		auditOutcome = "upstream_error"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
+	auditStatus = resp.StatusCode
+	auditOutcome = outcomeFromStatus(resp.StatusCode)
 
 	for name, values := range resp.Header {
 		switch http.CanonicalHeaderKey(name) {

@@ -338,6 +338,53 @@ data: {"type":"message_stop"}
 	}
 }
 
+// TestLLMEndpoint_EmitsAuditRow proves a /v1/* call writes an audit_log
+// row that the dashboard picks up — visibility into "what did my agents
+// do via lite-proxy" is the trust feature gating production use.
+func TestLLMEndpoint_EmitsAuditRow(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.AuditEmitter = llmproxy.NewAuditEmitter(st, nil, nil)
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-haiku-4-5","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Pull the agent's user_id to scope the audit query.
+	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	rows, _, err := st.ListAuditEntries(context.Background(), user.ID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("expected audit rows, got none")
+	}
+	var found bool
+	for _, row := range rows {
+		if row.Action == "lite_proxy.messages.create" && row.Decision == "allow" && row.Outcome == "success" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lite_proxy.messages.create audit row; got %d rows", len(rows))
+	}
+}
+
 func TestLLMEndpoint_RejectsMissingAuth(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be hit when auth missing")

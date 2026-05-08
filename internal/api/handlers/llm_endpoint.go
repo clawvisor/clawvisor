@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -14,6 +15,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	"github.com/google/uuid"
 )
 
 // LLMEndpointHandler is the lite-proxy LLM termination point. It accepts
@@ -38,6 +40,10 @@ type LLMEndpointHandler struct {
 	// tool_uses through (e.g. https://clawvisor.example/proxy/v1). Empty
 	// disables rewriting even when Inspector is set.
 	ResolverBaseURL string
+
+	// AuditEmitter writes one audit_log row per /v1/* request and per
+	// inspected tool_use. nil disables audit logging.
+	AuditEmitter *llmproxy.AuditEmitter
 
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
@@ -81,24 +87,64 @@ func (h *LLMEndpointHandler) Responses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := r.Header.Get("X-Request-Id")
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+
+	// Per-request audit state captured at every exit path.
+	var (
+		auditAgent   *store.Agent
+		auditAction  = "lite_proxy.unknown"
+		auditStatus  int
+		auditDecide  = "allow"
+		auditOutcome string
+		auditReason  string
+	)
+	defer func() {
+		if h.AuditEmitter == nil || auditAgent == nil {
+			return
+		}
+		provName := ""
+		if p := h.Parsers.ParserForRoute(r.URL.Path); p != nil {
+			provName = string(p.Name())
+		}
+		h.AuditEmitter.LogEndpointCall(r.Context(), auditAgent, requestID, provName,
+			auditAction, auditStatus, auditDecide, auditOutcome, auditReason,
+			time.Since(start), nil)
+	}()
+
 	agent := middleware.AgentFromContext(r.Context())
 	if agent == nil {
 		// Middleware should have rejected this; defense-in-depth.
+		auditStatus = http.StatusUnauthorized
+		auditDecide = "deny"
+		auditOutcome = "unauthorized"
 		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing agent token")
 		return
 	}
+	auditAgent = agent
 
 	parser := h.Parsers.ParserForRoute(r.URL.Path)
 	if parser == nil {
+		auditStatus = http.StatusNotFound
+		auditDecide = "deny"
+		auditOutcome = "not_found"
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "unsupported route")
 		return
 	}
 	provider := parser.Name()
+	auditAction = "lite_proxy." + actionForRoute(r.URL.Path)
 
 	// Read the inbound body in full. v1 doesn't stream the request side
 	// (Anthropic/OpenAI don't either; bodies are bounded by tokens-of-context).
 	body, err := readLimited(r.Body, h.MaxRequestBytes)
 	if err != nil {
+		auditStatus = http.StatusRequestEntityTooLarge
+		auditDecide = "deny"
+		auditOutcome = "request_too_large"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
 	}
@@ -106,6 +152,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// Validate that the body parses for the selected provider. Surfaces
 	// schema errors as a 400 before we burn an upstream call.
 	if _, err := parser.ParseRequest(body); err != nil {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "malformed_request"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
 	}
@@ -113,16 +163,25 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, provider, r, body)
 	if err != nil {
 		if isVaultMiss(err) {
+			auditStatus = http.StatusUnauthorized
+			auditDecide = "deny"
+			auditOutcome = "upstream_key_missing"
 			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING",
 				"no upstream API key configured in vault for this provider")
 			return
 		}
 		h.Logger.WarnContext(r.Context(), "lite-proxy forward failed",
 			"agent_id", agent.ID, "provider", string(provider), "err", err.Error())
+		auditStatus = http.StatusBadGateway
+		auditDecide = "deny"
+		auditOutcome = "upstream_error"
+		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
+	auditStatus = resp.StatusCode
+	auditOutcome = outcomeFromStatus(resp.StatusCode)
 
 	// Mirror upstream status + headers. Strip hop-by-hop. We rewrite
 	// Content-Length below if postprocess mutates the body.
@@ -168,6 +227,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			Store:       h.Store,
 			AgentUserID: agent.UserID,
 			AgentID:     agent.ID,
+			Audit:       h.AuditEmitter,
+			RequestID:   requestID,
 		})
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")
@@ -251,6 +312,35 @@ func readResponseLimited(r io.Reader, max int64) ([]byte, error) {
 		max = 32 << 20
 	}
 	return readLimited(r, max)
+}
+
+// actionForRoute maps a request path to an audit-log action label.
+func actionForRoute(path string) string {
+	switch path {
+	case "/v1/messages":
+		return "messages.create"
+	case "/v1/messages/count_tokens":
+		return "messages.count_tokens"
+	case "/v1/chat/completions":
+		return "chat.completions.create"
+	case "/v1/responses":
+		return "responses.create"
+	}
+	return "unknown"
+}
+
+// outcomeFromStatus turns an HTTP status code into a coarse outcome label
+// for the audit row. 2xx → success, 4xx → client_error, 5xx → upstream_error.
+func outcomeFromStatus(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return "success"
+	case status >= 400 && status < 500:
+		return "client_error"
+	case status >= 500:
+		return "upstream_error"
+	}
+	return "unknown"
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's

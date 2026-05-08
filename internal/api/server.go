@@ -30,6 +30,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -834,9 +835,16 @@ func (s *Server) routes() http.Handler {
 			llmHandler.ResolverBaseURL = strings.TrimRight(pub, "/") + "/proxy/v1"
 		}
 
+		// Audit emission for /v1/* endpoint calls + per-tool-use
+		// inspection rows + resolver swaps. All write into audit_log
+		// so the existing dashboard surfaces them automatically.
+		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
+		llmHandler.AuditEmitter = auditEmitter
+
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
+		resolverHandler.AuditEmitter = auditEmitter
 
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
 

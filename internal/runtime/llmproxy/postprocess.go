@@ -32,6 +32,15 @@ type PostprocessConfig struct {
 	AgentUserID string
 	AgentID     string
 
+	// Audit is the emitter for runtime.llm_proxy.* events. nil disables
+	// audit logging from the postprocess path. The handler keeps audit
+	// for the endpoint-call shape; postprocess adds per-tool-use rows.
+	Audit *AuditEmitter
+
+	// RequestID is the audit RequestID for tool_use rows so they group
+	// with the parent endpoint call.
+	RequestID string
+
 	// ResponseRegistry is the conversation rewriter registry. Defaults
 	// to conversation.DefaultResponseRegistry() when nil.
 	ResponseRegistry *conversation.ResponseRegistry
@@ -88,6 +97,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		return PostprocessResult{Body: body, ContentType: contentType, SkippedReason: "no rewriter for route"}
 	}
 
+	auditAgent := auditAgentForCfg(cfg)
+
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		v := cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{
 			ID:    tu.ID,
@@ -95,14 +106,24 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			Input: tu.Input,
 		})
 
+		audit := func(decision, outcome, reason string) {
+			if cfg.Audit == nil || auditAgent == nil {
+				return
+			}
+			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu.ID, v, decision, outcome, reason)
+		}
+
 		// Inspector says trigger missed (no autovault placeholder),
 		// validator returned ambiguous, or it isn't an API call we should
 		// mediate — pass through unchanged.
 		if v.Source == inspector.SourceTriggerMiss {
+			// Don't audit pass-through-no-trigger — most tool_uses go
+			// through this path and the row volume would dominate. Only
+			// audit when the inspector actually engaged.
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		if v.Ambiguous || !v.IsAPICall {
-			// Ambiguous + autovault placeholder present == fail closed.
+			audit("block", "ambiguous", v.Reason)
 			return conversation.ToolUseVerdict{
 				Allowed: false,
 				Reason:  "Clawvisor: ambiguous credentialed call refused — " + v.Reason,
@@ -114,6 +135,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// host allowlist. Look it up and run BoundaryCheck. Mismatch =
 		// fail closed.
 		if reason, ok := boundaryCheckVerdict(req, cfg, v); !ok {
+			audit("block", "boundary_check_failed", reason)
 			return conversation.ToolUseVerdict{
 				Allowed: false,
 				Reason:  "Clawvisor: target host outside placeholder bound-service — " + reason,
@@ -126,11 +148,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			Input: tu.Input,
 		}, v, cfg.RewriteOpts)
 		if err != nil {
+			audit("block", "rewriter_error", err.Error())
 			return conversation.ToolUseVerdict{
 				Allowed: false,
 				Reason:  "Clawvisor: rewriter refused — " + err.Error(),
 			}
 		}
+		audit("rewrite", "success", v.Reason)
 		return conversation.ToolUseVerdict{
 			Allowed:      true,
 			RewriteInput: rewritten,
@@ -159,6 +183,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
 	}
+}
+
+// auditAgentForCfg builds a minimal *store.Agent for the audit emitter
+// from the postprocess config. The emitter only reads UserID and ID; we
+// avoid an extra DB lookup by synthesizing the struct.
+func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
+	if cfg.Audit == nil || cfg.AgentID == "" || cfg.AgentUserID == "" {
+		return nil
+	}
+	return &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}
 }
 
 // boundaryCheckVerdict validates the inspector's claimed host against
