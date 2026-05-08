@@ -152,7 +152,11 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
 		if runtimeMgr != nil || (opts.Config != nil && opts.Config.ProxyLite.Enabled) {
-			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config, reviewCache)
+			var runtimeHandlerManager handlers.RuntimeManager
+			if runtimeMgr != nil {
+				runtimeHandlerManager = runtimeMgr
+			}
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeHandlerManager, opts.Config, reviewCache)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)
 			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -39,7 +40,23 @@ type RuntimeHandler struct {
 }
 
 func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache runtimereview.HeldApprovalCache) *RuntimeHandler {
+	if isNilRuntimeManager(manager) {
+		manager = nil
+	}
 	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache}
+}
+
+func isNilRuntimeManager(manager RuntimeManager) bool {
+	if manager == nil {
+		return true
+	}
+	v := reflect.ValueOf(manager)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -358,7 +375,7 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not inspect runtime approval sessions")
 		return
 	}
-	var filtered []*store.ApprovalRecord
+	filtered := []*store.ApprovalRecord{}
 	now := time.Now().UTC()
 	for _, rec := range records {
 		if rec.SessionID == nil || *rec.SessionID == "" {

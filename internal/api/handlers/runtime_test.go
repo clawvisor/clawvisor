@@ -99,7 +99,8 @@ func TestRuntimeHandlerStatusAndSessionsWithoutRuntimeManager(t *testing.T) {
 	cfg.RuntimeProxy.Enabled = false
 	cfg.ProxyLite.Enabled = true
 
-	h := NewRuntimeHandler(st, nil, nil, cfg, nil)
+	var runtimeMgr *runtimeproxy.Manager
+	h := NewRuntimeHandler(st, nil, runtimeMgr, cfg, nil)
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
 	statusReq = statusReq.WithContext(context.WithValue(statusReq.Context(), middleware.UserContextKey, user))
