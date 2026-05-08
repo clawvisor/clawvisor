@@ -172,7 +172,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			if cfg.Audit == nil || auditAgent == nil {
 				return
 			}
-			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu.ID, v, decision, outcome, reason)
+			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu, v, decision, outcome, reason)
 		}
 
 		// Inspector says trigger missed (no autovault placeholder). There
@@ -198,9 +198,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				}
 				switch dec.Kind {
 				case runtimedecision.VerdictAllow:
-					if dec.ObservationEffect != runtimedecision.ObservationNone {
-						audit("allow", string(dec.Source), dec.Reason)
-					}
+					audit("allow", string(dec.Source), dec.Reason)
 				case runtimedecision.VerdictDeny:
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
@@ -235,9 +233,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					}
 				}
 			}
-			// Don't audit pass-through-no-trigger without a matching policy
-			// decision — most tool_uses go through this path and the row
-			// volume would dominate.
+			// Record ordinary tool uses even when no credential trigger was
+			// present so lite-proxy activity shows the agent's tool calls.
+			audit("allow", "pass_through", "no credential trigger")
 			return conversation.ToolUseVerdict{Allowed: true}
 		}
 		if v.Ambiguous || !v.IsAPICall {

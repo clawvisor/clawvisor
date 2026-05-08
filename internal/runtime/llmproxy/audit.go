@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/version"
@@ -86,15 +88,19 @@ func (e *AuditEmitter) LogEndpointCall(ctx context.Context, agent *store.Agent, 
 	}
 }
 
-// LogToolUseInspected records one tool_use the inspector touched. Each
-// row carries verdict source, decision, target host (when known), the
-// tool_use ID, and the placeholder substring (no real credential).
-func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID, toolUseID string, verdict inspector.Verdict, decision, outcome, reason string) {
+// LogToolUseInspected records one tool_use seen by the lite-proxy. Each row
+// carries the tool name, a bounded input summary, verdict source, decision,
+// target host (when known), and placeholder substrings (no real credential).
+func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Agent, requestID string, tu conversation.ToolUse, verdict inspector.Verdict, decision, outcome, reason string) {
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
+	toolInput := decodeAuditToolInput(tu.Input)
 	params := map[string]any{
 		"event":             "lite_proxy.tool_use_inspected",
+		"tool_name":         tu.Name,
+		"tool_input":        toolInput,
+		"tool_target":       toolTarget(toolInput),
 		"verdict_source":    string(verdict.Source),
 		"is_api_call":       verdict.IsAPICall,
 		"ambiguous":         verdict.Ambiguous,
@@ -120,18 +126,15 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 	}
 	paramsJSON, _ := json.Marshal(params)
 
-	service := verdict.Host
-	if service == "" {
-		service = "lite_proxy"
-	}
-	tu := toolUseID
+	service := "runtime.tool_use"
+	toolUseID := tu.ID
 
 	entry := &store.AuditEntry{
 		ID:         uuid.NewString(),
 		UserID:     agent.UserID,
 		AgentID:    &agent.ID,
 		RequestID:  requestID,
-		ToolUseID:  &tu,
+		ToolUseID:  &toolUseID,
 		Timestamp:  time.Now().UTC(),
 		Service:    service,
 		Action:     "lite_proxy.tool_use." + decision,
@@ -142,7 +145,7 @@ func (e *AuditEmitter) LogToolUseInspected(ctx context.Context, agent *store.Age
 	}
 	if err := e.Store.LogAudit(ctx, entry); err != nil {
 		e.Logger.WarnContext(ctx, "lite-proxy: tool_use audit failed",
-			"agent_id", agent.ID, "tool_use_id", toolUseID, "err", err.Error())
+			"agent_id", agent.ID, "tool_use_id", tu.ID, "err", err.Error())
 	}
 }
 
@@ -243,3 +246,81 @@ func buildSHA() string {
 const parserVersionStr = "lite-proxy-parser/v1"
 
 func parserVersion() string { return parserVersionStr }
+
+func decodeAuditToolInput(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return map[string]any{"raw": "<unparseable>"}
+	}
+	return truncateAuditMap(input, 512)
+}
+
+func truncateAuditMap(input map[string]any, maxString int) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for k, v := range input {
+		if isAuditSecretKey(k) {
+			continue
+		}
+		out[k] = truncateAuditValue(v, maxString)
+	}
+	return out
+}
+
+func truncateAuditValue(v any, maxString int) any {
+	switch t := v.(type) {
+	case string:
+		return truncateAuditString(t, maxString)
+	case map[string]any:
+		return truncateAuditMap(t, maxString)
+	case []any:
+		out := make([]any, 0, len(t))
+		for i, item := range t {
+			if i >= 20 {
+				out = append(out, "...<truncated>")
+				break
+			}
+			out = append(out, truncateAuditValue(item, maxString))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func truncateAuditString(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "...<truncated>"
+}
+
+func toolTarget(input map[string]any) string {
+	if len(input) == 0 {
+		return ""
+	}
+	for _, key := range []string{"url", "file_path", "path", "directory", "pattern", "command"} {
+		if v, ok := input[key].(string); ok && strings.TrimSpace(v) != "" {
+			return truncateAuditString(strings.TrimSpace(v), 512)
+		}
+	}
+	return ""
+}
+
+func isAuditSecretKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return false
+	}
+	for _, marker := range []string{"authorization", "api_key", "apikey", "access_key", "private_key", "token", "secret", "password", "bearer"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	return false
+}

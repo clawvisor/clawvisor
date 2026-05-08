@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
@@ -96,15 +97,19 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 			{Kind: "header", Name: "Authorization", Scheme: "Bearer"},
 		},
 	}
-	em.LogToolUseInspected(context.Background(), agent, "req-1", "toolu_1", verdict, "rewrite", "success", verdict.Reason)
+	em.LogToolUseInspected(context.Background(), agent, "req-1", conversation.ToolUse{
+		ID:    "toolu_1",
+		Name:  "WebFetch",
+		Input: json.RawMessage(`{"url":"https://api.github.com/repos/x/y/issues","headers":{"Authorization":"Bearer secret"}}`),
+	}, verdict, "rewrite", "success", verdict.Reason)
 
 	rows, _, _ := st.ListAuditEntries(context.Background(), agent.UserID, store.AuditFilter{})
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
 	row := rows[0]
-	if row.Service != "api.github.com" {
-		t.Errorf("service=%q, want api.github.com", row.Service)
+	if row.Service != "runtime.tool_use" {
+		t.Errorf("service=%q, want runtime.tool_use", row.Service)
 	}
 	if row.Action != "lite_proxy.tool_use.rewrite" {
 		t.Errorf("action=%q", row.Action)
@@ -119,6 +124,17 @@ func TestAuditEmitter_LogToolUseInspected(t *testing.T) {
 	}
 	if params["verdict_source"] != "deterministic" {
 		t.Errorf("expected verdict_source=deterministic, got %v", params["verdict_source"])
+	}
+	if params["tool_name"] != "WebFetch" {
+		t.Errorf("expected tool_name=WebFetch, got %v", params["tool_name"])
+	}
+	if params["tool_target"] != "https://api.github.com/repos/x/y/issues" {
+		t.Errorf("expected tool_target URL, got %v", params["tool_target"])
+	}
+	toolInput, _ := params["tool_input"].(map[string]any)
+	headers, _ := toolInput["headers"].(map[string]any)
+	if _, ok := headers["Authorization"]; ok {
+		t.Errorf("tool_input should not persist Authorization header: %+v", headers)
 	}
 }
 

@@ -125,6 +125,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditDecide  = "allow"
 		auditOutcome string
 		auditReason  string
+		auditParams  map[string]any
 	)
 	defer func() {
 		if h.AuditEmitter == nil || auditAgent == nil {
@@ -136,7 +137,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		h.AuditEmitter.LogEndpointCall(r.Context(), auditAgent, requestID, provName,
 			auditAction, auditStatus, auditDecide, auditOutcome, auditReason,
-			time.Since(start), nil)
+			time.Since(start), auditParams)
 	}()
 
 	agent := middleware.AgentFromContext(r.Context())
@@ -160,6 +161,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := parser.Name()
 	auditAction = "lite_proxy." + actionForRoute(r.URL.Path)
+	auditParams = map[string]any{
+		"provider": string(provider),
+		"method":   r.Method,
+		"path":     r.URL.Path,
+		"query":    r.URL.RawQuery,
+		"route":    actionForRoute(r.URL.Path),
+	}
 
 	// Read the inbound body in full. v1 doesn't stream the request side
 	// (Anthropic/OpenAI don't either; bodies are bounded by tokens-of-context).
@@ -184,6 +192,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
+	auditParams["model"] = reqSummary.Model
+	auditParams["stream"] = reqSummary.Stream
+	auditParams["request_body_bytes"] = len(body)
 	h.Logger.DebugContext(r.Context(), "lite-proxy request accepted",
 		"request_id", requestID,
 		"agent_id", agent.ID,

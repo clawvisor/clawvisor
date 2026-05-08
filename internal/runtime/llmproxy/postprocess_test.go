@@ -84,6 +84,57 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	}
 }
 
+func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
+	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Audit:       NewAuditEmitter(st, nil, nil),
+		RequestID:   "req-audit",
+	})
+
+	if got.Rewritten {
+		t.Fatalf("no autovault placeholder should produce no rewrite")
+	}
+	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Service != "runtime.tool_use" {
+		t.Fatalf("service=%q, want runtime.tool_use", row.Service)
+	}
+	if row.Action != "lite_proxy.tool_use.allow" {
+		t.Fatalf("action=%q, want lite_proxy.tool_use.allow", row.Action)
+	}
+	if row.ToolUseID == nil || *row.ToolUseID != "toolu_1" {
+		t.Fatalf("tool_use_id=%v, want toolu_1", row.ToolUseID)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(row.ParamsSafe, &params); err != nil {
+		t.Fatalf("params unmarshal: %v", err)
+	}
+	if params["tool_name"] != "WebFetch" {
+		t.Fatalf("tool_name=%v, want WebFetch", params["tool_name"])
+	}
+	if params["tool_target"] != "https://example.com/foo" {
+		t.Fatalf("tool_target=%v, want https://example.com/foo", params["tool_target"])
+	}
+	if params["verdict_source"] != "trigger_miss" {
+		t.Fatalf("verdict_source=%v, want trigger_miss", params["verdict_source"])
+	}
+}
+
 func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"url":"https://example.com/foo"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
