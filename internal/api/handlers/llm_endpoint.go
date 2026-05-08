@@ -183,11 +183,46 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
 	}
+	reqSummary := liteProxyRequestDebugSummary(provider, body)
+	h.Logger.DebugContext(r.Context(), "lite-proxy request accepted",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"method", r.Method,
+		"path", r.URL.RequestURI(),
+		"model", reqSummary.Model,
+		"stream", reqSummary.Stream,
+		"auth_mode", liteProxyAuthMode(r),
+		"body_bytes", len(body),
+		"inspector_enabled", h.Inspector != nil,
+		"resolver_base_url_set", h.ResolverBaseURL != "",
+	)
 
 	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 		return
 	}
 
+	upstreamURL := ""
+	if h.Forwarder != nil {
+		if u, urlErr := h.Forwarder.Upstream.URL(provider, r.URL.RequestURI()); urlErr == nil {
+			upstreamURL = u.String()
+		} else {
+			h.Logger.DebugContext(r.Context(), "lite-proxy upstream URL build failed",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"path", r.URL.RequestURI(),
+				"err", urlErr.Error(),
+			)
+		}
+	}
+	h.Logger.DebugContext(r.Context(), "lite-proxy forwarding upstream",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"upstream_url", upstreamURL,
+		"model", reqSummary.Model,
+	)
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
 		if isVaultMiss(err) {
@@ -210,6 +245,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	auditStatus = resp.StatusCode
 	auditOutcome = outcomeFromStatus(resp.StatusCode)
+	h.Logger.DebugContext(r.Context(), "lite-proxy upstream response",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"upstream_url", upstreamURL,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"),
+		"anthropic_request_id", firstNonEmptyLog(resp.Header.Get("request-id"), resp.Header.Get("anthropic-request-id")),
+		"openai_request_id", resp.Header.Get("x-request-id"),
+	)
 
 	// Mirror upstream status + headers. Strip hop-by-hop. We rewrite
 	// Content-Length below if postprocess mutates the body.
@@ -238,6 +283,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_TOO_LARGE", "upstream response exceeded size cap")
 			return
 		}
+		if resp.StatusCode >= 400 {
+			h.Logger.DebugContext(r.Context(), "lite-proxy upstream error body",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"provider", string(provider),
+				"status", resp.StatusCode,
+				"body_preview", truncateForLog(string(full), 2048),
+			)
+		}
 		callerToken := middleware.CallerTokenFromContext(r.Context())
 		if callerToken == "" {
 			// Fallback: extract from inbound headers — the LLM endpoint
@@ -256,6 +310,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			catalogIface = h.Catalog
 		}
 		candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		h.Logger.DebugContext(r.Context(), "lite-proxy decision inputs loaded",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"provider", string(provider),
+			"posture", string(liteProxyDecisionPosture(agent)),
+			"candidate_tasks", len(candidateTasks),
+			"tool_rules", len(toolRules),
+			"egress_rules", len(egressRules),
+		)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:        h.Inspector,
 			RewriteOpts:      opts,
@@ -273,6 +336,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			EgressRules:      egressRules,
 			PendingApprovals: h.PendingApprovals,
 		})
+		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"provider", string(provider),
+			"status", resp.StatusCode,
+			"rewritten", processed.Rewritten,
+			"decisions", len(processed.Decisions),
+			"skipped_reason", processed.SkippedReason,
+		)
 		if processed.Rewritten {
 			w.Header().Set("Content-Length", "")
 			// Stripping Content-Encoding because we mutated the body
@@ -454,6 +526,17 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		PendingApproval: h.PendingApprovals,
 		Audit:           h.AuditEmitter,
 	})
+	if result.Handled {
+		h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"provider", string(provider),
+			"http_status", result.HTTPStatus,
+			"decision", result.Decision,
+			"outcome", result.Outcome,
+			"reason", result.Reason,
+		)
+	}
 	if !result.Handled {
 		return false
 	}
@@ -477,6 +560,67 @@ func liteProxyDecisionPosture(agent *store.Agent) runtimedecision.EvaluationPost
 		return runtimedecision.PostureObserve
 	}
 	return runtimedecision.PostureEnforce
+}
+
+type liteProxyRequestSummary struct {
+	Model  string
+	Stream bool
+}
+
+func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) liteProxyRequestSummary {
+	var summary liteProxyRequestSummary
+	switch provider {
+	case conversation.ProviderAnthropic:
+		var req struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		if err := json.Unmarshal(body, &req); err == nil {
+			summary.Model = req.Model
+			summary.Stream = req.Stream
+		}
+	case conversation.ProviderOpenAI:
+		var req struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		if err := json.Unmarshal(body, &req); err == nil {
+			summary.Model = req.Model
+			summary.Stream = req.Stream
+		}
+	}
+	return summary
+}
+
+func liteProxyAuthMode(r *http.Request) string {
+	hasBearer := strings.TrimSpace(r.Header.Get("Authorization")) != ""
+	hasAPIKey := strings.TrimSpace(r.Header.Get("x-api-key")) != ""
+	switch {
+	case hasBearer && hasAPIKey:
+		return "authorization+x-api-key"
+	case hasBearer:
+		return "authorization"
+	case hasAPIKey:
+		return "x-api-key"
+	default:
+		return "none"
+	}
+}
+
+func truncateForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "...<truncated>"
+}
+
+func firstNonEmptyLog(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's
