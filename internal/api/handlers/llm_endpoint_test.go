@@ -93,6 +93,7 @@ func newSeededHandler(t *testing.T, upstreamURL string) (*LLMEndpointHandler, st
 
 	v := &stubVault{}
 	_ = v.Set(ctx, user.ID, "anthropic", []byte("sk-ant-real"))
+	_ = v.Set(ctx, user.ID, "openai", []byte("sk-openai-real"))
 	_ = v.Set(ctx, user.ID, "github", []byte("real-gh-token"))
 
 	// Register a github placeholder so the rewrite-path boundary check
@@ -522,6 +523,51 @@ func TestLLMEndpoint_EmitsAuditRow(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected lite_proxy.messages.create audit row; got %d rows", len(rows))
+	}
+}
+
+func TestLLMEndpoint_AuditsOpenAIToolUseWithoutResolverURL(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write(conversation.SynthOpenAIResponsesFunctionCallSSE("call_1", "exec_command", map[string]any{
+			"cmd": "echo hi",
+		}))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.Forwarder.Upstream.OpenAIBaseURL = upstream.URL
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	h.AuditEmitter = llmproxy.NewAuditEmitter(st, nil, nil)
+	h.ResolverBaseURL = ""
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/responses", mw(http.HandlerFunc(h.Responses)))
+
+	body := []byte(`{"model":"gpt-5.4","stream":true,"input":"run echo","tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	rows, _, err := st.ListAuditEntries(context.Background(), user.ID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	var found bool
+	for _, row := range rows {
+		if row.Service == "runtime.tool_use" && row.Action == "lite_proxy.tool_use.allow" && row.ToolUseID != nil && *row.ToolUseID == "call_1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected runtime.tool_use audit row for OpenAI tool use; got %d rows", len(rows))
 	}
 }
 

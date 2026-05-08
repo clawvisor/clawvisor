@@ -286,11 +286,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	upstreamCT := resp.Header.Get("Content-Type")
 
-	// Postprocess runs when we have an inspector + resolver URL. SSE
-	// responses are buffered whole-turn before re-emitting; JSON
-	// responses are parsed-and-mutated. Streaming-while-rewriting is a
-	// future optimization — the harness sees a correct SSE turn either way.
-	if h.Inspector != nil && h.ResolverBaseURL != "" {
+	// Postprocess runs when we have an inspector. The resolver URL is only
+	// required for credential rewrites; ordinary tool-use audit and policy
+	// decisions must still run on local proxy-lite installs that do not set
+	// server.public_url.
+	if h.Inspector != nil {
 		full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
 		if readErr != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy upstream read error",
