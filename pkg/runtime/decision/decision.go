@@ -184,10 +184,23 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		return AuthorizationDecision{}, err
 	}
 	if match != nil {
+		task := taskByID(in.CandidateTasks, match.TaskID)
+		if reason, ok, err := runToolIntentVerify(ctx, in, task, match, toolInput); err != nil || !ok {
+			if err != nil {
+				return AuthorizationDecision{}, err
+			}
+			return AuthorizationDecision{
+				Kind:       VerdictDeny,
+				Reason:     firstNonEmpty(reason, "intent verifier refused this tool call"),
+				DenyReason: DenyReasonIntent,
+				Task:       task,
+				Source:     SourceIntentRefusal,
+			}, nil
+		}
 		return AuthorizationDecision{
 			Kind:   VerdictAllow,
 			Reason: firstNonEmpty(match.Item.Why, "matched expected tool scope"),
-			Task:   taskByID(in.CandidateTasks, match.TaskID),
+			Task:   task,
 			Source: SourceTaskScope,
 		}, nil
 	}
@@ -348,6 +361,48 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 		Action:      in.Action,
 		Params:      params,
 		Reason:      "runtime decision tool_use " + in.ToolUse.Name,
+		TaskID:      taskID,
+		Lenient:     mode == "lenient",
+	})
+	if err != nil {
+		return "", false, err
+	}
+	if verdict == nil || verdict.Allow {
+		if verdict == nil {
+			return "", true, nil
+		}
+		return verdict.Explanation, true, nil
+	}
+	return verdict.Explanation, false, nil
+}
+
+func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Task, match *runtimepolicy.ToolMatch, params map[string]any) (string, bool, error) {
+	if in.IntentVerifier == nil || match == nil {
+		return "", true, nil
+	}
+	mode := ""
+	purpose := ""
+	expectedUse := ""
+	taskID := match.TaskID
+	if task != nil {
+		mode = strings.TrimSpace(strings.ToLower(task.IntentVerificationMode))
+		purpose = task.Purpose
+		expectedUse = task.ExpectedUse
+		taskID = task.ID
+	}
+	if mode == "off" {
+		return "", true, nil
+	}
+	if expectedUse == "" {
+		expectedUse = match.Item.Why
+	}
+	verdict, err := in.IntentVerifier.Verify(ctx, IntentVerifyRequest{
+		TaskPurpose: purpose,
+		ExpectedUse: expectedUse,
+		Service:     "runtime.tool",
+		Action:      in.ToolUse.Name,
+		Params:      params,
+		Reason:      firstNonEmpty(match.Item.Why, "runtime decision tool_use "+in.ToolUse.Name),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
 	})
