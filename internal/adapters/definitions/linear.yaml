@@ -53,6 +53,7 @@ actions:
       team_id: { type: string, filter_path: "team.id.eq" }
       state: { type: string, filter_path: "state.name.eq" }
       assignee_id: { type: string, filter_path: "assignee.id.eq" }
+      assignee_is_me: { type: bool, filter_path: "assignee.isMe.eq" }
     response:
       data_path: "data.issues.nodes"
       fields:
@@ -86,7 +87,7 @@ actions:
         }
       }
     params:
-      issue_id: { type: string, required: true, graphql_var: true }
+      issue_id: { type: string, required: true, graphql_var: true, map_to: "id" }
     response:
       data_path: "data.issue"
       fields:
@@ -142,7 +143,7 @@ actions:
         }
       }
     params:
-      issue_id: { type: string, required: true, graphql_var: true }
+      issue_id: { type: string, required: true, graphql_var: true, map_to: "id" }
       title: { type: string, input_field: "title" }
       description: { type: string, input_field: "description" }
       state_id: { type: string, input_field: "stateId" }
@@ -233,8 +234,8 @@ actions:
     display_name: "Search issues"
     risk: { category: search, sensitivity: low, description: "Search Linear issues" }
     query: |
-      query($query: String!, $first: Int, $after: String, $includeComments: Boolean) {
-        searchIssues(term: $query, first: $first, after: $after, includeComments: $includeComments) {
+      query($query: String!, $first: Int, $after: String, $includeComments: Boolean, $filter: IssueFilter) {
+        searchIssues(term: $query, first: $first, after: $after, includeComments: $includeComments, filter: $filter) {
           nodes {
             id identifier title
             state { name }
@@ -251,6 +252,10 @@ actions:
       first: { type: int, default: 20, max: 250, graphql_var: true }
       after: { type: string, graphql_var: true }
       includeComments: { type: bool, default: true, graphql_var: true }
+      team_id: { type: string, filter_path: "team.id.eq" }
+      state: { type: string, filter_path: "state.name.eq" }
+      assignee_id: { type: string, filter_path: "assignee.id.eq" }
+      assignee_is_me: { type: bool, filter_path: "assignee.isMe.eq" }
     response:
       data_path: "data.searchIssues.nodes"
       fields:

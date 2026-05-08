@@ -232,6 +232,66 @@ func TestYAMLAdapter_RESTFormPost(t *testing.T) {
 	}
 }
 
+func TestYAMLAdapter_GraphQLVarMapTo(t *testing.T) {
+	// Verify map_to renames a graphql_var param so the variable key in the
+	// payload matches what the GraphQL query expects (e.g. user-facing
+	// issue_id → $id).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		vars, _ := payload["variables"].(map[string]any)
+		if vars == nil {
+			t.Fatalf("expected variables in payload, got %v", payload)
+		}
+		if _, has := vars["issue_id"]; has {
+			t.Errorf("variables should not contain raw param name 'issue_id': %v", vars)
+		}
+		if got := vars["id"]; got != "abc-123" {
+			t.Errorf("expected variables.id == abc-123, got %v", vars["id"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"issue": map[string]any{"id": "abc-123", "identifier": "LIN-1", "title": "x"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "linear"},
+		Auth:    yamldef.AuthDef{Type: "api_key", Header: "Authorization"},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "graphql"},
+		Actions: map[string]yamldef.Action{
+			"get_issue": {
+				Query: `query($id: String!) { issue(id: $id) { id identifier title } }`,
+				Params: map[string]yamldef.Param{
+					"issue_id": {Type: "string", Required: true, GraphQLVar: true, MapTo: "id"},
+				},
+				Response: yamldef.ResponseDef{
+					DataPath: "data.issue",
+					Fields:   []yamldef.FieldDef{{Name: "id"}, {Name: "identifier"}, {Name: "title"}},
+					Summary:  "{{.identifier}}",
+				},
+			},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if _, err := adapter.Execute(context.Background(), adapters.Request{
+		Action:     "get_issue",
+		Params:     map[string]any{"issue_id": "abc-123"},
+		Credential: testCred("lin_api_test"),
+	}); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
 func TestYAMLAdapter_GraphQLAction(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any

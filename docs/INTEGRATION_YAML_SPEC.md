@@ -310,7 +310,7 @@ actions:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `graphql_var` | bool | Pass as a top-level GraphQL variable |
+| `graphql_var` | bool | Pass as a top-level GraphQL variable. Combine with `map_to` to use a different variable name than the user-facing param (e.g. `issue_id` → `$id`). |
 | `filter_path` | string | Dot-delimited path to build a nested filter object (e.g. `"team.id.eq"`) |
 | `input_field` | string | Maps param to a field in the `$input` mutation variable (e.g. `"teamId"`) |
 

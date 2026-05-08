@@ -27,7 +27,11 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 
 		switch {
 		case paramDef.GraphQLVar:
-			variables[name] = val
+			varName := name
+			if paramDef.MapTo != "" {
+				varName = paramDef.MapTo
+			}
+			variables[varName] = val
 		case paramDef.FilterPath != "":
 			setNestedValue(filter, paramDef.FilterPath, val)
 		case paramDef.InputField != "":
