@@ -21,7 +21,8 @@ func TestTriggerHits(t *testing.T) {
 		{"no shadow", toolUse("Bash", `{"cmd":"ls"}`), false},
 		{"autovault", toolUse("Bash", `{"cmd":"curl -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/repos/x/y"}`), true},
 		{"clawvisor legacy", toolUse("Bash", `{"cmd":"echo clawvisor_x"}`), true},
-		{"unrelated word", toolUse("Bash", `{"cmd":"echo autovaults"}`), true}, // intentional false-positive: substring is intentionally noisy
+		{"unrelated autovault word", toolUse("Bash", `{"cmd":"echo autovaults"}`), false},
+		{"clawvisor repo path", toolUse("exec_command", `{"cmd":"pwd","workdir":"/Users/ericlevine/conductor/workspaces/clawvisor-public/san-francisco-v5"}`), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

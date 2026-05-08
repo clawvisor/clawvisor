@@ -22,9 +22,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
-
-	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 )
 
 // ToolUse is a parsed assistant tool_use block under inspection.
@@ -159,15 +158,17 @@ func (i *Inspector) Inspect(ctx context.Context, t ToolUse) Verdict {
 	return v
 }
 
-// TriggerHits reports whether a tool_use's serialized input contains the
-// autovault placeholder marker (or the legacy clawvisor marker). Cheap
-// pre-filter; the bulk of tool_uses skip inspection entirely.
+// TriggerHits reports whether a tool_use's serialized input contains an
+// autovault placeholder token (or legacy clawvisor_ token). Cheap pre-filter;
+// the bulk of tool_uses skip credential inspection entirely.
 func TriggerHits(t ToolUse) bool {
 	if len(t.Input) == 0 {
 		return false
 	}
-	return autovault.LooksLikeShadow(string(t.Input))
+	return shadowPlaceholderTokenRE.Match(t.Input)
 }
+
+var shadowPlaceholderTokenRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:autovault|clawvisor)[_:][a-z0-9._:-]+`)
 
 // Parser is the deterministic structural-shape parser.
 type Parser interface {
