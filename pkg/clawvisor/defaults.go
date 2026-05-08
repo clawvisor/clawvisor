@@ -376,12 +376,13 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		logger.Info("redis connected", "addr", client.Options().Addr)
 	}
 
+	runtimeSurface := runtimePolicySurfaceEnabled(cfg)
 	features := FeatureSet{
 		PasswordAuth:      cfg.Server.AuthMode == "password",
 		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
 		SecretVault:       cfg.RuntimeProxy.Enabled && cfg.Features.SecretVault,
-		RuntimePolicyUI:   cfg.RuntimeProxy.Enabled,
-		RuntimeActivity:   cfg.RuntimeProxy.Enabled,
+		RuntimePolicyUI:   runtimeSurface,
+		RuntimeActivity:   runtimeSurface,
 		AgentLiveSessions: cfg.RuntimeProxy.Enabled,
 		ServicePresets:    cfg.RuntimeProxy.Enabled && cfg.Features.ServicePresets,
 	}
@@ -532,4 +533,8 @@ func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, err
 	default:
 		return nil, fmt.Errorf("unsupported vault backend %q (use \"local\" or \"gcp\")", cfg.Vault.Backend)
 	}
+}
+
+func runtimePolicySurfaceEnabled(cfg *config.Config) bool {
+	return cfg != nil && (cfg.RuntimeProxy.Enabled || cfg.ProxyLite.Enabled)
 }

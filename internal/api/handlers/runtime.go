@@ -13,10 +13,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
-	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
+	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/google/uuid"
@@ -247,10 +247,17 @@ func (h *RuntimeHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
-	sessions, err := h.manager.ListRuntimeSessionsForUser(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime sessions")
-		return
+	var sessions []*store.RuntimeSession
+	if h.manager != nil {
+		var err error
+		sessions, err = h.manager.ListRuntimeSessionsForUser(r.Context(), user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime sessions")
+			return
+		}
+	}
+	if sessions == nil {
+		sessions = []*store.RuntimeSession{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": sessions,
@@ -278,6 +285,10 @@ func (h *RuntimeHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
 		return
 	}
+	if h.manager == nil {
+		writeError(w, http.StatusConflict, "RUNTIME_PROXY_DISABLED", "runtime proxy is not enabled")
+		return
+	}
 	if err := h.manager.RevokeRuntimeSession(r.Context(), sessionID); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke runtime session")
 		return
@@ -295,9 +306,16 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = user
+	proxyURL := ""
+	caCertPEM := ""
+	if h.manager != nil {
+		proxyURL = h.manager.ProxyURL()
+		caCertPEM = h.manager.CACertPEM()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":                  h.cfg != nil && h.cfg.RuntimeProxy.Enabled,
-		"proxy_url":                h.manager.ProxyURL(),
+		"proxy_lite_enabled":       h.cfg != nil && h.cfg.ProxyLite.Enabled,
+		"proxy_url":                proxyURL,
 		"observation_mode_default": h.cfg != nil && h.cfg.RuntimePolicy.ObservationModeDefault,
 		"inline_approval_enabled":  h.cfg != nil && h.cfg.RuntimePolicy.InlineApprovalEnabled,
 		"tool_lease_timeout_seconds": func() int {
@@ -319,7 +337,7 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 			return h.cfg.RuntimePolicy.AutovaultMode
 		}(),
 		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
-		"ca_cert_pem":          h.manager.CACertPEM(),
+		"ca_cert_pem":          caCertPEM,
 		"starter_profiles":     runtimepolicy.StarterProfiles(),
 	})
 }

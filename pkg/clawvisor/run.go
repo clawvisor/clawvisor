@@ -15,11 +15,11 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/llm"
-	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -151,7 +151,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}))
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
-		if runtimeMgr != nil {
+		if runtimeMgr != nil || (opts.Config != nil && opts.Config.ProxyLite.Enabled) {
 			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config, reviewCache)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
-	"github.com/clawvisor/clawvisor/pkg/config"
-	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/google/uuid"
 )
 
@@ -79,6 +79,70 @@ func TestRuntimeHandlerOneOffTTLDefaultsWhenConfigNil(t *testing.T) {
 	h := NewRuntimeHandler(nil, nil, nil, nil, nil)
 	if got := h.oneOffTTLSeconds(); got != 300 {
 		t.Fatalf("oneOffTTLSeconds()=%d, want 300", got)
+	}
+}
+
+func TestRuntimeHandlerStatusAndSessionsWithoutRuntimeManager(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-lite.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "runtime-lite@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = false
+	cfg.ProxyLite.Enabled = true
+
+	h := NewRuntimeHandler(st, nil, nil, cfg, nil)
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	statusReq = statusReq.WithContext(context.WithValue(statusReq.Context(), middleware.UserContextKey, user))
+	statusRec := httptest.NewRecorder()
+	h.Status(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("Status status=%d body=%s", statusRec.Code, statusRec.Body.String())
+	}
+	var statusResp struct {
+		Enabled          bool   `json:"enabled"`
+		ProxyLiteEnabled bool   `json:"proxy_lite_enabled"`
+		ProxyURL         string `json:"proxy_url"`
+		CACertPEM        string `json:"ca_cert_pem"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if statusResp.Enabled {
+		t.Fatalf("full runtime proxy should be disabled: %+v", statusResp)
+	}
+	if !statusResp.ProxyLiteEnabled {
+		t.Fatalf("proxy-lite should be reported enabled: %+v", statusResp)
+	}
+	if statusResp.ProxyURL != "" || statusResp.CACertPEM != "" {
+		t.Fatalf("nil manager should not report full-proxy connection data: %+v", statusResp)
+	}
+
+	sessionsReq := httptest.NewRequest(http.MethodGet, "/api/runtime/sessions", nil)
+	sessionsReq = sessionsReq.WithContext(context.WithValue(sessionsReq.Context(), middleware.UserContextKey, user))
+	sessionsRec := httptest.NewRecorder()
+	h.ListSessions(sessionsRec, sessionsReq)
+	if sessionsRec.Code != http.StatusOK {
+		t.Fatalf("ListSessions status=%d body=%s", sessionsRec.Code, sessionsRec.Body.String())
+	}
+	var sessionsResp struct {
+		Entries []store.RuntimeSession `json:"entries"`
+		Total   int                    `json:"total"`
+	}
+	if err := json.Unmarshal(sessionsRec.Body.Bytes(), &sessionsResp); err != nil {
+		t.Fatalf("unmarshal sessions: %v", err)
+	}
+	if sessionsResp.Total != 0 || len(sessionsResp.Entries) != 0 {
+		t.Fatalf("expected empty sessions without runtime manager: %+v", sessionsResp)
 	}
 }
 
