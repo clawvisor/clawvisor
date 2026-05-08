@@ -355,8 +355,14 @@ func runIntentVerify(ctx context.Context, cfg PostprocessConfig, dec TaskScopeDe
 		Lenient:     mode == "lenient",
 	})
 	if err != nil {
-		// Fail-open on verifier error to match gateway behavior; record
-		// in the reason for forensics.
+		// Circuit-breaker outage signals fail-closed: until the verifier
+		// recovers, we refuse rather than allow tool_use without scope
+		// validation. Other errors (timeouts, transient network failures)
+		// fail-open to match the gateway's behavior so a single hiccup
+		// doesn't strand the agent.
+		if errors.Is(err, ErrCircuitOpen) {
+			return "verifier_circuit_open", false
+		}
 		return fmt.Sprintf("verifier_error: %s", err.Error()), true
 	}
 	if verdict == nil {

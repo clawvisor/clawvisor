@@ -853,7 +853,13 @@ func (s *Server) routes() http.Handler {
 		// prompts + caching + provider config stay consistent across
 		// runtime-proxy, MCP gateway, and lite-proxy. NoopVerifier
 		// returns nil verdicts → postprocess treats it as off-mode.
-		llmHandler.IntentVerifier = llmproxy.NewIntentVerifierAdapter(verifier)
+		// Wrap in a circuit breaker so a sustained verifier outage
+		// fails closed rather than silently allowing every tool_use
+		// through with no scope check.
+		llmHandler.IntentVerifier = llmproxy.NewCircuitBreakerVerifier(
+			llmproxy.NewIntentVerifierAdapter(verifier),
+			llmproxy.DefaultCircuitBreakerConfig(),
+		)
 
 		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
 		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
