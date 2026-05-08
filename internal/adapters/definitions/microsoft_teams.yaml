@@ -12,11 +12,11 @@ auth:
   type: oauth2
   oauth:
     scopes:
-      - "https://graph.microsoft.com/Team.ReadBasic.All"
-      - "https://graph.microsoft.com/Channel.ReadBasic.All"
-      - "https://graph.microsoft.com/ChannelMessage.Read.All"
-      - "https://graph.microsoft.com/ChannelMessage.Send"
-      - "https://graph.microsoft.com/User.Read"
+      - "Team.ReadBasic.All"
+      - "Channel.ReadBasic.All"
+      - "ChannelMessage.Read.All"
+      - "ChannelMessage.Send"
+      - "User.Read"
       - "offline_access"
     endpoint: microsoft
     vault_key: microsoft
@@ -37,7 +37,7 @@ actions:
   list_teams:
     display_name: "List joined teams"
     risk: { category: read, sensitivity: low, description: "List Teams the user has joined" }
-    scopes: ["https://graph.microsoft.com/Team.ReadBasic.All"]
+    scopes: ["Team.ReadBasic.All"]
     method: GET
     path: "/me/joinedTeams"
     response:
@@ -51,7 +51,7 @@ actions:
   list_channels:
     display_name: "List channels"
     risk: { category: read, sensitivity: low, description: "List channels in a Team" }
-    scopes: ["https://graph.microsoft.com/Channel.ReadBasic.All"]
+    scopes: ["Channel.ReadBasic.All"]
     method: GET
     path: "/teams/{{.team_id}}/channels"
     params:
@@ -71,7 +71,7 @@ actions:
   list_messages:
     display_name: "List messages"
     risk: { category: read, sensitivity: low, description: "List messages in a Teams channel" }
-    scopes: ["https://graph.microsoft.com/ChannelMessage.Read.All"]
+    scopes: ["ChannelMessage.Read.All"]
     method: GET
     path: "/teams/{{.team_id}}/channels/{{.channel_id}}/messages"
     params:
@@ -101,7 +101,7 @@ actions:
   send_message:
     display_name: "Send message"
     risk: { category: write, sensitivity: medium, description: "Send a message in a Teams channel" }
-    scopes: ["https://graph.microsoft.com/ChannelMessage.Send"]
+    scopes: ["ChannelMessage.Send"]
     override: go
     params:
       team_id:

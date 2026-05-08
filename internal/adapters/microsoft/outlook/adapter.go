@@ -93,7 +93,7 @@ func (a *Adapter) createEvent(ctx context.Context, client *http.Client, params m
 	}
 	locationStr, _ := params["location"].(string)
 	bodyStr, _ := params["body"].(string)
-	attendeesStr, _ := params["attendees"].(string)
+	attendeesRaw := params["attendees"]
 
 	if subject == "" {
 		return nil, fmt.Errorf("outlook create_event: subject is required")
@@ -130,21 +130,39 @@ func (a *Adapter) createEvent(ctx context.Context, client *http.Client, params m
 		}
 	}
 
-	if attendeesStr != "" {
-		var attendees []map[string]any
-		for _, email := range strings.Split(attendeesStr, ",") {
-			email = strings.TrimSpace(email)
-			if email != "" {
-				attendees = append(attendees, map[string]any{
-					"emailAddress": map[string]string{
-						"address": email,
-					},
-					"type": "required",
-				})
+	if attendeesRaw != nil {
+		var emails []string
+		switch v := attendeesRaw.(type) {
+		case string:
+			if v != "" {
+				emails = strings.Split(v, ",")
 			}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok && s != "" {
+					emails = append(emails, s)
+				}
+			}
+		case []string:
+			emails = v
 		}
-		if len(attendees) > 0 {
-			payload["attendees"] = attendees
+
+		if len(emails) > 0 {
+			var attendees []map[string]any
+			for _, email := range emails {
+				email = strings.TrimSpace(email)
+				if email != "" {
+					attendees = append(attendees, map[string]any{
+						"emailAddress": map[string]string{
+							"address": email,
+						},
+						"type": "required",
+					})
+				}
+			}
+			if len(attendees) > 0 {
+				payload["attendees"] = attendees
+			}
 		}
 	}
 
@@ -159,10 +177,14 @@ func (a *Adapter) createEvent(ctx context.Context, client *http.Client, params m
 	return &adapters.Result{
 		Summary: format.Summary("Event created: %q", subject),
 		Data: map[string]any{
-			"id":      out.ID,
-			"subject": subject,
-			"start":   start,
-			"end":     end,
+			"id":        out.ID,
+			"subject":   subject,
+			"start":     start,
+			"end":       end,
+			"timezone":  timezone,
+			"location":  locationStr,
+			"body":      bodyStr,
+			"attendees": payload["attendees"],
 		},
 	}, nil
 }

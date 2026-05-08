@@ -32,6 +32,9 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"dropbox":          false,
 		"granola":          false,
 		"perplexity":       false,
+		"microsoft.onedrive": false,
+		"microsoft.outlook":  false,
+		"microsoft.teams":    false,
 	}
 
 	for _, a := range adapters {

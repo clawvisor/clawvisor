@@ -12,10 +12,10 @@ auth:
   type: oauth2
   oauth:
     scopes:
-      - "https://graph.microsoft.com/Mail.Read"
-      - "https://graph.microsoft.com/Mail.Send"
-      - "https://graph.microsoft.com/Calendars.ReadWrite"
-      - "https://graph.microsoft.com/User.Read"
+      - "Mail.Read"
+      - "Mail.Send"
+      - "Calendars.ReadWrite"
+      - "User.Read"
       - "offline_access"
     endpoint: microsoft
     vault_key: microsoft
@@ -36,7 +36,7 @@ actions:
   list_messages:
     display_name: "List messages"
     risk: { category: read, sensitivity: low, description: "List email messages from Outlook inbox" }
-    scopes: ["https://graph.microsoft.com/Mail.Read"]
+    scopes: ["Mail.Read"]
     method: GET
     path: "/me/messages"
     params:
@@ -84,7 +84,7 @@ actions:
   get_message:
     display_name: "Get message"
     risk: { category: read, sensitivity: low, description: "Read a specific email message" }
-    scopes: ["https://graph.microsoft.com/Mail.Read"]
+    scopes: ["Mail.Read"]
     method: GET
     path: "/me/messages/{{.message_id}}"
     params:
@@ -106,7 +106,7 @@ actions:
   send_message:
     display_name: "Send message"
     risk: { category: write, sensitivity: high, description: "Send email as the user via Outlook" }
-    scopes: ["https://graph.microsoft.com/Mail.Send"]
+    scopes: ["Mail.Send"]
     method: POST
     path: "/me/sendMail"
     params:
@@ -128,7 +128,7 @@ actions:
   list_events:
     display_name: "List calendar events"
     risk: { category: read, sensitivity: low, description: "List calendar events from Outlook" }
-    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
+    scopes: ["Calendars.ReadWrite"]
     method: GET
     path: "/me/events"
     params:
@@ -162,7 +162,7 @@ actions:
   get_event:
     display_name: "Get calendar event"
     risk: { category: read, sensitivity: low, description: "Read a specific calendar event" }
-    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
+    scopes: ["Calendars.ReadWrite"]
     method: GET
     path: "/me/events/{{.event_id}}"
     params:
@@ -176,6 +176,7 @@ actions:
         - { name: subject, sanitize: true }
         - { name: start, path: "start.dateTime" }
         - { name: end, path: "end.dateTime" }
+        - { name: timezone, path: "start.timeZone" }
         - { name: location, path: "location.displayName" }
         - { name: body, path: "body.content", sanitize: true }
         - { name: attendees }
@@ -184,7 +185,7 @@ actions:
   create_event:
     display_name: "Create calendar event"
     risk: { category: write, sensitivity: medium, description: "Create a new calendar event" }
-    scopes: ["https://graph.microsoft.com/Calendars.ReadWrite"]
+    scopes: ["Calendars.ReadWrite"]
     override: go
     params:
       subject:
@@ -206,5 +207,6 @@ actions:
       body:
         type: string
       attendees:
-        type: string
-        description: "Comma-separated attendee email addresses"
+        type: array
+        items: { type: string }
+        description: "List of attendee email addresses"

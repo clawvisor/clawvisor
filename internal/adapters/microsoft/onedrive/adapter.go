@@ -109,33 +109,40 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return nil, fmt.Errorf("onedrive download_file: item_id is required")
 	}
 
-	// First get metadata to know the name and size
-	metaEndpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s", itemID)
+	// Fetch metadata including the pre-signed @microsoft.graph.downloadUrl.
+	// We download from the URL using a plain client to avoid 401 redirect issues
+	// (Go's OAuth2 client re-injects Authorization headers on cross-host redirects).
+	metaEndpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s?$select=name,size,@microsoft.graph.downloadUrl", itemID)
 	var meta struct {
-		Name string `json:"name"`
-		Size int64  `json:"size"`
+		Name        string `json:"name"`
+		Size        int64  `json:"size"`
+		DownloadURL string `json:"@microsoft.graph.downloadUrl"`
 	}
 	if err := microsoft.GraphGET(ctx, client, metaEndpoint, &meta); err != nil {
-		return nil, fmt.Errorf("onedrive download_file: metadata: %w", err)
+		return nil, fmt.Errorf("onedrive download_file metadata: %w", err)
 	}
 
-	downloadEndpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/content", itemID)
+	if meta.DownloadURL == "" {
+		return nil, fmt.Errorf("onedrive download_file: item is not a file or has no download URL")
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadEndpoint, nil)
+	// Use plain HTTP client for the pre-signed URL download
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.DownloadURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("onedrive download_file: %w", err)
+		return nil, fmt.Errorf("onedrive download_file: download error: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("onedrive download_file: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("onedrive download_file: download status %d", resp.StatusCode)
 	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
 
 	contentType := mime.TypeByExtension(filepath.Ext(meta.Name))
 	if contentType == "" {
@@ -164,13 +171,22 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 
 func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	path, _ := params["path"].(string)
-	content, _ := params["content"].(string)
+	contentRaw, ok := params["content"]
+	if !ok {
+		return nil, fmt.Errorf("onedrive upload_file: content is required")
+	}
+	content, ok := contentRaw.(string)
+	if !ok {
+		return nil, fmt.Errorf("onedrive upload_file: content must be a string")
+	}
 
 	if path == "" {
 		return nil, fmt.Errorf("onedrive upload_file: path is required")
 	}
-	if content == "" {
-		return nil, fmt.Errorf("onedrive upload_file: content is required")
+
+	// Microsoft Graph simple upload limit is 4MB.
+	if len(content) > 4*1024*1024 {
+		return nil, fmt.Errorf("onedrive upload_file: file too large for simple upload (max 4MB); resumable uploads not yet implemented")
 	}
 
 	path = strings.TrimPrefix(path, "/")
@@ -207,7 +223,6 @@ func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params ma
 			"id":   uploaded.ID,
 			"name": uploaded.Name,
 			"size": uploaded.Size,
-			"path": path,
 		},
 	}, nil
 }

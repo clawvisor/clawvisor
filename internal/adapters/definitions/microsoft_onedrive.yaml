@@ -12,8 +12,8 @@ auth:
   type: oauth2
   oauth:
     scopes:
-      - "https://graph.microsoft.com/Files.ReadWrite"
-      - "https://graph.microsoft.com/User.Read"
+      - "Files.ReadWrite"
+      - "User.Read"
       - "offline_access"
     endpoint: microsoft
     vault_key: microsoft
@@ -34,7 +34,7 @@ actions:
   list_files:
     display_name: "List files"
     risk: { category: read, sensitivity: low, description: "List files in a OneDrive folder" }
-    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
+    scopes: ["Files.ReadWrite"]
     method: GET
     path: "/me/drive/root/children"
     params:
@@ -58,7 +58,7 @@ actions:
   get_file:
     display_name: "Get file metadata"
     risk: { category: read, sensitivity: low, description: "Get metadata for a file or folder in OneDrive" }
-    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
+    scopes: ["Files.ReadWrite"]
     method: GET
     path: "/me/drive/items/{{.item_id}}"
     params:
@@ -73,12 +73,17 @@ actions:
         - { name: size }
         - { name: lastModifiedDateTime, rename: modified }
         - { name: webUrl, rename: web_url }
+        - { name: parentReference.path, rename: path }
       summary: "{{.name}}"
+
+    errors:
+      - { code: not_found, status: 404 }
+      - { code: not_found, status: 400, body: "item id is not valid" }
 
   download_file:
     display_name: "Download file"
     risk: { category: read, sensitivity: low, description: "Download a file's content from OneDrive" }
-    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
+    scopes: ["Files.ReadWrite"]
     override: go
     params:
       item_id:
@@ -89,7 +94,7 @@ actions:
   upload_file:
     display_name: "Upload file"
     risk: { category: write, sensitivity: medium, description: "Upload a file to OneDrive" }
-    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
+    scopes: ["Files.ReadWrite"]
     override: go
     params:
       path:
@@ -104,7 +109,7 @@ actions:
   search_files:
     display_name: "Search files"
     risk: { category: search, sensitivity: low, description: "Search for files in OneDrive" }
-    scopes: ["https://graph.microsoft.com/Files.ReadWrite"]
+    scopes: ["Files.ReadWrite"]
     method: GET
     path: "/me/drive/root/search(q='{{.query}}')"
     params:
