@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type RuntimeToolControl, type ServiceInfo } from '../api/client'
@@ -287,6 +287,7 @@ export default function Policy() {
   const [agentFilter, setAgentFilter] = useState<string>('all')
   const [editingRule, setEditingRule] = useState<RuleDraft | null>(null)
   const [rulesTab, setRulesTab] = useState<'service' | 'egress' | 'tool'>('service')
+  const [proxyLiteTab, setProxyLiteTab] = useState<'tools' | 'accounts'>('tools')
 
   const { data: servicesData, isLoading: servicesLoading } = useQuery({
     queryKey: ['services'],
@@ -400,7 +401,7 @@ export default function Policy() {
           <h1 className="text-2xl font-bold text-text-primary">Policy</h1>
           <p className="text-sm text-text-tertiary mt-1">
             {proxyLiteOnly
-              ? 'Choose how this harness may use LLM tools.'
+              ? 'Configure harness tool access and connected account restrictions.'
               : runtimePolicyUI || servicePresetsUI
                 ? 'Configure presets, runtime rules, defaults, and legacy service restrictions from one control surface.'
               : 'Configure service restrictions for your connected adapters and integrations.'}
@@ -462,12 +463,32 @@ export default function Policy() {
       )}
 
       {proxyLiteOnly ? (
-        <ProxyLiteToolControlsPanel
-          agentId={agentFilter}
-          controls={toolControls?.entries ?? []}
-          busy={updateToolControlMut.isPending}
-          onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
-          onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
+        <ProxyLitePolicyTabs
+          activeTab={proxyLiteTab}
+          onTabChange={setProxyLiteTab}
+          toolCount={toolControls?.entries?.length ?? 0}
+          accountCount={allRestrictions.length}
+          tools={
+            <ProxyLiteToolControlsPanel
+              agentId={agentFilter}
+              controls={toolControls?.entries ?? []}
+              busy={updateToolControlMut.isPending}
+              onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
+              onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
+            />
+          }
+          accounts={
+            <AccountControlsPanel
+              orgId={orgId}
+              isLoading={isLoading}
+              allServices={allServices}
+              activated={activated}
+              unactivated={unactivated}
+              restrictions={allRestrictions}
+              showAll={showAll}
+              onToggleShowAll={() => setShowAll(s => !s)}
+            />
+          }
         />
       ) : (
         <PolicyRulesPanel
@@ -498,6 +519,55 @@ export default function Policy() {
   )
 }
 
+function ProxyLitePolicyTabs({
+  activeTab,
+  onTabChange,
+  toolCount,
+  accountCount,
+  tools,
+  accounts,
+}: {
+  activeTab: 'tools' | 'accounts'
+  onTabChange: (tab: 'tools' | 'accounts') => void
+  toolCount: number
+  accountCount: number
+  tools: ReactNode
+  accounts: ReactNode
+}) {
+  const tabs: Array<{ id: 'tools' | 'accounts'; label: string; count: number }> = [
+    { id: 'tools', label: 'Tool Controls', count: toolCount },
+    { id: 'accounts', label: 'Account Controls', count: accountCount },
+  ]
+
+  return (
+    <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
+      <div className="inline-flex rounded-lg border border-border-default bg-surface-0 p-1">
+        {tabs.map(tab => {
+          const active = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onTabChange(tab.id)}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition ${
+                active
+                  ? 'bg-surface-1 text-text-primary shadow-sm'
+                  : 'text-text-tertiary hover:text-text-primary'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs ${active ? 'bg-border-subtle text-text-primary' : 'bg-surface-1 text-text-tertiary'}`}>
+                {tab.count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {activeTab === 'tools' ? tools : accounts}
+    </section>
+  )
+}
+
 function ProxyLiteToolControlsPanel({
   agentId,
   controls,
@@ -513,7 +583,7 @@ function ProxyLiteToolControlsPanel({
 }) {
   const needsAgent = agentId === 'all'
   return (
-    <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">Tool Controls</h2>
@@ -542,7 +612,6 @@ function ProxyLiteToolControlsPanel({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
-                  <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-text-tertiary">{control.source}</span>
                   {control.advanced_rule_count > 0 && (
                     <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
                       {control.advanced_rule_count} advanced
@@ -566,7 +635,7 @@ function ProxyLiteToolControlsPanel({
           ))}
         </div>
       )}
-    </section>
+    </div>
   )
 }
 
@@ -607,6 +676,86 @@ function SegmentedToolAction({
           </button>
         )
       })}
+    </div>
+  )
+}
+
+function AccountControlsPanel({
+  orgId,
+  isLoading,
+  allServices,
+  activated,
+  unactivated,
+  restrictions,
+  showAll,
+  onToggleShowAll,
+}: {
+  orgId?: string
+  isLoading: boolean
+  allServices: ServiceInfo[]
+  activated: ServiceInfo[]
+  unactivated: ServiceInfo[]
+  restrictions: (Restriction | OrgRestriction)[]
+  showAll: boolean
+  onToggleShowAll: () => void
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Account Controls</h2>
+        <p className="text-sm text-text-tertiary mt-1">
+          Manage action-level restrictions for connected adapters and integrations.
+        </p>
+      </div>
+
+      {isLoading && <div className="text-sm text-text-tertiary">Loading...</div>}
+
+      {!isLoading && allServices.length === 0 && (
+        <div className="text-sm text-text-tertiary py-8 text-center">
+          No services registered. Add adapters in the server configuration to manage policy.
+        </div>
+      )}
+
+      {!isLoading && allServices.length > 0 && activated.length === 0 && (
+        <div className="text-sm text-text-tertiary py-8 text-center">
+          Activate a service first to manage account controls.{' '}
+          <Link to="/dashboard/accounts" className="text-brand hover:underline">Go to Accounts</Link>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {activated.map(svc => (
+          <ServiceGroup
+            key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
+            svc={svc}
+            restrictions={restrictions}
+            orgId={orgId}
+          />
+        ))}
+      </div>
+
+      {unactivated.length > 0 && (
+        <div className="space-y-4">
+          <button
+            onClick={onToggleShowAll}
+            className="text-sm text-text-tertiary hover:text-text-primary"
+          >
+            {showAll ? 'Hide unactivated services' : `Show all services (${unactivated.length} not activated)`}
+          </button>
+          {showAll && (
+            <div className="space-y-4 opacity-50">
+              {unactivated.map(svc => (
+                <ServiceGroup
+                  key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
+                  svc={svc}
+                  restrictions={restrictions}
+                  orgId={orgId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -701,56 +850,16 @@ function PolicyRulesPanel({
       </div>
 
       {rulesTab === 'service' && (
-        <div className="space-y-4">
-          {isLoading && <div className="text-sm text-text-tertiary">Loading...</div>}
-
-          {!isLoading && allServices.length === 0 && (
-            <div className="text-sm text-text-tertiary py-8 text-center">
-              No services registered. Add adapters in the server configuration to manage policy.
-            </div>
-          )}
-
-          {!isLoading && allServices.length > 0 && activated.length === 0 && (
-            <div className="text-sm text-text-tertiary py-8 text-center">
-              Activate a service first to manage service rules.{' '}
-              <Link to="/dashboard/accounts" className="text-brand hover:underline">Go to Accounts</Link>
-            </div>
-          )}
-
-          <div className="space-y-4">
-            {activated.map(svc => (
-              <ServiceGroup
-                key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
-                svc={svc}
-                restrictions={restrictions}
-                orgId={orgId}
-              />
-            ))}
-          </div>
-
-          {unactivated.length > 0 && (
-            <div className="space-y-4">
-              <button
-                onClick={onToggleShowAll}
-                className="text-sm text-text-tertiary hover:text-text-primary"
-              >
-                {showAll ? 'Hide unactivated services' : `Show all services (${unactivated.length} not activated)`}
-              </button>
-              {showAll && (
-                <div className="space-y-4 opacity-50">
-                  {unactivated.map(svc => (
-                    <ServiceGroup
-                      key={svc.alias ? `${svc.id}:${svc.alias}` : svc.id}
-                      svc={svc}
-                      restrictions={restrictions}
-                      orgId={orgId}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <AccountControlsPanel
+          orgId={orgId}
+          isLoading={isLoading}
+          allServices={allServices}
+          activated={activated}
+          unactivated={unactivated}
+          restrictions={restrictions}
+          showAll={showAll}
+          onToggleShowAll={onToggleShowAll}
+        />
       )}
 
       {rulesTab === 'egress' && !orgId && (
