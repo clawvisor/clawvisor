@@ -108,11 +108,7 @@ type PostprocessConfig struct {
 
 	PendingApprovals PendingApprovalCache
 
-	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
-	// endpoint rewrites. Empty disables the control-plane rewrite path.
-	ControlBaseURL string
-
-	// ControlExecutor handles synthetic Clawvisor control endpoint tool calls
+	// ControlExecutor handles synthetic Clawvisor control tool calls
 	// in-band. When set, control calls are executed inside proxy-lite and
 	// substituted with a synthetic assistant response instead of being handed
 	// to the harness shell.
@@ -186,17 +182,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			v = call.Verdict
 			if cfg.ControlExecutor != nil {
 				resp, err := cfg.ControlExecutor.ExecuteControl(req.Context(), ControlExecutionRequest{
-					Agent:  cfg.ControlAgent,
-					Method: call.Method,
-					Path:   call.Path,
-					Body:   call.Body,
+					Agent:    cfg.ControlAgent,
+					ToolName: call.ToolName,
+					Body:     call.Body,
 				})
 				if err != nil {
 					audit("block", "control_executor_error", err.Error())
 					return conversation.ToolUseVerdict{
 						Allowed:        false,
-						Reason:         "Clawvisor: control endpoint failed — " + err.Error(),
-						SubstituteWith: "Clawvisor control request failed.\n\n" + err.Error(),
+						Reason:         "Clawvisor: synthetic control tool failed — " + err.Error(),
+						SubstituteWith: "Clawvisor synthetic control tool failed.\n\n" + err.Error(),
 					}
 				}
 				outcome := "control_executed"
@@ -206,30 +201,15 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				audit("allow", outcome, v.Reason)
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
-					Reason:         "Clawvisor: control endpoint handled in proxy-lite",
+					Reason:         "Clawvisor: synthetic control tool handled in proxy-lite",
 					SubstituteWith: FormatControlExecutionResponse(resp),
 				}
 			}
 
-			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, cfg.RewriteOpts.CallerToken)
-			if !rewriteOK {
-				audit("block", "control_unavailable", "no control executor or rewrite base URL configured")
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: control endpoint unavailable",
-				}
-			}
-			if err != nil {
-				audit("block", "control_rewriter_error", err.Error())
-				return conversation.ToolUseVerdict{
-					Allowed: false,
-					Reason:  "Clawvisor: control endpoint rewrite refused — " + err.Error(),
-				}
-			}
-			audit("rewrite", "clawvisor_control", v.Reason)
+			audit("block", "control_unavailable", "no control executor configured")
 			return conversation.ToolUseVerdict{
-				Allowed:      true,
-				RewriteInput: rewritten,
+				Allowed: false,
+				Reason:  "Clawvisor: synthetic control tool unavailable",
 			}
 		}
 

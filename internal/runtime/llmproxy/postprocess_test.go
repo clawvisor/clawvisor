@@ -63,6 +63,10 @@ func seedPostprocessStore(t *testing.T, placeholder string) (store.Store, string
 }
 
 func anthropicJSONWithToolUse(input string) []byte {
+	return anthropicJSONWithNamedToolUse("WebFetch", input)
+}
+
+func anthropicJSONWithNamedToolUse(name, input string) []byte {
 	return []byte(`{
 		"id":"msg_1",
 		"type":"message",
@@ -70,7 +74,7 @@ func anthropicJSONWithToolUse(input string) []byte {
 		"model":"claude-haiku-4-5",
 		"content":[
 			{"type":"text","text":"sure"},
-			{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":` + input + `}
+			{"type":"tool_use","id":"toolu_1","name":"` + name + `","input":` + input + `}
 		],
 		"stop_reason":"tool_use"
 	}`)
@@ -181,48 +185,8 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
-func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
-
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:      insp,
-		RewriteOpts:    inspector.DefaultRewriteOpts(""),
-		Store:          st,
-		AgentUserID:    userID,
-		AgentID:        agentID,
-		ControlBaseURL: "http://localhost:25297",
-		ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
-	})
-
-	if !got.Rewritten {
-		t.Fatalf("expected synthetic control URL rewrite")
-	}
-	out := string(got.Body)
-	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
-		t.Fatalf("control URL was not rewritten: %s", out)
-	}
-	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
-		t.Fatalf("control rewrite missing target header: %s", out)
-	}
-	if strings.Contains(out, "web fetch blocked") {
-		t.Fatalf("synthetic control endpoint should bypass tool rules: %s", out)
-	}
-}
-
 func TestPostprocess_ExecutesSyntheticControlToolUseInBand(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
+	body := anthropicJSONWithNamedToolUse("cv_task", `{"purpose":"test","expected_tools_json":[{"tool_name":"bash","why":"test"}]}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -253,18 +217,56 @@ func TestPostprocess_ExecutesSyntheticControlToolUseInBand(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected synthetic control response substitution")
 	}
-	if exec.got.Method != http.MethodPost || exec.got.Path != "/control/tasks" {
-		t.Fatalf("executor got method/path %s %s", exec.got.Method, exec.got.Path)
+	if exec.got.ToolName != ControlToolTask {
+		t.Fatalf("executor got tool %s", exec.got.ToolName)
 	}
 	if !strings.Contains(string(exec.got.Body), `"purpose":"test"`) {
 		t.Fatalf("executor body missing task payload: %s", exec.got.Body)
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "Clawvisor control request handled") || !strings.Contains(out, "task_123") {
+	if !strings.Contains(out, "Clawvisor synthetic tool handled") || !strings.Contains(out, "task_123") {
 		t.Fatalf("response missing synthetic control result: %s", out)
 	}
 	if strings.Contains(out, "http://localhost") || strings.Contains(out, "web fetch blocked") {
-		t.Fatalf("control call should not be rewritten to localhost or blocked by rules: %s", out)
+		t.Fatalf("control tool should not be rewritten to localhost or blocked by rules: %s", out)
+	}
+}
+
+func TestPostprocess_DoesNotTreatControlURLCurlAsSyntheticTool(t *testing.T) {
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -d '{\"purpose\":\"test\"}'"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	exec := &fakeControlExecutor{}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts(""),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlExecutor:  exec,
+		ResponseRegistry: conversation.DefaultResponseRegistry(),
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-webfetch",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "WebFetch",
+			Reason:   "web fetch blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected ordinary WebFetch rule to apply")
+	}
+	if exec.got.ToolName != "" {
+		t.Fatalf("HTTP compatibility fallback should not execute synthetic control, got %s", exec.got.ToolName)
+	}
+	if !strings.Contains(string(got.Body), "web fetch blocked") {
+		t.Fatalf("ordinary tool rule did not apply: %s", got.Body)
 	}
 }
 

@@ -44,11 +44,6 @@ type LLMEndpointHandler struct {
 	// disables rewriting even when Inspector is set.
 	ResolverBaseURL string
 
-	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
-	// endpoint rewrites (https://clawvisor.local/control/... in tool calls).
-	// Empty disables control prompt injection and control rewrites.
-	ControlBaseURL string
-
 	// ControlExecutor handles synthetic Clawvisor control calls in-band
 	// before they reach the harness shell.
 	ControlExecutor llmproxy.ControlExecutor
@@ -201,8 +196,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
-	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)
+	if h.ControlExecutor != nil && shouldInjectLiteControlTools(r.URL.Path, reqSummary) {
+		injectedBody, injected, injectErr := llmproxy.InjectControlTools(provider, r.URL.Path, body)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
@@ -222,7 +217,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			reqSummary = liteProxyRequestDebugSummary(provider, body)
-			auditParams["control_notice_injected"] = true
+			auditParams["control_tools_injected"] = true
 		}
 	}
 	auditParams["model"] = reqSummary.Model
@@ -383,7 +378,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			ToolRules:        toolRules,
 			EgressRules:      egressRules,
 			PendingApprovals: h.PendingApprovals,
-			ControlBaseURL:   h.ControlBaseURL,
 			ControlExecutor:  h.ControlExecutor,
 			ControlAgent:     agent,
 		})
@@ -657,7 +651,7 @@ func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) l
 	return summary
 }
 
-func shouldInjectLiteControlNotice(path string, summary liteProxyRequestSummary) bool {
+func shouldInjectLiteControlTools(path string, summary liteProxyRequestSummary) bool {
 	if strings.HasSuffix(path, "/count_tokens") {
 		return false
 	}

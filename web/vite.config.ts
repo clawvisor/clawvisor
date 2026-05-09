@@ -12,7 +12,6 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': backendURL,
-      '/control': backendURL,
       '/skill': backendURL,
       '/health': backendURL,
       '/ready': backendURL,
