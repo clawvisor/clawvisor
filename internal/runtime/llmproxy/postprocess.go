@@ -451,7 +451,73 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 		b.WriteString(preview)
 	}
 	b.WriteString("\n\nReply `approve` to run this tool call or `deny` to block it.")
+	if taskHint := taskCreationPrompt(tu); taskHint != "" {
+		b.WriteString("\n\n")
+		b.WriteString(taskHint)
+	}
 	return b.String()
+}
+
+func taskCreationPrompt(tu conversation.ToolUse) string {
+	toolName := strings.TrimSpace(tu.Name)
+	if toolName == "" {
+		return ""
+	}
+	payload := map[string]any{
+		"purpose": "Describe the user-visible task you are trying to complete, including why this tool access is needed.",
+		"expected_tools_json": []map[string]any{{
+			"tool_name": toolName,
+			"why":       taskToolWhy(tu),
+		}},
+		"intent_verification_mode": "strict",
+		"expires_in_seconds":       600,
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return "To request task-scoped permission for this and related work, create a task that covers this action plus any other tools or commands you expect to use. Add more `expected_tools_json` entries as needed.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+}
+
+func taskToolWhy(tu conversation.ToolUse) string {
+	switch strings.TrimSpace(tu.Name) {
+	case "Bash", "bash", "exec_command":
+		if command := toolInputString(tu.Input, "command", "cmd"); command != "" {
+			return "Run shell command(s) needed for the task, including: " + command
+		}
+	case "Read":
+		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
+			return "Read files needed for the task, including: " + path
+		}
+	case "Write", "Edit", "NotebookEdit":
+		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
+			return "Modify files needed for the task, including: " + path
+		}
+	case "WebFetch", "WebSearch":
+		if target := toolInputString(tu.Input, "url", "query"); target != "" {
+			return "Use web access needed for the task, including: " + target
+		}
+	}
+	return "Use this tool for the requested task. Include a concise description of the command pattern, file path, URL, or operation."
+}
+
+func toolInputString(raw json.RawMessage, keys ...string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		if v, ok := input[key].(string); ok {
+			v = strings.TrimSpace(v)
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 type decisionIntentVerifier struct {

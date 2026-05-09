@@ -195,9 +195,15 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	if !got.Rewritten {
 		t.Fatalf("missing task/rule scope should rewrite to an approval prompt")
 	}
-	if !strings.Contains(string(got.Body), "Reply `approve`") ||
-		!strings.Contains(string(got.Body), "no matching task scope") {
+	text := anthropicResponseText(t, got.Body)
+	if !strings.Contains(text, "Reply `approve`") ||
+		!strings.Contains(text, "no matching task scope") {
 		t.Fatalf("approval prompt missing expected text: %s", got.Body)
+	}
+	if !strings.Contains(text, "https://clawvisor.local/control/tasks") ||
+		!strings.Contains(text, `"tool_name": "Bash"`) ||
+		!strings.Contains(text, "ls /tmp/ | grep -i greet") {
+		t.Fatalf("approval prompt missing task creation guidance: %s", got.Body)
 	}
 	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
 	if err != nil {
@@ -209,6 +215,46 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	row := rows[0]
 	if row.Action != "lite_proxy.tool_use.block" || row.Outcome != "task_scope_missing" {
 		t.Fatalf("unexpected audit row: action=%s outcome=%s", row.Action, row.Outcome)
+	}
+}
+
+func anthropicResponseText(t *testing.T, body []byte) string {
+	t.Helper()
+	var resp struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("response unmarshal: %v", err)
+	}
+	var parts []string
+	for _, block := range resp.Content {
+		if block.Type == "text" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func TestApprovalPromptIncludesTaskCreationExample(t *testing.T) {
+	got := approvalPrompt(conversation.ToolUse{
+		Name:  "Write",
+		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
+	}, "no matching task scope")
+
+	for _, want := range []string{
+		"Reply `approve`",
+		"create a task that covers this action plus any other tools",
+		"https://clawvisor.local/control/tasks",
+		`"tool_name": "Write"`,
+		"/tmp/report.txt",
+		"expected_tools_json",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("approval prompt missing %q:\n%s", want, got)
+		}
 	}
 }
 
