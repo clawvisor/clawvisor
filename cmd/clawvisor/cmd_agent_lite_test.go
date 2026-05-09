@@ -48,9 +48,6 @@ func TestBuildLiteProxyEnvCodex(t *testing.T) {
 	if got := values["OPENAI_API_KEY"]; got != "cvis_token" {
 		t.Fatalf("OPENAI_API_KEY = %q", got)
 	}
-	if got := values["CODEX_API_KEY"]; got != "cvis_token" {
-		t.Fatalf("CODEX_API_KEY = %q", got)
-	}
 	if got := values["ANTHROPIC_BASE_URL"]; got != "" {
 		t.Fatalf("ANTHROPIC_BASE_URL should be omitted for codex, got %q", got)
 	}
@@ -144,8 +141,10 @@ func TestPrepareLiteProxyCommandArgsInjectsCodexConfig(t *testing.T) {
 	got := prepareLiteProxyCommandArgs(opts, []string{"codex", "exec", "hello"})
 	want := []string{
 		"codex",
-		"-c", `model_provider="openai"`,
-		"-c", `openai_base_url="https://clawvisor.example/v1"`,
+		"-c", "model_provider=clawvisor",
+		"-c", `model_providers.clawvisor.name="clawvisor"`,
+		"-c", `model_providers.clawvisor.base_url="https://clawvisor.example/v1"`,
+		"-c", `model_providers.clawvisor.env_key="CLAWVISOR_AGENT_TOKEN"`,
 		"exec",
 		"hello",
 	}
