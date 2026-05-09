@@ -106,6 +106,10 @@ type PostprocessConfig struct {
 	EgressRules    []*store.RuntimePolicyRule
 
 	PendingApprovals PendingApprovalCache
+
+	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
+	// endpoint rewrites. Empty disables the control-plane rewrite path.
+	ControlBaseURL string
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -162,18 +166,35 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	auditAgent := auditAgentForCfg(cfg)
 
 	eval := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
-		v := cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{
-			ID:    tu.ID,
-			Name:  tu.Name,
-			Input: tu.Input,
-		})
-
+		var v inspector.Verdict
 		audit := func(decision, outcome, reason string) {
 			if cfg.Audit == nil || auditAgent == nil {
 				return
 			}
 			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu, v, decision, outcome, reason)
 		}
+
+		if rewritten, controlVerdict, ok, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, cfg.RewriteOpts.CallerToken); ok {
+			v = controlVerdict
+			if err != nil {
+				audit("block", "control_rewriter_error", err.Error())
+				return conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: control endpoint rewrite refused — " + err.Error(),
+				}
+			}
+			audit("rewrite", "clawvisor_control", v.Reason)
+			return conversation.ToolUseVerdict{
+				Allowed:      true,
+				RewriteInput: rewritten,
+			}
+		}
+
+		v = cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{
+			ID:    tu.ID,
+			Name:  tu.Name,
+			Input: tu.Input,
+		})
 
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization

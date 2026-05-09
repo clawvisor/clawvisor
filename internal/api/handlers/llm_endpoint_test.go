@@ -176,6 +176,36 @@ func TestLLMEndpoint_PassthroughAnthropic(t *testing.T) {
 	}
 }
 
+func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.ControlBaseURL = "http://localhost:25297"
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
+		t.Fatalf("upstream request missing control notice: %s", seenBody)
+	}
+}
+
 func TestLiteProxyDecisionPostureIsAlwaysEnforce(t *testing.T) {
 	agent := &store.Agent{RuntimeSettings: &store.AgentRuntimeSettings{RuntimeMode: "observe"}}
 	if got := liteProxyDecisionPosture(agent); got != "enforce" {

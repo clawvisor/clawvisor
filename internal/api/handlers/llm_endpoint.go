@@ -44,6 +44,11 @@ type LLMEndpointHandler struct {
 	// disables rewriting even when Inspector is set.
 	ResolverBaseURL string
 
+	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
+	// endpoint rewrites (https://clawvisor.local/control/... in tool calls).
+	// Empty disables control prompt injection and control rewrites.
+	ControlBaseURL string
+
 	// AuditEmitter writes one audit_log row per /v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
@@ -192,6 +197,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
+	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
+		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body)
+		if injectErr != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = injectErr.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", injectErr.Error())
+			return
+		}
+		if injected {
+			body = injectedBody
+			if _, err := parser.ParseRequest(body); err != nil {
+				auditStatus = http.StatusBadRequest
+				auditDecide = "deny"
+				auditOutcome = "malformed_request"
+				auditReason = err.Error()
+				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				return
+			}
+			reqSummary = liteProxyRequestDebugSummary(provider, body)
+			auditParams["control_notice_injected"] = true
+		}
+	}
 	auditParams["model"] = reqSummary.Model
 	auditParams["stream"] = reqSummary.Stream
 	auditParams["request_body_bytes"] = len(body)
@@ -350,6 +379,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			ToolRules:        toolRules,
 			EgressRules:      egressRules,
 			PendingApprovals: h.PendingApprovals,
+			ControlBaseURL:   h.ControlBaseURL,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -619,6 +649,13 @@ func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) l
 		}
 	}
 	return summary
+}
+
+func shouldInjectLiteControlNotice(path string, summary liteProxyRequestSummary) bool {
+	if strings.HasSuffix(path, "/count_tokens") {
+		return false
+	}
+	return len(summary.AvailableTools) > 0
 }
 
 func appendToolName(tools []string, name string) []string {

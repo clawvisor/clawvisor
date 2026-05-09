@@ -167,6 +167,46 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
+func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:      insp,
+		RewriteOpts:    inspector.DefaultRewriteOpts(""),
+		Store:          st,
+		AgentUserID:    userID,
+		AgentID:        agentID,
+		ControlBaseURL: "http://localhost:25297",
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-webfetch",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "WebFetch",
+			Reason:   "web fetch blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected synthetic control URL rewrite")
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
+		t.Fatalf("control URL was not rewritten: %s", out)
+	}
+	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
+		t.Fatalf("control rewrite missing target header: %s", out)
+	}
+	if strings.Contains(out, "web fetch blocked") {
+		t.Fatalf("synthetic control endpoint should bypass tool rules: %s", out)
+	}
+}
+
 func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",
