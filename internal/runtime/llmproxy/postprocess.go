@@ -111,13 +111,6 @@ type PostprocessConfig struct {
 	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
 	// endpoint rewrites. Empty disables the control-plane rewrite path.
 	ControlBaseURL string
-
-	// ControlExecutor handles synthetic Clawvisor control endpoint tool calls
-	// in-band. When set, control calls are executed inside proxy-lite and
-	// substituted with a synthetic assistant response instead of being handed
-	// to the harness shell.
-	ControlExecutor ControlExecutor
-	ControlAgent    *store.Agent
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -184,36 +177,9 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 		if call, ok := ParseControlToolUse(tu); ok {
 			v = call.Verdict
-			if cfg.ControlExecutor != nil {
-				resp, err := cfg.ControlExecutor.ExecuteControl(req.Context(), ControlExecutionRequest{
-					Agent:  cfg.ControlAgent,
-					Method: call.Method,
-					Path:   call.Path,
-					Body:   call.Body,
-				})
-				if err != nil {
-					audit("block", "control_executor_error", err.Error())
-					return conversation.ToolUseVerdict{
-						Allowed:        false,
-						Reason:         "Clawvisor: control endpoint failed — " + err.Error(),
-						SubstituteWith: "Clawvisor control request failed.\n\n" + err.Error(),
-					}
-				}
-				outcome := "control_executed"
-				if resp.StatusCode >= 400 {
-					outcome = "control_error"
-				}
-				audit("allow", outcome, v.Reason)
-				return conversation.ToolUseVerdict{
-					Allowed:        false,
-					Reason:         "Clawvisor: control endpoint handled in proxy-lite",
-					SubstituteWith: FormatControlExecutionResponse(resp),
-				}
-			}
-
 			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, cfg.RewriteOpts.CallerToken)
 			if !rewriteOK {
-				audit("block", "control_unavailable", "no control executor or rewrite base URL configured")
+				audit("block", "control_unavailable", "no control rewrite base URL configured")
 				return conversation.ToolUseVerdict{
 					Allowed: false,
 					Reason:  "Clawvisor: control endpoint unavailable",

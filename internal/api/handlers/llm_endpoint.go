@@ -49,10 +49,6 @@ type LLMEndpointHandler struct {
 	// Empty disables control prompt injection and control rewrites.
 	ControlBaseURL string
 
-	// ControlExecutor handles synthetic Clawvisor control calls in-band
-	// before they reach the harness shell.
-	ControlExecutor llmproxy.ControlExecutor
-
 	// AuditEmitter writes one audit_log row per /v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
@@ -384,8 +380,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			EgressRules:      egressRules,
 			PendingApprovals: h.PendingApprovals,
 			ControlBaseURL:   h.ControlBaseURL,
-			ControlExecutor:  h.ControlExecutor,
-			ControlAgent:     agent,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,

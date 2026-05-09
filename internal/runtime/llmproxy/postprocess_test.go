@@ -3,7 +3,6 @@ package llmproxy
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -16,19 +15,6 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
-
-type fakeControlExecutor struct {
-	got ControlExecutionRequest
-}
-
-func (f *fakeControlExecutor) ExecuteControl(_ context.Context, req ControlExecutionRequest) (ControlExecutionResponse, error) {
-	f.got = req
-	return ControlExecutionResponse{
-		StatusCode:  http.StatusCreated,
-		ContentType: "application/json",
-		Body:        []byte(`{"task_id":"task_123","status":"pending_approval"}`),
-	}, nil
-}
 
 // seedPostprocessStore returns a store with a github placeholder + agent
 // owned by `userID/agentID`. Tests that rely on the boundary check pass
@@ -218,53 +204,6 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	}
 	if strings.Contains(out, "web fetch blocked") {
 		t.Fatalf("synthetic control endpoint should bypass tool rules: %s", out)
-	}
-}
-
-func TestPostprocess_ExecutesSyntheticControlToolUseInBand(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
-	exec := &fakeControlExecutor{}
-	agent := &store.Agent{ID: agentID, UserID: userID}
-
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts(""),
-		Store:            st,
-		AgentUserID:      userID,
-		AgentID:          agentID,
-		ControlExecutor:  exec,
-		ControlAgent:     agent,
-		ResponseRegistry: conversation.DefaultResponseRegistry(),
-		ToolRules: []*store.RuntimePolicyRule{{
-			ID:       "deny-webfetch",
-			UserID:   userID,
-			AgentID:  &agentID,
-			Kind:     "tool",
-			Action:   "deny",
-			ToolName: "WebFetch",
-			Reason:   "web fetch blocked",
-			Enabled:  true,
-		}},
-	})
-
-	if !got.Rewritten {
-		t.Fatalf("expected synthetic control response substitution")
-	}
-	if exec.got.Method != http.MethodPost || exec.got.Path != "/control/tasks" {
-		t.Fatalf("executor got method/path %s %s", exec.got.Method, exec.got.Path)
-	}
-	if !strings.Contains(string(exec.got.Body), `"purpose":"test"`) {
-		t.Fatalf("executor body missing task payload: %s", exec.got.Body)
-	}
-	out := string(got.Body)
-	if !strings.Contains(out, "Clawvisor control request handled") || !strings.Contains(out, "task_123") {
-		t.Fatalf("response missing synthetic control result: %s", out)
-	}
-	if strings.Contains(out, "http://localhost") || strings.Contains(out, "web fetch blocked") {
-		t.Fatalf("control call should not be rewritten to localhost or blocked by rules: %s", out)
 	}
 }
 

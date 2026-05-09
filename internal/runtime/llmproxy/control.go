@@ -1,15 +1,12 @@
 package llmproxy
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
-	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 const (
@@ -22,7 +19,7 @@ func ControlNotice(controlBaseURL string) string {
 	if controlBaseURL != "" {
 		docsURL = controlBaseURL + "/control/skill"
 	}
-	return "Clawvisor is available for permission management. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use, emit a tool call that POSTs to https://clawvisor.local/control/tasks; Clawvisor handles that synthetic URL inside proxy-lite, so the shell does not need local network access. Task creation does not grant permission until the user approves it."
+	return "Clawvisor is available for permission management. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use, emit a tool call that POSTs to https://clawvisor.local/control/tasks; Clawvisor rewrites that synthetic URL to the configured proxy endpoint before the shell runs it. Task creation does not grant permission until the user approves it."
 }
 
 // InjectControlNotice adds a compact control-plane hint to the request context.
@@ -155,24 +152,6 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	return rewritten, v, true, err
 }
 
-type ControlExecutor interface {
-	ExecuteControl(ctx context.Context, req ControlExecutionRequest) (ControlExecutionResponse, error)
-}
-
-type ControlExecutionRequest struct {
-	Agent  *store.Agent
-	Method string
-	Path   string
-	Body   []byte
-}
-
-type ControlExecutionResponse struct {
-	StatusCode   int
-	ContentType  string
-	Body         []byte
-	ErrorMessage string
-}
-
 type ControlCall struct {
 	Method  string
 	URL     *url.URL
@@ -182,7 +161,7 @@ type ControlCall struct {
 }
 
 func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
-	u, method, body, ok := controlCallParts(t)
+	u, method, _, ok := controlCallParts(t)
 	if !ok {
 		return ControlCall{}, false
 	}
@@ -197,24 +176,8 @@ func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
 		Method:  method,
 		URL:     u,
 		Path:    u.RequestURI(),
-		Body:    body,
 		Verdict: controlVerdictWithMethod(u, method),
 	}, true
-}
-
-func FormatControlExecutionResponse(resp ControlExecutionResponse) string {
-	status := resp.StatusCode
-	if status == 0 {
-		status = 500
-	}
-	if resp.ErrorMessage != "" {
-		return fmt.Sprintf("Clawvisor control request failed.\n\nHTTP %d\n%s", status, resp.ErrorMessage)
-	}
-	body := strings.TrimSpace(string(resp.Body))
-	if body == "" {
-		return fmt.Sprintf("Clawvisor control request handled.\n\nHTTP %d", status)
-	}
-	return fmt.Sprintf("Clawvisor control request handled.\n\nHTTP %d\n```json\n%s\n```", status, body)
 }
 
 func controlVerdictForToolUse(t conversation.ToolUse) (inspector.Verdict, bool) {
