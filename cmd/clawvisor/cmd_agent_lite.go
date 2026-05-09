@@ -186,6 +186,7 @@ func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
 		env = append(env,
 			"OPENAI_BASE_URL="+liteProxyOpenAIBaseURL(baseURL),
 			"OPENAI_API_KEY="+agentToken,
+			"CODEX_API_KEY="+agentToken,
 		)
 	}
 	return env, nil
@@ -214,6 +215,7 @@ func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
 	if err != nil {
 		return err
 	}
+	commandArgs = prepareLiteProxyCommandArgs(opts, commandArgs)
 	child := exec.Command(commandArgs[0], commandArgs[1:]...)
 	child.Env = mergeEnvironment(os.Environ(), envPairs)
 	child.Stdin = os.Stdin
@@ -221,6 +223,21 @@ func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
 	child.Stderr = os.Stderr
 	fmt.Fprintf(os.Stderr, "Routing %s through Clawvisor proxy-lite at %s\n", opts.Provider, opts.BaseURL)
 	return child.Run()
+}
+
+func prepareLiteProxyCommandArgs(opts *liteProxyOptions, commandArgs []string) []string {
+	if opts == nil || opts.Provider != liteProxyProviderCodex || len(commandArgs) == 0 {
+		return commandArgs
+	}
+	if normalizeLiteProxyCommandKey(commandArgs[0]) != liteProxyProviderCodex {
+		return commandArgs
+	}
+	injected := []string{
+		commandArgs[0],
+		"-c", `model_provider="openai"`,
+		"-c", fmt.Sprintf(`openai_base_url=%q`, liteProxyOpenAIBaseURL(opts.BaseURL)),
+	}
+	return append(injected, commandArgs[1:]...)
 }
 
 func addLiteProxyFlags(cmd *cobra.Command) {

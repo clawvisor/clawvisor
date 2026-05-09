@@ -48,6 +48,9 @@ func TestBuildLiteProxyEnvCodex(t *testing.T) {
 	if got := values["OPENAI_API_KEY"]; got != "cvis_token" {
 		t.Fatalf("OPENAI_API_KEY = %q", got)
 	}
+	if got := values["CODEX_API_KEY"]; got != "cvis_token" {
+		t.Fatalf("CODEX_API_KEY = %q", got)
+	}
 	if got := values["ANTHROPIC_BASE_URL"]; got != "" {
 		t.Fatalf("ANTHROPIC_BASE_URL should be omitted for codex, got %q", got)
 	}
@@ -133,5 +136,29 @@ func TestLiteProxyRunPlanRequiresProviderForUnknownCommand(t *testing.T) {
 	_, _, err := liteProxyRunPlan([]string{"my-wrapper"}, "")
 	if err == nil || !strings.Contains(err.Error(), "could not infer proxy-lite provider") {
 		t.Fatalf("error = %v, want inference failure", err)
+	}
+}
+
+func TestPrepareLiteProxyCommandArgsInjectsCodexConfig(t *testing.T) {
+	opts := &liteProxyOptions{Provider: "codex", BaseURL: "https://clawvisor.example"}
+	got := prepareLiteProxyCommandArgs(opts, []string{"codex", "exec", "hello"})
+	want := []string{
+		"codex",
+		"-c", `model_provider="openai"`,
+		"-c", `openai_base_url="https://clawvisor.example/v1"`,
+		"exec",
+		"hello",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("command args = %#v, want %#v", got, want)
+	}
+}
+
+func TestPrepareLiteProxyCommandArgsLeavesNonCodexWrapperAlone(t *testing.T) {
+	opts := &liteProxyOptions{Provider: "codex", BaseURL: "https://clawvisor.example"}
+	got := prepareLiteProxyCommandArgs(opts, []string{"my-codex-wrapper", "hello"})
+	want := []string{"my-codex-wrapper", "hello"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("command args = %#v, want %#v", got, want)
 	}
 }
