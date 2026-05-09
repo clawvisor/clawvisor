@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -84,8 +85,29 @@ type Client struct {
 	hedgeDelay        time.Duration      // 0 → no hedge; otherwise fire a second request after this delay
 
 	// Gemini-specific settings.
-	geminiThinkingLevel string       // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
-	geminiCacheNameFn   func() string // returns current Gemini cachedContents resource name; "" = uncached path
+	geminiThinkingLevel    string             // "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"; "" → MINIMAL
+	geminiCacheNameFn      func() string      // returns current Gemini cachedContents resource name; "" = uncached path
+	geminiCacheInvalidator func(name string)  // called when a cache reference fails server-side; manager drops the matching name and refreshes
+	slogger                *slog.Logger       // optional; defaults to slog.Default() via logger()
+}
+
+// logger returns the client's structured logger, defaulting to slog.Default()
+// when WithLogger has not been called. Used by the Gemini provider path to
+// emit cache-fallback events without callers needing to wire a logger.
+func (c *Client) logger() *slog.Logger {
+	if c.slogger != nil {
+		return c.slogger
+	}
+	return slog.Default()
+}
+
+// WithLogger returns a shallow copy with a custom structured logger. Used
+// by the Gemini cache-fallback path to emit a warn-level event when a
+// referenced cachedContent fails server-side. Pass nil to clear.
+func (c *Client) WithLogger(l *slog.Logger) *Client {
+	c2 := *c
+	c2.slogger = l
+	return &c2
 }
 
 // WithMaxTokens returns a shallow copy of the client with a custom max_tokens limit.
@@ -140,6 +162,19 @@ func (c *Client) Endpoint() string {
 // must call this on each new instance.
 func (c *Client) AttachGeminiCacheNameFn(fn func() string) {
 	c.geminiCacheNameFn = fn
+}
+
+// AttachGeminiCacheInvalidator registers a callback the client invokes
+// when a cachedContent reference fails server-side (404 not-found or 400
+// "is expired"). The callback receives the failed cache name; the
+// implementation (typically GeminiCacheManager.InvalidateIfMatches) drops
+// the in-process name if it still matches and triggers an async refresh,
+// so concurrent and subsequent requests don't all hit the same dead
+// reference. Optional — without it, the client still falls back to the
+// uncached path for the failing request, but every other in-flight
+// request keeps using the stale name until the next refresh tick.
+func (c *Client) AttachGeminiCacheInvalidator(fn func(name string)) {
+	c.geminiCacheInvalidator = fn
 }
 
 // NewClient builds a Client from a provider config.

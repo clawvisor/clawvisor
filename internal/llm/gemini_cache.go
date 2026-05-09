@@ -35,6 +35,11 @@ type GeminiCacheManager struct {
 	// cacheName is updated atomically so reads from CacheName() never lock.
 	cacheName atomic.Value // string
 
+	// refreshInFlight is set while an InvalidateIfMatches-triggered
+	// async refresh is running, so a thundering herd of failing
+	// requests doesn't mint dozens of caches in parallel.
+	refreshInFlight atomic.Bool
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
@@ -117,20 +122,23 @@ func (m *GeminiCacheManager) Start(ctx context.Context) error {
 
 // StartCachedSystemPrompt is a convenience constructor that fills cfg's
 // SystemPrompt, builds a GeminiCacheManager, and starts it in one call.
-// Returns the manager (for shutdown control if needed) and a function
-// that returns the current cache resource name (suitable for passing to
-// Client.AttachGeminiCacheNameFn). Used by service-level Start helpers
-// to deduplicate the build-and-start dance.
-func StartCachedSystemPrompt(ctx context.Context, cfg GeminiCacheManagerConfig, systemPrompt string) (*GeminiCacheManager, func() string, error) {
+// Returns the manager (for shutdown control if needed), a function that
+// returns the current cache resource name (suitable for passing to
+// Client.AttachGeminiCacheNameFn), and an invalidator (suitable for
+// Client.AttachGeminiCacheInvalidator) that drops the in-process name
+// and triggers an async refresh when a cache reference fails server-side.
+// Used by service-level Start helpers to deduplicate the build-and-start
+// dance.
+func StartCachedSystemPrompt(ctx context.Context, cfg GeminiCacheManagerConfig, systemPrompt string) (*GeminiCacheManager, func() string, func(string), error) {
 	cfg.SystemPrompt = systemPrompt
 	mgr, err := NewGeminiCacheManager(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := mgr.Start(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return mgr, mgr.CacheName, nil
+	return mgr, mgr.CacheName, mgr.InvalidateIfMatches, nil
 }
 
 // CacheName returns the current cache resource name, or "" if no cache is
@@ -138,6 +146,58 @@ func StartCachedSystemPrompt(ctx context.Context, cfg GeminiCacheManagerConfig, 
 func (m *GeminiCacheManager) CacheName() string {
 	v, _ := m.cacheName.Load().(string)
 	return v
+}
+
+// SetCacheNameForTest seeds the in-process cache name without going through
+// Start (which performs a real HTTP create). Test-only helper exposed so
+// invalidation behavior can be exercised against a pre-seeded name.
+func (m *GeminiCacheManager) SetCacheNameForTest(name string) {
+	m.cacheName.Store(name)
+}
+
+// InvalidateIfMatches drops the in-process cache name if it equals failed
+// and kicks off a single async refresh. Called by the LLM client when a
+// cachedContent reference fails server-side (404 or 400-expired). The
+// match check skips the work when a refresh has already swapped in a new
+// name since the failing request was issued, so we don't trash a fresh
+// cache because of in-flight requests using the old one.
+//
+// The async refresh is debounced via refreshInFlight: at most one
+// invalidation-triggered create runs at a time. Failures are logged and
+// non-fatal — the next scheduled refresh tick will try again, and
+// requests fall through to the uncached path until then.
+//
+// Safe for concurrent use.
+func (m *GeminiCacheManager) InvalidateIfMatches(failed string) {
+	if failed == "" {
+		return
+	}
+	current, _ := m.cacheName.Load().(string)
+	if current != failed {
+		return
+	}
+	if !m.cacheName.CompareAndSwap(failed, "") {
+		return // someone else swapped first
+	}
+	m.logger.Warn("gemini cache invalidated by client; triggering async refresh",
+		"name", failed)
+	if !m.refreshInFlight.CompareAndSwap(false, true) {
+		return // a refresh is already running
+	}
+	go func() {
+		defer m.refreshInFlight.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		newName, err := m.create(ctx)
+		if err != nil {
+			m.logger.Warn("gemini cache async refresh after invalidation failed",
+				"err", err)
+			return
+		}
+		m.cacheName.Store(newName)
+		m.logger.Info("gemini cache repopulated after invalidation",
+			"name", newName)
+	}()
 }
 
 // Stop signals the refresh loop to exit and best-effort-deletes the
