@@ -211,15 +211,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		if v.Source == inspector.SourceTriggerMiss {
 			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
 				decisionInput := runtimedecision.AuthorizationInput{
-					ToolUse:           tu,
-					UserID:            cfg.AgentUserID,
-					AgentID:           cfg.AgentID,
-					Posture:           cfg.Posture,
-					CandidateTasks:    cfg.CandidateTasks,
-					ToolRules:         cfg.ToolRules,
-					EgressRules:       cfg.EgressRules,
-					IntentVerifier:    decisionIntentVerifier{inner: cfg.IntentVerifier},
-					AllowMissingScope: true,
+					ToolUse:        tu,
+					UserID:         cfg.AgentUserID,
+					AgentID:        cfg.AgentID,
+					Posture:        cfg.Posture,
+					CandidateTasks: cfg.CandidateTasks,
+					ToolRules:      cfg.ToolRules,
+					EgressRules:    cfg.EgressRules,
+					IntentVerifier: decisionIntentVerifier{inner: cfg.IntentVerifier},
 				}
 				dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
 				if err != nil {

@@ -557,7 +557,7 @@ func TestLLMEndpoint_EmitsAuditRow(t *testing.T) {
 	}
 }
 
-func TestLLMEndpoint_AuditsOpenAIToolUseWithoutResolverURL(t *testing.T) {
+func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write(conversation.SynthOpenAIResponsesFunctionCallSSE("call_1", "exec_command", map[string]any{
@@ -584,6 +584,9 @@ func TestLLMEndpoint_AuditsOpenAIToolUseWithoutResolverURL(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "Reply `approve`") {
+		t.Fatalf("expected approval prompt, got %s", rec.Body.String())
+	}
 
 	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
 	rows, _, err := st.ListAuditEntries(context.Background(), user.ID, store.AuditFilter{})
@@ -592,13 +595,17 @@ func TestLLMEndpoint_AuditsOpenAIToolUseWithoutResolverURL(t *testing.T) {
 	}
 	var found bool
 	for _, row := range rows {
-		if row.Service == "runtime.tool_use" && row.Action == "lite_proxy.tool_use.allow" && row.ToolUseID != nil && *row.ToolUseID == "call_1" {
+		if row.Service == "runtime.tool_use" &&
+			row.Action == "lite_proxy.tool_use.block" &&
+			row.Outcome == "task_scope_missing" &&
+			row.ToolUseID != nil &&
+			*row.ToolUseID == "call_1" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected runtime.tool_use audit row for OpenAI tool use; got %d rows", len(rows))
+		t.Fatalf("expected runtime.tool_use approval audit row for OpenAI tool use; got %d rows", len(rows))
 	}
 }
 

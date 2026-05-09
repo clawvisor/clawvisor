@@ -49,6 +49,10 @@ func seedPostprocessStore(t *testing.T, placeholder string) (store.Store, string
 }
 
 func anthropicJSONWithToolUse(input string) []byte {
+	return anthropicJSONWithNamedToolUse("WebFetch", input)
+}
+
+func anthropicJSONWithNamedToolUse(name, input string) []byte {
 	return []byte(`{
 		"id":"msg_1",
 		"type":"message",
@@ -56,7 +60,7 @@ func anthropicJSONWithToolUse(input string) []byte {
 		"model":"claude-haiku-4-5",
 		"content":[
 			{"type":"text","text":"sure"},
-			{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":` + input + `}
+			{"type":"tool_use","id":"toolu_1","name":"` + name + `","input":` + input + `}
 		],
 		"stop_reason":"tool_use"
 	}`)
@@ -164,6 +168,47 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 	if !strings.Contains(string(got.Body), "web fetch blocked") {
 		t.Fatalf("refusal missing rule reason: %s", got.Body)
+	}
+}
+
+func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"ls /tmp/ | grep -i greet","description":"Find greet script in /tmp"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-missing-scope",
+		CandidateTasks:   []*store.Task{},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("missing task/rule scope should rewrite to an approval prompt")
+	}
+	if !strings.Contains(string(got.Body), "Reply `approve`") ||
+		!strings.Contains(string(got.Body), "no matching task scope") {
+		t.Fatalf("approval prompt missing expected text: %s", got.Body)
+	}
+	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Action != "lite_proxy.tool_use.block" || row.Outcome != "task_scope_missing" {
+		t.Fatalf("unexpected audit row: action=%s outcome=%s", row.Action, row.Outcome)
 	}
 }
 
