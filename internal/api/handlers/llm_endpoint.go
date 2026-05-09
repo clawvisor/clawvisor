@@ -196,7 +196,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
-	if h.ControlExecutor != nil && shouldInjectLiteControlTools(r.URL.Path) {
+	if h.ControlExecutor != nil && shouldInjectLiteControlTools(r.URL.Path, reqSummary) {
 		injectedBody, injected, injectErr := llmproxy.InjectControlTools(provider, r.URL.Path, body)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
@@ -651,11 +651,11 @@ func liteProxyRequestDebugSummary(provider conversation.Provider, body []byte) l
 	return summary
 }
 
-func shouldInjectLiteControlTools(path string) bool {
+func shouldInjectLiteControlTools(path string, summary liteProxyRequestSummary) bool {
 	if strings.HasSuffix(path, "/count_tokens") {
 		return false
 	}
-	return true
+	return len(summary.AvailableTools) > 0
 }
 
 func appendToolName(tools []string, name string) []string {

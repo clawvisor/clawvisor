@@ -182,7 +182,7 @@ func TestLLMEndpoint_PassthroughAnthropic(t *testing.T) {
 	}
 }
 
-func TestLLMEndpoint_InjectsControlToolsOnNormalRequests(t *testing.T) {
+func TestLLMEndpoint_InjectsControlToolsWhenToolsAvailable(t *testing.T) {
 	var seenBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenBody, _ = io.ReadAll(r.Body)
@@ -198,7 +198,7 @@ func TestLLMEndpoint_InjectsControlToolsOnNormalRequests(t *testing.T) {
 	mw := middleware.RequireAgentLLM(st)
 	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
 
-	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}]}`)
+	body := []byte(`{"model":"claude-sonnet-4","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 	rec := httptest.NewRecorder()
