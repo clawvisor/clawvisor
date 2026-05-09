@@ -138,7 +138,7 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	if strings.TrimSpace(controlBaseURL) == "" {
 		return nil, inspector.Verdict{}, false, nil
 	}
-	v, ok := controlVerdictForToolUse(t)
+	v, ok := controlVerdictForToolUse(t, controlBaseURL)
 	if !ok {
 		return nil, inspector.Verdict{}, false, nil
 	}
@@ -161,7 +161,11 @@ type ControlCall struct {
 }
 
 func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
-	u, method, _, ok := controlCallParts(t)
+	return ParseControlToolUseWithBase(t, "")
+}
+
+func ParseControlToolUseWithBase(t conversation.ToolUse, controlBaseURL string) (ControlCall, bool) {
+	u, method, _, ok := controlCallParts(t, controlBaseURL)
 	if !ok {
 		return ControlCall{}, false
 	}
@@ -180,33 +184,33 @@ func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
 	}, true
 }
 
-func controlVerdictForToolUse(t conversation.ToolUse) (inspector.Verdict, bool) {
-	call, ok := ParseControlToolUse(t)
+func controlVerdictForToolUse(t conversation.ToolUse, controlBaseURL string) (inspector.Verdict, bool) {
+	call, ok := ParseControlToolUseWithBase(t, controlBaseURL)
 	if ok {
 		return call.Verdict, true
 	}
 	return inspector.Verdict{}, false
 }
 
-func controlCallParts(t conversation.ToolUse) (*url.URL, string, []byte, bool) {
+func controlCallParts(t conversation.ToolUse, controlBaseURL string) (*url.URL, string, []byte, bool) {
 	if len(t.Input) == 0 {
 		return nil, "", nil, false
 	}
-	if u, method, body, ok := controlPartsFromStructuredInput(t.Input); ok {
+	if u, method, body, ok := controlPartsFromStructuredInput(t.Input, controlBaseURL); ok {
 		return u, method, body, true
 	}
-	if u, method, body, ok := controlPartsFromCommandInput(t.Input); ok {
+	if u, method, body, ok := controlPartsFromCommandInput(t.Input, controlBaseURL); ok {
 		return u, method, body, true
 	}
 	return nil, "", nil, false
 }
 
 func controlURLFromStructuredInput(in json.RawMessage) (*url.URL, bool) {
-	u, _, _, ok := controlPartsFromStructuredInput(in)
+	u, _, _, ok := controlPartsFromStructuredInput(in, "")
 	return u, ok
 }
 
-func controlPartsFromStructuredInput(in json.RawMessage) (*url.URL, string, []byte, bool) {
+func controlPartsFromStructuredInput(in json.RawMessage, controlBaseURL string) (*url.URL, string, []byte, bool) {
 	var raw struct {
 		URL    string          `json:"url"`
 		Method string          `json:"method,omitempty"`
@@ -215,7 +219,7 @@ func controlPartsFromStructuredInput(in json.RawMessage) (*url.URL, string, []by
 	if err := json.Unmarshal(in, &raw); err != nil || raw.URL == "" {
 		return nil, "", nil, false
 	}
-	u, ok := parseControlURL(raw.URL)
+	u, ok := parseControlURL(raw.URL, controlBaseURL)
 	if !ok {
 		return nil, "", nil, false
 	}
@@ -228,11 +232,11 @@ func controlPartsFromStructuredInput(in json.RawMessage) (*url.URL, string, []by
 }
 
 func controlURLFromCommandInput(in json.RawMessage) (*url.URL, bool) {
-	u, _, _, ok := controlPartsFromCommandInput(in)
+	u, _, _, ok := controlPartsFromCommandInput(in, "")
 	return u, ok
 }
 
-func controlPartsFromCommandInput(in json.RawMessage) (*url.URL, string, []byte, bool) {
+func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*url.URL, string, []byte, bool) {
 	var raw struct {
 		Cmd     string `json:"cmd,omitempty"`
 		Command string `json:"command,omitempty"`
@@ -280,7 +284,7 @@ func controlPartsFromCommandInput(in json.RawMessage) (*url.URL, string, []byte,
 			body = []byte(strings.TrimPrefix(tok, "--data-binary="))
 		default:
 			if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
-				if u, ok := parseControlURL(tok); ok {
+				if u, ok := parseControlURL(tok, controlBaseURL); ok {
 					control = u
 				}
 			}
@@ -295,7 +299,7 @@ func controlPartsFromCommandInput(in json.RawMessage) (*url.URL, string, []byte,
 	return control, method, body, true
 }
 
-func parseControlURL(raw string) (*url.URL, bool) {
+func parseControlURL(raw string, controlBaseURL string) (*url.URL, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return nil, false
@@ -303,13 +307,47 @@ func parseControlURL(raw string) (*url.URL, bool) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, false
 	}
-	if !strings.EqualFold(u.Hostname(), ControlSyntheticHost) {
+	if !isControlHost(u, controlBaseURL) {
 		return nil, false
 	}
 	if u.Path != "/control" && !strings.HasPrefix(u.Path, "/control/") {
 		return nil, false
 	}
 	return u, true
+}
+
+func isControlHost(u *url.URL, controlBaseURL string) bool {
+	if strings.EqualFold(u.Hostname(), ControlSyntheticHost) {
+		return true
+	}
+	base, err := url.Parse(strings.TrimSpace(controlBaseURL))
+	if err != nil || base.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), base.Hostname()) && samePort(u, base)
+}
+
+func samePort(a, b *url.URL) bool {
+	ap := a.Port()
+	if ap == "" {
+		ap = defaultPort(a.Scheme)
+	}
+	bp := b.Port()
+	if bp == "" {
+		bp = defaultPort(b.Scheme)
+	}
+	return ap == bp
+}
+
+func defaultPort(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 func controlVerdict(u *url.URL) inspector.Verdict {

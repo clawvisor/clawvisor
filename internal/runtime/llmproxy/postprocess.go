@@ -175,7 +175,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu, v, decision, outcome, reason)
 		}
 
-		if call, ok := ParseControlToolUse(tu); ok {
+		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
 			v = call.Verdict
 			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, cfg.RewriteOpts.CallerToken)
 			if !rewriteOK {
