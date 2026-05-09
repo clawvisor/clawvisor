@@ -16,9 +16,7 @@ auth:
       - "Channel.ReadBasic.All"
       - "ChannelMessage.Read.All"
       - "ChannelMessage.Send"
-      - "Group.Read.All"
       - "User.Read"
-      - "User.ReadBasic.All"
       - "offline_access"
     endpoint: microsoft
     vault_key: microsoft
