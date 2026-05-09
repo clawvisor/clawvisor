@@ -689,8 +689,8 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
 			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
-			duration_ms, filters_applied, verification, error_msg
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+			duration_ms, filters_applied, verification, error_msg, deduped_of
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
 		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
@@ -699,7 +699,10 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		e.WouldBlock, e.WouldReview, e.WouldPromptInline,
 		e.SafetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, nilIfEmpty(e.FiltersApplied),
-		nilIfEmpty(e.Verification), e.ErrorMsg)
+		nilIfEmpty(e.Verification), e.ErrorMsg, e.DedupedOf)
+	if isDuplicate(err) {
+		return store.ErrConflict
+	}
 	return err
 }
 
@@ -715,77 +718,74 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 }
 
 func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
-	e := &store.AuditEntry{}
-	var paramsSafe, filtersApplied, verification []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		       would_block, would_review, would_prompt_inline,
-		       safety_flagged, safety_reason, reason, data_origin, context_src,
-		       duration_ms, filters_applied, verification, error_msg
-		FROM audit_log WHERE id = $1 AND user_id = $2
-	`, id, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
-		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
-		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
-		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
-		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
-		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+auditEntryColumns+` FROM audit_log WHERE id = $1 AND user_id = $2`,
+		id, userID)
+	e, err := scanAuditEntryPg(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
-	if err != nil {
-		return nil, err
-	}
-	e.ParamsSafe = json.RawMessage(paramsSafe)
-	if filtersApplied != nil {
-		e.FiltersApplied = json.RawMessage(filtersApplied)
-	}
-	if verification != nil {
-		e.Verification = json.RawMessage(verification)
-	}
-	return e, nil
+	return e, err
 }
 
 func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
-	e := &store.AuditEntry{}
-	var paramsSafe, filtersApplied, verification []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		       would_block, would_review, would_prompt_inline,
-		       safety_flagged, safety_reason, reason, data_origin, context_src,
-		       duration_ms, filters_applied, verification, error_msg
-		FROM audit_log WHERE request_id = $1 AND user_id = $2
-	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
-		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
-		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
-		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
-		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
-		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+auditEntryColumns+`
+		 FROM audit_log
+		 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		 ORDER BY timestamp DESC LIMIT 1`,
+		requestID, userID)
+	e, err := scanAuditEntryPg(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
-	if err != nil {
-		return nil, err
+	return e, err
+}
+
+func (s *Store) GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
+	// Read-time precedence is inverted from FindDedupCandidate: the feedback
+	// handler wants the row that actually fired *in the agent's task*, so an
+	// exact task_id match wins over a pre-task canonical for the same
+	// request_id. Pre-task remains the fallback when no task-scoped row
+	// exists. (FindDedupCandidate keeps the opposite ordering at write time
+	// so a pre-task canonical correctly absorbs later task-scoped retries.)
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+auditEntryColumns+`
+		 FROM audit_log
+		 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		   AND (task_id IS NULL OR task_id = $3)
+		 ORDER BY (task_id IS NULL) ASC, timestamp ASC LIMIT 1`,
+		requestID, userID, taskID)
+	e, err := scanAuditEntryPg(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
 	}
-	e.ParamsSafe = json.RawMessage(paramsSafe)
-	if filtersApplied != nil {
-		e.FiltersApplied = json.RawMessage(filtersApplied)
+	return e, err
+}
+
+func (s *Store) FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
+	var row pgx.Row
+	if taskID == "" {
+		row = s.pool.QueryRow(ctx,
+			`SELECT `+auditEntryColumns+`
+			 FROM audit_log
+			 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL AND task_id IS NULL
+			 ORDER BY timestamp ASC LIMIT 1`,
+			requestID, userID)
+	} else {
+		row = s.pool.QueryRow(ctx,
+			`SELECT `+auditEntryColumns+`
+			 FROM audit_log
+			 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+			   AND (task_id IS NULL OR task_id = $3)
+			 ORDER BY (task_id IS NULL) DESC, timestamp ASC LIMIT 1`,
+			requestID, userID, taskID)
 	}
-	if verification != nil {
-		e.Verification = json.RawMessage(verification)
+	e, err := scanAuditEntryPg(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
 	}
-	return e, nil
+	return e, err
 }
 
 func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter store.AuditFilter) ([]*store.AuditEntry, int, error) {
@@ -840,14 +840,7 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		return nil, 0, err
 	}
 
-	dataQuery := `SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		would_block, would_review, would_prompt_inline,
-		safety_flagged, safety_reason, reason, data_origin, context_src,
-		duration_ms, filters_applied, verification, error_msg
-		FROM audit_log ` + where +
+	dataQuery := `SELECT ` + auditEntryColumns + ` FROM audit_log ` + where +
 		fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, filter.Offset)
 
@@ -1465,29 +1458,51 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// auditEntryColumns is the canonical SELECT list for audit_log rows. Kept in
+// one place so adding a column doesn't require touching four queries.
+const auditEntryColumns = `id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+		tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+		params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+		intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+		would_block, would_review, would_prompt_inline,
+		safety_flagged, safety_reason, reason, data_origin, context_src,
+		duration_ms, filters_applied, verification, error_msg, deduped_of`
+
+type pgAuditScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAuditEntryPg(row pgAuditScanner) (*store.AuditEntry, error) {
+	e := &store.AuditEntry{}
+	var paramsSafe, filtersApplied, verification []byte
+	if err := row.Scan(
+		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
+		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
+		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
+		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
+		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
+		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
+		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
+		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg, &e.DedupedOf,
+	); err != nil {
+		return nil, err
+	}
+	e.ParamsSafe = json.RawMessage(paramsSafe)
+	if filtersApplied != nil {
+		e.FiltersApplied = json.RawMessage(filtersApplied)
+	}
+	if verification != nil {
+		e.Verification = json.RawMessage(verification)
+	}
+	return e, nil
+}
+
 func scanAuditEntries(rows pgx.Rows) ([]*store.AuditEntry, error) {
 	var entries []*store.AuditEntry
 	for rows.Next() {
-		e := &store.AuditEntry{}
-		var paramsSafe, filtersApplied, verification []byte
-		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
-			&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
-			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-			&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
-			&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
-			&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
-			&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg,
-		); err != nil {
+		e, err := scanAuditEntryPg(rows)
+		if err != nil {
 			return nil, err
-		}
-		e.ParamsSafe = json.RawMessage(paramsSafe)
-		if filtersApplied != nil {
-			e.FiltersApplied = json.RawMessage(filtersApplied)
-		}
-		if verification != nil {
-			e.Verification = json.RawMessage(verification)
 		}
 		entries = append(entries, e)
 	}

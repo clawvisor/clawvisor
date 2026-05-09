@@ -29,8 +29,10 @@ func registerCallbackSecret(t *testing.T, env *testEnv, agentToken string) strin
 // ── request_id deduplication ──────────────────────────────────────────────────
 
 func TestGateway_Dedup_BlockedRequest(t *testing.T) {
-	// A blocked request, when resubmitted with the same request_id, should return
-	// the existing outcome without creating a duplicate audit entry.
+	// A blocked request, when resubmitted with the same request_id, should
+	// return the canonical outcome without re-running the block check, while
+	// landing the retry as its own dedup-attempt audit row pointing at the
+	// canonical entry. This keeps every retry visible in the audit UI.
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "dedup-block")
 	sc.createRestriction(t, "mock.svc", "run", "blocked by test")
@@ -57,20 +59,31 @@ func TestGateway_Dedup_BlockedRequest(t *testing.T) {
 		t.Errorf("dedup: request_id mismatch: got %v", second["request_id"])
 	}
 	if second["audit_id"] != first["audit_id"] {
-		t.Errorf("dedup: audit_id should match original: got %v, want %v", second["audit_id"], first["audit_id"])
+		t.Errorf("dedup: audit_id should match original canonical: got %v, want %v", second["audit_id"], first["audit_id"])
 	}
 
-	// Exactly one audit entry should exist for this request_id.
+	// Two audit entries should exist for this request_id: the canonical
+	// (decision="block", deduped_of=NULL) and the retry attempt
+	// (decision="dedup", deduped_of=canonical's id).
 	resp := sc.session.do("GET", "/api/audit", nil)
 	body := mustStatus(t, resp, http.StatusOK)
-	count := 0
+	var canonical, attempt int
 	for _, e := range arr(t, body, "entries") {
-		if e.(map[string]any)["request_id"] == reqID {
-			count++
+		entry := e.(map[string]any)
+		if entry["request_id"] != reqID {
+			continue
+		}
+		if entry["deduped_of"] == nil || entry["deduped_of"] == "" {
+			canonical++
+		} else {
+			attempt++
 		}
 	}
-	if count != 1 {
-		t.Errorf("dedup: expected 1 audit entry, got %d", count)
+	if canonical != 1 {
+		t.Errorf("dedup: expected 1 canonical audit row, got %d", canonical)
+	}
+	if attempt != 1 {
+		t.Errorf("dedup: expected 1 dedup-attempt audit row, got %d", attempt)
 	}
 }
 
@@ -202,6 +215,26 @@ func TestGateway_Dedup_SameRequestID_DifferentTask_NotDeduplicated(t *testing.T)
 	// Fresh execution should include result data.
 	if second["result"] == nil {
 		t.Error("cross-task reuse: result should be present (not dedup cache)")
+	}
+
+	// Two canonical audit rows should exist for this request_id, one per task —
+	// this is the bug the partial unique index fixes: previously the second
+	// canonical insert silently violated UNIQUE(request_id, user_id) and the
+	// audit row was lost while the agent still got a fresh audit_id back.
+	resp := sc.session.do("GET", "/api/audit", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	canonicals := 0
+	for _, e := range arr(t, body, "entries") {
+		entry := e.(map[string]any)
+		if entry["request_id"] != reqID {
+			continue
+		}
+		if entry["deduped_of"] == nil || entry["deduped_of"] == "" {
+			canonicals++
+		}
+	}
+	if canonicals != 2 {
+		t.Errorf("cross-task reuse: expected 2 canonical audit rows (one per task), got %d", canonicals)
 	}
 }
 

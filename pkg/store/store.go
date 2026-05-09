@@ -100,7 +100,24 @@ type Store interface {
 	LogAudit(ctx context.Context, entry *AuditEntry) error
 	UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error
 	GetAuditEntry(ctx context.Context, id, userID string) (*AuditEntry, error)
+	// GetAuditEntryByRequestID returns the latest canonical (deduped_of IS NULL)
+	// audit entry for (request_id, user_id). Used by the polling endpoint and
+	// other callers that don't have task context. Newer canonicals shadow older
+	// ones — agents almost always poll right after submitting, where "latest"
+	// is the entry they care about.
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
+	// GetAuditEntryByRequestIDAndTask returns the canonical audit entry for
+	// (request_id, user_id, task_id). Pre-task canonicals (task_id IS NULL) win
+	// over task-scoped ones, matching FindDedupCandidate precedence so callers
+	// see the same row the dedup write path matched against.
+	GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
+	// FindDedupCandidate returns the canonical audit entry that a new
+	// (request_id, user_id, task_id) request should dedup against, or
+	// ErrNotFound if no candidate exists. Pre-task canonicals (task_id IS NULL)
+	// always win over task-scoped canonicals for the same request_id; within a
+	// tier the oldest row wins. taskID == "" means the caller has no task
+	// context yet (runtime classification path) and only pre-task rows match.
+	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
@@ -436,6 +453,9 @@ type AuditEntry struct {
 	FiltersApplied          json.RawMessage `json:"filters_applied,omitempty"`
 	Verification            json.RawMessage `json:"verification,omitempty"`
 	ErrorMsg                *string         `json:"error_msg,omitempty"`
+	// DedupedOf is set on retry attempt rows to the id of the canonical
+	// audit entry they shadow. Canonical rows have DedupedOf == nil.
+	DedupedOf *string `json:"deduped_of,omitempty"`
 }
 
 // ActivityMute suppresses noisy runtime egress rows from the activity feed.

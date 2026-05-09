@@ -62,11 +62,22 @@ func (h *FeedbackHandler) ReportBug(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up referenced request and task to give the reviewer full context.
+	// When the agent supplies task_id, prefer the task-scoped lookup so the
+	// reviewer sees the canonical row that actually fired in the agent's task
+	// (rather than an unrelated pre-task or cross-task canonical that happens
+	// to share the request_id).
 	var auditEntry *store.AuditEntry
 	var task *store.Task
 	if req.RequestID != "" {
-		if e, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
-			auditEntry = e
+		if req.TaskID != "" {
+			if e, err := h.store.GetAuditEntryByRequestIDAndTask(ctx, req.RequestID, agent.UserID, req.TaskID); err == nil {
+				auditEntry = e
+			}
+		}
+		if auditEntry == nil {
+			if e, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
+				auditEntry = e
+			}
 		}
 	}
 	if req.TaskID != "" {

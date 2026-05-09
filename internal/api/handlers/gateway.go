@@ -249,29 +249,9 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Parse alias from service field (e.g. "google.gmail:personal" → type="google.gmail", alias="personal").
 	serviceType, serviceAlias := parseServiceAlias(req.Service)
 
-	if req.RequestID == "" {
+	requestIDProvided := req.RequestID != ""
+	if !requestIDProvided {
 		req.RequestID = uuid.New().String()
-	} else {
-		// Dedup: if this request_id was already processed under the same task,
-		// return the existing outcome without re-processing. This prevents
-		// duplicate audit entries and re-execution of side-effect actions when
-		// the agent retries after a network timeout.
-		//
-		// The dedup is scoped to the same task_id so that reusing a request_id
-		// across different tasks/sessions is treated as a fresh request.
-		// Pre-task outcomes (e.g. "blocked" by restriction) have no task_id
-		// and are always dedup'd since they're stateless checks.
-		if existing, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
-			preTask := existing.TaskID == nil // blocked/error before task scope
-			sameTask := req.TaskID != "" && existing.TaskID != nil && *existing.TaskID == req.TaskID
-			if preTask || sameTask {
-				writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
-					Deduped: true,
-					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
-				})
-				return
-			}
-		}
 	}
 	middleware.AddLogField(ctx, "request_id", req.RequestID)
 
@@ -279,17 +259,26 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 	auditID := uuid.New().String()
 
-	// Backup log: append-only record of every gateway request. Written after
-	// the response so it captures the outcome. If the primary audit insert is
-	// ever silently dropped, this table retains full visibility.
+	// Backup log: append-only record of every gateway request, including dedup
+	// attempts. Written after the response so it captures the outcome. If the
+	// primary audit insert is ever silently dropped, this table retains full
+	// visibility.
 	//
 	// The timeout is generous (30s) so that a temporarily slow database does
 	// not silently lose log rows; the prior 5s deadline dropped writes under
 	// load that would otherwise have completed.
-	var outDecision, outOutcome string
+	//
+	// We read decision/outcome from the most recently produced audit entry so
+	// that race recovery — which mutates the entry to "dedup"/winner.Outcome
+	// after a unique-violation — is reflected in the backup log too.
+	var lastAudit *store.AuditEntry
 	defer func() {
 		logCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		var decision, outcome string
+		if lastAudit != nil {
+			decision, outcome = lastAudit.Decision, lastAudit.Outcome
+		}
 		if logErr := h.store.LogGatewayRequest(logCtx, &store.GatewayRequestLog{
 			AuditID:    auditID,
 			RequestID:  req.RequestID,
@@ -299,19 +288,18 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			Action:     req.Action,
 			TaskID:     req.TaskID,
 			Reason:     req.Reason,
-			Decision:   outDecision,
-			Outcome:    outOutcome,
+			Decision:   decision,
+			Outcome:    outcome,
 			DurationMS: int(time.Since(start).Milliseconds()),
 		}); logErr != nil {
 			h.logger.Warn("backup request log failed", "err", logErr)
 		}
 	}()
 
-	// baseEntry builds an AuditEntry with fields common to all outcomes.
-	// It also records the decision/outcome for the deferred backup log.
+	// baseEntry builds an AuditEntry with fields common to all outcomes and
+	// stashes a pointer in lastAudit for the deferred backup log to read.
 	baseEntry := func(decision, outcome string, taskID *string) *store.AuditEntry {
-		outDecision, outOutcome = decision, outcome
-		return &store.AuditEntry{
+		e := &store.AuditEntry{
 			ID:         auditID,
 			UserID:     agent.UserID,
 			AgentID:    &agent.ID,
@@ -327,6 +315,36 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			DataOrigin: req.Context.DataOrigin,
 			ContextSrc: nullableStr(req.Context.Source),
 		}
+		lastAudit = e
+		return e
+	}
+
+	// Dedup: if this request_id already has a canonical audit row in the same
+	// scope, record this attempt as a dedup row (deduped_of → canonical) and
+	// return the canonical's outcome without re-processing. This prevents
+	// re-execution of side-effect actions on retry while keeping every attempt
+	// visible in the audit log. Pre-task canonicals win over task-scoped ones
+	// for the same request_id (FindDedupCandidate handles precedence).
+	//
+	// Only run the lookup when the agent supplied request_id — a freshly
+	// generated UUID has no prior canonical to match.
+	if requestIDProvided {
+		if existing, err := h.store.FindDedupCandidate(ctx, req.RequestID, agent.UserID, req.TaskID); err == nil {
+			e := baseEntry("dedup", existing.Outcome, existing.TaskID)
+			e.DedupedOf = &existing.ID
+			e.DurationMS = int(time.Since(start).Milliseconds())
+			// Plain LogAudit: dedup-attempt rows have deduped_of != NULL so
+			// they're outside the partial unique index — no race recovery needed.
+			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			h.publishAuditAndQueue(agent.UserID, "")
+			writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+				Deduped: true,
+				Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+			})
+			return
+		}
 	}
 
 	// ── Step 0: Cloud gateway hooks (org-level restrictions) ────────────────
@@ -336,7 +354,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			middleware.AddLogField(ctx, "outcome", "blocked")
 			e := baseEntry("block", "blocked", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
@@ -371,7 +389,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.RuleID = &serviceRule.ID
 		}
 		e.DurationMS = int(time.Since(start).Milliseconds())
-		if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+		if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 			h.logger.Warn("audit log failed", "err", logErr)
 		}
 		h.publishAuditAndQueue(agent.UserID, "")
@@ -416,7 +434,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "missing required field: task_id"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -463,7 +481,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "request matches multiple active tasks; specify task_id explicitly"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
@@ -484,7 +502,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			middleware.AddLogField(ctx, "outcome", "pending")
 			e := baseEntry("approve", "pending", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
@@ -525,7 +543,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "missing required field: task_id"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -558,7 +576,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := fmt.Sprintf("task %q not found", req.TaskID)
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -574,7 +592,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "task does not belong to this agent's user"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
@@ -595,7 +613,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "task belongs to a different agent"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusForbidden, apiErrorDetail{
@@ -609,7 +627,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			taskIDPtr := &req.TaskID
 			e := baseEntry("reject", "task_expired", taskIDPtr)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			resp := map[string]any{
@@ -640,7 +658,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e := baseEntry("reject", "invalid_state", taskIDPtr)
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusConflict, apiErrorDetail{
@@ -657,7 +675,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := "session_id is required for standing task requests"
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
@@ -690,7 +708,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e := baseEntry("unknown_action", "blocked", taskIDPtr)
 				e.DurationMS = int(time.Since(start).Milliseconds())
 				e.ErrorMsg = &msg
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 					h.logger.Warn("audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -710,7 +728,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e := baseEntry("unknown_action", "blocked", taskIDPtr)
 				e.DurationMS = int(time.Since(start).Milliseconds())
 				e.ErrorMsg = &msg
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 					h.logger.Warn("audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -737,7 +755,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e := baseEntry("out_of_scope", "blocked", taskIDPtr)
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			e.ErrorMsg = &msg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -772,7 +790,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					e.DurationMS = dur
 					errMsg := "local services are not available in this deployment"
 					e.ErrorMsg = &errMsg
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -828,7 +846,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					e := baseEntry("verify", "restricted", taskIDPtr)
 					e.DurationMS = dur
 					e.Verification = intent.MarshalVerdict(verdict)
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -911,7 +929,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					e := baseEntry("verify", "restricted", taskIDPtr)
 					e.DurationMS = dur
 					e.Verification = intent.MarshalVerdict(verdict)
-					if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+					if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 						h.logger.Warn("audit log failed", "err", logErr)
 					}
 					h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -952,7 +970,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						e.DurationMS = dur
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, taskAdapter)
 						e.ErrorMsg = &auditMsg
-						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 							h.logger.Warn("audit log failed", "err", logErr)
 						}
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -976,7 +994,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						e := baseEntry("reject", "validation_error", taskIDPtr)
 						e.DurationMS = int(time.Since(start).Milliseconds())
 						e.ErrorMsg = &errMsg
-						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 							h.logger.Warn("audit log failed", "err", logErr)
 						}
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -998,7 +1016,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 						e.DurationMS = dur
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
 						e.ErrorMsg = &auditMsg
-						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+						if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 							h.logger.Warn("audit log failed", "err", logErr)
 						}
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1023,7 +1041,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e := baseEntry("execute", "error", taskIDPtr)
 				e.DurationMS = dur
 				e.ErrorMsg = &errMsg
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 					h.logger.Warn("audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1053,7 +1071,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if verdict != nil {
 				e.Verification = intent.MarshalVerdict(verdict)
 			}
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
@@ -1158,7 +1176,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			errMsg := fmt.Sprintf("unknown service %q", serviceType)
 			e.ErrorMsg = &errMsg
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
@@ -1190,7 +1208,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				e.DurationMS = int(time.Since(start).Milliseconds())
 				code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, approveAdapter)
 				e.ErrorMsg = &auditMsg
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+				if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
 					h.logger.Warn("audit log failed", "err", logErr)
 				}
 				h.publishAuditAndQueue(agent.UserID, "")
@@ -1213,8 +1231,21 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	e := baseEntry("approve", "pending", taskIDPtr)
 	e.DurationMS = int(time.Since(start).Milliseconds())
 	e.Verification = intent.MarshalVerdict(advisoryVerdict)
-	if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+	winner, logErr := h.logAuditCanonical(ctx, e)
+	if logErr != nil {
 		h.logger.Warn("audit log failed", "err", logErr)
+	}
+	if winner != nil {
+		// Lost the canonical-insert race against a concurrent worker. e was
+		// rewritten as a dedup-attempt; do not enqueue a duplicate approval —
+		// surface the winning row's status the same way the early-dedup branch
+		// would have if we'd seen it during FindDedupCandidate.
+		h.publishAuditAndQueue(agent.UserID, "")
+		writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
+			Deduped: true,
+			Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+		})
+		return
 	}
 	h.publishAuditAndQueue(agent.UserID, req.TaskID)
 	expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
@@ -1553,6 +1584,42 @@ func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any
 			"task_id":  taskID,
 		},
 	}
+}
+
+// logAuditCanonical writes an audit row with the partial-unique canonical
+// constraint in mind. On a unique-violation race (concurrent inserts for the
+// same (user_id, request_id, task_id)), it refetches the winning canonical,
+// rewrites the entry as a dedup-attempt row pointing at the winner, and
+// returns the winner so callers that gate side effects on canonical insertion
+// (currently the approval routing path) can short-circuit instead of
+// double-handling the request.
+//
+// Returned winner is non-nil iff race recovery rewrote the entry. e is mutated
+// in place (DedupedOf/Decision/Outcome) so callers reading e see the same
+// shape that landed in the database. err is the final insert error, if any.
+//
+// Use this for every canonical insert site: per-request approval, blocked,
+// executed, validation_error — anywhere a fresh row is meant to be the
+// authoritative record for this (request_id, scope). Dedup-attempt rows
+// (deduped_of != NULL) are outside the partial unique index, so callers that
+// already build attempt rows can use plain LogAudit.
+func (h *GatewayHandler) logAuditCanonical(ctx context.Context, e *store.AuditEntry) (*store.AuditEntry, error) {
+	err := h.store.LogAudit(ctx, e)
+	if err == nil || !errors.Is(err, store.ErrConflict) {
+		return nil, err
+	}
+	taskID := ""
+	if e.TaskID != nil {
+		taskID = *e.TaskID
+	}
+	winner, lookupErr := h.store.FindDedupCandidate(ctx, e.RequestID, e.UserID, taskID)
+	if lookupErr != nil {
+		return nil, fmt.Errorf("dedup candidate lookup after race: %w", lookupErr)
+	}
+	e.DedupedOf = &winner.ID
+	e.Decision = "dedup"
+	e.Outcome = winner.Outcome
+	return winner, h.store.LogAudit(ctx, e)
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.
