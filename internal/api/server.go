@@ -869,6 +869,7 @@ func (s *Server) routes() http.Handler {
 
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
+		llmHandler.ControlExecutor = handlers.NewLLMControlExecutor(controlHandler, tasksHandler)
 
 		// LLM endpoint accepts the agent token via Authorization or
 		// x-api-key (SDK conventions).

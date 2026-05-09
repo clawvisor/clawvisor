@@ -1,13 +1,15 @@
 package llmproxy
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 const (
@@ -20,7 +22,7 @@ func ControlNotice(controlBaseURL string) string {
 	if controlBaseURL != "" {
 		docsURL = controlBaseURL + "/control/skill"
 	}
-	return "Clawvisor is available for permission management. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use, emit a tool call that POSTs to https://clawvisor.local/control/tasks; Clawvisor rewrites that synthetic URL before the shell runs it. Task creation does not grant permission until the user approves it."
+	return "Clawvisor is available for permission management. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use, emit a tool call that POSTs to https://clawvisor.local/control/tasks; Clawvisor handles that synthetic URL inside proxy-lite, so the shell does not need local network access. Task creation does not grant permission until the user approves it."
 }
 
 // InjectControlNotice adds a compact control-plane hint to the request context.
@@ -153,52 +155,181 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	return rewritten, v, true, err
 }
 
+type ControlExecutor interface {
+	ExecuteControl(ctx context.Context, req ControlExecutionRequest) (ControlExecutionResponse, error)
+}
+
+type ControlExecutionRequest struct {
+	Agent  *store.Agent
+	Method string
+	Path   string
+	Body   []byte
+}
+
+type ControlExecutionResponse struct {
+	StatusCode   int
+	ContentType  string
+	Body         []byte
+	ErrorMessage string
+}
+
+type ControlCall struct {
+	Method  string
+	URL     *url.URL
+	Path    string
+	Body    []byte
+	Verdict inspector.Verdict
+}
+
+func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
+	u, method, body, ok := controlCallParts(t)
+	if !ok {
+		return ControlCall{}, false
+	}
+	if method == "" {
+		method = controlMethodForPath(u.Path)
+	}
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = "GET"
+	}
+	return ControlCall{
+		Method:  method,
+		URL:     u,
+		Path:    u.RequestURI(),
+		Body:    body,
+		Verdict: controlVerdictWithMethod(u, method),
+	}, true
+}
+
+func FormatControlExecutionResponse(resp ControlExecutionResponse) string {
+	status := resp.StatusCode
+	if status == 0 {
+		status = 500
+	}
+	if resp.ErrorMessage != "" {
+		return fmt.Sprintf("Clawvisor control request failed.\n\nHTTP %d\n%s", status, resp.ErrorMessage)
+	}
+	body := strings.TrimSpace(string(resp.Body))
+	if body == "" {
+		return fmt.Sprintf("Clawvisor control request handled.\n\nHTTP %d", status)
+	}
+	return fmt.Sprintf("Clawvisor control request handled.\n\nHTTP %d\n```json\n%s\n```", status, body)
+}
+
 func controlVerdictForToolUse(t conversation.ToolUse) (inspector.Verdict, bool) {
-	if len(t.Input) == 0 {
-		return inspector.Verdict{}, false
-	}
-	if u, ok := controlURLFromStructuredInput(t.Input); ok {
-		return controlVerdict(u), true
-	}
-	if u, ok := controlURLFromCommandInput(t.Input); ok {
-		return controlVerdict(u), true
+	call, ok := ParseControlToolUse(t)
+	if ok {
+		return call.Verdict, true
 	}
 	return inspector.Verdict{}, false
 }
 
+func controlCallParts(t conversation.ToolUse) (*url.URL, string, []byte, bool) {
+	if len(t.Input) == 0 {
+		return nil, "", nil, false
+	}
+	if u, method, body, ok := controlPartsFromStructuredInput(t.Input); ok {
+		return u, method, body, true
+	}
+	if u, method, body, ok := controlPartsFromCommandInput(t.Input); ok {
+		return u, method, body, true
+	}
+	return nil, "", nil, false
+}
+
 func controlURLFromStructuredInput(in json.RawMessage) (*url.URL, bool) {
+	u, _, _, ok := controlPartsFromStructuredInput(in)
+	return u, ok
+}
+
+func controlPartsFromStructuredInput(in json.RawMessage) (*url.URL, string, []byte, bool) {
 	var raw struct {
-		URL string `json:"url"`
+		URL    string          `json:"url"`
+		Method string          `json:"method,omitempty"`
+		Body   json.RawMessage `json:"body,omitempty"`
 	}
 	if err := json.Unmarshal(in, &raw); err != nil || raw.URL == "" {
-		return nil, false
+		return nil, "", nil, false
 	}
-	return parseControlURL(raw.URL)
+	u, ok := parseControlURL(raw.URL)
+	if !ok {
+		return nil, "", nil, false
+	}
+	body := raw.Body
+	var bodyString string
+	if len(body) > 0 && json.Unmarshal(body, &bodyString) == nil {
+		body = []byte(bodyString)
+	}
+	return u, raw.Method, body, true
 }
 
 func controlURLFromCommandInput(in json.RawMessage) (*url.URL, bool) {
+	u, _, _, ok := controlPartsFromCommandInput(in)
+	return u, ok
+}
+
+func controlPartsFromCommandInput(in json.RawMessage) (*url.URL, string, []byte, bool) {
 	var raw struct {
 		Cmd     string `json:"cmd,omitempty"`
 		Command string `json:"command,omitempty"`
 	}
 	if err := json.Unmarshal(in, &raw); err != nil {
-		return nil, false
+		return nil, "", nil, false
 	}
 	cmd := strings.TrimSpace(raw.Cmd)
 	if cmd == "" {
 		cmd = strings.TrimSpace(raw.Command)
 	}
 	if cmd == "" || !strings.HasPrefix(strings.ToLower(cmd), "curl ") {
-		return nil, false
+		return nil, "", nil, false
 	}
 	if hasControlRewriteUnsafeShell(cmd) {
-		return nil, false
+		return nil, "", nil, false
 	}
-	match := controlURLRE.FindString(cmd)
-	if match == "" {
-		return nil, false
+	tokens, ok := controlShellTokenize(cmd)
+	if !ok || len(tokens) == 0 {
+		return nil, "", nil, false
 	}
-	return parseControlURL(match)
+	method := ""
+	var body []byte
+	var control *url.URL
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		switch {
+		case tok == "-X" || tok == "--request":
+			if i+1 >= len(tokens) {
+				return nil, "", nil, false
+			}
+			method = tokens[i+1]
+			i++
+		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary":
+			if i+1 >= len(tokens) {
+				return nil, "", nil, false
+			}
+			body = []byte(tokens[i+1])
+			i++
+		case strings.HasPrefix(tok, "--data="):
+			body = []byte(strings.TrimPrefix(tok, "--data="))
+		case strings.HasPrefix(tok, "--data-raw="):
+			body = []byte(strings.TrimPrefix(tok, "--data-raw="))
+		case strings.HasPrefix(tok, "--data-binary="):
+			body = []byte(strings.TrimPrefix(tok, "--data-binary="))
+		default:
+			if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
+				if u, ok := parseControlURL(tok); ok {
+					control = u
+				}
+			}
+		}
+	}
+	if control == nil {
+		return nil, "", nil, false
+	}
+	if method == "" && len(body) > 0 {
+		method = "POST"
+	}
+	return control, method, body, true
 }
 
 func parseControlURL(raw string) (*url.URL, bool) {
@@ -219,10 +350,10 @@ func parseControlURL(raw string) (*url.URL, bool) {
 }
 
 func controlVerdict(u *url.URL) inspector.Verdict {
-	method := "GET"
-	if strings.HasSuffix(u.Path, "/tasks") {
-		method = "POST"
-	}
+	return controlVerdictWithMethod(u, controlMethodForPath(u.Path))
+}
+
+func controlVerdictWithMethod(u *url.URL, method string) inspector.Verdict {
 	return inspector.Verdict{
 		IsAPICall: true,
 		Method:    method,
@@ -231,6 +362,13 @@ func controlVerdict(u *url.URL) inspector.Verdict {
 		Source:    inspector.SourceDeterministic,
 		Reason:    "synthetic Clawvisor control endpoint",
 	}
+}
+
+func controlMethodForPath(path string) string {
+	if strings.HasSuffix(path, "/tasks") {
+		return "POST"
+	}
+	return "GET"
 }
 
 func hasControlRewriteUnsafeShell(cmd string) bool {
@@ -243,4 +381,34 @@ func hasControlRewriteUnsafeShell(cmd string) bool {
 	return false
 }
 
-var controlURLRE = regexp.MustCompile(`https?://clawvisor\.local(?::[0-9]+)?/control[^\s'"]*`)
+func controlShellTokenize(cmd string) ([]string, bool) {
+	var (
+		tokens []string
+		buf    strings.Builder
+		state  rune
+	)
+	flush := func() {
+		if buf.Len() > 0 {
+			tokens = append(tokens, buf.String())
+			buf.Reset()
+		}
+	}
+	for i := range len(cmd) {
+		c := rune(cmd[i])
+		switch {
+		case state == 0 && (c == ' ' || c == '\t' || c == '\n'):
+			flush()
+		case state == 0 && (c == '\'' || c == '"'):
+			state = c
+		case state != 0 && c == state:
+			state = 0
+		default:
+			buf.WriteRune(c)
+		}
+	}
+	if state != 0 {
+		return nil, false
+	}
+	flush()
+	return tokens, true
+}
