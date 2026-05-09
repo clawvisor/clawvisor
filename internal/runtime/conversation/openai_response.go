@@ -64,6 +64,7 @@ type openAIResponseOutputItem struct {
 	CallID    string                  `json:"call_id,omitempty"`
 	Name      string                  `json:"name,omitempty"`
 	Arguments any                     `json:"arguments,omitempty"`
+	Input     any                     `json:"input,omitempty"`
 	Content   []openAIResponseContent `json:"content,omitempty"`
 }
 
@@ -117,6 +118,22 @@ func (rw OpenAIResponseRewriter) rewriteResponsesJSON(body []byte, eval ToolUseE
 				anyRewritten = true
 			}
 			frags = append(frags, assistantFragment{IsTool: true, ToolName: item.Name, ToolArgs: finalArgs})
+		case "custom_tool_call":
+			tu, ok := toolUseFromOpenAICustomToolCall(item, index)
+			if !ok {
+				continue
+			}
+			index++
+			verdict := eval(tu)
+			decisions = append(decisions, ToolUseDecisionRecord{
+				ToolUse:          tu,
+				Verdict:          verdict,
+				ToolInputPreview: MakeToolInputPreview(tu.Input),
+			})
+			if !verdict.Allowed {
+				anyBlocked = true
+			}
+			frags = append(frags, assistantFragment{IsTool: true, ToolName: tu.Name, ToolArgs: tu.Input})
 		}
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
@@ -305,6 +322,22 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					arguments:   finalArgs,
 				})
 				delete(pending, raw.Item.ID)
+			case "custom_tool_call":
+				tu, ok := toolUseFromOpenAICustomToolCall(raw.Item, index)
+				if !ok {
+					continue
+				}
+				index++
+				verdict := eval(tu)
+				decisions = append(decisions, ToolUseDecisionRecord{
+					ToolUse:          tu,
+					Verdict:          verdict,
+					ToolInputPreview: MakeToolInputPreview(tu.Input),
+				})
+				if !verdict.Allowed {
+					anyBlocked = true
+				}
+				frags = append(frags, assistantFragment{IsTool: true, ToolName: tu.Name, ToolArgs: tu.Input})
 			}
 		}
 	}
@@ -1030,6 +1063,35 @@ func rawIfJSONOpenAI(args string) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(args)
+}
+
+func toolUseFromOpenAICustomToolCall(item openAIResponseOutputItem, index int) (ToolUse, bool) {
+	name := strings.TrimSpace(item.Name)
+	if name == "" {
+		return ToolUse{}, false
+	}
+	input := stringifyOpenAIArguments(item.Input)
+	if input == "" {
+		input = stringifyOpenAIArguments(item.Arguments)
+	}
+	return ToolUse{
+		ID:    firstNonEmpty(item.CallID, item.ID),
+		Index: index,
+		Name:  name,
+		Input: rawOpenAICustomToolInput(input),
+	}, true
+}
+
+func rawOpenAICustomToolInput(input string) json.RawMessage {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	if json.Valid([]byte(input)) {
+		return json.RawMessage(input)
+	}
+	raw, _ := json.Marshal(map[string]string{"input": input})
+	return raw
 }
 
 func firstNonEmpty(values ...string) string {

@@ -567,6 +567,64 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	}
 }
 
+func TestPostprocess_OpenAIResponsesSSEAuditsCustomToolCall(t *testing.T) {
+	body := []byte(`event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","status":"in_progress","call_id":"call_patch","name":"apply_patch"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","status":"completed","call_id":"call_patch","name":"apply_patch","input":"*** Begin Patch\n*** Add File: /tmp/hello.sh\n+#!/bin/sh\n*** End Patch\n"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}
+
+`)
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
+		Inspector:   insp,
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+		Audit:       NewAuditEmitter(st, nil, nil),
+		RequestID:   "req-custom-tool",
+	})
+
+	if got.Rewritten {
+		t.Fatalf("custom tool call without credential trigger should not rewrite")
+	}
+	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Action != "lite_proxy.tool_use.allow" {
+		t.Fatalf("action=%q, want lite_proxy.tool_use.allow", row.Action)
+	}
+	if row.ToolUseID == nil || *row.ToolUseID != "call_patch" {
+		t.Fatalf("tool_use_id=%v, want call_patch", row.ToolUseID)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(row.ParamsSafe, &params); err != nil {
+		t.Fatalf("params unmarshal: %v", err)
+	}
+	if params["tool_name"] != "apply_patch" {
+		t.Fatalf("tool_name=%v, want apply_patch", params["tool_name"])
+	}
+	input, ok := params["tool_input"].(map[string]any)
+	if !ok || !strings.Contains(input["input"].(string), "/tmp/hello.sh") {
+		t.Fatalf("tool_input=%v, want patch preview", params["tool_input"])
+	}
+}
+
 // OpenAI Chat Completions JSON rewrite.
 func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	body := []byte(`{
