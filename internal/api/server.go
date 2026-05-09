@@ -888,6 +888,7 @@ func (s *Server) routes() http.Handler {
 		// https://clawvisor.local/control/... are rewritten here with
 		// X-Clawvisor-Caller auth so agents can request task scope before
 		// that scope exists.
+		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
 		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))

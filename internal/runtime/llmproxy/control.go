@@ -12,46 +12,55 @@ import (
 
 const (
 	ControlSyntheticHost = "clawvisor.local"
-	ControlNotice        = "Clawvisor is available for permission management. To request permission for future tool use, call POST https://clawvisor.local/control/tasks. Task creation does not grant permission until the user approves it. For schemas and examples, call GET https://clawvisor.local/control/skill."
 )
+
+func ControlNotice(controlBaseURL string) string {
+	controlBaseURL = strings.TrimRight(strings.TrimSpace(controlBaseURL), "/")
+	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
+	if controlBaseURL != "" {
+		docsURL = controlBaseURL + "/control/skill"
+	}
+	return "Clawvisor is available for permission management. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use, emit a tool call that POSTs to https://clawvisor.local/control/tasks; Clawvisor rewrites that synthetic URL before the shell runs it. Task creation does not grant permission until the user approves it."
+}
 
 // InjectControlNotice adds a compact control-plane hint to the request context.
 // The synthetic URL is rewritten from model-emitted tool calls before the tool
 // runner sees it, so the prompt stays stable across local and public daemon URLs.
-func InjectControlNotice(provider conversation.Provider, body []byte) ([]byte, bool, error) {
+func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string) ([]byte, bool, error) {
 	if strings.Contains(string(body), "https://"+ControlSyntheticHost+"/control") {
 		return body, false, nil
 	}
+	notice := ControlNotice(controlBaseURL)
 	switch provider {
 	case conversation.ProviderAnthropic:
-		return injectAnthropicControlNotice(body)
+		return injectAnthropicControlNotice(body, notice)
 	case conversation.ProviderOpenAI:
-		return injectOpenAIControlNotice(body)
+		return injectOpenAIControlNotice(body, notice)
 	default:
 		return body, false, nil
 	}
 }
 
-func injectAnthropicControlNotice(body []byte) ([]byte, bool, error) {
+func injectAnthropicControlNotice(body []byte, notice string) ([]byte, bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, false, err
 	}
 	sys, ok := raw["system"]
 	if !ok || len(sys) == 0 || string(sys) == "null" {
-		encoded, _ := json.Marshal(ControlNotice)
+		encoded, _ := json.Marshal(notice)
 		raw["system"] = encoded
 		return marshalInjected(raw)
 	}
 	var s string
 	if err := json.Unmarshal(sys, &s); err == nil {
-		encoded, _ := json.Marshal(appendNotice(s))
+		encoded, _ := json.Marshal(appendNotice(s, notice))
 		raw["system"] = encoded
 		return marshalInjected(raw)
 	}
 	var blocks []map[string]any
 	if err := json.Unmarshal(sys, &blocks); err == nil {
-		blocks = append(blocks, map[string]any{"type": "text", "text": ControlNotice})
+		blocks = append(blocks, map[string]any{"type": "text", "text": notice})
 		encoded, err := json.Marshal(blocks)
 		if err != nil {
 			return nil, false, err
@@ -62,12 +71,12 @@ func injectAnthropicControlNotice(body []byte) ([]byte, bool, error) {
 	return body, false, nil
 }
 
-func injectOpenAIControlNotice(body []byte) ([]byte, bool, error) {
+func injectOpenAIControlNotice(body []byte, notice string) ([]byte, bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, false, err
 	}
-	if messages, ok, err := injectOpenAIMessages(raw["messages"]); err != nil {
+	if messages, ok, err := injectOpenAIMessages(raw["messages"], notice); err != nil {
 		return nil, false, err
 	} else if ok {
 		raw["messages"] = messages
@@ -78,11 +87,11 @@ func injectOpenAIControlNotice(body []byte) ([]byte, bool, error) {
 		if err := json.Unmarshal(instr, &s); err != nil {
 			return body, false, nil
 		}
-		encoded, _ := json.Marshal(appendNotice(s))
+		encoded, _ := json.Marshal(appendNotice(s, notice))
 		raw["instructions"] = encoded
 		return marshalInjected(raw)
 	}
-	encoded, _ := json.Marshal(ControlNotice)
+	encoded, _ := json.Marshal(notice)
 	raw["instructions"] = encoded
 	return marshalInjected(raw)
 }
@@ -92,7 +101,7 @@ func marshalInjected(v any) ([]byte, bool, error) {
 	return out, err == nil, err
 }
 
-func injectOpenAIMessages(raw json.RawMessage) (json.RawMessage, bool, error) {
+func injectOpenAIMessages(raw json.RawMessage, notice string) (json.RawMessage, bool, error) {
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
@@ -104,23 +113,23 @@ func injectOpenAIMessages(raw json.RawMessage) (json.RawMessage, bool, error) {
 		role, _ := messages[0]["role"].(string)
 		if role == "system" || role == "developer" {
 			if s, ok := messages[0]["content"].(string); ok {
-				messages[0]["content"] = appendNotice(s)
+				messages[0]["content"] = appendNotice(s, notice)
 				out, err := json.Marshal(messages)
 				return out, true, err
 			}
 		}
 	}
-	messages = append([]map[string]any{{"role": "system", "content": ControlNotice}}, messages...)
+	messages = append([]map[string]any{{"role": "system", "content": notice}}, messages...)
 	out, err := json.Marshal(messages)
 	return out, true, err
 }
 
-func appendNotice(existing string) string {
+func appendNotice(existing, notice string) string {
 	existing = strings.TrimSpace(existing)
 	if existing == "" {
-		return ControlNotice
+		return notice
 	}
-	return existing + "\n\n" + ControlNotice
+	return existing + "\n\n" + notice
 }
 
 // RewriteControlToolUse redirects a model-emitted synthetic control URL to the

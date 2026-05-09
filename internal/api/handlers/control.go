@@ -1,6 +1,9 @@
 package handlers
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 type LLMControlHandler struct {
 	BaseURL string
@@ -13,7 +16,9 @@ func NewLLMControlHandler(baseURL string) *LLMControlHandler {
 func (h *LLMControlHandler) Capabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"control_host": "https://clawvisor.local",
+		"direct_url":   strings.TrimRight(h.BaseURL, "/") + "/control/skill",
 		"base_path":    "/control",
+		"note":         "clawvisor.local is synthetic and is rewritten only inside proxy-lite tool calls. Use direct_url when fetching documentation from a shell.",
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/control/skill", "purpose": "Return schemas and examples for Clawvisor control-plane calls."},
 			{"method": "POST", "path": "/control/tasks", "purpose": "Create a task approval request for future tool use."},
@@ -28,8 +33,11 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 		"name":        "clawvisor-control",
 		"description": "Use this control plane to ask the user for permission before attempting tool work that may be blocked.",
 		"base_url":    "https://clawvisor.local",
+		"direct_docs": strings.TrimRight(h.BaseURL, "/") + "/control/skill",
 		"rules": []string{
-			"Use the synthetic https://clawvisor.local/control URLs exactly; Clawvisor rewrites them to the local daemon.",
+			"clawvisor.local is synthetic. Do not expect DNS lookup for the naked domain to work.",
+			"Use direct_docs for reading these schemas from a shell.",
+			"Use the synthetic https://clawvisor.local/control/tasks URL exactly when creating a task request through a proxied tool call; Clawvisor rewrites it and injects caller auth before the shell runs.",
 			"Creating or expanding a task requests permission. It does not grant permission until the user approves it.",
 			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
 		},
@@ -40,7 +48,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 				"purpose": "Briefly explain the user-visible work you need permission to do.",
 				"expected_tools_json": []map[string]any{{
 					"tool_name": "bash",
-					"why":       "Run curl to POST a task request to Clawvisor.",
+					"why":       "Describe the exact command pattern or operation you need, e.g. run curl to POST JSON to https://api.example.com/widgets.",
 				}},
 				"intent_verification_mode": "strict",
 				"expires_in_seconds":       600,

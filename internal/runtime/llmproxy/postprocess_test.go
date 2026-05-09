@@ -239,6 +239,10 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected approval prompts for reviewed tool calls")
 	}
+	if !strings.Contains(string(got.Body), "Tool: `WebFetch`") ||
+		!strings.Contains(string(got.Body), "https://example.com/one") {
+		t.Fatalf("approval prompt should identify held tool and input: %s", got.Body)
+	}
 	first, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
 	if err != nil {
 		t.Fatal(err)

@@ -201,7 +201,8 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
+	if !strings.Contains(string(seenBody), "http://localhost:25297/control/skill") ||
+		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
 		t.Fatalf("upstream request missing control notice: %s", seenBody)
 	}
 }

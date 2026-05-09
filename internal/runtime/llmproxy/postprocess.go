@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -224,7 +225,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
 				case runtimedecision.VerdictNeedsApproval:
-					substitute := "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it."
+					substitute := approvalPrompt(tu, dec.Reason)
 					if cfg.PendingApprovals != nil {
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 							UserID:      cfg.AgentUserID,
@@ -342,7 +343,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
-					SubstituteWith: "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it.",
+					SubstituteWith: approvalPrompt(tu, dec.Reason),
 				}
 			}
 		}
@@ -423,6 +424,27 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		Rewritten:   result.Rewritten,
 		Decisions:   result.Decisions,
 	}
+}
+
+func approvalPrompt(tu conversation.ToolUse, reason string) string {
+	preview := conversation.MakeToolInputPreview(tu.Input)
+	var b strings.Builder
+	b.WriteString("Clawvisor paused this tool call for approval.")
+	if tu.Name != "" {
+		b.WriteString("\n\nTool: `")
+		b.WriteString(tu.Name)
+		b.WriteString("`")
+	}
+	if reason != "" {
+		b.WriteString("\nReason: ")
+		b.WriteString(reason)
+	}
+	if preview != "" {
+		b.WriteString("\nInput: ")
+		b.WriteString(preview)
+	}
+	b.WriteString("\n\nReply `approve` to run this tool call or `deny` to block it.")
+	return b.String()
 }
 
 type decisionIntentVerifier struct {

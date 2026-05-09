@@ -653,6 +653,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Purpose:      req.Purpose,
 			Actions:      req.AuthorizedActions,
 			PlannedCalls: req.PlannedCalls,
+			ScopeSummary: taskScopeSummary(req.AuthorizedActions, req.ExpectedTools, req.ExpectedEgress),
 			RiskLevel:    task.RiskLevel,
 			ApproveURL:   approveURL,
 			DenyURL:      denyURL,
@@ -684,6 +685,48 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	h.contentDedup.Put(taskDedupKey, resp)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func taskScopeSummary(actions []store.TaskAction, tools []runtimetasks.ExpectedTool, egress []runtimetasks.ExpectedEgress) []string {
+	summary := make([]string, 0, len(actions)+len(tools)+len(egress))
+	for _, a := range actions {
+		if a.Service == "" || a.Action == "" {
+			continue
+		}
+		mode := "auto-execute"
+		if !a.AutoExecute {
+			mode = "requires per-request approval"
+		}
+		summary = append(summary, fmt.Sprintf("%s.%s (%s)", a.Service, a.Action, mode))
+	}
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.ToolName)
+		if name == "" {
+			continue
+		}
+		line := "tool " + name
+		if why := strings.TrimSpace(tool.Why); why != "" {
+			line += " — " + why
+		}
+		summary = append(summary, line)
+	}
+	for _, eg := range egress {
+		host := strings.TrimSpace(eg.Host)
+		if host == "" {
+			continue
+		}
+		method := strings.TrimSpace(eg.Method)
+		path := firstNonEmptyLog(eg.Path, eg.PathRegex)
+		line := "egress " + host
+		if method != "" || path != "" {
+			line += " " + strings.TrimSpace(method+" "+path)
+		}
+		if why := strings.TrimSpace(eg.Why); why != "" {
+			line += " — " + why
+		}
+		summary = append(summary, line)
+	}
+	return summary
 }
 
 // ── Get ───────────────────────────────────────────────────────────────────────

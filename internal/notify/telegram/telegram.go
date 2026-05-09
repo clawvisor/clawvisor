@@ -741,14 +741,20 @@ func formatTaskApprovalMessage(req notify.TaskApprovalRequest) string {
 	sb.WriteString(fmt.Sprintf("<b>Time:</b> %s\n", time.Now().UTC().Format("Mon Jan 2 2006, 3:04 PM MST")))
 
 	sb.WriteString("\n<b>Requested actions:</b>\n")
-	for _, a := range req.Actions {
-		mode := "auto-execute"
-		if !a.AutoExecute {
-			mode = "requires per-request approval"
+	if len(req.ScopeSummary) > 0 {
+		for _, line := range req.ScopeSummary {
+			sb.WriteString(fmt.Sprintf("  • %s\n", html.EscapeString(line)))
 		}
-		sb.WriteString(fmt.Sprintf("  • %s (%s)\n",
-			html.EscapeString(display.FormatServiceAction(a.Service, a.Action)),
-			mode))
+	} else {
+		for _, a := range req.Actions {
+			mode := "auto-execute"
+			if !a.AutoExecute {
+				mode = "requires per-request approval"
+			}
+			sb.WriteString(fmt.Sprintf("  • %s (%s)\n",
+				html.EscapeString(display.FormatServiceAction(a.Service, a.Action)),
+				mode))
+		}
 	}
 
 	if len(req.PlannedCalls) > 0 {
