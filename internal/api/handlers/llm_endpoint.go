@@ -188,6 +188,21 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 	// Validate that the body parses for the selected provider. Surfaces
 	// schema errors as a 400 before we burn an upstream call.
+	if provider == conversation.ProviderAnthropic {
+		sanitizedBody, sanitized, sanitizeErr := llmproxy.SanitizeAnthropicRequest(body)
+		if sanitizeErr != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = sanitizeErr.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", sanitizeErr.Error())
+			return
+		}
+		if sanitized {
+			body = sanitizedBody
+			auditParams["anthropic_empty_text_sanitized"] = true
+		}
+	}
 	if _, err := parser.ParseRequest(body); err != nil {
 		auditStatus = http.StatusBadRequest
 		auditDecide = "deny"

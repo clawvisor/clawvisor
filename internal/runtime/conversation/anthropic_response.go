@@ -357,12 +357,13 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 	})
 
 	stopReason := "end_turn"
-	for i, pb := range blocks {
+	outIndex := 0
+	for _, pb := range blocks {
 		if pb.isTU {
 			stopReason = "tool_use"
 			emit("content_block_start", map[string]any{
 				"type":  "content_block_start",
-				"index": i,
+				"index": outIndex,
 				"content_block": map[string]any{
 					"type":  "tool_use",
 					"id":    pb.id,
@@ -376,7 +377,7 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 			}
 			emit("content_block_delta", map[string]any{
 				"type":  "content_block_delta",
-				"index": i,
+				"index": outIndex,
 				"delta": map[string]any{
 					"type":         "input_json_delta",
 					"partial_json": string(input),
@@ -384,14 +385,18 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 			})
 			emit("content_block_stop", map[string]any{
 				"type":  "content_block_stop",
-				"index": i,
+				"index": outIndex,
 			})
+			outIndex++
+			continue
+		}
+		if pb.text.Len() == 0 {
 			continue
 		}
 		// Text block.
 		emit("content_block_start", map[string]any{
 			"type":  "content_block_start",
-			"index": i,
+			"index": outIndex,
 			"content_block": map[string]any{
 				"type": "text",
 				"text": "",
@@ -400,7 +405,7 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 		if pb.text.Len() > 0 {
 			emit("content_block_delta", map[string]any{
 				"type":  "content_block_delta",
-				"index": i,
+				"index": outIndex,
 				"delta": map[string]any{
 					"type": "text_delta",
 					"text": pb.text.String(),
@@ -409,8 +414,9 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 		}
 		emit("content_block_stop", map[string]any{
 			"type":  "content_block_stop",
-			"index": i,
+			"index": outIndex,
 		})
+		outIndex++
 	}
 
 	emit("message_delta", map[string]any{

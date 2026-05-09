@@ -75,6 +75,56 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 	}
 }
 
+func TestAnthropicResponseRewriterOmitsEmptyTextBlocksWhenRewritingSSE(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://clawvisor.local/control/skill\",\"prompt\":\"What is here?\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:      true,
+			RewriteInput: json.RawMessage(`{"url":"https://example.test/control/skill","prompt":"What is here?"}`),
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE")
+	}
+	out := string(result.Body)
+	if strings.Contains(out, `"type":"text","text":""`) {
+		t.Fatalf("rewritten SSE should not include an empty text block: %s", out)
+	}
+	if !strings.Contains(out, `"index":0`) || strings.Contains(out, `"index":1`) {
+		t.Fatalf("rewritten SSE should reindex the remaining tool block to 0: %s", out)
+	}
+}
+
 func TestAnthropicToolResultIDsFromRequest(t *testing.T) {
 	t.Parallel()
 
