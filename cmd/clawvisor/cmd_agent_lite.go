@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,8 @@ const (
 	liteProxyProviderClaude = "claude"
 	liteProxyProviderCodex  = "codex"
 )
+
+var liteRunProvider string
 
 var agentLiteEnvCmd = &cobra.Command{
 	Use:   "lite-env <claude|codex>",
@@ -38,18 +41,18 @@ var agentLiteEnvCmd = &cobra.Command{
 }
 
 var agentLiteRunCmd = &cobra.Command{
-	Use:   "lite-run <claude|codex> -- [command] [args...]",
+	Use:   "lite-run -- <command> [args...]",
 	Short: "Run an agent harness through proxy-lite",
-	Long:  "Inject proxy-lite LLM endpoint environment variables and run Claude Code, Codex, or another command under that provider configuration.",
-	Args:  cobra.MinimumNArgs(1),
+	Long:  "Infer the harness from the command name, inject proxy-lite LLM endpoint environment variables, and run Claude Code or Codex. Use --provider when the command name is a wrapper script.",
+	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts, err := liteProxyOptionsFromFlags(args[0])
+		provider, commandArgs, err := liteProxyRunPlan(args, liteRunProvider)
 		if err != nil {
 			return err
 		}
-		commandArgs := args[1:]
-		if len(commandArgs) == 0 {
-			commandArgs = []string{opts.Provider}
+		opts, err := liteProxyOptionsFromFlags(provider)
+		if err != nil {
+			return err
 		}
 		return runLiteProxyCommand(opts, commandArgs)
 	},
@@ -105,6 +108,52 @@ func normalizeLiteProxyProvider(provider string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported proxy-lite provider %q: expected claude or codex", provider)
 	}
+}
+
+func liteProxyRunPlan(args []string, explicitProvider string) (provider string, commandArgs []string, err error) {
+	explicitProvider = strings.TrimSpace(explicitProvider)
+	if explicitProvider != "" {
+		provider, err = normalizeLiteProxyProvider(explicitProvider)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(args) == 0 {
+			return provider, []string{provider}, nil
+		}
+		return provider, args, nil
+	}
+
+	provider, ok := detectLiteProxyProviderFromCommand(args)
+	if !ok {
+		return "", nil, fmt.Errorf("could not infer proxy-lite provider from command %q: use claude, codex, or pass --provider", firstLiteProxyArg(args))
+	}
+	return provider, args, nil
+}
+
+func detectLiteProxyProviderFromCommand(args []string) (string, bool) {
+	if len(args) == 0 {
+		return "", false
+	}
+	switch normalizeLiteProxyCommandKey(args[0]) {
+	case "claude", "claude-code":
+		return liteProxyProviderClaude, true
+	case "codex":
+		return liteProxyProviderCodex, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeLiteProxyCommandKey(value string) string {
+	value = strings.TrimSpace(strings.ToLower(path.Base(value)))
+	return strings.TrimSuffix(value, ".exe")
+}
+
+func firstLiteProxyArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }
 
 func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
@@ -187,6 +236,7 @@ func init() {
 	for _, subcmd := range []*cobra.Command{agentLiteEnvCmd, agentLiteRunCmd, agentClaudeCmd, agentCodexCmd} {
 		addLiteProxyFlags(subcmd)
 	}
+	agentLiteRunCmd.Flags().StringVar(&liteRunProvider, "provider", "", "Proxy-lite provider when it cannot be inferred from the command name (claude or codex)")
 	agentCmd.AddCommand(agentLiteEnvCmd)
 	agentCmd.AddCommand(agentLiteRunCmd)
 	agentCmd.AddCommand(agentClaudeCmd)

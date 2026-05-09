@@ -76,3 +76,62 @@ func TestBuildLiteProxyEnvRequiresToken(t *testing.T) {
 		t.Fatalf("error = %v, want missing token", err)
 	}
 }
+
+func TestLiteProxyRunPlanInfersClaudeFromCommand(t *testing.T) {
+	provider, commandArgs, err := liteProxyRunPlan([]string{"/usr/local/bin/claude", "--model", "sonnet"}, "")
+	if err != nil {
+		t.Fatalf("liteProxyRunPlan: %v", err)
+	}
+	if provider != "claude" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if strings.Join(commandArgs, "\x00") != "/usr/local/bin/claude\x00--model\x00sonnet" {
+		t.Fatalf("commandArgs = %#v", commandArgs)
+	}
+}
+
+func TestLiteProxyRunPlanInfersCodexFromCommand(t *testing.T) {
+	provider, commandArgs, err := liteProxyRunPlan([]string{"codex", "hello"}, "")
+	if err != nil {
+		t.Fatalf("liteProxyRunPlan: %v", err)
+	}
+	if provider != "codex" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if strings.Join(commandArgs, "\x00") != "codex\x00hello" {
+		t.Fatalf("commandArgs = %#v", commandArgs)
+	}
+}
+
+func TestLiteProxyRunPlanUsesExplicitProviderForWrapper(t *testing.T) {
+	provider, commandArgs, err := liteProxyRunPlan([]string{"my-codex-wrapper", "--debug"}, "codex")
+	if err != nil {
+		t.Fatalf("liteProxyRunPlan: %v", err)
+	}
+	if provider != "codex" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if strings.Join(commandArgs, "\x00") != "my-codex-wrapper\x00--debug" {
+		t.Fatalf("commandArgs = %#v", commandArgs)
+	}
+}
+
+func TestLiteProxyRunPlanDefaultsCommandWithExplicitProvider(t *testing.T) {
+	provider, commandArgs, err := liteProxyRunPlan(nil, "claude")
+	if err != nil {
+		t.Fatalf("liteProxyRunPlan: %v", err)
+	}
+	if provider != "claude" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if strings.Join(commandArgs, "\x00") != "claude" {
+		t.Fatalf("commandArgs = %#v", commandArgs)
+	}
+}
+
+func TestLiteProxyRunPlanRequiresProviderForUnknownCommand(t *testing.T) {
+	_, _, err := liteProxyRunPlan([]string{"my-wrapper"}, "")
+	if err == nil || !strings.Contains(err.Error(), "could not infer proxy-lite provider") {
+		t.Fatalf("error = %v, want inference failure", err)
+	}
+}
