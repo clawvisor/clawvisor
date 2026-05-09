@@ -109,30 +109,52 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 		return nil, fmt.Errorf("onedrive download_file: item_id is required")
 	}
 
-	// Fetch metadata including the pre-signed @microsoft.graph.downloadUrl.
-	// We download from the URL using a plain client to avoid 401 redirect issues
-	// (Go's OAuth2 client re-injects Authorization headers on cross-host redirects).
-	metaEndpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s?$select=name,size,@microsoft.graph.downloadUrl", itemID)
-	var meta struct {
-		Name        string `json:"name"`
-		Size        int64  `json:"size"`
-		DownloadURL string `json:"@microsoft.graph.downloadUrl"`
+	// Determine the correct endpoint. If itemID looks like a path (e.g., starts with "root:"),
+	// use the root path syntax. Otherwise, assume it's a DriveItem ID.
+	var metaEndpoint string
+	if strings.HasPrefix(itemID, "root:") || strings.Contains(itemID, "/") {
+		// If it's a path, it might be /Documents/file.txt or root:/Documents/file.txt
+		path := strings.TrimPrefix(itemID, "/")
+		if !strings.HasPrefix(path, "root:") {
+			path = "root:/" + path
+		}
+		// Handle the trailing colon if it's a path
+		if strings.HasPrefix(path, "root:/") && !strings.HasSuffix(path, ":") {
+			path += ":"
+		}
+		metaEndpoint = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/%s", escapePath(path))
+	} else {
+		metaEndpoint = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s", url.PathEscape(itemID))
 	}
+
+	// Use map[string]any to reliably capture the @ annotation key.
+	var meta map[string]any
 	if err := microsoft.GraphGET(ctx, client, metaEndpoint, &meta); err != nil {
 		return nil, fmt.Errorf("onedrive download_file metadata: %w", err)
 	}
 
-	if meta.DownloadURL == "" {
-		return nil, fmt.Errorf("onedrive download_file: item is not a file or has no download URL")
+	fileName, _ := meta["name"].(string)
+	fileSize, _ := meta["size"].(float64) // JSON numbers unmarshal as float64
+
+	downloadURL, _ := meta["@microsoft.graph.downloadUrl"].(string)
+
+	if downloadURL == "" {
+		// Fallback: use the /content endpoint
+		contentEndpoint := metaEndpoint + "/content"
+		return a.downloadViaContent(ctx, client, contentEndpoint, itemID, fileName, int64(fileSize))
 	}
 
-	// Use plain HTTP client for the pre-signed URL download
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.DownloadURL, nil)
+
+	// Use a plain HTTP client for the pre-signed URL download.
+	// The download URL is pre-authenticated; sending an OAuth Bearer token
+	// to the SharePoint download host causes a 401.
+	plainClient := &http.Client{}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := plainClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("onedrive download_file: download error: %w", err)
 	}
@@ -144,15 +166,57 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
 
-	contentType := mime.TypeByExtension(filepath.Ext(meta.Name))
+	return a.buildDownloadResult(itemID, fileName, int64(fileSize), body), nil
+}
+
+// downloadViaContent handles the /content redirect flow by stripping the
+// Authorization header on cross-host redirects.
+func (a *Adapter) downloadViaContent(ctx context.Context, oauthClient *http.Client, endpoint, itemID, fileName string, fileSize int64) (*adapters.Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a client that uses the OAuth transport but strips Authorization
+	// on cross-host redirects (SharePoint download host rejects the token).
+	dlClient := *oauthClient
+	dlClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+			req.Header.Del("Authorization")
+		}
+		return nil
+	}
+
+	resp, err := dlClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("onedrive download_file: content redirect error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("onedrive download_file: download status %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(format.MaxBodyLen)))
+
+	return a.buildDownloadResult(itemID, fileName, fileSize, body), nil
+}
+
+// buildDownloadResult constructs the download response with appropriate
+// content encoding (text or base64).
+func (a *Adapter) buildDownloadResult(itemID, fileName string, fileSize int64, body []byte) *adapters.Result {
+	contentType := mime.TypeByExtension(filepath.Ext(fileName))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
 	result := map[string]any{
-		"name":         format.SanitizeText(meta.Name, format.MaxFieldLen),
+		"name":         format.SanitizeText(fileName, format.MaxFieldLen),
 		"id":           itemID,
-		"size":         meta.Size,
+		"size":         fileSize,
 		"content_type": contentType,
 	}
 
@@ -164,9 +228,9 @@ func (a *Adapter) downloadFile(ctx context.Context, client *http.Client, params 
 	}
 
 	return &adapters.Result{
-		Summary: format.Summary("Downloaded %s (%d bytes)", meta.Name, meta.Size),
+		Summary: format.Summary("Downloaded %s (%d bytes)", fileName, fileSize),
 		Data:    result,
-	}, nil
+	}
 }
 
 func (a *Adapter) uploadFile(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {

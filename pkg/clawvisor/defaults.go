@@ -184,7 +184,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	goOverrides["perplexity:chat"] = pplx.Execute
 
 	outlook := outlookadapter.New(msOAuthProvider)
-	for _, action := range []string{"send_message", "create_event"} {
+	for _, action := range []string{"send_message", "create_event", "list_events", "get_event"} {
 		goOverrides["microsoft.outlook:"+action] = outlook.Execute
 	}
 

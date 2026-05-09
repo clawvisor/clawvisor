@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
@@ -31,12 +32,97 @@ func (a *Adapter) Execute(ctx context.Context, req adapters.Request) (*adapters.
 	switch req.Action {
 	case "send_message":
 		return a.sendMessage(ctx, client, req.Params)
+	case "list_events":
+		return a.listEvents(ctx, client, req.Params)
+	case "get_event":
+		return a.getEvent(ctx, client, req.Params)
 	case "create_event":
 		return a.createEvent(ctx, client, req.Params)
 	default:
 		return nil, fmt.Errorf("outlook: unsupported action %q", req.Action)
 	}
 }
+
+func (a *Adapter) listEvents(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	top := 10
+	if v, ok := params["top"].(float64); ok {
+		top = int(v)
+	}
+	filter, _ := params["filter"].(string)
+
+	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/events?$top=%d", top)
+	if filter != "" {
+		endpoint += "&$filter=" + url.QueryEscape(filter)
+	}
+
+	var out struct {
+		Value []map[string]any `json:"value"`
+	}
+	if err := microsoft.GraphGET(ctx, client, endpoint, &out); err != nil {
+		return nil, fmt.Errorf("outlook list_events: %w", err)
+	}
+
+	var events []map[string]any
+	for _, item := range out.Value {
+		start, _ := item["start"].(map[string]any)
+		end, _ := item["end"].(map[string]any)
+		loc, _ := item["location"].(map[string]any)
+
+		events = append(events, map[string]any{
+			"id":          item["id"],
+			"subject":     format.SanitizeText(item["subject"].(string), format.MaxFieldLen),
+			"start":       start["dateTime"],
+			"end":         end["dateTime"],
+			"timezone":    start["timeZone"],
+			"location":    loc["displayName"],
+			"is_all_day":  item["isAllDay"],
+			"web_link":    item["webLink"],
+		})
+	}
+
+	return &adapters.Result{
+		Summary: format.Summary("%d event(s)", len(events)),
+		Data:    events,
+	}, nil
+}
+
+func (a *Adapter) getEvent(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
+	eventID, _ := params["event_id"].(string)
+	if eventID == "" {
+		return nil, fmt.Errorf("outlook get_event: event_id is required")
+	}
+
+	endpoint := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/events/%s", url.PathEscape(eventID))
+	var item map[string]any
+	if err := microsoft.GraphGET(ctx, client, endpoint, &item); err != nil {
+		return nil, fmt.Errorf("outlook get_event: %w", err)
+	}
+
+	start, _ := item["start"].(map[string]any)
+	end, _ := item["end"].(map[string]any)
+	loc, _ := item["location"].(map[string]any)
+	body, _ := item["body"].(map[string]any)
+
+	data := map[string]any{
+		"id":          item["id"],
+		"subject":     format.SanitizeText(item["subject"].(string), format.MaxFieldLen),
+		"start":       start["dateTime"],
+		"end":         end["dateTime"],
+		"timezone":    start["timeZone"],
+		"location":    loc["displayName"],
+		"body":        format.SanitizeText(body["content"].(string), format.MaxBodyLen),
+		"attendees":   item["attendees"],
+		"is_all_day":  item["isAllDay"],
+		"web_link":    item["webLink"],
+		"organizer":   item["organizer"],
+	}
+
+	return &adapters.Result{
+		Summary: format.Summary("Event: %s", data["subject"]),
+		Data:    data,
+	}, nil
+}
+
 
 func (a *Adapter) sendMessage(ctx context.Context, client *http.Client, params map[string]any) (*adapters.Result, error) {
 	to, _ := params["to"].(string)
