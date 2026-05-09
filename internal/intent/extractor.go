@@ -83,6 +83,10 @@ type LLMExtractor struct {
 	// Attached to every per-call llm.Client so the cache is referenced on
 	// Gemini provider requests.
 	geminiCacheNameFn func() string
+	// geminiCacheInvalidator drops the in-process cache name and
+	// triggers an async refresh when a server-side cache reference
+	// fails. Wired alongside geminiCacheNameFn when a manager is in use.
+	geminiCacheInvalidator func(string)
 	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
 	// used. Nil when no cache was set up.
 	geminiCacheMgr *llm.GeminiCacheManager
@@ -102,12 +106,13 @@ func (e *LLMExtractor) StartGeminiCache(ctx context.Context, cfg llm.GeminiCache
 	if cfg.Logger == nil {
 		cfg.Logger = e.logger
 	}
-	mgr, nameFn, err := llm.StartCachedSystemPrompt(ctx, cfg, extractionSystemPrompt)
+	mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, extractionSystemPrompt)
 	if err != nil {
 		return fmt.Errorf("extractor gemini cache: %w", err)
 	}
 	e.geminiCacheMgr = mgr
 	e.geminiCacheNameFn = nameFn
+	e.geminiCacheInvalidator = invalidator
 	return nil
 }
 
@@ -513,6 +518,12 @@ func (e *LLMExtractor) ExtractLLM(ctx context.Context, req ExtractRequest, exist
 	client := llm.NewClient(cfg.LLMProviderConfig).WithMaxTokens(8192)
 	if e.geminiCacheNameFn != nil {
 		client.AttachGeminiCacheNameFn(e.geminiCacheNameFn)
+		if e.geminiCacheInvalidator != nil {
+			client.AttachGeminiCacheInvalidator(e.geminiCacheInvalidator)
+		}
+	}
+	if e.logger != nil {
+		client = client.WithLogger(e.logger)
 	}
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: extractionSystemPrompt, CacheControl: true},

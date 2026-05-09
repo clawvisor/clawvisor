@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // ErrGeminiCacheNotFound is wrapped by doGeminiRequest when Vertex returns
@@ -27,6 +28,15 @@ import (
 // resource manually deleted, refresh failure) doesn't turn into a
 // user-visible error. Cache manager refresh continues independently.
 var ErrGeminiCacheNotFound = errors.New("gemini: cached content not found")
+
+// ErrGeminiCacheExpired is wrapped by doGeminiRequest when Vertex returns
+// status 400 INVALID_ARGUMENT with a "Cache content … is expired" message
+// on a request that referenced a cachedContent resource. Vertex serves
+// this — not 404 — when the resource still exists in metadata but its
+// TTL has elapsed. Treated identically to ErrGeminiCacheNotFound by
+// completeGemini: drop the stale name (if an invalidator is attached)
+// and retry once with systemInstruction inlined.
+var ErrGeminiCacheExpired = errors.New("gemini: cached content expired")
 
 // completeGemini sends generateContent to Vertex Gemini and returns text + usage.
 //
@@ -63,12 +73,24 @@ func (c *Client) completeGemini(ctx context.Context, messages []ChatMessage) (st
 	}
 
 	text, usage, err := c.doGeminiRequest(ctx, system, convo, cacheName)
-	if err != nil && cacheName != "" && errors.Is(err, ErrGeminiCacheNotFound) {
-		// The cached resource is gone server-side — TTL elapsed before our
-		// next refresh tick succeeded, or the manager's refresh has been
-		// failing. Retry once with the system prompt inlined; the next
-		// successful refresh will repopulate the cache and subsequent
-		// calls go back to the cached path.
+	if err != nil && cacheName != "" && (errors.Is(err, ErrGeminiCacheNotFound) || errors.Is(err, ErrGeminiCacheExpired)) {
+		// The cached resource is unusable server-side — either gone (404)
+		// or its TTL has elapsed (400 INVALID_ARGUMENT "is expired").
+		// Drop the stale name from the cache manager so concurrent and
+		// subsequent callers skip it immediately (otherwise they all
+		// repeat this dance until the next refresh tick), then retry
+		// once with the system prompt inlined. The manager's async
+		// refresh repopulates the name; subsequent calls return to the
+		// cached path.
+		cause := "not_found"
+		if errors.Is(err, ErrGeminiCacheExpired) {
+			cause = "expired"
+		}
+		c.logger().Warn("gemini cache fallback to inline systemInstruction",
+			"cause", cause, "cache_name", cacheName, "err", err)
+		if c.geminiCacheInvalidator != nil {
+			c.geminiCacheInvalidator(cacheName)
+		}
 		return c.doGeminiRequest(ctx, system, convo, "")
 	}
 	return text, usage, err
@@ -137,6 +159,12 @@ func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []Cha
 				resp.Header.Get("Server"), resp.Header.Get("Via"),
 				resp.Header.Get("Content-Type"), respBody)
 		}
+		if resp.StatusCode == http.StatusBadRequest && cacheName != "" && isCacheExpiredBody(respBody) {
+			return "", nil, fmt.Errorf("%w: url=%s body_len=%d server=%q via=%q content_type=%q body=%s",
+				ErrGeminiCacheExpired, c.endpoint, len(respBody),
+				resp.Header.Get("Server"), resp.Header.Get("Via"),
+				resp.Header.Get("Content-Type"), respBody)
+		}
 		return "", nil, fmt.Errorf("%w url=%s body_len=%d server=%q via=%q content_type=%q",
 			c.statusError(resp.StatusCode, respBody),
 			c.endpoint, len(respBody),
@@ -152,6 +180,28 @@ func (c *Client) doGeminiRequest(ctx context.Context, system string, convo []Cha
 		return "", nil, fmt.Errorf("llm: read gemini response: %w", err)
 	}
 	return decodeGeminiResponse(respBody)
+}
+
+// isCacheExpiredBody reports whether a Vertex 400 response body indicates
+// that the referenced cachedContent resource has expired. Vertex returns
+// status INVALID_ARGUMENT with a message like:
+//
+//	"Cache content projects/.../cachedContents/12345 is expired"
+//
+// when a cache reference is used past its TTL. We don't unmarshal — Vertex's
+// envelope nests under {"error":{"message":...,"status":"INVALID_ARGUMENT"}},
+// but a literal substring scan is robust against shape drift and avoids
+// allocating just to read a known phrase.
+func isCacheExpiredBody(body []byte) bool {
+	s := string(body)
+	if !strings.Contains(s, "is expired") {
+		return false
+	}
+	// Belt-and-suspenders: only treat as cache-expired if "cache" appears
+	// somewhere in the body, so an unrelated 400 mentioning the phrase
+	// "is expired" doesn't accidentally trip the fallback path.
+	ls := strings.ToLower(s)
+	return strings.Contains(ls, "cache content") || strings.Contains(ls, "cachedcontent")
 }
 
 // buildGeminiContents converts ChatMessage convo turns into the Gemini

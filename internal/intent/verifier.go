@@ -70,6 +70,12 @@ type LLMVerifier struct {
 	// at app startup. Attached to every per-call llm.Client so the cache
 	// is referenced on Gemini provider requests.
 	geminiCacheNameFn func() string
+	// geminiCacheInvalidator drops the in-process cache name and
+	// triggers an async refresh when a server-side cache reference
+	// fails (404 or 400 expired). Wired alongside geminiCacheNameFn
+	// when a manager is in use; nil when SetGeminiCacheNameFn was
+	// called directly (e.g. by tests).
+	geminiCacheInvalidator func(string)
 	// geminiCacheMgr owns the cache lifecycle when StartGeminiCache was
 	// used. Nil when SetGeminiCacheNameFn was used directly (e.g. by tests).
 	geminiCacheMgr *llm.GeminiCacheManager
@@ -131,12 +137,13 @@ func (v *LLMVerifier) StartGeminiCache(ctx context.Context, cfg llm.GeminiCacheM
 	if cfg.Logger == nil {
 		cfg.Logger = v.logger
 	}
-	mgr, nameFn, err := llm.StartCachedSystemPrompt(ctx, cfg, verificationSystemPrompt)
+	mgr, nameFn, invalidator, err := llm.StartCachedSystemPrompt(ctx, cfg, verificationSystemPrompt)
 	if err != nil {
 		return fmt.Errorf("verifier gemini cache: %w", err)
 	}
 	v.geminiCacheMgr = mgr
 	v.geminiCacheNameFn = nameFn
+	v.geminiCacheInvalidator = invalidator
 	return nil
 }
 
@@ -162,6 +169,12 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	// cache so the full system prompt is inlined.
 	if v.geminiCacheNameFn != nil && !req.Lenient {
 		client.AttachGeminiCacheNameFn(v.geminiCacheNameFn)
+		if v.geminiCacheInvalidator != nil {
+			client.AttachGeminiCacheInvalidator(v.geminiCacheInvalidator)
+		}
+	}
+	if v.logger != nil {
+		client = client.WithLogger(v.logger)
 	}
 	userMsg := buildVerificationUserMessage(req)
 	systemPrompt := verificationSystemPrompt

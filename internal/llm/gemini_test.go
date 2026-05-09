@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,6 +248,175 @@ func TestClient_Gemini_404OnCachedRequest_RetriesWithInlineSystem(t *testing.T) 
 	}
 }
 
+func TestClient_Gemini_400CacheExpired_RetriesWithInlineSystem(t *testing.T) {
+	// Vertex returns 400 INVALID_ARGUMENT — not 404 — when a cachedContent
+	// reference is used past its TTL. Client must classify this as
+	// ErrGeminiCacheExpired and retry once with systemInstruction inlined.
+	// Without this, the verifier hard-fails for every concurrent caller
+	// holding the same stale ID until process restart.
+	var bodies []map[string]any
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(bodies) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			// Real-world Vertex error envelope shape.
+			w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"Cache content projects/p/locations/global/cachedContents/abc is expired"}}`))
+			return
+		}
+		w.Write(geminiResponse("recovered", 0))
+	})
+
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	client.AttachGeminiCacheNameFn(func() string {
+		return "projects/p/locations/global/cachedContents/abc"
+	})
+
+	got, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "system text"},
+		{Role: "user", Content: "user text"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "recovered" {
+		t.Errorf("got %q, want recovered", got)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 requests (cached attempt + inline retry), got %d", len(bodies))
+	}
+	if _, has := bodies[0]["cachedContent"]; !has {
+		t.Error("first request should have set cachedContent")
+	}
+	if _, has := bodies[1]["cachedContent"]; has {
+		t.Error("retry should NOT have set cachedContent")
+	}
+	if _, has := bodies[1]["systemInstruction"]; !has {
+		t.Error("retry should have inlined systemInstruction")
+	}
+}
+
+func TestClient_Gemini_400CacheExpired_FiresInvalidator(t *testing.T) {
+	// When an invalidator is attached, the failed cache name must be
+	// passed to it so the manager can drop the in-process name and
+	// concurrent callers stop hitting the same dead reference.
+	const failingName = "projects/p/locations/global/cachedContents/abc"
+	calls := 0
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"Cache content ` + failingName + ` is expired"}}`))
+			return
+		}
+		w.Write(geminiResponse("ok", 0))
+	})
+
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	client.AttachGeminiCacheNameFn(func() string { return failingName })
+
+	var invalidated []string
+	client.AttachGeminiCacheInvalidator(func(name string) {
+		invalidated = append(invalidated, name)
+	})
+
+	if _, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(invalidated) != 1 || invalidated[0] != failingName {
+		t.Errorf("invalidator: got %v, want [%s]", invalidated, failingName)
+	}
+}
+
+func TestClient_Gemini_400Uncached_NotClassifiedAsCacheExpired(t *testing.T) {
+	// A 400 on a request that was NOT cached must not trigger the
+	// cache-expired fallback — there's no cache to invalidate, and the
+	// real error (e.g. malformed contents) should surface to the caller.
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"Invalid contents"}}`))
+	})
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err == nil {
+		t.Fatal("expected 400 error to surface")
+	}
+}
+
+func TestClient_Gemini_400Cached_UnrelatedError_NotMisclassified(t *testing.T) {
+	// 400 on a cached request that is NOT a cache-expired error must
+	// surface as-is, without retry. The substring check requires both
+	// "is expired" AND a "cache content" / "cachedContent" mention.
+	calls := 0
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"Invalid contents: parts is empty"}}`))
+	})
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	client.AttachGeminiCacheNameFn(func() string {
+		return "projects/p/locations/global/cachedContents/abc"
+	})
+
+	_, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	})
+	if err == nil {
+		t.Fatal("expected 400 error to surface")
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 call (no fallback retry), got %d", calls)
+	}
+}
+
+func TestClient_Gemini_404OnCachedRequest_FiresInvalidator(t *testing.T) {
+	// The 404 path should also invoke the invalidator (parity with the
+	// 400-expired path). Otherwise concurrent callers keep hitting the
+	// same stale name until the next refresh tick.
+	const failingName = "projects/p/locations/global/cachedContents/abc"
+	calls := 0
+	_, cfg := newGeminiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"code":404,"message":"cached content gone"}}`))
+			return
+		}
+		w.Write(geminiResponse("ok", 0))
+	})
+
+	client := llm.NewClient(cfg).WithTokenSource(staticToken{})
+	client.AttachGeminiCacheNameFn(func() string { return failingName })
+
+	var invalidated []string
+	client.AttachGeminiCacheInvalidator(func(name string) {
+		invalidated = append(invalidated, name)
+	})
+
+	if _, err := client.Complete(context.Background(), []llm.ChatMessage{
+		{Role: "system", Content: "s"},
+		{Role: "user", Content: "u"},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(invalidated) != 1 || invalidated[0] != failingName {
+		t.Errorf("invalidator: got %v, want [%s]", invalidated, failingName)
+	}
+}
+
 func TestClient_Gemini_404Uncached_NoRetry(t *testing.T) {
 	// 404 on a request that was already uncached should NOT retry — there's
 	// nothing to fall back to. The error surfaces to the caller.
@@ -424,6 +594,108 @@ func TestClient_Hedge_BothFail_ReturnsError(t *testing.T) {
 	if c := atomic.LoadInt32(&calls); c != 2 {
 		t.Errorf("expected 2 server calls, got %d", c)
 	}
+}
+
+// fakeRoundTripper intercepts cachedContents create/delete calls so the
+// manager can be exercised without hitting the real Vertex API. Returns
+// canned 200 OK responses with the supplied body.
+type fakeRoundTripper struct {
+	mu       sync.Mutex
+	requests []*http.Request
+	respBody string
+}
+
+func (f *fakeRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	f.requests = append(f.requests, r)
+	body := f.respBody
+	f.mu.Unlock()
+	return &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+		Request:    r,
+	}, nil
+}
+
+func (f *fakeRoundTripper) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
+}
+
+func TestGeminiCacheManager_InvalidateIfMatches(t *testing.T) {
+	t.Run("empty name is no-op", func(t *testing.T) {
+		mgr := newTestCacheManager(t, &fakeRoundTripper{})
+		mgr.SetCacheNameForTest("X")
+		mgr.InvalidateIfMatches("")
+		if got := mgr.CacheName(); got != "X" {
+			t.Errorf("expected unchanged name X, got %q", got)
+		}
+	})
+
+	t.Run("non-matching name is no-op", func(t *testing.T) {
+		// A successful refresh between the failing request and the
+		// invalidation arriving means the current name is already a
+		// fresh one — invalidating would trash a good cache.
+		rt := &fakeRoundTripper{}
+		mgr := newTestCacheManager(t, rt)
+		mgr.SetCacheNameForTest("FRESH")
+		mgr.InvalidateIfMatches("STALE")
+		if got := mgr.CacheName(); got != "FRESH" {
+			t.Errorf("expected unchanged name FRESH, got %q", got)
+		}
+		if rt.requestCount() != 0 {
+			t.Errorf("expected no HTTP calls (no refresh on mismatch), got %d", rt.requestCount())
+		}
+	})
+
+	t.Run("matching name drops cache and refreshes", func(t *testing.T) {
+		rt := &fakeRoundTripper{
+			respBody: `{"name":"projects/p/locations/global/cachedContents/NEW"}`,
+		}
+		mgr := newTestCacheManager(t, rt)
+		mgr.SetCacheNameForTest("OLD")
+		mgr.InvalidateIfMatches("OLD")
+		// Immediately after invalidate, name is dropped — concurrent
+		// callers stop hitting the dead reference.
+		if got := mgr.CacheName(); got != "" {
+			t.Errorf("expected name dropped to empty after invalidate, got %q", got)
+		}
+		// Async refresh repopulates within a short window.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if mgr.CacheName() != "" {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := mgr.CacheName(); got == "" {
+			t.Fatal("expected async refresh to repopulate cache name")
+		}
+		if !strings.HasSuffix(mgr.CacheName(), "/NEW") {
+			t.Errorf("expected refreshed name ending /NEW, got %q", mgr.CacheName())
+		}
+	})
+}
+
+// newTestCacheManager builds a manager wired to the supplied transport so
+// create/delete calls don't hit the real Vertex API.
+func newTestCacheManager(t *testing.T, rt http.RoundTripper) *llm.GeminiCacheManager {
+	t.Helper()
+	mgr, err := llm.NewGeminiCacheManager(llm.GeminiCacheManagerConfig{
+		Project:      "p",
+		Region:       "global",
+		Model:        "gemini-test",
+		SystemPrompt: "sys",
+		TTL:          30 * time.Minute,
+		HTTPClient:   &http.Client{Transport: rt},
+		TokenSource:  staticToken{},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiCacheManager: %v", err)
+	}
+	return mgr
 }
 
 func TestNewGeminiCacheManager_RejectsNegativeTTL(t *testing.T) {
