@@ -180,7 +180,8 @@ func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
 	case liteProxyProviderClaude:
 		env = append(env,
 			"ANTHROPIC_BASE_URL="+baseURL,
-			"ANTHROPIC_API_KEY="+agentToken,
+			"ANTHROPIC_AUTH_TOKEN="+agentToken,
+			"ANTHROPIC_API_KEY=",
 		)
 	case liteProxyProviderCodex:
 		env = append(env,

@@ -27,8 +27,11 @@ func TestBuildLiteProxyEnvClaude(t *testing.T) {
 	if got := values["ANTHROPIC_BASE_URL"]; got != "https://clawvisor.example" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
 	}
-	if got := values["ANTHROPIC_API_KEY"]; got != "cvis_token" {
-		t.Fatalf("ANTHROPIC_API_KEY = %q", got)
+	if got := values["ANTHROPIC_AUTH_TOKEN"]; got != "cvis_token" {
+		t.Fatalf("ANTHROPIC_AUTH_TOKEN = %q", got)
+	}
+	if got := values["ANTHROPIC_API_KEY"]; got != "" {
+		t.Fatalf("ANTHROPIC_API_KEY = %q, want explicitly empty", got)
 	}
 	if got := values["OPENAI_BASE_URL"]; got != "" {
 		t.Fatalf("OPENAI_BASE_URL should be omitted for claude, got %q", got)
