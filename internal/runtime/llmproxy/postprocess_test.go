@@ -208,7 +208,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl https://control.example.test/control/skill"}`)
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/control/tasks"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -238,7 +238,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 		t.Fatalf("expected configured control URL rewrite")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "https://control.example.test/control/skill") {
+	if !strings.Contains(out, "https://control.example.test/control/tasks") {
 		t.Fatalf("control URL missing after rewrite: %s", out)
 	}
 	if !strings.Contains(out, "X-Clawvisor-Caller") {
@@ -246,6 +246,41 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 	}
 	if strings.Contains(out, "web fetch blocked") {
 		t.Fatalf("configured control endpoint should bypass tool rules: %s", out)
+	}
+}
+
+func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing.T) {
+	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST\\n-H 'Content-Type: application/json'\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools_json\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}'\\nhttps://control.example.test/control/tasks\"}")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	opts := inspector.DefaultRewriteOpts("https://control.example.test")
+	opts.CallerToken = "cvis_test"
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:      insp,
+		RewriteOpts:    opts,
+		Store:          st,
+		AgentUserID:    userID,
+		AgentID:        agentID,
+		ControlBaseURL: "https://control.example.test",
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-webfetch",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "WebFetch",
+			Reason:   "web fetch blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected multiline configured control URL rewrite")
+	}
+	if strings.Contains(string(got.Body), "web fetch blocked") {
+		t.Fatalf("multiline configured control endpoint should bypass tool rules: %s", got.Body)
 	}
 }
 

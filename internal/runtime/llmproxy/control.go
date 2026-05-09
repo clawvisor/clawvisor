@@ -375,7 +375,7 @@ func controlMethodForPath(path string) string {
 func hasControlRewriteUnsafeShell(cmd string) bool {
 	for _, c := range cmd {
 		switch c {
-		case '\n', '|', ';', '&', '`', '$', '<', '>':
+		case '|', ';', '&', '`', '$', '<', '>':
 			return true
 		}
 	}
