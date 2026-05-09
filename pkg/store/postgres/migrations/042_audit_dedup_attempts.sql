@@ -1,4 +1,4 @@
--- See pkg/store/sqlite/migrations/041_audit_dedup_attempts.sql for the full
+-- See pkg/store/sqlite/migrations/042_audit_dedup_attempts.sql for the full
 -- rationale. Summary: drop the (request_id, user_id) UNIQUE constraint, add a
 -- deduped_of column, and replace the constraint with a partial unique index
 -- scoped to canonical (deduped_of IS NULL) rows. Per-scope uniqueness is
