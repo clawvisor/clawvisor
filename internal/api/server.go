@@ -834,6 +834,7 @@ func (s *Server) routes() http.Handler {
 		if pub := s.cfg.Server.PublicURL; pub != "" {
 			llmHandler.ResolverBaseURL = strings.TrimRight(pub, "/") + "/proxy/v1"
 		}
+		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
 
 		// Audit emission for /v1/* endpoint calls + per-tool-use
 		// inspection rows + resolver swaps. All write into audit_log
@@ -867,7 +868,8 @@ func (s *Server) routes() http.Handler {
 		resolverHandler.AuditEmitter = auditEmitter
 
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
-		llmHandler.ControlExecutor = handlers.NewLLMControlExecutor(tasksHandler)
+		controlHandler := handlers.NewLLMControlHandler(baseURL)
+		llmHandler.ControlExecutor = handlers.NewLLMControlExecutor(controlHandler, tasksHandler)
 
 		// LLM endpoint accepts the agent token via Authorization or
 		// x-api-key (SDK conventions).
@@ -882,6 +884,17 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
 		mux.Handle("POST /v1/chat/completions", requireAgentLLM(http.HandlerFunc(llmHandler.ChatCompletions)))
 		mux.Handle("POST /v1/responses", requireAgentLLM(http.HandlerFunc(llmHandler.Responses)))
+
+		// Synthetic Clawvisor control plane. Model-emitted calls to
+		// https://clawvisor.local/control/... are rewritten here with
+		// X-Clawvisor-Caller auth so agents can request task scope before
+		// that scope exists.
+		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
+		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
+		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
+		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 
 		// Resolver — agent harness's outbound HTTPS calls land here so
 		// we can swap autovault placeholders in headers for real vault

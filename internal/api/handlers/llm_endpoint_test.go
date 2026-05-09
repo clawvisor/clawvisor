@@ -39,12 +39,6 @@ func (s *stubVault) Get(ctx context.Context, userID, serviceID string) ([]byte, 
 func (s *stubVault) Delete(ctx context.Context, userID, serviceID string) error { return nil }
 func (s *stubVault) List(ctx context.Context, userID string) ([]string, error)  { return nil, nil }
 
-type noopControlExecutor struct{}
-
-func (noopControlExecutor) ExecuteControl(context.Context, llmproxy.ControlExecutionRequest) (llmproxy.ControlExecutionResponse, error) {
-	return llmproxy.ControlExecutionResponse{}, nil
-}
-
 func TestLiteProxyRequestDebugSummaryExtractsAvailableTools(t *testing.T) {
 	anthropic := liteProxyRequestDebugSummary(conversation.ProviderAnthropic, []byte(`{
 		"model":"claude-sonnet-4-6",
@@ -182,7 +176,7 @@ func TestLLMEndpoint_PassthroughAnthropic(t *testing.T) {
 	}
 }
 
-func TestLLMEndpoint_InjectsControlToolsWhenToolsAvailable(t *testing.T) {
+func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	var seenBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenBody, _ = io.ReadAll(r.Body)
@@ -192,7 +186,7 @@ func TestLLMEndpoint_InjectsControlToolsWhenToolsAvailable(t *testing.T) {
 	defer upstream.Close()
 
 	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
-	h.ControlExecutor = noopControlExecutor{}
+	h.ControlBaseURL = "http://localhost:25297"
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -207,14 +201,9 @@ func TestLLMEndpoint_InjectsControlToolsWhenToolsAvailable(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
-		t.Fatalf("control tools should not advertise HTTP compatibility: %s", seenBody)
-	}
-	if !strings.Contains(string(seenBody), `"name":"cv_protocol"`) ||
-		!strings.Contains(string(seenBody), `"name":"cv_task"`) ||
-		!strings.Contains(string(seenBody), "there is no HTTP compatibility fallback") ||
-		!strings.Contains(string(seenBody), `"expected_tools_json"`) {
-		t.Fatalf("upstream request missing synthetic control tools: %s", seenBody)
+	if !strings.Contains(string(seenBody), "http://localhost:25297/control/skill") ||
+		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
+		t.Fatalf("upstream request missing control notice: %s", seenBody)
 	}
 }
 
