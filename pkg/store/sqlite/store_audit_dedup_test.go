@@ -204,3 +204,59 @@ func TestAuditDedup_GetAuditEntryByRequestID_LatestCanonical(t *testing.T) {
 		t.Errorf("GetAuditEntryByRequestID: got %q, want %q (newest canonical)", got.ID, newer.ID)
 	}
 }
+
+// TestAuditDedup_MarkAuditDeduped covers the demote-canonical-to-attempt path
+// used when a downstream conflict (e.g. approval-table uniqueness) makes a
+// just-inserted canonical the wrong row to surface for polling. After the
+// demotion, GetAuditEntryByRequestID must skip the demoted row and return the
+// canonical it now points at.
+func TestAuditDedup_MarkAuditDeduped(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newAuditDedupFixture(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	taskA, taskB := "task-A", "task-B"
+
+	// Existing canonical (pre-task-1 approval, still pending).
+	canonical := f.makeEntry("canonical", "req-1", &taskA, "approve", "pending", now)
+	if err := f.st.LogAudit(ctx, canonical); err != nil {
+		t.Fatalf("LogAudit canonical: %v", err)
+	}
+
+	// Cross-task duplicate canonical that loses the approval-table race.
+	loser := f.makeEntry("loser", "req-1", &taskB, "approve", "pending", now.Add(time.Second))
+	if err := f.st.LogAudit(ctx, loser); err != nil {
+		t.Fatalf("LogAudit loser: %v", err)
+	}
+
+	// Demote loser to dedup-attempt pointing at the canonical, snapshotting
+	// the canonical's outcome.
+	if err := f.st.MarkAuditDeduped(ctx, loser.ID, canonical.ID, canonical.Outcome); err != nil {
+		t.Fatalf("MarkAuditDeduped: %v", err)
+	}
+
+	// Polling by request_id must now return the canonical, not the demoted row.
+	got, err := f.st.GetAuditEntryByRequestID(ctx, "req-1", f.userID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+	if got.ID != canonical.ID {
+		t.Errorf("GetAuditEntryByRequestID: got %q, want %q (demoted row should be skipped)", got.ID, canonical.ID)
+	}
+
+	// The demoted row itself must reflect the new shape.
+	demoted, err := f.st.GetAuditEntry(ctx, loser.ID, f.userID)
+	if err != nil {
+		t.Fatalf("GetAuditEntry: %v", err)
+	}
+	if demoted.Decision != "dedup" {
+		t.Errorf("Decision: got %q, want %q", demoted.Decision, "dedup")
+	}
+	if demoted.Outcome != canonical.Outcome {
+		t.Errorf("Outcome: got %q, want %q (snapshot)", demoted.Outcome, canonical.Outcome)
+	}
+	if demoted.DedupedOf == nil || *demoted.DedupedOf != canonical.ID {
+		t.Errorf("DedupedOf: got %v, want pointer to %q", demoted.DedupedOf, canonical.ID)
+	}
+}

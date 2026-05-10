@@ -330,7 +330,15 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// generated UUID has no prior canonical to match.
 	if requestIDProvided {
 		if existing, err := h.store.FindDedupCandidate(ctx, req.RequestID, agent.UserID, req.TaskID); err == nil {
-			e := baseEntry("dedup", existing.Outcome, existing.TaskID)
+			// The attempt row records *where the retry happened* (req.TaskID),
+			// not where the canonical lives. When a pre-task canonical absorbs
+			// a task-scoped retry the two diverge, and tagging the attempt with
+			// the canonical's task hides it from the retry's task-scoped feed.
+			var attemptTaskID *string
+			if req.TaskID != "" {
+				attemptTaskID = &req.TaskID
+			}
+			e := baseEntry("dedup", existing.Outcome, attemptTaskID)
 			e.DedupedOf = &existing.ID
 			e.DurationMS = int(time.Since(start).Milliseconds())
 			// Plain LogAudit: dedup-attempt rows have deduped_of != NULL so
@@ -338,7 +346,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
-			h.publishAuditAndQueue(agent.UserID, "")
+			h.publishAuditAndQueue(agent.UserID, req.TaskID)
 			writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
 				Deduped: true,
 				Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
@@ -1255,8 +1263,35 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	if hardcoded {
 		reason = "iMessage send_message always requires human approval"
 	}
-	if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID,
-		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict); routeErr != nil {
+	routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID,
+		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict)
+	if errors.Is(routeErr, store.ErrConflict) {
+		// Cross-task duplicate: pending_approvals/approval_records are still
+		// globally unique by request_id even though audit_log now allows one
+		// canonical per (user, request_id, task). Another task already has an
+		// approval pending for this request_id. Surface the existing approval's
+		// status and demote our just-inserted canonical to a dedup-attempt so
+		// polling returns the row that actually owns the request_id.
+		existing, lookupErr := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID)
+		if lookupErr == nil {
+			if mErr := h.store.MarkAuditDeduped(ctx, e.ID, existing.ID, existing.Outcome); mErr != nil {
+				h.logger.Warn("mark audit deduped after approval conflict failed", "err", mErr)
+			} else {
+				e.DedupedOf = &existing.ID
+				e.Decision = "dedup"
+				e.Outcome = existing.Outcome
+			}
+			h.publishAuditAndQueue(agent.UserID, req.TaskID)
+			writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+				Deduped: true,
+				Message: "Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.",
+			})
+			return
+		}
+		h.logger.Warn("approval conflict; canonical lookup failed", "err", lookupErr)
+		// Fall through to the pending response — at least the wait=true path
+		// can still resolve via the existing approval.
+	} else if routeErr != nil {
 		h.logger.Warn("route to approval failed", "err", routeErr)
 	}
 	// If wait=true, long-poll for approval then execute inline.
@@ -1603,6 +1638,18 @@ func (h *GatewayHandler) maybeInjectNPS(ctx context.Context, resp map[string]any
 // authoritative record for this (request_id, scope). Dedup-attempt rows
 // (deduped_of != NULL) are outside the partial unique index, so callers that
 // already build attempt rows can use plain LogAudit.
+//
+// Known limitation — auto-execute idempotency: callers in the auto-execute
+// path invoke the adapter *before* calling this helper. Two concurrent
+// requests with the same (user, request_id, task_id) can both miss the early
+// FindDedupCandidate, both perform the side effect, and only collide here on
+// the audit insert. This helper recovers the audit shape (one canonical, one
+// dedup-attempt) but cannot un-fire a side effect the adapter already
+// executed. The same race window existed under the prior UNIQUE+early-return
+// design; closing it requires an insert-canonical-before-execute reservation
+// pattern that is intentionally out of scope for this change. The early
+// FindDedupCandidate still catches the common case (sequential retries); the
+// race is narrow (two near-simultaneous identical requests).
 func (h *GatewayHandler) logAuditCanonical(ctx context.Context, e *store.AuditEntry) (*store.AuditEntry, error) {
 	err := h.store.LogAudit(ctx, e)
 	if err == nil || !errors.Is(err, store.ErrConflict) {

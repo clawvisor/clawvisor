@@ -107,9 +107,11 @@ type Store interface {
 	// is the entry they care about.
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
 	// GetAuditEntryByRequestIDAndTask returns the canonical audit entry for
-	// (request_id, user_id, task_id). Pre-task canonicals (task_id IS NULL) win
-	// over task-scoped ones, matching FindDedupCandidate precedence so callers
-	// see the same row the dedup write path matched against.
+	// (request_id, user_id, task_id). Inverts FindDedupCandidate's precedence:
+	// an exact task_id match wins over a pre-task (task_id IS NULL) canonical,
+	// because callers (the feedback handler) want the row that actually fired
+	// in the agent's task. Pre-task is the fallback when no task-scoped row
+	// exists.
 	GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	// FindDedupCandidate returns the canonical audit entry that a new
 	// (request_id, user_id, task_id) request should dedup against, or
@@ -118,6 +120,13 @@ type Store interface {
 	// tier the oldest row wins. taskID == "" means the caller has no task
 	// context yet (runtime classification path) and only pre-task rows match.
 	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
+	// MarkAuditDeduped converts an existing canonical audit row into a dedup
+	// attempt pointing at canonicalID, snapshotting the canonical's outcome.
+	// Used to resolve cross-table conflicts (e.g. approval-table uniqueness)
+	// after the audit row has already been written: instead of leaving an
+	// orphan canonical with a stale "pending" outcome, demote it so polling
+	// returns the row that actually owns the request.
+	MarkAuditDeduped(ctx context.Context, id, canonicalID, snapshotOutcome string) error
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error

@@ -717,6 +717,13 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 	return err
 }
 
+func (s *Store) MarkAuditDeduped(ctx context.Context, id, canonicalID, snapshotOutcome string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE audit_log SET decision = 'dedup', outcome = $1, deduped_of = $2 WHERE id = $3`,
+		snapshotOutcome, canonicalID, id)
+	return err
+}
+
 func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT `+auditEntryColumns+` FROM audit_log WHERE id = $1 AND user_id = $2`,
@@ -1634,6 +1641,9 @@ func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.
 	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
 		rec.Surface, rawJSONOrDefaultBytes(rec.SummaryJSON, "{}"), rawJSONOrDefaultBytes(rec.PayloadJSON, "{}"),
 		rec.ResolutionTransport, rec.ExpiresAt, rec.ResolvedAt, rec.Resolution); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
 		return err
 	}
 	if _, err = tx.Exec(ctx, `
@@ -1641,6 +1651,9 @@ func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
 		return err
 	}
 	return tx.Commit(ctx)

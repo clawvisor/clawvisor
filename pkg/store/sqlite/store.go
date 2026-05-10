@@ -861,6 +861,13 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 	return err
 }
 
+func (s *Store) MarkAuditDeduped(ctx context.Context, id, canonicalID, snapshotOutcome string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE audit_log SET decision = 'dedup', outcome = ?, deduped_of = ? WHERE id = ?`,
+		snapshotOutcome, canonicalID, id)
+	return err
+}
+
 // auditEntryColumns is the canonical SELECT list for audit_log rows. Kept in
 // one place so adding a column doesn't require touching four queries.
 const auditEntryColumns = `id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
@@ -1800,6 +1807,9 @@ func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.
 	`, rec.ID, rec.Kind, rec.UserID, rec.AgentID, rec.RequestID, rec.TaskID, rec.SessionID, rec.Status,
 		rec.Surface, rawJSONOrDefault(rec.SummaryJSON, "{}"), rawJSONOrDefault(rec.PayloadJSON, "{}"),
 		rec.ResolutionTransport, formatNullableTime(rec.ExpiresAt), formatNullableTime(rec.ResolvedAt), rec.Resolution); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `
@@ -1807,6 +1817,9 @@ func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.
 		VALUES (?,?,?,?,?,?,?,?,?)
 	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, string(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
+		if isDuplicate(err) {
+			return store.ErrConflict
+		}
 		return err
 	}
 	return tx.Commit()
