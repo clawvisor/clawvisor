@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -144,12 +145,83 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	}
 	opts := inspector.DefaultRewriteOpts(controlBaseURL)
 	opts.CallerToken = callerToken
+	if rewritten, ok, err := rewriteControlCommandToolUse(t, v, opts); ok {
+		return rewritten, v, true, err
+	}
 	rewritten, err := inspector.Rewrite(inspector.ToolUse{
 		ID:    t.ID,
 		Name:  t.Name,
 		Input: t.Input,
 	}, v, opts)
 	return rewritten, v, true, err
+}
+
+func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, opts inspector.RewriteOpts) ([]byte, bool, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(t.Input, &raw); err != nil {
+		return nil, false, nil
+	}
+	cmdField := "cmd"
+	cmd, ok := raw["cmd"].(string)
+	if !ok {
+		cmdField = "command"
+		cmd, ok = raw["command"].(string)
+	}
+	if !ok || cmd == "" {
+		return nil, false, nil
+	}
+	rewritten, ok := rewriteControlCommandString(cmd, v, opts)
+	if !ok {
+		return nil, false, nil
+	}
+	raw[cmdField] = rewritten
+	out, err := json.Marshal(raw)
+	return out, true, err
+}
+
+var controlCommandURLRE = regexp.MustCompile(`https?://[^\s'"<>]+`)
+
+func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector.RewriteOpts) (string, bool) {
+	resolver, err := url.Parse(opts.ResolverBaseURL)
+	if err != nil || resolver.Host == "" {
+		return "", false
+	}
+	matches := controlCommandURLRE.FindAllStringIndex(cmd, -1)
+	for _, loc := range matches {
+		rawURL := cmd[loc[0]:loc[1]]
+		parsed, err := url.Parse(rawURL)
+		if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Hostname(), v.Host) {
+			continue
+		}
+		rewritten := *parsed
+		rewritten.Scheme = resolver.Scheme
+		rewritten.Host = resolver.Host
+		if resolver.Path != "" {
+			rewritten.Path = strings.TrimRight(resolver.Path, "/") + parsed.Path
+		}
+		headers := " -H " + shellSingleQuote(firstNonEmptyControl(opts.TargetHostHeader, "X-Clawvisor-Target-Host")+": "+parsed.Host)
+		if opts.CallerToken != "" && opts.CallerHeader != "" {
+			headers += " -H " + shellSingleQuote(opts.CallerHeader+": Bearer "+opts.CallerToken)
+		}
+		return cmd[:loc[0]] + headers + " " + rewritten.String() + cmd[loc[1]:], true
+	}
+	return "", false
+}
+
+func firstNonEmptyControl(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func shellSingleQuote(s string) string {
+	if !strings.Contains(s, "'") {
+		return "'" + s + "'"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 type ControlCall struct {
@@ -375,7 +447,7 @@ func controlMethodForPath(path string) string {
 func hasControlRewriteUnsafeShell(cmd string) bool {
 	for _, c := range cmd {
 		switch c {
-		case '|', ';', '&', '`', '$', '<', '>':
+		case '|', ';', '&', '`', '$':
 			return true
 		}
 	}

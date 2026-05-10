@@ -394,6 +394,53 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 	}
 }
 
+func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T) {
+	cmd := "curl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"test\"}]}\nJSON"
+	input, err := json.Marshal(map[string]any{"command": cmd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := anthropicJSONWithNamedToolUse("Bash", string(input))
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	opts := inspector.DefaultRewriteOpts("https://control.example.test")
+	opts.CallerToken = "cvis_test"
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:      insp,
+		RewriteOpts:    opts,
+		Store:          st,
+		AgentUserID:    userID,
+		AgentID:        agentID,
+		ControlBaseURL: "https://control.example.test",
+		ToolRules: []*store.RuntimePolicyRule{{
+			ID:       "deny-bash",
+			UserID:   userID,
+			AgentID:  &agentID,
+			Kind:     "tool",
+			Action:   "deny",
+			ToolName: "Bash",
+			Reason:   "bash blocked",
+			Enabled:  true,
+		}},
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected heredoc synthetic control URL rewrite")
+	}
+	out := string(got.Body)
+	if strings.Contains(out, "bash blocked") {
+		t.Fatalf("heredoc synthetic control endpoint should bypass tool rules: %s", out)
+	}
+	if !strings.Contains(out, "https://control.example.test/control/tasks") ||
+		!strings.Contains(out, "X-Clawvisor-Target-Host") ||
+		!strings.Contains(out, "X-Clawvisor-Caller") ||
+		!strings.Contains(out, `\u003c\u003c'JSON'`) {
+		t.Fatalf("heredoc control rewrite lost expected command shape: %s", out)
+	}
+}
+
 func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",
