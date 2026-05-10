@@ -472,7 +472,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	if err != nil {
 		return ""
 	}
-	return "Your action was blocked. Please create a task that covers the blocked action, along with any other tools or commands you expect to use to complete the user's request. Add more `expected_tools_json` entries as needed.\n\nImportant: create this task by using a shell/curl tool to POST to the synthetic proxy-lite control plane at `https://clawvisor.local/control/tasks`. Do not use Clawvisor MCP tools such as `mcp__claude_ai_clawvisor__create_task` for this bootstrap step.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	return "Your action was blocked. Please create a task that covers the blocked action, along with any other tools or commands you expect to use to complete the user's request. Add more `expected_tools_json` entries as needed.\n\nUse the official Clawvisor proxy-lite control plane described in your system instructions: call a shell/curl tool to POST to the synthetic URL `https://clawvisor.local/control/tasks`. Do not use Clawvisor MCP tools such as `mcp__claude_ai_clawvisor__create_task` for this bootstrap step; those MCP tools are ordinary model tools and may themselves require task scope.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 func taskToolWhy(tu conversation.ToolUse) string {

@@ -206,6 +206,10 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
 		t.Fatalf("upstream request missing control notice: %s", seenBody)
 	}
+	if !strings.Contains(string(seenBody), "Official Clawvisor proxy-lite control plane") ||
+		!strings.Contains(string(seenBody), "Do not use Clawvisor MCP task tools") {
+		t.Fatalf("upstream request missing official proxy-lite control guidance: %s", seenBody)
+	}
 }
 
 func TestLiteProxyDecisionPostureIsAlwaysEnforce(t *testing.T) {
