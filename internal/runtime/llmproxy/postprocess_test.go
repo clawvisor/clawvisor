@@ -395,7 +395,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 }
 
 func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T) {
-	cmd := "curl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"test\"}]}\nJSON"
+	cmd := "curl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"Search with find /tmp -iname 'hello'\"}]}\nJSON"
 	input, err := json.Marshal(map[string]any{"command": cmd})
 	if err != nil {
 		t.Fatal(err)

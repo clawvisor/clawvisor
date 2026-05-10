@@ -180,6 +180,7 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 }
 
 var controlCommandURLRE = regexp.MustCompile(`https?://[^\s'"<>]+`)
+var controlCurlMethodRE = regexp.MustCompile(`(?i)(?:^|\s)(?:-X|--request)(?:=|\s+)([A-Z]+)\b`)
 
 func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector.RewriteOpts) (string, bool) {
 	resolver, err := url.Parse(opts.ResolverBaseURL)
@@ -328,6 +329,9 @@ func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*u
 	}
 	tokens, ok := controlShellTokenize(cmd)
 	if !ok || len(tokens) == 0 {
+		if control, method, ok := controlPartsFromCommandText(cmd, controlBaseURL); ok {
+			return control, method, nil, true
+		}
 		return nil, "", nil, false
 	}
 	method := ""
@@ -363,12 +367,33 @@ func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*u
 		}
 	}
 	if control == nil {
+		if control, method, ok := controlPartsFromCommandText(cmd, controlBaseURL); ok {
+			return control, method, body, true
+		}
 		return nil, "", nil, false
 	}
 	if method == "" && len(body) > 0 {
 		method = "POST"
 	}
 	return control, method, body, true
+}
+
+func controlPartsFromCommandText(cmd string, controlBaseURL string) (*url.URL, string, bool) {
+	method := controlMethodFromCommandText(cmd)
+	for _, raw := range controlCommandURLRE.FindAllString(cmd, -1) {
+		if u, ok := parseControlURL(raw, controlBaseURL); ok {
+			return u, method, true
+		}
+	}
+	return nil, "", false
+}
+
+func controlMethodFromCommandText(cmd string) string {
+	match := controlCurlMethodRE.FindStringSubmatch(cmd)
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.ToUpper(match[1])
 }
 
 func parseControlURL(raw string, controlBaseURL string) (*url.URL, bool) {
