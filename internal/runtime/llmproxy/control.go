@@ -3,11 +3,11 @@ package llmproxy
 import (
 	"encoding/json"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 const (
@@ -179,17 +179,17 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	return out, true, err
 }
 
-var controlCommandURLRE = regexp.MustCompile(`https?://[^\s'"<>]+`)
-var controlCurlMethodRE = regexp.MustCompile(`(?i)(?:^|\s)(?:-X|--request)(?:=|\s+)([A-Z]+)\b`)
-
 func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector.RewriteOpts) (string, bool) {
 	resolver, err := url.Parse(opts.ResolverBaseURL)
 	if err != nil || resolver.Host == "" {
 		return "", false
 	}
-	matches := controlCommandURLRE.FindAllStringIndex(cmd, -1)
-	for _, loc := range matches {
-		rawURL := cmd[loc[0]:loc[1]]
+	args, ok := parseControlCurlArgs(cmd)
+	if !ok {
+		return "", false
+	}
+	for _, arg := range args[1:] {
+		rawURL := arg.value
 		parsed, err := url.Parse(rawURL)
 		if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Hostname(), v.Host) {
 			continue
@@ -204,7 +204,7 @@ func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector
 		if opts.CallerToken != "" && opts.CallerHeader != "" {
 			headers += " -H " + shellSingleQuote(opts.CallerHeader+": Bearer "+opts.CallerToken)
 		}
-		return cmd[:loc[0]] + headers + " " + rewritten.String() + cmd[loc[1]:], true
+		return cmd[:arg.start] + headers + " " + rewritten.String() + cmd[arg.end:], true
 	}
 	return "", false
 }
@@ -321,37 +321,41 @@ func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*u
 	if cmd == "" {
 		cmd = strings.TrimSpace(raw.Command)
 	}
-	if cmd == "" || !strings.HasPrefix(strings.ToLower(cmd), "curl ") {
+	if cmd == "" {
 		return nil, "", nil, false
 	}
-	if hasControlRewriteUnsafeShell(cmd) {
+	args, ok := parseControlCurlArgs(cmd)
+	if !ok {
 		return nil, "", nil, false
 	}
-	tokens, ok := controlShellTokenize(cmd)
-	if !ok || len(tokens) == 0 {
-		if control, method, ok := controlPartsFromCommandText(cmd, controlBaseURL); ok {
-			return control, method, nil, true
-		}
-		return nil, "", nil, false
-	}
+	return controlPartsFromCurlArgs(args, controlBaseURL)
+}
+
+func controlPartsFromCurlArgs(args []controlCurlArg, controlBaseURL string) (*url.URL, string, []byte, bool) {
 	method := ""
 	var body []byte
 	var control *url.URL
-	for i := 1; i < len(tokens); i++ {
-		tok := tokens[i]
+	for i := 1; i < len(args); i++ {
+		tok := args[i].value
 		switch {
 		case tok == "-X" || tok == "--request":
-			if i+1 >= len(tokens) {
+			if i+1 >= len(args) {
 				return nil, "", nil, false
 			}
-			method = tokens[i+1]
+			method = args[i+1].value
 			i++
+		case strings.HasPrefix(tok, "-X") && tok != "-X":
+			method = strings.TrimPrefix(tok, "-X")
+		case strings.HasPrefix(tok, "--request="):
+			method = strings.TrimPrefix(tok, "--request=")
 		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary":
-			if i+1 >= len(tokens) {
+			if i+1 >= len(args) {
 				return nil, "", nil, false
 			}
-			body = []byte(tokens[i+1])
+			body = []byte(args[i+1].value)
 			i++
+		case strings.HasPrefix(tok, "-d") && tok != "-d":
+			body = []byte(strings.TrimPrefix(tok, "-d"))
 		case strings.HasPrefix(tok, "--data="):
 			body = []byte(strings.TrimPrefix(tok, "--data="))
 		case strings.HasPrefix(tok, "--data-raw="):
@@ -367,33 +371,12 @@ func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*u
 		}
 	}
 	if control == nil {
-		if control, method, ok := controlPartsFromCommandText(cmd, controlBaseURL); ok {
-			return control, method, body, true
-		}
 		return nil, "", nil, false
 	}
 	if method == "" && len(body) > 0 {
 		method = "POST"
 	}
 	return control, method, body, true
-}
-
-func controlPartsFromCommandText(cmd string, controlBaseURL string) (*url.URL, string, bool) {
-	method := controlMethodFromCommandText(cmd)
-	for _, raw := range controlCommandURLRE.FindAllString(cmd, -1) {
-		if u, ok := parseControlURL(raw, controlBaseURL); ok {
-			return u, method, true
-		}
-	}
-	return nil, "", false
-}
-
-func controlMethodFromCommandText(cmd string) string {
-	match := controlCurlMethodRE.FindStringSubmatch(cmd)
-	if len(match) != 2 {
-		return ""
-	}
-	return strings.ToUpper(match[1])
 }
 
 func parseControlURL(raw string, controlBaseURL string) (*url.URL, bool) {
@@ -469,44 +452,75 @@ func controlMethodForPath(path string) string {
 	return "GET"
 }
 
-func hasControlRewriteUnsafeShell(cmd string) bool {
-	for _, c := range cmd {
-		switch c {
-		case '|', ';', '&', '`', '$':
-			return true
-		}
-	}
-	return false
+type controlCurlArg struct {
+	value string
+	start int
+	end   int
 }
 
-func controlShellTokenize(cmd string) ([]string, bool) {
-	var (
-		tokens []string
-		buf    strings.Builder
-		state  rune
-	)
-	flush := func() {
-		if buf.Len() > 0 {
-			tokens = append(tokens, buf.String())
-			buf.Reset()
-		}
-	}
-	for i := range len(cmd) {
-		c := rune(cmd[i])
-		switch {
-		case state == 0 && (c == ' ' || c == '\t' || c == '\n'):
-			flush()
-		case state == 0 && (c == '\'' || c == '"'):
-			state = c
-		case state != 0 && c == state:
-			state = 0
-		default:
-			buf.WriteRune(c)
-		}
-	}
-	if state != 0 {
+func parseControlCurlArgs(cmd string) ([]controlCurlArg, bool) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
+	if err != nil || len(file.Stmts) != 1 {
 		return nil, false
 	}
-	flush()
-	return tokens, true
+	stmt := file.Stmts[0]
+	if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown || stmt.Semicolon.IsValid() {
+		return nil, false
+	}
+	for _, redir := range stmt.Redirs {
+		if redir.Op != syntax.Hdoc && redir.Op != syntax.DashHdoc {
+			return nil, false
+		}
+		if _, ok := staticShellWord(redir.Word); !ok {
+			return nil, false
+		}
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
+		return nil, false
+	}
+	args := make([]controlCurlArg, 0, len(call.Args))
+	for _, word := range call.Args {
+		value, ok := staticShellWord(word)
+		if !ok {
+			return nil, false
+		}
+		start, end := int(word.Pos().Offset()), int(word.End().Offset())
+		if start < 0 || end <= start || end > len(cmd) {
+			return nil, false
+		}
+		args = append(args, controlCurlArg{value: value, start: start, end: end})
+	}
+	if args[0].value != "curl" {
+		return nil, false
+	}
+	return args, true
+}
+
+func staticShellWord(word *syntax.Word) (string, bool) {
+	if word == nil {
+		return "", false
+	}
+	return staticShellWordParts(word.Parts)
+}
+
+func staticShellWordParts(parts []syntax.WordPart) (string, bool) {
+	var b strings.Builder
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			b.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			b.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			value, ok := staticShellWordParts(p.Parts)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(value)
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }

@@ -278,6 +278,24 @@ func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
 	}
 }
 
+func TestParseControlToolUseRejectsNonSimpleShell(t *testing.T) {
+	for _, cmd := range []string{
+		"curl https://clawvisor.local/control/tasks | sh",
+		"curl https://clawvisor.local/control/tasks; echo done",
+		"curl $(echo https://clawvisor.local/control/tasks)",
+		"curl https://clawvisor.local/control/tasks > /tmp/out",
+		"FOO=bar curl https://clawvisor.local/control/tasks",
+	} {
+		input, err := json.Marshal(map[string]any{"command": cmd})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := ParseControlToolUseWithBase(conversation.ToolUse{Name: "Bash", Input: input}, "https://control.example.test"); ok {
+			t.Fatalf("unsafe shell command parsed as control call: %s", cmd)
+		}
+	}
+}
+
 func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -361,7 +379,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST\\n-H 'Content-Type: application/json'\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools_json\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}'\\nhttps://control.example.test/control/tasks\"}")
+	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools_json\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/control/tasks\"}")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -396,7 +414,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 }
 
 func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T) {
-	cmd := "curl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"Search with find /tmp -iname 'hello'\"}]}\nJSON"
+	cmd := "curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"Search with find /tmp -iname 'hello'; content can mention $HOME\"}]}\nJSON"
 	input, err := json.Marshal(map[string]any{"command": cmd})
 	if err != nil {
 		t.Fatal(err)
@@ -434,7 +452,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	if strings.Contains(out, "bash blocked") {
 		t.Fatalf("heredoc synthetic control endpoint should bypass tool rules: %s", out)
 	}
-	if !strings.Contains(out, "https://control.example.test/control/tasks") ||
+	if !strings.Contains(out, "https://control.example.test/control/tasks?wait=true\\u0026timeout=120") ||
 		!strings.Contains(out, "X-Clawvisor-Target-Host") ||
 		!strings.Contains(out, "X-Clawvisor-Caller") ||
 		!strings.Contains(out, `\u003c\u003c'JSON'`) {
