@@ -510,8 +510,20 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			middleware.AddLogField(ctx, "outcome", "pending")
 			e := baseEntry("approve", "pending", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			if _, logErr := h.logAuditCanonical(ctx, e); logErr != nil {
+			winner, logErr := h.logAuditCanonical(ctx, e)
+			if logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
+			}
+			if winner != nil {
+				// Lost the canonical-insert race: another worker already
+				// wrote the canonical for this (request_id, NULL task) scope.
+				// Don't enqueue a duplicate approval — surface the winner.
+				h.publishAuditAndQueue(agent.UserID, "")
+				writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
+					Deduped: true,
+					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+				})
+				return
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
 			expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
@@ -520,7 +532,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if classification.Kind == runtimepolicy.ClassificationNeedsNewTask {
 				reason = "request is outside every active task and may need a new task"
 			}
-			if routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID, req.Context.CallbackURL, expiresAt, reason, nil); routeErr != nil {
+			routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID, req.Context.CallbackURL, expiresAt, reason, nil)
+			if errors.Is(routeErr, store.ErrConflict) {
+				if h.recoverApprovalConflict(ctx, w, e, agent.UserID, req.RequestID, "",
+					"Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.") {
+					return
+				}
+				// Fell through to the wait/pending path below.
+			} else if routeErr != nil {
 				h.logger.Warn("route to approval failed", "err", routeErr)
 			}
 			if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
@@ -1266,41 +1285,12 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	routeErr := h.routeToApproval(ctx, agent.UserID, blob, auditID,
 		req.Context.CallbackURL, expiresAt, reason, advisoryVerdict)
 	if errors.Is(routeErr, store.ErrConflict) {
-		// Cross-task duplicate: pending_approvals/approval_records are still
-		// globally unique by request_id even though audit_log now allows one
-		// canonical per (user, request_id, task). Another task already has an
-		// approval pending for this request_id. Surface the existing approval's
-		// status and demote our just-inserted canonical to a dedup-attempt so
-		// polling returns the row that actually owns the request_id.
-		//
-		// Resolve the sibling canonical via pending_approvals.audit_id rather
-		// than GetAuditEntryByRequestID — the latter orders by timestamp DESC
-		// and would return *our* just-inserted row, producing a self-loop in
-		// deduped_of and stranding the response on a row with no live approval.
-		var existing *store.AuditEntry
-		pa, paErr := h.store.GetPendingApproval(ctx, req.RequestID)
-		if paErr == nil && pa.AuditID != "" {
-			existing, _ = h.store.GetAuditEntry(ctx, pa.AuditID, agent.UserID)
-		}
-		if existing != nil && existing.ID != e.ID {
-			if mErr := h.store.MarkAuditDeduped(ctx, e.ID, existing.ID, existing.Outcome); mErr != nil {
-				h.logger.Warn("mark audit deduped after approval conflict failed", "err", mErr)
-			} else {
-				e.DedupedOf = &existing.ID
-				e.Decision = "dedup"
-				e.Outcome = existing.Outcome
-			}
-			h.publishAuditAndQueue(agent.UserID, req.TaskID)
-			writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
-				Deduped: true,
-				Message: "Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.",
-			})
+		if h.recoverApprovalConflict(ctx, w, e, agent.UserID, req.RequestID, req.TaskID,
+			"Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.") {
 			return
 		}
-		h.logger.Warn("approval conflict; sibling canonical lookup failed",
-			"pending_lookup_err", paErr, "request_id", req.RequestID)
-		// Fall through to the pending response — at least the wait=true path
-		// can still resolve via the existing approval.
+		// Fell through: the wait=true long-poll can still resolve via the
+		// existing approval, so continue to the pending response.
 	} else if routeErr != nil {
 		h.logger.Warn("route to approval failed", "err", routeErr)
 	}
@@ -1677,6 +1667,47 @@ func (h *GatewayHandler) logAuditCanonical(ctx context.Context, e *store.AuditEn
 	e.Decision = "dedup"
 	e.Outcome = winner.Outcome
 	return winner, h.store.LogAudit(ctx, e)
+}
+
+// recoverApprovalConflict handles a store.ErrConflict from routeToApproval —
+// the cross-task duplicate case where pending_approvals/approval_records are
+// still globally unique by request_id even though audit_log permits one
+// canonical per (user, request_id, task). Resolves the sibling canonical via
+// pending_approvals.audit_id (NOT GetAuditEntryByRequestID, which would order
+// by timestamp DESC and return the just-inserted loser, producing a self-loop
+// in MarkAuditDeduped), demotes e to a dedup-attempt pointing at the sibling,
+// and writes a deduped status response. Returns true iff recovery succeeded;
+// on false the caller should fall through to its normal pending-response path
+// (the wait=true long-poll can still resolve via the existing approval).
+func (h *GatewayHandler) recoverApprovalConflict(
+	ctx context.Context,
+	w http.ResponseWriter,
+	e *store.AuditEntry,
+	userID, requestID, publishTaskID, dedupMessage string,
+) bool {
+	pa, paErr := h.store.GetPendingApproval(ctx, requestID)
+	var existing *store.AuditEntry
+	if paErr == nil && pa.AuditID != "" {
+		existing, _ = h.store.GetAuditEntry(ctx, pa.AuditID, userID)
+	}
+	if existing == nil || existing.ID == e.ID {
+		h.logger.Warn("approval conflict; sibling canonical lookup failed",
+			"pending_lookup_err", paErr, "request_id", requestID)
+		return false
+	}
+	if mErr := h.store.MarkAuditDeduped(ctx, e.ID, existing.ID, existing.Outcome); mErr != nil {
+		h.logger.Warn("mark audit deduped after approval conflict failed", "err", mErr)
+	} else {
+		e.DedupedOf = &existing.ID
+		e.Decision = "dedup"
+		e.Outcome = existing.Outcome
+	}
+	h.publishAuditAndQueue(userID, publishTaskID)
+	writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+		Deduped: true,
+		Message: dedupMessage,
+	})
+	return true
 }
 
 // writeGatewayStatusResponse writes a consistent status payload for a resolved audit entry.
