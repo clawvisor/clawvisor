@@ -19,7 +19,7 @@ func ControlNotice(controlBaseURL string) string {
 	if controlBaseURL != "" {
 		docsURL = controlBaseURL + "/control/skill"
 	}
-	return "Official Clawvisor proxy-lite control plane: Clawvisor exposes the synthetic URL https://clawvisor.local/control inside proxied tool calls. This host is not public DNS; proxy-lite rewrites it to the configured Clawvisor endpoint before the tool runs. For schemas and examples, call GET " + docsURL + ". To request permission for future tool use from inside proxy-lite, use a shell/curl tool to POST to https://clawvisor.local/control/tasks. Do not use Clawvisor MCP task tools for this proxy-lite bootstrap path; those MCP tools are ordinary model tools and may themselves require task scope. Task creation does not grant permission until the user approves it."
+	return "Clawvisor proxy-lite sessions can request task permission through the synthetic Clawvisor control endpoint at https://clawvisor.local/control/tasks. This URL is handled by Clawvisor before the shell command runs. For schemas and examples, call GET " + docsURL + ". Task creation does not grant permission until the user approves it."
 }
 
 // InjectControlNotice adds a compact control-plane hint to the request context.

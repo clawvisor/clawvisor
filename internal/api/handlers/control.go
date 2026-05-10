@@ -37,9 +37,8 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 		"rules": []string{
 			"clawvisor.local is synthetic. Do not expect DNS lookup for the naked domain to work.",
 			"Use direct_docs for reading these schemas from a shell.",
-			"This is the official Clawvisor proxy-lite control plane for task bootstrap inside proxied tool calls.",
-			"Use the synthetic https://clawvisor.local/control/tasks URL exactly when creating a task request through a proxied tool call; Clawvisor handles it inside proxy-lite before the shell runs.",
-			"Do not use Clawvisor MCP task tools for this proxy-lite bootstrap path; those MCP tools are ordinary model tools and may themselves require task scope.",
+			"Proxy-lite sessions can request task permission through the synthetic Clawvisor control endpoint at https://clawvisor.local/control/tasks.",
+			"Clawvisor handles the synthetic URL before the shell command runs.",
 			"Creating or expanding a task requests permission. It does not grant permission until the user approves it.",
 			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
 		},

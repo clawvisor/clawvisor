@@ -264,13 +264,9 @@ func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Your action was blocked",
-		"create a task that covers the blocked action",
-		"official Clawvisor proxy-lite control plane",
+		"Please request a Clawvisor task",
+		"proxy-lite control endpoint",
 		"https://clawvisor.local/control/tasks",
-		"Do not use Clawvisor MCP tools",
-		"ordinary model tools",
-		"mcp__claude_ai_clawvisor__create_task",
 		`"tool_name": "Write"`,
 		"/tmp/report.txt",
 		"expected_tools_json",
