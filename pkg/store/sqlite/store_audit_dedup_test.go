@@ -260,3 +260,70 @@ func TestAuditDedup_MarkAuditDeduped(t *testing.T) {
 		t.Errorf("DedupedOf: got %v, want pointer to %q", demoted.DedupedOf, canonical.ID)
 	}
 }
+
+// TestAuditDedup_ApprovalConflictSiblingLookup pins down the lookup the handler
+// must use when recovering from an approval-table conflict. The approval-conflict
+// recovery path inserts a fresh canonical *before* it discovers the conflict, so
+// the just-inserted row is the newest by timestamp. GetAuditEntryByRequestID
+// would return the just-inserted row and produce a self-loop; the handler must
+// resolve the sibling via pending_approvals.audit_id so polling lands on the row
+// that actually owns the live approval.
+func TestAuditDedup_ApprovalConflictSiblingLookup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newAuditDedupFixture(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	taskA, taskB := "task-A", "task-B"
+
+	// Sibling canonical that already owns a pending approval (older by timestamp).
+	sibling := f.makeEntry("sibling-canonical", "req-1", &taskA, "approve", "pending", now)
+	if err := f.st.LogAudit(ctx, sibling); err != nil {
+		t.Fatalf("LogAudit sibling: %v", err)
+	}
+	pa := &store.PendingApproval{
+		ID:        "pending-1",
+		UserID:    f.userID,
+		RequestID: "req-1",
+		AuditID:   sibling.ID,
+		Status:    "pending",
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := f.st.SavePendingApproval(ctx, pa); err != nil {
+		t.Fatalf("SavePendingApproval: %v", err)
+	}
+
+	// Loser canonical inserted by the handler before it discovered the
+	// approval-table conflict — newer by timestamp, same request_id, different task.
+	loser := f.makeEntry("loser-canonical", "req-1", &taskB, "approve", "pending", now.Add(time.Second))
+	if err := f.st.LogAudit(ctx, loser); err != nil {
+		t.Fatalf("LogAudit loser: %v", err)
+	}
+
+	// The newest-by-timestamp lookup picks the wrong row — this is the bug
+	// the handler avoids by going through pending_approvals instead.
+	wrong, err := f.st.GetAuditEntryByRequestID(ctx, "req-1", f.userID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestID: %v", err)
+	}
+	if wrong.ID != loser.ID {
+		t.Fatalf("setup invariant: GetAuditEntryByRequestID should pick the newest (loser) row, got %q", wrong.ID)
+	}
+
+	// The correct lookup: pending_approvals.audit_id → GetAuditEntry. This is
+	// what the handler does and must keep doing.
+	got, err := f.st.GetPendingApproval(ctx, "req-1")
+	if err != nil {
+		t.Fatalf("GetPendingApproval: %v", err)
+	}
+	siblingFound, err := f.st.GetAuditEntry(ctx, got.AuditID, f.userID)
+	if err != nil {
+		t.Fatalf("GetAuditEntry: %v", err)
+	}
+	if siblingFound.ID != sibling.ID {
+		t.Errorf("sibling lookup: got %q, want %q (must resolve via pending_approvals.audit_id, not timestamp)", siblingFound.ID, sibling.ID)
+	}
+	if siblingFound.ID == loser.ID {
+		t.Error("sibling lookup returned the loser row — would self-loop in MarkAuditDeduped")
+	}
+}

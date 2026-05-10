@@ -1272,8 +1272,17 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		// approval pending for this request_id. Surface the existing approval's
 		// status and demote our just-inserted canonical to a dedup-attempt so
 		// polling returns the row that actually owns the request_id.
-		existing, lookupErr := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID)
-		if lookupErr == nil {
+		//
+		// Resolve the sibling canonical via pending_approvals.audit_id rather
+		// than GetAuditEntryByRequestID — the latter orders by timestamp DESC
+		// and would return *our* just-inserted row, producing a self-loop in
+		// deduped_of and stranding the response on a row with no live approval.
+		var existing *store.AuditEntry
+		pa, paErr := h.store.GetPendingApproval(ctx, req.RequestID)
+		if paErr == nil && pa.AuditID != "" {
+			existing, _ = h.store.GetAuditEntry(ctx, pa.AuditID, agent.UserID)
+		}
+		if existing != nil && existing.ID != e.ID {
 			if mErr := h.store.MarkAuditDeduped(ctx, e.ID, existing.ID, existing.Outcome); mErr != nil {
 				h.logger.Warn("mark audit deduped after approval conflict failed", "err", mErr)
 			} else {
@@ -1288,7 +1297,8 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		h.logger.Warn("approval conflict; canonical lookup failed", "err", lookupErr)
+		h.logger.Warn("approval conflict; sibling canonical lookup failed",
+			"pending_lookup_err", paErr, "request_id", req.RequestID)
 		// Fall through to the pending response — at least the wait=true path
 		// can still resolve via the existing approval.
 	} else if routeErr != nil {
