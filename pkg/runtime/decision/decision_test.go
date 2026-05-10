@@ -240,7 +240,7 @@ func TestEvaluateAuthorization_ToolTaskRunsIntentVerifier(t *testing.T) {
 	}
 }
 
-func TestEvaluateAuthorization_ToolTaskIntentRefusalDenies(t *testing.T) {
+func TestEvaluateAuthorization_ToolTaskIntentRefusalNeedsApproval(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "write command outside scope"}}
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
 		ToolUse:        toolUse("exec_command", map[string]any{"cmd": "rm README.md"}),
@@ -251,8 +251,8 @@ func TestEvaluateAuthorization_ToolTaskIntentRefusalDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Kind != VerdictDeny || got.Source != SourceIntentRefusal || got.DenyReason != DenyReasonIntent {
-		t.Fatalf("decision = %+v, want intent refusal deny", got)
+	if got.Kind != VerdictNeedsApproval || got.Source != SourceIntentRefusal || got.DenyReason != DenyReasonIntent {
+		t.Fatalf("decision = %+v, want intent refusal review", got)
 	}
 	if got.Reason != "write command outside scope" {
 		t.Fatalf("reason = %q", got.Reason)

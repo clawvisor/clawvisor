@@ -200,7 +200,7 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 				return AuthorizationDecision{}, err
 			}
 			return AuthorizationDecision{
-				Kind:       VerdictDeny,
+				Kind:       VerdictNeedsApproval,
 				Reason:     firstNonEmpty(reason, "intent verifier refused this tool call"),
 				DenyReason: DenyReasonIntent,
 				Task:       task,

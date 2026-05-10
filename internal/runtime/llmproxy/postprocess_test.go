@@ -217,6 +217,49 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	}
 }
 
+func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Write", `{"file_path":"/tmp/goodbye.py","content":"print('bye')\n"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+	task := &store.Task{
+		ID:                     "task-1",
+		AgentID:                agentID,
+		Purpose:                "Create and refactor /tmp/hello.py",
+		Status:                 "active",
+		IntentVerificationMode: "strict",
+		ExpectedTools:          json.RawMessage(`[{"tool_name":"Write","why":"create and refactor /tmp/hello.py"}]`),
+	}
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "The requested file path /tmp/goodbye.py and content do not match the task purpose of creating and refactoring /tmp/hello.py."}}
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		CandidateTasks:   []*store.Task{task},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		IntentVerifier:   verifier,
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("intent refusal should rewrite to an approval prompt")
+	}
+	text := anthropicResponseText(t, got.Body)
+	if !strings.Contains(text, "Reply `approve`") ||
+		!strings.Contains(text, "/tmp/goodbye.py") ||
+		!strings.Contains(text, "do not match the task purpose") {
+		t.Fatalf("intent refusal prompt missing expected text: %s", got.Body)
+	}
+	if strings.Contains(text, "Tool use was blocked") {
+		t.Fatalf("intent refusal should not hard block: %s", got.Body)
+	}
+}
+
 func anthropicResponseText(t *testing.T, body []byte) string {
 	t.Helper()
 	var resp struct {
