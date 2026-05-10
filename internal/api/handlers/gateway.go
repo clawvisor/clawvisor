@@ -1685,14 +1685,37 @@ func (h *GatewayHandler) recoverApprovalConflict(
 	e *store.AuditEntry,
 	userID, requestID, publishTaskID, dedupMessage string,
 ) bool {
-	pa, paErr := h.store.GetPendingApproval(ctx, requestID)
+	// First try: live pending approval. Catches concurrent same-task races and
+	// cross-task collisions while the approval is still pending. The
+	// pending_approvals.audit_id reference points straight at the sibling
+	// canonical (no risk of returning our just-inserted loser).
 	var existing *store.AuditEntry
+	pa, paErr := h.store.GetPendingApproval(ctx, requestID)
 	if paErr == nil && pa.AuditID != "" {
 		existing, _ = h.store.GetAuditEntry(ctx, pa.AuditID, userID)
 	}
+	// Second try: long-resolved approval_record. pending_approvals is deleted
+	// on deny/expire/execute, but approval_records.request_id stays populated,
+	// so a much-later cross-task reuse hits ErrConflict here even though no
+	// pending row exists. Resolve the sibling canonical via the resolved
+	// record's task_id — GetAuditEntryByRequestIDAndTask filters on that
+	// task, so our loser (different task) is excluded by the WHERE clause and
+	// can't self-loop.
+	var recErr error
+	if existing == nil || existing.ID == e.ID {
+		var rec *store.ApprovalRecord
+		rec, recErr = h.store.GetApprovalRecordByRequestID(ctx, requestID)
+		if recErr == nil {
+			recTaskID := ""
+			if rec.TaskID != nil {
+				recTaskID = *rec.TaskID
+			}
+			existing, _ = h.store.GetAuditEntryByRequestIDAndTask(ctx, requestID, userID, recTaskID)
+		}
+	}
 	if existing == nil || existing.ID == e.ID {
 		h.logger.Warn("approval conflict; sibling canonical lookup failed",
-			"pending_lookup_err", paErr, "request_id", requestID)
+			"pending_lookup_err", paErr, "record_lookup_err", recErr, "request_id", requestID)
 		return false
 	}
 	if mErr := h.store.MarkAuditDeduped(ctx, e.ID, existing.ID, existing.Outcome); mErr != nil {

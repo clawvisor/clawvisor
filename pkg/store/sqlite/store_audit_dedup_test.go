@@ -327,3 +327,79 @@ func TestAuditDedup_ApprovalConflictSiblingLookup(t *testing.T) {
 		t.Error("sibling lookup returned the loser row — would self-loop in MarkAuditDeduped")
 	}
 }
+
+// TestAuditDedup_ResolvedApprovalConflictFallback covers the lifecycle
+// asymmetry: pending_approvals is deleted on deny/expire/execute but
+// approval_records.request_id stays populated indefinitely. A later cross-task
+// reuse of the same request_id hits ErrConflict on approval_records, by which
+// time GetPendingApproval returns nothing — the recovery helper must fall back
+// through GetApprovalRecordByRequestID + GetAuditEntryByRequestIDAndTask
+// (scoped to the resolved record's task_id) to land on the resolved sibling
+// canonical, not on the just-inserted loser.
+func TestAuditDedup_ResolvedApprovalConflictFallback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newAuditDedupFixture(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	taskB := "task-B"
+
+	// Resolved sibling canonical: pre-task approval that was approved + executed
+	// long ago. Pre-task (task_id=NULL) keeps the test free of the tasks(id)
+	// FK while still exercising the resolved-record lookup chain.
+	sibling := f.makeEntry("sibling-canonical", "req-1", nil, "approve", "executed", now)
+	if err := f.st.LogAudit(ctx, sibling); err != nil {
+		t.Fatalf("LogAudit sibling: %v", err)
+	}
+	reqID := "req-1"
+	expiresAt := now.Add(time.Hour)
+	resolvedAt := now.Add(time.Minute)
+	rec := &store.ApprovalRecord{
+		ID:                  "approval-rec-1",
+		Kind:                "request_once",
+		UserID:              f.userID,
+		RequestID:           &reqID,
+		Status:              "approved",
+		Surface:             "dashboard",
+		ResolutionTransport: "execute_pending_request",
+		ExpiresAt:           &expiresAt,
+		ResolvedAt:          &resolvedAt,
+		Resolution:          "approved",
+	}
+	if err := f.st.CreateApprovalRecord(ctx, rec); err != nil {
+		t.Fatalf("CreateApprovalRecord: %v", err)
+	}
+	// Note: no pending_approvals row — it was deleted on resolve. This is the
+	// scenario the lifecycle asymmetry creates.
+
+	// Loser canonical: cross-task reuse much later, in a different task.
+	loser := f.makeEntry("loser-canonical", "req-1", &taskB, "approve", "pending", now.Add(time.Hour))
+	if err := f.st.LogAudit(ctx, loser); err != nil {
+		t.Fatalf("LogAudit loser: %v", err)
+	}
+
+	// First-try lookup (live pending) returns nothing.
+	if _, err := f.st.GetPendingApproval(ctx, "req-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetPendingApproval: expected ErrNotFound, got %v", err)
+	}
+
+	// Second-try lookup must land on the resolved sibling, not on the loser.
+	got, err := f.st.GetApprovalRecordByRequestID(ctx, "req-1")
+	if err != nil {
+		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
+	}
+	recTaskID := ""
+	if got.TaskID != nil {
+		recTaskID = *got.TaskID
+	}
+	siblingFound, err := f.st.GetAuditEntryByRequestIDAndTask(ctx, "req-1", f.userID, recTaskID)
+	if err != nil {
+		t.Fatalf("GetAuditEntryByRequestIDAndTask: %v", err)
+	}
+	if siblingFound.ID != sibling.ID {
+		t.Errorf("resolved-record fallback: got %q, want %q", siblingFound.ID, sibling.ID)
+	}
+	if siblingFound.ID == loser.ID {
+		t.Error("resolved-record fallback returned the loser — would self-loop")
+	}
+}
