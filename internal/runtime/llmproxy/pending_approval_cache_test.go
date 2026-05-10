@@ -123,6 +123,42 @@ func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	}
 }
 
+func TestMemoryPendingApprovalCachePeekDoesNotConsume(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-first",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	peeked, err := cache.Peek(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeked == nil || peeked.ID != "cv-first" {
+		t.Fatalf("peeked = %+v, want first", peeked)
+	}
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil || resolved.ID != "cv-first" {
+		t.Fatalf("resolved after peek = %+v, want first", resolved)
+	}
+}
+
 func TestMemoryPendingApprovalCacheExplicitIDResolvesMatchingPending(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()

@@ -450,11 +450,7 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 		b.WriteString("\nInput: ")
 		b.WriteString(preview)
 	}
-	b.WriteString("\n\nReply `approve` to run this tool call or `deny` to block it.")
-	if taskHint := taskCreationPrompt(tu); taskHint != "" {
-		b.WriteString("\n\n")
-		b.WriteString(taskHint)
-	}
+	b.WriteString("\n\nReply `approve` to run this tool call, `deny` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
 	return b.String()
 }
 
@@ -476,7 +472,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	if err != nil {
 		return ""
 	}
-	return "To request task-scoped permission for this and related work, create a task that covers this action plus any other tools or commands you expect to use. Add more `expected_tools_json` entries as needed.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	return "Your action was blocked. Please create a task that covers the blocked action, along with any other tools or commands you expect to use to complete the user's request. Add more `expected_tools_json` entries as needed.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 func taskToolWhy(tu conversation.ToolUse) string {

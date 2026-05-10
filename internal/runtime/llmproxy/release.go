@@ -49,6 +49,9 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	if verb == "" || req.PendingApproval == nil || req.Agent == nil {
 		return ReleaseResult{}
 	}
+	if verb == "task" {
+		return handleTaskGuidanceReply(ctx, req, approvalID)
+	}
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
@@ -76,6 +79,36 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	}
 	req.logRelease(ctx, pending, "allow", "released", "approved inline by user")
 	return syntheticReleaseResult(req, pending, true, rewrittenInput, "allow", "approval_released", "")
+}
+
+func handleTaskGuidanceReply(ctx context.Context, req ReleaseRequest, approvalID string) ReleaseResult {
+	pending, err := req.PendingApproval.Peek(ctx, ResolveRequest{
+		UserID:     req.Agent.UserID,
+		AgentID:    req.Agent.ID,
+		Provider:   req.Provider,
+		ApprovalID: approvalID,
+	})
+	if err != nil {
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_task_error", Reason: err.Error()}
+	}
+	if pending == nil {
+		if approvalID != "" {
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+		}
+		return ReleaseResult{}
+	}
+	synth, ok := conversation.SyntheticApprovalTextResponse(req.HTTPRequest, req.Provider, req.Body, taskCreationPrompt(pending.ToolUse))
+	if !ok {
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_task_unsupported", Reason: "unsupported task guidance provider"}
+	}
+	return ReleaseResult{
+		Handled:     true,
+		HTTPStatus:  http.StatusOK,
+		Decision:    "allow",
+		Outcome:     "approval_task_guidance",
+		ContentType: synth.ContentType,
+		Body:        synth.Body,
+	}
 }
 
 func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) (map[string]any, error) {

@@ -97,6 +97,36 @@ func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requ
 	return SyntheticApprovalResponse{ContentType: contentType, Body: body}, len(body) > 0
 }
 
+func SyntheticApprovalTextResponse(req *http.Request, provider Provider, requestBody []byte, text string) (SyntheticApprovalResponse, bool) {
+	contentType := "application/json"
+	var body []byte
+	switch provider {
+	case ProviderAnthropic:
+		if AnthropicRequestWantsStream(requestBody) {
+			contentType = "text/event-stream"
+			body = SynthAnthropicTextSSE("", "", "assistant", text)
+		} else {
+			body = SynthAnthropicTextJSON("", "", "assistant", text)
+		}
+	case ProviderOpenAI:
+		if OpenAIRequestWantsStream(requestBody) {
+			contentType = "text/event-stream"
+			if IsOpenAIChatCompletionsEndpoint(req) {
+				body = SynthOpenAIChatTextSSE(text)
+			} else {
+				body = SynthOpenAIResponsesTextSSE(text)
+			}
+		} else if IsOpenAIChatCompletionsEndpoint(req) {
+			body = SynthOpenAIChatTextJSON(text)
+		} else {
+			body = SynthOpenAIResponsesTextJSON(text)
+		}
+	default:
+		return SyntheticApprovalResponse{}, false
+	}
+	return SyntheticApprovalResponse{ContentType: contentType, Body: body}, len(body) > 0
+}
+
 func flattenAnthropicUserText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""

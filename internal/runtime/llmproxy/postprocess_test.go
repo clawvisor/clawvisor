@@ -197,13 +197,12 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	}
 	text := anthropicResponseText(t, got.Body)
 	if !strings.Contains(text, "Reply `approve`") ||
+		!strings.Contains(text, "`task`") ||
 		!strings.Contains(text, "no matching task scope") {
 		t.Fatalf("approval prompt missing expected text: %s", got.Body)
 	}
-	if !strings.Contains(text, "https://clawvisor.local/control/tasks") ||
-		!strings.Contains(text, `"tool_name": "Bash"`) ||
-		!strings.Contains(text, "ls /tmp/ | grep -i greet") {
-		t.Fatalf("approval prompt missing task creation guidance: %s", got.Body)
+	if strings.Contains(text, "https://clawvisor.local/control/tasks") {
+		t.Fatalf("approval prompt should defer task details until user replies task: %s", got.Body)
 	}
 	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
 	if err != nil {
@@ -238,7 +237,7 @@ func anthropicResponseText(t *testing.T, body []byte) string {
 	return strings.Join(parts, "\n")
 }
 
-func TestApprovalPromptIncludesTaskCreationExample(t *testing.T) {
+func TestApprovalPromptMentionsTaskReply(t *testing.T) {
 	got := approvalPrompt(conversation.ToolUse{
 		Name:  "Write",
 		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
@@ -246,7 +245,27 @@ func TestApprovalPromptIncludesTaskCreationExample(t *testing.T) {
 
 	for _, want := range []string{
 		"Reply `approve`",
-		"create a task that covers this action plus any other tools",
+		"`task`",
+		"task definition for approval",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("approval prompt missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "https://clawvisor.local/control/tasks") {
+		t.Fatalf("approval prompt should not include full task recipe until task reply:\n%s", got)
+	}
+}
+
+func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
+	got := taskCreationPrompt(conversation.ToolUse{
+		Name:  "Write",
+		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
+	})
+
+	for _, want := range []string{
+		"Your action was blocked",
+		"create a task that covers the blocked action",
 		"https://clawvisor.local/control/tasks",
 		`"tool_name": "Write"`,
 		"/tmp/report.txt",

@@ -43,6 +43,7 @@ type HoldResult struct {
 
 type PendingApprovalCache interface {
 	Hold(ctx context.Context, pending PendingLiteApproval) (HoldResult, error)
+	Peek(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Resolve(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Drop(ctx context.Context, req ResolveRequest) error
 }
@@ -120,10 +121,35 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	pending, index, items := c.findLocked(req)
+	if pending == nil {
+		return nil, nil
+	}
+	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	items = append(items[:index], items[index+1:]...)
+	if len(items) == 0 {
+		delete(c.pending, key)
+	} else {
+		c.pending[key] = items
+	}
+	return pending, nil
+}
+
+func (c *MemoryPendingApprovalCache) Peek(_ context.Context, req ResolveRequest) (*PendingLiteApproval, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pending, _, _ := c.findLocked(req)
+	return pending, nil
+}
+
+func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLiteApproval, int, []PendingLiteApproval) {
 	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
 	items := c.pruneExpiredLocked(key, c.now().UTC())
 	if len(items) == 0 {
-		return nil, nil
+		return nil, -1, items
 	}
 	index := 0
 	if req.ApprovalID != "" {
@@ -135,17 +161,11 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 			}
 		}
 		if index < 0 {
-			return nil, nil
+			return nil, -1, items
 		}
 	}
 	pending := items[index]
-	items = append(items[:index], items[index+1:]...)
-	if len(items) == 0 {
-		delete(c.pending, key)
-	} else {
-		c.pending[key] = items
-	}
-	return &pending, nil
+	return &pending, index, items
 }
 
 func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest) error {
