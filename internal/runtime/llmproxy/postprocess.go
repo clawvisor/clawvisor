@@ -472,7 +472,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	if err != nil {
 		return ""
 	}
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Use a shell command to POST the task definition to `https://clawvisor.local/control/tasks`. Include the blocked action and any related tools or commands you expect to need.\n\nExample:\n\n```sh\ncurl -sS -X POST https://clawvisor.local/control/tasks \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a shell command to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120` so the command waits for my decision. Include the blocked action and any related tools or commands you expect to need.\n\nExample:\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 func taskToolWhy(tu conversation.ToolUse) string {

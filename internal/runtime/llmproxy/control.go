@@ -20,7 +20,7 @@ func ControlNotice(controlBaseURL string) string {
 	if controlBaseURL != "" {
 		docsURL = controlBaseURL + "/control/skill"
 	}
-	return "Clawvisor proxy-lite sessions can request task permission through the synthetic Clawvisor control endpoint at https://clawvisor.local/control/tasks. This URL is handled by Clawvisor before the shell command runs. For schemas and examples, call GET " + docsURL + ". Task creation does not grant permission until the user approves it."
+	return "Clawvisor proxy-lite sessions can request task permission through the synthetic Clawvisor control endpoint at https://clawvisor.local/control/tasks?wait=true&timeout=120. Before creating a task, tell me I will need to approve it. This URL is handled by Clawvisor before the shell command runs. For schemas and examples, call GET " + docsURL + ". Task creation does not grant permission until I approve it."
 }
 
 // InjectControlNotice adds a compact control-plane hint to the request context.

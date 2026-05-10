@@ -203,11 +203,13 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(string(seenBody), "http://localhost:25297/control/skill") ||
-		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") {
+		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks?wait=true") ||
+		!strings.Contains(string(seenBody), "timeout=120") {
 		t.Fatalf("upstream request missing control notice: %s", seenBody)
 	}
 	if !strings.Contains(string(seenBody), "Clawvisor proxy-lite sessions can request task permission") ||
-		!strings.Contains(string(seenBody), "This URL is handled by Clawvisor before the shell command runs") {
+		!strings.Contains(string(seenBody), "This URL is handled by Clawvisor before the shell command runs") ||
+		!strings.Contains(string(seenBody), "Before creating a task, tell me I will need to approve it") {
 		t.Fatalf("upstream request missing official proxy-lite control guidance: %s", seenBody)
 	}
 }
@@ -656,7 +658,9 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") ||
+	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks?wait=true") ||
+		!strings.Contains(string(seenBody), "timeout=120") ||
+		!strings.Contains(string(seenBody), "tell me that I will need to approve it") ||
 		!strings.Contains(string(seenBody), "/tmp/greet.sh") ||
 		strings.Contains(string(seenBody), `"content":"task"`) {
 		t.Fatalf("upstream body was not rewritten with task guidance: %s", seenBody)
