@@ -204,7 +204,7 @@ func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector
 		if opts.CallerToken != "" && opts.CallerHeader != "" {
 			headers += " -H " + shellSingleQuote(opts.CallerHeader+": Bearer "+opts.CallerToken)
 		}
-		return cmd[:arg.start] + headers + " " + rewritten.String() + cmd[arg.end:], true
+		return cmd[:arg.start] + headers + " " + shellSingleQuote(rewritten.String()) + cmd[arg.end:], true
 	}
 	return "", false
 }

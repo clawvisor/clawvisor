@@ -452,7 +452,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	if strings.Contains(out, "bash blocked") {
 		t.Fatalf("heredoc synthetic control endpoint should bypass tool rules: %s", out)
 	}
-	if !strings.Contains(out, "https://control.example.test/control/tasks?wait=true\\u0026timeout=120") ||
+	if !strings.Contains(out, "'https://control.example.test/control/tasks?wait=true\\u0026timeout=120'") ||
 		!strings.Contains(out, "X-Clawvisor-Target-Host") ||
 		!strings.Contains(out, "X-Clawvisor-Caller") ||
 		!strings.Contains(out, `\u003c\u003c'JSON'`) {
