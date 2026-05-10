@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
@@ -606,6 +607,55 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	}
 	if !found {
 		t.Fatalf("expected runtime.tool_use approval audit row for OpenAI tool use; got %d rows", len(rows))
+	}
+}
+
+func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
+	h.PendingApprovals = cache
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+	if _, err := cache.Hold(context.Background(), llmproxy.PendingLiteApproval{
+		UserID:   agent.UserID,
+		AgentID:  agent.ID,
+		Provider: conversation.ProviderAnthropic,
+		ToolUse: conversation.ToolUse{
+			ID:    "toolu_1",
+			Name:  "Read",
+			Input: json.RawMessage(`{"file_path":"/tmp/greet.sh"}`),
+		},
+	}); err != nil {
+		t.Fatalf("Hold: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"task"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks") ||
+		!strings.Contains(string(seenBody), "/tmp/greet.sh") ||
+		strings.Contains(string(seenBody), `"content":"task"`) {
+		t.Fatalf("upstream body was not rewritten with task guidance: %s", seenBody)
 	}
 }
 

@@ -211,6 +211,31 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
 	}
+	if taskRewrite, taskErr := llmproxy.RewriteTaskApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
+		HTTPRequest:     r,
+		Provider:        provider,
+		Body:            body,
+		Agent:           agent,
+		PendingApproval: h.PendingApprovals,
+	}); taskErr != nil {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "malformed_request"
+		auditReason = taskErr.Error()
+		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", taskErr.Error())
+		return
+	} else if taskRewrite.Rewritten {
+		body = taskRewrite.Body
+		if _, err := parser.ParseRequest(body); err != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = err.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			return
+		}
+		auditParams["approval_task_rewritten"] = true
+	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
 		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)

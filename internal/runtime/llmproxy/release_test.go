@@ -63,7 +63,7 @@ func TestTryReleasePendingApprovalParsesLongExplicitID(t *testing.T) {
 	}
 }
 
-func TestTryReleasePendingApprovalTaskReplyReturnsGuidanceWithoutConsuming(t *testing.T) {
+func TestRewriteTaskApprovalReplyReplacesUserTaskTextWithoutConsuming(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	held, err := cache.Hold(ctx, PendingLiteApproval{
@@ -81,13 +81,16 @@ func TestTryReleasePendingApprovalTaskReplyReturnsGuidanceWithoutConsuming(t *te
 		t.Fatal(err)
 	}
 
-	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+	result, err := RewriteTaskApprovalReply(ctx, TaskReplyRewriteRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"task"}]}`),
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
 		PendingApproval: cache,
 	})
-	if !result.Handled || result.HTTPStatus != 200 || result.Outcome != "approval_task_guidance" {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Rewritten {
 		t.Fatalf("task reply result = %+v", result)
 	}
 	if !strings.Contains(string(result.Body), "https://clawvisor.local/control/tasks") ||
