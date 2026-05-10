@@ -32,7 +32,7 @@ verification_hints: |
   Microsoft Teams actions operate within the user's joined teams.
   Channel and message access is scoped to teams the user belongs to.
   Sending messages posts on behalf of the authenticated user.
-  IMPORTANT: Ensure your Azure App registration has "Team.ReadBasic.All" and "Group.Read.All" permissions added and consented.
+  IMPORTANT: Ensure your Azure App registration has "Team.ReadBasic.All" permission added and consented.
 
 actions:
   list_teams:

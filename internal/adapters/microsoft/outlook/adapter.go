@@ -67,10 +67,11 @@ func (a *Adapter) listEvents(ctx context.Context, client *http.Client, params ma
 		start, _ := item["start"].(map[string]any)
 		end, _ := item["end"].(map[string]any)
 		loc, _ := item["location"].(map[string]any)
+		subject, _ := item["subject"].(string)
 
 		events = append(events, map[string]any{
 			"id":          item["id"],
-			"subject":     format.SanitizeText(item["subject"].(string), format.MaxFieldLen),
+			"subject":     format.SanitizeText(subject, format.MaxFieldLen),
 			"start":       start["dateTime"],
 			"end":         end["dateTime"],
 			"timezone":    start["timeZone"],
@@ -79,6 +80,7 @@ func (a *Adapter) listEvents(ctx context.Context, client *http.Client, params ma
 			"web_link":    item["webLink"],
 		})
 	}
+
 
 	return &adapters.Result{
 		Summary: format.Summary("%d event(s)", len(events)),
@@ -102,20 +104,23 @@ func (a *Adapter) getEvent(ctx context.Context, client *http.Client, params map[
 	end, _ := item["end"].(map[string]any)
 	loc, _ := item["location"].(map[string]any)
 	body, _ := item["body"].(map[string]any)
+	subject, _ := item["subject"].(string)
+	bodyContent, _ := body["content"].(string)
 
 	data := map[string]any{
 		"id":          item["id"],
-		"subject":     format.SanitizeText(item["subject"].(string), format.MaxFieldLen),
+		"subject":     format.SanitizeText(subject, format.MaxFieldLen),
 		"start":       start["dateTime"],
 		"end":         end["dateTime"],
 		"timezone":    start["timeZone"],
 		"location":    loc["displayName"],
-		"body":        format.SanitizeText(body["content"].(string), format.MaxBodyLen),
+		"body":        format.SanitizeText(bodyContent, format.MaxBodyLen),
 		"attendees":   item["attendees"],
 		"is_all_day":  item["isAllDay"],
 		"web_link":    item["webLink"],
 		"organizer":   item["organizer"],
 	}
+
 
 	return &adapters.Result{
 		Summary: format.Summary("Event: %s", data["subject"]),
