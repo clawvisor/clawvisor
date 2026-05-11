@@ -103,7 +103,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	if _, err := st.GetApprovalRecord(ctx, approval.ID); err != nil {
 		t.Fatalf("GetApprovalRecord: %v", err)
 	}
-	if _, err := st.GetApprovalRecordByRequestID(ctx, requestID); err != nil {
+	if _, err := st.GetApprovalRecordByRequestID(ctx, requestID, user.ID); err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}
 	records, err := st.ListPendingApprovalRecords(ctx, user.ID)
@@ -129,7 +129,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	if err := st.SavePendingApproval(ctx, pending); err != nil {
 		t.Fatalf("SavePendingApproval: %v", err)
 	}
-	gotPending, err := st.GetPendingApproval(ctx, requestID)
+	gotPending, err := st.GetPendingApproval(ctx, requestID, user.ID)
 	if err != nil {
 		t.Fatalf("GetPendingApproval: %v", err)
 	}
@@ -457,10 +457,10 @@ func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
 	}
 
 	// Promote pending → approved → executing (the legitimate hot path).
-	if err := st.UpdatePendingApprovalStatus(ctx, requestID, "approved"); err != nil {
+	if err := st.UpdatePendingApprovalStatus(ctx, requestID, user.ID, "", "approved"); err != nil {
 		t.Fatalf("UpdatePendingApprovalStatus(approved): %v", err)
 	}
-	claimed, err := st.ClaimPendingApprovalForExecution(ctx, requestID)
+	claimed, err := st.ClaimPendingApprovalForExecution(ctx, requestID, user.ID, "")
 	if err != nil {
 		t.Fatalf("ClaimPendingApprovalForExecution: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestPendingApproval_StalledExecutingRecovery(t *testing.T) {
 	}
 
 	// Recovery: deleting the stale row frees the user to re-issue the request.
-	if err := st.DeletePendingApproval(ctx, requestID); err != nil {
+	if err := st.DeletePendingApproval(ctx, requestID, user.ID, ""); err != nil {
 		t.Fatalf("DeletePendingApproval: %v", err)
 	}
 	stalled, err = st.ListStalledExecutingApprovals(ctx, time.Second)
@@ -530,20 +530,20 @@ func TestPendingApproval_StatusCASBlocksConcurrentResolution(t *testing.T) {
 	}
 
 	// First transition wins.
-	won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "approved")
+	won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", user.ID, "", "pending", "approved")
 	if err != nil || !won {
 		t.Fatalf("first CAS approve: won=%v err=%v", won, err)
 	}
 
 	// Concurrent attempt to deny the same row must lose, leaving status="approved".
-	won, err = st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", "pending", "denied")
+	won, err = st.UpdatePendingApprovalStatusFrom(ctx, "req-cas-1", user.ID, "", "pending", "denied")
 	if err != nil {
 		t.Fatalf("second CAS: %v", err)
 	}
 	if won {
 		t.Fatal("expected second CAS to lose, got won=true")
 	}
-	got, err := st.GetPendingApproval(ctx, "req-cas-1")
+	got, err := st.GetPendingApproval(ctx, "req-cas-1", user.ID)
 	if err != nil {
 		t.Fatalf("GetPendingApproval: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestPendingApproval_ConcurrentResolution_ExactlyOneWinner(t *testing.T) {
 		go func(t string) {
 			defer wg.Done()
 			<-start
-			won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-race-1", "pending", t)
+			won, err := st.UpdatePendingApprovalStatusFrom(ctx, "req-race-1", user.ID, "", "pending", t)
 			if err != nil {
 				errs.Add(1)
 				return
@@ -659,7 +659,7 @@ func TestClaimPendingApprovalForExecution_ConcurrentClaim_ExactlyOneWinner(t *te
 		go func() {
 			defer wg.Done()
 			<-start
-			won, err := st.ClaimPendingApprovalForExecution(ctx, "req-exec-1")
+			won, err := st.ClaimPendingApprovalForExecution(ctx, "req-exec-1", user.ID, "")
 			if err != nil {
 				errCount.Add(1)
 				firstErr.CompareAndSwap(nil, &err)
@@ -712,7 +712,7 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 	if err := st.SavePendingApproval(ctx, pa); err != nil {
 		t.Fatalf("SavePendingApproval: %v", err)
 	}
-	if won, err := st.ClaimPendingApprovalForExecution(ctx, "req-stalled-1"); err != nil || !won {
+	if won, err := st.ClaimPendingApprovalForExecution(ctx, "req-stalled-1", user.ID, ""); err != nil || !won {
 		t.Fatalf("seed claim: won=%v err=%v", won, err)
 	}
 	// SQLite CURRENT_TIMESTAMP and datetime('now') round to whole seconds,
@@ -734,7 +734,7 @@ func TestClaimStalledExecutingApprovalForRecovery_ExactlyOneWinner(t *testing.T)
 		go func() {
 			defer wg.Done()
 			<-start
-			won, err := st.ClaimStalledExecutingApprovalForRecovery(ctx, "req-stalled-1", time.Second)
+			won, err := st.ClaimStalledExecutingApprovalForRecovery(ctx, "req-stalled-1", user.ID, "", time.Second)
 			if err != nil {
 				errCount.Add(1)
 				firstErr.CompareAndSwap(nil, &err)

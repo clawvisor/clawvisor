@@ -13,6 +13,13 @@ var ErrNotFound = errors.New("store: record not found")
 // ErrConflict is returned when a uniqueness constraint is violated.
 var ErrConflict = errors.New("store: record already exists")
 
+// ErrAmbiguous is returned by request-id-only lookups (GetPendingApproval,
+// GetApprovalRecordByRequestID) when more than one row matches under the
+// symmetric (user_id, request_id, COALESCE(task_id,'')) dedup scope.
+// Callers must disambiguate via the *ByTask variant, or surface 409 to the
+// client with the candidate task_ids enumerated via List*ByRequestID.
+var ErrAmbiguous = errors.New("store: multiple records match without task scope")
+
 // Store is the primary data access interface. All database operations go
 // through this interface; no direct queries are made outside the store package.
 type Store interface {
@@ -97,10 +104,40 @@ type Store interface {
 	LogGatewayRequest(ctx context.Context, entry *GatewayRequestLog) error
 
 	// Audit log
+	//
+	// LogAudit inserts an audit row. If entry.DedupedOf is nil the row is
+	// treated as canonical and subject to the (user_id, request_id,
+	// COALESCE(task_id,'')) WHERE deduped_of IS NULL partial unique index;
+	// a collision returns ErrConflict. The canonical-insertion sites in
+	// handlers/gateway.go gate side effects on a prior FindDedupCandidate
+	// check, so an ErrConflict here means two workers both passed that
+	// check and raced — the loser should look the winner up via
+	// FindDedupCandidate and surface its outcome instead of re-running.
+	// Rows with DedupedOf set are dedup-attempt rows and are outside the
+	// unique index.
 	LogAudit(ctx context.Context, entry *AuditEntry) error
 	UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg string, durationMS int) error
 	GetAuditEntry(ctx context.Context, id, userID string) (*AuditEntry, error)
+	// GetAuditEntryByRequestID returns the latest canonical (deduped_of IS NULL)
+	// audit entry for (request_id, user_id). Used by the polling endpoint and
+	// other callers that don't have task context. Newer canonicals shadow older
+	// ones — agents almost always poll right after submitting, where "latest"
+	// is the entry they care about.
 	GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*AuditEntry, error)
+	// GetAuditEntryByRequestIDAndTask returns the canonical audit entry for
+	// (request_id, user_id, task_id). Inverts FindDedupCandidate's precedence:
+	// an exact task_id match wins over a pre-task (task_id IS NULL) canonical,
+	// because callers (the feedback handler) want the row that actually fired
+	// in the agent's task. Pre-task is the fallback when no task-scoped row
+	// exists.
+	GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
+	// FindDedupCandidate returns the canonical audit entry that a new
+	// (request_id, user_id, task_id) request should dedup against, or
+	// ErrNotFound if no candidate exists. Pre-task canonicals (task_id IS NULL)
+	// always win over task-scoped canonicals for the same request_id; within a
+	// tier the oldest row wins. taskID == "" means the caller has no task
+	// context yet (runtime classification path) and only pre-task rows match.
+	FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*AuditEntry, error)
 	ListAuditEntries(ctx context.Context, userID string, filter AuditFilter) ([]*AuditEntry, int, error)
 	AuditActivityBuckets(ctx context.Context, userID string, since time.Time, bucketMinutes int) ([]ActivityBucket, error)
 	CreateActivityMute(ctx context.Context, mute *ActivityMute) error
@@ -132,21 +169,45 @@ type Store interface {
 	RevokeTasksByAgent(ctx context.Context, agentID, userID string) (int, error)
 
 	// Pending approvals
+	//
+	// Under the symmetric dedup scope (user_id, request_id,
+	// COALESCE(task_id,'')), two pending approvals with the same request_id
+	// but different task_ids may coexist for one user. Lookups that take
+	// only request_id return ErrAmbiguous in that case; callers must
+	// disambiguate via the *ByTask variant or expose the ambiguity to the
+	// client via ListPendingApprovalsByRequestID.
 	SavePendingApproval(ctx context.Context, pa *PendingApproval) error
-	GetPendingApproval(ctx context.Context, requestID string) (*PendingApproval, error)
+	// GetPendingApproval returns the unique pending approval for
+	// (request_id, user_id). Returns ErrNotFound if no row matches and
+	// ErrAmbiguous if more than one matches.
+	GetPendingApproval(ctx context.Context, requestID, userID string) (*PendingApproval, error)
+	// GetPendingApprovalByTask returns the pending approval scoped to an
+	// exact (request_id, user_id, task_id). taskID == "" matches the
+	// pre-task scope (task_id IS NULL in SQL).
+	GetPendingApprovalByTask(ctx context.Context, requestID, userID, taskID string) (*PendingApproval, error)
+	// ListPendingApprovalsByRequestID returns every pending approval that
+	// matches (request_id, user_id). Used by the approval HTTP handlers to
+	// surface candidate task_ids in a 409 AMBIGUOUS response when a caller
+	// addresses a request_id-only endpoint and more than one row exists.
+	ListPendingApprovalsByRequestID(ctx context.Context, requestID, userID string) ([]*PendingApproval, error)
 	ListPendingApprovals(ctx context.Context, userID string) ([]*PendingApproval, error)
-	DeletePendingApproval(ctx context.Context, requestID string) error
+	// DeletePendingApproval removes the unique pending approval for
+	// (request_id, user_id, task_id). Pass taskID == "" for the pre-task
+	// scope. Callers must always supply task_id (typically read from a
+	// prior Get) so the delete cannot accidentally fan out across siblings.
+	DeletePendingApproval(ctx context.Context, requestID, userID, taskID string) error
 	ListExpiredPendingApprovals(ctx context.Context) ([]*PendingApproval, error)
-	UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error
+	UpdatePendingApprovalStatus(ctx context.Context, requestID, userID, taskID, status string) error
 	// UpdatePendingApprovalStatusFrom atomically transitions a pending
-	// approval from fromStatus to toStatus. Returns true if the caller won
-	// the race, false if the row was not in fromStatus. Use this for any
+	// approval from fromStatus to toStatus, scoped to a specific row by
+	// (request_id, user_id, task_id). Returns true if the caller won the
+	// race, false if the row was not in fromStatus. Use this for any
 	// approve/deny path that can be raced across UI/Telegram/API.
-	UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error)
+	UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, userID, taskID, fromStatus, toStatus string) (bool, error)
 	// ClaimPendingApprovalForExecution atomically transitions a pending approval
 	// from "approved" to "executing". Returns true if the caller won the claim,
 	// false if another caller already claimed it (or the row is not "approved").
-	ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error)
+	ClaimPendingApprovalForExecution(ctx context.Context, requestID, userID, taskID string) (bool, error)
 	// ListStalledExecutingApprovals returns rows stuck in "executing" beyond
 	// leaseTTL — the recovery hook for daemon crashes mid-execution.
 	ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*PendingApproval, error)
@@ -156,7 +217,7 @@ type Store interface {
 	// callers must dispatch the timeout callback only on true. Returns
 	// false (no error) when the executor finished between list and claim
 	// or another sweep already won the race.
-	ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error)
+	ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID, userID, taskID string, leaseTTL time.Duration) (bool, error)
 
 	// CreateApprovalRecordWithPending writes the canonical approval record
 	// and its corresponding pending approval row in a single transaction.
@@ -169,7 +230,15 @@ type Store interface {
 	// Canonical approval records
 	CreateApprovalRecord(ctx context.Context, rec *ApprovalRecord) error
 	GetApprovalRecord(ctx context.Context, id string) (*ApprovalRecord, error)
-	GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*ApprovalRecord, error)
+	// GetApprovalRecordByRequestID returns the unique approval record for
+	// (request_id, user_id). Returns ErrNotFound if no row matches and
+	// ErrAmbiguous if more than one matches under the symmetric dedup
+	// scope.
+	GetApprovalRecordByRequestID(ctx context.Context, requestID, userID string) (*ApprovalRecord, error)
+	// GetApprovalRecordByRequestIDAndTask returns the approval record
+	// scoped to an exact (request_id, user_id, task_id). taskID == "" means
+	// pre-task (task_id IS NULL).
+	GetApprovalRecordByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*ApprovalRecord, error)
 	ListPendingApprovalRecords(ctx context.Context, userID string) ([]*ApprovalRecord, error)
 	ClearApprovalRecordRequestID(ctx context.Context, id string) error
 	ResolveApprovalRecord(ctx context.Context, id, resolution, status string, resolvedAt time.Time) error
@@ -436,6 +505,9 @@ type AuditEntry struct {
 	FiltersApplied          json.RawMessage `json:"filters_applied,omitempty"`
 	Verification            json.RawMessage `json:"verification,omitempty"`
 	ErrorMsg                *string         `json:"error_msg,omitempty"`
+	// DedupedOf is set on retry-attempt rows to the id of the canonical
+	// audit entry they shadow. Canonical rows have DedupedOf == nil.
+	DedupedOf *string `json:"deduped_of,omitempty"`
 }
 
 // ActivityMute suppresses noisy runtime egress rows from the activity feed.
@@ -518,6 +590,7 @@ type PendingApproval struct {
 	ID               string          `json:"id"`
 	UserID           string          `json:"user_id"`
 	RequestID        string          `json:"request_id"`
+	TaskID           *string         `json:"task_id,omitempty"`
 	AuditID          string          `json:"audit_id"`
 	ApprovalRecordID *string         `json:"approval_record_id,omitempty"`
 	RequestBlob      json.RawMessage `json:"request_blob"`

@@ -689,8 +689,8 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 			intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
 			would_block, would_review, would_prompt_inline,
 			safety_flagged, safety_reason, reason, data_origin, context_src,
-			duration_ms, filters_applied, verification, error_msg
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+			duration_ms, filters_applied, verification, error_msg, deduped_of
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
 	`, e.ID, e.UserID, e.AgentID, e.RequestID, e.TaskID, e.SessionID, e.ApprovalID, e.LeaseID,
 		e.ToolUseID, e.MatchedTaskID, e.LeaseTaskID, e.Timestamp,
 		e.Service, e.Action, []byte(paramsSafe), e.Decision, e.Outcome,
@@ -699,7 +699,10 @@ func (s *Store) LogAudit(ctx context.Context, e *store.AuditEntry) error {
 		e.WouldBlock, e.WouldReview, e.WouldPromptInline,
 		e.SafetyFlagged, e.SafetyReason, e.Reason,
 		e.DataOrigin, e.ContextSrc, e.DurationMS, nilIfEmpty(e.FiltersApplied),
-		nilIfEmpty(e.Verification), e.ErrorMsg)
+		nilIfEmpty(e.Verification), e.ErrorMsg, e.DedupedOf)
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
 	return err
 }
 
@@ -714,19 +717,24 @@ func (s *Store) UpdateAuditOutcome(ctx context.Context, id, outcome, errMsg stri
 	return err
 }
 
-func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
+// auditColumns is the canonical SELECT list for audit_log rows in the postgres
+// store. Kept in sync with scanAuditRow; deduped_of trails so symmetric-dedup
+// callers (FindDedupCandidate, GetAuditEntryByRequestID) can filter on the
+// canonical partial-unique index.
+const auditColumns = `
+	id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
+	tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
+	params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
+	intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
+	would_block, would_review, would_prompt_inline,
+	safety_flagged, safety_reason, reason, data_origin, context_src,
+	duration_ms, filters_applied, verification, error_msg, deduped_of
+`
+
+func scanAuditRow(scan func(...any) error) (*store.AuditEntry, error) {
 	e := &store.AuditEntry{}
 	var paramsSafe, filtersApplied, verification []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		       would_block, would_review, would_prompt_inline,
-		       safety_flagged, safety_reason, reason, data_origin, context_src,
-		       duration_ms, filters_applied, verification, error_msg
-		FROM audit_log WHERE id = $1 AND user_id = $2
-	`, id, userID).Scan(
+	err := scan(
 		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
 		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
 		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
@@ -734,10 +742,8 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
 		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
 		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
+		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg, &e.DedupedOf,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -751,41 +757,79 @@ func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.Au
 	return e, nil
 }
 
-func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
-	e := &store.AuditEntry{}
-	var paramsSafe, filtersApplied, verification []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		       tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		       params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		       intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		       would_block, would_review, would_prompt_inline,
-		       safety_flagged, safety_reason, reason, data_origin, context_src,
-		       duration_ms, filters_applied, verification, error_msg
-		FROM audit_log WHERE request_id = $1 AND user_id = $2
-	`, requestID, userID).Scan(
-		&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
-		&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
-		&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-		&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
-		&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
-		&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
-		&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-		&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg)
+func (s *Store) GetAuditEntry(ctx context.Context, id, userID string) (*store.AuditEntry, error) {
+	e, err := scanAuditRow(s.pool.QueryRow(ctx,
+		`SELECT `+auditColumns+` FROM audit_log WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
-	if err != nil {
-		return nil, err
+	return e, err
+}
+
+// GetAuditEntryByRequestID returns the latest canonical row for
+// (request_id, user_id) — polling endpoint contract. See sqlite for full
+// rationale.
+func (s *Store) GetAuditEntryByRequestID(ctx context.Context, requestID, userID string) (*store.AuditEntry, error) {
+	e, err := scanAuditRow(s.pool.QueryRow(ctx,
+		`SELECT `+auditColumns+` FROM audit_log
+		 WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		 ORDER BY timestamp DESC LIMIT 1`,
+		requestID, userID,
+	).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
 	}
-	e.ParamsSafe = json.RawMessage(paramsSafe)
-	if filtersApplied != nil {
-		e.FiltersApplied = json.RawMessage(filtersApplied)
+	return e, err
+}
+
+// GetAuditEntryByRequestIDAndTask returns the canonical row for an exact
+// (request_id, user_id, task_id) — inverting FindDedupCandidate's
+// precedence so the feedback handler can resolve the task's row first.
+func (s *Store) GetAuditEntryByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
+	var taskFilter string
+	args := []any{requestID, userID}
+	if taskID == "" {
+		taskFilter = "task_id IS NULL"
+	} else {
+		taskFilter = "(task_id = $3 OR task_id IS NULL)"
+		args = append(args, taskID)
 	}
-	if verification != nil {
-		e.Verification = json.RawMessage(verification)
+	q := `SELECT ` + auditColumns + ` FROM audit_log
+		WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		  AND ` + taskFilter + `
+		ORDER BY CASE WHEN task_id IS NULL THEN 1 ELSE 0 END, timestamp DESC
+		LIMIT 1`
+	e, err := scanAuditRow(s.pool.QueryRow(ctx, q, args...).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
 	}
-	return e, nil
+	return e, err
+}
+
+// FindDedupCandidate returns the canonical audit row a new
+// (request_id, user_id, task_id) should dedup against. Pre-task canonicals
+// (task_id IS NULL) win over task-scoped ones; oldest within a tier.
+func (s *Store) FindDedupCandidate(ctx context.Context, requestID, userID, taskID string) (*store.AuditEntry, error) {
+	var taskFilter string
+	args := []any{requestID, userID}
+	if taskID == "" {
+		taskFilter = "task_id IS NULL"
+	} else {
+		taskFilter = "(task_id IS NULL OR task_id = $3)"
+		args = append(args, taskID)
+	}
+	q := `SELECT ` + auditColumns + ` FROM audit_log
+		WHERE request_id = $1 AND user_id = $2 AND deduped_of IS NULL
+		  AND ` + taskFilter + `
+		ORDER BY CASE WHEN task_id IS NULL THEN 0 ELSE 1 END, timestamp ASC
+		LIMIT 1`
+	e, err := scanAuditRow(s.pool.QueryRow(ctx, q, args...).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return e, err
 }
 
 func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter store.AuditFilter) ([]*store.AuditEntry, int, error) {
@@ -840,14 +884,7 @@ func (s *Store) ListAuditEntries(ctx context.Context, userID string, filter stor
 		return nil, 0, err
 	}
 
-	dataQuery := `SELECT id, user_id, agent_id, request_id, task_id, session_id, approval_id, lease_id,
-		tool_use_id, matched_task_id, lease_task_id, timestamp, service, action,
-		params_safe, decision, outcome, policy_id, rule_id, resolution_confidence,
-		intent_verdict, used_active_task_context, used_lease_bias, used_conv_judge_resolution,
-		would_block, would_review, would_prompt_inline,
-		safety_flagged, safety_reason, reason, data_origin, context_src,
-		duration_ms, filters_applied, verification, error_msg
-		FROM audit_log ` + where +
+	dataQuery := `SELECT ` + auditColumns + ` FROM audit_log ` + where +
 		fmt.Sprintf(" ORDER BY timestamp DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, filter.Offset)
 
@@ -1290,6 +1327,24 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 
 // ── Pending Approvals ─────────────────────────────────────────────────────────
 
+// pendingApprovalColumns is the canonical SELECT list for pending_approvals
+// rows. task_id is part of the symmetric-dedup scope (post-migration 042).
+const pendingApprovalColumns = `
+	id, user_id, request_id, task_id, audit_id, approval_record_id, request_blob,
+	callback_url, status, expires_at, created_at
+`
+
+// taskScopeClauseAt returns "task_id IS NULL" when taskID == "", or
+// "task_id = $N" with N = nextPlaceholder when not. Callers append the same
+// taskID to their args slice. The placeholder index is explicit because
+// pgx does not support positional reuse like $? in sqlite.
+func taskScopeClauseAt(taskID string, nextPlaceholder int, args []any) (string, []any, int) {
+	if taskID == "" {
+		return "task_id IS NULL", args, nextPlaceholder
+	}
+	return fmt.Sprintf("task_id = $%d", nextPlaceholder), append(args, taskID), nextPlaceholder + 1
+}
+
 func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApproval) error {
 	if pa.ID == "" {
 		pa.ID = uuid.New().String()
@@ -1298,42 +1353,94 @@ func (s *Store) SavePendingApproval(ctx context.Context, pa *store.PendingApprov
 		pa.Status = "pending"
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
+		INSERT INTO pending_approvals (id, user_id, request_id, task_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.TaskID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt)
+	if err != nil && isDuplicate(err) {
+		return store.ErrConflict
+	}
 	return err
 }
 
-func (s *Store) GetPendingApproval(ctx context.Context, requestID string) (*store.PendingApproval, error) {
+func scanPendingApprovalRow(scan func(...any) error) (*store.PendingApproval, error) {
 	pa := &store.PendingApproval{}
 	var requestBlob []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
-		FROM pending_approvals WHERE request_id = $1
-	`, requestID).Scan(
-		&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
-		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
+	if err := scan(
+		&pa.ID, &pa.UserID, &pa.RequestID, &pa.TaskID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
+		&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
+	); err != nil {
 		return nil, err
 	}
 	pa.RequestBlob = json.RawMessage(requestBlob)
 	return pa, nil
 }
 
-func (s *Store) DeletePendingApproval(ctx context.Context, requestID string) error {
+// GetPendingApproval returns the unique pending approval matching
+// (request_id, user_id). Returns ErrAmbiguous when more than one row matches
+// (cross-task reuse under symmetric scope).
+func (s *Store) GetPendingApproval(ctx context.Context, requestID, userID string) (*store.PendingApproval, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE request_id = $1 AND user_id = $2
+		 LIMIT 2`,
+		requestID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, store.ErrNotFound
+	}
+	pa, err := scanPendingApprovalRow(rows.Scan)
+	if err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, store.ErrAmbiguous
+	}
+	return pa, rows.Err()
+}
+
+func (s *Store) GetPendingApprovalByTask(ctx context.Context, requestID, userID, taskID string) (*store.PendingApproval, error) {
+	args := []any{requestID, userID}
+	scope, args, _ := taskScopeClauseAt(taskID, 3, args)
+	pa, err := scanPendingApprovalRow(s.pool.QueryRow(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE request_id = $1 AND user_id = $2 AND `+scope, args...,
+	).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	return pa, err
+}
+
+func (s *Store) ListPendingApprovalsByRequestID(ctx context.Context, requestID, userID string) ([]*store.PendingApproval, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE request_id = $1 AND user_id = $2
+		 ORDER BY created_at ASC`,
+		requestID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPendingApprovals(rows)
+}
+
+func (s *Store) DeletePendingApproval(ctx context.Context, requestID, userID, taskID string) error {
+	args := []any{requestID, userID}
+	scope, args, _ := taskScopeClauseAt(taskID, 3, args)
 	_, err := s.pool.Exec(ctx,
-		`DELETE FROM pending_approvals WHERE request_id = $1`, requestID)
+		`DELETE FROM pending_approvals WHERE request_id = $1 AND user_id = $2 AND `+scope, args...)
 	return err
 }
 
 func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*store.PendingApproval, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
-		FROM pending_approvals WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW() ORDER BY created_at ASC`, userID)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW()
+		 ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1342,9 +1449,9 @@ func (s *Store) ListPendingApprovals(ctx context.Context, userID string) ([]*sto
 }
 
 func (s *Store) ListExpiredPendingApprovals(ctx context.Context) ([]*store.PendingApproval, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
-		FROM pending_approvals WHERE status = 'pending' AND expires_at < NOW()`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE status = 'pending' AND expires_at < NOW()`)
 	if err != nil {
 		return nil, err
 	}
@@ -1468,26 +1575,9 @@ func containsStr(s, sub string) bool {
 func scanAuditEntries(rows pgx.Rows) ([]*store.AuditEntry, error) {
 	var entries []*store.AuditEntry
 	for rows.Next() {
-		e := &store.AuditEntry{}
-		var paramsSafe, filtersApplied, verification []byte
-		if err := rows.Scan(
-			&e.ID, &e.UserID, &e.AgentID, &e.RequestID, &e.TaskID, &e.SessionID, &e.ApprovalID, &e.LeaseID,
-			&e.ToolUseID, &e.MatchedTaskID, &e.LeaseTaskID, &e.Timestamp,
-			&e.Service, &e.Action, &paramsSafe, &e.Decision, &e.Outcome,
-			&e.PolicyID, &e.RuleID, &e.ResolutionConfidence, &e.IntentVerdict,
-			&e.UsedActiveTaskContext, &e.UsedLeaseBias, &e.UsedConvJudgeResolution,
-			&e.WouldBlock, &e.WouldReview, &e.WouldPromptInline,
-			&e.SafetyFlagged, &e.SafetyReason, &e.Reason,
-			&e.DataOrigin, &e.ContextSrc, &e.DurationMS, &filtersApplied, &verification, &e.ErrorMsg,
-		); err != nil {
+		e, err := scanAuditRow(rows.Scan)
+		if err != nil {
 			return nil, err
-		}
-		e.ParamsSafe = json.RawMessage(paramsSafe)
-		if filtersApplied != nil {
-			e.FiltersApplied = json.RawMessage(filtersApplied)
-		}
-		if verification != nil {
-			e.Verification = json.RawMessage(verification)
 		}
 		entries = append(entries, e)
 	}
@@ -1497,44 +1587,50 @@ func scanAuditEntries(rows pgx.Rows) ([]*store.AuditEntry, error) {
 func scanPendingApprovals(rows pgx.Rows) ([]*store.PendingApproval, error) {
 	var pas []*store.PendingApproval
 	for rows.Next() {
-		pa := &store.PendingApproval{}
-		var requestBlob []byte
-		if err := rows.Scan(
-			&pa.ID, &pa.UserID, &pa.RequestID, &pa.AuditID, &pa.ApprovalRecordID, &requestBlob,
-			&pa.CallbackURL, &pa.Status, &pa.ExpiresAt, &pa.CreatedAt,
-		); err != nil {
+		pa, err := scanPendingApprovalRow(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		pa.RequestBlob = json.RawMessage(requestBlob)
 		pas = append(pas, pa)
 	}
 	return pas, rows.Err()
 }
 
-func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, status string) error {
+func (s *Store) UpdatePendingApprovalStatus(ctx context.Context, requestID, userID, taskID, status string) error {
 	// Guard: only transition from 'pending'. This prevents regressions from
 	// 'approved'/'executing' back to earlier states, which would undermine
 	// the atomicity of ClaimPendingApprovalForExecution.
+	args := []any{status, requestID, userID}
+	scope, args, _ := taskScopeClauseAt(taskID, 4, args)
 	_, err := s.pool.Exec(ctx,
-		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = 'pending'`, status, requestID)
+		`UPDATE pending_approvals SET status = $1
+		 WHERE request_id = $2 AND user_id = $3 AND `+scope+` AND status = 'pending'`,
+		args...)
 	return err
 }
 
 // UpdatePendingApprovalStatusFrom is the CAS variant.
-func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, fromStatus, toStatus string) (bool, error) {
+func (s *Store) UpdatePendingApprovalStatusFrom(ctx context.Context, requestID, userID, taskID, fromStatus, toStatus string) (bool, error) {
+	args := []any{toStatus, requestID, userID}
+	scope, args, next := taskScopeClauseAt(taskID, 4, args)
+	args = append(args, fromStatus)
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE pending_approvals SET status = $1 WHERE request_id = $2 AND status = $3`,
-		toStatus, requestID, fromStatus)
+		`UPDATE pending_approvals SET status = $1
+		 WHERE request_id = $2 AND user_id = $3 AND `+scope+fmt.Sprintf(` AND status = $%d`, next),
+		args...)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
 }
 
-func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID string) (bool, error) {
+func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID, userID, taskID string) (bool, error) {
+	args := []any{requestID, userID}
+	scope, args, _ := taskScopeClauseAt(taskID, 3, args)
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE pending_approvals SET status = 'executing', executing_since = NOW()
-		 WHERE request_id = $1 AND status = 'approved'`, requestID)
+		 WHERE request_id = $1 AND user_id = $2 AND `+scope+` AND status = 'approved'`,
+		args...)
 	if err != nil {
 		return false, err
 	}
@@ -1547,9 +1643,9 @@ func (s *Store) ClaimPendingApprovalForExecution(ctx context.Context, requestID 
 // Recovery to gate side-effects.
 func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time.Duration) ([]*store.PendingApproval, error) {
 	cutoff := time.Now().UTC().Add(-leaseTTL)
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at, created_at
-		FROM pending_approvals WHERE status = 'executing' AND executing_since IS NOT NULL AND executing_since < $1`, cutoff)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+pendingApprovalColumns+` FROM pending_approvals
+		 WHERE status = 'executing' AND executing_since IS NOT NULL AND executing_since < $1`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1561,13 +1657,17 @@ func (s *Store) ListStalledExecutingApprovals(ctx context.Context, leaseTTL time
 // 'executing' row only if it is still in 'executing' status and still past
 // the lease cutoff. The DELETE's WHERE clause is the CAS — see sqlite
 // counterpart for the rationale.
-func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID string, leaseTTL time.Duration) (bool, error) {
+func (s *Store) ClaimStalledExecutingApprovalForRecovery(ctx context.Context, requestID, userID, taskID string, leaseTTL time.Duration) (bool, error) {
 	cutoff := time.Now().UTC().Add(-leaseTTL)
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM pending_approvals
-		WHERE request_id = $1 AND status = 'executing'
-		  AND executing_since IS NOT NULL AND executing_since < $2`,
-		requestID, cutoff)
+	args := []any{requestID, userID}
+	scope, args, next := taskScopeClauseAt(taskID, 3, args)
+	args = append(args, cutoff)
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM pending_approvals
+		 WHERE request_id = $1 AND user_id = $2 AND `+scope+`
+		   AND status = 'executing'
+		   AND executing_since IS NOT NULL AND executing_since < `+fmt.Sprintf("$%d", next),
+		args...)
 	if err != nil {
 		return false, err
 	}
@@ -1622,29 +1722,66 @@ func (s *Store) CreateApprovalRecordWithPending(ctx context.Context, rec *store.
 		return err
 	}
 	if _, err = tx.Exec(ctx, `
-		INSERT INTO pending_approvals (id, user_id, request_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, pa.ID, pa.UserID, pa.RequestID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
+		INSERT INTO pending_approvals (id, user_id, request_id, task_id, audit_id, approval_record_id, request_blob, callback_url, status, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	`, pa.ID, pa.UserID, pa.RequestID, pa.TaskID, pa.AuditID, pa.ApprovalRecordID, []byte(pa.RequestBlob),
 		pa.CallbackURL, pa.Status, pa.ExpiresAt); err != nil {
+		if isDuplicate(err) {
+			err = store.ErrConflict
+		}
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
+const approvalRecordColumns = `
+	id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
+	summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
+`
+
 func (s *Store) GetApprovalRecord(ctx context.Context, id string) (*store.ApprovalRecord, error) {
-	return s.getApprovalRecord(ctx, `
-		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
-		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
-		FROM approval_records WHERE id = $1
-	`, id)
+	return s.getApprovalRecord(ctx,
+		`SELECT `+approvalRecordColumns+` FROM approval_records WHERE id = $1`, id)
 }
 
-func (s *Store) GetApprovalRecordByRequestID(ctx context.Context, requestID string) (*store.ApprovalRecord, error) {
-	return s.getApprovalRecord(ctx, `
-		SELECT id, kind, user_id, agent_id, request_id, task_id, session_id, status, surface,
-		       summary_json, payload_json, resolution_transport, expires_at, resolved_at, resolution, created_at, updated_at
-		FROM approval_records WHERE request_id = $1
-	`, requestID)
+// GetApprovalRecordByRequestID returns the unique approval record matching
+// (request_id, user_id). Returns ErrAmbiguous when more than one row matches.
+func (s *Store) GetApprovalRecordByRequestID(ctx context.Context, requestID, userID string) (*store.ApprovalRecord, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+approvalRecordColumns+` FROM approval_records
+		 WHERE request_id = $1 AND user_id = $2
+		 LIMIT 2`, requestID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, store.ErrNotFound
+	}
+	rec, err := scanApprovalRecord(rows)
+	if err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, store.ErrAmbiguous
+	}
+	return rec, rows.Err()
+}
+
+func (s *Store) GetApprovalRecordByRequestIDAndTask(ctx context.Context, requestID, userID, taskID string) (*store.ApprovalRecord, error) {
+	args := []any{requestID, userID}
+	scope, args, _ := taskScopeClauseAt(taskID, 3, args)
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+approvalRecordColumns+` FROM approval_records
+		 WHERE request_id = $1 AND user_id = $2 AND `+scope+` LIMIT 1`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, store.ErrNotFound
+	}
+	return scanApprovalRecord(rows)
 }
 
 func (s *Store) ListPendingApprovalRecords(ctx context.Context, userID string) ([]*store.ApprovalRecord, error) {
