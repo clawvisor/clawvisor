@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
+	vaultpkg "github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // registerCallbackSecret calls POST /api/callbacks/register and returns the secret.
@@ -556,6 +557,117 @@ func TestGateway_Dedup_CanceledClientStillFinalizesExecuteReservation(t *testing
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestGateway_Dedup_CanceledClientStillFinalizesMissingCredentialReservation(t *testing.T) {
+	vaultGate := &blockingMissingCredentialVault{
+		serviceID: "mock.cancel-missing-cred",
+		entered:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	adapter := newMockAdapter("mock.cancel-missing-cred", "run").withResult("ok", nil)
+	env := newTestEnvWithVaultWrapper(t, func(v vaultpkg.Vault) vaultpkg.Vault {
+		vaultGate.Vault = v
+		return vaultGate
+	}, adapter)
+	sc := newScenario(t, env, "cancel-missing-cred")
+	vaultGate.enabled = false
+	sc.activateService(t, env, "mock.cancel-missing-cred")
+
+	// Create and approve the task while the service is activated, then remove
+	// the credential. The gateway reserves execute/pending before it discovers
+	// vault.ErrNotFound during the adapter execution path.
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "test missing credential finalization",
+		"authorized_actions": []map[string]any{{
+			"service": "mock.cancel-missing-cred", "action": "run", "auto_execute": true,
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	taskID := str(t, body, "task_id")
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
+	mustStatus(t, resp, http.StatusOK)
+	if err := env.Vault.Delete(context.Background(), sc.session.UserID, "mock.cancel-missing-cred"); err != nil {
+		t.Fatalf("vault delete: %v", err)
+	}
+	vaultGate.enabled = true
+
+	reqID := fmt.Sprintf("cancel-missing-cred-%s", randSuffix())
+	reqBody, err := json.Marshal(map[string]any{
+		"request_id": reqID,
+		"service":    "mock.cancel-missing-cred",
+		"action":     "run",
+		"task_id":    taskID,
+		"reason":     "exercise canceled client missing credential finalization",
+	})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, env.url("/api/gateway/request"), bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+sc.AgentToken)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.ts.Config.Handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	select {
+	case <-vaultGate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gateway credential lookup")
+	}
+	cancel()
+	close(vaultGate.release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for canceled client request to return")
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var last *store.AuditEntry
+	for {
+		entry, err := env.Store.GetAuditEntryByRequestIDAndTask(context.Background(), reqID, sc.session.UserID, taskID)
+		if err == nil {
+			last = entry
+			if entry.Outcome == "error" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			if last == nil {
+				t.Fatalf("expected terminal audit row for canceled missing-credential request, lookup did not succeed")
+			}
+			t.Fatalf("expected canceled missing-credential reservation to finalize as error, got decision=%q outcome=%q audit_id=%s", last.Decision, last.Outcome, last.ID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type blockingMissingCredentialVault struct {
+	vaultpkg.Vault
+	serviceID string
+	enabled   bool
+	entered   chan struct{}
+	release   chan struct{}
+}
+
+func (v *blockingMissingCredentialVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {
+	if v.enabled && serviceID == v.serviceID {
+		select {
+		case v.entered <- struct{}{}:
+		default:
+		}
+		<-v.release
+		return nil, vaultpkg.ErrNotFound
+	}
+	return v.Vault.Get(ctx, userID, serviceID)
 }
 
 // TestGateway_Status_TaskScoped guards the status / long-poll endpoint

@@ -43,6 +43,14 @@ func newTestEnv(t *testing.T, extra ...adapters.Adapter) *testEnv {
 }
 
 func newTestEnvWithLLM(t *testing.T, llmCfg config.LLMConfig, extra ...adapters.Adapter) *testEnv {
+	return newTestEnvWithLLMAndVaultWrapper(t, llmCfg, nil, extra...)
+}
+
+func newTestEnvWithVaultWrapper(t *testing.T, wrapVault func(vault.Vault) vault.Vault, extra ...adapters.Adapter) *testEnv {
+	return newTestEnvWithLLMAndVaultWrapper(t, config.LLMConfig{}, wrapVault, extra...)
+}
+
+func newTestEnvWithLLMAndVaultWrapper(t *testing.T, llmCfg config.LLMConfig, wrapVault func(vault.Vault) vault.Vault, extra ...adapters.Adapter) *testEnv {
 	t.Helper()
 
 	ctx := context.Background()
@@ -55,9 +63,13 @@ func newTestEnvWithLLM(t *testing.T, llmCfg config.LLMConfig, extra ...adapters.
 	st := sqlitestore.NewStore(db)
 
 	// LocalVault with auto-generated key
-	v, err := intvault.NewLocalVault(t.TempDir()+"/vault.key", db, "sqlite")
+	localVault, err := intvault.NewLocalVault(t.TempDir()+"/vault.key", db, "sqlite")
 	if err != nil {
 		t.Fatalf("vault: %v", err)
+	}
+	var v vault.Vault = localVault
+	if wrapVault != nil {
+		v = wrapVault(v)
 	}
 
 	jwtSvc, err := auth.NewJWTService("test-secret-for-integration-tests")
