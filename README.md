@@ -239,7 +239,6 @@ All three LLM subsystems (intent verification, chain context extraction, and tas
 | `google.contacts` | Google Contacts | `list_contacts`, `get_contact`, `search_contacts` |
 | `microsoft.outlook` | Outlook | `list_messages`, `get_message`, `send_message`, `list_events`, `get_event`, `create_event` |
 | `microsoft.onedrive` | OneDrive | `list_files`, `get_file`, `download_file`, `upload_file`, `search_files` |
-
 | `github` | GitHub | `list_issues`, `get_issue`, `create_issue`, `comment_issue`, `list_prs`, `get_pr`, `list_repos`, `search_code` |
 | `slack` | Slack | `list_channels`, `get_channel`, `list_messages`, `send_message`, `search_messages`, `list_users` |
 | `notion` | Notion | `search`, `get_page`, `create_page`, `update_page`, `query_database`, `list_databases` |
