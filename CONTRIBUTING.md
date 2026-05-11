@@ -116,4 +116,4 @@ If you're adding an adapter via integration YAML rather than Go code, see [docs/
 
 ## Questions
 
-For usage questions, open a [Discussion](https://github.com/clawvisor/clawvisor/discussions) or ask in an issue. For anything sensitive, email `security@clawvisor.com`.
+For usage questions, join the [Clawvisor Discord](https://discord.gg/sZAV4xfAKd). For bug reports or feature requests, open an issue. For anything sensitive, email `security@clawvisor.com`.
