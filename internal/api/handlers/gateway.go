@@ -1065,15 +1065,27 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 			dur := int(time.Since(start).Milliseconds())
 
+			// Finalize the reservation row with a fresh background context.
+			// If the HTTP client cancels mid-adapter, r.Context() is already
+			// Done and UpdateAuditOutcome(ctx) would fail with
+			// "context canceled" — leaving the canonical stuck in "pending"
+			// and shadowing every subsequent retry through the early dedup
+			// check. The adapter call already produced a definitive
+			// result/error; finalization must record it regardless of
+			// client liveness. Five seconds covers the slowest reasonable
+			// audit write on a busy DB.
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer finalizeCancel()
+
 			if execErr != nil {
 				errMsg := execErr.Error()
-				if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "error", errMsg, dur); updErr != nil {
+				if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, "error", errMsg, dur); updErr != nil {
 					h.logger.Warn("audit outcome update failed", "err", updErr)
 				}
 				outDecision, outOutcome = "execute", "error"
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				if req.Context.CallbackURL != "" {
-					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
+					cbKey, _ := h.store.GetAgentCallbackSecret(finalizeCtx, agent.ID)
 					h.dispatchCallback(req.Context.CallbackURL, &callback.Payload{
 						Type: "request", RequestID: req.RequestID, Status: "error", Error: errMsg, AuditID: auditID,
 					}, cbKey)
@@ -1093,7 +1105,7 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			// Success — update the reservation to "executed".
 			middleware.AddLogField(ctx, "decision", "execute")
 			middleware.AddLogField(ctx, "outcome", "executed")
-			if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "executed", "", dur); updErr != nil {
+			if updErr := h.store.UpdateAuditOutcome(finalizeCtx, auditID, "executed", "", dur); updErr != nil {
 				h.logger.Warn("audit outcome update failed", "err", updErr)
 			}
 			outDecision, outOutcome = "execute", "executed"

@@ -35,13 +35,14 @@ func WaitFor[T any](
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	// Periodic poll: catches transitions even if a publish lands between
-	// our Subscribe and the producer's Publish, or if the hub drops the
-	// event under contention (non-blocking Publish skips full buffers).
-	// Without this, a tightly-racing producer can resolve the state we
-	// care about and we'd wait until timeout for an event that's already
-	// gone.
-	poll := time.NewTicker(100 * time.Millisecond)
+	// Periodic poll: safety net for events the hub drops under buffer
+	// overflow (Publish skips full per-subscriber buffers). The
+	// initial-fetch above already covers publishes that landed between
+	// the caller's last check and our Subscribe call, so this only fires
+	// for the rare drop case. One second balances responsiveness against
+	// load (one fetch/sec per waiter) — under normal conditions
+	// nothing waits long enough for it to fire at all.
+	poll := time.NewTicker(1 * time.Second)
 	defer poll.Stop()
 
 	for {

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 // registerCallbackSecret calls POST /api/callbacks/register and returns the secret.
@@ -454,7 +457,14 @@ func TestGateway_Dedup_ConcurrentSameScope_DoesNotDoubleExecuteAdapter(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first adapter execution")
 	}
-	time.Sleep(100 * time.Millisecond)
+	// No fixed sleep before releasing: every loser converges to
+	// status="executed" regardless of where it arrives in the race —
+	// reservation-conflict + reserveExecAndWaitLoser, early-dedup on the
+	// in-flight reservation + wait there, or early-dedup after
+	// UpdateAuditOutcome and immediate return. The two invariants
+	// (executeCount == 1 and every result is "executed") hold across
+	// all three paths, so a fixed sleep would only add flakiness without
+	// strengthening the assertion.
 	close(releaseExecute)
 	wg.Wait()
 
@@ -468,6 +478,83 @@ func TestGateway_Dedup_ConcurrentSameScope_DoesNotDoubleExecuteAdapter(t *testin
 	}
 	if got := adapter.executeCount(); got != 1 {
 		t.Fatalf("duplicate request_id should execute adapter once, got %d executions", got)
+	}
+}
+
+func TestGateway_Dedup_CanceledClientStillFinalizesExecuteReservation(t *testing.T) {
+	firstExecute := make(chan struct{}, 1)
+	releaseExecute := make(chan struct{})
+	adapter := newMockAdapter("mock.cancel-finalize", "run").
+		withResult("ok", nil).
+		withExecuteHook(func() {
+			select {
+			case firstExecute <- struct{}{}:
+			default:
+			}
+			<-releaseExecute
+		})
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "cancel-finalize")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.cancel-finalize", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+	taskID := sc.createApprovedTask(t, env, "mock.cancel-finalize", "run", true)
+	reqID := fmt.Sprintf("cancel-finalize-%s", randSuffix())
+
+	body, err := json.Marshal(map[string]any{
+		"request_id": reqID,
+		"service":    "mock.cancel-finalize",
+		"action":     "run",
+		"task_id":    taskID,
+		"reason":     "exercise canceled client finalization",
+	})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, env.url("/api/gateway/request"), bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+sc.AgentToken)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.ts.Config.Handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	select {
+	case <-firstExecute:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for adapter execution")
+	}
+	cancel()
+	close(releaseExecute)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for canceled client request to return")
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var last *store.AuditEntry
+	for {
+		entry, err := env.Store.GetAuditEntryByRequestIDAndTask(context.Background(), reqID, sc.session.UserID, taskID)
+		if err == nil {
+			last = entry
+			if entry.Outcome == "executed" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			if last == nil {
+				t.Fatalf("expected terminal audit row for canceled request, lookup did not succeed")
+			}
+			t.Fatalf("expected canceled request reservation to finalize as executed, got decision=%q outcome=%q audit_id=%s", last.Decision, last.Outcome, last.ID)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
