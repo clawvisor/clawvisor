@@ -578,7 +578,7 @@ func loadOrCreatePendingRuntimeApproval(ctx context.Context, st store.Store, dra
 	if draft == nil || draft.RequestID == nil || strings.TrimSpace(*draft.RequestID) == "" {
 		return nil, store.ErrNotFound
 	}
-	rec, err := st.GetApprovalRecordByRequestID(ctx, *draft.RequestID)
+	rec, err := st.GetApprovalRecordByRequestID(ctx, *draft.RequestID, draft.UserID)
 	switch {
 	case err == nil && rec != nil && rec.Status == "pending":
 		return rec, nil

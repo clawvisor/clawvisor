@@ -56,7 +56,7 @@ func TestRequestApprovalAllowSessionPromotesToActiveTask(t *testing.T) {
 		t.Fatal("expected promoted task scope to auto-execute")
 	}
 
-	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID)
+	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID, sc.session.UserID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRequestApprovalAllowAlwaysPromotesToStandingTask(t *testing.T) {
 		t.Fatalf("expected no expiry for standing promoted task, got %v", promotedTask.ExpiresAt)
 	}
 
-	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID)
+	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID, sc.session.UserID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRequestApprovalDefaultRemainsAllowOnce(t *testing.T) {
 		t.Fatalf("expected no promoted task for allow_once, got %v", body["task_id"])
 	}
 
-	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID)
+	rec, err := env.Store.GetApprovalRecordByRequestID(context.Background(), reqID, sc.session.UserID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}

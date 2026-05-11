@@ -781,6 +781,7 @@ func TestRuntimeProxyDeterministicMatchBeatsLeaseBias(t *testing.T) {
 
 type runtimeTestSession struct {
 	id     string
+	userID string
 	secret string
 }
 
@@ -799,7 +800,7 @@ func createRuntimeSession(t *testing.T, st store.Store, sessionID, userID, agent
 	if err := st.CreateRuntimeSession(context.Background(), sess); err != nil {
 		t.Fatalf("CreateRuntimeSession: %v", err)
 	}
-	return runtimeTestSession{id: sessionID, secret: secret}
+	return runtimeTestSession{id: sessionID, userID: userID, secret: secret}
 }
 
 func seedRuntimePrincipal(t *testing.T, st store.Store) (string, string) {

@@ -59,6 +59,9 @@ func (h *OverviewHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Params:    blob.Params,
 			Reason:    blob.Reason,
 		}
+		if pa.TaskID != nil {
+			qa.TaskID = *pa.TaskID
+		}
 		if blob.Verification != nil {
 			b, _ := json.Marshal(blob.Verification)
 			var m map[string]any

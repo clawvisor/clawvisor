@@ -337,7 +337,7 @@ func (n *Notifier) SendApprovalRequest(ctx context.Context, req notify.ApprovalR
 	text := formatApprovalMessage(req)
 
 	// Generate callback tokens for inline buttons.
-	approveID, denyID, tokenErr := n.cbTokens.Generate("approval", req.RequestID, req.UserID, chatID, 6*time.Minute)
+	approveID, denyID, tokenErr := n.cbTokens.Generate("approval", req.RequestID, req.UserID, req.TaskID, chatID, 6*time.Minute)
 	var keyboard any
 	if tokenErr == nil {
 		keyboard = inlineKeyboard([][]inlineButton{{
@@ -398,7 +398,7 @@ func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskA
 
 	text := formatTaskApprovalMessage(req)
 
-	approveID, denyID, tokenErr := n.cbTokens.Generate("task", req.TaskID, req.UserID, chatID, 6*time.Minute)
+	approveID, denyID, tokenErr := n.cbTokens.Generate("task", req.TaskID, req.UserID, "", chatID, 6*time.Minute)
 	var keyboard any
 	if tokenErr == nil {
 		keyboard = inlineKeyboard([][]inlineButton{{
@@ -432,7 +432,7 @@ func (n *Notifier) SendScopeExpansionRequest(ctx context.Context, req notify.Sco
 
 	text := formatScopeExpansionMessage(req)
 
-	approveID, denyID, tokenErr := n.cbTokens.Generate("scope_expansion", req.TaskID, req.UserID, chatID, 6*time.Minute)
+	approveID, denyID, tokenErr := n.cbTokens.Generate("scope_expansion", req.TaskID, req.UserID, "", chatID, 6*time.Minute)
 	var keyboard any
 	if tokenErr == nil {
 		keyboard = inlineKeyboard([][]inlineButton{{
@@ -474,7 +474,7 @@ func (n *Notifier) SendConnectionRequest(ctx context.Context, req notify.Connect
 
 	text := formatConnectionRequestMessage(req)
 
-	approveID, denyID, tokenErr := n.cbTokens.Generate("connection", req.ConnectionID, req.UserID, chatID, 6*time.Minute)
+	approveID, denyID, tokenErr := n.cbTokens.Generate("connection", req.ConnectionID, req.UserID, "", chatID, 6*time.Minute)
 	var keyboard any
 	if tokenErr == nil {
 		keyboard = inlineKeyboard([][]inlineButton{{

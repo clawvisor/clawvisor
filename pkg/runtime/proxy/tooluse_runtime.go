@@ -683,7 +683,7 @@ func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHoo
 
 func (s *Server) ensureHeldToolUseApprovalWithKind(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any, approvalKind string, judgment runtimepolicy.RuntimeContextJudgment, reason string) (*store.ApprovalRecord, *review.HeldApproval, string) {
 	requestID := "runtime-tooluse:" + session.ID + ":" + tu.ID
-	rec, err := hooks.Store.GetApprovalRecordByRequestID(ctx, requestID)
+	rec, err := hooks.Store.GetApprovalRecordByRequestID(ctx, requestID, session.UserID)
 	if err != nil && err != store.ErrNotFound {
 		return nil, nil, "Clawvisor could not create the runtime approval needed for this tool call."
 	}

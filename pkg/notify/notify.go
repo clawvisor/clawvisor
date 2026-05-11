@@ -22,8 +22,13 @@ type Notifier interface {
 
 // ApprovalRequest carries the data needed to ask the user to approve or deny a gateway request.
 type ApprovalRequest struct {
-	PendingID    string
-	RequestID    string
+	PendingID string
+	RequestID string
+	// TaskID disambiguates sibling pending approvals that share a request_id
+	// under symmetric dedup. Empty for pre-task approvals. Notifiers MUST
+	// propagate this onto the CallbackDecision they emit so the resolver
+	// hits the right pending row.
+	TaskID       string
 	UserID       string
 	AgentName    string
 	Service      string
@@ -128,7 +133,11 @@ type CallbackDecision struct {
 	Type     string // "approval", "task", "scope_expansion", "connection"
 	Action   string // "approve" or "deny"
 	TargetID string
-	UserID   string
+	// TaskID disambiguates a Type=="approval" decision when two pending
+	// approvals share request_id under symmetric dedup. Empty for the
+	// pre-task scope and for non-"approval" decision types.
+	TaskID string
+	UserID string
 }
 
 // PollingDecrementer is implemented by notifiers that run callback polling

@@ -73,7 +73,7 @@ func TestReactivatePendingRequest_RejectsCrossUserHijack(t *testing.T) {
 	// but victim's request_id. Must be a no-op.
 	h.reactivatePendingRequest(ctx, attacker.ID, "req-victim-1")
 
-	got, err := st.GetPendingApproval(ctx, "req-victim-1")
+	got, err := st.GetPendingApproval(ctx, "req-victim-1", victim.ID)
 	if err != nil {
 		t.Fatalf("victim's pending approval was deleted by cross-user reactivation: %v", err)
 	}

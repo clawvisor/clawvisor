@@ -116,6 +116,14 @@ func (s *localTestStore) GetAuditEntryByRequestID(_ context.Context, _, _ string
 	return nil, store.ErrNotFound
 }
 
+func (s *localTestStore) FindDedupCandidate(_ context.Context, _, _, _ string) (*store.AuditEntry, error) {
+	return nil, store.ErrNotFound
+}
+
+func (s *localTestStore) GetAuditEntryByRequestIDAndTask(_ context.Context, _, _, _ string) (*store.AuditEntry, error) {
+	return nil, store.ErrNotFound
+}
+
 func (s *localTestStore) ListChainFacts(_ context.Context, _, _ string, _ int) ([]*store.ChainFact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

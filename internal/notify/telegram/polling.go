@@ -348,6 +348,7 @@ func (n *Notifier) handleCallbackQuery(ctx context.Context, ps *pollingSession, 
 		Type:     entry.Type,
 		Action:   action,
 		TargetID: entry.TargetID,
+		TaskID:   entry.TaskID,
 		UserID:   entry.UserID,
 	}
 	select {

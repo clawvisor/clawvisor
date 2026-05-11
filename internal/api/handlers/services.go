@@ -149,7 +149,7 @@ func (h *ServicesHandler) checkPendingRequestOwnership(w http.ResponseWriter, r 
 	if pendingReqID == "" {
 		return true
 	}
-	pa, err := h.st.GetPendingApproval(r.Context(), pendingReqID)
+	pa, err := h.st.GetPendingApproval(r.Context(), pendingReqID, userID)
 	if err != nil || pa.UserID != userID {
 		h.logger.Warn("rejected oauth init with cross-user pending_request_id",
 			"caller_user_id", userID,
@@ -1337,7 +1337,7 @@ func (h *ServicesHandler) resolveIdentityAlias(
 
 // reactivatePendingRequest re-executes a pending request after service activation.
 func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, requestID string) {
-	pa, err := h.st.GetPendingApproval(ctx, requestID)
+	pa, err := h.st.GetPendingApproval(ctx, requestID, userID)
 	if err != nil {
 		h.logger.Warn("reactivate: pending approval not found", "request_id", requestID, "err", err)
 		return
@@ -1373,7 +1373,11 @@ func (h *ServicesHandler) reactivatePendingRequest(ctx context.Context, userID, 
 	}
 
 	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, 0)
-	_ = h.st.DeletePendingApproval(ctx, requestID)
+	paTask := ""
+	if pa.TaskID != nil {
+		paTask = *pa.TaskID
+	}
+	_ = h.st.DeletePendingApproval(ctx, requestID, userID, paTask)
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		var cbResult *adapters.Result

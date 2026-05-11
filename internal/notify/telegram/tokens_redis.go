@@ -15,12 +15,13 @@ const redisCBTokenPrefix = "clawvisor:tgcb:"
 
 // callbackEntryJSON is the JSON form for Redis storage.
 type callbackEntryJSON struct {
-	Type       string `json:"type"`
-	TargetID   string `json:"target_id"`
-	UserID     string `json:"user_id"`
-	ChatID     string `json:"chat_id"`
-	ExpiresAt  int64  `json:"expires_at"`
-	SiblingID  string `json:"sibling_id"`
+	Type      string `json:"type"`
+	TargetID  string `json:"target_id"`
+	TaskID    string `json:"task_id,omitempty"`
+	UserID    string `json:"user_id"`
+	ChatID    string `json:"chat_id"`
+	ExpiresAt int64  `json:"expires_at"`
+	SiblingID string `json:"sibling_id"`
 }
 
 // redisCallbackTokenStore stores Telegram callback tokens in Redis for
@@ -34,7 +35,7 @@ func NewRedisCallbackTokenStore(rdb *redis.Client) CallbackTokenStorer {
 	return &redisCallbackTokenStore{rdb: rdb}
 }
 
-func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, chatID string, ttl time.Duration) (string, string, error) {
+func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, taskID, chatID string, ttl time.Duration) (string, string, error) {
 	approveID, err := redisRandomShortID()
 	if err != nil {
 		return "", "", err
@@ -49,6 +50,7 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, chatID s
 	approveData, err := json.Marshal(callbackEntryJSON{
 		Type:      entryType,
 		TargetID:  targetID,
+		TaskID:    taskID,
 		UserID:    userID,
 		ChatID:    chatID,
 		ExpiresAt: expiresAt,
@@ -60,6 +62,7 @@ func (s *redisCallbackTokenStore) Generate(entryType, targetID, userID, chatID s
 	denyData, err := json.Marshal(callbackEntryJSON{
 		Type:      entryType,
 		TargetID:  targetID,
+		TaskID:    taskID,
 		UserID:    userID,
 		ChatID:    chatID,
 		ExpiresAt: expiresAt,
@@ -112,6 +115,7 @@ func (s *redisCallbackTokenStore) Consume(shortID string) (*callbackEntry, error
 	return &callbackEntry{
 		Type:      j.Type,
 		TargetID:  j.TargetID,
+		TaskID:    j.TaskID,
 		UserID:    j.UserID,
 		ChatID:    j.ChatID,
 		ExpiresAt: time.UnixMilli(j.ExpiresAt),

@@ -316,7 +316,7 @@ func credentialReference(value string) string {
 
 func ensureRuntimeCredentialReview(ctx context.Context, st store.Store, session *store.RuntimeSession, host, headerName string, detection *headerCredentialDetection) (*store.ApprovalRecord, error) {
 	requestID := runtimeCredentialReviewRequestID(session.ID, host, headerName, detection)
-	rec, err := st.GetApprovalRecordByRequestID(ctx, requestID)
+	rec, err := st.GetApprovalRecordByRequestID(ctx, requestID, session.UserID)
 	if err == nil {
 		return rec, nil
 	}

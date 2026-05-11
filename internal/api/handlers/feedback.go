@@ -65,7 +65,21 @@ func (h *FeedbackHandler) ReportBug(w http.ResponseWriter, r *http.Request) {
 	var auditEntry *store.AuditEntry
 	var task *store.Task
 	if req.RequestID != "" {
-		if e, err := h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID); err == nil {
+		// When the agent supplied a task_id, scope the audit lookup to it —
+		// otherwise under symmetric dedup a sibling task's canonical for the
+		// same request_id could be attached to the bug report, misleading the
+		// reviewer. GetAuditEntryByRequestIDAndTask falls back to the
+		// pre-task canonical when no task-scoped row exists.
+		var (
+			e   *store.AuditEntry
+			err error
+		)
+		if req.TaskID != "" {
+			e, err = h.store.GetAuditEntryByRequestIDAndTask(ctx, req.RequestID, agent.UserID, req.TaskID)
+		} else {
+			e, err = h.store.GetAuditEntryByRequestID(ctx, req.RequestID, agent.UserID)
+		}
+		if err == nil {
 			auditEntry = e
 		}
 	}

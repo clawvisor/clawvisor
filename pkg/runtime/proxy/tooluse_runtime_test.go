@@ -776,7 +776,7 @@ func TestStreamToolUseBlockRewritesBlockedAnthropicSSE(t *testing.T) {
 	if !strings.Contains(string(body), "Clawvisor paused:") {
 		t.Fatalf("expected blocked Anthropc SSE to contain approval prompt, got %s", string(body))
 	}
-	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":toolu_1")
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":toolu_1", session.userID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}
@@ -848,7 +848,7 @@ func TestStreamToolUseBlockRewritesBlockedOpenAISSE(t *testing.T) {
 	if !strings.Contains(string(body), "Clawvisor paused:") {
 		t.Fatalf("expected blocked OpenAI SSE to contain approval prompt, got %s", string(body))
 	}
-	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_1")
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_1", session.userID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}
@@ -920,7 +920,7 @@ func TestStreamToolUseBlockRewritesBlockedOpenAIChatSSE(t *testing.T) {
 	if !strings.Contains(string(body), "Clawvisor paused:") {
 		t.Fatalf("expected blocked OpenAI chat SSE to contain approval prompt, got %s", string(body))
 	}
-	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_2")
+	rec, err := st.GetApprovalRecordByRequestID(ctx, "runtime-tooluse:"+session.id+":call_2", session.userID)
 	if err != nil {
 		t.Fatalf("GetApprovalRecordByRequestID: %v", err)
 	}

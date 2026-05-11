@@ -16,8 +16,11 @@ var (
 
 // callbackEntry is one pair of approve/deny tokens for a single target.
 type callbackEntry struct {
-	Type      string // "approval", "task", "scope_expansion", "connection"
-	TargetID  string
+	Type     string // "approval", "task", "scope_expansion", "connection"
+	TargetID string
+	// TaskID is the symmetric-dedup disambiguator for Type=="approval".
+	// Empty for the pre-task scope and for non-approval entry types.
+	TaskID    string
 	UserID    string
 	ChatID    string
 	ExpiresAt time.Time
@@ -43,7 +46,7 @@ func newCallbackTokenStore() *callbackTokenStore {
 
 // Generate creates approve and deny tokens for a target.
 // Returns (approveShortID, denyShortID, error).
-func (s *callbackTokenStore) Generate(entryType, targetID, userID, chatID string, ttl time.Duration) (string, string, error) {
+func (s *callbackTokenStore) Generate(entryType, targetID, userID, taskID, chatID string, ttl time.Duration) (string, string, error) {
 	approveID, err := randomShortID()
 	if err != nil {
 		return "", "", err
@@ -56,6 +59,7 @@ func (s *callbackTokenStore) Generate(entryType, targetID, userID, chatID string
 	entry := &callbackEntry{
 		Type:      entryType,
 		TargetID:  targetID,
+		TaskID:    taskID,
 		UserID:    userID,
 		ChatID:    chatID,
 		ExpiresAt: time.Now().Add(ttl),

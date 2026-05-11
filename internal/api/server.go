@@ -1088,10 +1088,15 @@ func (s *Server) consumeNotifierDecisions(ctx context.Context, ch <-chan notify.
 			var err error
 			switch d.Type {
 			case "approval":
+				// d.TaskID disambiguates sibling pending approvals that share
+				// request_id under symmetric dedup. Telegram callback tokens
+				// carry it through; older clients leave it empty, in which
+				// case the handlers fall back to the request_id-only lookup
+				// and surface ErrAmbiguous if more than one row matches.
 				if d.Action == "approve" {
-					err = s.approvalsHandler.ApproveByRequestID(ctx, d.TargetID, d.UserID)
+					err = s.approvalsHandler.ApproveByRequestID(ctx, d.TargetID, d.UserID, d.TaskID)
 				} else {
-					err = s.approvalsHandler.DenyByRequestID(ctx, d.TargetID, d.UserID)
+					err = s.approvalsHandler.DenyByRequestID(ctx, d.TargetID, d.UserID, d.TaskID)
 				}
 			case "task":
 				if d.Action == "approve" {

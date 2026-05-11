@@ -99,6 +99,84 @@ func (h *ApprovalsHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resolvePendingForRequest returns the single pending approval matching
+// (request_id, user_id). When the optional ?task_id= query param is present
+// it disambiguates by exact task scope; otherwise the unique row is returned,
+// or — if more than one row matches — the helper writes 409 AMBIGUOUS with
+// candidate task_ids and returns nil (caller should return). Returning
+// ([nil, false]) means the helper already wrote a response.
+//
+// Symmetric dedup permits two pending approvals to share a request_id when
+// they belong to different tasks; the HTTP routes deliberately stay
+// request_id-keyed for backwards compatibility, so disambiguation only
+// surfaces when it actually has to.
+func (h *ApprovalsHandler) resolvePendingForRequest(w http.ResponseWriter, r *http.Request, userID string) (*store.PendingApproval, bool) {
+	requestID := r.PathValue("request_id")
+	taskID := r.URL.Query().Get("task_id")
+	if taskID != "" {
+		pa, err := h.st.GetPendingApprovalByTask(r.Context(), requestID, userID, taskID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+				return nil, false
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+			return nil, false
+		}
+		return pa, true
+	}
+	pa, err := h.st.GetPendingApproval(r.Context(), requestID, userID)
+	if err == nil {
+		return pa, true
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
+		return nil, false
+	}
+	if errors.Is(err, store.ErrAmbiguous) {
+		h.writeAmbiguousPending(w, r.Context(), requestID, userID)
+		return nil, false
+	}
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+	return nil, false
+}
+
+// writeAmbiguousPending emits the 409 response shape that clients retry with
+// an explicit ?task_id= query param. The candidate list comes straight from
+// the store; if the lookup fails we fall back to a generic 409.
+func (h *ApprovalsHandler) writeAmbiguousPending(w http.ResponseWriter, ctx context.Context, requestID, userID string) {
+	candidates, err := h.st.ListPendingApprovalsByRequestID(ctx, requestID, userID)
+	if err != nil {
+		writeError(w, http.StatusConflict, "AMBIGUOUS", "multiple pending approvals share this request_id; retry with ?task_id=<id>")
+		return
+	}
+	taskIDs := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		t := ""
+		if c.TaskID != nil {
+			t = *c.TaskID
+		}
+		taskIDs = append(taskIDs, t)
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":              "multiple pending approvals share this request_id",
+		"code":               "AMBIGUOUS",
+		"hint":               "retry with ?task_id=<one of candidate_task_ids>",
+		"request_id":         requestID,
+		"candidate_task_ids": taskIDs,
+	})
+}
+
+// paTaskID extracts a PendingApproval's task_id for use in scope-keyed
+// mutations. Returns "" when TaskID is nil (the pre-task scope, which maps
+// to task_id IS NULL in the store).
+func paTaskID(pa *store.PendingApproval) string {
+	if pa == nil || pa.TaskID == nil {
+		return ""
+	}
+	return *pa.TaskID
+}
+
 // Approve marks a pending request as approved. The agent is expected to call
 // POST /api/gateway/request/{request_id}/execute to claim the result. If the
 // agent registered a callback URL, a notification is also delivered there.
@@ -112,16 +190,11 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestID := r.PathValue("request_id")
-	pa, err := h.st.GetPendingApproval(r.Context(), requestID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+	pa, ok := h.resolvePendingForRequest(w, r, user.ID)
+	if !ok {
 		return
 	}
+	requestID := pa.RequestID
 
 	if pa.UserID != user.ID {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your approval")
@@ -166,10 +239,23 @@ func (h *ApprovalsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ApproveByRequestID is the core approve logic, callable from both the HTTP handler
-// and the Telegram callback decision consumer.
-func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, userID string) error {
-	pa, err := h.st.GetPendingApproval(ctx, requestID)
+// ApproveByRequestID is the core approve logic, callable from both the HTTP
+// handler and the Telegram callback decision consumer. taskID is the
+// symmetric-dedup disambiguator; pass "" when the caller has no task scope
+// (pre-task approvals, legacy clients). When taskID is empty and more than
+// one pending approval shares (request_id, user_id) the store returns
+// ErrAmbiguous and this function propagates it — callers should surface that
+// back rather than approving an arbitrary candidate.
+func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, userID, taskID string) error {
+	var (
+		pa  *store.PendingApproval
+		err error
+	)
+	if taskID != "" {
+		pa, err = h.st.GetPendingApprovalByTask(ctx, requestID, userID, taskID)
+	} else {
+		pa, err = h.st.GetPendingApproval(ctx, requestID, userID)
+	}
 	if err != nil {
 		return err
 	}
@@ -200,7 +286,7 @@ func (h *ApprovalsHandler) ApproveByRequestID(ctx context.Context, requestID, us
 // approval status (which must be one of "denied" / "expired" — see
 // validateApprovalRecordTransition).
 func (h *ApprovalsHandler) revertOrTerminate(ctx context.Context, pa *store.PendingApproval, reason string) {
-	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "approved", pa.Status)
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, pa.UserID, paTaskID(pa), "approved", pa.Status)
 	if err != nil {
 		h.logger.Error("failed to revert approval status",
 			"request_id", pa.RequestID, "reason", reason, "err", err)
@@ -237,7 +323,7 @@ var errApprovalAlreadyResolved = errors.New("approval is no longer pending")
 // Returns errApprovalAlreadyResolved if the row was resolved by another
 // caller before our CAS landed; HTTP handlers translate that to 409.
 func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingApproval, resolution string) (*store.Task, error) {
-	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, "pending", "approved")
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, pa.RequestID, pa.UserID, paTaskID(pa), "pending", "approved")
 	if err != nil {
 		h.logger.Error("failed to update approval status", "request_id", pa.RequestID, "err", err)
 		return nil, err
@@ -271,7 +357,7 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 			notifyText = "✅ <b>Approved</b> — session task created and waiting for agent execution."
 		}
 	}
-	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, notifyText)
+	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
 	h.decrementNotifierPolling(pa.UserID)
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
@@ -304,8 +390,16 @@ func (h *ApprovalsHandler) markApproved(ctx context.Context, pa *store.PendingAp
 // The status update is a CAS from "pending" → "denied", so a concurrent
 // Approve against the same request_id can't co-resolve. If the row has
 // already been resolved (approved, denied, or executing), this is a no-op.
-func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userID string) error {
-	pa, err := h.st.GetPendingApproval(ctx, requestID)
+func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userID, callerTaskID string) error {
+	var (
+		pa  *store.PendingApproval
+		err error
+	)
+	if callerTaskID != "" {
+		pa, err = h.st.GetPendingApprovalByTask(ctx, requestID, userID, callerTaskID)
+	} else {
+		pa, err = h.st.GetPendingApproval(ctx, requestID, userID)
+	}
 	if err != nil {
 		return err
 	}
@@ -313,7 +407,8 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 		return errors.New("not your approval")
 	}
 
-	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, requestID, "pending", "denied")
+	taskID := paTaskID(pa)
+	won, err := h.st.UpdatePendingApprovalStatusFrom(ctx, requestID, userID, taskID, "pending", "denied")
 	if err != nil {
 		return err
 	}
@@ -330,11 +425,11 @@ func (h *ApprovalsHandler) DenyByRequestID(ctx context.Context, requestID, userI
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, "denied", "", 0); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
-	if err := h.st.DeletePendingApproval(ctx, requestID); err != nil {
+	if err := h.st.DeletePendingApproval(ctx, requestID, userID, taskID); err != nil {
 		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
-	h.updateNotificationMsg(ctx, "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
+	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
 	h.publishQueueAndAudit(userID, pa.AuditID)
 
@@ -363,13 +458,8 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := r.PathValue("request_id")
-	pa, err := h.st.GetPendingApproval(r.Context(), requestID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "pending approval not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get pending approval")
+	pa, ok := h.resolvePendingForRequest(w, r, user.ID)
+	if !ok {
 		return
 	}
 
@@ -378,7 +468,8 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	won, err := h.st.UpdatePendingApprovalStatusFrom(r.Context(), requestID, "pending", "denied")
+	taskID := paTaskID(pa)
+	won, err := h.st.UpdatePendingApprovalStatusFrom(r.Context(), requestID, user.ID, taskID, "pending", "denied")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update approval")
 		return
@@ -397,11 +488,11 @@ func (h *ApprovalsHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	if err := h.st.UpdateAuditOutcome(r.Context(), pa.AuditID, "denied", "", 0); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
-	if err := h.st.DeletePendingApproval(r.Context(), requestID); err != nil {
+	if err := h.st.DeletePendingApproval(r.Context(), requestID, user.ID, taskID); err != nil {
 		h.logger.Error("failed to delete pending approval", "request_id", requestID, "err", err)
 	}
 
-	h.updateNotificationMsg(r.Context(), "approval", requestID, pa.UserID, "❌ <b>Denied</b> — request rejected.")
+	h.updateNotificationMsg(r.Context(), "approval", approvalNotifyTargetID(requestID, taskID), pa.UserID, "❌ <b>Denied</b> — request rejected.")
 	h.decrementNotifierPolling(pa.UserID)
 	h.publishQueueAndAudit(user.ID, pa.AuditID)
 
@@ -448,7 +539,7 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	if err := h.st.UpdateAuditOutcome(ctx, pa.AuditID, outcome, errMsg, dur); err != nil {
 		h.logger.Error("failed to update audit outcome", "audit_id", pa.AuditID, "err", err)
 	}
-	if err := h.st.DeletePendingApproval(ctx, pa.RequestID); err != nil {
+	if err := h.st.DeletePendingApproval(ctx, pa.RequestID, pa.UserID, paTaskID(pa)); err != nil {
 		h.logger.Error("failed to delete pending approval", "request_id", pa.RequestID, "err", err)
 	}
 
@@ -456,7 +547,7 @@ func (h *ApprovalsHandler) executeApproval(ctx context.Context, pa *store.Pendin
 	if errMsg != "" {
 		notifyText = "✅ <b>Approved</b> — execution failed: " + errMsg
 	}
-	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, notifyText)
+	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, notifyText)
 
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		var cbResult *adapters.Result
@@ -512,11 +603,11 @@ func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
 func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store.PendingApproval, reason, telegramMsg string) {
 	h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
 	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
-	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, telegramMsg)
+	h.updateNotificationMsg(ctx, "approval", approvalNotifyTargetID(pa.RequestID, paTaskID(pa)), pa.UserID, telegramMsg)
 	// For the regular expired path the caller relies on us to delete the
 	// row; for the stranded path the CAS DELETE already happened, so the
 	// best-effort DELETE here is a no-op (zero rows affected).
-	_ = h.st.DeletePendingApproval(ctx, pa.RequestID)
+	_ = h.st.DeletePendingApproval(ctx, pa.RequestID, pa.UserID, paTaskID(pa))
 	if pa.CallbackURL != nil && *pa.CallbackURL != "" {
 		var blob pendingRequestBlob
 		_ = json.Unmarshal(pa.RequestBlob, &blob)
@@ -558,7 +649,7 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		h.logger.Warn("expiry cleanup: stalled-executing list failed", "err", err)
 	} else {
 		for _, pa := range stalled {
-			won, err := h.st.ClaimStalledExecutingApprovalForRecovery(ctx, pa.RequestID, executingLeaseTTL)
+			won, err := h.st.ClaimStalledExecutingApprovalForRecovery(ctx, pa.RequestID, pa.UserID, paTaskID(pa), executingLeaseTTL)
 			if err != nil {
 				h.logger.Warn("expiry cleanup: stalled-executing claim failed", "request_id", pa.RequestID, "err", err)
 				continue
@@ -609,7 +700,7 @@ func (h *ApprovalsHandler) resolveCanonicalApproval(ctx context.Context, pa *sto
 	var rec *store.ApprovalRecord
 	if approvalID == nil {
 		var err error
-		rec, err = h.st.GetApprovalRecordByRequestID(ctx, pa.RequestID)
+		rec, err = h.st.GetApprovalRecordByRequestID(ctx, pa.RequestID, pa.UserID)
 		if err == nil {
 			approvalID = &rec.ID
 		}

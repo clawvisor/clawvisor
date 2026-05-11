@@ -20,7 +20,11 @@ func NewQueueHandler(st store.Store) *QueueHandler {
 }
 
 type queueApproval struct {
-	RequestID    string         `json:"request_id"`
+	RequestID string `json:"request_id"`
+	// TaskID disambiguates when two pending approvals share a request_id
+	// across tasks under symmetric dedup. Clients must round-trip this on
+	// approve/deny (?task_id=...) to avoid the 409 AMBIGUOUS path.
+	TaskID       string         `json:"task_id,omitempty"`
 	AuditID      string         `json:"audit_id"`
 	Service      string         `json:"service"`
 	Action       string         `json:"action"`
@@ -76,6 +80,9 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 			Action:    blob.Action,
 			Params:    blob.Params,
 			Reason:    blob.Reason,
+		}
+		if pa.TaskID != nil {
+			qa.TaskID = *pa.TaskID
 		}
 		if blob.Verification != nil {
 			b, _ := json.Marshal(blob.Verification)
