@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.5](https://github.com/clawvisor/clawvisor/compare/v0.9.4...v0.9.5) (2026-05-11)
+
+
+### Features
+
+* Microsoft 365 integration (Outlook, OneDrive) with full OAuth2 support ([#344](https://github.com/clawvisor/clawvisor/issues/344)) ([87a4adf](https://github.com/clawvisor/clawvisor/commit/87a4adf678cd0263efe5bb6a1d6c49bcfb5f8343))
+
+
+### Bug Fixes
+
+* **linear:** map issue_id to  and add strict assignee filters ([#358](https://github.com/clawvisor/clawvisor/issues/358)) ([3b5616b](https://github.com/clawvisor/clawvisor/commit/3b5616b7120c3900cd8c2a2919496a5438011a87))
+* **llm:** retry on Vertex Gemini cache-expired (400 INVALID_ARGUMENT) ([#360](https://github.com/clawvisor/clawvisor/issues/360)) ([ccf506e](https://github.com/clawvisor/clawvisor/commit/ccf506ebf7d830edc80c24059a845c0d994c9023))
+* **mcp:** url-encode service param to prevent query string injection ([#363](https://github.com/clawvisor/clawvisor/issues/363)) ([d637dc0](https://github.com/clawvisor/clawvisor/commit/d637dc0667f2304da8489c21fc43dfd94bcee62a))
+
 ## [0.9.4](https://github.com/clawvisor/clawvisor/compare/v0.9.3...v0.9.4) (2026-05-07)
 
 
