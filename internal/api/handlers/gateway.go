@@ -260,8 +260,20 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		// under symmetric scope doesn't shadow our retry's pre-task or
 		// same-task winner. Using the request_id-only getter here would
 		// silently return that sibling's "latest canonical" instead.
+		//
+		// If the canonical is an in-flight adapter reservation
+		// (decision=="execute", outcome=="pending"), wait for it to
+		// resolve so the deduped response reflects the actual outcome,
+		// not the transient "pending" reservation. Approval-pending and
+		// other long-lived states return immediately.
 		if existing, err := h.store.FindDedupCandidate(ctx, req.RequestID, agent.UserID, req.TaskID); err == nil {
-			writeGatewayStatusResponse(w, existing, gatewayStatusResponseOptions{
+			final := existing
+			if existing.Decision == "execute" && existing.Outcome == "pending" && h.eventHub != nil {
+				if resolved := h.waitForRequestResolution(ctx, req.RequestID, agent.UserID, req.TaskID, longPollDeadline(r)); resolved != nil {
+					final = resolved
+				}
+			}
+			writeGatewayStatusResponse(w, final, gatewayStatusResponseOptions{
 				Deduped: true,
 				Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
 			})
@@ -479,10 +491,21 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			middleware.AddLogField(ctx, "outcome", "pending")
 			e := baseEntry("approve", "pending", nil)
 			e.DurationMS = int(time.Since(start).Milliseconds())
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			winner, logErr := h.logAuditCanonical(ctx, e)
+			if logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, "")
+			if winner != nil {
+				// Same-scope race (pre-task scope: task_id IS NULL).
+				// Another worker already enqueued the approval; surface
+				// its row without creating a duplicate pending.
+				writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
+					Deduped: true,
+					Message: "Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.",
+				})
+				return
+			}
 			expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
 			blob := buildRequestBlob(req, agent)
 			reason := "raw request needs review before execution"
@@ -858,6 +881,19 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				// Reservation before the adapter call (see the cloud branch
+				// below for the full rationale). Local-executor side effects
+				// — file writes, subprocess spawns — are no more idempotent
+				// than a cloud adapter's, so the double-execute window has
+				// to close here too.
+				localReservation := baseEntry("execute", "pending", taskIDPtr)
+				if verdict != nil {
+					localReservation.Verification = intent.MarshalVerdict(verdict)
+				}
+				if !h.reserveExecAndWaitLoser(w, r, localReservation) {
+					return
+				}
+
 				result, execErr = h.localExec.Execute(ctx, agent.UserID, serviceType, req.Action, req.Params)
 			} else {
 				// ── Intent verification ──────────────────────────────────
@@ -984,6 +1020,20 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Reservation: insert the canonical "execute"/"pending" row
+				// BEFORE running the adapter so the partial unique index
+				// on (user_id, request_id, COALESCE(task_id,'')) WHERE
+				// deduped_of IS NULL closes the double-execute window
+				// against concurrent identical requests. See
+				// reserveExecAndWaitLoser for the loser-wait semantics.
+				reservation := baseEntry("execute", "pending", taskIDPtr)
+				if verdict != nil {
+					reservation.Verification = intent.MarshalVerdict(verdict)
+				}
+				if !h.reserveExecAndWaitLoser(w, r, reservation) {
+					return
+				}
+
 				vKey := h.adapterReg.VaultKeyWithAliasForUser(serviceType, serviceAlias, agent.UserID)
 				result, execErr = executeAdapterRequest(ctx, h.vault, h.adapterReg, h.store,
 					agent.UserID, serviceType, req.Action, req.Params, vKey)
@@ -993,13 +1043,11 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					adapter, adapterOK := h.adapterReg.GetForUser(ctx, serviceType, agent.UserID)
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
 						dur := int(time.Since(start).Milliseconds())
-						e := baseEntry("block", "error", taskIDPtr)
-						e.DurationMS = dur
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
-						e.ErrorMsg = &auditMsg
-						if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-							h.logger.Warn("audit log failed", "err", logErr)
+						if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "error", auditMsg, dur); updErr != nil {
+							h.logger.Warn("audit outcome update failed", "err", updErr)
 						}
+						outDecision, outOutcome = "execute", "error"
 						h.publishAuditAndQueue(agent.UserID, req.TaskID)
 						writeJSON(w, http.StatusBadRequest, map[string]any{
 							"status":     "error",
@@ -1019,12 +1067,10 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 			if execErr != nil {
 				errMsg := execErr.Error()
-				e := baseEntry("execute", "error", taskIDPtr)
-				e.DurationMS = dur
-				e.ErrorMsg = &errMsg
-				if logErr := h.store.LogAudit(ctx, e); logErr != nil {
-					h.logger.Warn("audit log failed", "err", logErr)
+				if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "error", errMsg, dur); updErr != nil {
+					h.logger.Warn("audit outcome update failed", "err", updErr)
 				}
+				outDecision, outOutcome = "execute", "error"
 				h.publishAuditAndQueue(agent.UserID, req.TaskID)
 				if req.Context.CallbackURL != "" {
 					cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
@@ -1044,32 +1090,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Success
+			// Success — update the reservation to "executed".
 			middleware.AddLogField(ctx, "decision", "execute")
 			middleware.AddLogField(ctx, "outcome", "executed")
-			e := baseEntry("execute", "executed", taskIDPtr)
-			e.DurationMS = dur
-			if verdict != nil {
-				e.Verification = intent.MarshalVerdict(verdict)
+			if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "executed", "", dur); updErr != nil {
+				h.logger.Warn("audit outcome update failed", "err", updErr)
 			}
-			winner, logErr := h.logAuditCanonical(ctx, e)
-			if logErr != nil {
-				h.logger.Warn("audit log failed", "err", logErr)
-			}
+			outDecision, outOutcome = "execute", "executed"
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
-			if winner != nil {
-				// Same-scope race: the canonical landed in another goroutine.
-				// The adapter on this side already fired (see
-				// logAuditCanonical's auto-execute limitation), but we
-				// surface the winner's outcome to the agent and suppress
-				// chain-context extraction + callback on this loser so the
-				// agent doesn't see duplicate execution side effects.
-				writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
-					Deduped: true,
-					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
-				})
-				return
-			}
 
 			// Chain context extraction (async — cloud services only, guarded by verdict != nil)
 			chainSessionID := req.SessionID
@@ -1383,6 +1411,48 @@ const longPollGrace = 10 * time.Second
 // request — the client-requested timeout plus longPollGrace.
 func longPollDeadline(r *http.Request) time.Duration {
 	return time.Duration(parseLongPollTimeout(r))*time.Second + longPollGrace
+}
+
+// reserveExecAndWaitLoser inserts e as the canonical "execute"/"pending"
+// row that precedes the adapter call. Returns ok=true if the caller won
+// the canonical reservation and should proceed with the adapter; ok=false
+// if the caller lost the race and the deduped response has already been
+// written (caller must return).
+//
+// This is the only thing that prevents the auto-execute path from firing
+// non-idempotent adapter calls twice when two concurrent identical
+// requests both pass the early FindDedupCandidate gate at the top of
+// HandleRequest. Losers wait for the winner's canonical to leave
+// "pending" so the response reflects the actual outcome, not "pending".
+//
+// A reservation error (transient DB failure) returns ok=true with a warn
+// log — degrading to pre-PR best-effort behavior is better than failing
+// the request outright on a flaky write.
+func (h *GatewayHandler) reserveExecAndWaitLoser(w http.ResponseWriter, r *http.Request, e *store.AuditEntry) bool {
+	ctx := r.Context()
+	winner, reserveErr := h.logAuditCanonical(ctx, e)
+	if reserveErr != nil {
+		h.logger.Warn("audit reservation failed; proceeding without dedup protection", "err", reserveErr)
+	}
+	publishTaskID := ""
+	if e.TaskID != nil {
+		publishTaskID = *e.TaskID
+	}
+	h.publishAuditAndQueue(e.UserID, publishTaskID)
+	if winner == nil {
+		return true
+	}
+	final := winner
+	if winner.Outcome == "pending" && h.eventHub != nil {
+		if resolved := h.waitForRequestResolution(ctx, e.RequestID, e.UserID, publishTaskID, longPollDeadline(r)); resolved != nil {
+			final = resolved
+		}
+	}
+	writeGatewayStatusResponse(w, final, gatewayStatusResponseOptions{
+		Deduped: true,
+		Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+	})
+	return false
 }
 
 // logAuditCanonical writes a canonical audit row (DedupedOf == nil) and

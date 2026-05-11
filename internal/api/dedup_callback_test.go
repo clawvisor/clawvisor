@@ -361,10 +361,9 @@ func TestGateway_Dedup_SameRequestID_DifferentTask_ApprovalRequired_IndependentA
 // fell through to a regular "executed" response, leaving the agent unaware
 // of the dedup.
 //
-// Note the adapter STILL fires twice — closing that window requires an
-// insert-canonical-before-execute reservation that's out of scope here;
-// this test only locks in the audit-shape + response-shape recovery
-// (see logAuditCanonical's "Known limitation" docstring).
+// This test only locks in the audit-shape + response-shape recovery; see
+// TestGateway_Dedup_ConcurrentSameScope_DoesNotDoubleExecuteAdapter for the
+// stronger idempotency expectation.
 func TestGateway_Dedup_ConcurrentSameScope_RecoversCanonical(t *testing.T) {
 	adapter := newMockAdapter("mock.race-recover", "run").withResult("ok", nil)
 	env := newTestEnv(t, adapter)
@@ -413,6 +412,62 @@ func TestGateway_Dedup_ConcurrentSameScope_RecoversCanonical(t *testing.T) {
 	}
 	if dedupCount != goroutines-1 {
 		t.Fatalf("expected %d racers to report deduped=true, got %d", goroutines-1, dedupCount)
+	}
+}
+
+func TestGateway_Dedup_ConcurrentSameScope_DoesNotDoubleExecuteAdapter(t *testing.T) {
+	firstExecute := make(chan struct{}, 1)
+	releaseExecute := make(chan struct{})
+	adapter := newMockAdapter("mock.race-idempotent", "run").
+		withResult("ok", nil).
+		withExecuteHook(func() {
+			select {
+			case firstExecute <- struct{}{}:
+			default:
+			}
+			<-releaseExecute
+		})
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "race-idempotent")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.race-idempotent", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+	taskID := sc.createApprovedTask(t, env, "mock.race-idempotent", "run", true)
+	reqID := fmt.Sprintf("race-idempotent-%s", randSuffix())
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]map[string]any, goroutines)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			results[idx] = sc.gatewayRequestWithTask(env, reqID, "mock.race-idempotent", "run", taskID)
+		}(i)
+	}
+	close(start)
+
+	select {
+	case <-firstExecute:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first adapter execution")
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(releaseExecute)
+	wg.Wait()
+
+	for _, r := range results {
+		if r == nil {
+			t.Fatal("nil result")
+		}
+		if r["status"] != "executed" {
+			t.Fatalf("expected status=executed, got %v (full: %+v)", r["status"], r)
+		}
+	}
+	if got := adapter.executeCount(); got != 1 {
+		t.Fatalf("duplicate request_id should execute adapter once, got %d executions", got)
 	}
 }
 

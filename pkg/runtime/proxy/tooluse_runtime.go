@@ -683,18 +683,17 @@ func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHoo
 
 func (s *Server) ensureHeldToolUseApprovalWithKind(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any, approvalKind string, judgment runtimepolicy.RuntimeContextJudgment, reason string) (*store.ApprovalRecord, *review.HeldApproval, string) {
 	requestID := "runtime-tooluse:" + session.ID + ":" + tu.ID
-	// Under the symmetric (user, request_id, task_id) dedup scope a
-	// reviewTask scopes the lookup: we want THIS task's record, not a
-	// sibling task's. Without reviewTask we accept the pre-task scope.
-	// GetApprovalRecordByRequestID would return ErrAmbiguous (or the wrong
-	// row) once two task-scoped records share a request_id.
-	var rec *store.ApprovalRecord
-	var err error
+	// Always scope the lookup to a concrete task bucket so symmetric-dedup
+	// siblings can't return ErrAmbiguous. With reviewTask set we want THIS
+	// task's record; without it we want the pre-task scope (task_id IS NULL)
+	// — explicitly NOT a sibling task's row. GetApprovalRecordByRequestID
+	// (no task scope) would surface ErrAmbiguous once two task-scoped
+	// records share a request_id, blocking the legitimate pre-task path.
+	lookupTaskID := ""
 	if reviewTask != nil {
-		rec, err = hooks.Store.GetApprovalRecordByRequestIDAndTask(ctx, requestID, session.UserID, reviewTask.ID)
-	} else {
-		rec, err = hooks.Store.GetApprovalRecordByRequestID(ctx, requestID, session.UserID)
+		lookupTaskID = reviewTask.ID
 	}
+	rec, err := hooks.Store.GetApprovalRecordByRequestIDAndTask(ctx, requestID, session.UserID, lookupTaskID)
 	if err != nil && err != store.ErrNotFound {
 		return nil, nil, "Clawvisor could not create the runtime approval needed for this tool call."
 	}

@@ -290,6 +290,104 @@ func TestGateway_NoTaskID_UncoveredRoutesToApproval(t *testing.T) {
 	}
 }
 
+func TestGateway_NoTaskID_ConcurrentApprovalRaceReturnsCanonicalPending(t *testing.T) {
+	const goroutines = 6
+	arrivedAtResolver := make(chan struct{}, goroutines)
+	releaseResolver := make(chan struct{})
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&map[string]any{})
+		arrivedAtResolver <- struct{}{}
+		<-releaseResolver
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"kind":"one_off"}`}},
+			},
+		})
+	}))
+	defer llmSrv.Close()
+
+	adapter := newMockAdapter("mock.no-task-race", "run")
+	env := newTestEnvWithLLM(t, testGatewayResolverLLMConfig(llmSrv.URL), adapter, newMockAdapter("mock.no-task-race-other", "run"))
+	sc := newScenario(t, env, "bot")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.no-task-race", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+	_ = sc.createApprovedTask(t, env, "mock.no-task-race-other", "run", true)
+	reqID := fmt.Sprintf("req-no-task-race-%s", randSuffix())
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]map[string]any, goroutines)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			results[idx] = sc.gatewayRequest(env, reqID, "mock.no-task-race", "run")
+		}(i)
+	}
+	close(start)
+	arrivals := 0
+	select {
+	case <-arrivedAtResolver:
+		arrivals++
+	case <-time.After(3 * time.Second):
+		close(releaseResolver)
+		t.Fatal("timed out waiting for first resolver request")
+	}
+	collectWindow := time.NewTimer(250 * time.Millisecond)
+collectArrivals:
+	for arrivals < goroutines {
+		select {
+		case <-arrivedAtResolver:
+			arrivals++
+		case <-collectWindow.C:
+			break collectArrivals
+		}
+	}
+	if !collectWindow.Stop() {
+		select {
+		case <-collectWindow.C:
+		default:
+		}
+	}
+	close(releaseResolver)
+	wg.Wait()
+
+	auditIDs := map[string]int{}
+	dedupCount := 0
+	for _, r := range results {
+		if r == nil {
+			t.Fatal("nil result")
+		}
+		if r["status"] != "pending" {
+			t.Fatalf("expected status=pending, got %v (full: %+v)", r["status"], r)
+		}
+		auditIDs[str(t, r, "audit_id")]++
+		if r["deduped"] == true {
+			dedupCount++
+		}
+	}
+	if len(auditIDs) != 1 {
+		t.Fatalf("expected all racers to return canonical audit_id, got %d distinct: %v", len(auditIDs), auditIDs)
+	}
+	if dedupCount != goroutines-1 {
+		t.Fatalf("expected %d racers to report deduped=true, got %d", goroutines-1, dedupCount)
+	}
+
+	resp := sc.session.do("GET", "/api/approvals", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	count := 0
+	for _, e := range arr(t, body, "entries") {
+		if e.(map[string]any)["request_id"] == reqID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one pending approval for raced request_id, got %d", count)
+	}
+}
+
 func TestGateway_NoTaskID_LLMResolvesAmbiguousTask(t *testing.T) {
 	var llmResponse string
 	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

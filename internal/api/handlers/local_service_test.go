@@ -98,6 +98,26 @@ func (s *localTestStore) LogAudit(_ context.Context, entry *store.AuditEntry) er
 	return nil
 }
 
+// UpdateAuditOutcome stubs the reservation-pattern outcome update used by
+// HandleRequest's auto-execute path. Matches the audit row by id and mutates
+// Outcome/ErrorMsg/DurationMS in place so test assertions on
+// s.auditEntries observe the final state.
+func (s *localTestStore) UpdateAuditOutcome(_ context.Context, id, outcome, errMsg string, durationMS int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.auditEntries {
+		if e.ID == id {
+			e.Outcome = outcome
+			if errMsg != "" {
+				e.ErrorMsg = &errMsg
+			}
+			e.DurationMS = durationMS
+			return nil
+		}
+	}
+	return nil
+}
+
 func (s *localTestStore) LogGatewayRequest(_ context.Context, entry *store.GatewayRequestLog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -9,18 +9,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/internal/api"
 	"github.com/clawvisor/clawvisor/internal/auth"
-	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/vault"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 // ── Test environment ──────────────────────────────────────────────────────────
@@ -350,6 +351,8 @@ type mockAdapter struct {
 	actions   []string
 	result    *adapters.Result
 	execErr   error
+	calls     int64
+	onExecute func()
 }
 
 func newMockAdapter(serviceID string, actions ...string) *mockAdapter {
@@ -366,10 +369,23 @@ func (m *mockAdapter) withError(err error) *mockAdapter {
 	return m
 }
 
+func (m *mockAdapter) withExecuteHook(fn func()) *mockAdapter {
+	m.onExecute = fn
+	return m
+}
+
+func (m *mockAdapter) executeCount() int {
+	return int(atomic.LoadInt64(&m.calls))
+}
+
 func (m *mockAdapter) ServiceID() string          { return m.serviceID }
 func (m *mockAdapter) SupportedActions() []string { return m.actions }
 
 func (m *mockAdapter) Execute(_ context.Context, _ adapters.Request) (*adapters.Result, error) {
+	atomic.AddInt64(&m.calls, 1)
+	if m.onExecute != nil {
+		m.onExecute()
+	}
 	return m.result, m.execErr
 }
 
