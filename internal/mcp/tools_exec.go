@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 )
 
@@ -123,7 +124,7 @@ func buildInternalRequest(toolName string, arguments json.RawMessage) (internalR
 	case "fetch_catalog":
 		path := "/api/skill/catalog"
 		if svc := getString("service"); svc != "" {
-			path += "?service=" + svc
+			path += "?service=" + url.QueryEscape(svc)
 		}
 		return internalRoute{"GET", path, "GET /api/skill/catalog", nil}, nil, nil
 
