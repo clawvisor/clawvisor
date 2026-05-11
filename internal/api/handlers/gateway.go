@@ -1160,7 +1160,11 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 
 					// Phase 2: LLM (slower, seconds). Returns only NEW facts
-					// beyond what builtins captured.
+					// beyond what builtins captured. Skipped when the task
+					// opted into builtins_only mode.
+					if resolveChainExtractionMode(task) == chainExtractionBuiltinsOnly {
+						return
+					}
 					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer extractCancel()
 					llmFacts, err := h.extractor.ExtractLLM(extractCtx, extractReq, builtinFacts)
@@ -2048,6 +2052,28 @@ const (
 	extractionPollInterval = 250 * time.Millisecond
 	extractionPollMaxWait  = 1500 * time.Millisecond
 )
+
+// Chain extraction modes. The empty string means "use the system default".
+// The system default is currently `chainExtractionFull` (today's behavior);
+// flipping the default is a one-line change in resolveChainExtractionMode.
+const (
+	chainExtractionFull         = "full"
+	chainExtractionBuiltinsOnly = "builtins_only"
+)
+
+// resolveChainExtractionMode returns the effective chain-extraction mode for
+// a task. An unset (empty) task-level value defers to the system default. The
+// system default is intentionally `chainExtractionFull` for now — Phase 3's
+// eval-suite gate has to pass before we flip the default to builtins_only.
+func resolveChainExtractionMode(task *store.Task) string {
+	if task != nil {
+		switch task.ChainExtractionMode {
+		case chainExtractionFull, chainExtractionBuiltinsOnly:
+			return task.ChainExtractionMode
+		}
+	}
+	return chainExtractionFull
+}
 
 // chainContextFallback handles chain context violations by checking whether
 // the missing values actually exist in the chain facts. Three outcomes:

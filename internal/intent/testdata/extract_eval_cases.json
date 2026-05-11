@@ -1101,5 +1101,58 @@
         "Re: integration plan"
       ]
     }
+  },
+  {
+    "name": "format_display_name_literal_angle_brackets",
+    "category": "format_compliance",
+    "request": {
+      "task_purpose": "Read message thread",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"data\":[{\"id\":\"18de3f7a2b4c6d90\",\"from\":\"Tom Wilson <tom.wilson@example.com>\",\"to\":\"Alice Park <alice.park@example.org>\",\"cc\":\"Ben Liu <ben.liu@example.net>\"}]}"
+    },
+    "expected": {
+      "min_facts": 3,
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_include_values": [
+        "tom.wilson@example.com",
+        "alice.park@example.org",
+        "ben.liu@example.net"
+      ],
+      "must_exclude_values": [
+        "Tom Wilson <tom.wilson@example.com>",
+        "<tom.wilson@example.com>",
+        "Alice Park <alice.park@example.org>",
+        "Ben Liu <ben.liu@example.net>"
+      ]
+    }
+  },
+  {
+    "name": "format_display_name_unicode_escaped_angle_brackets",
+    "category": "format_compliance",
+    "request": {
+      "task_purpose": "Read message thread",
+      "service": "google.gmail",
+      "action": "list_messages",
+      "result": "{\"data\":[{\"id\":\"18de3f7a2b4c6d90\",\"from\":\"Tom Wilson \\u003ctom.wilson@example.com\\u003e\",\"to\":\"Alice Park \\u003calice.park@example.org\\u003e\"}]}"
+    },
+    "expected": {
+      "min_facts": 2,
+      "must_include_types": [
+        "email_address"
+      ],
+      "must_include_values": [
+        "tom.wilson@example.com",
+        "alice.park@example.org"
+      ],
+      "must_exclude_values": [
+        "Tom Wilson \\u003ctom.wilson@example.com\\u003e",
+        "\\u003ctom.wilson@example.com\\u003e",
+        "tom.wilson@example.com\\u003e",
+        "Tom Wilson <tom.wilson@example.com>"
+      ]
+    }
   }
 ]

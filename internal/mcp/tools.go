@@ -97,6 +97,7 @@ func toolDefs() []Tool {
 						"description": "Optional pre-registered calls. Calls matching a planned call skip per-request intent verification. Each must be covered by authorized_actions and must include params."
 					},
 					"intent_verification_mode": {"type": "string", "enum": ["strict", "lenient", "off"], "description": "Runtime intent verification strictness for v2 envelopes. Defaults to strict."},
+					"chain_extraction_mode": {"type": "string", "enum": ["full", "builtins_only"], "description": "Async chain-context extraction mode for this task. \"full\" runs the LLM Phase-2 extraction pass; \"builtins_only\" skips it and relies only on the synchronous builtin regex patterns. Omit to defer to the system default."},
 					"expected_use": {"type": "string", "description": "Top-level intended use summary for runtime-backed tasks"},
 					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use."},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},

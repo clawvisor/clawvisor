@@ -166,6 +166,63 @@ func TestBuiltinPatterns_Gmail(t *testing.T) {
 	}
 }
 
+func TestBuiltinPatterns_EmailDisplayName(t *testing.T) {
+	patterns := builtinPatterns("google.gmail", "list_messages")
+
+	cases := []struct {
+		name   string
+		result string
+		want   []string
+		reject []string
+	}{
+		{
+			name:   "literal angle brackets",
+			result: `{"from":"Tom Wilson <tom.wilson@example.com>","to":"Alice Park <alice.park@example.org>","cc":"Ben Liu <ben.liu@example.net>"}`,
+			want:   []string{"tom.wilson@example.com", "alice.park@example.org", "ben.liu@example.net"},
+			reject: []string{"Tom Wilson <tom.wilson@example.com>", "<tom.wilson@example.com>"},
+		},
+		{
+			name:   "unicode-escaped angle brackets",
+			result: `{"from":"Tom Wilson \u003ctom.wilson@example.com\u003e","to":"Alice Park \u003calice.park@example.org\u003e"}`,
+			want:   []string{"tom.wilson@example.com", "alice.park@example.org"},
+			reject: []string{`Tom Wilson \u003ctom.wilson@example.com\u003e`, `\u003ctom.wilson@example.com\u003e`, `tom.wilson@example.com\u003e`},
+		},
+		{
+			name:   "bare email (no display name)",
+			result: `{"from":"dana.chen@example.com","sender":"morgan.kim@example.org"}`,
+			want:   []string{"dana.chen@example.com", "morgan.kim@example.org"},
+		},
+		{
+			name:   "malformed local-only address is excluded",
+			result: `{"from":"kira@","to":"noor@"}`,
+			want:   nil,
+			reject: []string{"kira@", "noor@"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			matches := runExtractionPatterns(patterns, tc.result, slog.Default(), "test")
+			values := make(map[string]bool)
+			for _, m := range matches {
+				if m.factType == "email_address" {
+					values[m.factValue] = true
+				}
+			}
+			for _, w := range tc.want {
+				if !values[w] {
+					t.Errorf("expected email_address %q in matches; got %v", w, values)
+				}
+			}
+			for _, r := range tc.reject {
+				if values[r] {
+					t.Errorf("did not expect email_address %q in matches", r)
+				}
+			}
+		})
+	}
+}
+
 func TestBuiltinPatterns_Drive(t *testing.T) {
 	patterns := builtinPatterns("google.drive", "list_files")
 	result := `{"files":[{"id":"file_001_abc","owners":[{"emailAddress":"bob@co.com"}]}]}`
@@ -210,8 +267,8 @@ func TestBuiltinPatterns_Calendar(t *testing.T) {
 }
 
 func TestBuiltinPatterns_GenericEntityIDFallback(t *testing.T) {
-	// Unknown service: the cross-service generic block should still emit an
-	// entity_id pattern that catches any "id" field with an 8+ char value.
+	// Unknown service: the default arm should still emit an entity_id pattern
+	// that catches any "id" field with an 8+ char value.
 	patterns := builtinPatterns("some.new.saas", "list_things")
 	result := `{"things":[{"id":"thing_abc12345"},{"id":"42"}]}`
 	matches := runExtractionPatterns(patterns, result, slog.Default(), "test")
@@ -224,6 +281,34 @@ func TestBuiltinPatterns_GenericEntityIDFallback(t *testing.T) {
 	}
 	if found["entity_id|42"] {
 		t.Error("entity_id 42 should NOT be captured (under 8-char minimum)")
+	}
+}
+
+func TestBuiltinPatterns_NoEntityIDForKnownServices(t *testing.T) {
+	// Services with their own ID fact_types should not emit a redundant
+	// entity_id row for the same value. The 8+ char generic catch is only
+	// for unknown services.
+	cases := []struct {
+		service string
+		result  string
+	}{
+		{"google.gmail", `{"messages":[{"id":"19d5fe858c900042","threadId":"19d5fe858c900040"}]}`},
+		{"google.drive", `{"files":[{"id":"1BxR7a3mNpQ9vK2wL5sYcTfDgHjKlMnO"}]}`},
+		{"google.calendar", `{"data":[{"id":"1pj4096shhq40g6hkl995jrqfo"}]}`},
+		{"slack", `{"channels":[{"id":"C0123456789"}]}`},
+		{"linear", `{"issues":[{"id":"3a7c8e1b-2d4f-49a0-91c5-b7e1f8d2c4a6","identifier":"ENG-123"}]}`},
+		{"stripe", `{"charges":[{"id":"ch_3OdN8h2eZvKYlo2C0H8Vp9wY"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.service, func(t *testing.T) {
+			patterns := builtinPatterns(tc.service, "list_x")
+			matches := runExtractionPatterns(patterns, tc.result, slog.Default(), "test")
+			for _, m := range matches {
+				if m.factType == "entity_id" {
+					t.Errorf("did not expect entity_id match for %s, got %q", tc.service, m.factValue)
+				}
+			}
+		})
 	}
 }
 

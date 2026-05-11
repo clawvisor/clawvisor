@@ -15,7 +15,7 @@ var ErrConflict = errors.New("store: record already exists")
 
 // ErrAmbiguous is returned by request-id-only lookups (GetPendingApproval,
 // GetApprovalRecordByRequestID) when more than one row matches under the
-// symmetric (user_id, request_id, COALESCE(task_id,'')) dedup scope.
+// symmetric (user_id, request_id, COALESCE(task_id,”)) dedup scope.
 // Callers must disambiguate via the *ByTask variant, or surface 409 to the
 // client with the candidate task_ids enumerated via List*ByRequestID.
 var ErrAmbiguous = errors.New("store: multiple records match without task scope")
@@ -379,12 +379,12 @@ type Session struct {
 
 // Agent is an AI agent that authenticates via a long-lived bearer token.
 type Agent struct {
-	ID          string `json:"id"`
-	UserID      string `json:"user_id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	TokenHash   string `json:"-"`
-	OrgID       string `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	TokenHash   string    `json:"-"`
+	OrgID       string    `json:"org_id,omitempty"` // set by cloud when agent belongs to an org
 	CreatedAt   time.Time `json:"created_at"`
 	// TokenExpiresAt bounds the lifetime of a leaked bearer token. nil
 	// means no expiry — preserved for legacy POST /api/agents tokens that
@@ -566,14 +566,19 @@ type Task struct {
 	ExpectedTools          json.RawMessage `json:"expected_tools_json,omitempty"`
 	ExpectedEgress         json.RawMessage `json:"expected_egress_json,omitempty"`
 	IntentVerificationMode string          `json:"intent_verification_mode,omitempty"`
-	ExpectedUse            string          `json:"expected_use,omitempty"`
-	SchemaVersion          int             `json:"schema_version,omitempty"`
-	CallbackURL            *string         `json:"callback_url,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	ApprovedAt             *time.Time      `json:"approved_at,omitempty"`
-	ExpiresAt              *time.Time      `json:"expires_at,omitempty"`
-	ExpiresInSeconds       int             `json:"expires_in_seconds,omitempty"`
-	RequestCount           int             `json:"request_count"`
+	// ChainExtractionMode overrides the system default for async chain-context
+	// extraction. "" (unset) defers to the system default; "full" runs the
+	// LLM Phase-2 pass; "builtins_only" skips it (synchronous builtin regex
+	// only). Resolved in internal/api/handlers/gateway.go.
+	ChainExtractionMode string     `json:"chain_extraction_mode,omitempty"`
+	ExpectedUse         string     `json:"expected_use,omitempty"`
+	SchemaVersion       int        `json:"schema_version,omitempty"`
+	CallbackURL         *string    `json:"callback_url,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	ExpiresInSeconds    int        `json:"expires_in_seconds,omitempty"`
+	RequestCount        int        `json:"request_count"`
 	// PendingAction holds the action awaiting scope expansion approval.
 	PendingAction *TaskAction `json:"pending_action,omitempty"`
 	PendingReason string      `json:"pending_reason,omitempty"`

@@ -133,6 +133,7 @@ type createTaskRequest struct {
 	ExpectedTools          []runtimetasks.ExpectedTool   `json:"expected_tools_json,omitempty"`
 	ExpectedEgress         []runtimetasks.ExpectedEgress `json:"expected_egress_json,omitempty"`
 	IntentVerificationMode string                        `json:"intent_verification_mode,omitempty"`
+	ChainExtractionMode    string                        `json:"chain_extraction_mode,omitempty"` // "" | "full" | "builtins_only"
 	ExpectedUse            string                        `json:"expected_use,omitempty"`
 	SchemaVersion          int                           `json:"schema_version,omitempty"`
 	ExpiresInSeconds       int                           `json:"expires_in_seconds"`
@@ -442,6 +443,17 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// chain_extraction_mode is a small enum; reject unknown values before the
+	// dedup lookup so an invalid value can't surface a cached 201 response,
+	// and so the mode participates correctly in the dedup key below.
+	switch req.ChainExtractionMode {
+	case "", "full", "builtins_only":
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+			`chain_extraction_mode must be "", "full", or "builtins_only"`)
+		return
+	}
+
 	// Content-based dedup: if an identical task creation request was recently made
 	// by the same agent, return the existing task instead of creating a duplicate.
 	//
@@ -449,6 +461,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// intent_verification_mode, expected_use, schema_version) only participate in
 	// the hash when any are non-empty. v1-only requests therefore produce the
 	// same fingerprint they did pre-#310, preserving the existing dedup window.
+	// chain_extraction_mode is treated the same way: only enters the key when
+	// set, so default tasks keep their existing fingerprint.
 	dedupParts := []any{"task", agent.ID, req.Purpose, req.AuthorizedActions}
 	if len(req.PlannedCalls) > 0 ||
 		len(req.ExpectedTools) > 0 ||
@@ -466,6 +480,9 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	dedupParts = append(dedupParts, lifetime)
+	if req.ChainExtractionMode != "" {
+		dedupParts = append(dedupParts, "chain_extraction_mode", req.ChainExtractionMode)
+	}
 	taskDedupKey := buildDedupKey(dedupParts...)
 	if cached, ok := h.contentDedup.Get(taskDedupKey); ok {
 		resp := cached.(map[string]any)
@@ -489,6 +506,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AuthorizedActions:      req.AuthorizedActions,
 		PlannedCalls:           req.PlannedCalls,
 		IntentVerificationMode: env.IntentVerificationMode,
+		ChainExtractionMode:    req.ChainExtractionMode,
 		ExpectedUse:            req.ExpectedUse,
 		SchemaVersion:          schemaVersion,
 		ExpiresInSeconds:       expiresIn,

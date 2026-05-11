@@ -830,13 +830,15 @@ func builtinPatterns(service, action string) []extractionPattern {
 // builtinPatternsRaw returns the per-service patterns without setting a
 // Source — the public builtinPatterns wrapper handles that uniformly.
 func builtinPatternsRaw(service, action string) []extractionPattern {
-	// Generic patterns that apply to most JSON API responses. Includes a
-	// permissive entity_id catch for any "id" field with an 8+ char value;
-	// service-specific patterns below typically also extract these values
-	// under more precise fact_types, and dedupe handles the overlap.
+	// Generic patterns that apply to most JSON API responses. The
+	// email_address pattern strips a "Display Name <…>" prefix (both literal
+	// `<`/`>` and JSON-escaped `<`/`>` forms) so the captured value
+	// is just the address. Known services add more precise fact_types below;
+	// the catch-all entity_id pattern fires only on the default branch so
+	// known services don't emit duplicate (entity_id, message_id) rows for
+	// the same value.
 	generic := []extractionPattern{
-		{FactType: "email_address", Regex: `"(?:email|emailAddress|from|to|sender|recipient)":\s*"([^"]+@[^"]+)"`},
-		{FactType: "entity_id", Regex: `"id":\s*"([^"]{8,})"`},
+		{FactType: "email_address", Regex: `"(?:email|emailAddress|from|to|sender|recipient|cc|bcc|replyTo|reply_to)":\s*"(?:[^"]*?(?:<|\\u003c)\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*(?:>|\\u003e)?\s*"`},
 	}
 
 	svc := strings.SplitN(service, ":", 2)[0] // strip instance suffix
@@ -846,23 +848,19 @@ func builtinPatternsRaw(service, action string) []extractionPattern {
 		return append(generic,
 			extractionPattern{FactType: "message_id", Regex: `"id":\s*"([a-f0-9]{16})"`},
 			extractionPattern{FactType: "thread_id", Regex: `"threadId":\s*"([a-f0-9]{16})"`},
-			extractionPattern{FactType: "email_address", Regex: `"email":\s*"([^"]+@[^"]+)"`},
 		)
 	case "google.drive":
 		return append(generic,
 			extractionPattern{FactType: "file_id", Regex: `"id":\s*"([^"]+)"`},
-			extractionPattern{FactType: "email_address", Regex: `"emailAddress":\s*"([^"]+@[^"]+)"`},
 		)
 	case "google.calendar":
 		// Google Calendar event IDs are lowercase base32 (5-1024 chars),
 		// optionally prefixed with "_" for imported events, with an optional
 		// "_<UTC_datetime>Z" suffix for recurring instances. Tight to avoid
 		// labeling calendar IDs (e.g. "primary", "x@group.calendar.google.com")
-		// as event_ids; those still get captured by the generic entity_id
-		// fallback in the shared block above.
+		// as event_ids. Calendar IDs themselves are not extracted as facts.
 		return append(generic,
 			extractionPattern{FactType: "event_id", Regex: `"id":\s*"(_?[a-z0-9]+(?:_[0-9]{8}T[0-9]{6}Z)?)"`},
-			extractionPattern{FactType: "email_address", Regex: `"email":\s*"([^"]+@[^"]+)"`},
 		)
 	case "google.contacts":
 		return append(generic,
@@ -895,10 +893,13 @@ func builtinPatternsRaw(service, action string) []extractionPattern {
 			extractionPattern{FactType: "phone_number", Regex: `"(?:handle|sender|recipient)":\s*"(\+?[\d]{10,})"`},
 		)
 	default:
-		// Unknown service: rely entirely on the generic block, which already
-		// emits an entity_id pattern with an 8+ char minimum and the email
-		// pattern. No service-specific additions.
-		return generic
+		// Unknown service: also emit a catch-all entity_id pattern for any
+		// "id" field with an 8+ char value. Known services above declare
+		// their own ID fact_types, so this fires only on the default branch
+		// to avoid duplicate (entity_id, <service>_id) rows for the same value.
+		return append(generic,
+			extractionPattern{FactType: "entity_id", Regex: `"id":\s*"([^"]{8,})"`},
+		)
 	}
 }
 

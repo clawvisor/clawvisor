@@ -1007,14 +1007,15 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
 			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
-			expected_egress_json, intent_verification_mode, expected_use, schema_version)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+			expected_egress_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		actionsJSON, plannedCallsJSON, task.CallbackURL, task.ExpiresInSeconds,
 		task.ApprovedAt, task.ExpiresAt,
 		nilIfEmpty(pendingActionJSON), task.PendingReason, task.Lifetime,
 		task.RiskLevel, string(riskDetails), task.ApprovalSource, approvalRationale,
-		expectedToolsJSON, expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion)
+		expectedToolsJSON, expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
+		task.ChainExtractionMode)
 	return err
 }
 
@@ -1022,18 +1023,20 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON []byte
 	var riskDetailsStr, approvalRationaleStr string
+	var chainExtractionMode *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version
+		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE id = $1
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 		&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-		&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion)
+		&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+		&chainExtractionMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -1067,6 +1070,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if expectedEgressJSON != nil {
 		t.ExpectedEgress = json.RawMessage(expectedEgressJSON)
 	}
+	if chainExtractionMode != nil {
+		t.ChainExtractionMode = *chainExtractionMode
+	}
 	return t, nil
 }
 
@@ -1097,7 +1103,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version
+		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -1267,7 +1273,7 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version
+		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < NOW()
 	`)
 	if err != nil {
@@ -1283,12 +1289,17 @@ func scanTasks(rows pgx.Rows) ([]*store.Task, error) {
 		t := &store.Task{}
 		var actionsJSON, plannedCallsJSON, pendingActionJSON, expectedToolsJSON, expectedEgressJSON []byte
 		var riskDetailsStr, approvalRationaleStr string
+		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsJSON,
 			&plannedCallsJSON, &t.CallbackURL, &t.CreatedAt, &t.ApprovedAt, &t.ExpiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionJSON, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-			&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion); err != nil {
+			&expectedToolsJSON, &expectedEgressJSON, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&chainExtractionMode); err != nil {
 			return nil, err
+		}
+		if chainExtractionMode != nil {
+			t.ChainExtractionMode = *chainExtractionMode
 		}
 		// authorized_actions IS the task scope — fail loudly rather than load
 		// a task with no authorized actions (which would silently fall through
