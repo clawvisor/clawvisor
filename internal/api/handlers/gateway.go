@@ -1044,7 +1044,13 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 					if adapterOK && adapter.ValidateCredential(nil) != nil {
 						dur := int(time.Since(start).Milliseconds())
 						code, userErr, auditMsg := serviceNotActivatedResponse(ctx, h.vault, h.store, h.adapterReg, agent.UserID, serviceType, serviceAlias, req.Service, adapter)
-						if updErr := h.store.UpdateAuditOutcome(ctx, auditID, "error", auditMsg, dur); updErr != nil {
+						// Use a fresh background context: see the comment on
+						// finalizeCtx below — if the client cancelled while
+						// we were waiting on the vault, r.Context() is Done
+						// and we'd leave the reservation stuck in "pending".
+						vaultFinalizeCtx, vaultFinalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer vaultFinalizeCancel()
+						if updErr := h.store.UpdateAuditOutcome(vaultFinalizeCtx, auditID, "error", auditMsg, dur); updErr != nil {
 							h.logger.Warn("audit outcome update failed", "err", updErr)
 						}
 						outDecision, outOutcome = "execute", "error"
