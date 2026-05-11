@@ -150,7 +150,10 @@ func (s *localTestStore) ListChainFacts(_ context.Context, _, _ string, _ int) (
 	return s.chainFacts, nil
 }
 
-func (s *localTestStore) SaveChainFacts(_ context.Context, _ []*store.ChainFact) error {
+func (s *localTestStore) SaveChainFacts(_ context.Context, facts []*store.ChainFact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chainFacts = append(s.chainFacts, facts...)
 	return nil
 }
 

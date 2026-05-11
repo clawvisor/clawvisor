@@ -41,6 +41,7 @@ type pendingRequestBlob struct {
 	AgentName    string                      `json:"agent_name"`
 	RequestID    string                      `json:"request_id"`
 	TaskID       string                      `json:"task_id"`
+	SessionID    string                      `json:"session_id,omitempty"`
 	Reason       string                      `json:"reason"`
 	CallbackURL  string                      `json:"callback_url"`
 	Verification *intent.VerificationVerdict `json:"verification,omitempty"`
@@ -1117,70 +1118,14 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			outDecision, outOutcome = "execute", "executed"
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
 
-			// Chain context extraction (async — cloud services only, guarded by verdict != nil)
-			chainSessionID := req.SessionID
-			if chainSessionID == "" && task.Lifetime != "standing" {
-				chainSessionID = req.TaskID
-			}
-			if chainSessionID != "" && verdict != nil && verdict.ExtractContext {
-				resultJSON, _ := json.Marshal(result)
-				// Mark synchronously (before returning to the agent) so a
-				// follow-up request sees the pending flag even if it arrives
-				// before the goroutine is scheduled.
-				markCtx, markCancel := context.WithTimeout(context.Background(), 2*time.Second)
-				h.extractTrack.MarkPending(markCtx, req.TaskID, chainSessionID, auditID)
-				markCancel()
-				safeGo(h.logger, "chain context extraction", func() {
-					defer func() {
-						doneCtx, doneCancel := context.WithTimeout(context.Background(), 2*time.Second)
-						h.extractTrack.MarkDone(doneCtx, req.TaskID, chainSessionID, auditID)
-						doneCancel()
-					}()
-					extractReq := intent.ExtractRequest{
-						TaskPurpose:       task.Purpose,
-						AuthorizedActions: task.AuthorizedActions,
-						Service:           req.Service,
-						Action:            req.Action,
-						Result:            string(resultJSON),
-						TaskID:            req.TaskID,
-						SessionID:         chainSessionID,
-						AuditID:           auditID,
-					}
-
-					// Phase 1: builtin regex (fast, ~ms). Save immediately so
-					// downstream verifications targeting these IDs pass without
-					// waiting on the LLM round trip.
-					builtinFacts := h.extractor.ExtractBuiltins(extractReq)
-					if len(builtinFacts) > 0 {
-						saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
-						if err := h.store.SaveChainFacts(saveCtx, builtinFacts); err != nil {
-							h.logger.Warn("chain facts (builtin) save failed", "err", err, "task_id", req.TaskID)
-						}
-						saveCancel()
-					}
-
-					// Phase 2: LLM (slower, seconds). Returns only NEW facts
-					// beyond what builtins captured. Skipped when the task
-					// opted into builtins_only mode.
-					if resolveChainExtractionMode(task) == chainExtractionBuiltinsOnly {
-						return
-					}
-					extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer extractCancel()
-					llmFacts, err := h.extractor.ExtractLLM(extractCtx, extractReq, builtinFacts)
-					if err != nil {
-						h.logger.Warn("chain context LLM extraction failed", "err", err, "task_id", req.TaskID)
-						return
-					}
-					if len(llmFacts) > 0 {
-						saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
-						if err := h.store.SaveChainFacts(saveCtx, llmFacts); err != nil {
-							h.logger.Warn("chain facts (llm) save failed", "err", err, "task_id", req.TaskID)
-						}
-						saveCancel()
-					}
-				})
-			}
+			// Chain context extraction (async). The builtin pass always runs:
+			// it is the only thing that catches a create's new entity ID in
+			// time for the next request. The LLM pass is gated on the
+			// verifier's extract_context flag (false for creates/sends per
+			// the prompt) to keep cost bounded.
+			runLLM := verdict != nil && verdict.ExtractContext
+			h.startChainExtraction(task, req.Service, req.Action, result,
+				req.TaskID, req.SessionID, auditID, runLLM)
 
 			if req.Context.CallbackURL != "" {
 				cbKey, _ := h.store.GetAgentCallbackSecret(ctx, agent.ID)
@@ -1623,6 +1568,21 @@ func (h *GatewayHandler) executeAndRespond(w http.ResponseWriter, ctx context.Co
 	_ = h.store.DeletePendingApproval(ctx, pa.RequestID, pa.UserID, paTask)
 	h.publishAuditAndQueue(pa.UserID, blob.TaskID)
 
+	// On successful execution, seed chain_facts with anything the new result
+	// carries (e.g. the IDs of a newly-created calendar event or page). The
+	// auto-execute path does this inline; without the call here, a "create"
+	// approved through the per-request flow would never reach the extractor
+	// and the next "update_*" request would fail chain verification.
+	if execErr == nil && blob.TaskID != "" {
+		var task *store.Task
+		if t, err := h.store.GetTask(ctx, blob.TaskID); err == nil {
+			task = t
+		}
+		runLLM := blob.Verification != nil && blob.Verification.ExtractContext
+		h.startChainExtraction(task, blob.Service, blob.Action, result,
+			blob.TaskID, blob.SessionID, pa.AuditID, runLLM)
+	}
+
 	resp := map[string]any{
 		"status":     outcome,
 		"request_id": pa.RequestID,
@@ -1852,6 +1812,99 @@ func (h *GatewayHandler) publishAuditAndQueue(userID, taskID string) {
 	}
 	h.eventHub.Publish(userID, events.Event{Type: "audit", ID: taskID})
 	h.eventHub.Publish(userID, events.Event{Type: "queue"})
+}
+
+// startChainExtraction launches the async chain-context extraction goroutine
+// for a completed request. Phase 1 (builtin regex) always runs so the next
+// request from the agent can see freshly minted IDs — especially for "create"
+// actions where the response body IS the new entity reference. Phase 2 (LLM)
+// is gated on runLLM (typically the verifier's extract_context verdict) and
+// further suppressed when the task opts into chain_extraction_mode=builtins_only.
+//
+// Safe to call with task == nil; nil and the standing-task case both leave
+// chainSessionID empty, which is the no-op signal.
+func (h *GatewayHandler) startChainExtraction(
+	task *store.Task,
+	service, action string,
+	result *adapters.Result,
+	taskID, sessionID, auditID string,
+	runLLM bool,
+) {
+	chainSessionID := sessionID
+	if chainSessionID == "" && task != nil && task.Lifetime != "standing" {
+		chainSessionID = taskID
+	}
+	if chainSessionID == "" {
+		return
+	}
+
+	resultJSON, _ := json.Marshal(result)
+
+	// Mark pending synchronously (before this function returns to the
+	// HTTP handler) so a follow-up request arriving before the goroutine
+	// is scheduled still sees the pending flag and waits in the fallback.
+	markCtx, markCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	h.extractTrack.MarkPending(markCtx, taskID, chainSessionID, auditID)
+	markCancel()
+
+	taskPurpose := ""
+	var authorizedActions []store.TaskAction
+	if task != nil {
+		taskPurpose = task.Purpose
+		authorizedActions = task.AuthorizedActions
+	}
+	builtinsOnly := resolveChainExtractionMode(task) == chainExtractionBuiltinsOnly
+
+	safeGo(h.logger, "chain context extraction", func() {
+		defer func() {
+			doneCtx, doneCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			h.extractTrack.MarkDone(doneCtx, taskID, chainSessionID, auditID)
+			doneCancel()
+		}()
+		extractReq := intent.ExtractRequest{
+			TaskPurpose:       taskPurpose,
+			AuthorizedActions: authorizedActions,
+			Service:           service,
+			Action:            action,
+			Result:            string(resultJSON),
+			TaskID:            taskID,
+			SessionID:         chainSessionID,
+			AuditID:           auditID,
+		}
+
+		// Phase 1: builtin regex (fast, ~ms). Save immediately so
+		// downstream verifications targeting these IDs pass without
+		// waiting on the LLM round trip.
+		builtinFacts := h.extractor.ExtractBuiltins(extractReq)
+		if len(builtinFacts) > 0 {
+			saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := h.store.SaveChainFacts(saveCtx, builtinFacts); err != nil {
+				h.logger.Warn("chain facts (builtin) save failed", "err", err, "task_id", taskID)
+			}
+			saveCancel()
+		}
+
+		// Phase 2: LLM (slower, seconds). Skip when the caller didn't
+		// request it (e.g. verdict.extract_context=false for terminal
+		// actions) or when the task opted into builtins_only.
+		if !runLLM || builtinsOnly {
+			return
+		}
+		extractCtx, extractCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer extractCancel()
+		llmFacts, err := h.extractor.ExtractLLM(extractCtx, extractReq, builtinFacts)
+		if err != nil {
+			h.logger.Warn("chain context LLM extraction failed", "err", err, "task_id", taskID)
+			return
+		}
+		if len(llmFacts) > 0 {
+			saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := h.store.SaveChainFacts(saveCtx, llmFacts); err != nil {
+				h.logger.Warn("chain facts (llm) save failed", "err", err, "task_id", taskID)
+			}
+			saveCancel()
+		}
+	})
 }
 
 // runVerification runs intent verification for a request and returns the verdict.
@@ -2499,6 +2552,7 @@ func buildRequestBlob(req gateway.Request, agent *store.Agent) *pendingRequestBl
 		AgentName:   agent.Name,
 		RequestID:   req.RequestID,
 		TaskID:      req.TaskID,
+		SessionID:   req.SessionID,
 		Reason:      req.Reason,
 		CallbackURL: req.Context.CallbackURL,
 	}
