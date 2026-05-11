@@ -803,9 +803,11 @@ func popupNonce() string {
 //     the success signal as an oracle.
 //
 // When openerOrigin is empty (caller had no Origin/Referer at init) the
-// page simply closes itself without postMessage. The dashboard can poll
-// for state changes — losing the postMessage signal is preferable to
-// broadcasting it to '*'.
+// page falls back to window.location.origin as the postMessage target.
+// The browser only delivers postMessage when the opener's actual origin
+// matches the target, so a same-origin dashboard (the common case) still
+// receives the refresh signal while a cross-origin framejacker does not —
+// equivalent safety to the threaded openerOrigin path.
 func oauthPopupClose(w http.ResponseWriter, errMsg, cliCallback, openerOrigin string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	nonce := popupNonce()
@@ -821,16 +823,20 @@ h2{color:#dc2626;margin:0 0 8px}p{color:#6b7280;margin:4px 0;font-size:14px}</st
 			html.EscapeString(errMsg))
 		return
 	}
-	// Targeted postMessage when we know the opener origin; otherwise
-	// skip messaging entirely. cliCallback fetch is sandboxed to
+	// Targeted postMessage: use openerOrigin when known, otherwise fall
+	// back to the popup's own origin so a same-origin opener still
+	// receives the refresh signal. cliCallback fetch is sandboxed to
 	// localhost via connect-src.
-	postMessageSnippet := ""
+	var targetExpr string
 	if openerOrigin != "" {
-		postMessageSnippet = fmt.Sprintf(
-			`if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},%q)}catch(e){}}`,
-			openerOrigin,
-		)
+		targetExpr = fmt.Sprintf("%q", openerOrigin)
+	} else {
+		targetExpr = "window.location.origin"
 	}
+	postMessageSnippet := fmt.Sprintf(
+		`if(window.opener){try{window.opener.postMessage({type:'clawvisor_oauth_done'},%s)}catch(e){}}`,
+		targetExpr,
+	)
 	cliCallbackSnippet := ""
 	if cliCallback != "" {
 		cliCallbackSnippet = fmt.Sprintf(`fetch(%q).catch(function(){});`, cliCallback)
