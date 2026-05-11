@@ -501,16 +501,22 @@ func (h *ApprovalsHandler) RunExpiryCleanup(ctx context.Context) {
 	}
 }
 
-// processExpiredApproval performs the canonical-resolution + audit-update +
-// notification + callback work for a pending_approvals row that has either
-// timed out (caller already deleted the row) or been recovered from a
-// stalled 'executing' state (CAS DELETE already happened). reason is
-// included in the structured log so the operator can distinguish
-// "user never replied" from "executor crashed mid-execution"; it is NOT
-// passed as the canonical status (which must be "expired" — see
-// validateApprovalRecordTransition).
+// processExpiredApproval performs the audit-update + notification + callback
+// work for a pending_approvals row that has either timed out (caller already
+// deleted the row) or been recovered from a stalled 'executing' state (CAS
+// DELETE already happened). reason is included in the structured log so the
+// operator can distinguish "user never replied" from "executor crashed
+// mid-execution".
+//
+// The canonical ApprovalRecord is NOT touched here. The two callers each
+// know the right thing to do with it:
+//   - regular-expired path: canonical record is still 'pending'; the caller
+//     flips it to deny/expired inline before invoking us.
+//   - stranded-executing path: the user already approved, so the canonical
+//     record is already in 'approved'. Flipping it would both lie about the
+//     user's decision and fail validateApprovalRecordTransition's
+//     pending-only guard, paging on every recovery sweep.
 func (h *ApprovalsHandler) processExpiredApproval(ctx context.Context, pa *store.PendingApproval, reason, telegramMsg string) {
-	h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
 	_ = h.st.UpdateAuditOutcome(ctx, pa.AuditID, "timeout", "", 0)
 	h.updateNotificationMsg(ctx, "approval", pa.RequestID, pa.UserID, telegramMsg)
 	// For the regular expired path the caller relies on us to delete the
@@ -545,6 +551,11 @@ func (h *ApprovalsHandler) expireTimedOut(ctx context.Context) {
 		return
 	}
 	for _, pa := range expired {
+		// Regular-expired path: the user never replied, so the canonical
+		// approval record is still 'pending' and must be moved to a terminal
+		// state. The stranded path below skips this because the canonical
+		// record is already 'approved' there.
+		h.resolveCanonicalApproval(ctx, pa, "deny", "expired")
 		h.processExpiredApproval(ctx, pa, "expired", "⏰ <b>Timed out</b> — approval window expired.")
 	}
 	// Stranded 'executing' rows: claim each via a CAS DELETE before
