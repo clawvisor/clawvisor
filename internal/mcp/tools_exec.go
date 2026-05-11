@@ -218,7 +218,7 @@ func buildWaitQuery(args map[string]json.RawMessage, getString func(string) stri
 	}
 	q := "?wait=true"
 	if t := getString("timeout"); t != "" {
-		q += "&timeout=" + t
+		q += "&timeout=" + url.QueryEscape(t)
 	}
 	return q
 }
