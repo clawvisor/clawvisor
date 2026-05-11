@@ -402,6 +402,10 @@ export interface PendingApproval {
   id: string
   user_id: string
   request_id: string
+  /** task_id disambiguates sibling pending approvals that share request_id
+   *  under symmetric dedup. Round-trip on approve/deny to avoid the 409
+   *  AMBIGUOUS path. */
+  task_id?: string
   audit_id: string
   request_blob: {
     service: string
@@ -788,6 +792,10 @@ export interface WelcomeData {
 
 export interface QueueApproval {
   request_id: string
+  /** task_id disambiguates sibling pending approvals that share request_id
+   *  under symmetric dedup. Round-trip on approve/deny to avoid the 409
+   *  AMBIGUOUS path. */
+  task_id?: string
   audit_id: string
   service: string
   action: string
@@ -1192,12 +1200,25 @@ export const api = {
   },
   approvals: {
     list: () => get<{ entries: PendingApproval[]; total: number }>('/api/approvals'),
-    approve: (requestId: string, resolution?: 'allow_once' | 'allow_session' | 'allow_always') =>
-      post<{ status: string; request_id: string; audit_id: string; resolution?: string; task_id?: string; task_status?: string; task_lifetime?: string; result?: unknown }>
-        (`/api/approvals/${requestId}/approve`, resolution ? { resolution } : {}),
-    deny: (requestId: string) =>
-      post<{ status: string; request_id: string; audit_id: string }>
-        (`/api/approvals/${requestId}/deny`, {}),
+    // taskId is the symmetric-dedup disambiguator. Pass it whenever the
+    // caller has it in scope; the server returns 409 AMBIGUOUS (with
+    // candidate_task_ids in the body) when it's omitted and more than one
+    // pending approval shares the request_id.
+    approve: (
+      requestId: string,
+      resolution?: 'allow_once' | 'allow_session' | 'allow_always',
+      taskId?: string,
+    ) => {
+      const path = `/api/approvals/${requestId}/approve${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''}`
+      return post<{ status: string; request_id: string; audit_id: string; resolution?: string; task_id?: string; task_status?: string; task_lifetime?: string; result?: unknown }>(
+        path,
+        resolution ? { resolution } : {},
+      )
+    },
+    deny: (requestId: string, taskId?: string) => {
+      const path = `/api/approvals/${requestId}/deny${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''}`
+      return post<{ status: string; request_id: string; audit_id: string }>(path, {})
+    },
   },
   runtime: {
     status: () => get<RuntimeStatus>('/api/runtime/status'),

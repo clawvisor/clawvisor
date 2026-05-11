@@ -24,19 +24,23 @@ export default function Overview() {
   const liveSessionsUI = !!features?.agent_live_sessions
   const showRuntimeAttention = runtimeActivityUI || liveSessionsUI
 
-  // Deep link mutations for approval requests (moved from Queue)
+  // Deep link mutations for approval requests (moved from Queue). taskId is
+  // forwarded when the notification's deep link supplied it, so the resolve
+  // hits the specific sibling instead of the request_id-only AMBIGUOUS route.
+  type DeepLinkVars = { requestId: string; taskId?: string }
   const deepApproveRequest = useMutation({
-    mutationFn: (requestId: string) => api.approvals.approve(requestId),
-    onSuccess: (_data, requestId) => {
-      setDeepLinkResult(`Request ${requestId.slice(0, 8)}... approved.`)
+    mutationFn: ({ requestId, taskId }: DeepLinkVars) =>
+      api.approvals.approve(requestId, undefined, taskId),
+    onSuccess: (_data, vars) => {
+      setDeepLinkResult(`Request ${vars.requestId.slice(0, 8)}... approved.`)
       qc.invalidateQueries({ queryKey: ['overview'] })
     },
     onError: (err: Error) => setDeepLinkResult(`Approve failed: ${err.message}`),
   })
   const deepDenyRequest = useMutation({
-    mutationFn: (requestId: string) => api.approvals.deny(requestId),
-    onSuccess: (_data, requestId) => {
-      setDeepLinkResult(`Request ${requestId.slice(0, 8)}... denied.`)
+    mutationFn: ({ requestId, taskId }: DeepLinkVars) => api.approvals.deny(requestId, taskId),
+    onSuccess: (_data, vars) => {
+      setDeepLinkResult(`Request ${vars.requestId.slice(0, 8)}... denied.`)
       qc.invalidateQueries({ queryKey: ['overview'] })
     },
     onError: (err: Error) => setDeepLinkResult(`Deny failed: ${err.message}`),
@@ -46,12 +50,13 @@ export default function Overview() {
   useEffect(() => {
     const action = searchParams.get('action')
     const requestId = searchParams.get('request_id')
+    const taskId = searchParams.get('task_id') ?? undefined
     if (!action || !requestId) return
 
     setSearchParams({}, { replace: true })
 
-    if (action === 'approve') deepApproveRequest.mutate(requestId)
-    else if (action === 'deny') deepDenyRequest.mutate(requestId)
+    if (action === 'approve') deepApproveRequest.mutate({ requestId, taskId })
+    else if (action === 'deny') deepDenyRequest.mutate({ requestId, taskId })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -383,7 +388,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   }
 
   const approveMut = useMutation({
-    mutationFn: () => api.approvals.approve(a.request_id, 'allow_once'),
+    mutationFn: () => api.approvals.approve(a.request_id, 'allow_once', a.task_id),
     onSuccess: (res) => {
       setResult(res.status === 'executed' ? 'Approved & executed' : `Outcome: ${res.status}`)
       invalidate()
@@ -391,7 +396,7 @@ function ApprovalCard({ item }: { item: QueueItem }) {
   })
 
   const denyMut = useMutation({
-    mutationFn: () => api.approvals.deny(a.request_id),
+    mutationFn: () => api.approvals.deny(a.request_id, a.task_id),
     onSuccess: () => {
       setResult('Denied')
       invalidate()
