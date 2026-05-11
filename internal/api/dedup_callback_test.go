@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -348,6 +349,71 @@ func TestGateway_Dedup_SameRequestID_DifferentTask_ApprovalRequired_IndependentA
 	mustStatus(t, resp, http.StatusOK)
 	resp = sc.session.do("POST", fmt.Sprintf("/api/approvals/%s/deny?task_id=%s", reqID, taskID2), nil)
 	mustStatus(t, resp, http.StatusOK)
+}
+
+// TestGateway_Dedup_ConcurrentSameScope_RecoversCanonical guards the
+// same-scope race recovery: two concurrent identical requests must end with
+// exactly one canonical audit row and the loser's response must reflect the
+// winner's outcome (deduped:true, same audit_id) instead of a fresh
+// executed row whose canonical insert silently failed. Pre-fix this test
+// would either see two canonical rows (impossible under the unique index)
+// or one canonical + one orphan loser whose LogAudit silently logged and
+// fell through to a regular "executed" response, leaving the agent unaware
+// of the dedup.
+//
+// Note the adapter STILL fires twice — closing that window requires an
+// insert-canonical-before-execute reservation that's out of scope here;
+// this test only locks in the audit-shape + response-shape recovery
+// (see logAuditCanonical's "Known limitation" docstring).
+func TestGateway_Dedup_ConcurrentSameScope_RecoversCanonical(t *testing.T) {
+	adapter := newMockAdapter("mock.race-recover", "run").withResult("ok", nil)
+	env := newTestEnv(t, adapter)
+	sc := newScenario(t, env, "race-recover")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.race-recover", []byte("cred")); err != nil {
+		t.Fatalf("vault seed: %v", err)
+	}
+	taskID := sc.createApprovedTask(t, env, "mock.race-recover", "run", true)
+	reqID := fmt.Sprintf("race-recover-%s", randSuffix())
+
+	const goroutines = 8
+	var (
+		wg      sync.WaitGroup
+		results = make([]map[string]any, goroutines)
+		start   = make(chan struct{})
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			results[idx] = sc.gatewayRequestWithTask(env, reqID, "mock.race-recover", "run", taskID)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// Exactly one canonical audit row should exist for (user, reqID, task).
+	// All N callers must return the SAME audit_id; N-1 must report deduped:true.
+	auditIDs := map[string]int{}
+	dedupCount := 0
+	for _, r := range results {
+		if r == nil {
+			t.Fatal("nil result")
+		}
+		if r["status"] != "executed" {
+			t.Fatalf("expected status=executed, got %v (full: %+v)", r["status"], r)
+		}
+		auditIDs[str(t, r, "audit_id")]++
+		if r["deduped"] == true {
+			dedupCount++
+		}
+	}
+	if len(auditIDs) != 1 {
+		t.Fatalf("expected all %d racers to converge on a single canonical audit_id, got %d distinct: %v", goroutines, len(auditIDs), auditIDs)
+	}
+	if dedupCount != goroutines-1 {
+		t.Fatalf("expected %d racers to report deduped=true, got %d", goroutines-1, dedupCount)
+	}
 }
 
 // TestGateway_Status_TaskScoped guards the status / long-poll endpoint

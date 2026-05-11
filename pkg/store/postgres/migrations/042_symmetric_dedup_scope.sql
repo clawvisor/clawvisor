@@ -47,3 +47,17 @@ DROP INDEX idx_approval_records_request_id;
 CREATE UNIQUE INDEX idx_approval_records_request_id
     ON approval_records(user_id, request_id, COALESCE(task_id, ''))
     WHERE request_id IS NOT NULL AND request_id != '';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4. notification_messages: backfill the composed target_id for in-flight
+--    approval rows so post-migration resolve handlers can still address the
+--    Telegram message. See the sqlite mirror for the full rationale.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+UPDATE notification_messages nm
+SET target_id = nm.target_id || '|' || pa.task_id
+FROM pending_approvals pa
+WHERE nm.target_type = 'approval'
+  AND nm.target_id = pa.request_id
+  AND pa.task_id IS NOT NULL
+  AND pa.task_id != '';

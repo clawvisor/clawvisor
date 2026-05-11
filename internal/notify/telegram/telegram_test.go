@@ -149,9 +149,13 @@ func TestCallbackTokenStore_TaskIDRoundTrips(t *testing.T) {
 		t.Fatalf("Consume(denyB): TaskID=%q TargetID=%q, want task-B/req-X", gotB.TaskID, gotB.TargetID)
 	}
 
-	// Sibling token for the same target (denyA) must still be consumable —
-	// the share-state-across-pair behavior is keyed on TargetID, not TaskID,
-	// so siblings under different tasks are independent.
+	// Pair-state is shared per (approve, deny) entry: consuming approveA
+	// must invalidate denyA, and consuming denyB must invalidate approveB
+	// (so a user can't both approve and deny the same target). Cross-task
+	// siblings remain independent because they were minted from separate
+	// Generate calls — approveA / denyA carry task-A's entry, approveB /
+	// denyB carry task-B's, and consuming any one of the four does NOT
+	// touch the other task's pair.
 	if _, err := s.Consume(denyA); err != errTokenUsed {
 		t.Fatalf("Consume(denyA after approveA): want errTokenUsed, got %v", err)
 	}

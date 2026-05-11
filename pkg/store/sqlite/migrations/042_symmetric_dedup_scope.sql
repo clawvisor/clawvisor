@@ -180,3 +180,29 @@ DROP INDEX idx_approval_records_request_id;
 CREATE UNIQUE INDEX idx_approval_records_request_id
     ON approval_records(user_id, request_id, COALESCE(task_id, ''))
     WHERE request_id IS NOT NULL AND request_id != '';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4. notification_messages: pre-migration approval rows were stored with
+--    target_id = request_id. Post-migration the handler addresses the row
+--    with target_id = request_id || '|' || task_id (see approvalNotifyTargetID
+--    in internal/api/handlers/gateway.go). Backfill so existing in-flight
+--    Telegram messages remain addressable.
+--
+--    The UPDATE only touches rows whose pending_approval now has a non-empty
+--    task_id (back-filled in step 2). Rows for pre-task approvals stay under
+--    their original request_id key, matching approvalNotifyTargetID's
+--    pre-task branch.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+UPDATE notification_messages
+SET target_id = target_id || '|' || (
+    SELECT pa.task_id FROM pending_approvals pa
+    WHERE pa.request_id = notification_messages.target_id
+      AND pa.task_id IS NOT NULL AND pa.task_id != ''
+    LIMIT 1
+)
+WHERE target_type = 'approval'
+  AND target_id IN (
+      SELECT pa2.request_id FROM pending_approvals pa2
+      WHERE pa2.task_id IS NOT NULL AND pa2.task_id != ''
+  );

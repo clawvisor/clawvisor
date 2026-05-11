@@ -1052,10 +1052,24 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 			if verdict != nil {
 				e.Verification = intent.MarshalVerdict(verdict)
 			}
-			if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+			winner, logErr := h.logAuditCanonical(ctx, e)
+			if logErr != nil {
 				h.logger.Warn("audit log failed", "err", logErr)
 			}
 			h.publishAuditAndQueue(agent.UserID, req.TaskID)
+			if winner != nil {
+				// Same-scope race: the canonical landed in another goroutine.
+				// The adapter on this side already fired (see
+				// logAuditCanonical's auto-execute limitation), but we
+				// surface the winner's outcome to the agent and suppress
+				// chain-context extraction + callback on this loser so the
+				// agent doesn't see duplicate execution side effects.
+				writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
+					Deduped: true,
+					Message: "Duplicate request_id reused; returning the existing result. Use a new request_id for a new request.",
+				})
+				return
+			}
 
 			// Chain context extraction (async — cloud services only, guarded by verdict != nil)
 			chainSessionID := req.SessionID
@@ -1212,10 +1226,22 @@ func (h *GatewayHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	e := baseEntry("approve", "pending", taskIDPtr)
 	e.DurationMS = int(time.Since(start).Milliseconds())
 	e.Verification = intent.MarshalVerdict(advisoryVerdict)
-	if logErr := h.store.LogAudit(ctx, e); logErr != nil {
+	winner, logErr := h.logAuditCanonical(ctx, e)
+	if logErr != nil {
 		h.logger.Warn("audit log failed", "err", logErr)
 	}
 	h.publishAuditAndQueue(agent.UserID, req.TaskID)
+	if winner != nil {
+		// Same-scope race: another worker already enqueued the approval.
+		// Skip routeToApproval to avoid creating a duplicate pending row
+		// and surface the winner's outcome (which may itself still be
+		// "pending" — the agent should poll, not retry).
+		writeGatewayStatusResponse(w, winner, gatewayStatusResponseOptions{
+			Deduped: true,
+			Message: "Duplicate request_id reused; awaiting the existing approval. Use a new request_id for a new request.",
+		})
+		return
+	}
 	expiresAt := time.Now().Add(time.Duration(h.cfg.Approval.Timeout) * time.Second)
 	blob := buildRequestBlob(req, agent)
 	blob.Verification = advisoryVerdict
@@ -1357,6 +1383,48 @@ const longPollGrace = 10 * time.Second
 // request — the client-requested timeout plus longPollGrace.
 func longPollDeadline(r *http.Request) time.Duration {
 	return time.Duration(parseLongPollTimeout(r))*time.Second + longPollGrace
+}
+
+// logAuditCanonical writes a canonical audit row (DedupedOf == nil) and
+// recovers cleanly from a same-scope race. On a unique-violation against
+// idx_audit_canonical_dedup, it re-fetches the winning canonical via
+// FindDedupCandidate, demotes e in place to a dedup-attempt row pointing
+// at the winner, and re-LogAudits. Returns the winner (non-nil) iff race
+// recovery rewrote e; callers gating side effects or queue insertion on
+// canonical insertion should short-circuit on winner != nil with the
+// winner's outcome.
+//
+// Known limitation — auto-execute idempotency: callers that fire the
+// adapter BEFORE calling this helper can both miss the early
+// FindDedupCandidate check, both execute, and only collide here on the
+// audit insert. This helper recovers the audit shape (one canonical,
+// one dedup-attempt) but cannot un-fire a side effect the adapter
+// already executed. Closing the window requires an
+// insert-canonical-before-execute reservation pattern, intentionally
+// out of scope for the dedup-scope migration. The early
+// FindDedupCandidate at the request-handling entry still catches the
+// common case (sequential retries); the residual race is narrow (two
+// near-simultaneous identical requests). Even in that case, the
+// loser's response now reflects the winner's outcome and the loser's
+// callback is suppressed — the audit log is the only thing that no
+// longer "lies" about it.
+func (h *GatewayHandler) logAuditCanonical(ctx context.Context, e *store.AuditEntry) (*store.AuditEntry, error) {
+	err := h.store.LogAudit(ctx, e)
+	if err == nil || !errors.Is(err, store.ErrConflict) {
+		return nil, err
+	}
+	taskID := ""
+	if e.TaskID != nil {
+		taskID = *e.TaskID
+	}
+	winner, lookupErr := h.store.FindDedupCandidate(ctx, e.RequestID, e.UserID, taskID)
+	if lookupErr != nil {
+		return nil, fmt.Errorf("dedup candidate lookup after race: %w", lookupErr)
+	}
+	e.DedupedOf = &winner.ID
+	e.Decision = "dedup"
+	e.Outcome = winner.Outcome
+	return winner, h.store.LogAudit(ctx, e)
 }
 
 // writeAmbiguousExecute emits the 409 AMBIGUOUS response shape for the
