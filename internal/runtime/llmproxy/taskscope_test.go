@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
-	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -144,12 +143,6 @@ func TestDefsFromRegistry_NilSafe(t *testing.T) {
 	if defs := DefsFromRegistry(nil); len(defs) != 0 {
 		t.Errorf("nil registry should produce empty defs, got %d", len(defs))
 	}
-}
-
-func TestClassifyToDecision_AllShapes(t *testing.T) {
-	// Sanity: each classification kind gets a sensible decision shape.
-	defs := []yamldef.ServiceDef{} // unused, just here so the test compiles in catalog package
-	_ = defs
 }
 
 // End-to-end: a tool_use that triggers a rewrite is blocked when the

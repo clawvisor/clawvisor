@@ -328,8 +328,11 @@ func simpleShellTokenize(cmd string) ([]string, bool) {
 			buf.Reset()
 		}
 	}
-	for i := range len(cmd) {
-		c := rune(cmd[i])
+	// Iterate runes, not bytes — rune(cmd[i]) treats a single byte as a
+	// codepoint, which corrupts multi-byte UTF-8 (e.g. é → two bogus
+	// runes 0xC3, 0xA9 each WriteRune-encoded back to UTF-8 separately,
+	// turning one é into four bytes of garbage).
+	for _, c := range cmd {
 		switch {
 		case state == 0 && (c == ' ' || c == '\t' || c == '\n'):
 			flush()

@@ -238,12 +238,41 @@ func joinShellTokens(tokens []string) string {
 
 // quoteShell wraps a string in single quotes, escaping any embedded
 // single quotes via the standard '\'' trick.
+//
+// Security: uses an ALLOW-list — only leaves a token unquoted when every
+// character is known-safe (alphanumerics + a small URL-safe set). A
+// deny-list misses metacharacters trivially (newline, tab, glob chars,
+// brace/bracket expansion, comment marker), and a missed metacharacter
+// can mean command injection via model-generated tool input.
 func quoteShell(s string) string {
-	if !strings.ContainsAny(s, " '\"$`\\;|&<>()") {
+	if shellTokenSafe(s) {
 		return s
 	}
 	if !strings.Contains(s, "'") {
 		return "'" + s + "'"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellTokenSafe reports whether s contains only characters known to be
+// safe to pass unquoted to /bin/sh-style shells. Conservative on purpose:
+// any character not in the safe set forces quoting. Empty string is NOT
+// safe (an unquoted empty token disappears from the argv) — callers want
+// it quoted as '' to preserve it as a discrete argument.
+func shellTokenSafe(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == '/' || r == ',' ||
+			r == ':' || r == '=' || r == '@' || r == '+' || r == '%':
+		default:
+			return false
+		}
+	}
+	return true
 }

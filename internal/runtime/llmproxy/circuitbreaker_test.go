@@ -104,10 +104,14 @@ func TestCircuitBreaker_ReopensOnHalfOpenFailure(t *testing.T) {
 		t.Fatalf("expected half_open")
 	}
 
-	// Probe still failing → re-open.
+	// Probe still failing → re-open. We expect a non-nil upstream error
+	// (not ErrCircuitOpen — half-open lets one probe through).
 	_, err := cb.Verify(context.Background(), IntentVerifyRequest{})
-	if !errors.Is(err, errors.Unwrap(err)) && err == nil {
-		t.Fatalf("expected upstream error on probe")
+	if err == nil {
+		t.Fatalf("expected upstream error on probe, got nil")
+	}
+	if errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("probe should pass through to upstream, not short-circuit; got %v", err)
 	}
 	if cb.State() != "open" {
 		t.Errorf("state=%s after probe failure, want open", cb.State())

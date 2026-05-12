@@ -421,6 +421,9 @@ function RadioGroup({
   onChange: (value: string) => void
 }) {
   return (
+    // Use aria-pressed (toggle-button semantics) rather than role="radio",
+    // which would require a surrounding role="radiogroup" container and
+    // arrow-key navigation we don't implement.
     <div className="inline-flex rounded-md border border-border-default bg-surface-0 p-1">
       {options.map(option => {
         const active = value === option.value
@@ -428,8 +431,7 @@ function RadioGroup({
           <button
             key={option.value}
             type="button"
-            role="radio"
-            aria-checked={active}
+            aria-pressed={active}
             onClick={() => onChange(option.value)}
             className={`rounded px-3 py-1.5 text-sm font-medium transition ${
               active

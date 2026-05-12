@@ -234,6 +234,61 @@ func TestRewrite_StructuredPreservesExplicitPort(t *testing.T) {
 	}
 }
 
+// Security: a deny-list of shell metacharacters misses things. The
+// allow-list in quoteShell must quote any token containing a newline,
+// tab, glob char, brace, bracket, or comment marker — otherwise model-
+// generated tool input could inject commands via the rebuilt shell line.
+func TestRewrite_BashQuotesDangerousTokens(t *testing.T) {
+	// Each test case feeds the curl line a header value containing a
+	// dangerous character. The rewriter must produce a command that
+	// keeps the value inside a single argument.
+	cases := []struct {
+		name      string
+		headerVal string
+	}{
+		{"newline_injection", "Bearer autovault_x\nrm -rf /"},
+		{"tab", "Bearer autovault_x\tinjected"},
+		{"comment_marker", "Bearer autovault_x #ignored"},
+		{"glob_star", "Bearer autovault_x*"},
+		{"glob_question", "Bearer autovault_x?"},
+		{"brace_expand", "Bearer autovault_x{a,b}"},
+		{"bracket_expand", "Bearer autovault_x[abc]"},
+		{"home_tilde", "Bearer autovault_x~"},
+		{"backtick", "Bearer autovault_x`whoami`"},
+		{"dollar", "Bearer autovault_x$SHELL"},
+		{"semicolon", "Bearer autovault_x;rm"},
+		{"pipe", "Bearer autovault_x|cat"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := quoteShell(tc.headerVal)
+			// The quoted result must start with a single-quote (we use
+			// single-quote wrapping for any non-safe token).
+			if !strings.HasPrefix(out, "'") || !strings.HasSuffix(out, "'") {
+				t.Fatalf("dangerous token %q not quoted: %q", tc.headerVal, out)
+			}
+		})
+	}
+}
+
+func TestRewrite_BashLeavesSafeTokensUnquoted(t *testing.T) {
+	// Tokens composed of only the safe allow-list pass through verbatim
+	// (no spurious quoting that would corrupt the command line).
+	cases := []string{
+		"curl",
+		"-X",
+		"POST",
+		"https://api.github.com/repos/x/y",
+		"Authorization:",
+		"abc123-_.+@example",
+	}
+	for _, s := range cases {
+		if out := quoteShell(s); out != s {
+			t.Errorf("safe token %q was unnecessarily quoted as %q", s, out)
+		}
+	}
+}
+
 func TestRewrite_AmbiguousReturnsErr(t *testing.T) {
 	v := Verdict{Ambiguous: true}
 	if _, err := Rewrite(ToolUse{}, v, DefaultRewriteOpts("https://proxy")); err != ErrAmbiguous {
@@ -335,13 +390,20 @@ func TestRewrite_BashPreservesQuotedHeaderValue(t *testing.T) {
 	}
 
 	// Sanity: the injected X-Clawvisor-Caller value with a space must
-	// also be a single token.
+	// also be a single token. Assert we found it AND that it's intact;
+	// without the foundCaller flag, an entirely-missing header would
+	// silently pass.
+	foundCaller := false
 	for i, tok := range tokens {
 		if tok == "-H" && i+1 < len(tokens) && strings.HasPrefix(tokens[i+1], "X-Clawvisor-Caller:") {
+			foundCaller = true
 			if tokens[i+1] != "X-Clawvisor-Caller: Bearer cvis_call" {
 				t.Fatalf("X-Clawvisor-Caller value mangled: %q", tokens[i+1])
 			}
 		}
+	}
+	if !foundCaller {
+		t.Fatalf("X-Clawvisor-Caller header not injected at all: tokens=%v", tokens)
 	}
 }
 

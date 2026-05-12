@@ -338,6 +338,17 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					anyBlocked = true
 				}
 				frags = append(frags, assistantFragment{IsTool: true, ToolName: tu.Name, ToolArgs: tu.Input})
+				// Preserve custom_tool_call in the ordered stream so a
+				// sibling function_call rewrite doesn't silently drop it
+				// from the synthesized SSE re-emit.
+				orderedItems = append(orderedItems, orderedResponsesItem{
+					isCustomToolCall: true,
+					outputIndex:      raw.OutputIndex,
+					itemID:           raw.Item.ID,
+					callID:           raw.Item.CallID,
+					name:             tu.Name,
+					customInput:      string(tu.Input),
+				})
 			}
 		}
 	}
@@ -407,6 +418,37 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 			}))
 			continue
 		}
+		if it.isCustomToolCall {
+			itemID := it.itemID
+			if itemID == "" {
+				itemID = "ctc_" + it.callID
+			}
+			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
+				"type":         "response.output_item.added",
+				"output_index": i,
+				"item": map[string]any{
+					"id":      itemID,
+					"type":    "custom_tool_call",
+					"status":  "completed",
+					"call_id": it.callID,
+					"name":    it.name,
+					"input":   it.customInput,
+				},
+			}))
+			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
+				"type":         "response.output_item.done",
+				"output_index": i,
+				"item": map[string]any{
+					"id":      itemID,
+					"type":    "custom_tool_call",
+					"status":  "completed",
+					"call_id": it.callID,
+					"name":    it.name,
+					"input":   it.customInput,
+				},
+			}))
+			continue
+		}
 		// function_call item.
 		itemID := it.itemID
 		if itemID == "" {
@@ -460,13 +502,15 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 // buildOpenAIResponsesMultiSSE. Mirrors the local orderedItem in
 // rewriteResponsesSSE so the helper can be tested independently.
 type orderedResponsesItem struct {
-	isText      bool
-	outputIndex int
-	itemID      string
-	callID      string
-	name        string
-	arguments   string
-	text        string
+	isText           bool
+	isCustomToolCall bool
+	outputIndex      int
+	itemID           string
+	callID           string
+	name             string
+	arguments        string
+	text             string
+	customInput      string  // for custom_tool_call: the raw input string
 }
 
 type openAIChatCompletionsResponse struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -212,13 +213,20 @@ func flattenOpenAITaskReplyContent(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return ""
 	}
-	for i := len(blocks) - 1; i >= 0; i-- {
-		switch blocks[i].Type {
+	// Concatenate every text-bearing block in order. Returning only the
+	// last block was a false-negative when "approve cv-<id>" was split
+	// across blocks (e.g. ["please ", "approve cv-abc"]) or when the
+	// approve verb sat in an earlier block followed by trailing prose.
+	// The downstream parser regex finds the latest matching verb+id
+	// anywhere in the combined text.
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
 		case "text", "input_text":
-			if blocks[i].Text != "" {
-				return blocks[i].Text
+			if b.Text != "" {
+				parts = append(parts, b.Text)
 			}
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }

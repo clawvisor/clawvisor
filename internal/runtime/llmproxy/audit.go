@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -294,10 +295,61 @@ func truncateAuditValue(v any, maxString int) any {
 }
 
 func truncateAuditString(s string, max int) string {
+	s = redactSecretsInString(s)
 	if max <= 0 || len(s) <= max {
 		return s
 	}
 	return s[:max] + "...<truncated>"
+}
+
+// auditSecretValueRE matches the credential patterns we don't want
+// landing in audit rows, even when they appear embedded in larger
+// strings such as a `command` field's shell-command-line value or a
+// `url` value with basic-auth credentials.
+//
+// Patterns covered:
+//   - Bearer tokens: `Bearer <token>` (any non-whitespace token).
+//   - Known prefixed credentials: `sk-ant-...`, `sk-...`, `ghp_...`,
+//     `gho_...`, `ghu_...`, `ghs_...`, `xoxb-...`, `xoxa-...`, `xoxp-...`,
+//     `cvis_...`.
+//   - URL embedded basic auth: `https://user:secret@host/...`.
+//   - Autovault placeholders are NOT redacted — they're tokens by
+//     reference, not by value, and operators rely on seeing them.
+var auditSecretValueRE = regexp.MustCompile(
+	`(?i)` +
+		// Bearer token: terminate match at whitespace OR quote char so we
+		// don't swallow the closing ' or " when the token sat inside a
+		// quoted shell argument.
+		`(?:bearer\s+[^\s'"]+|` +
+		`sk-ant-[A-Za-z0-9_-]+|` +
+		`sk-(?:proj-)?[A-Za-z0-9_-]{8,}|` +
+		`ghp_[A-Za-z0-9]+|gho_[A-Za-z0-9]+|ghu_[A-Za-z0-9]+|ghs_[A-Za-z0-9]+|` +
+		`xox[abp]-[A-Za-z0-9-]+|` +
+		`cvis_[A-Za-z0-9]+` +
+		`)` +
+		`|(https?://)[^/:@\s]+:[^@\s]+@`)
+
+// redactSecretsInString replaces well-known credential patterns with
+// `<REDACTED:auth>`. Applied to every string value flowing into the
+// audit row so credentials embedded in command-line or URL strings
+// don't survive into the audit log. Key-based filtering at the
+// caller is necessary but not sufficient — values can carry secrets
+// in fields not named like secrets (e.g. `command`).
+func redactSecretsInString(s string) string {
+	if s == "" {
+		return s
+	}
+	return auditSecretValueRE.ReplaceAllStringFunc(s, func(match string) string {
+		// URL basic-auth case: preserve scheme prefix.
+		if strings.HasPrefix(match, "http://") || strings.HasPrefix(match, "https://") {
+			scheme := "https://"
+			if strings.HasPrefix(match, "http://") {
+				scheme = "http://"
+			}
+			return scheme + "<REDACTED:auth>@"
+		}
+		return "<REDACTED:auth>"
+	})
 }
 
 func toolTarget(input map[string]any) string {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -145,7 +145,10 @@ func detectLiteProxyProviderFromCommand(args []string) (string, bool) {
 }
 
 func normalizeLiteProxyCommandKey(value string) string {
-	value = strings.TrimSpace(strings.ToLower(path.Base(value)))
+	// filepath.Base honors the host OS path separator. path.Base uses
+	// forward slashes only and would return the whole Windows-style
+	// path verbatim, breaking provider detection.
+	value = strings.TrimSpace(strings.ToLower(filepath.Base(value)))
 	return strings.TrimSuffix(value, ".exe")
 }
 

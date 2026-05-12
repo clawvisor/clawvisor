@@ -431,7 +431,11 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"skipped_reason", processed.SkippedReason,
 		)
 		if processed.Rewritten {
-			w.Header().Set("Content-Length", "")
+			// Drop Content-Length entirely — the rewritten body's length
+			// differs from upstream's. Setting it to "" leaves an empty
+			// header which is malformed; Del removes it so Go writes the
+			// correct length (or transfers chunked).
+			w.Header().Del("Content-Length")
 			// Stripping Content-Encoding because we mutated the body
 			// after upstream may have compressed it; the harness should
 			// not try to gunzip our plaintext.

@@ -1332,8 +1332,16 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
 
   function copy(label: string, value: string) {
     navigator.clipboard.writeText(value)
-    setCopied(label)
-    setTimeout(() => setCopied(null), 2000)
+      .then(() => {
+        setCopied(label)
+        setTimeout(() => setCopied(null), 2000)
+      })
+      .catch(() => {
+        // writeText can reject (insecure context, permission denied).
+        // Show a transient failure label rather than a false 'Copied!'.
+        setCopied(`${label}-failed`)
+        setTimeout(() => setCopied(null), 2000)
+      })
   }
 
   // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
@@ -1380,7 +1388,7 @@ client = anthropic.Anthropic(
                 onClick={() => copy('base', `${baseURL}/v1`)}
                 className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
               >
-                {copied === 'base' ? 'Copied!' : 'Copy'}
+                {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}
               </button>
             </div>
           </div>
@@ -1398,7 +1406,7 @@ client = anthropic.Anthropic(
                   onClick={() => copy(snippet.key, snippet.body)}
                   className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
                 >
-                  {copied === snippet.key ? 'Copied!' : 'Copy'}
+                  {copied === snippet.key ? 'Copied!' : copied === `${snippet.key}-failed` ? 'Copy failed' : 'Copy'}
                 </button>
               </div>
               <pre className="mt-1 px-3 py-2 text-xs font-mono rounded border border-border-default bg-surface-1 text-text-primary overflow-x-auto whitespace-pre-wrap">{snippet.body}</pre>

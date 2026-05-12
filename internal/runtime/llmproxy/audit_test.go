@@ -193,3 +193,53 @@ func TestAuditEmitter_PopulatesValidatorPromptSHA(t *testing.T) {
 		t.Errorf("expected validator_prompt=abc123, got %v", params["validator_prompt"])
 	}
 }
+
+// Security: credentials embedded in audit values (not just keys) must
+// be redacted. A `command` value containing `Bearer ghp_...` previously
+// landed verbatim in the audit row.
+func TestRedactSecretsInString(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "bearer_token_in_command",
+			in:   "curl -H 'Authorization: Bearer ghp_realtoken123' https://api.github.com/x",
+			want: "curl -H 'Authorization: <REDACTED:auth>' https://api.github.com/x",
+		},
+		{
+			name: "anthropic_key",
+			in:   "use sk-ant-realsecret as the key",
+			want: "use <REDACTED:auth> as the key",
+		},
+		{
+			name: "openai_key",
+			in:   "OPENAI_API_KEY=sk-proj-realsecret123",
+			want: "OPENAI_API_KEY=<REDACTED:auth>",
+		},
+		{
+			name: "agent_token",
+			in:   "agent token is cvis_abc123def",
+			want: "agent token is <REDACTED:auth>",
+		},
+		{
+			name: "url_basic_auth",
+			in:   "https://user:secretpw@api.example.com/path",
+			want: "https://<REDACTED:auth>@api.example.com/path",
+		},
+		{
+			name: "autovault_placeholder_survives",
+			in:   "use placeholder autovault_github_xyz123 here",
+			want: "use placeholder autovault_github_xyz123 here",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactSecretsInString(tc.in)
+			if got != tc.want {
+				t.Errorf("redaction:\n  in=  %q\n  got= %q\n  want=%q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

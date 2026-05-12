@@ -22,8 +22,14 @@ func TestAnthropicValidator_PromptSHADeterministic(t *testing.T) {
 
 func TestAnthropicValidator_HappyPath(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// t.Fatalf inside an httptest handler goroutine calls Goexit on
+		// the handler, not the test — leaves the test passing despite the
+		// failure. Use Errorf + return so the assertion is recorded on the
+		// test object and the handler returns cleanly.
 		if r.Header.Get("x-api-key") != "test-key" {
-			t.Fatalf("expected x-api-key=test-key, got %q", r.Header.Get("x-api-key"))
+			t.Errorf("expected x-api-key=test-key, got %q", r.Header.Get("x-api-key"))
+			http.Error(w, "missing api key", http.StatusUnauthorized)
+			return
 		}
 		_, _ = w.Write([]byte(`{
 			"content":[
