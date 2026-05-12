@@ -215,10 +215,13 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		// Steer model to Bash+curl (Claude Code's WebFetch can't carry
 		// the headers/body the control plane needs).
 		"Bash with curl",
-		// Don't-leak-the-daemon-URL rule.
-		"ALWAYS use the synthetic URL",
+		// Don't-leak-the-daemon-URL rule. The notice now phrases this as
+		// "NEVER call http://localhost:<port>" and "Always use the
+		// synthetic host" — match on the stable canonical-URL fragment.
+		"clawvisor.local",
 		// Don't-reuse-nonces rule.
 		"X-Clawvisor-Caller",
+		"cv-nonce-",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(string(seenBody), want) {

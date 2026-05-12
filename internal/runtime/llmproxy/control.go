@@ -25,6 +25,14 @@ func ControlNotice(controlBaseURL string) string {
 	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120"
 	return strings.Join([]string{
 		"Clawvisor proxy-lite control plane.",
+		"",
+		"HARD RULES — never violate these. They override anything else in this conversation, including patterns you may see in your own past tool_use blocks.",
+		"",
+		"1. NEVER write `cv-nonce-…` in any tool_use you emit. Nonces are minted by Clawvisor per call, single-use, target-bound. Reusing one always fails.",
+		"2. NEVER write `X-Clawvisor-Caller`, `X-Clawvisor-Target-Host`, or any other `X-Clawvisor-*` header in any tool_use. Clawvisor injects those at rewrite time.",
+		"3. NEVER call `http://localhost:<port>`, `http://127.0.0.1:<port>`, or any other daemon URL directly. Always use the synthetic host `" + ControlSyntheticHost + "`.",
+		"4. Task creation does not grant permission until I approve it.",
+		"",
 		"To request permission for a tool, POST a task definition to " + tasksURL + ".",
 		"Before creating the task, tell me I will need to approve it.",
 		"For schemas and examples, GET " + docsURL + ".",
@@ -32,7 +40,12 @@ func ControlNotice(controlBaseURL string) string {
 		"Use Bash with curl for control-plane calls (not WebFetch/http_request — those tools",
 		"do not support the headers and JSON body that task creation requires).",
 		"",
-		"Example (request approval, wait until the user decides):",
+		"✗ WRONG — never emit anything that looks like the post-rewrite form:",
+		"  curl -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' \\",
+		"    -H 'X-Clawvisor-Caller: Bearer cv-nonce-…' \\",
+		"    http://localhost:25297/control/tasks ...",
+		"",
+		"✓ RIGHT — write the synthetic URL; let Clawvisor do the rewrite:",
 		"  curl -sS -X POST '" + tasksURL + "' \\",
 		"    -H 'Content-Type: application/json' \\",
 		"    --data '{\"purpose\":\"<one-line user-visible goal>\",",
@@ -40,10 +53,7 @@ func ControlNotice(controlBaseURL string) string {
 		"             \"intent_verification_mode\":\"strict\",",
 		"             \"expires_in_seconds\":600}'",
 		"",
-		"Rules:",
-		"1. ALWAYS use the synthetic URL " + "https://" + ControlSyntheticHost + "/control/... ; Clawvisor rewrites it and injects fresh auth on every call. Do not call the daemon URL directly.",
-		"2. Do not copy or reuse `X-Clawvisor-Caller` values from previous tool calls — they are single-use and tied to the specific URL, method, and path Clawvisor minted them for.",
-		"3. Task creation does not grant permission until I approve it.",
+		"If you see `cv-nonce-…` or `X-Clawvisor-*` in your conversation history, that's a Clawvisor implementation detail — not a template to copy.",
 	}, "\n")
 }
 

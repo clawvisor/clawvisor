@@ -228,6 +228,26 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
 	}
+	// Strip the rewriter's transport details from the assistant
+	// tool_use history BEFORE the model sees this request. Without
+	// this, models pattern-match from their own history and start
+	// emitting `cv-nonce-…` / proxy headers / rewritten URLs verbatim
+	// on subsequent turns, bypassing the rewrite path entirely.
+	if sanitized, sanitizeErr := llmproxy.SanitizeInboundHistory(llmproxy.SanitizeInboundRequest{
+		Provider:        provider,
+		Body:            body,
+		ResolverBaseURL: h.ResolverBaseURL,
+		ControlBaseURL:  h.ControlBaseURL,
+	}); sanitizeErr != nil {
+		// Sanitization is best-effort; a failure here means the
+		// model sees the un-sanitized history but the request still
+		// works. Log and continue.
+		h.Logger.WarnContext(r.Context(), "lite-proxy inbound sanitize failed",
+			"agent_id", agent.ID, "err", sanitizeErr.Error())
+	} else if sanitized.Modified {
+		body = sanitized.Body
+		auditParams["inbound_history_sanitized"] = true
+	}
 	if taskRewrite, taskErr := llmproxy.RewriteTaskApprovalReply(r.Context(), llmproxy.TaskReplyRewriteRequest{
 		HTTPRequest:     r,
 		Provider:        provider,
