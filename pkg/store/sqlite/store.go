@@ -429,6 +429,13 @@ func (s *Store) GetAgentCallbackSecret(ctx context.Context, agentID string) (str
 	return *secret, nil
 }
 
+// GetAgent looks up an agent by its ID. Returns store.ErrNotFound when
+// the agent doesn't exist or has been soft-deleted. Thin wrapper around
+// the existing getAgentByID helper.
+func (s *Store) GetAgent(ctx context.Context, id string) (*store.Agent, error) {
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var createdAt string

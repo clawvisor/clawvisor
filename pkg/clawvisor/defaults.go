@@ -35,6 +35,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
@@ -325,6 +326,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var pairingCodeStore handlers.PairingCodeStore
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
+	var callerNonceCache llmproxy.CallerNonceCache
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -356,6 +358,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 			verdictTTL = 60 * time.Second
 		}
 		verdictCache = intent.NewRedisVerdictCache(client, verdictTTL)
+
+		// Lite-proxy caller-auth nonces: cross-instance consumption.
+		// 5-minute TTL covers the typical proxy-to-resolver round-trip
+		// (well under a minute in practice) plus held-tool-use release
+		// windows that re-mint a fresh nonce.
+		callerNonceCache = llmproxy.NewRedisCallerNonceCache(client, 5*time.Minute)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
@@ -411,6 +419,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		DedupCache:         dedupCache,
 		VerdictCache:       verdictCache,
 		ExtractionTracker:  extractionTracker,
+		CallerNonceCache:   callerNonceCache,
 		RedisClient:        rdb,
 	}
 

@@ -9,15 +9,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
-func newSeededResolver(t *testing.T) (*ProxyResolverHandler, store.Store, *store.User, *store.Agent, string, string) {
+func newSeededResolver(t *testing.T) (*ProxyResolverHandler, store.Store, *store.User, *store.Agent, llmproxy.CallerNonceCache, string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -59,7 +61,38 @@ func newSeededResolver(t *testing.T) (*ProxyResolverHandler, store.Store, *store
 
 	h := NewProxyResolverHandler(st, v, slog.Default())
 	h.AllowPrivateNetworks = true // allow httptest's loopback target
-	return h, st, user, agent, rawAgentToken, placeholder
+	nonces := llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
+	return h, st, user, agent, nonces, placeholder
+}
+
+// mintTestNonce produces a nonce bound to the given target so a test
+// can populate X-Clawvisor-Caller for the resolver middleware. Matches
+// what postprocess does for real credentialed rewrites.
+func mintTestNonce(t *testing.T, nonces llmproxy.CallerNonceCache, agentID, host, method, path string) string {
+	t.Helper()
+	nonce, err := nonces.Mint(context.Background(), agentID, llmproxy.NonceTarget{
+		Host:   host,
+		Method: method,
+		Path:   path,
+	})
+	if err != nil {
+		t.Fatalf("Mint nonce: %v", err)
+	}
+	return nonce
+}
+
+// nonceForRequest mints a caller nonce that satisfies the middleware
+// for the given outbound request — reads target from the request's
+// X-Clawvisor-Target-Host header. CALL ORDER MATTERS: set the target
+// header BEFORE invoking this helper; otherwise the nonce binds to an
+// empty host and the middleware will reject the request.
+func nonceForRequest(t *testing.T, nonces llmproxy.CallerNonceCache, agentID string, req *http.Request) string {
+	t.Helper()
+	return mintTestNonce(t, nonces, agentID,
+		req.Header.Get("X-Clawvisor-Target-Host"),
+		req.Method,
+		strings.TrimPrefix(req.URL.Path, "/proxy/v1"),
+	)
 }
 
 func TestResolver_HappyPath(t *testing.T) {
@@ -74,13 +107,13 @@ func TestResolver_HappyPath(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	// Target host: api.github.com (in the github bound-service allowlist).
@@ -88,8 +121,8 @@ func TestResolver_HappyPath(t *testing.T) {
 	// loopback URL, but the resolver believes (and validates against)
 	// api.github.com.
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/repos/x/y/issues", strings.NewReader(""))
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// Harness sends the placeholder in the natural Authorization header.
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
@@ -120,17 +153,17 @@ func TestResolver_AcceptsTargetHostWithExplicitPort(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/repos/x/y/issues", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com:8443")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -141,14 +174,14 @@ func TestResolver_AcceptsTargetHostWithExplicitPort(t *testing.T) {
 }
 
 func TestResolver_RejectsMissingTargetHost(t *testing.T) {
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -158,16 +191,16 @@ func TestResolver_RejectsMissingTargetHost(t *testing.T) {
 }
 
 func TestResolver_RejectsSelfTarget(t *testing.T) {
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.SelfHostnames = []string{"clawvisor.example"}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "clawvisor.example")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -177,7 +210,7 @@ func TestResolver_RejectsSelfTarget(t *testing.T) {
 }
 
 func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
-	h, st, _, _, rawToken, _ := newSeededResolver(t)
+	h, st, _, agent, nonces, _ := newSeededResolver(t)
 
 	// Mint a different placeholder owned by a different agent. The resolver
 	// must refuse.
@@ -203,12 +236,12 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+foreign)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -218,15 +251,15 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 }
 
 func TestResolver_RejectsCallWithoutPlaceholder(t *testing.T) {
-	h, st, _, _, rawToken, _ := newSeededResolver(t)
+	h, st, _, agent, nonces, _ := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// No header carries an autovault placeholder.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -238,15 +271,15 @@ func TestResolver_RejectsCallWithoutPlaceholder(t *testing.T) {
 func TestResolver_RejectsHostOutsideBoundService(t *testing.T) {
 	// Placeholder is bound to "github" service, but caller asks resolver
 	// to forward to slack.com — the bound-service host check refuses.
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/api.test/path", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "slack.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -267,17 +300,17 @@ func TestResolver_StripsXClawvisorPrefixOnOutbound(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("X-Clawvisor-Custom", "secret")
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
@@ -303,20 +336,22 @@ func TestResolver_StripsCallerAuthFromOutbound(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.Client = upstream.Client()
 	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
-	// Placeholder rides on X-API-Key; Authorization carries cvis_ caller
-	// token (a misconfiguration). Resolver should strip Authorization.
-	req.Header.Set("Authorization", "Bearer "+rawToken)
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	// Placeholder rides on X-API-Key; Authorization carries a literal
+	// cvis_-shaped token (a misconfigured client sending the agent
+	// token where the proxy doesn't want it). Resolver should strip
+	// Authorization rather than forward it upstream.
+	req.Header.Set("Authorization", "Bearer cvis_should_not_leak_upstream")
 	req.Header.Set("X-API-Key", placeholder)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -334,16 +369,16 @@ func TestResolver_StripsCallerAuthFromOutbound(t *testing.T) {
 // against the configured `clawvisor.example` and the resolver would
 // happily forward through itself.
 func TestResolver_RejectsSelfTargetWithPort(t *testing.T) {
-	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.SelfHostnames = []string{"clawvisor.example"}
 
 	mux := http.NewServeMux()
-	mw := middleware.RequireAgentLLMCaller(st)
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
 	for _, target := range []string{"clawvisor.example:443", "clawvisor.example:8080", "Clawvisor.Example:443"} {
 		req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-		req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
+		req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 		req.Header.Set("X-Clawvisor-Target-Host", target)
 		req.Header.Set("Authorization", "Bearer "+placeholder)
 		rec := httptest.NewRecorder()

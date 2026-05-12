@@ -320,6 +320,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.ExtractionTracker != nil {
 		apiOpts = append(apiOpts, api.WithExtractionTracker(opts.ExtractionTracker))
 	}
+	if opts.CallerNonceCache != nil {
+		apiOpts = append(apiOpts, api.WithCallerNonceCache(opts.CallerNonceCache))
+	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))
 	}

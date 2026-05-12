@@ -371,6 +371,12 @@ func (s *Store) UpdateAgentDescription(ctx context.Context, agentID, userID, des
 	return nil
 }
 
+// GetAgent looks up an agent by its ID. Returns store.ErrNotFound when
+// the agent doesn't exist or has been soft-deleted.
+func (s *Store) GetAgent(ctx context.Context, id string) (*store.Agent, error) {
+	return s.getAgentByID(ctx, id)
+}
+
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var orgID *string

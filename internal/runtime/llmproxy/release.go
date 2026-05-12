@@ -32,6 +32,12 @@ type ReleaseRequest struct {
 	IntentVerifier  IntentVerifier
 	PendingApproval PendingApprovalCache
 	Audit           *AuditEmitter
+	// CallerNonces mints the per-release nonce that replaces the agent's
+	// bearer token in the released tool_use's X-Clawvisor-Caller header.
+	// Same semantics as the inline path: bound to (agent, host, method,
+	// path), one-shot, consumed by the resolver. Required when releasing
+	// a credentialed tool_use; release fails closed if nil.
+	CallerNonces CallerNonceCache
 }
 
 type ReleaseResult struct {
@@ -151,7 +157,24 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 			return nil, errors.New("held approval no longer matches current authorization decision")
 		}
 	}
-	raw, err := inspector.Rewrite(inspector.ToolUse{ID: pending.ToolUse.ID, Name: pending.ToolUse.Name, Input: pending.ToolUse.Input}, verdict, req.RewriteOpts)
+	// Mint a fresh nonce at release time — the original hold predates
+	// this release by minutes-to-hours, and any nonce that was minted at
+	// hold time has long since expired. Bound to (agent, host, method,
+	// path) so it only authorizes the specific call we're about to emit.
+	if req.CallerNonces == nil {
+		return nil, errors.New("caller nonce cache not configured; refusing to release with raw agent token")
+	}
+	nonce, mintErr := req.CallerNonces.Mint(ctx, req.Agent.ID, NonceTarget{
+		Host:   verdict.Host,
+		Method: verdict.Method,
+		Path:   verdict.Path,
+	})
+	if mintErr != nil {
+		return nil, errors.New("caller nonce mint failed: " + mintErr.Error())
+	}
+	opts := req.RewriteOpts
+	opts.CallerToken = nonce
+	raw, err := inspector.Rewrite(inspector.ToolUse{ID: pending.ToolUse.ID, Name: pending.ToolUse.Name, Input: pending.ToolUse.Input}, verdict, opts)
 	if err != nil {
 		return nil, err
 	}

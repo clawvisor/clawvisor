@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -161,6 +162,7 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -193,6 +195,7 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -241,6 +244,7 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -282,6 +286,7 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 	_ = Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -311,6 +316,7 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -345,6 +351,7 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -371,6 +378,7 @@ func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,

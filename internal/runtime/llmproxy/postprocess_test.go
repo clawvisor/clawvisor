@@ -75,6 +75,7 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -97,6 +98,7 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -148,6 +150,7 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -180,6 +183,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -235,6 +239,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -348,6 +353,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    inspector.DefaultRewriteOpts(""),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -390,6 +396,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -432,6 +439,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -472,6 +480,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -523,6 +532,7 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -565,6 +575,7 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -602,6 +613,7 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -681,6 +693,7 @@ data: {"type":"message_stop"}
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -722,6 +735,7 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -766,6 +780,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -807,6 +822,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -873,6 +889,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -904,6 +921,7 @@ data: [DONE]
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,
@@ -937,6 +955,7 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
 		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
 		AgentID:     agentID,

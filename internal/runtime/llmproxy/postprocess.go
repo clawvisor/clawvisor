@@ -65,6 +65,16 @@ type PostprocessConfig struct {
 	AgentUserID string
 	AgentID     string
 
+	// CallerNonces mints the short-lived single-use nonce that takes
+	// the place of the agent's bearer token in the rewritten tool_use's
+	// X-Clawvisor-Caller header. The nonce is bound to (agent, host,
+	// method, path); the resolver-side middleware consumes it on the
+	// matching call. When non-nil, the rewriter receives a freshly
+	// minted nonce per tool_use; the agent's raw token never enters
+	// the model's conversation context. When nil, credentialed rewrites
+	// fail closed with a configuration error.
+	CallerNonces CallerNonceCache
+
 	// Audit is the emitter for runtime.llm_proxy.* events. nil disables
 	// audit logging from the postprocess path. The handler keeps audit
 	// for the endpoint-call shape; postprocess adds per-tool-use rows.
@@ -391,11 +401,39 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// the host to the placeholder's bound-service allowlist.
 		}
 
+		// Mint a per-tool nonce that stands in for the agent's bearer
+		// token in the rewritten tool_use's X-Clawvisor-Caller header.
+		// The nonce is bound to (agent, host, method, path); the
+		// resolver consumes it one-shot on the matching call. Failure
+		// to mint (cache misconfigured or backend down) fails closed —
+		// we won't embed the raw agent token in the conversation as a
+		// fallback.
+		if cfg.CallerNonces == nil {
+			audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in tool_use",
+			}
+		}
+		nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
+			Host:   v.Host,
+			Method: v.Method,
+			Path:   v.Path,
+		})
+		if mintErr != nil {
+			audit("block", "caller_nonce_mint_failed", mintErr.Error())
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
+			}
+		}
+		opts := cfg.RewriteOpts
+		opts.CallerToken = nonce
 		rewritten, err := inspector.Rewrite(inspector.ToolUse{
 			ID:    tu.ID,
 			Name:  tu.Name,
 			Input: tu.Input,
-		}, v, cfg.RewriteOpts)
+		}, v, opts)
 		if err != nil {
 			audit("block", "rewriter_error", err.Error())
 			return conversation.ToolUseVerdict{

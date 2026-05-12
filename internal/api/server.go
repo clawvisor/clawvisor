@@ -101,6 +101,7 @@ type Server struct {
 	dedupCache         handlers.DedupCache
 	verdictCache       intent.VerdictCacher
 	extractionTracker  handlers.ExtractionTracker
+	callerNonces       llmproxy.CallerNonceCache
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -310,6 +311,14 @@ func WithVerdictCache(vc intent.VerdictCacher) ServerOption {
 // Use the Redis-backed tracker in multi-instance deployments.
 func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 	return func(s *Server) { s.extractionTracker = t }
+}
+
+// WithCallerNonceCache overrides the default in-memory caller-nonce cache
+// used by the lite-proxy resolver. Use the Redis-backed cache in
+// multi-instance deployments so a nonce minted on one daemon can be
+// consumed on another.
+func WithCallerNonceCache(c llmproxy.CallerNonceCache) ServerOption {
+	return func(s *Server) { s.callerNonces = c }
 }
 
 // New creates a Server and registers all routes.
@@ -873,6 +882,19 @@ func (s *Server) routes() http.Handler {
 		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
 		resolverHandler.AuditEmitter = auditEmitter
 
+		// Caller-auth nonce cache: minted by the postprocess layer when
+		// rewriting credentialed tool_uses, consumed by the resolver
+		// middleware below. Configured via WithCallerNonceCache (Redis
+		// in multi-instance mode); falls back to in-process memory cache
+		// for single-daemon installs. The nonce stands in for the agent's
+		// bearer token so the token never appears in the model's
+		// conversation context.
+		callerNonces := s.callerNonces
+		if callerNonces == nil {
+			callerNonces = llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
+		}
+		llmHandler.CallerNonces = callerNonces
+
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
 
@@ -880,10 +902,11 @@ func (s *Server) routes() http.Handler {
 		// x-api-key (SDK conventions).
 		requireAgentLLM := middleware.RequireAgentLLM(s.store)
 
-		// Resolver expects the agent token in `X-Clawvisor-Caller` so the
-		// natural credential headers (Authorization, x-api-key) remain
-		// free to carry the placeholder being swapped.
-		requireAgentLLMCaller := middleware.RequireAgentLLMCaller(s.store)
+		// Resolver expects a short-lived single-use nonce in
+		// X-Clawvisor-Caller — never the raw agent token. The nonce is
+		// bound to (agent, host, method, path), so a leaked nonce only
+		// authorizes the specific call the proxy already approved.
+		requireAgentLLMCaller := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
 
 		mux.Handle("POST /v1/messages", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
 		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))

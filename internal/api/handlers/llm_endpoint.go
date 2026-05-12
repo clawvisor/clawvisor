@@ -73,6 +73,14 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// CallerNonces mints short-lived per-rewrite nonces that stand in
+	// for the agent's bearer token in the rewritten tool_use. The
+	// resolver-side middleware shares the same cache instance and
+	// consumes one-shot on the corresponding resolver call. When nil,
+	// credentialed rewrites fail closed rather than embedding the
+	// agent's raw token in the model's conversation context.
+	CallerNonces llmproxy.CallerNonceCache
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -94,7 +102,11 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Parsers:          conversation.DefaultRegistry(),
 		Logger:           logger,
 		PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
-		MaxRequestBytes:  4 << 20,
+		// Default in-process nonce cache; production wires the Redis-
+		// backed cache via WithCallerNonceCache. Cache instance is
+		// shared with the resolver-side middleware in production.
+		CallerNonces:    llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
+		MaxRequestBytes: 4 << 20,
 	}
 }
 
@@ -428,6 +440,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			EgressRules:      egressRules,
 			PendingApprovals: h.PendingApprovals,
 			ControlBaseURL:   h.ControlBaseURL,
+			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
+			// inside the credentialed rewrite path so the agent's raw
+			// bearer token never enters the model's conversation context.
+			CallerNonces: h.CallerNonces,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -622,6 +638,9 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		IntentVerifier:  h.IntentVerifier,
 		PendingApproval: h.PendingApprovals,
 		Audit:           h.AuditEmitter,
+		// Mint a fresh nonce at release time; the original hold predates
+		// this release by an arbitrary amount, so any old nonce is gone.
+		CallerNonces: h.CallerNonces,
 	})
 	if result.Handled {
 		h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled",

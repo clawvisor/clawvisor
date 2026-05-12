@@ -34,6 +34,7 @@ type Store interface {
 	CreateAgent(ctx context.Context, userID, name, tokenHash string) (*Agent, error)
 	CreateAgentWithOrg(ctx context.Context, userID, name, tokenHash, orgID string) (*Agent, error)
 	GetAgentByToken(ctx context.Context, tokenHash string) (*Agent, error)
+	GetAgent(ctx context.Context, agentID string) (*Agent, error)
 	ListAgents(ctx context.Context, userID string) ([]*Agent, error)
 	UpdateAgentDescription(ctx context.Context, agentID, userID, description string) error
 	GetAgentRuntimeSettings(ctx context.Context, agentID string) (*AgentRuntimeSettings, error)
