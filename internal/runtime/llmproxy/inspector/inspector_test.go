@@ -20,8 +20,11 @@ func TestTriggerHits(t *testing.T) {
 		{"empty", toolUse("Bash", ""), false},
 		{"no shadow", toolUse("Bash", `{"cmd":"ls"}`), false},
 		{"autovault", toolUse("Bash", `{"cmd":"curl -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/repos/x/y"}`), true},
-		{"clawvisor legacy", toolUse("Bash", `{"cmd":"echo clawvisor_x"}`), true},
 		{"unrelated autovault word", toolUse("Bash", `{"cmd":"echo autovaults"}`), false},
+		// Legacy `clawvisor_` markers are no longer recognized — no
+		// users were ever issued them, so the placeholder space is
+		// exclusively `autovault_…`.
+		{"clawvisor not a placeholder anymore", toolUse("Bash", `{"cmd":"echo clawvisor_x"}`), false},
 		{"clawvisor repo path", toolUse("exec_command", `{"cmd":"pwd","workdir":"/Users/ericlevine/conductor/workspaces/clawvisor-public/san-francisco-v5"}`), false},
 	}
 	for _, tc := range cases {

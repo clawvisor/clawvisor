@@ -17,7 +17,6 @@ func PlaceholderPrefix(service string) string {
 }
 
 const ShadowMarker = "autovault"
-const legacyShadowMarker = "clawvisor"
 
 func GeneratePlaceholder(prefix string) (string, error) {
 	raw := make([]byte, 24)
@@ -32,8 +31,7 @@ func GeneratePlaceholder(prefix string) (string, error) {
 }
 
 func LooksLikeShadow(v string) bool {
-	lower := strings.ToLower(v)
-	return strings.Contains(lower, ShadowMarker) || strings.Contains(lower, legacyShadowMarker)
+	return strings.Contains(strings.ToLower(v), ShadowMarker)
 }
 
 func HeaderMaybeContainsShadow(v string) bool {

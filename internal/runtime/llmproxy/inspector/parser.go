@@ -582,7 +582,7 @@ func scanHeadersForShadow(headers map[string]any) ([]CredentialLocation, []strin
 // autovaultPlaceholderRE pulls placeholder tokens out of a header value
 // without false-matching log-line / comment context that may share part
 // of the substring. Mirror of the runtime-proxy's autovault swap regex.
-var autovaultPlaceholderRE = regexp.MustCompile(`[A-Za-z0-9._:-]*(?:autovault|clawvisor)[A-Za-z0-9._:-]+`)
+var autovaultPlaceholderRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
 
 func canonicalHeaderName(s string) string {
 	if s == "" {

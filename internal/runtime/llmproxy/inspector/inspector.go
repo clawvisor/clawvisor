@@ -166,9 +166,9 @@ func (i *Inspector) Inspect(ctx context.Context, t ToolUse) Verdict {
 	return v
 }
 
-// extractPlaceholdersFromInput finds every `autovault_…` / `clawvisor_…`
-// substring in the raw tool_use input bytes. Used as a fallback when the
-// verdict source doesn't populate Placeholders directly (i.e. the LLM
+// extractPlaceholdersFromInput finds every `autovault_…` substring in
+// the raw tool_use input bytes. Used as a fallback when the verdict
+// source doesn't populate Placeholders directly (i.e. the LLM
 // validator path).
 func extractPlaceholdersFromInput(input []byte) []string {
 	if len(input) == 0 {
@@ -198,11 +198,11 @@ func extractPlaceholdersFromInput(input []byte) []string {
 // capture group 1, anchoring on a non-alnum left boundary so embedded
 // substrings (e.g. `myautovault_x`) do not produce phantom placeholder
 // hits. The token-detector counterpart below uses the same boundary.
-var shadowPlaceholderExtractRE = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:autovault|clawvisor)[_:][a-z0-9._:-]+)`)
+var shadowPlaceholderExtractRE = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(autovault[_:][a-z0-9._:-]+)`)
 
-// TriggerHits reports whether a tool_use's serialized input contains an
-// autovault placeholder token (or legacy clawvisor_ token). Cheap pre-filter;
-// the bulk of tool_uses skip credential inspection entirely.
+// TriggerHits reports whether a tool_use's serialized input contains
+// an autovault placeholder token. Cheap pre-filter; the bulk of
+// tool_uses skip credential inspection entirely.
 func TriggerHits(t ToolUse) bool {
 	if len(t.Input) == 0 {
 		return false
@@ -210,7 +210,7 @@ func TriggerHits(t ToolUse) bool {
 	return shadowPlaceholderTokenRE.Match(t.Input)
 }
 
-var shadowPlaceholderTokenRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:autovault|clawvisor)[_:][a-z0-9._:-]+`)
+var shadowPlaceholderTokenRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])autovault[_:][a-z0-9._:-]+`)
 
 // Parser is the deterministic structural-shape parser.
 type Parser interface {

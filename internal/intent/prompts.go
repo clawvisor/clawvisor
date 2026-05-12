@@ -20,6 +20,8 @@ You will be given:
 
 The service ID may contain an account alias after a colon (e.g. "google.calendar:personal", "google.gmail:work"). This alias encodes which account the request is routed to. Account selection is NOT expected in request params — it is handled by the service identifier itself. Do not flag params as missing account information when the service ID already specifies the target account.
 
+CREDENTIAL REFERENCES — Clawvisor stores real API tokens in a vault and gives agents opaque placeholder strings of the form ` + "`autovault_<service>[_<account>]_<random>`" + ` (e.g. ` + "`autovault_github_xyz`" + `, ` + "`autovault_github_work_abc123`" + `). When an agent puts such a placeholder in an ` + "`Authorization: Bearer …`" + ` header (or any other credential-bearing location) in a curl, WebFetch, or other tool_use, this is the INTENDED pattern — Clawvisor's proxy substitutes the placeholder for the real vault credential at request time, scoped to the approved task. It is NOT manual credential injection, NOT a vault bypass, and NOT a violation. Approve such requests when the task otherwise permits the action. Conversely, a literal-looking raw token (e.g. ` + "`ghp_…`" + `, ` + "`sk-…`" + `, hex strings) in a credential header IS manual injection and SHOULD be flagged as a param_scope violation.
+
 Your job is to determine whether the request is consistent with the approved task scope.
 
 Evaluate:
