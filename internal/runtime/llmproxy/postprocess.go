@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -666,6 +667,19 @@ func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 	return &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}
 }
 
+// redactPlaceholderForReason returns the placeholder's prefix +
+// length suffix — enough for operators to identify which placeholder
+// was missing vs. which actually exists in the DB, without exposing
+// the full random suffix in audit reasons that may surface in UIs or
+// logs shared more broadly than the placeholder itself.
+func redactPlaceholderForReason(ph string) string {
+	const head = 18 // long enough to keep `autovault_<svc>_…`
+	if len(ph) <= head {
+		return ph
+	}
+	return ph[:head] + "…(" + strconv.Itoa(len(ph)) + " chars)"
+}
+
 // boundaryCheckVerdict validates the inspector's claimed host against
 // the bound-service allowlist of every placeholder it found. Returns
 // (reason, ok). ok=false on any mismatch, ownership failure, or unknown
@@ -684,12 +698,12 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 		rec, err := cfg.Store.GetRuntimePlaceholder(req.Context(), ph)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return "placeholder not registered", false
+				return "placeholder not registered: " + redactPlaceholderForReason(ph), false
 			}
 			return "store error: " + err.Error(), false
 		}
 		if rec.UserID != cfg.AgentUserID || rec.AgentID != cfg.AgentID {
-			return "placeholder owned by another agent", false
+			return "placeholder owned by another agent (placeholder=" + redactPlaceholderForReason(ph) + ")", false
 		}
 		hosts := inspector.BoundServiceHosts(rec.ServiceID)
 		if len(hosts) == 0 {
