@@ -278,6 +278,7 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 	params, _ := json.MarshalIndent(req.Params, "", "  ")
 
 	stripTags := func(s string) string {
+		lower := strings.ToLower(s)
 		for _, tag := range []string{
 			"<reason>", "</reason>",
 			"<system>", "</system>",
@@ -285,7 +286,14 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 			"<user>", "</user>",
 			"<prompt>", "</prompt>",
 		} {
-			s = strings.ReplaceAll(s, tag, "")
+			for {
+				i := strings.Index(lower, tag)
+				if i == -1 {
+					break
+				}
+				s = s[:i] + s[i+len(tag):]
+				lower = lower[:i] + lower[i+len(tag):]
+			}
 		}
 		return s
 	}
