@@ -122,6 +122,12 @@ type PostprocessConfig struct {
 	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
 	// endpoint rewrites. Empty disables the control-plane rewrite path.
 	ControlBaseURL string
+
+	// Trace, when non-nil, receives one JSON-line event per inspector
+	// decision point for this request. Disabled by default; enabled
+	// via cfg.ProxyLite.TraceLogPath. Calls on a nil *TraceLogger are
+	// no-ops, so production code doesn't branch.
+	Trace *TraceLogger
 }
 
 // PostprocessResult reports what happened during postprocess. The handler
@@ -185,6 +191,34 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			}
 			cfg.Audit.LogToolUseInspected(req.Context(), auditAgent, cfg.RequestID, tu, v, decision, outcome, reason)
 		}
+		// trace emits one JSONL line per decision point when
+		// cfg.Trace is configured. The kv slice is event-specific.
+		trace := func(event string, kv ...any) {
+			if cfg.Trace == nil {
+				return
+			}
+			m := map[string]any{
+				"event":       event,
+				"request_id":  cfg.RequestID,
+				"user_id":     cfg.AgentUserID,
+				"agent_id":    cfg.AgentID,
+				"tool_use_id": tu.ID,
+				"tool_name":   tu.Name,
+			}
+			for i := 0; i+1 < len(kv); i += 2 {
+				key, ok := kv[i].(string)
+				if !ok {
+					continue
+				}
+				m[key] = kv[i+1]
+			}
+			cfg.Trace.Emit(m)
+		}
+		trace(TraceEventToolUseEntry,
+			"input_preview", truncateForTrace(string(tu.Input), traceInputPreviewLimit),
+			"input_bytes", len(tu.Input),
+			"trigger_hit", inspector.TriggerHits(inspector.ToolUse{ID: tu.ID, Name: tu.Name, Input: tu.Input}),
+		)
 
 		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
 			v = call.Verdict
@@ -230,6 +264,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				}
 			}
 			audit("rewrite", "clawvisor_control", v.Reason)
+			trace(TraceEventControlRewrite,
+				"host", v.Host,
+				"method", v.Method,
+				"path", v.Path,
+				"nonce_prefix", nonce[:min(len(nonce), 14)],
+				"rewrite_bytes", len(rewritten),
+			)
 			return conversation.ToolUseVerdict{
 				Allowed:      true,
 				RewriteInput: rewritten,
@@ -241,6 +282,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			Name:  tu.Name,
 			Input: tu.Input,
 		})
+		trace(TraceEventInspectVerdict,
+			"source", string(v.Source),
+			"is_api_call", v.IsAPICall,
+			"ambiguous", v.Ambiguous,
+			"method", v.Method,
+			"host", v.Host,
+			"path", v.Path,
+			"placeholders", v.Placeholders,
+			"reason", v.Reason,
+		)
 
 		// Inspector says trigger missed (no autovault placeholder). There
 		// is no credential rewrite to perform, but shared authorization
@@ -262,6 +313,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", "decision_error", err.Error())
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
 				}
+				trace(TraceEventDecision,
+					"path", "trigger_miss",
+					"kind", string(dec.Kind),
+					"source", string(dec.Source),
+					"reason", dec.Reason,
+					"task_id", taskIDFromDecision(dec),
+				)
 				// Local-only tools (Read, Edit, Glob, Skill, …) never make
 				// outbound HTTP calls. Requiring an active task to cover
 				// every one is useless friction — but a task that DID
@@ -329,11 +387,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// The authoritative source is the placeholder's bound service
 		// host allowlist. Look it up and run BoundaryCheck. Mismatch =
 		// fail closed.
-		if reason, ok := boundaryCheckVerdict(req, cfg, v); !ok {
-			audit("block", "boundary_check_failed", reason)
+		boundaryReason, boundaryOK := boundaryCheckVerdict(req, cfg, v)
+		trace(TraceEventBoundaryCheck,
+			"ok", boundaryOK,
+			"reason", boundaryReason,
+			"placeholders", v.Placeholders,
+			"verdict_host", v.Host,
+		)
+		if !boundaryOK {
+			audit("block", "boundary_check_failed", boundaryReason)
 			return conversation.ToolUseVerdict{
 				Allowed: false,
-				Reason:  "Clawvisor: target host outside placeholder bound-service — " + reason,
+				Reason:  "Clawvisor: target host outside placeholder bound-service — " + boundaryReason,
 			}
 		}
 
@@ -364,6 +429,15 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					Reason:  "Clawvisor: authorization failed — " + err.Error(),
 				}
 			}
+			trace(TraceEventDecision,
+				"path", "credentialed",
+				"kind", string(dec.Kind),
+				"source", string(dec.Source),
+				"reason", dec.Reason,
+				"service", resolved.ServiceID,
+				"action", resolved.ActionID,
+				"task_id", taskIDFromDecision(dec),
+			)
 			switch dec.Kind {
 			case runtimedecision.VerdictAllow:
 				// Continue to credential rewrite below.
@@ -481,6 +555,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			}
 		}
 		audit("rewrite", "success", v.Reason)
+		trace(TraceEventRewriteApplied,
+			"host", v.Host,
+			"method", v.Method,
+			"path", v.Path,
+			"placeholders", v.Placeholders,
+			"nonce_prefix", nonce[:min(len(nonce), 14)],
+			"rewrite_bytes", len(rewritten),
+		)
 		return conversation.ToolUseVerdict{
 			Allowed:      true,
 			RewriteInput: rewritten,
@@ -665,6 +747,15 @@ func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 		return nil
 	}
 	return &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}
+}
+
+// taskIDFromDecision extracts the matched task's ID from a decision,
+// returning "" when there is no associated task. Trace-only helper.
+func taskIDFromDecision(dec runtimedecision.AuthorizationDecision) string {
+	if dec.Task == nil {
+		return ""
+	}
+	return dec.Task.ID
 }
 
 // redactPlaceholderForReason returns the placeholder's prefix +

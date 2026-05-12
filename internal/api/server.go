@@ -845,6 +845,20 @@ func (s *Server) routes() http.Handler {
 			validator = inspector.NewLLMClientValidator(s.llmHealth.VerificationConfig, s.logger)
 		}
 		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
+		// Optional decision-trace log. Strictly observational; off
+		// unless cfg.ProxyLite.TraceLogPath or CLAWVISOR_PROXY_LITE_TRACE
+		// is set. Failure to open the file logs at WARN and the daemon
+		// continues without tracing.
+		tracePath := s.cfg.ProxyLite.TraceLogPath
+		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_TRACE")); env != "" {
+			tracePath = env
+		}
+		if traceLogger, err := llmproxy.OpenTraceLogger(tracePath); err != nil {
+			s.logger.Warn("lite-proxy: failed to open trace log", "path", tracePath, "err", err.Error())
+		} else if traceLogger != nil {
+			llmHandler.TraceLogger = traceLogger
+			s.logger.Info("lite-proxy: decision trace enabled", "path", tracePath)
+		}
 		// Prefer the configured public URL so the rewritten resolver URL the
 		// agent dials is reachable across networks; fall back to the local
 		// baseURL so single-host self-installs still rewrite (without this

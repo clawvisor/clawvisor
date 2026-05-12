@@ -81,6 +81,11 @@ type LLMEndpointHandler struct {
 	// agent's raw token in the model's conversation context.
 	CallerNonces llmproxy.CallerNonceCache
 
+	// TraceLogger, when non-nil, receives one JSON-line event per
+	// inspector decision point for diagnostic purposes. Off by
+	// default; opted in via cfg.ProxyLite.TraceLogPath.
+	TraceLogger *llmproxy.TraceLogger
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -448,6 +453,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// inside the credentialed rewrite path so the agent's raw
 			// bearer token never enters the model's conversation context.
 			CallerNonces: h.CallerNonces,
+			Trace:        h.TraceLogger,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,

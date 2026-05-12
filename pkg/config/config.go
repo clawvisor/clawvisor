@@ -292,6 +292,13 @@ type ProxyLiteConfig struct {
 	// AllowPrivateNetworks lets the resolver dial RFC1918 / loopback
 	// targets. Default false; flip in self-host development environments.
 	AllowPrivateNetworks bool `yaml:"allow_private_networks"`
+
+	// TraceLogPath, when set, enables a JSON-line decision-trace log
+	// for the lite-proxy postprocess pipeline. Strictly observational;
+	// useful for diagnosing "why did this tool_use get blocked" cases
+	// without rebuilding the daemon. The env var
+	// CLAWVISOR_PROXY_LITE_TRACE overrides this when set.
+	TraceLogPath string `yaml:"trace_log_path"`
 }
 
 // FeaturesConfig gates progressively enhanced UI and runtime surfaces.
