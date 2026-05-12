@@ -374,7 +374,15 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 				msg:    fmt.Sprintf("no bound-service hosts for service %q", ph.ServiceID),
 			}
 		}
-		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: targetHost}, hosts); !ok {
+		// Strip port for allowlist comparison; preserve the original
+		// host:port for the upstream dial. Allowlist entries are
+		// hostnames (e.g. "api.github.com"), so targetHost like
+		// "api.github.com:443" must compare as "api.github.com".
+		hostOnly := targetHost
+		if h, _, err := net.SplitHostPort(targetHost); err == nil {
+			hostOnly = h
+		}
+		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
 			return "", &resolverAPIError{
 				status: http.StatusForbidden,
 				code:   "TARGET_HOST_NOT_BOUND",

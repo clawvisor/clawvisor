@@ -180,6 +180,60 @@ func TestRewrite_BashAddsTargetHostHeader(t *testing.T) {
 	}
 }
 
+// An explicit non-default port on the original URL must survive the
+// rewriter round-trip via the X-Clawvisor-Target-Host header. Without
+// this, a URL like https://api.github.com:8443/... would be forwarded
+// to the default port (443) at the resolver.
+func TestRewrite_BashPreservesExplicitPort(t *testing.T) {
+	in := toolUse("Bash", `{"cmd":"curl -X POST -H 'Authorization: Bearer autovault_github_abc' https://api.github.com:8443/repos/x/y/issues"}`)
+	v, ok := DefaultParser{}.Parse(in)
+	if !ok || !v.IsAPICall {
+		t.Fatalf("setup: parser did not classify as IsAPICall")
+	}
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("rewritten output not JSON: %v", err)
+	}
+	cmd, _ := got["cmd"].(string)
+	if !strings.Contains(cmd, "X-Clawvisor-Target-Host: api.github.com:8443") {
+		t.Fatalf("explicit port dropped from target-host header: %q", cmd)
+	}
+}
+
+// Structured rewrites already include the port via url.URL.Host; this
+// test pins the behavior so a future change can't regress it without
+// flipping this assertion.
+func TestRewrite_StructuredPreservesExplicitPort(t *testing.T) {
+	in := toolUse("WebFetch", `{
+		"url":"https://api.github.com:8443/repos/x/y/issues",
+		"method":"POST",
+		"headers":{"Authorization":"Bearer autovault_github_abc"}
+	}`)
+	v, ok := DefaultParser{}.Parse(in)
+	if !ok || !v.IsAPICall {
+		t.Fatalf("setup: parser did not classify as IsAPICall")
+	}
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("rewritten output not JSON: %v", err)
+	}
+	headers, _ := got["headers"].(map[string]any)
+	if headers == nil {
+		t.Fatalf("rewritten output missing headers: %s", out)
+	}
+	if headers["X-Clawvisor-Target-Host"] != "api.github.com:8443" {
+		t.Fatalf("explicit port dropped from target-host header: %v", headers["X-Clawvisor-Target-Host"])
+	}
+}
+
 func TestRewrite_AmbiguousReturnsErr(t *testing.T) {
 	v := Verdict{Ambiguous: true}
 	if _, err := Rewrite(ToolUse{}, v, DefaultRewriteOpts("https://proxy")); err != ErrAmbiguous {

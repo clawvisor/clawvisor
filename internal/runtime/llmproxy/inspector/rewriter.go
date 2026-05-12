@@ -148,7 +148,15 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 		return nil, false, nil
 	}
 
-	originalHost := v.Host
+	// targetHost is the value we want the resolver to dial. v.Host is
+	// hostname-only (parsed.Hostname()), used for the allowlist filter
+	// at parse time. The *header* we emit must preserve any explicit
+	// port from the original URL so a non-default port survives the
+	// round-trip. We compute targetHost from the matched URL's parsed
+	// Host (which is hostname+":port" when a port was specified, or
+	// hostname-only otherwise).
+	verdictHostname := v.Host
+	targetHost := v.Host
 	rewroteAny := false
 	for i, tok := range tokens {
 		if !strings.HasPrefix(tok, "http://") && !strings.HasPrefix(tok, "https://") {
@@ -158,9 +166,12 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 		if err != nil || parsed.Host == "" {
 			continue
 		}
-		if parsed.Hostname() != originalHost {
+		if parsed.Hostname() != verdictHostname {
 			continue
 		}
+		// Use parsed.Host (may include :port) so an explicit port reaches
+		// the resolver and downstream dial preserves it.
+		targetHost = parsed.Host
 		newURL := *parsed
 		newURL.Scheme = resolver.Scheme
 		newURL.Host = resolver.Host
@@ -175,7 +186,7 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 		return nil, false, nil
 	}
 
-	// Inject -H "X-Clawvisor-Target-Host: <originalHost>" as the *last*
+	// Inject -H "X-Clawvisor-Target-Host: <targetHost>" as the *last*
 	// flag before the URL. Simplest: append before the URL token.
 	urlIdx := -1
 	for i, tok := range tokens {
@@ -190,7 +201,7 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 	// Inject pre-shell-tokenized strings; joinShellTokens re-quotes each
 	// at join time so values containing spaces (e.g. an Authorization
 	// header value) survive the rejoin.
-	hostHeader := fmt.Sprintf("%s: %s", opts.TargetHostHeader, originalHost)
+	hostHeader := fmt.Sprintf("%s: %s", opts.TargetHostHeader, targetHost)
 	injected := []string{"-H", hostHeader}
 	if opts.CallerToken != "" && opts.CallerHeader != "" {
 		callerHeader := fmt.Sprintf("%s: Bearer %s", opts.CallerHeader, opts.CallerToken)

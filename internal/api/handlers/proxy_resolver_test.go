@@ -110,6 +110,36 @@ func TestResolver_HappyPath(t *testing.T) {
 	_ = seenBody
 }
 
+// An explicit port on X-Clawvisor-Target-Host must pass the bound-service
+// allowlist check (allowlist entries are hostnames) without losing the
+// port for the actual upstream dial. Before the fix, the boundary check
+// compared "api.github.com:8443" against ["api.github.com"] and rejected.
+func TestResolver_AcceptsTargetHostWithExplicitPort(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMCaller(st)
+	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/repos/x/y/issues", nil)
+	req.Header.Set("X-Clawvisor-Caller", "Bearer "+rawToken)
+	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com:8443")
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with explicit port (allowlist should strip port for comparison), got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestResolver_RejectsMissingTargetHost(t *testing.T) {
 	h, st, _, _, rawToken, placeholder := newSeededResolver(t)
 
