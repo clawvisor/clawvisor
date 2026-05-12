@@ -178,3 +178,45 @@ func TestLazyServiceCatalog_RebuildsOnSet(t *testing.T) {
 		t.Errorf("expected openai after Set, got %+v ok=%v", got, ok)
 	}
 }
+
+// Regression: services whose base_url includes a path prefix
+// (e.g. `https://api.example.com/v1`) must resolve when an
+// inbound request includes that prefix.
+func TestServiceCatalog_HonorsBaseURLPath(t *testing.T) {
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "stripe"},
+		API:     yamldef.APIDef{BaseURL: "https://api.stripe.com/v1", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"charges_list": {Method: "GET", Path: "/charges"},
+		},
+	}
+	c := NewServiceCatalog([]yamldef.ServiceDef{def})
+	got, ok := c.Resolve("api.stripe.com", "GET", "/v1/charges")
+	if !ok {
+		t.Fatalf("expected resolve for /v1/charges, got !ok")
+	}
+	if got.ActionID != "charges_list" {
+		t.Errorf("action=%q, want charges_list", got.ActionID)
+	}
+}
+
+// Regression: a templated path on a concrete host must still be
+// indexed. Previously, hostFromBaseURL bailed on any `{{` anywhere
+// in the URL, dropping Twilio-style base URLs entirely.
+func TestServiceCatalog_AllowsTemplatesInPath(t *testing.T) {
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "twilio"},
+		API:     yamldef.APIDef{BaseURL: "https://api.twilio.com/2010-04-01/Accounts/{{.var.account_sid}}", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"send_message": {Method: "POST", Path: "/Messages.json"},
+		},
+	}
+	c := NewServiceCatalog([]yamldef.ServiceDef{def})
+	got, ok := c.Resolve("api.twilio.com", "POST", "/2010-04-01/Accounts/AC123/Messages.json")
+	if !ok {
+		t.Fatalf("expected resolve for templated-path base URL")
+	}
+	if got.ServiceID != "twilio" {
+		t.Errorf("serviceID=%q, want twilio", got.ServiceID)
+	}
+}

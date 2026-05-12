@@ -265,6 +265,14 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 			if err := json.Unmarshal([]byte(event.Data), &raw); err != nil {
 				continue
 			}
+			// Also keep the item as raw JSON so unknown types
+			// (reasoning, web_search_call, image_generation_call, …)
+			// can be re-emitted verbatim in the synthesized SSE
+			// stream when a sibling function_call triggers a rewrite.
+			var rawItem struct {
+				Item json.RawMessage `json:"item"`
+			}
+			_ = json.Unmarshal([]byte(event.Data), &rawItem)
 			switch raw.Item.Type {
 			case "message":
 				txt := ""
@@ -353,6 +361,19 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					name:             tu.Name,
 					customInput:      input,
 				})
+			default:
+				// Unknown item type (reasoning, web_search_call,
+				// image_generation_call, MCP tool calls, …). Preserve
+				// the raw item so the synthesized rewrite SSE doesn't
+				// silently drop it when a sibling function_call
+				// triggers a rebuild.
+				if len(rawItem.Item) > 0 {
+					orderedItems = append(orderedItems, orderedResponsesItem{
+						isPassThrough:  true,
+						outputIndex:    raw.OutputIndex,
+						passThroughRaw: append(json.RawMessage(nil), rawItem.Item...),
+					})
+				}
 			}
 		}
 	}
@@ -419,6 +440,27 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 				"type":         "response.output_item.done",
 				"output_index": i,
 				"item":         map[string]any{"id": itemID, "type": "message", "role": "assistant", "status": "completed"},
+			}))
+			continue
+		}
+		if it.isPassThrough && len(it.passThroughRaw) > 0 {
+			// Decode the original item JSON so we can wrap it in the
+			// expected output_item.added / output_item.done envelope
+			// shape. Decoding into a map preserves arbitrary fields
+			// the rewriter doesn't recognize.
+			var passThrough map[string]any
+			if err := json.Unmarshal(it.passThroughRaw, &passThrough); err != nil || passThrough == nil {
+				continue
+			}
+			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
+				"type":         "response.output_item.added",
+				"output_index": i,
+				"item":         passThrough,
+			}))
+			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
+				"type":         "response.output_item.done",
+				"output_index": i,
+				"item":         passThrough,
 			}))
 			continue
 		}
@@ -508,6 +550,7 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 type orderedResponsesItem struct {
 	isText           bool
 	isCustomToolCall bool
+	isPassThrough    bool
 	outputIndex      int
 	itemID           string
 	callID           string
@@ -518,6 +561,11 @@ type orderedResponsesItem struct {
 	// json.RawMessage so it serializes as the original structured value
 	// rather than being double-encoded into a quoted JSON string.
 	customInput json.RawMessage
+	// passThroughRaw is the raw `item` JSON for output_item types the
+	// rewriter does not specifically know about (reasoning,
+	// web_search_call, image_generation_call, MCP tool calls, …). The
+	// synthesized rewrite SSE re-emits these verbatim.
+	passThroughRaw json.RawMessage
 }
 
 type openAIChatCompletionsResponse struct {

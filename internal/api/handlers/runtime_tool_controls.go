@@ -108,6 +108,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list tool rules")
 		return
 	}
+	agentScopedTools := map[string]bool{}
 	for _, rule := range rules {
 		if rule == nil || strings.TrimSpace(rule.ToolName) == "" {
 			continue
@@ -117,10 +118,27 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		if isSimpleToolControlRule(rule) {
-			if rule.Enabled && (ctrl.RuleID == "" || rule.AgentID != nil) {
+			if !rule.Enabled {
+				continue
+			}
+			// Rules arrive in `created_at DESC` order. The newest rule
+			// for this tool should win. Track whether the recorded
+			// match is already agent-scoped so a later (older) rule
+			// — agent-scoped or not — never overrides it. A global
+			// rule may still be upgraded to a later-seen agent-scoped
+			// rule, since per-agent intent beats per-user defaults.
+			if ctrl.RuleID == "" {
 				ctrl.Action = normalizeToolControlAction(rule.Action)
 				ctrl.RuleID = rule.ID
 				ctrl.Source = "rule"
+				if rule.AgentID != nil {
+					agentScopedTools[rule.ToolName] = true
+				}
+			} else if rule.AgentID != nil && !agentScopedTools[rule.ToolName] {
+				ctrl.Action = normalizeToolControlAction(rule.Action)
+				ctrl.RuleID = rule.ID
+				ctrl.Source = "rule"
+				agentScopedTools[rule.ToolName] = true
 			}
 			continue
 		}

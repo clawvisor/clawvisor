@@ -18,8 +18,10 @@ export default defineConfig({
     port: 5173,
     // allowedHosts: true is permissive (accepts any Host header). Keep
     // it gated behind an explicit env var so the default localhost
-    // dev experience is also strict against rebinding attacks.
-    allowedHosts: allowAllHosts,
+    // dev experience is also strict against rebinding attacks. Vite
+    // expects either `true` or `string[]`; `false` is not a documented
+    // value, so pass `[]` for the deny-all default instead.
+    allowedHosts: allowAllHosts ? true : [],
     proxy: {
       '/api': backendURL,
       '/control': backendURL,

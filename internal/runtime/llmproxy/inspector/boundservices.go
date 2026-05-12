@@ -15,7 +15,7 @@ import "strings"
 //
 // An unknown service returns an empty slice; callers must fail-closed.
 func BoundServiceHosts(serviceID string) []string {
-	switch strings.ToLower(strings.TrimSpace(serviceID)) {
+	switch strings.ToLower(strings.TrimSpace(normalizeBoundServiceID(serviceID))) {
 	case "github":
 		return []string{
 			"api.github.com",
@@ -49,4 +49,26 @@ func BoundServiceHosts(serviceID string) []string {
 		return []string{"api.anthropic.com"}
 	}
 	return nil
+}
+
+// normalizeBoundServiceID strips known synthetic prefixes that wrap a
+// real service token. The runtime captured-secret path stores
+// ServiceID as `runtime.captured.<service>.<placeholder>`; without this
+// normalization the boundary check returns an empty allowlist and
+// every credentialed call fails closed even when the underlying
+// service is well-known.
+func normalizeBoundServiceID(serviceID string) string {
+	id := strings.TrimSpace(serviceID)
+	const capturedPrefix = "runtime.captured."
+	if strings.HasPrefix(id, capturedPrefix) {
+		remainder := id[len(capturedPrefix):]
+		// Shape is `<service>.<placeholder>`; the service token is up
+		// to the first '.'. Placeholder tokens may themselves contain
+		// dots, so we only split on the first separator.
+		if i := strings.IndexByte(remainder, '.'); i > 0 {
+			return remainder[:i]
+		}
+		return remainder
+	}
+	return id
 }

@@ -54,7 +54,7 @@ type catalogEntry struct {
 }
 
 var (
-	templateVarRE = regexp.MustCompile(`\{\{\s*\.[A-Za-z0-9_]+\s*\}\}`)
+	templateVarRE = regexp.MustCompile(`\{\{\s*\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*\s*\}\}`)
 )
 
 // NewServiceCatalog builds a catalog from the loaded YAML service definitions.
@@ -73,12 +73,14 @@ func NewServiceCatalog(defs []yamldef.ServiceDef) *ServiceCatalog {
 		if host == "" {
 			continue
 		}
+		basePath := basePathFromBaseURL(def.API.BaseURL)
 		serviceID := def.Service.ID
 		for actionID, action := range def.Actions {
 			if action.Method == "" || action.Path == "" {
 				continue
 			}
-			re, score, ok := compilePathTemplate(action.Path)
+			fullPath := joinBaseAndActionPath(basePath, action.Path)
+			re, score, ok := compilePathTemplate(fullPath)
 			if !ok {
 				continue
 			}
@@ -87,7 +89,7 @@ func NewServiceCatalog(defs []yamldef.ServiceDef) *ServiceCatalog {
 				actionID:     actionID,
 				method:       strings.ToUpper(action.Method),
 				host:         strings.ToLower(host),
-				pathTemplate: action.Path,
+				pathTemplate: fullPath,
 				pathRegex:    re,
 				staticScore:  score,
 			})
@@ -173,20 +175,64 @@ func lessActionKey(e catalogEntry, best ResolvedAction) bool {
 	return e.pathTemplate < best.PathTemplate
 }
 
-// hostFromBaseURL extracts the host (excluding port) from a base_url. If the
-// URL contains an unresolved template like `{{.workspace}}.example.com`, the
-// host has a `{{` substring and we return "" so the catalog skips this def
-// — it can't be reverse-mapped without instance-specific config.
+// hostFromBaseURL extracts the host (excluding port) from a base_url. If
+// the host contains an unresolved template like
+// `{{.workspace}}.example.com`, returns "" so the catalog skips this def
+// — it can't be reverse-mapped without instance-specific config. A `{{`
+// elsewhere in the URL (e.g. in the path: `https://api.x.com/v1/{{.id}}/…`)
+// is fine — the host is still concrete and the catalog can resolve it.
 func hostFromBaseURL(base string) string {
 	base = strings.TrimSpace(base)
-	if base == "" || strings.Contains(base, "{{") {
+	if base == "" {
 		return ""
 	}
 	u, err := url.Parse(base)
 	if err != nil {
 		return ""
 	}
-	return u.Hostname()
+	host := u.Hostname()
+	if host == "" || strings.Contains(host, "{{") {
+		return ""
+	}
+	return host
+}
+
+// joinBaseAndActionPath combines a base_url path prefix with an action's
+// path template. The base prefix is concrete; the action path may carry
+// `{{.var}}` templates which compilePathTemplate later converts to
+// `[^/]+`.
+func joinBaseAndActionPath(base, action string) string {
+	action = strings.TrimSpace(action)
+	if !strings.HasPrefix(action, "/") {
+		action = "/" + action
+	}
+	if base == "" {
+		return action
+	}
+	return strings.TrimRight(base, "/") + action
+}
+
+// basePathFromBaseURL returns the path prefix from a base_url (or "" when
+// the URL has none). The compiled per-action regex prepends this prefix
+// so request paths that include it (e.g. `/v1/widgets` for a base_url
+// of `https://api.example.com/v1` and an action path of `/widgets`)
+// resolve correctly.
+func basePathFromBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	p := u.Path
+	if p == "" || p == "/" {
+		return ""
+	}
+	// Templated path segments are kept verbatim — compilePathTemplate
+	// will convert them downstream.
+	return strings.TrimRight(p, "/")
 }
 
 // compilePathTemplate converts a YAML path template like

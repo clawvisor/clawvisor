@@ -143,11 +143,17 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 	if err := json.Unmarshal(t.Input, &raw); err != nil {
 		return nil, false, nil
 	}
+	// Some tools accept either `cmd` or `command`. An empty `cmd` should
+	// fall through to `command` rather than aborting the rewrite — the
+	// parser-side acceptance permits exactly this shape.
 	cmdField := "cmd"
 	cmdVal, ok := raw["cmd"].(string)
-	if !ok {
-		cmdField = "command"
-		cmdVal, ok = raw["command"].(string)
+	if !ok || cmdVal == "" {
+		if alt, altOK := raw["command"].(string); altOK && alt != "" {
+			cmdField = "command"
+			cmdVal = alt
+			ok = true
+		}
 	}
 	if !ok || cmdVal == "" {
 		return nil, false, nil

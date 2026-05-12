@@ -476,16 +476,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 	result, err := rewriter.Rewrite(body, contentType, eval)
 	if err != nil {
-		// Fail closed: if the rewriter errored AFTER an autovault trigger
-		// fired (we won't know without inspecting input bodies, so we
-		// conservatively assume yes), the safe behavior is to refuse the
-		// response rather than pass it through with literal placeholders.
-		// Today's eval callback returns ambiguous-on-trigger-miss as
-		// Allowed:true; rewriter errors are mostly malformed-body cases.
-		// Caller decides how to surface; we mark as skipped so handlers
-		// can choose to 502 rather than write through unchanged.
+		// Fail closed: the rewriter failed mid-body so we don't know
+		// whether a credentialed placeholder survived into the response.
+		// Returning the original body would pass it (or worse, the
+		// literal placeholder) to the harness. Drop the body and surface
+		// a non-empty SkippedReason; the handler checks SkippedReason to
+		// emit a 502 instead of writing the upstream body unchanged.
 		return PostprocessResult{
-			Body:          body,
+			Body:          nil,
 			ContentType:   contentType,
 			SkippedReason: "rewriter error: " + err.Error(),
 		}

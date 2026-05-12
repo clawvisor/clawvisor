@@ -98,11 +98,16 @@ func sanitizeAnthropicContent(raw json.RawMessage) (json.RawMessage, bool, bool,
 		var typ string
 		_ = json.Unmarshal(block["type"], &typ)
 		if typ == "text" {
+			// Only treat as empty when `text` decodes as a string AND
+			// that string is whitespace-only. A malformed or non-string
+			// `text` (e.g. number, object) is left alone — dropping it
+			// silently risks losing real content the model emitted.
 			var blockText string
-			_ = json.Unmarshal(block["text"], &blockText)
-			if strings.TrimSpace(blockText) == "" {
-				changed = true
-				continue
+			if err := json.Unmarshal(block["text"], &blockText); err == nil {
+				if strings.TrimSpace(blockText) == "" {
+					changed = true
+					continue
+				}
 			}
 		}
 		if nested, ok := block["content"]; ok {

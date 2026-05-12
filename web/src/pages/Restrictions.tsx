@@ -745,8 +745,11 @@ function SegmentedToolAction({
         return (
           <button
             key={option.value}
-            disabled={disabled}
-            onClick={() => onChange(option.value)}
+            disabled={disabled || active}
+            onClick={() => {
+              if (active) return
+              onChange(option.value)
+            }}
             className={`rounded px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
               active
                 ? option.value === 'allow'

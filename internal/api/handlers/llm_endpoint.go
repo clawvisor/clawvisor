@@ -384,6 +384,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditDecide = "deny"
 			auditOutcome = "upstream_too_large"
 			auditReason = readErr.Error()
+			// Clear the upstream-mirrored headers (Content-Length now
+			// lies about our JSON error body, vendor request-id leaks)
+			// before writing the JSON error.
+			clearMirroredUpstreamHeaders(w.Header())
 			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_TOO_LARGE", "upstream response exceeded size cap")
 			return
 		}
@@ -454,6 +458,23 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decisions", len(processed.Decisions),
 			"skipped_reason", processed.SkippedReason,
 		)
+		// Fail closed when postprocess could not finish its rewrite pass.
+		// A rewriter mid-body error leaves Body=nil with a non-empty
+		// SkippedReason; passing the upstream body through unchanged
+		// would risk leaking a literal autovault_… placeholder to the
+		// model. Emit a 502 instead.
+		if processed.SkippedReason != "" && len(processed.Body) == 0 {
+			h.Logger.WarnContext(r.Context(), "lite-proxy postprocess failed closed",
+				"agent_id", agent.ID, "reason", processed.SkippedReason)
+			auditStatus = http.StatusBadGateway
+			auditDecide = "deny"
+			auditOutcome = "postprocess_error"
+			auditReason = processed.SkippedReason
+			clearMirroredUpstreamHeaders(w.Header())
+			writeJSONError(w, http.StatusBadGateway, "POSTPROCESS_ERROR",
+				"response postprocess failed; see clawvisor audit log")
+			return
+		}
 		if processed.Rewritten {
 			// Drop Content-Length entirely — the rewritten body's length
 			// differs from upstream's. Setting it to "" leaves an empty
@@ -771,6 +792,28 @@ func firstNonEmptyLog(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// clearMirroredUpstreamHeaders removes the headers we copied from the
+// upstream response when an error path now wants to write a fresh JSON
+// error body. Without this, Content-Length advertises the upstream's
+// body size (mismatching our JSON), Content-Encoding tells the client
+// to gunzip our plaintext, and vendor request-ids leak.
+func clearMirroredUpstreamHeaders(h http.Header) {
+	for _, name := range []string{
+		"Content-Length",
+		"Content-Encoding",
+		"Content-Type",
+		"Etag",
+		"Last-Modified",
+		"Cache-Control",
+		"Vary",
+		"Anthropic-Request-Id",
+		"Request-Id",
+		"X-Request-Id",
+	} {
+		h.Del(name)
+	}
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's
