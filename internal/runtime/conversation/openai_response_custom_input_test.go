@@ -19,7 +19,7 @@ func TestCustomToolCallReemit_PreservesStringInput(t *testing.T) {
 		itemID:           "ctc_1",
 		callID:           "call_1",
 		name:             "shell",
-		customInput:      customToolInputForReemit(freeform),
+		customInput:      customToolInputForReemit(freeform, nil),
 	}
 	sse := buildOpenAIResponsesMultiSSE([]orderedResponsesItem{item})
 	// Look for the input field shape on a `response.output_item.added`
@@ -35,7 +35,7 @@ func TestCustomToolCallReemit_PreservesStringInput(t *testing.T) {
 }
 
 func TestCustomToolInputForReemit_NilCollapsesToNull(t *testing.T) {
-	got := customToolInputForReemit(nil)
+	got := customToolInputForReemit(nil, nil)
 	if got != nil {
 		t.Errorf("nil input should round-trip as nil, got %v", got)
 	}
@@ -43,5 +43,21 @@ func TestCustomToolInputForReemit_NilCollapsesToNull(t *testing.T) {
 	out, _ := json.Marshal(map[string]any{"input": got})
 	if string(out) != `{"input":null}` {
 		t.Errorf("nil should marshal as null, got %s", out)
+	}
+}
+
+// Regression: when the model sends the payload in `arguments` (some
+// SDK clients use that legacy field for custom tools) rather than
+// `input`, the re-emitted SSE must preserve the value instead of
+// dropping it to null.
+func TestCustomToolInputForReemit_FallsBackToArguments(t *testing.T) {
+	got := customToolInputForReemit("", "fallback-payload")
+	if got != "fallback-payload" {
+		t.Errorf("expected fallback to arguments, got %v", got)
+	}
+	// And whitespace-only `input` should also fall through.
+	got = customToolInputForReemit("   ", "real-payload")
+	if got != "real-payload" {
+		t.Errorf("whitespace-only input should fall back, got %v", got)
 	}
 }

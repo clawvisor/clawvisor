@@ -359,7 +359,7 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 					itemID:           raw.Item.ID,
 					callID:           raw.Item.CallID,
 					name:             tu.Name,
-					customInput:      customToolInputForReemit(raw.Item.Input),
+					customInput:      customToolInputForReemit(raw.Item.Input, raw.Item.Arguments),
 				})
 			default:
 				// Unknown item type (reasoning, web_search_call,
@@ -1199,16 +1199,34 @@ func toolUseFromOpenAICustomToolCall(item openAIResponseOutputItem, index int) (
 // customToolInputForReemit returns the value to place in the
 // `input` field of a synthesized custom_tool_call event. The OpenAI
 // Responses API documents `input` as a string, so we preserve the
-// model's original wire value (item.Input as `any`) and let
-// json.Marshal escape it correctly. nil collapses to JSON null.
-func customToolInputForReemit(orig any) any {
-	if orig == nil {
+// model's original wire value and let json.Marshal escape it
+// correctly. Mirrors toolUseFromOpenAICustomToolCall: prefer
+// `item.Input`, fall back to `item.Arguments`. If both are empty,
+// returns nil (which marshals as JSON null).
+func customToolInputForReemit(input, arguments any) any {
+	if v := customToolValueIfNonEmpty(input); v != nil {
+		return v
+	}
+	if v := customToolValueIfNonEmpty(arguments); v != nil {
+		return v
+	}
+	return nil
+}
+
+// customToolValueIfNonEmpty returns v when it carries a non-empty
+// payload, otherwise nil. Strings are empty when whitespace-only;
+// other types are kept as-is when non-nil.
+func customToolValueIfNonEmpty(v any) any {
+	if v == nil {
 		return nil
 	}
-	if s, ok := orig.(string); ok {
+	if s, ok := v.(string); ok {
+		if strings.TrimSpace(s) == "" {
+			return nil
+		}
 		return s
 	}
-	return orig
+	return v
 }
 
 func rawOpenAICustomToolInput(input string) json.RawMessage {
