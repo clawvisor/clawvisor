@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.6](https://github.com/clawvisor/clawvisor/compare/v0.9.5...v0.9.6) (2026-05-12)
+
+
+### Features
+
+* **mcp:** spec-driven MCP adapters with OAuth discovery + registration ([#373](https://github.com/clawvisor/clawvisor/issues/373)) ([2fe599e](https://github.com/clawvisor/clawvisor/commit/2fe599efeea53ab6fad18a57a2319ab5ea12e34d))
+* symmetric (user, request_id, task_id) dedup scope ([#365](https://github.com/clawvisor/clawvisor/issues/365)) ([ec08db7](https://github.com/clawvisor/clawvisor/commit/ec08db73b441c7fdbee60733ef7349638c80a063))
+
+
+### Bug Fixes
+
+* **approvals:** skip canonical resolve on stranded-executor recovery ([#370](https://github.com/clawvisor/clawvisor/issues/370)) ([da0ee49](https://github.com/clawvisor/clawvisor/commit/da0ee4988d6c0073ab01988f4df607036c36735b))
+* **intent:** always run builtin chain extraction so created IDs reach chain_facts ([#371](https://github.com/clawvisor/clawvisor/issues/371)) ([2f67095](https://github.com/clawvisor/clawvisor/commit/2f67095b6bfac9b82e3eac07aa95f4c43990e735))
+* **intent:** clean builtin email extraction and add chain_extraction opt-in ([#369](https://github.com/clawvisor/clawvisor/issues/369)) ([20795bb](https://github.com/clawvisor/clawvisor/commit/20795bba195f3883f95241e2000f213ba94297d6))
+* **mcp:** url-encode timeout param and add injection tests ([#366](https://github.com/clawvisor/clawvisor/issues/366)) ([b76d9f4](https://github.com/clawvisor/clawvisor/commit/b76d9f45772057769af929c4272a7c16345f879c))
+* **services:** same-origin postMessage fallback restores dashboard auto-refresh ([#372](https://github.com/clawvisor/clawvisor/issues/372)) ([afb2763](https://github.com/clawvisor/clawvisor/commit/afb27630668689e1e6517a4a6e5a73585ee64f8f))
+
 ## [0.9.5](https://github.com/clawvisor/clawvisor/compare/v0.9.4...v0.9.5) (2026-05-11)
 
 
