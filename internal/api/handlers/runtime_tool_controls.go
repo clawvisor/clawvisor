@@ -194,7 +194,12 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if action == "allow" {
+	// For the "allow" path, only short-circuit when no global rule
+	// overrides this tool. If a global rule (AgentID nil) exists,
+	// returning Source="default" would lie — the agent would still be
+	// blocked. Persist an explicit agent-scoped "allow" so the
+	// agent-scoped rule wins on subsequent reads.
+	if action == "allow" && !hasGlobalToolRuleConflict(rules, toolName) {
 		writeJSON(w, http.StatusOK, runtimeToolControlResponse{
 			AgentID:  agentID,
 			ToolName: toolName,
@@ -265,6 +270,27 @@ func normalizeToolControlAction(action string) string {
 	default:
 		return ""
 	}
+}
+
+// hasGlobalToolRuleConflict reports whether the supplied rules include a
+// global (non-agent-scoped) simple tool rule for toolName whose action is
+// not "allow". When true, the upsert handler must persist an explicit
+// agent-scoped "allow" override rather than implying default behavior —
+// otherwise the agent stays blocked by the global rule and the API lies
+// to the caller about the effective action.
+func hasGlobalToolRuleConflict(rules []*store.RuntimePolicyRule, toolName string) bool {
+	for _, rule := range rules {
+		if rule == nil || !rule.Enabled || rule.AgentID != nil {
+			continue
+		}
+		if rule.ToolName != toolName || !isSimpleToolControlRule(rule) {
+			continue
+		}
+		if normalizeToolControlAction(rule.Action) != "allow" {
+			return true
+		}
+	}
+	return false
 }
 
 func isSimpleToolControlRule(rule *store.RuntimePolicyRule) bool {

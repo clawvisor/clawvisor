@@ -233,6 +233,16 @@ func TestRedactSecretsInString(t *testing.T) {
 			in:   "use placeholder autovault_github_xyz123 here",
 			want: "use placeholder autovault_github_xyz123 here",
 		},
+		{
+			name: "github_fine_grained_pat",
+			in:   "TOKEN=github_pat_11ABCDEF0_realfinegrainedpatsecret",
+			want: "TOKEN=<REDACTED:auth>",
+		},
+		{
+			name: "github_refresh_token",
+			in:   "refresh=ghr_realgithubrefreshtoken123",
+			want: "refresh=<REDACTED:auth>",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

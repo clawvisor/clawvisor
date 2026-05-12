@@ -105,7 +105,7 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 			CandidateTasks:    req.CandidateTasks,
 			ToolRules:         req.ToolRules,
 			EgressRules:       req.EgressRules,
-			IntentVerifier:    releaseDecisionIntentVerifier{inner: req.IntentVerifier},
+			IntentVerifier:    decisionIntentVerifier{inner: req.IntentVerifier},
 			AllowMissingScope: true,
 		}
 		dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
@@ -143,7 +143,7 @@ func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *Pe
 		CandidateTasks: req.CandidateTasks,
 		ToolRules:      req.ToolRules,
 		EgressRules:    req.EgressRules,
-		IntentVerifier: releaseDecisionIntentVerifier{inner: req.IntentVerifier},
+		IntentVerifier: decisionIntentVerifier{inner: req.IntentVerifier},
 	}
 	dec, err := runtimedecision.EvaluateAuthorization(ctx, decisionInput)
 	if err != nil {
@@ -217,30 +217,6 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 		}
 	}
 	return "", true
-}
-
-type releaseDecisionIntentVerifier struct {
-	inner IntentVerifier
-}
-
-func (v releaseDecisionIntentVerifier) Verify(ctx context.Context, req runtimedecision.IntentVerifyRequest) (*runtimedecision.IntentVerdict, error) {
-	if v.inner == nil {
-		return nil, nil
-	}
-	verdict, err := v.inner.Verify(ctx, IntentVerifyRequest{
-		TaskPurpose: req.TaskPurpose,
-		ExpectedUse: req.ExpectedUse,
-		Service:     req.Service,
-		Action:      req.Action,
-		Params:      req.Params,
-		Reason:      req.Reason,
-		TaskID:      req.TaskID,
-		Lenient:     req.Lenient,
-	})
-	if err != nil || verdict == nil {
-		return nil, err
-	}
-	return &runtimedecision.IntentVerdict{Allow: verdict.Allow, Explanation: verdict.Explanation}, nil
 }
 
 func syntheticReleaseResult(req ReleaseRequest, pending *PendingLiteApproval, allow bool, toolInput map[string]any, decision, outcome, reason string) ReleaseResult {

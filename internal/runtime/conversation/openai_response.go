@@ -341,13 +341,17 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				// Preserve custom_tool_call in the ordered stream so a
 				// sibling function_call rewrite doesn't silently drop it
 				// from the synthesized SSE re-emit.
+				input := json.RawMessage(tu.Input)
+				if len(input) == 0 {
+					input = json.RawMessage(`null`)
+				}
 				orderedItems = append(orderedItems, orderedResponsesItem{
 					isCustomToolCall: true,
 					outputIndex:      raw.OutputIndex,
 					itemID:           raw.Item.ID,
 					callID:           raw.Item.CallID,
 					name:             tu.Name,
-					customInput:      string(tu.Input),
+					customInput:      input,
 				})
 			}
 		}
@@ -510,7 +514,10 @@ type orderedResponsesItem struct {
 	name             string
 	arguments        string
 	text             string
-	customInput      string  // for custom_tool_call: the raw input string
+	// customInput is the raw input JSON for a custom_tool_call. Stored as
+	// json.RawMessage so it serializes as the original structured value
+	// rather than being double-encoded into a quoted JSON string.
+	customInput json.RawMessage
 }
 
 type openAIChatCompletionsResponse struct {

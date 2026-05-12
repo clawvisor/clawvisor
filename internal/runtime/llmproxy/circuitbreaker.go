@@ -94,12 +94,13 @@ func (c *CircuitBreakerVerifier) Verify(ctx context.Context, req IntentVerifyReq
 	if c == nil || c.inner == nil {
 		return nil, nil
 	}
-	if err := c.preCall(); err != nil {
+	admittedAsProbe, err := c.preCall()
+	if err != nil {
 		return nil, err
 	}
-	verdict, err := c.inner.Verify(ctx, req)
-	c.postCall(err)
-	return verdict, err
+	verdict, innerErr := c.inner.Verify(ctx, req)
+	c.postCall(innerErr, admittedAsProbe)
+	return verdict, innerErr
 }
 
 // State returns the current circuit state for tests + observability.
@@ -117,34 +118,45 @@ func (c *CircuitBreakerVerifier) State() string {
 	return "closed"
 }
 
-func (c *CircuitBreakerVerifier) preCall() error {
+// preCall returns whether this call was admitted as a half-open probe.
+// The caller threads the bool to postCall so a late success can't fall
+// through to the closed-state branch after the breaker has already
+// re-opened.
+func (c *CircuitBreakerVerifier) preCall() (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.maybeTransitionToHalfOpenLocked()
 	switch c.state {
 	case circuitOpen:
-		return ErrCircuitOpen
+		return false, ErrCircuitOpen
 	case circuitHalfOpen:
 		if c.halfOpenInflight >= c.cfg.HalfOpenMaxCalls {
-			return ErrCircuitOpen
+			return false, ErrCircuitOpen
 		}
 		c.halfOpenInflight++
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func (c *CircuitBreakerVerifier) postCall(err error) {
+func (c *CircuitBreakerVerifier) postCall(err error, admittedAsProbe bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	wasHalfOpen := c.state == circuitHalfOpen
-	if wasHalfOpen {
+	if admittedAsProbe {
 		c.halfOpenInflight--
 		if c.halfOpenInflight < 0 {
 			c.halfOpenInflight = 0
 		}
 	}
 	if err == nil {
-		if wasHalfOpen {
+		if admittedAsProbe {
+			// Ignore late successes if another probe already failed and
+			// re-opened the circuit. Without this guard, a probe admitted
+			// during half-open whose Verify call returns last would
+			// incorrectly close the breaker.
+			if c.state != circuitHalfOpen {
+				return
+			}
 			// Require HalfOpenMaxCalls consecutive probe successes before
 			// closing. With max=1 (the default) this closes immediately
 			// like before. With max>1 a single stale success can't override
@@ -159,13 +171,17 @@ func (c *CircuitBreakerVerifier) postCall(err error) {
 			}
 			return
 		}
-		// Success in closed state: reset failure counter.
-		c.state = circuitClosed
-		c.consecutiveErrors = 0
+		// Success while not admitted as probe (closed state). Reset
+		// failure counter. Skip if the breaker re-opened concurrently —
+		// the success started before the trip, so it doesn't disprove
+		// the trip.
+		if c.state == circuitClosed {
+			c.consecutiveErrors = 0
+		}
 		return
 	}
 	c.consecutiveErrors++
-	if wasHalfOpen {
+	if admittedAsProbe {
 		// Any failure during the half-open burst trips the circuit again,
 		// regardless of other in-flight successes. Reset success count so
 		// the next half-open burst starts fresh.
@@ -175,7 +191,7 @@ func (c *CircuitBreakerVerifier) postCall(err error) {
 		c.halfOpenInflight = 0
 		return
 	}
-	if c.consecutiveErrors >= c.cfg.FailureThreshold {
+	if c.state == circuitClosed && c.consecutiveErrors >= c.cfg.FailureThreshold {
 		c.state = circuitOpen
 		c.openedAt = c.cfg.Now()
 	}

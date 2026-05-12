@@ -135,6 +135,38 @@ func TestServiceCatalog_SkipsTemplatedHost(t *testing.T) {
 	}
 }
 
+// When two actions have identical specificity for the same request,
+// the resolved (service, action) must be deterministic across catalog
+// builds. Pre-fix, ties resolved by entry insertion order — stable
+// within a process but invisible to operators making config changes.
+func TestServiceCatalog_TieBreakIsDeterministic(t *testing.T) {
+	// Two services exposing the same shape: GET / on the same host.
+	makeDef := func(id, action string) yamldef.ServiceDef {
+		return yamldef.ServiceDef{
+			Service: yamldef.ServiceInfo{ID: id},
+			API:     yamldef.APIDef{BaseURL: "https://overlap.example", Type: "rest"},
+			Actions: map[string]yamldef.Action{
+				action: {Method: "GET", Path: "/"},
+			},
+		}
+	}
+	// Build twice with the defs in different orders.
+	a := NewServiceCatalog([]yamldef.ServiceDef{makeDef("alpha", "act_a"), makeDef("beta", "act_b")})
+	b := NewServiceCatalog([]yamldef.ServiceDef{makeDef("beta", "act_b"), makeDef("alpha", "act_a")})
+	resA, okA := a.Resolve("overlap.example", "GET", "/")
+	resB, okB := b.Resolve("overlap.example", "GET", "/")
+	if !okA || !okB {
+		t.Fatalf("expected resolve, got okA=%v okB=%v", okA, okB)
+	}
+	if resA.ServiceID != resB.ServiceID || resA.ActionID != resB.ActionID {
+		t.Fatalf("tie-break not deterministic: a=%+v b=%+v", resA, resB)
+	}
+	// Lexical: "alpha" < "beta" so alpha wins regardless of insertion.
+	if resA.ServiceID != "alpha" {
+		t.Errorf("expected lex-first winner (alpha), got %q", resA.ServiceID)
+	}
+}
+
 func TestLazyServiceCatalog_RebuildsOnSet(t *testing.T) {
 	l := NewLazyServiceCatalog([]yamldef.ServiceDef{githubDef()})
 	if _, ok := l.Resolve("api.openai.com", "POST", "/v1/chat/completions"); ok {

@@ -187,7 +187,33 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
 			v = call.Verdict
-			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, cfg.RewriteOpts.CallerToken)
+			// Mint a nonce bound to the rewritten control URL's
+			// (host, method, path) — the rewritten curl carries it in
+			// X-Clawvisor-Caller; the daemon's nonce middleware on
+			// /control/* one-shot consumes it. Without this, the
+			// rewriter would have to embed the agent's raw cvis_ token
+			// (which the nonce middleware rejects) in the model's
+			// conversation context.
+			if cfg.CallerNonces == nil {
+				audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
+				return conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: caller nonce cache not configured; refusing to embed agent token in control tool_use",
+				}
+			}
+			nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
+				Host:   v.Host,
+				Method: v.Method,
+				Path:   v.Path,
+			})
+			if mintErr != nil {
+				audit("block", "caller_nonce_mint_failed", mintErr.Error())
+				return conversation.ToolUseVerdict{
+					Allowed: false,
+					Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
+				}
+			}
+			rewritten, _, rewriteOK, err := RewriteControlToolUse(tu, cfg.ControlBaseURL, nonce)
 			if !rewriteOK {
 				audit("block", "control_unavailable", "no control rewrite base URL configured")
 				return conversation.ToolUseVerdict{

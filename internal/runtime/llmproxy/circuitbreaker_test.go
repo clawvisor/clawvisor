@@ -218,6 +218,51 @@ func (s *switchableVerifier) Verify(ctx context.Context, req IntentVerifyRequest
 	return s.verdict, s.err
 }
 
+// Regression: a probe admitted in half-open whose Verify call returns
+// AFTER another probe failure has already re-opened the breaker must
+// not close it. Pre-fix: postCall snapshotted state at completion time,
+// so a late success saw state==open and fell through the closed-state
+// branch (which clobbered consecutiveErrors and set state=closed).
+func TestCircuitBreaker_LateSuccessAfterReopenDoesNotClose(t *testing.T) {
+	now := time.Unix(0, 0)
+	clock := func() time.Time { return now }
+	// Both probes are admitted concurrently. We drive postCall ordering
+	// by reaching into the breaker directly: success arrives after the
+	// failure has already re-opened it.
+	v := &switchableVerifier{err: errors.New("boom")}
+	cb := NewCircuitBreakerVerifier(v, CircuitBreakerConfig{
+		FailureThreshold: 1,
+		CooldownDuration: 10 * time.Second,
+		HalfOpenMaxCalls: 2,
+		Now:              clock,
+	})
+	_, _ = cb.Verify(context.Background(), IntentVerifyRequest{}) // trip
+	now = now.Add(11 * time.Second)
+	if cb.State() != "half_open" {
+		t.Fatalf("expected half_open, got %s", cb.State())
+	}
+	// Both probes get admitted as probes (HalfOpenMaxCalls=2).
+	probeA, err := cb.preCall()
+	if err != nil || !probeA {
+		t.Fatalf("probe A admit: probe=%v err=%v", probeA, err)
+	}
+	probeB, err := cb.preCall()
+	if err != nil || !probeB {
+		t.Fatalf("probe B admit: probe=%v err=%v", probeB, err)
+	}
+	// Probe B fails first → reopens the circuit.
+	cb.postCall(errors.New("boom"), probeB)
+	if cb.State() != "open" {
+		t.Fatalf("probe B failure should re-open, got %s", cb.State())
+	}
+	// Now probe A's late success arrives. Pre-fix: this closes the
+	// breaker. Post-fix: it's ignored because the circuit re-opened.
+	cb.postCall(nil, probeA)
+	if cb.State() != "open" {
+		t.Fatalf("late success must not close re-opened breaker, got %s", cb.State())
+	}
+}
+
 // All-success probes must accumulate to HalfOpenMaxCalls before closing.
 func TestCircuitBreaker_RequiresAllProbesToClose(t *testing.T) {
 	now := time.Unix(0, 0)

@@ -288,3 +288,28 @@ func TestVaultServiceID(t *testing.T) {
 		t.Errorf("unknown provider should map to empty serviceID")
 	}
 }
+
+// RFC 7230: headers named in the inbound Connection field are
+// hop-by-hop and must not be forwarded.
+func TestCopyForwardableHeaders_StripsConnectionScoped(t *testing.T) {
+	src := http.Header{}
+	src.Set("Connection", "X-Internal, Upgrade")
+	src.Set("X-Internal", "secret-internal-token")
+	src.Set("Upgrade", "websocket")
+	src.Set("X-Forwarded-For", "1.2.3.4")
+	src.Set("Authorization", "Bearer cvis_agent_token")
+	dst := http.Header{}
+	copyForwardableHeaders(dst, src)
+	if dst.Get("X-Internal") != "" {
+		t.Errorf("X-Internal listed in Connection should be stripped, got %q", dst.Get("X-Internal"))
+	}
+	if dst.Get("Upgrade") != "" {
+		t.Errorf("Upgrade should be stripped, got %q", dst.Get("Upgrade"))
+	}
+	if dst.Get("X-Forwarded-For") != "1.2.3.4" {
+		t.Errorf("X-Forwarded-For (not connection-scoped) should pass through, got %q", dst.Get("X-Forwarded-For"))
+	}
+	if dst.Get("Authorization") != "" {
+		t.Errorf("Authorization (static skip) should still be stripped, got %q", dst.Get("Authorization"))
+	}
+}

@@ -165,3 +165,30 @@ func TestMemoryCallerNonceCache_ConcurrentConsumeIsOneShot(t *testing.T) {
 		t.Errorf("expected one success + one NotFound; got nil=%d notFound=%d", nilCount, notFoundCount)
 	}
 }
+
+// Regression: minted-but-never-consumed entries should be GC'd. Without
+// the sweep, every mint on a workload that rarely consumes (rewrite
+// blocked downstream) would accumulate in the map.
+func TestMemoryCallerNonceCache_SweepReclaimsExpired(t *testing.T) {
+	c := NewMemoryCallerNonceCache(50 * time.Millisecond)
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+	target := NonceTarget{Host: "api.github.com", Method: "GET", Path: "/x"}
+	if _, err := c.Mint(context.Background(), "agent-1", target); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if _, err := c.Mint(context.Background(), "agent-2", target); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if c.Len() != 2 {
+		t.Fatalf("pre-expiry len = %d, want 2", c.Len())
+	}
+	// Advance the clock well past the TTL so the next Mint sweeps them.
+	now = now.Add(time.Hour)
+	if _, err := c.Mint(context.Background(), "agent-3", target); err != nil {
+		t.Fatalf("Mint (post-expiry): %v", err)
+	}
+	if got := c.Len(); got != 1 {
+		t.Errorf("post-sweep len = %d, want 1 (only the freshly minted nonce)", got)
+	}
+}

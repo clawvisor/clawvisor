@@ -244,9 +244,16 @@ var forwardSkipHeaders = map[string]struct{}{
 }
 
 func copyForwardableHeaders(dst, src http.Header) {
+	// Per RFC 7230, headers named in the inbound Connection field are
+	// hop-by-hop and must not be forwarded. Static denylists alone miss
+	// non-standard connection-scoped headers like X-Proxy-Internal.
+	connectionDrop := connectionScopedHeaders(src)
 	for name, values := range src {
 		lower := strings.ToLower(name)
 		if _, skip := forwardSkipHeaders[lower]; skip {
+			continue
+		}
+		if _, skip := connectionDrop[lower]; skip {
 			continue
 		}
 		if strings.HasPrefix(lower, "x-clawvisor-") {
@@ -254,6 +261,27 @@ func copyForwardableHeaders(dst, src http.Header) {
 		}
 		dst[name] = append(dst[name][:0:0], values...)
 	}
+}
+
+// connectionScopedHeaders parses the inbound Connection header(s) and
+// returns the lowercased header names that should be dropped along with
+// Connection itself. The set is empty when no Connection header is set.
+func connectionScopedHeaders(src http.Header) map[string]struct{} {
+	values := src.Values("Connection")
+	if len(values) == 0 {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for _, v := range values {
+		for _, token := range strings.Split(v, ",") {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token == "" || token == "close" || token == "keep-alive" {
+				continue
+			}
+			out[token] = struct{}{}
+		}
+	}
+	return out
 }
 
 func zeroBytes(b []byte) {

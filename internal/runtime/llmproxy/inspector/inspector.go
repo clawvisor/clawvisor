@@ -174,14 +174,17 @@ func extractPlaceholdersFromInput(input []byte) []string {
 	if len(input) == 0 {
 		return nil
 	}
-	matches := shadowPlaceholderExtractRE.FindAll(input, -1)
+	matches := shadowPlaceholderExtractRE.FindAllSubmatch(input, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(matches))
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
-		s := string(m)
+		if len(m) < 2 {
+			continue
+		}
+		s := string(m[1])
 		if _, ok := seen[s]; ok {
 			continue
 		}
@@ -191,10 +194,11 @@ func extractPlaceholdersFromInput(input []byte) []string {
 	return out
 }
 
-// shadowPlaceholderExtractRE captures the placeholder token itself (not
-// the surrounding header value), so the BoundaryCheck can look up each
-// placeholder's bound-service entry.
-var shadowPlaceholderExtractRE = regexp.MustCompile(`(?i)(?:autovault|clawvisor)[_:][a-z0-9._:-]+`)
+// shadowPlaceholderExtractRE captures the placeholder token itself in
+// capture group 1, anchoring on a non-alnum left boundary so embedded
+// substrings (e.g. `myautovault_x`) do not produce phantom placeholder
+// hits. The token-detector counterpart below uses the same boundary.
+var shadowPlaceholderExtractRE = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:autovault|clawvisor)[_:][a-z0-9._:-]+)`)
 
 // TriggerHits reports whether a tool_use's serialized input contains an
 // autovault placeholder token (or legacy clawvisor_ token). Cheap pre-filter;

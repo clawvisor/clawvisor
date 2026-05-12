@@ -115,10 +115,11 @@ func generateNonce() (string, error) {
 // daemon process; multi-instance deployments should use the Redis impl
 // so a nonce minted on instance A can be consumed on instance B.
 type MemoryCallerNonceCache struct {
-	mu      sync.Mutex
-	entries map[string]memoryNonceEntry
-	ttl     time.Duration
-	now     func() time.Time
+	mu          sync.Mutex
+	entries     map[string]memoryNonceEntry
+	ttl         time.Duration
+	now         func() time.Time
+	lastSweepAt time.Time
 }
 
 type memoryNonceEntry struct {
@@ -154,8 +155,27 @@ func (c *MemoryCallerNonceCache) Mint(ctx context.Context, agentID string, targe
 		target:    target,
 		expiresAt: c.now().Add(c.ttl),
 	}
+	c.sweepExpiredLocked()
 	c.mu.Unlock()
 	return nonce, nil
+}
+
+// sweepExpiredLocked deletes expired entries. Throttled to at most once
+// per TTL window so high-rate mint paths don't pay an O(n) scan on every
+// call. Without this, nonces that are minted but never consumed (the
+// rewrite was blocked downstream, the resolver call never fires) would
+// accumulate indefinitely.
+func (c *MemoryCallerNonceCache) sweepExpiredLocked() {
+	now := c.now()
+	if !c.lastSweepAt.IsZero() && now.Sub(c.lastSweepAt) < c.ttl {
+		return
+	}
+	c.lastSweepAt = now
+	for k, e := range c.entries {
+		if now.After(e.expiresAt) {
+			delete(c.entries, k)
+		}
+	}
 }
 
 // Consume implements CallerNonceCache.

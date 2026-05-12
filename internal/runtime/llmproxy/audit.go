@@ -323,7 +323,8 @@ var auditSecretValueRE = regexp.MustCompile(
 		`(?:bearer\s+[^\s'"]+|` +
 		`sk-ant-[A-Za-z0-9_-]+|` +
 		`sk-(?:proj-)?[A-Za-z0-9_-]{8,}|` +
-		`ghp_[A-Za-z0-9]+|gho_[A-Za-z0-9]+|ghu_[A-Za-z0-9]+|ghs_[A-Za-z0-9]+|` +
+		`github_pat_[A-Za-z0-9_]+|` +
+		`ghp_[A-Za-z0-9]+|gho_[A-Za-z0-9]+|ghu_[A-Za-z0-9]+|ghs_[A-Za-z0-9]+|ghr_[A-Za-z0-9]+|` +
 		`xox[abp]-[A-Za-z0-9-]+|` +
 		`cvis_[A-Za-z0-9]+` +
 		`)` +

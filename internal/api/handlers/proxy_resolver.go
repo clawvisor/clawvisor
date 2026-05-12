@@ -123,11 +123,23 @@ func (h *ProxyResolverHandler) safeDialContext(ctx context.Context, network, add
 			return nil, fmt.Errorf("dial blocked: %s resolves to private IP %s", host, ip)
 		}
 	}
-	// Dial the first validated IP directly so the dial uses the same
-	// resolution we just inspected. Preserves the host:port shape;
-	// SNI/Host the server gave us upstream is set elsewhere.
+	// Try every validated IP in order, returning the first successful
+	// dial. Without the fallback, a host with a stale or unreachable
+	// first record would fail even when later records work — surprising
+	// for multi-A or dual-stack hosts that already passed the public-IP
+	// check.
 	var d net.Dialer
-	return d.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	var firstErr error
+	for _, ip := range ips {
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
 }
 
 // Forward handles ANY method on /proxy/v1/<path>. Path mapping: the request
@@ -425,11 +437,18 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		return extracted, nil
 	}
 
+	connectionDrop := resolverConnectionScopedHeaders(r.Header)
 	for name, values := range r.Header {
 		canonical := http.CanonicalHeaderKey(name)
 		// Strip every X-Clawvisor-* private header from the outbound
 		// request — they're for our edge, not the upstream service.
 		if strings.HasPrefix(canonical, "X-Clawvisor-") {
+			continue
+		}
+		if _, skip := resolverHopByHopHeaders[canonical]; skip {
+			continue
+		}
+		if _, skip := connectionDrop[strings.ToLower(canonical)]; skip {
 			continue
 		}
 		swapped := make([]string, 0, len(values))
@@ -459,6 +478,41 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		out[canonical] = swapped
 	}
 	return out, allReplaced, nil
+}
+
+// resolverHopByHopHeaders is the canonical set of hop-by-hop headers
+// that must not be forwarded to the upstream service. Matches the set
+// already stripped from upstream responses in Forward.
+var resolverHopByHopHeaders = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
+// resolverConnectionScopedHeaders returns the lowercased header names
+// listed in the inbound Connection header(s). RFC 7230 designates these
+// as hop-by-hop and they must not be forwarded.
+func resolverConnectionScopedHeaders(src http.Header) map[string]struct{} {
+	values := src.Values("Connection")
+	if len(values) == 0 {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for _, v := range values {
+		for _, token := range strings.Split(v, ",") {
+			token = strings.ToLower(strings.TrimSpace(token))
+			if token == "" || token == "close" || token == "keep-alive" {
+				continue
+			}
+			out[token] = struct{}{}
+		}
+	}
+	return out
 }
 
 // looksLikeCallerAuthValue reports whether a header value carries the

@@ -364,9 +364,21 @@ func controlPartsFromCurlArgs(args []controlCurlArg, controlBaseURL string) (*ur
 			body = []byte(strings.TrimPrefix(tok, "--data-binary="))
 		default:
 			if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
-				if u, ok := parseControlURL(tok, controlBaseURL); ok {
-					control = u
+				u, ok := parseControlURL(tok, controlBaseURL)
+				if !ok {
+					// A non-control URL alongside a control URL would
+					// let a curl invocation claim policy-bypass status
+					// for the control call while still hitting an
+					// arbitrary outbound URL. Refuse the entire command
+					// rather than rewriting only the matching URL.
+					return nil, "", nil, false
 				}
+				if control != nil {
+					// Multiple control URLs in one invocation is
+					// ambiguous; refuse instead of guessing.
+					return nil, "", nil, false
+				}
+				control = u
 			}
 		}
 	}

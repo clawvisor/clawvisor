@@ -133,21 +133,44 @@ func (c *ServiceCatalog) Resolve(host, method, path string) (ResolvedAction, boo
 		if !e.pathRegex.MatchString(path) {
 			continue
 		}
-		if e.staticScore > bestScore {
-			bestScore = e.staticScore
-			best = ResolvedAction{
-				ServiceID:    e.serviceID,
-				ActionID:     e.actionID,
-				Method:       e.method,
-				PathTemplate: e.pathTemplate,
-			}
-			found = true
+		switch {
+		case e.staticScore > bestScore:
+		case e.staticScore == bestScore && found && lessActionKey(e, best):
+			// Equal specificity: break the tie deterministically on
+			// (service, action, template) so the same request always
+			// resolves to the same action across processes. Without this
+			// tie-break, two overlapping templates with identical scores
+			// would otherwise be picked by entry order — which is stable
+			// per process but silently surprising under config edits.
+		default:
+			continue
 		}
+		bestScore = e.staticScore
+		best = ResolvedAction{
+			ServiceID:    e.serviceID,
+			ActionID:     e.actionID,
+			Method:       e.method,
+			PathTemplate: e.pathTemplate,
+		}
+		found = true
 	}
 	if !found {
 		return ResolvedAction{}, false
 	}
 	return best, true
+}
+
+// lessActionKey reports whether candidate e sorts before best on the
+// (serviceID, actionID, pathTemplate) tuple. Used to break tie-rank
+// matches in Resolve so the same request always picks the same action.
+func lessActionKey(e catalogEntry, best ResolvedAction) bool {
+	if e.serviceID != best.ServiceID {
+		return e.serviceID < best.ServiceID
+	}
+	if e.actionID != best.ActionID {
+		return e.actionID < best.ActionID
+	}
+	return e.pathTemplate < best.PathTemplate
 }
 
 // hostFromBaseURL extracts the host (excluding port) from a base_url. If the

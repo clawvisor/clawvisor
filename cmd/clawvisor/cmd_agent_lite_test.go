@@ -57,8 +57,8 @@ func TestBuildLiteProxyEnvCodex(t *testing.T) {
 	if got := values["OPENAI_API_KEY"]; got != "cvis_token" {
 		t.Fatalf("OPENAI_API_KEY = %q", got)
 	}
-	if got := values["ANTHROPIC_BASE_URL"]; got != "" {
-		t.Fatalf("ANTHROPIC_BASE_URL should be omitted for codex, got %q", got)
+	if got, ok := values["ANTHROPIC_BASE_URL"]; ok {
+		t.Fatalf("ANTHROPIC_BASE_URL should be omitted for codex, got %q (present in env)", got)
 	}
 }
 

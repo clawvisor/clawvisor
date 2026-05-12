@@ -378,13 +378,21 @@ func TestResolver_RejectsSelfTargetWithPort(t *testing.T) {
 
 	for _, target := range []string{"clawvisor.example:443", "clawvisor.example:8080", "Clawvisor.Example:443"} {
 		req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
-		req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+		// Set Target-Host BEFORE minting the nonce so the nonce is bound
+		// to the target the resolver will see. Without this order, the
+		// middleware's nonce-target check fires first and the 403 below
+		// would arrive for the wrong reason — masking a real self-target
+		// regression in the resolver.
 		req.Header.Set("X-Clawvisor-Target-Host", target)
+		req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 		req.Header.Set("Authorization", "Bearer "+placeholder)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("target %q: expected 403, got %d (%s)", target, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "SELF_TARGET") {
+			t.Fatalf("target %q: expected SELF_TARGET error code in body, got %s", target, rec.Body.String())
 		}
 	}
 }

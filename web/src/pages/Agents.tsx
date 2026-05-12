@@ -1327,7 +1327,19 @@ function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
 // and a generic OpenAI/Anthropic SDK.
 function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
   const [open, setOpen] = useState(false)
-  const baseURL = `${window.location.origin}`
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pairInfo'],
+    queryFn: () => api.devices.pairInfo(),
+  })
+  // window.location.origin points at the relay when the dashboard is
+  // accessed via the cloud, not the per-daemon mount the agent harness
+  // must talk to. Prefer the daemon-scoped relay path when we have one
+  // and the dashboard isn't local; otherwise fall back to the origin.
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
+  const baseURL = !isLocal && hasRelay
+    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
+    : window.location.origin
   const [copied, setCopied] = useState<string | null>(null)
 
   function copy(label: string, value: string) {
