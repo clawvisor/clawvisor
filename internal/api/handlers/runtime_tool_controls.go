@@ -290,12 +290,16 @@ func normalizeToolControlAction(action string) string {
 	}
 }
 
-// hasGlobalToolRuleConflict reports whether the supplied rules include a
-// global (non-agent-scoped) simple tool rule for toolName whose action is
-// not "allow". When true, the upsert handler must persist an explicit
-// agent-scoped "allow" override rather than implying default behavior —
-// otherwise the agent stays blocked by the global rule and the API lies
-// to the caller about the effective action.
+// hasGlobalToolRuleConflict reports whether the NEWEST enabled global
+// (non-agent-scoped) simple tool rule for toolName is something other
+// than "allow". When true, the upsert handler must persist an explicit
+// agent-scoped "allow" override rather than implying default behavior;
+// otherwise the agent stays blocked by the global rule and the API
+// lies to the caller about the effective action.
+//
+// Rules arrive in `created_at DESC` order, so the first matching global
+// rule is the most recent. Older rules don't matter: a newer global
+// "allow" supersedes any older "deny"/"review".
 func hasGlobalToolRuleConflict(rules []*store.RuntimePolicyRule, toolName string) bool {
 	for _, rule := range rules {
 		if rule == nil || !rule.Enabled || rule.AgentID != nil {
@@ -304,9 +308,7 @@ func hasGlobalToolRuleConflict(rules []*store.RuntimePolicyRule, toolName string
 		if rule.ToolName != toolName || !isSimpleToolControlRule(rule) {
 			continue
 		}
-		if normalizeToolControlAction(rule.Action) != "allow" {
-			return true
-		}
+		return normalizeToolControlAction(rule.Action) != "allow"
 	}
 	return false
 }

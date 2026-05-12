@@ -200,6 +200,25 @@ func TestServiceCatalog_HonorsBaseURLPath(t *testing.T) {
 	}
 }
 
+// Regression: when an action's path is "/" under a base_url with a
+// path prefix, the joined template must not produce a trailing slash
+// (e.g. base=/v1, action=/  →  /v1/), since Resolve normalizes the
+// request path to /v1 and the regex would never match.
+func TestServiceCatalog_RootActionUnderBasePath(t *testing.T) {
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "svc"},
+		API:     yamldef.APIDef{BaseURL: "https://api.example/v1", Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"root": {Method: "GET", Path: "/"},
+		},
+	}
+	c := NewServiceCatalog([]yamldef.ServiceDef{def})
+	got, ok := c.Resolve("api.example", "GET", "/v1")
+	if !ok || got.ActionID != "root" {
+		t.Fatalf("expected root match for /v1, got %+v ok=%v", got, ok)
+	}
+}
+
 // Regression: a templated path on a concrete host must still be
 // indexed. Previously, hostFromBaseURL bailed on any `{{` anywhere
 // in the URL, dropping Twilio-style base URLs entirely.

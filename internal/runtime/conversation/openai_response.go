@@ -348,18 +348,18 @@ func (rw OpenAIResponseRewriter) rewriteResponsesSSE(body []byte, eval ToolUseEv
 				frags = append(frags, assistantFragment{IsTool: true, ToolName: tu.Name, ToolArgs: tu.Input})
 				// Preserve custom_tool_call in the ordered stream so a
 				// sibling function_call rewrite doesn't silently drop it
-				// from the synthesized SSE re-emit.
-				input := json.RawMessage(tu.Input)
-				if len(input) == 0 {
-					input = json.RawMessage(`null`)
-				}
+				// from the synthesized SSE re-emit. The OpenAI spec
+				// types `custom_tool_call.input` as a string, so we
+				// keep the original wire value (item.Input) rather
+				// than our normalized JSON shape (tu.Input, which can
+				// be an object wrapping freeform text).
 				orderedItems = append(orderedItems, orderedResponsesItem{
 					isCustomToolCall: true,
 					outputIndex:      raw.OutputIndex,
 					itemID:           raw.Item.ID,
 					callID:           raw.Item.CallID,
 					name:             tu.Name,
-					customInput:      input,
+					customInput:      customToolInputForReemit(raw.Item.Input),
 				})
 			default:
 				// Unknown item type (reasoning, web_search_call,
@@ -557,10 +557,12 @@ type orderedResponsesItem struct {
 	name             string
 	arguments        string
 	text             string
-	// customInput is the raw input JSON for a custom_tool_call. Stored as
-	// json.RawMessage so it serializes as the original structured value
-	// rather than being double-encoded into a quoted JSON string.
-	customInput json.RawMessage
+	// customInput holds the value to emit for a custom_tool_call's
+	// `input` field. Stored as `any` so a model-emitted string is
+	// re-emitted as a JSON string (per the OpenAI Responses spec),
+	// while any non-string shape the parser happened to accept also
+	// round-trips through json.Marshal cleanly. Nil emits as `null`.
+	customInput any
 	// passThroughRaw is the raw `item` JSON for output_item types the
 	// rewriter does not specifically know about (reasoning,
 	// web_search_call, image_generation_call, MCP tool calls, …). The
@@ -1192,6 +1194,21 @@ func toolUseFromOpenAICustomToolCall(item openAIResponseOutputItem, index int) (
 		Name:  name,
 		Input: rawOpenAICustomToolInput(input),
 	}, true
+}
+
+// customToolInputForReemit returns the value to place in the
+// `input` field of a synthesized custom_tool_call event. The OpenAI
+// Responses API documents `input` as a string, so we preserve the
+// model's original wire value (item.Input as `any`) and let
+// json.Marshal escape it correctly. nil collapses to JSON null.
+func customToolInputForReemit(orig any) any {
+	if orig == nil {
+		return nil
+	}
+	if s, ok := orig.(string); ok {
+		return s
+	}
+	return orig
 }
 
 func rawOpenAICustomToolInput(input string) json.RawMessage {

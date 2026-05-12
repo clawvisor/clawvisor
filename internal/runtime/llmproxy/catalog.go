@@ -209,7 +209,16 @@ func joinBaseAndActionPath(base, action string) string {
 	if base == "" {
 		return action
 	}
-	return strings.TrimRight(base, "/") + action
+	joined := strings.TrimRight(base, "/") + action
+	// When the action path is just "/", the join ends in a trailing
+	// slash (e.g. base=/v1, action=/  ->  /v1/). The resolver
+	// normalizes request paths by stripping the trailing slash, so
+	// the regex would never match the normalized form. Strip the
+	// trailing slash here unless the whole result IS "/".
+	if len(joined) > 1 && strings.HasSuffix(joined, "/") {
+		joined = strings.TrimRight(joined, "/")
+	}
+	return joined
 }
 
 // basePathFromBaseURL returns the path prefix from a base_url (or "" when
