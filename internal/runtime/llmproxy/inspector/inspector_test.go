@@ -305,6 +305,64 @@ func TestVerdict_PlaceholdersExtracted(t *testing.T) {
 	}
 }
 
+// validator path: the LLM-backed validator intentionally doesn't return
+// Placeholders (we don't trust the model to enumerate them). The inspector
+// must extract them from the raw input bytes after the validator runs,
+// otherwise BoundaryCheck fails closed on empty Placeholders and the
+// entire validator fallback is dead code for any Allow decision.
+type fakeValidator struct {
+	verdict Verdict
+}
+
+func (f fakeValidator) Validate(_ context.Context, _ ToolUse) (Verdict, error) {
+	return f.verdict, nil
+}
+
+func TestInspector_ValidatorPathExtractsPlaceholdersFromInput(t *testing.T) {
+	// Parser refuses; falls through to validator.
+	insp := NewInspector(refusingParser{}, fakeValidator{verdict: Verdict{
+		IsAPICall: true,
+		Method:    "POST",
+		Host:      "api.github.com",
+		Path:      "/repos/x/y/issues",
+	}})
+	in := toolUse("WebFetch", `{
+		"url":"https://api.github.com/repos/x/y/issues",
+		"headers":{"Authorization":"Bearer autovault_github_abc123"}
+	}`)
+	v := insp.Inspect(context.Background(), in)
+	if v.Source != SourceValidator {
+		t.Fatalf("expected validator source, got %q", v.Source)
+	}
+	if len(v.Placeholders) != 1 || v.Placeholders[0] != "autovault_github_abc123" {
+		t.Fatalf("validator path failed to extract placeholders from input: %+v", v.Placeholders)
+	}
+}
+
+func TestInspector_ValidatorPathDedupesMultiplePlaceholderMatches(t *testing.T) {
+	insp := NewInspector(refusingParser{}, fakeValidator{verdict: Verdict{IsAPICall: true}})
+	in := toolUse("custom", `{
+		"a":"Bearer autovault_github_xyz",
+		"b":"autovault_github_xyz again",
+		"c":"autovault_github_other"
+	}`)
+	v := insp.Inspect(context.Background(), in)
+	want := map[string]bool{"autovault_github_xyz": true, "autovault_github_other": true}
+	if len(v.Placeholders) != 2 {
+		t.Fatalf("expected 2 distinct placeholders, got %+v", v.Placeholders)
+	}
+	for _, p := range v.Placeholders {
+		if !want[p] {
+			t.Fatalf("unexpected placeholder: %q", p)
+		}
+	}
+}
+
+// refusingParser never matches; forces the inspector into the validator path.
+type refusingParser struct{}
+
+func (refusingParser) Parse(_ ToolUse) (Verdict, bool) { return Verdict{}, false }
+
 func TestBoundaryCheck(t *testing.T) {
 	allowed := []string{"api.github.com", "*.github.com"}
 	cases := []struct {

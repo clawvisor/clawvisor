@@ -155,8 +155,46 @@ func (i *Inspector) Inspect(ctx context.Context, t ToolUse) Verdict {
 		}
 	}
 	v.Source = SourceValidator
+	// The validator's structured response intentionally doesn't carry
+	// Placeholders — the LLM can't be trusted to enumerate them. Extract
+	// from the raw input bytes here so the downstream BoundaryCheck has
+	// something to validate against. Without this, validator-path verdicts
+	// always fail the boundary check (Placeholders required to be non-empty).
+	if len(v.Placeholders) == 0 {
+		v.Placeholders = extractPlaceholdersFromInput(t.Input)
+	}
 	return v
 }
+
+// extractPlaceholdersFromInput finds every `autovault_…` / `clawvisor_…`
+// substring in the raw tool_use input bytes. Used as a fallback when the
+// verdict source doesn't populate Placeholders directly (i.e. the LLM
+// validator path).
+func extractPlaceholdersFromInput(input []byte) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	matches := shadowPlaceholderExtractRE.FindAll(input, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(matches))
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		s := string(m)
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// shadowPlaceholderExtractRE captures the placeholder token itself (not
+// the surrounding header value), so the BoundaryCheck can look up each
+// placeholder's bound-service entry.
+var shadowPlaceholderExtractRE = regexp.MustCompile(`(?i)(?:autovault|clawvisor)[_:][a-z0-9._:-]+`)
 
 // TriggerHits reports whether a tool_use's serialized input contains an
 // autovault placeholder token (or legacy clawvisor_ token). Cheap pre-filter;

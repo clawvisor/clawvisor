@@ -589,6 +589,13 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 	var orderedChatCalls []orderedChatToolCall
 	var streamID string
 	var text strings.Builder
+	// leadingText preserves the assistant's prose that arrived BEFORE any
+	// tool_calls in the same stream. Once finish_reason="tool_calls" fires,
+	// `text` gets reset (so a subsequent fragment-walk doesn't double-count
+	// it), but the rewrite path still needs the prose when synthesizing the
+	// re-emitted SSE — otherwise mixed text+tool streams silently drop their
+	// leading text after rewrite.
+	var leadingText strings.Builder
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "data:") {
@@ -630,6 +637,7 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 			}
 			if choice.FinishReason == "tool_calls" {
 				if text.Len() > 0 {
+					leadingText.WriteString(text.String())
 					frags = append(frags, assistantFragment{Text: text.String()})
 					text.Reset()
 				}
@@ -679,7 +687,12 @@ func (rw OpenAIResponseRewriter) rewriteChatCompletionsSSE(body []byte, eval Too
 	}
 	turn := assistantTurnFromFragments(frags, decisions)
 	if !anyBlocked && anyRewritten {
-		out := buildOpenAIChatMultiSSE(streamID, text.String(), orderedChatCalls)
+		// Include any prose that arrived before the tool_calls plus any
+		// post-tool trailing text. leadingText was captured on
+		// finish_reason="tool_calls"; text.String() captures anything
+		// after that point (rare but legal).
+		combinedText := leadingText.String() + text.String()
+		out := buildOpenAIChatMultiSSE(streamID, combinedText, orderedChatCalls)
 		return RewriteResult{Body: out, Decisions: decisions, Rewritten: true, AssistantTurn: turn}, nil
 	}
 	if !anyBlocked {

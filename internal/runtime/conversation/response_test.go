@@ -343,6 +343,46 @@ func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {
 	}
 }
 
+// OpenAI Chat streams can interleave assistant prose with tool_calls.
+// When the rewriter mutates the tool_call arguments, the synthesized
+// re-emit must preserve the leading text. Previously the text buffer
+// was reset on finish_reason="tool_calls" and the re-emit was built
+// from the empty buffer, silently dropping the prose.
+func TestOpenAIResponseRewriterPreservesLeadingTextOnChatRewrite(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Looking up your repo. "},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"github","arguments":"{\"repo\":\"acme\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		// Rewrite the tool_call arguments so the rewrite path fires.
+		return ToolUseVerdict{Allowed: true, RewriteInput: []byte(`{"repo":"acme/rewritten"}`)}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatalf("expected rewrite to fire")
+	}
+	if !strings.Contains(string(result.Body), "Looking up your repo.") {
+		t.Fatalf("leading prose dropped after rewrite:\n%s", result.Body)
+	}
+}
+
 func TestOpenAIResponseRewriterSortsStreamingChatToolCallsByIndex(t *testing.T) {
 	t.Parallel()
 

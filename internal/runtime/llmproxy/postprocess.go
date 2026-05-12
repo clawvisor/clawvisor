@@ -228,6 +228,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				switch dec.Kind {
 				case runtimedecision.VerdictAllow:
 					audit("allow", string(dec.Source), dec.Reason)
+					return conversation.ToolUseVerdict{Allowed: true}
 				case runtimedecision.VerdictDeny:
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}

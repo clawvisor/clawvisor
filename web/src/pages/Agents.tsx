@@ -1336,7 +1336,10 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL}/v1 ANTHROPIC_API_KEY=cvis_<this-agent-token> claude`
+  // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
+  // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/v1`
+  // because the client appends just the action path (`/chat/completions`).
+  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_API_KEY=cvis_<this-agent-token> claude`
   const codex = `codex exec \\
   -c model_provider=clawvisor \\
   -c 'model_providers.clawvisor.base_url="${baseURL}/v1"' \\
@@ -1349,7 +1352,7 @@ client = OpenAI(
 )`
   const anthropicSDK = `import anthropic
 client = anthropic.Anthropic(
-    base_url="${baseURL}/v1",
+    base_url="${baseURL}",
     api_key="cvis_<this-agent-token>",
 )`
 

@@ -831,9 +831,15 @@ func (s *Server) routes() http.Handler {
 		// mode), which is fine for most flows since structured fetch
 		// tools and clean curl Bash invocations all parse deterministically.
 		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-		if pub := s.cfg.Server.PublicURL; pub != "" {
-			llmHandler.ResolverBaseURL = strings.TrimRight(pub, "/") + "/proxy/v1"
+		// Prefer the configured public URL so the rewritten resolver URL the
+		// agent dials is reachable across networks; fall back to the local
+		// baseURL so single-host self-installs still rewrite (without this
+		// fallback, inspector.Rewrite fails closed on "missing ResolverBaseURL").
+		resolverBase := s.cfg.Server.PublicURL
+		if resolverBase == "" {
+			resolverBase = baseURL
 		}
+		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/proxy/v1"
 		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
 
 		// Audit emission for /v1/* endpoint calls + per-tool-use
