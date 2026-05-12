@@ -29,6 +29,10 @@ type AssessRequest struct {
 	AuthorizedActions []store.TaskAction
 	PlannedCalls      []store.PlannedCall
 	AgentName         string
+	// UserID scopes the action-context lookup so per-user MCP tool sets
+	// (discovered at activation) appear in the prompt. Empty falls back to
+	// the global registry only.
+	UserID string
 }
 
 // RiskAssessment is the result of a task risk evaluation.
@@ -76,11 +80,14 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	start := time.Now()
 
-	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(a.registry))
+	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(ctx, a.registry, req.UserID))
 	client := llm.NewClient(cfg.LLMProviderConfig)
 	userMsg := buildAssessUserMessage(req)
-	// systemPrompt is stable across the process lifetime (registry metadata
-	// is loaded at startup), so it makes a good prompt-cache prefix.
+	// systemPrompt varies per user (the action context includes the user's
+	// MCP-discovered tools), so the cache prefix is effectively per-user.
+	// Still worth caching: a single user runs many risk assessments per
+	// session, all sharing the same activated-tool set, so the cache hit
+	// rate within a user is high.
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: systemPrompt, CacheControl: true},
 		{Role: "user", Content: userMsg},

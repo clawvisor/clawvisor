@@ -540,6 +540,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				AuthorizedActions: req.AuthorizedActions,
 				PlannedCalls:      req.PlannedCalls,
 				AgentName:         agent.Name,
+				UserID:            agent.UserID,
 			})
 			if err != nil {
 				h.logger.Warn("task risk assessment failed", "error", err)

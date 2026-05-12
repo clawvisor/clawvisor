@@ -32,6 +32,12 @@ type ServiceInfo struct {
 	IconSVG     string       `yaml:"icon_svg,omitempty"` // optional: inline SVG markup (mutually exclusive with icon_url)
 	IconURL     string       `yaml:"icon_url,omitempty"` // optional: absolute or site-relative URL to the icon (e.g. "/logos/github.svg")
 	Identity    *IdentityDef `yaml:"identity,omitempty"`
+	// Deprecated hides the service from the connect-service list for new
+	// users while keeping it visible (and functional) for users who have
+	// already activated it. Use during a migration where a successor adapter
+	// has taken the prominent slot — existing connections keep working but
+	// new connections route to the successor.
+	Deprecated bool `yaml:"deprecated,omitempty"`
 }
 
 // IdentityDef configures automatic account identity detection after activation.

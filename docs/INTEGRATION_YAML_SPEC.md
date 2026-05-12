@@ -1,8 +1,12 @@
 # Clawvisor Integration YAML Specification
 
-This document describes the YAML format for declaring Clawvisor integrations (adapters). Each YAML file defines a single service integration — its authentication, API endpoints, parameters, and response handling.
+Clawvisor integrations come in two formats:
 
-Integration files are stored in `~/.clawvisor/adapters/` and hot-loaded on save.
+1. **YAML adapters** (`*.yaml`) — declare a REST/GraphQL integration directly: auth, endpoints, params, response shape, risk classification. Hot-loaded from `~/.clawvisor/adapters/`. **This document, sections "Top-Level Structure" through "Complete Example", covers this format.**
+
+2. **MCP adapters** (`*.mcp.yaml`) — declare that an integration is backed by a remote MCP (Model Context Protocol) server. Almost everything (actions, params, risk, auth endpoints, client credentials) is discovered at runtime; the YAML only needs the MCP endpoint and a few hooks. **See the "MCP Adapters" section at the end of this document.**
+
+Prefer MCP adapters when the vendor ships a hosted MCP server (e.g. Notion, Supabase) — it's a few lines of YAML and you inherit dynamic tool discovery, OAuth client registration, and response sanitization for free. Use YAML adapters for direct REST/GraphQL integrations where no MCP server exists.
 
 ## Top-Level Structure
 
@@ -510,3 +514,172 @@ actions:
     response:
       summary: "Widget deleted"
 ```
+
+---
+
+# MCP Adapters
+
+An MCP adapter declares that a service is backed by a remote [Model Context Protocol](https://modelcontextprotocol.io) server. Clawvisor handles the protocol mechanics generically — the YAML spec only has to identify the server and (optionally) tell Clawvisor how to derive the user's identity.
+
+MCP-adapter files live in `internal/adapters/definitions/mcp/` and use the `.mcp.yaml` suffix. They're embedded into the binary via `//go:embed *.mcp.yaml`, so adding a service requires a rebuild — there's no per-user hot-load path today.
+
+## Top-Level Structure
+
+```yaml
+service:
+  id: <string>           # canonical service identifier (e.g. "notion")
+  display_name: <string>
+  description: <string>
+  setup_url: <string>    # optional
+  icon_url: <string>     # optional
+  icon_svg: <string>     # optional, inline SVG (mutually exclusive with icon_url)
+
+mcp:
+  transport: <"http" | "stdio">  # default: stdio
+  endpoint: <string>             # MCP streamable-HTTP URL (http only)
+  command: [<string>, ...]       # argv to launch the server (stdio only)
+  credential_env: <string>       # env var the server reads for auth (stdio only)
+  oauth: { ... }                 # optional, see "OAuth"
+  whoami: { ... }                # optional, see "Whoami"
+```
+
+For HTTP transports (the production case for vendor-hosted MCP servers like `mcp.notion.com`), only `endpoint`, `oauth`, and `whoami` are needed. For stdio transports (local subprocess servers like `npx @notionhq/notion-mcp-server`), set `command` and `credential_env`.
+
+## What Clawvisor handles automatically
+
+Everything that a YAML adapter would have to declare explicitly is derived at runtime for MCP adapters:
+
+| Concern | YAML adapter | MCP adapter |
+| --- | --- | --- |
+| Action list | hand-written `actions:` block | `tools/list` at activation; persisted to `mcp_tool_caches` |
+| Param schemas | `params:` per action | tool's `inputSchema` JSON Schema |
+| Risk classification | per-action `risk:` block | MCP `annotations` (`readOnlyHint`, `destructiveHint`) |
+| HTTP / JSON-RPC framing | manual `path` + `method` + `body` mapping | handled by `mcpclient` (JSON + SSE) |
+| Response sanitization | per-action `transforms:` | generic gateway middleware (HTML strip, truncation) |
+| OAuth endpoints | declared inline | RFC 8414 discovery from the server |
+| OAuth client provisioning | admin-pasted client_id/secret | RFC 7591 dynamic client registration, cached per deployment |
+| Token refresh | manual via `pkce_flow` | `oauth2.TokenSource` wrapping the HTTP client |
+
+The one piece you *do* configure per-service is identity resolution (whoami), and only because there's no MCP standard for it.
+
+## OAuth
+
+For MCP servers that require OAuth (most do), declare it with an empty mapping:
+
+```yaml
+mcp:
+  transport: http
+  endpoint: https://mcp.notion.com/mcp
+  oauth: {}
+```
+
+On the first Connect click for a given service, the adapter:
+
+1. Probes the MCP endpoint cold → reads `WWW-Authenticate: Bearer resource_metadata="..."`.
+2. Fetches the protected-resource metadata (RFC 9728) → `authorization_servers`.
+3. Fetches the AS metadata (`.well-known/oauth-authorization-server`, RFC 8414) → endpoints, supported grant types, supported auth methods, supported PKCE methods.
+4. POSTs to the AS's `registration_endpoint` (RFC 7591) with Clawvisor's callback URL → receives `client_id` (+ optional `client_secret`).
+5. Caches the registered client + discovered endpoints under `__system__/mcp.client.<serviceID>` in the vault.
+
+All subsequent users on this Clawvisor deployment reuse that cached client. Discovery runs once per service per deployment.
+
+### When dynamic registration isn't available
+
+A few MCP servers don't implement RFC 7591. For those, an admin can pre-register a client (via the vendor's developer dashboard) and pin it through the settings UI at `/api/system/mcp-oauth`. The pinned credentials at `__system__/mcp.oauth.<serviceID>` take precedence over any cached dynamic-registration record.
+
+You can also declare hardcoded authorize/token URLs in the spec as a fallback for servers that don't expose RFC 8414 metadata:
+
+```yaml
+mcp:
+  transport: http
+  endpoint: https://mcp.example.com/mcp
+  oauth:
+    authorize_url: https://example.com/oauth/authorize  # fallback, used if discovery fails
+    token_url:     https://example.com/oauth/token
+    scopes: [read, write]                               # optional, included in the authorize URL
+```
+
+These fields are escape hatches; the discovery path should cover almost every production MCP server.
+
+## Whoami
+
+Identity resolution determines the alias under which Clawvisor stores the user's credential (e.g. `notion:eric@clawvisor.com` instead of `notion:default`). MCP has no standard tool name for this, so the spec names a tool + describes how to extract the identifier from its response.
+
+```yaml
+mcp:
+  whoami:
+    tool: <string>           # MCP tool name to invoke (e.g. "notion-get-users")
+    params: <map>            # optional, passed as `arguments` to the tool
+    field: <string>          # dot-path into the JSON response with array indexing
+```
+
+The `field` path supports two array-indexing notations: `results[0].email` (JSONPath-style) and `results.0.email` (dot-number). Whoami results are then run through a normalization pass — whitespace becomes `-`, letters lowercase, characters outside the alias set (`a-z 0-9 _ - . @ +`) are dropped — so org names like `"Eric Levine's Org"` become `eric-levines-org`.
+
+If `whoami` is omitted or the tool call fails, the credential is stored under the `default` alias.
+
+## Examples
+
+### Notion (OAuth, hosted MCP)
+
+The MCP-driven Notion adapter ships with `id: notion-mcp` (display: `Notion`). The original REST-API adapter at `id: notion` is preserved as `Notion (Legacy)` for backward compatibility — new connections should use this MCP one.
+
+```yaml
+service:
+  id: notion-mcp
+  display_name: Notion
+  description: "Notion workspace via MCP — read pages, query databases, create content."
+  icon_url: "/logos/notion.svg"
+
+mcp:
+  transport: http
+  endpoint: https://mcp.notion.com/mcp
+  oauth: {}
+  whoami:
+    tool: notion-get-users
+    params:
+      user_id: self
+    field: results[0].email
+```
+
+### Supabase (OAuth, hosted MCP, cross-domain AS)
+
+```yaml
+service:
+  id: supabase
+  display_name: Supabase
+  description: "Supabase via MCP — query the database, manage projects, deploy edge functions."
+  icon_url: "/logos/supabase.svg"
+
+mcp:
+  transport: http
+  endpoint: https://mcp.supabase.com/mcp
+  oauth: {}
+  whoami:
+    tool: list_organizations
+    field: organizations[0].name
+```
+
+(Supabase's MCP advertises its authorization server on `api.supabase.com`, not `mcp.supabase.com`. Discovery handles that automatically via the protected-resource metadata.)
+
+### Local stdio (no OAuth)
+
+```yaml
+service:
+  id: local-thing
+  display_name: "Local Thing"
+
+mcp:
+  transport: stdio
+  command: ["npx", "-y", "@vendor/local-mcp-server"]
+  credential_env: VENDOR_TOKEN   # the API key from vault is injected as this env var
+```
+
+## Trade-offs
+
+What you give up by adopting MCP instead of a hand-written YAML adapter:
+
+- **Schema authorship**: tool param schemas come from the vendor. If their schema overstates required-ness (e.g. Notion marks `parent` required when prose says it's optional for workspace-level pages), Clawvisor faithfully echoes that. The catalog can't second-guess the server.
+- **Action stability**: when the vendor adds, removes, or renames tools, your users' restriction rules need to follow. The same risk exists for upstream API changes against a YAML adapter; MCP just makes the surface easier to query for diffs.
+- **Trust boundary**: the MCP server is now part of the trust chain. Tool responses pass through the response-sanitization middleware before reaching the agent, but a compromised server can still return misleading-but-clean text. Pin server endpoints to vendor-controlled domains; don't proxy unknown MCP servers.
+
+What you gain in exchange is large enough to be the default: zero per-service Go, automatic OAuth setup, dynamic tool discovery, consistent risk classification, and a sanitization layer that works the same for every server.

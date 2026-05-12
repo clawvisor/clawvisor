@@ -94,6 +94,13 @@ type Store interface {
 	GetServiceConfig(ctx context.Context, userID, serviceID, alias string) (*ServiceConfig, error)
 	DeleteServiceConfig(ctx context.Context, userID, serviceID, alias string) error
 
+	// MCP tool caches (per-user, populated at service activation; lazy-loaded
+	// by the registry resolver on cache miss). Tools are an opaque JSON blob
+	// — the store does not interpret them.
+	UpsertMCPTools(ctx context.Context, userID, serviceID, alias string, tools json.RawMessage) error
+	GetMCPTools(ctx context.Context, userID, serviceID, alias string) (json.RawMessage, error)
+	DeleteMCPTools(ctx context.Context, userID, serviceID, alias string) error
+
 	// Notification configs
 	UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error
 	GetNotificationConfig(ctx context.Context, userID, channel string) (*NotificationConfig, error)

@@ -1,0 +1,19 @@
+# Notion via Notion's hosted MCP server. The display name is the canonical
+# "Notion" because this is the blessed adapter for new connections —
+# the legacy REST adapter (id: notion, in internal/adapters/definitions/
+# notion.yaml) keeps existing connections working while users migrate.
+service:
+  id: notion-mcp
+  display_name: Notion
+  description: "Notion workspace via MCP — read pages, query databases, create content."
+  icon_url: "/logos/notion.svg"
+
+mcp:
+  transport: http
+  endpoint: https://mcp.notion.com/mcp
+  oauth: {}
+  whoami:
+    tool: notion-get-users
+    params:
+      user_id: self
+    field: results[0].email

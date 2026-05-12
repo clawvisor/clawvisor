@@ -291,6 +291,9 @@ export interface ServiceInfo {
   icon_url?: string
   alias?: string
   oauth: boolean
+  oauth_endpoint?: string
+  oauth_client_id_required?: boolean
+  deprecated?: boolean
   device_flow?: boolean
   pkce_flow?: boolean
   pkce_client_id_required?: boolean
@@ -1327,6 +1330,12 @@ export const api = {
       post<{ ok: boolean }>('/api/system/pkce-credentials', { service_id: serviceId, client_id: clientId }),
     deletePKCECredential: (serviceId: string) =>
       del<{ ok: boolean }>(`/api/system/pkce-credentials/${serviceId}`),
+    listMCPOAuthCredentials: () =>
+      get<{ service_id: string; client_id: string }[]>('/api/system/mcp-oauth'),
+    setMCPOAuthCredential: (serviceId: string, clientId: string, clientSecret: string) =>
+      post<{ ok: boolean }>('/api/system/mcp-oauth', { service_id: serviceId, client_id: clientId, client_secret: clientSecret }),
+    deleteMCPOAuthCredential: (serviceId: string) =>
+      del<{ ok: boolean }>(`/api/system/mcp-oauth/${serviceId}`),
   },
   features: {
     get: () => get<FeatureSet>('/api/features'),

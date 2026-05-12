@@ -582,6 +582,7 @@ func (a *YAMLAdapter) ServiceMetadata() adapters.ServiceMetadata {
 		PKCEFlow:          a.def.Auth.PKCEFlow != nil && a.resolvePKCEFlowClientID() != "",
 		PKCEFlowDefined:   a.def.Auth.PKCEFlow != nil,
 		AutoIdentity:      a.def.Service.Identity != nil,
+		Deprecated:        a.def.Service.Deprecated,
 		ActionMeta:        actionMeta,
 		VerificationHints: a.def.VerificationHints,
 		Variables:         variables,
