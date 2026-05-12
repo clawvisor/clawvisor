@@ -196,7 +196,14 @@ func (a *MCPAdapter) httpClientFor(ctx context.Context, cred []byte) (*http.Clie
 		TokenType:    "Bearer",
 	}
 	if stored.Expiry != "" {
-		if t, err := time.Parse(time.RFC3339, stored.Expiry); err == nil {
+		t, err := time.Parse(time.RFC3339, stored.Expiry)
+		if err != nil {
+			// A malformed expiry left zero-valued would tell oauth2 the token
+			// never expires, suppressing refresh and producing 401s once the
+			// access token actually expires. Force a refresh instead by
+			// marking it expired in the past.
+			token.Expiry = time.Unix(0, 0)
+		} else {
 			token.Expiry = t
 		}
 	}

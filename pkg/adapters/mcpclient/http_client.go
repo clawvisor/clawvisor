@@ -100,8 +100,12 @@ func (c *HTTPClient) Initialize(ctx context.Context) error {
 		return err
 	}
 	// Send the initialized notification (no id → no response expected).
-	// Some servers require it before tools/* will work.
-	_, _ = c.do(ctx, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
+	// Some servers require it before tools/* will work; if the transport
+	// or server rejects it, surface the error rather than silently
+	// continuing with a half-initialized session.
+	if _, err := c.do(ctx, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"}); err != nil {
+		return fmt.Errorf("notifications/initialized: %w", err)
+	}
 	return nil
 }
 
@@ -119,7 +123,10 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, args map[string]
 	if args == nil {
 		args = map[string]any{}
 	}
-	params, _ := json.Marshal(map[string]any{"name": name, "arguments": args})
+	params, err := json.Marshal(map[string]any{"name": name, "arguments": args})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tools/call params: %w", err)
+	}
 	var result ToolResult
 	if err := c.call(ctx, "tools/call", params, &result); err != nil {
 		return nil, err
@@ -140,6 +147,13 @@ func (c *HTTPClient) call(ctx context.Context, method string, params json.RawMes
 	}
 	if resp == nil {
 		return nil // notification path
+	}
+	// JSON-RPC 2.0 §5: response id MUST match the request id. Most
+	// transports preserve this naturally, but a misbehaving proxy or a
+	// server that returns a stray response from a different in-flight
+	// request would otherwise be silently mis-attributed.
+	if int64(resp.ID) != id {
+		return fmt.Errorf("%s: response id mismatch (got %d, want %d)", method, resp.ID, id)
 	}
 	if resp.Error != nil {
 		return fmt.Errorf("%s: rpc error %d: %s", method, resp.Error.Code, resp.Error.Message)

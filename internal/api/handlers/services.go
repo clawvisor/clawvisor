@@ -1401,12 +1401,14 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 // ensureMCPToolsActivated runs DiscoverTools + persist + register-per-user
 // for MCP adapters. Called from both activation paths (OAuth callback and
 // API-key) right after the credential lands in the vault, and from the
-// already_authorized fast path as self-repair when a previous activation
-// stored the credential but failed mid-discovery.
+// already_authorized fast path via repairMCPToolsForUser as self-repair
+// when a previous activation stored the credential but failed mid-discovery.
 //
 // No-op for non-MCP adapters. Returns the underlying error so callers can
-// log at the appropriate level; activation does NOT roll back on failure
-// (the credential is valid and a future Connect click can repair).
+// log and act. The activation callers (OAuthCallback, ActivateWithKey)
+// roll back the vault credential and service_meta row on failure so a
+// connected service never exposes zero actions — this helper itself does
+// not mutate anything other than the tool cache and per-user registry.
 func (h *ServicesHandler) ensureMCPToolsActivated(
 	ctx context.Context, adapter adapters.Adapter, userID, serviceID, alias string, credBytes []byte,
 ) error {

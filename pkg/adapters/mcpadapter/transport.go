@@ -80,6 +80,9 @@ type InProcessTransport struct {
 }
 
 func (t *InProcessTransport) Open(ctx context.Context, env map[string]string) (mcpclient.Caller, error) {
+	if t.Serve == nil {
+		return nil, fmt.Errorf("in-process transport: Serve handler is nil")
+	}
 	clientToServer, serverIn := io.Pipe()
 	serverOut, clientFromServer := io.Pipe()
 

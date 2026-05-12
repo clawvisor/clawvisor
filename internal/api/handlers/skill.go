@@ -33,18 +33,27 @@ func (h *SkillHandler) isMCPService(serviceID string) bool {
 //
 // Output is NOT Markdown-wrapped — we serve the description verbatim so
 // the agent gets exactly what the MCP server documented.
-func (h *SkillHandler) writeActionDetail(buf *strings.Builder, serviceID, action string, entries []*catalogEntry, adapterMeta map[string]adapters.ServiceMetadata) {
+//
+// Honors the same restriction filter as the overview/detail views: an
+// action that's restricted (and therefore omitted from the catalog list)
+// must not be readable via this endpoint either. Otherwise an agent could
+// learn from full docs of an action it isn't allowed to call.
+func (h *SkillHandler) writeActionDetail(buf *strings.Builder, ctx context.Context, serviceID, action string, entries []*catalogEntry, adapterMeta map[string]adapters.ServiceMetadata, userID string) {
 	baseID, _ := parseServiceAliasSkill(serviceID)
 	// Only allow this view for services the user actually has activated.
-	known := false
+	var entry *catalogEntry
 	for _, e := range entries {
 		if e.baseID == baseID {
-			known = true
+			entry = e
 			break
 		}
 	}
-	if !known {
+	if entry == nil {
 		buf.WriteString(fmt.Sprintf("Service %q is not activated for this user.\n", serviceID))
+		return
+	}
+	if h.isRestricted(ctx, userID, entry, action) {
+		buf.WriteString(fmt.Sprintf("Action %q is restricted on service %q.\n", action, serviceID))
 		return
 	}
 	meta, ok := adapterMeta[baseID]
@@ -247,7 +256,7 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	case serviceFilter != "" && actionFilter != "":
 		// Detail endpoint: return the byte-exact raw description so the
 		// agent can read full Markdown docs for one specific tool.
-		h.writeActionDetail(&buf, serviceFilter, actionFilter, sorted, adapterMeta)
+		h.writeActionDetail(&buf, ctx, serviceFilter, actionFilter, sorted, adapterMeta, agent.UserID)
 	case serviceFilter != "":
 		h.writeServiceDetail(&buf, ctx, serviceFilter, sorted, adapterMeta, agent.UserID)
 	default:

@@ -272,21 +272,24 @@ func (a *MCPAdapter) RequiredScopes() []string {
 func (a *MCPAdapter) ServiceMetadata() adapters.ServiceMetadata {
 	actionMeta := make(map[string]adapters.ActionMeta)
 	for _, t := range a.Tools() {
-		// Resolve risk class conservatively when both hints are set:
-		// destructiveHint wins because the cost of misclassifying a write
-		// as read (bypassing approval/scope checks) is strictly worse
-		// than the inverse. Servers that get this wrong (Notion's
-		// notion-update-page used to set both) shouldn't accidentally
-		// unlock auto-execution.
-		category := "read"
-		sensitivity := "low"
+		// Default to write/medium per the MCP spec: when annotations are
+		// absent, readOnlyHint defaults to false and destructiveHint
+		// defaults to true. An unannotated tool must therefore be treated
+		// as writable and destructive so it doesn't accidentally bypass
+		// approval/scope gates. readOnlyHint=true is the only way to
+		// downgrade to read/low; destructiveHint=false (with readOnly not
+		// set) downgrades from high to medium.
+		category := "write"
+		sensitivity := "high"
+		if dh, ok := t.Annotations["destructiveHint"].(bool); ok && !dh {
+			sensitivity = "medium"
+		}
 		if ro, _ := t.Annotations["readOnlyHint"].(bool); ro {
+			// Read-only wins over any destructive hint — a server that
+			// sets both is misconfigured, but read-only is a stronger
+			// safety claim than destructive (which is the unknown default).
 			category = "read"
 			sensitivity = "low"
-		}
-		if dh, _ := t.Annotations["destructiveHint"].(bool); dh {
-			category = "write"
-			sensitivity = "medium"
 		}
 		actionMeta[t.Name] = adapters.ActionMeta{
 			DisplayName: t.Name,

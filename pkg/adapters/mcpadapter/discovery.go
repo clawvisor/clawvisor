@@ -114,14 +114,21 @@ func discoverAndRegister(
 	// to register a client we can't use, rather than registering one that
 	// would fail at token exchange or silently bypass auth-method
 	// expectations on the server.
+	// RFC 8414 §2: when token_endpoint_auth_methods_supported is absent the
+	// default is ["client_secret_basic"]. Treat nil/empty as that default so
+	// minimally-compliant servers don't fail discovery.
+	supported := asMeta.AuthMethodsSupported
+	if len(supported) == 0 {
+		supported = []string{"client_secret_basic"}
+	}
 	authMethod := "client_secret_post"
 	switch {
-	case supportsAuthMethod(asMeta.AuthMethodsSupported, "client_secret_post"):
+	case supportsAuthMethod(supported, "client_secret_post"):
 		authMethod = "client_secret_post"
-	case supportsAuthMethod(asMeta.AuthMethodsSupported, "client_secret_basic"):
+	case supportsAuthMethod(supported, "client_secret_basic"):
 		authMethod = "client_secret_basic"
 	default:
-		return nil, fmt.Errorf("authorization server only supports public OAuth clients (token_endpoint_auth_method_supported=%v); Clawvisor doesn't yet implement PKCE for MCP — admin must pre-register a confidential client and pin it via settings", asMeta.AuthMethodsSupported)
+		return nil, fmt.Errorf("authorization server only supports public OAuth clients (token_endpoint_auth_methods_supported=%v); Clawvisor doesn't yet implement PKCE for MCP — admin must pre-register a confidential client and pin it via settings", supported)
 	}
 
 	regReq := map[string]any{

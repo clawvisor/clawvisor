@@ -114,10 +114,13 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	if args == nil {
 		args = map[string]any{}
 	}
-	params, _ := json.Marshal(map[string]any{
+	params, err := json.Marshal(map[string]any{
 		"name":      name,
 		"arguments": args,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tools/call params: %w", err)
+	}
 	var result ToolResult
 	if err := c.call(ctx, "tools/call", params, &result); err != nil {
 		return nil, err
