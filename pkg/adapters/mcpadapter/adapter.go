@@ -16,8 +16,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/oauth2"
 
@@ -269,6 +271,22 @@ func (a *MCPAdapter) RequiredScopes() []string {
 // → param signature). Future work: pull more from MCP server `serverInfo`
 // and `instructions` responses.
 
+// humanizeToolName converts an MCP tool ID like "get_edge_function" or
+// "notion-get-users" into a sentence-cased display string ("Get edge
+// function", "Notion get users"). MCP servers emit raw IDs; the UI wants
+// something readable in policy lists, queue entries, and approval cards.
+func humanizeToolName(name string) string {
+	s := strings.ReplaceAll(name, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return name
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
 func (a *MCPAdapter) ServiceMetadata() adapters.ServiceMetadata {
 	actionMeta := make(map[string]adapters.ActionMeta)
 	for _, t := range a.Tools() {
@@ -292,7 +310,7 @@ func (a *MCPAdapter) ServiceMetadata() adapters.ServiceMetadata {
 			sensitivity = "low"
 		}
 		actionMeta[t.Name] = adapters.ActionMeta{
-			DisplayName: t.Name,
+			DisplayName: humanizeToolName(t.Name),
 			Category:    category,
 			Sensitivity: sensitivity,
 			Description: t.Description, // raw — catalog renderer applies OneLineSummary

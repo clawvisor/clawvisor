@@ -60,7 +60,13 @@ export function actionName(action: string, service?: string): string {
     const qualified = _actionNames[`${base}:${action}`]
     if (qualified) return qualified
   }
-  return _actionNames[action] ?? action.replace(/_/g, ' ')
+  if (_actionNames[action]) return _actionNames[action]
+  // Fallback: humanize the raw ID. Replace _ and - with spaces and
+  // sentence-case so "get_edge_function" → "Get edge function" for
+  // services that don't supply a display name in the catalog response.
+  const s = action.replace(/[_-]+/g, ' ').trim()
+  if (!s) return action
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 export function formatServiceAction(service: string, action: string): string {

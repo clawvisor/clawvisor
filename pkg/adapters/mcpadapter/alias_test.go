@@ -2,6 +2,25 @@ package mcpadapter
 
 import "testing"
 
+func TestHumanizeToolName(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"get_edge_function", "Get edge function"},
+		{"notion-get-users", "Notion get users"},
+		{"apply_migration", "Apply migration"},
+		{"already-Sentence Case", "Already Sentence Case"},
+		{"", ""},
+		{"a", "A"},
+		{"mixed_case-with_both", "Mixed case with both"},
+	}
+	for _, tc := range cases {
+		if got := humanizeToolName(tc.in); got != tc.want {
+			t.Errorf("humanizeToolName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestNormalizeAlias(t *testing.T) {
 	cases := []struct {
 		name string
