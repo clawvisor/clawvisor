@@ -51,12 +51,20 @@ func BoundServiceHosts(serviceID string) []string {
 	return nil
 }
 
-// normalizeBoundServiceID strips known synthetic prefixes that wrap a
-// real service token. The runtime captured-secret path stores
-// ServiceID as `runtime.captured.<service>.<placeholder>`; without this
-// normalization the boundary check returns an empty allowlist and
-// every credentialed call fails closed even when the underlying
-// service is well-known.
+// normalizeBoundServiceID strips synthetic prefixes and account-scoped
+// suffixes that wrap a real service token. Without normalization the
+// boundary check returns an empty allowlist and every credentialed
+// call fails closed even when the underlying service is well-known.
+//
+// Wrappers handled:
+//   - `runtime.captured.<service>.<placeholder>` — produced by the
+//     inbound-secret capture path when the proxy auto-vaults a secret
+//     it observed in an outbound request.
+//   - `<service>:<account>` — produced by the Shadow Tokens UI when
+//     the user has multiple accounts for the same service (e.g.
+//     `github:ericlevine`, `github:work`). The account suffix scopes
+//     ownership; the bound-service host allowlist is shared across
+//     accounts.
 func normalizeBoundServiceID(serviceID string) string {
 	id := strings.TrimSpace(serviceID)
 	const capturedPrefix = "runtime.captured."
@@ -66,9 +74,16 @@ func normalizeBoundServiceID(serviceID string) string {
 		// to the first '.'. Placeholder tokens may themselves contain
 		// dots, so we only split on the first separator.
 		if i := strings.IndexByte(remainder, '.'); i > 0 {
-			return remainder[:i]
+			id = remainder[:i]
+		} else {
+			id = remainder
 		}
-		return remainder
+	}
+	// Account-scoped: `<service>:<account>`. The account portion
+	// scopes credential ownership in the UI; the bound-service host
+	// allowlist applies per-service, not per-account.
+	if i := strings.IndexByte(id, ':'); i > 0 {
+		id = id[:i]
 	}
 	return id
 }
