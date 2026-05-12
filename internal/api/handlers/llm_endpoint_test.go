@@ -202,15 +202,33 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(string(seenBody), "http://localhost:25297/control/skill") ||
-		!strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks?wait=true") ||
-		!strings.Contains(string(seenBody), "timeout=120") {
-		t.Fatalf("upstream request missing control notice: %s", seenBody)
+	// Invariants the notice must surface to the model. URLs are
+	// always the synthetic `clawvisor.local` form so the model never
+	// learns the local daemon URL (which would let it bypass the
+	// rewriter and reuse one-shot nonces).
+	mustContain := []string{
+		"Clawvisor proxy-lite control plane",
+		"https://clawvisor.local/control/skill",
+		"https://clawvisor.local/control/tasks?wait=true",
+		"timeout=120",
+		"Before creating the task, tell me I will need to approve it",
+		// Steer model to Bash+curl (Claude Code's WebFetch can't carry
+		// the headers/body the control plane needs).
+		"Bash with curl",
+		// Don't-leak-the-daemon-URL rule.
+		"ALWAYS use the synthetic URL",
+		// Don't-reuse-nonces rule.
+		"X-Clawvisor-Caller",
 	}
-	if !strings.Contains(string(seenBody), "Clawvisor proxy-lite sessions can request task permission") ||
-		!strings.Contains(string(seenBody), "This URL is handled by Clawvisor before the shell command runs") ||
-		!strings.Contains(string(seenBody), "Before creating a task, tell me I will need to approve it") {
-		t.Fatalf("upstream request missing official proxy-lite control guidance: %s", seenBody)
+	for _, want := range mustContain {
+		if !strings.Contains(string(seenBody), want) {
+			t.Fatalf("upstream request missing control-notice fragment %q in: %s", want, seenBody)
+		}
+	}
+	// Negative: the daemon URL must not appear in the notice — it's a
+	// regression bug if it does.
+	if strings.Contains(string(seenBody), "http://localhost:25297/control/skill") {
+		t.Fatalf("control notice must not advertise the daemon URL: %s", seenBody)
 	}
 }
 

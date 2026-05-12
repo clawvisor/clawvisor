@@ -298,6 +298,58 @@ func TestEvaluateAuthorization_ToolTaskIntentLenientFlag(t *testing.T) {
 	}
 }
 
+// Regression: when the lite-proxy's catalog resolves a credentialed
+// call to (service, action) but no task declared `authorized_actions`
+// for it, the evaluator should still try matching against the task's
+// `expected_tools_json` before defaulting to approval-required. The
+// lite-proxy's taskCreationPrompt steers the model to declare scope
+// via expected_tools, so a previously-approved task that covers
+// (Bash, "curl api.github.com/user") must allow the credentialed call
+// without a second inline approval.
+func TestEvaluateAuthorization_ServiceActionFallsBackToExpectedTool(t *testing.T) {
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("Bash", map[string]any{"command": "curl https://api.github.com/user"}),
+		AgentID:        "agent-1",
+		Service:        "github",
+		Action:         "get_user",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "fetch GitHub user info")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow {
+		t.Fatalf("decision = %+v, want VerdictAllow", got)
+	}
+	if got.Source != SourceTaskScope {
+		t.Fatalf("source = %s, want SourceTaskScope", got.Source)
+	}
+	if got.Task == nil || got.Task.ID != "task-1" {
+		t.Fatalf("expected to match task-1, got task=%+v", got.Task)
+	}
+}
+
+// Regression: models populate expected_tools_json from documentation
+// and examples; they routinely use lowercase tool names (`bash`) even
+// when the harness reports `Bash`. The task-scope matcher must be
+// case-insensitive so the model-emitted lowercase form covers the
+// harness's capitalized actual tool name.
+func TestEvaluateAuthorization_ExpectedToolMatchIsCaseInsensitive(t *testing.T) {
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("Bash", map[string]any{"command": "curl https://api.github.com/user"}),
+		AgentID:        "agent-1",
+		Service:        "github",
+		Action:         "get_user",
+		// Task declared lowercase "bash" (what the model wrote).
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "bash", "fetch user")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow {
+		t.Fatalf("decision = %+v, want VerdictAllow (case-insensitive match)", got)
+	}
+}
+
 func toolUse(name string, input map[string]any) conversation.ToolUse {
 	raw, _ := json.Marshal(input)
 	return conversation.ToolUse{ID: "toolu_1", Name: name, Input: raw}

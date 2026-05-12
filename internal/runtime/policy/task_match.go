@@ -39,7 +39,13 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 			return nil, err
 		}
 		for _, item := range env.ExpectedTools {
-			if item.ToolName != toolName {
+			// Case-insensitive tool-name match. Harnesses report tool
+			// names in their declared casing (`Bash`, `WebFetch`,
+			// `Read`), but the model frequently emits the lowercase form
+			// (`bash`, `webfetch`) when populating `expected_tools_json`
+			// — it's pattern-matching from documentation, not echoing
+			// the harness's declared name. Treat them as the same tool.
+			if !strings.EqualFold(item.ToolName, toolName) {
 				continue
 			}
 			if item.InputRegex != "" {
