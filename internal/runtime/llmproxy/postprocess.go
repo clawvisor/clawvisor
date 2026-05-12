@@ -261,6 +261,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", "decision_error", err.Error())
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: authorization failed — " + err.Error()}
 				}
+				// Local-only tools (Read, Edit, Glob, Skill, …) never make
+				// outbound HTTP calls. Requiring an active task to cover
+				// every one is useless friction — but a task that DID
+				// declare expected_tools or a deny rule that targets the
+				// tool must still apply. So we run the evaluator
+				// normally and only override the "no matching task scope"
+				// review verdict to allow for local-only tools.
+				localOnly := inspector.IsLocalOnlyTool(tu.Name)
 				switch dec.Kind {
 				case runtimedecision.VerdictAllow:
 					audit("allow", string(dec.Source), dec.Reason)
@@ -269,6 +277,10 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
 				case runtimedecision.VerdictNeedsApproval:
+					if localOnly && dec.Source == runtimedecision.SourceTaskScopeMissing {
+						audit("allow", "local_only_pass_through", "local-only tool ("+tu.Name+")")
+						return conversation.ToolUseVerdict{Allowed: true}
+					}
 					substitute := approvalPrompt(tu, dec.Reason)
 					if cfg.PendingApprovals != nil {
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{

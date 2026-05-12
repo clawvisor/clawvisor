@@ -174,6 +174,93 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
+// Regression: local-only tools (Read, Edit, Glob, Skill, TodoWrite, …)
+// never make outbound HTTP calls. Requiring an approved task scope to
+// invoke them would force a user to approve every Read / Skill — high
+// friction, zero security benefit (no credential could be transmitted).
+// The postprocess decision-gate must short-circuit the
+// SourceTaskScopeMissing path for these tools.
+func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args string
+	}{
+		{"skill_dispatch", "Skill", `{"skill":"clawvisor","args":"do the thing"}`},
+		{"read_file", "Read", `{"file_path":"/tmp/foo.txt"}`},
+		{"todo_write", "TodoWrite", `{"todos":[{"content":"item","activeForm":"item"}]}`},
+		{"glob", "Glob", `{"pattern":"**/*.go"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := anthropicJSONWithNamedToolUse(tc.tool, tc.args)
+			req := httptest.NewRequest("POST", "/v1/messages", nil)
+			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+			got := Postprocess(req, body, "application/json", PostprocessConfig{
+				Inspector:        insp,
+				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+				Store:            st,
+				AgentUserID:      userID,
+				AgentID:          agentID,
+				Audit:            NewAuditEmitter(st, nil, nil),
+				RequestID:        "req-local-" + tc.name,
+				CandidateTasks:   []*store.Task{}, // no task scope set
+				ToolRules:        []*store.RuntimePolicyRule{},
+				EgressRules:      []*store.RuntimePolicyRule{},
+				PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+				Posture:          runtimedecision.PostureEnforce,
+			})
+
+			if got.Rewritten {
+				t.Fatalf("local-only tool %q should pass through, got rewrite body=%s", tc.tool, got.Body)
+			}
+			rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+			if err != nil {
+				t.Fatalf("ListAuditEntries: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("expected 1 audit row, got %d", len(rows))
+			}
+			if rows[0].Outcome != "local_only_pass_through" {
+				t.Errorf("expected outcome=local_only_pass_through, got %q", rows[0].Outcome)
+			}
+		})
+	}
+}
+
+// Negative: an HTTP-shaped tool (Bash) without a covering task must
+// still hit the approval prompt — the local-only bypass must not
+// leak to tools that can actually transmit credentials.
+func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"echo hi"}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-bash-still-gated",
+		CandidateTasks:   []*store.Task{},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("Bash without task scope must require approval, got pass-through")
+	}
+}
+
 func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testing.T) {
 	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"ls /tmp/ | grep -i greet","description":"Find greet script in /tmp"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)

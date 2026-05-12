@@ -79,6 +79,16 @@ var localOnlyTools = map[string]struct{}{
 }
 
 func isLocalOnlyTool(name string) bool {
+	return IsLocalOnlyTool(name)
+}
+
+// IsLocalOnlyTool reports whether name is in the well-known set of
+// tools that never make outbound HTTP calls. Exported so the
+// postprocess decision-gate path can short-circuit task-scope
+// enforcement for these tools: requiring an approved task scope to
+// run Read / Edit / TodoWrite / Skill / etc. is over-restriction
+// since they're harness-local and can't exfiltrate credentials.
+func IsLocalOnlyTool(name string) bool {
 	_, ok := localOnlyTools[name]
 	return ok
 }
