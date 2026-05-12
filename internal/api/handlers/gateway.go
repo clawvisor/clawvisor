@@ -2319,6 +2319,8 @@ func executeAdapterRequest(
 		return nil, fmt.Errorf("adapter %s: %w", service, err)
 	}
 
+	applyMCPResponseMiddleware(adapter, result)
+
 	return result, nil
 }
 

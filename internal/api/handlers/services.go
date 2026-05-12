@@ -23,6 +23,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/pkg/adapters/mcpadapter"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/callback"
 	"github.com/clawvisor/clawvisor/internal/display"
@@ -246,8 +247,10 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		IconURL              string                  `json:"icon_url,omitempty"`
 		Alias                string                  `json:"alias,omitempty"`
 		OAuth                bool                    `json:"oauth"`
-		OAuthEndpoint        string                  `json:"oauth_endpoint,omitempty"`
-		DeviceFlow           bool                    `json:"device_flow,omitempty"`
+		OAuthEndpoint         string                  `json:"oauth_endpoint,omitempty"`
+		OAuthClientIDRequired bool                    `json:"oauth_client_id_required,omitempty"`
+		Deprecated            bool                    `json:"deprecated,omitempty"`
+		DeviceFlow            bool                    `json:"device_flow,omitempty"`
 		PKCEFlow             bool                    `json:"pkce_flow,omitempty"`
 		PKCEClientIDRequired bool                    `json:"pkce_client_id_required,omitempty"`
 		AutoIdentity         bool                    `json:"auto_identity,omitempty"`
@@ -303,12 +306,13 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			actions = append(actions, ae)
 		}
 
-		var deviceFlow, pkceFlow, pkceFlowDefined bool
+		var deviceFlow, pkceFlow, pkceFlowDefined, deprecated bool
 		if mp, ok2 := a.(adapters.MetadataProvider); ok2 {
 			meta := mp.ServiceMetadata()
 			deviceFlow = meta.DeviceFlow
 			pkceFlow = meta.PKCEFlow
 			pkceFlowDefined = meta.PKCEFlowDefined
+			deprecated = meta.Deprecated
 		}
 		_, autoIdentity := a.(adapters.IdentityFetcher)
 
@@ -319,34 +323,56 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// MCP-OAuth services handle their own client provisioning via RFC 7591
+		// dynamic registration on first Connect — there's nothing for the
+		// admin to pre-configure. The badge stays available for the admin
+		// override path (mcp.oauth.{serviceID} in the vault) but only fires
+		// when an admin has explicitly pinned a client without a secret.
+		oauthClientIDRequired := false
+		if strings.HasPrefix(oauthEndpoint, "mcp:") {
+			cid, csec := adapters.GetMCPOAuthCredentials(r.Context(), h.vault, a.ServiceID())
+			oauthClientIDRequired = cid != "" && csec == ""
+		}
+
 		return serviceEntry{
-			ID:                   a.ServiceID(),
-			Name:                 name,
-			Description:          desc,
-			IconSVG:              iconSVG,
-			IconURL:              iconURL,
-			OAuth:                a.RequiredScopes() != nil,
-			OAuthEndpoint:        oauthEndpoint,
-			DeviceFlow:           deviceFlow,
-			PKCEFlow:             pkceFlowDefined,              // show PKCE option if defined, even without client ID
-			PKCEClientIDRequired: pkceFlowDefined && !pkceFlow, // client ID still needed
-			AutoIdentity:         autoIdentity,
-			RequiresActivation:   true,
-			Actions:              actions,
-			Variables:            variables,
-			SetupURL:             setupURL,
-			KeyHint:              keyHint,
-			KeyDisplayName:       keyDisplayName,
-			KeyDescription:       keyDescription,
+			ID:                    a.ServiceID(),
+			Name:                  name,
+			Description:           desc,
+			IconSVG:               iconSVG,
+			IconURL:               iconURL,
+			OAuth:                 a.RequiredScopes() != nil,
+			OAuthEndpoint:         oauthEndpoint,
+			OAuthClientIDRequired: oauthClientIDRequired,
+			Deprecated:            deprecated,
+			DeviceFlow:            deviceFlow,
+			PKCEFlow:              pkceFlowDefined,              // show PKCE option if defined, even without client ID
+			PKCEClientIDRequired:  pkceFlowDefined && !pkceFlow, // client ID still needed
+			AutoIdentity:          autoIdentity,
+			RequiresActivation:    true,
+			Actions:               actions,
+			Variables:             variables,
+			SetupURL:              setupURL,
+			KeyHint:               keyHint,
+			KeyDisplayName:        keyDisplayName,
+			KeyDescription:        keyDescription,
 		}
 	}
 
 	services := make([]serviceEntry, 0)
-	for _, a := range h.adapterReg.All() {
+	for _, a := range h.adapterReg.AllForUser(r.Context(), user.ID) {
 		if ac, ok := a.(adapters.AvailabilityChecker); ok && !ac.Available() {
 			continue
 		}
 		credentialFree := a.ValidateCredential(nil) == nil
+
+		// Deprecated services stay visible *only* to users who have
+		// already activated them — they vanish from the "available to
+		// connect" portion of the catalog. Used during migrations where a
+		// successor adapter has taken the prominent slot.
+		deprecated := false
+		if mp, ok := a.(adapters.MetadataProvider); ok {
+			deprecated = mp.ServiceMetadata().Deprecated
+		}
 
 		if credentialFree {
 			// Check all metas for this service (may have a non-default alias via rename).
@@ -366,7 +392,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 				services = append(services, entry)
 			}
-			if !found {
+			if !found && !deprecated {
 				entry := buildEntry(a)
 				entry.CredentialFree = true
 				entry.Status = "not_activated"
@@ -411,7 +437,7 @@ func (h *ServicesHandler) List(w http.ResponseWriter, r *http.Request) {
 			shown = true
 		}
 
-		if !shown {
+		if !shown && !deprecated {
 			entry := buildEntry(a)
 			entry.Status = "not_activated"
 			services = append(services, entry)
@@ -458,6 +484,18 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For MCP-OAuth adapters, run RFC 9728 + RFC 8414 discovery and RFC 7591
+	// dynamic registration before consulting OAuthConfig — so the first
+	// Connect click against a fresh MCP service Just Works without admin
+	// pre-registration.
+	if mcp, ok := adapter.(*mcpadapter.MCPAdapter); ok {
+		if err := mcp.EnsureOAuthReady(r.Context(), h.oauthRedirectURL()); err != nil {
+			h.logger.Warn("mcp oauth discovery/registration failed", "service", serviceID, "err", err)
+			writeError(w, http.StatusBadGateway, "OAUTH_DISCOVERY_FAILED", err.Error())
+			return
+		}
+	}
+
 	oauthCfg := adapter.OAuthConfig()
 	if oauthCfg == nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service does not use OAuth2")
@@ -480,6 +518,13 @@ func (h *ServicesHandler) OAuthGetURL(w http.ResponseWriter, r *http.Request) {
 	if alreadyAuthorized && !newAccount {
 		// Scopes already granted — just ensure service_meta exists and return.
 		_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
+		// Self-heal MCP services with empty tool caches (e.g. legacy stuck
+		// state from before the activation rollback shipped, or a user who
+		// hit the rollback once and re-clicked Connect).
+		if err := h.repairMCPToolsForUser(r.Context(), adapter, user.ID, serviceID, alias); err != nil {
+			h.logger.Warn("mcp tool repair on already_authorized failed",
+				"service", serviceID, "user", user.ID, "err", err)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"already_authorized": true,
 			"service":            serviceID,
@@ -546,6 +591,18 @@ func (h *ServicesHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", fmt.Sprintf("service %q not found", serviceID))
 		return
+	}
+
+	// For MCP-OAuth adapters, run RFC 9728 + RFC 8414 discovery and RFC 7591
+	// dynamic registration before consulting OAuthConfig — so the first
+	// Connect click against a fresh MCP service Just Works without admin
+	// pre-registration.
+	if mcp, ok := adapter.(*mcpadapter.MCPAdapter); ok {
+		if err := mcp.EnsureOAuthReady(r.Context(), h.oauthRedirectURL()); err != nil {
+			h.logger.Warn("mcp oauth discovery/registration failed", "service", serviceID, "err", err)
+			writeError(w, http.StatusBadGateway, "OAUTH_DISCOVERY_FAILED", err.Error())
+			return
+		}
 	}
 
 	oauthCfg := adapter.OAuthConfig()
@@ -765,6 +822,19 @@ func (h *ServicesHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) 
 		_ = h.st.UpsertServiceConfig(r.Context(), entry.UserID, entry.ServiceID, alias, configJSON)
 	}
 
+	// MCP adapters: discover the downstream server's tools now that we have
+	// a valid OAuth credential. On failure, roll back so the user doesn't
+	// end up with a "connected" service exposing zero actions — the OAuth
+	// grant at the vendor still stands, so a retry is cheap.
+	if err := h.ensureMCPToolsActivated(r.Context(), adapter, entry.UserID, entry.ServiceID, alias, credBytes); err != nil {
+		h.logger.Error("mcp tool discovery failed at oauth activation; rolling back",
+			"service", entry.ServiceID, "user", entry.UserID, "err", err)
+		_ = h.vault.Delete(r.Context(), entry.UserID, vKey)
+		_ = h.st.DeleteServiceMeta(r.Context(), entry.UserID, entry.ServiceID, alias)
+		oauthPopupClose(w, "Tool discovery failed — please try connecting again.", "", entry.OpenerOrigin)
+		return
+	}
+
 	h.logger.Info("service activated", "user", entry.UserID, "service", entry.ServiceID, "alias", alias)
 
 	// Re-execute any pending request that was waiting for this activation.
@@ -902,6 +972,14 @@ func (h *ServicesHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		mergedScopes, alreadyAuthorized := h.resolveOAuthScopes(r.Context(), user.ID, serviceID, alias, adapter)
 		if alreadyAuthorized {
 			_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, alias, time.Now())
+			// Self-heal stuck MCP services whose tool cache failed to
+			// populate on the original activation. ensureMCPToolsActivated
+			// no-ops if tools are already cached, so this is cheap when
+			// nothing's wrong.
+			if err := h.repairMCPToolsForUser(r.Context(), adapter, user.ID, serviceID, alias); err != nil {
+				h.logger.Warn("mcp tool repair on already_authorized failed",
+					"service", serviceID, "user", user.ID, "err", err)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"already_authorized": true,
 				"service":            serviceID,
@@ -1041,6 +1119,19 @@ func (h *ServicesHandler) ActivateWithKey(w http.ResponseWriter, r *http.Request
 		_ = h.st.UpsertServiceConfig(r.Context(), user.ID, serviceID, alias, configJSON)
 	}
 
+	// MCP adapters: discover the downstream server's tools now that we have
+	// a credential, persist them to the store, and register a per-user
+	// clone carrying the discovered tool set. The store row is the source
+	// of truth across restarts; the in-memory clone is just a cache.
+	if err := h.ensureMCPToolsActivated(r.Context(), adapter, user.ID, serviceID, alias, credBytes); err != nil {
+		h.logger.Error("mcp tool discovery failed at api-key activation; rolling back",
+			"service", serviceID, "user", user.ID, "err", err)
+		_ = h.vault.Delete(r.Context(), user.ID, vKey)
+		_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
+		writeError(w, http.StatusBadGateway, "TOOL_DISCOVERY_FAILED", "tool discovery failed: "+err.Error())
+		return
+	}
+
 	h.logger.Info("service activated via api key", "user", user.ID, "service", serviceID, "alias", alias)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "activated", "service": serviceID, "alias": alias})
@@ -1088,9 +1179,13 @@ func (h *ServicesHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove the service_meta and service_config records first.
+	// Remove the service_meta, service_config, and (for MCP services) the
+	// per-user tool cache. Also evict the in-memory per-user adapter clone
+	// so the catalog doesn't keep serving stale actions until restart.
 	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, alias)
 	_ = h.st.DeleteServiceConfig(r.Context(), user.ID, serviceID, alias)
+	_ = h.st.DeleteMCPTools(r.Context(), user.ID, serviceID, alias)
+	h.adapterReg.RemoveForUser(serviceID, user.ID)
 
 	// Credential-free services have no vault credential to clean up.
 	adapter, ok := h.adapterReg.Get(serviceID)
@@ -1282,6 +1377,15 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 	_ = h.st.UpsertServiceMeta(r.Context(), user.ID, serviceID, body.NewAlias, oldMeta.ActivatedAt)
 	_ = h.st.DeleteServiceMeta(r.Context(), user.ID, serviceID, body.OldAlias)
 
+	// Move the MCP tool cache to the new alias too — restart hydration in
+	// defaults.go reads tools keyed by the current service_meta alias, so
+	// without this the renamed MCP connection would lose actions after the
+	// next process restart.
+	if oldTools, err := h.st.GetMCPTools(r.Context(), user.ID, serviceID, body.OldAlias); err == nil {
+		_ = h.st.UpsertMCPTools(r.Context(), user.ID, serviceID, body.NewAlias, oldTools)
+		_ = h.st.DeleteMCPTools(r.Context(), user.ID, serviceID, body.OldAlias)
+	}
+
 	// If other services share the same vault key (e.g. all Google services share "google"),
 	// rename their metas too so they continue to find the credential.
 	metas, _ := h.st.ListServiceMetas(r.Context(), user.ID)
@@ -1298,6 +1402,60 @@ func (h *ServicesHandler) RenameAlias(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("alias renamed", "user", user.ID, "service", serviceID, "old", body.OldAlias, "new", body.NewAlias)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "renamed", "service": serviceID, "alias": body.NewAlias})
+}
+
+// ensureMCPToolsActivated runs DiscoverTools + persist + register-per-user
+// for MCP adapters. Called from both activation paths (OAuth callback and
+// API-key) right after the credential lands in the vault, and from the
+// already_authorized fast path via repairMCPToolsForUser as self-repair
+// when a previous activation stored the credential but failed mid-discovery.
+//
+// No-op for non-MCP adapters. Returns the underlying error so callers can
+// log and act. The activation callers (OAuthCallback, ActivateWithKey)
+// roll back the vault credential and service_meta row on failure so a
+// connected service never exposes zero actions — this helper itself does
+// not mutate anything other than the tool cache and per-user registry.
+func (h *ServicesHandler) ensureMCPToolsActivated(
+	ctx context.Context, adapter adapters.Adapter, userID, serviceID, alias string, credBytes []byte,
+) error {
+	mcp, ok := adapter.(*mcpadapter.MCPAdapter)
+	if !ok {
+		return nil
+	}
+	tools, err := mcp.DiscoverTools(ctx, credBytes)
+	if err != nil {
+		return fmt.Errorf("discover: %w", err)
+	}
+	toolsJSON, _ := json.Marshal(tools)
+	if err := h.st.UpsertMCPTools(ctx, userID, serviceID, alias, toolsJSON); err != nil {
+		return fmt.Errorf("persist: %w", err)
+	}
+	h.adapterReg.RegisterForUser(userID, mcp.ForUser(tools))
+	h.logger.Info("mcp tools discovered",
+		"service", serviceID, "user", userID, "alias", alias, "tool_count", len(tools))
+	return nil
+}
+
+// repairMCPToolsForUser self-heals an MCP service that has a stored
+// credential + service_meta row but no tool cache (typically because
+// DiscoverTools failed transiently during the original activation). Called
+// from the already_authorized branch of /api/services/{id}/activate. No-op
+// when the cache is already populated.
+func (h *ServicesHandler) repairMCPToolsForUser(
+	ctx context.Context, adapter adapters.Adapter, userID, serviceID, alias string,
+) error {
+	if _, ok := adapter.(*mcpadapter.MCPAdapter); !ok {
+		return nil
+	}
+	if raw, err := h.st.GetMCPTools(ctx, userID, serviceID, alias); err == nil && len(raw) > 2 {
+		return nil // already cached
+	}
+	vKey := h.adapterReg.VaultKeyWithAlias(serviceID, alias)
+	credBytes, err := h.vault.Get(ctx, userID, vKey)
+	if err != nil {
+		return fmt.Errorf("vault get: %w", err)
+	}
+	return h.ensureMCPToolsActivated(ctx, adapter, userID, serviceID, alias, credBytes)
 }
 
 // resolveIdentityAlias attempts to auto-detect the account identity for a service.
@@ -2389,5 +2547,90 @@ func (h *ServicesHandler) DeletePKCECredential(w http.ResponseWriter, r *http.Re
 	}
 
 	h.logger.Info("PKCE client ID removed", "service_id", serviceID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ── MCP OAuth credentials ────────────────────────────────────────────────────
+// Settings-page CRUD for per-MCP-service OAuth client credentials. Mirrors
+// the PKCE handler shape: list/set/delete keyed by service ID. Secrets are
+// write-only — list responses contain client_id but never client_secret.
+
+// ListMCPOAuthCredentials returns all configured MCP OAuth client IDs.
+//
+// GET /api/system/mcp-oauth
+// Auth: user JWT
+// Response: [{"service_id": "...", "client_id": "..."}]
+func (h *ServicesHandler) ListMCPOAuthCredentials(w http.ResponseWriter, r *http.Request) {
+	entries, err := adapters.ListMCPOAuthCredentials(r.Context(), h.vault)
+	if err != nil {
+		h.logger.Error("failed to list MCP OAuth credentials", "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to list MCP OAuth credentials")
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// SetMCPOAuthCredential stores OAuth app credentials for an MCP service.
+// Once stored, the corresponding MCPAdapter will start returning a valid
+// OAuthConfig and the settings UI will mark the service ready to activate.
+//
+// POST /api/system/mcp-oauth
+// Auth: user JWT
+// Body: {"service_id": "...", "client_id": "...", "client_secret": "..."}
+// Response: {"ok": true}
+func (h *ServicesHandler) SetMCPOAuthCredential(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ServiceID    string `json:"service_id"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if body.ServiceID == "" || body.ClientID == "" || body.ClientSecret == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service_id, client_id, and client_secret are required")
+		return
+	}
+	// Validate that the service ID actually corresponds to a registered
+	// MCP-OAuth adapter, so admins can't accidentally seed credentials for
+	// a typo'd service that will never be read.
+	adapter, ok := h.adapterReg.Get(body.ServiceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "no adapter registered with that service_id")
+		return
+	}
+	if mp, ok := adapter.(adapters.MetadataProvider); ok {
+		if !strings.HasPrefix(mp.ServiceMetadata().OAuthEndpoint, "mcp:") {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service is not an MCP OAuth adapter")
+			return
+		}
+	}
+	if err := adapters.SetMCPOAuthCredentials(r.Context(), h.vault, body.ServiceID, body.ClientID, body.ClientSecret); err != nil {
+		h.logger.Error("failed to store MCP OAuth credentials", "service_id", body.ServiceID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to store credentials")
+		return
+	}
+	h.logger.Info("MCP OAuth credentials stored", "service_id", body.ServiceID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// DeleteMCPOAuthCredential removes OAuth app credentials for an MCP service.
+//
+// DELETE /api/system/mcp-oauth/{service_id}
+// Auth: user JWT
+// Response: {"ok": true}
+func (h *ServicesHandler) DeleteMCPOAuthCredential(w http.ResponseWriter, r *http.Request) {
+	serviceID := r.PathValue("service_id")
+	if serviceID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service_id is required")
+		return
+	}
+	if err := adapters.DeleteMCPOAuthCredentials(r.Context(), h.vault, serviceID); err != nil {
+		h.logger.Error("failed to delete MCP OAuth credentials", "service_id", serviceID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to delete credentials")
+		return
+	}
+	h.logger.Info("MCP OAuth credentials removed", "service_id", serviceID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

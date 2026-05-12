@@ -1,6 +1,7 @@
 package taskrisk
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -136,7 +137,7 @@ func TestMarshalAssessment_Nil(t *testing.T) {
 
 func TestBuildActionContextFromRegistry(t *testing.T) {
 	// With a nil registry, buildActionContextFromRegistry should return empty.
-	result := buildActionContextFromRegistry(nil)
+	result := buildActionContextFromRegistry(context.Background(), nil, "")
 	if result != "" {
 		t.Errorf("expected empty string for nil registry, got %q", result)
 	}

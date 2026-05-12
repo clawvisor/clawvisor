@@ -592,6 +592,48 @@ func (s *Store) DeleteServiceConfig(ctx context.Context, userID, serviceID, alia
 	return nil
 }
 
+// ── MCP Tool Caches ──────────────────────────────────────────────────────────
+
+func (s *Store) UpsertMCPTools(ctx context.Context, userID, serviceID, alias string, tools json.RawMessage) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO mcp_tool_caches (id, user_id, service_id, alias, tools)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, service_id, alias) DO UPDATE SET
+			tools      = EXCLUDED.tools,
+			updated_at = NOW()
+	`, uuid.New().String(), userID, serviceID, alias, tools)
+	return err
+}
+
+func (s *Store) GetMCPTools(ctx context.Context, userID, serviceID, alias string) (json.RawMessage, error) {
+	var toolsJSON []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT tools FROM mcp_tool_caches WHERE user_id = $1 AND service_id = $2 AND alias = $3`,
+		userID, serviceID, alias,
+	).Scan(&toolsJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(toolsJSON), nil
+}
+
+func (s *Store) DeleteMCPTools(ctx context.Context, userID, serviceID, alias string) error {
+	res, err := s.pool.Exec(ctx,
+		`DELETE FROM mcp_tool_caches WHERE user_id = $1 AND service_id = $2 AND alias = $3`,
+		userID, serviceID, alias,
+	)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // ── Notification Configs ──────────────────────────────────────────────────────
 
 func (s *Store) UpsertNotificationConfig(ctx context.Context, userID, channel string, config json.RawMessage) error {

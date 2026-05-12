@@ -250,7 +250,7 @@ func (h *WelcomeHandler) listActivatedServices(ctx context.Context, userID strin
 		return entry
 	}
 
-	for _, a := range h.adapterReg.All() {
+	for _, a := range h.adapterReg.AllForUser(ctx, userID) {
 		if ac, ok := a.(adapters.AvailabilityChecker); ok && !ac.Available() {
 			continue
 		}

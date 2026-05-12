@@ -7,6 +7,7 @@ import (
 	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 
 	imessageadapter "github.com/clawvisor/clawvisor/internal/adapters/apple/imessage"
 	"github.com/clawvisor/clawvisor/internal/adapters/definitions"
+	mcpdefs "github.com/clawvisor/clawvisor/internal/adapters/definitions/mcp"
 	dropboxadapter "github.com/clawvisor/clawvisor/internal/adapters/dropbox"
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
@@ -48,6 +50,8 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adaptergen"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/mcpadapter"
+	"github.com/clawvisor/clawvisor/pkg/adapters/mcpclient"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlloader"
 	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
@@ -241,34 +245,99 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	adapterReg.Register(imessageadapter.New())
 	adapterReg.Register(sqladapter.New())
 
-	// Cloud mode: set a resolver so the gateway can lazily load user-generated
-	// adapters from the DB on cache miss, scoped to the requesting user.
-	if cfg.Database.Driver == "postgres" {
-		adapterReg.SetResolver(func(ctx context.Context, serviceID, userID string) (adapters.Adapter, bool) {
-			rows, err := st.ListGeneratedAdapters(ctx, userID)
-			if err != nil {
-				logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
-				return nil, false
+	// MCP-driven adapters (config-only — the inverted architecture).
+	// Each *.mcp.yaml in internal/adapters/definitions/mcp/ becomes a service.
+	// The MCPAdapter handles tool discovery, execution, and identity (via the
+	// whoami hook); response sanitization happens generically in gateway middleware.
+	mcpAdapters, err := mcpadapter.LoadFromFS(mcpdefs.FS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("loading MCP adapter specs: %w", err)
+	}
+	mcpByID := make(map[string]*mcpadapter.MCPAdapter, len(mcpAdapters))
+	for _, ma := range mcpAdapters {
+		// Wire the shared vault so OAuth-MCP adapters can read their
+		// system-level client_id / client_secret on demand. Same pattern
+		// YAMLAdapter uses via SetOAuthProvider.
+		ma.SetOAuthVault(v)
+		adapterReg.Register(ma)
+		mcpByID[ma.ServiceID()] = ma
+	}
+
+	// Resolver chain: MCP tool-cache lookup (any mode) + cloud-mode user
+	// generated YAML adapters. Called by Registry on per-user cache miss.
+	adapterReg.SetResolver(func(ctx context.Context, serviceID, userID string) (adapters.Adapter, bool) {
+		// MCP: look up the user's discovered tool list from the persistent
+		// store and clone the global MCPAdapter with it. This is the
+		// post-restart hydration path — the user activated some time ago,
+		// the in-memory cache was lost, and we lazily rebuild from the DB.
+		//
+		// Whoami-enabled services persist tools under the resolved alias
+		// (email, org name, etc.) rather than "default", so query
+		// service_meta first to find the actual alias(es) the user has
+		// activated and try each in turn. Falling back to "default"
+		// preserves behavior for services without a whoami hook.
+		if mcp, ok := mcpByID[serviceID]; ok {
+			aliases := []string{"default"}
+			if metas, err := st.ListServiceMetas(ctx, userID); err == nil {
+				aliases = aliases[:0]
+				for _, m := range metas {
+					if m.ServiceID == serviceID {
+						aliases = append(aliases, m.Alias)
+					}
+				}
+				if len(aliases) == 0 {
+					aliases = []string{"default"}
+				}
 			}
-			for _, row := range rows {
-				if row.ServiceID != serviceID {
+			for _, alias := range aliases {
+				toolsJSON, err := st.GetMCPTools(ctx, userID, serviceID, alias)
+				if err != nil {
 					continue
 				}
-				var def yamldef.ServiceDef
-				if err := yaml.Unmarshal([]byte(row.YAMLContent), &def); err != nil {
-					logger.Warn("resolver: bad YAML for generated adapter", "service_id", serviceID, "err", err)
-					return nil, false
+				var tools []mcpclient.Tool
+				if err := json.Unmarshal(toolsJSON, &tools); err != nil {
+					logger.Warn("resolver: bad mcp tools json", "service", serviceID, "user", userID, "alias", alias, "err", err)
+					continue
 				}
-				a, err := yamlruntime.New(def, nil)
-				if err != nil {
-					logger.Warn("resolver: failed to build adapter", "service_id", serviceID, "err", err)
-					return nil, false
-				}
-				return a, true
+				return mcp.ForUser(tools), true
 			}
 			return nil, false
-		})
-	}
+		}
+		// Cloud: user-generated YAML adapters.
+		if cfg.Database.Driver != "postgres" {
+			return nil, false
+		}
+		// AllForUser invokes the resolver for every global adapter on cache
+		// miss; for built-in services that's wasted work because generated
+		// adapters always have user-only service IDs. Short-circuit when
+		// the serviceID is in the global registry — only GetForUser calls
+		// on truly-unknown services should reach ListGeneratedAdapters.
+		if _, isGlobal := adapterReg.Get(serviceID); isGlobal {
+			return nil, false
+		}
+		rows, err := st.ListGeneratedAdapters(ctx, userID)
+		if err != nil {
+			logger.Warn("resolver: failed to list generated adapters", "user_id", userID, "err", err)
+			return nil, false
+		}
+		for _, row := range rows {
+			if row.ServiceID != serviceID {
+				continue
+			}
+			var def yamldef.ServiceDef
+			if err := yaml.Unmarshal([]byte(row.YAMLContent), &def); err != nil {
+				logger.Warn("resolver: bad YAML for generated adapter", "service_id", serviceID, "err", err)
+				return nil, false
+			}
+			a, err := yamlruntime.New(def, nil)
+			if err != nil {
+				logger.Warn("resolver: failed to build adapter", "service_id", serviceID, "err", err)
+				return nil, false
+			}
+			return a, true
+		}
+		return nil, false
+	})
 
 	// Initialize the display package with the adapter registry.
 	display.Init(adapterReg)

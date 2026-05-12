@@ -801,6 +801,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/system/pkce-credentials", user(servicesHandler.ListPKCECredentials))
 	mux.Handle("POST /api/system/pkce-credentials", user(servicesHandler.SetPKCECredential))
 	mux.Handle("DELETE /api/system/pkce-credentials/{service_id}", user(servicesHandler.DeletePKCECredential))
+	mux.Handle("GET /api/system/mcp-oauth", user(servicesHandler.ListMCPOAuthCredentials))
+	mux.Handle("POST /api/system/mcp-oauth", user(servicesHandler.SetMCPOAuthCredential))
+	mux.Handle("DELETE /api/system/mcp-oauth/{service_id}", user(servicesHandler.DeleteMCPOAuthCredential))
 
 	// Skill catalog (agent token)
 	mux.Handle("GET /api/skill/catalog", requireAgent(e2e(http.HandlerFunc(skillHandler.Catalog))))

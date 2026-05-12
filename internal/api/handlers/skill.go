@@ -10,9 +10,78 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/mcpadapter"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
+
+// isMCPService reports whether the given base service ID corresponds to an
+// MCPAdapter — used by the catalog renderer to apply MCP-specific rules
+// (one-line summarization, per-server byte budget).
+func (h *SkillHandler) isMCPService(serviceID string) bool {
+	a, ok := h.adapterReg.Get(serviceID)
+	if !ok {
+		return false
+	}
+	_, ok = a.(*mcpadapter.MCPAdapter)
+	return ok
+}
+
+// writeActionDetail serves the byte-exact original description of a single
+// MCP tool. This is the "safety net" call site for an agent that read the
+// compact catalog summary and needs full docs before invoking a tool.
+//
+// Output is NOT Markdown-wrapped — we serve the description verbatim so
+// the agent gets exactly what the MCP server documented.
+//
+// Honors the same restriction filter as the overview/detail views: an
+// action that's restricted (and therefore omitted from the catalog list)
+// must not be readable via this endpoint either. Otherwise an agent could
+// learn from full docs of an action it isn't allowed to call.
+func (h *SkillHandler) writeActionDetail(buf *strings.Builder, ctx context.Context, serviceID, action string, entries []*catalogEntry, adapterMeta map[string]adapters.ServiceMetadata, userID string) {
+	baseID, _ := parseServiceAliasSkill(serviceID)
+	// Only allow this view for services the user actually has activated.
+	var entry *catalogEntry
+	for _, e := range entries {
+		if e.baseID == baseID {
+			entry = e
+			break
+		}
+	}
+	if entry == nil {
+		buf.WriteString(fmt.Sprintf("Service %q is not activated for this user.\n", serviceID))
+		return
+	}
+	if h.isRestricted(ctx, userID, entry, action) {
+		buf.WriteString(fmt.Sprintf("Action %q is restricted on service %q.\n", action, serviceID))
+		return
+	}
+	meta, ok := adapterMeta[baseID]
+	if !ok {
+		buf.WriteString(fmt.Sprintf("Service %q has no metadata.\n", serviceID))
+		return
+	}
+	am, ok := meta.ActionMeta[action]
+	if !ok {
+		buf.WriteString(fmt.Sprintf("Action %q not found on service %q.\n", action, serviceID))
+		return
+	}
+	if am.Description == "" {
+		buf.WriteString(fmt.Sprintf("(no description provided for %s:%s)\n", serviceID, action))
+		return
+	}
+	buf.WriteString(am.Description)
+}
+
+// parseServiceAliasSkill mirrors parseServiceAlias used elsewhere — split
+// "service:alias" → ("service", "alias"). Defined locally so this file
+// doesn't reach across to other handlers.
+func parseServiceAliasSkill(s string) (string, string) {
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
 
 // LocalServiceProvider supplies local daemon services for the agent catalog.
 // Implemented by the cloud layer; nil in self-hosted mode.
@@ -104,7 +173,7 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 
 	// Build the adapter metadata index for action descriptions.
 	adapterMeta := map[string]adapters.ServiceMetadata{} // serviceID → metadata
-	allAdapters := h.adapterReg.All()
+	allAdapters := h.adapterReg.AllForUser(ctx, agent.UserID)
 	for _, a := range allAdapters {
 		if mp, ok := a.(adapters.MetadataProvider); ok {
 			adapterMeta[a.ServiceID()] = mp.ServiceMetadata()
@@ -176,14 +245,21 @@ func (h *SkillHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].baseID < sorted[j].baseID })
 
-	// Check for ?service= filter for detailed single-service view.
+	// Check for ?service= filter for detailed single-service view, and
+	// ?action= for a single tool's raw description (MCP catalog spec).
 	serviceFilter := r.URL.Query().Get("service")
+	actionFilter := r.URL.Query().Get("action")
 
 	var buf strings.Builder
 
-	if serviceFilter != "" {
+	switch {
+	case serviceFilter != "" && actionFilter != "":
+		// Detail endpoint: return the byte-exact raw description so the
+		// agent can read full Markdown docs for one specific tool.
+		h.writeActionDetail(&buf, ctx, serviceFilter, actionFilter, sorted, adapterMeta, agent.UserID)
+	case serviceFilter != "":
 		h.writeServiceDetail(&buf, ctx, serviceFilter, sorted, adapterMeta, agent.UserID)
-	} else {
+	default:
 		h.writeCatalogOverview(&buf, ctx, sorted, adapterMeta, agent.UserID)
 	}
 
@@ -235,24 +311,49 @@ func (h *SkillHandler) writeCatalogOverview(buf *strings.Builder, ctx context.Co
 		}
 		buf.WriteString("\n")
 
-		for _, action := range entry.actions {
-			if h.isRestricted(ctx, userID, entry, action) {
-				continue
-			}
-
-			// Build the action line with compact param signature.
-			if meta, ok := adapterMeta[entry.baseID]; ok {
-				if am, ok := meta.ActionMeta[action]; ok {
-					desc := am.Description
-					if desc == "" {
-						desc = am.DisplayName
-					}
-					paramSig := compactParamSig(am.Params)
-					buf.WriteString(fmt.Sprintf("- **%s**%s \u2014 %s\n", action, paramSig, desc))
+		isMCP := h.isMCPService(entry.baseID)
+		renderSection := func(maxChars int) string {
+			var section strings.Builder
+			for _, action := range entry.actions {
+				if h.isRestricted(ctx, userID, entry, action) {
 					continue
 				}
+				meta, ok := adapterMeta[entry.baseID]
+				if !ok {
+					section.WriteString(fmt.Sprintf("- **%s** \u2014 (requires approval or task)\n", action))
+					continue
+				}
+				am, ok := meta.ActionMeta[action]
+				if !ok {
+					section.WriteString(fmt.Sprintf("- **%s** \u2014 (requires approval or task)\n", action))
+					continue
+				}
+				desc := am.Description
+				if isMCP {
+					// Raw MCP description can be multi-paragraph Markdown
+					// with fenced code, HTML, headers. Reduce to one line.
+					desc = mcpadapter.OneLineSummary(desc, maxChars)
+				}
+				if desc == "" {
+					desc = am.DisplayName
+				}
+				paramSig := compactParamSig(am.Params)
+				section.WriteString(fmt.Sprintf("- **%s**%s \u2014 %s\n", action, paramSig, desc))
 			}
-			buf.WriteString(fmt.Sprintf("- **%s** \u2014 (requires approval or task)\n", action))
+			return section.String()
+		}
+
+		// For MCP services, enforce the per-server byte budget by squeezing
+		// the summary cap until it fits. Non-MCP services use whatever
+		// curated descriptions their YAML already provides.
+		if isMCP {
+			buf.WriteString(mcpadapter.FitToBudget(
+				mcpadapter.PerServerByteBudget,
+				mcpadapter.DefaultSummaryMaxChars,
+				renderSection,
+			))
+		} else {
+			buf.WriteString(renderSection(0))
 		}
 		buf.WriteString("\n")
 	}

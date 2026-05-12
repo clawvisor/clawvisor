@@ -255,6 +255,11 @@ function OAuthCredentialsSection() {
     queryFn: () => api.system.listPKCECredentials(),
   })
 
+  const { data: mcpOAuthCredentials } = useQuery({
+    queryKey: ['mcp-oauth-credentials'],
+    queryFn: () => api.system.listMCPOAuthCredentials(),
+  })
+
   const { data: services } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.services.list(),
@@ -308,6 +313,29 @@ function OAuthCredentialsSection() {
     onError: (err: Error) => setError(err.message),
   })
 
+  const mcpOAuthSaveMut = useMutation({
+    mutationFn: ({ serviceId, clientId, clientSecret }: { serviceId: string; clientId: string; clientSecret: string }) =>
+      api.system.setMCPOAuthCredential(serviceId, clientId, clientSecret),
+    onSuccess: () => {
+      setEditingService(null)
+      setClientIdValue('')
+      setClientSecretValue('')
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['mcp-oauth-credentials'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const mcpOAuthDeleteMut = useMutation({
+    mutationFn: (serviceId: string) => api.system.deleteMCPOAuthCredential(serviceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mcp-oauth-credentials'] })
+      qc.invalidateQueries({ queryKey: ['services'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
   const serviceList = services?.services
 
   // Check if any Google services exist
@@ -334,8 +362,32 @@ function OAuthCredentialsSection() {
     }
   }
 
+  // MCP-OAuth client credentials are an *advanced override* — dynamic
+  // registration (RFC 7591) handles client provisioning automatically for
+  // every MCP server we ship. We only surface a service here when:
+  //   - the admin has already pinned a client (shown for management), or
+  //   - the catalog reports oauth_client_id_required (half-configured override).
+  // This keeps the settings UI quiet under normal flows and only appears
+  // when there's something the admin actually needs to do.
+  const mcpOAuthCredMap = new Map<string, string>()
+  if (mcpOAuthCredentials) {
+    for (const c of mcpOAuthCredentials) {
+      mcpOAuthCredMap.set(c.service_id, c.client_id)
+    }
+  }
+  const mcpOAuthServices = new Map<string, string>()
+  if (serviceList) {
+    for (const svc of serviceList) {
+      if (!svc.oauth_endpoint || !svc.oauth_endpoint.startsWith('mcp:')) continue
+      const needsAttention = svc.oauth_client_id_required || mcpOAuthCredMap.has(svc.id)
+      if (needsAttention && !mcpOAuthServices.has(svc.id)) {
+        mcpOAuthServices.set(svc.id, svc.name)
+      }
+    }
+  }
+
   // Nothing to show if no OAuth services exist
-  if (!hasGoogle && !hasMicrosoft && pkceServices.size === 0) return null
+  if (!hasGoogle && !hasMicrosoft && pkceServices.size === 0 && mcpOAuthServices.size === 0) return null
 
   function startEditing(serviceId: string, currentClientId?: string) {
     setEditingService(serviceId)
@@ -584,6 +636,103 @@ function OAuthCredentialsSection() {
                       className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
                     >
                       {pkceSaveMut.isPending ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingService(null); setError(null) }}
+                      className="text-xs text-text-tertiary hover:text-text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        {/* MCP-OAuth services (client ID + secret) */}
+        {Array.from(mcpOAuthServices.entries()).map(([serviceId, serviceName]) => {
+          const configured = mcpOAuthCredMap.get(serviceId)
+          const isEditing = editingService === serviceId
+
+          return (
+            <div
+              key={serviceId}
+              className="bg-surface-1 border border-border-default rounded-md p-4"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-text-primary">{serviceName}</span>
+                  <span className="text-xs text-text-tertiary ml-2">{serviceId}</span>
+                </div>
+                {!isEditing && (
+                  <div className="flex items-center gap-2">
+                    {configured ? (
+                      <>
+                        <span className="text-xs text-success">Configured</span>
+                        <button
+                          onClick={() => startEditing(serviceId, configured)}
+                          className="text-xs text-text-tertiary hover:text-text-primary"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => mcpOAuthDeleteMut.mutate(serviceId)}
+                          disabled={mcpOAuthDeleteMut.isPending}
+                          className="text-xs text-danger/70 hover:text-danger"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => startEditing(serviceId)}
+                        className="text-xs px-2.5 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+                      >
+                        Configure
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {isEditing && (
+                <div className="mt-3 space-y-2">
+                  <input
+                    type="text"
+                    value={clientIdValue}
+                    onChange={e => { setClientIdValue(e.target.value); setError(null) }}
+                    placeholder="OAuth Client ID"
+                    className={`${inputClass} font-mono`}
+                    autoFocus
+                  />
+                  <input
+                    type="password"
+                    value={clientSecretValue}
+                    onChange={e => { setClientSecretValue(e.target.value); setError(null) }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && clientIdValue.trim() && clientSecretValue.trim()) {
+                        mcpOAuthSaveMut.mutate({
+                          serviceId,
+                          clientId: clientIdValue.trim(),
+                          clientSecret: clientSecretValue.trim(),
+                        })
+                      }
+                    }}
+                    placeholder="OAuth Client Secret"
+                    className={`${inputClass} font-mono`}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => mcpOAuthSaveMut.mutate({
+                        serviceId,
+                        clientId: clientIdValue.trim(),
+                        clientSecret: clientSecretValue.trim(),
+                      })}
+                      disabled={mcpOAuthSaveMut.isPending || !clientIdValue.trim() || !clientSecretValue.trim()}
+                      className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                    >
+                      {mcpOAuthSaveMut.isPending ? 'Saving…' : 'Save'}
                     </button>
                     <button
                       onClick={() => { setEditingService(null); setError(null) }}

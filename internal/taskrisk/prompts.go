@@ -1,6 +1,7 @@
 package taskrisk
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -58,12 +59,20 @@ type ActionMeta struct {
 }
 
 // buildActionContextFromRegistry builds the action context block by reading
-// ActionMeta from all adapters that implement MetadataProvider.
-func buildActionContextFromRegistry(reg *adapters.Registry) string {
+// ActionMeta from all adapters that implement MetadataProvider, including
+// any per-user MCP-discovered tool sets so risk evaluation sees what the
+// requesting user actually has activated.
+func buildActionContextFromRegistry(ctx context.Context, reg *adapters.Registry, userID string) string {
 	entries := map[string]ActionMeta{}
 
 	if reg != nil {
-		for _, a := range reg.All() {
+		var list []adapters.Adapter
+		if userID != "" {
+			list = reg.AllForUser(ctx, userID)
+		} else {
+			list = reg.All()
+		}
+		for _, a := range list {
 			mp, ok := a.(adapters.MetadataProvider)
 			if !ok {
 				continue

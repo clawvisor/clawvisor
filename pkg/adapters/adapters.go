@@ -34,6 +34,7 @@ type ServiceMetadata struct {
 	PKCEFlow            bool                  // whether PKCE authorization code flow is available (client ID resolved)
 	PKCEFlowDefined     bool                  // whether PKCE flow is defined in the adapter (even without client ID)
 	AutoIdentity        bool                  // whether the adapter can auto-detect account identity
+	Deprecated          bool                  // hide from the connect-service list for new users (existing connections stay visible)
 	ActionMeta        map[string]ActionMeta // action_id → metadata
 	VerificationHints string
 	Variables         []VariableMeta // user-configurable variables declared by the adapter
@@ -115,6 +116,33 @@ const SystemVaultKeyMicrosoftOAuth = "microsoft.oauth"
 // SystemVaultKeyPKCEPrefix is the vault key prefix for per-service PKCE client IDs.
 // Stored as "__system__" / "pkce.{serviceID}" → {"client_id": "..."}.
 const SystemVaultKeyPKCEPrefix = "pkce."
+
+// SystemVaultKeyMCPOAuthPrefix is the vault key prefix for per-MCP-service
+// OAuth client credentials. Stored as
+//
+//	"__system__" / "mcp.oauth.{serviceID}" → {"client_id": "...", "client_secret": "..."}
+//
+// Settings UI populates these the same way it populates google.oauth /
+// microsoft.oauth. Used as an override when an admin wants to pin a specific
+// pre-registered client; otherwise the adapter dynamically registers and
+// stores the result under SystemVaultKeyMCPClientPrefix.
+const SystemVaultKeyMCPOAuthPrefix = "mcp.oauth."
+
+// SystemVaultKeyMCPClientPrefix is the vault key prefix for the per-service
+// MCP OAuth client record obtained via RFC 8414 discovery + RFC 7591 dynamic
+// client registration. Stored as
+//
+//	"__system__" / "mcp.client.{serviceID}" → {
+//	   "client_id": "...",
+//	   "client_secret": "...",            // optional (public clients omit)
+//	   "authorization_endpoint": "...",
+//	   "token_endpoint": "...",
+//	   "registration_endpoint": "..."     // for refresh / re-registration
+//	}
+//
+// One record per (Clawvisor deployment, MCP service). Probed and registered
+// once on first Connect click; reused for every user thereafter.
+const SystemVaultKeyMCPClientPrefix = "mcp.client."
 
 // Request is passed to an adapter's Execute method.
 // Credential is injected by the gateway; never logged or returned to the caller.
@@ -287,46 +315,121 @@ func (r *Registry) Get(serviceID string) (Adapter, bool) {
 	return a, ok
 }
 
-// GetForUser returns an adapter by service ID, checking the shared registry
-// first, then the per-user cache, then falling back to the resolver.
-// Resolved adapters are cached per-user to avoid cross-tenant leaks.
+// GetForUser returns an adapter by service ID, preferring the per-user cache
+// over the global registry. The lookup order is:
+//  1. Per-user cache (e.g. an MCP adapter clone with discovered tools)
+//  2. Resolver (for hydration from the persistent store on cache miss)
+//  3. Global registry (the unresolved/empty fallback)
+//
+// Per-user wins over global because services like MCP register an empty
+// global stub that would otherwise shadow the user's discovered tool set.
+// Resolved adapters are cached per-user for the rest of the process lifetime.
 func (r *Registry) GetForUser(ctx context.Context, serviceID, userID string) (Adapter, bool) {
 	r.mu.RLock()
-	// Check shared (built-in) adapters first.
-	a, ok := r.adapters[serviceID]
-	if ok {
-		r.mu.RUnlock()
-		return a, true
-	}
-	// Check per-user cache.
+	// 1. Per-user cache.
 	if userID != "" {
 		if userMap, exists := r.userAdapters[userID]; exists {
-			if a, ok = userMap[serviceID]; ok {
+			if a, ok := userMap[serviceID]; ok {
 				r.mu.RUnlock()
 				return a, true
 			}
 		}
 	}
 	resolver := r.resolver
+	global, hasGlobal := r.adapters[serviceID]
 	r.mu.RUnlock()
 
-	if resolver == nil || userID == "" {
-		return nil, false
+	// 2. Resolver — may return a user-scoped clone (MCP) or a generated YAML adapter.
+	if resolver != nil && userID != "" {
+		if a, ok := resolver(ctx, serviceID, userID); ok {
+			r.mu.Lock()
+			if r.userAdapters[userID] == nil {
+				r.userAdapters[userID] = make(map[string]Adapter)
+			}
+			r.userAdapters[userID][serviceID] = a
+			r.mu.Unlock()
+			return a, true
+		}
 	}
 
-	a, ok = resolver(ctx, serviceID, userID)
-	if !ok {
-		return nil, false
-	}
+	// 3. Global registry as last fallback.
+	return global, hasGlobal
+}
 
-	// Cache per-user so subsequent requests don't hit the DB.
+// RegisterForUser stores a user-scoped adapter instance. Used by activation
+// flows that build adapters with per-user state (e.g. MCP-discovered tools)
+// after the user supplies a credential. Look up via GetForUser.
+func (r *Registry) RegisterForUser(userID string, a Adapter) {
+	if userID == "" {
+		return
+	}
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.userAdapters[userID] == nil {
 		r.userAdapters[userID] = make(map[string]Adapter)
 	}
-	r.userAdapters[userID][serviceID] = a
-	r.mu.Unlock()
-	return a, true
+	r.userAdapters[userID][a.ServiceID()] = a
+}
+
+// AllForUser returns the union of built-in adapters and the user's per-user
+// adapters. When both registries hold the same service ID, the per-user
+// instance wins — that is how MCP services with activation-time tool
+// discovery surface their tool sets to the catalog.
+//
+// On cache miss for any global service, the registry's resolver (if set) is
+// consulted with (serviceID, userID). The resolver is the seam where MCP
+// adapters lazily load discovered tools from the persistent store, building
+// a per-user clone that is cached in r.userAdapters for the rest of the
+// process lifetime.
+func (r *Registry) AllForUser(ctx context.Context, userID string) []Adapter {
+	r.mu.RLock()
+	resolver := r.resolver
+	out := make([]Adapter, 0, len(r.adapters))
+	type resolveCandidate struct {
+		serviceID string
+		global    Adapter
+	}
+	var toResolve []resolveCandidate
+	userMap := r.userAdapters[userID]
+	seen := make(map[string]bool, len(r.adapters))
+	for id, a := range r.adapters {
+		seen[id] = true
+		if userMap != nil {
+			if ua, ok := userMap[id]; ok {
+				out = append(out, ua)
+				continue
+			}
+		}
+		// Defer resolver calls until after we drop the read lock.
+		if resolver != nil && userID != "" {
+			toResolve = append(toResolve, resolveCandidate{serviceID: id, global: a})
+			continue
+		}
+		out = append(out, a)
+	}
+	// Surface user-only adapters that have no global counterpart.
+	for id, a := range userMap {
+		if !seen[id] {
+			out = append(out, a)
+		}
+	}
+	r.mu.RUnlock()
+
+	// Resolve and cache outside the lock.
+	for _, c := range toResolve {
+		if resolved, ok := resolver(ctx, c.serviceID, userID); ok {
+			r.mu.Lock()
+			if r.userAdapters[userID] == nil {
+				r.userAdapters[userID] = make(map[string]Adapter)
+			}
+			r.userAdapters[userID][c.serviceID] = resolved
+			r.mu.Unlock()
+			out = append(out, resolved)
+		} else {
+			out = append(out, c.global)
+		}
+	}
+	return out
 }
 
 // SetFallback registers a resolver for service IDs not in the built-in map.

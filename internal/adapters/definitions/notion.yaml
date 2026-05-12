@@ -1,9 +1,14 @@
 service:
+  # Legacy Notion adapter (Notion REST API + integration tokens).
+  # Preserved for existing users; new connections should use the MCP-driven
+  # "notion-mcp" adapter (catalog display: "Notion"), which exposes a
+  # richer tool surface and uses OAuth instead of pasted API keys.
   id: notion
-  display_name: Notion
-  description: "Read and search pages, query databases, and access your team's knowledge base in Notion."
+  display_name: "Notion (Legacy)"
+  description: "Existing Notion connection using the Notion REST API. Reconnect via the newer Notion integration (MCP) for full tool access; this entry is preserved for backward compatibility."
   setup_url: "https://www.notion.so/profile/integrations"
   key_hint: "Notion integration token (secret_...)"
+  deprecated: true   # hidden from new-connection lists; existing activations remain visible
   icon_url: "/logos/notion.svg"
   identity:
     endpoint: "/users/me"
