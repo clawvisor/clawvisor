@@ -160,6 +160,18 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				headers[name] = value
 			}
 			i += 2
+		case isSafeBoolCurlFlag(tok):
+			// Benign no-value flags (`-s`, `--silent`, `-sS`, `--compressed`, …).
+			// They don't affect routing or auth, so we can safely accept
+			// the call instead of refusing it as ambiguous.
+			i++
+		case isSafeValueCurlFlag(tok):
+			// Value-taking flags that don't affect routing (`-A`, `-o`,
+			// `--max-time`, …). Consume the value too.
+			if i+1 >= len(tokens) {
+				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
+			}
+			i += 2
 		case strings.HasPrefix(tok, "-"):
 			// Unknown flag — could be -d/--data with a value or a flag we
 			// don't safely model. Fall through to validator.
@@ -199,6 +211,98 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		Placeholders:        placeholders,
 		Reason:              "bash curl with -H credential header",
 	}, true
+}
+
+// isSafeBoolCurlFlag reports whether tok is a curl flag we know to be
+// benign: no value follows, no impact on routing or auth. Returns true
+// for both long forms (`--silent`) and short-flag clusters (`-sS`,
+// `-fsS`) as long as every short-flag letter is itself benign.
+//
+// Refused-by-omission: anything that changes URL routing (`-x`/`--proxy`),
+// follows redirects (`-L`/`--location`), bypasses TLS (`-k`/`--insecure`),
+// loads alternate cert material, or carries a request body (`-d`,
+// `--data*`, `-T`, `-F`). Those still fall through to ambiguous so the
+// rewriter refuses the call.
+func isSafeBoolCurlFlag(tok string) bool {
+	if _, ok := safeBoolCurlFlagsExact[tok]; ok {
+		return true
+	}
+	// Short-flag cluster like `-sS` or `-fsS`: each letter must be in
+	// the safe single-char set. Two-char `-X` would have matched the
+	// switch above; here we're handling 3+ char clusters.
+	if len(tok) > 2 && tok[0] == '-' && tok[1] != '-' {
+		for _, r := range tok[1:] {
+			if _, ok := safeBoolCurlShortFlags[r]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isSafeValueCurlFlag reports whether tok is a curl flag that takes
+// exactly one value but does not affect routing or auth.
+func isSafeValueCurlFlag(tok string) bool {
+	_, ok := safeValueCurlFlagsExact[tok]
+	return ok
+}
+
+// safeBoolCurlFlagsExact lists boolean flags accepted verbatim.
+var safeBoolCurlFlagsExact = map[string]struct{}{
+	"-s":               {},
+	"-S":               {},
+	"--silent":         {},
+	"--show-error":     {},
+	"-f":               {},
+	"--fail":           {},
+	"--fail-with-body": {},
+	"-i":               {},
+	"--include":        {},
+	"--compressed":     {},
+	"-#":               {},
+	"--progress-bar":   {},
+	"-v":               {},
+	"--verbose":        {},
+	"-G":               {},
+	"--get":            {},
+	"-J":               {},
+	"--remote-header-name": {},
+	"-O":               {},
+	"--remote-name":    {},
+	"-N":               {},
+	"--no-buffer":      {},
+	"-4":               {},
+	"-6":               {},
+	"--ipv4":           {},
+	"--ipv6":           {},
+}
+
+// safeBoolCurlShortFlags is the set of single-character boolean flags
+// allowed inside a short-flag cluster like `-sS` / `-fsS`.
+var safeBoolCurlShortFlags = map[rune]struct{}{
+	's': {}, 'S': {}, 'f': {}, 'i': {}, 'v': {}, 'G': {}, 'J': {}, 'N': {}, '4': {}, '6': {},
+}
+
+// safeValueCurlFlagsExact lists flags that consume a single following
+// value and do not affect routing or auth.
+var safeValueCurlFlagsExact = map[string]struct{}{
+	"-A":                {},
+	"--user-agent":      {},
+	"-e":                {},
+	"--referer":         {},
+	"-o":                {},
+	"--output":          {},
+	"-w":                {},
+	"--write-out":       {},
+	"-m":                {},
+	"--max-time":        {},
+	"--connect-timeout": {},
+	"--retry":           {},
+	"--retry-delay":     {},
+	"--retry-max-time": {},
+	"--max-redirs":      {},
+	"--resolve":         {},
 }
 
 // scanHeadersForShadow returns the credential locations and the actual
