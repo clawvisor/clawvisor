@@ -120,3 +120,52 @@ func TestParseBashCurl_DashSNoLongerAmbiguous(t *testing.T) {
 		t.Errorf("reason still mentions unknown curl flag: %q", got.Reason)
 	}
 }
+
+// Regression: a placeholder substring inside a local-only tool's args
+// (Skill, Read, Edit, etc.) must pass through without engaging the
+// LLM validator. Otherwise smoke-test installs without an LLM-backed
+// validator see "ambiguous credentialed call refused" for tools that
+// never make outbound HTTP calls.
+func TestParser_LocalOnlyToolsPassThrough(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args string
+	}{
+		{"skill_with_placeholder_arg", "Skill", `{"skill":"clawvisor","args":"use autovault_github_xxx for the call"}`},
+		{"read_file_with_placeholder_path", "Read", `{"file_path":"/tmp/autovault_github_xxx.json"}`},
+		{"edit_with_placeholder_in_content", "Edit", `{"file_path":"/tmp/x","old_string":"","new_string":"autovault_github_xxx"}`},
+		{"todo_write_with_placeholder", "TodoWrite", `{"todos":[{"content":"call api with autovault_github_xxx","activeForm":"calling api"}]}`},
+		{"glob_with_placeholder_pattern", "Glob", `{"pattern":"autovault_github_xxx*.json"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tu := ToolUse{ID: "toolu_local", Name: tc.tool, Input: json.RawMessage(tc.args)}
+			got, ok := DefaultParser{}.Parse(tu)
+			if !ok {
+				t.Fatalf("parser should claim local-only tool %q, fell through", tc.tool)
+			}
+			if got.IsAPICall {
+				t.Errorf("local-only tool %q must not be IsAPICall=true", tc.tool)
+			}
+			if got.Ambiguous {
+				t.Errorf("local-only tool %q must not be ambiguous; got reason=%q", tc.tool, got.Reason)
+			}
+		})
+	}
+}
+
+// Sanity: known HTTP-shaped tools (WebFetch, Bash with curl) are NOT
+// considered local-only — they still flow through the normal parser
+// branch.
+func TestParser_HTTPToolsNotInLocalAllowlist(t *testing.T) {
+	if isLocalOnlyTool("WebFetch") {
+		t.Errorf("WebFetch must not be in local-only allowlist")
+	}
+	if isLocalOnlyTool("Bash") {
+		t.Errorf("Bash must not be in local-only allowlist (it can run curl)")
+	}
+	if isLocalOnlyTool("fetch") {
+		t.Errorf("fetch must not be in local-only allowlist")
+	}
+}

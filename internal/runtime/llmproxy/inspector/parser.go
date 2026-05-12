@@ -25,6 +25,18 @@ type DefaultParser struct{}
 
 // Parse implements Parser.
 func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
+	// Known-local tools never make outbound HTTP calls; if a placeholder
+	// substring appears in their args (a user pasting the placeholder
+	// into a chat that gets routed through Skill, an Edit that records
+	// a code snippet containing the literal, etc.) the credential isn't
+	// being transmitted. Pass through so the inspector doesn't refuse
+	// legitimate local work.
+	if isLocalOnlyTool(t.Name) {
+		return Verdict{
+			IsAPICall: false,
+			Reason:    "local-only tool (" + t.Name + "); placeholder not transmitted",
+		}, true
+	}
 	if v, ok := parseStructuredFetch(t); ok {
 		return v, true
 	}
@@ -32,6 +44,43 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 		return v, true
 	}
 	return Verdict{}, false
+}
+
+// localOnlyTools enumerates tool names that never originate outbound
+// HTTP traffic. They run inside the agent harness against local state
+// (filesystem, in-process planning, sub-skill dispatch). When a
+// placeholder substring appears in their args we know the credential
+// is not being sent to a third-party service, so the inspector can
+// safely pass through instead of routing to the (potentially absent)
+// LLM validator and failing closed.
+//
+// New entries should only be added for tools whose semantics are
+// strictly local. Meta-tools that fan out to other tools (Skill,
+// Agent) are safe because each sub-tool's tool_use is inspected
+// separately when it fires.
+var localOnlyTools = map[string]struct{}{
+	"Read":          {},
+	"Write":         {},
+	"Edit":          {},
+	"NotebookEdit":  {},
+	"Glob":          {},
+	"Grep":          {},
+	"TodoWrite":     {},
+	"BashOutput":    {},
+	"KillShell":     {},
+	"Skill":         {},
+	"Agent":         {},
+	"ExitPlanMode":  {},
+	"EnterPlanMode": {},
+	"EnterWorktree": {},
+	"ExitWorktree":  {},
+	"ScheduleWakeup": {},
+	"ToolSearch":    {},
+}
+
+func isLocalOnlyTool(name string) bool {
+	_, ok := localOnlyTools[name]
+	return ok
 }
 
 // parseStructuredFetch handles tools whose input is a JSON object with a
