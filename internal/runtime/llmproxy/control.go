@@ -15,12 +15,25 @@ const (
 )
 
 func ControlNotice(controlBaseURL string) string {
-	controlBaseURL = strings.TrimRight(strings.TrimSpace(controlBaseURL), "/")
+	// Always advertise the synthetic URL. Clawvisor rewrites it to the
+	// real daemon URL transparently and mints fresh auth on every call.
+	// Models that see (or guess) the daemon URL and call it directly
+	// bypass the rewrite path and end up reusing one-shot nonces from
+	// prior turns. controlBaseURL is intentionally ignored here.
+	_ = controlBaseURL
 	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
-	if controlBaseURL != "" {
-		docsURL = controlBaseURL + "/control/skill"
-	}
-	return "Clawvisor proxy-lite sessions can request task permission through the synthetic Clawvisor control endpoint at https://clawvisor.local/control/tasks?wait=true&timeout=120. Before creating a task, tell me I will need to approve it. This URL is handled by Clawvisor before the shell command runs. For schemas and examples, call GET " + docsURL + ". Task creation does not grant permission until I approve it."
+	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120"
+	return strings.Join([]string{
+		"Clawvisor proxy-lite control plane.",
+		"To request permission for a tool, POST a task definition to " + tasksURL + ".",
+		"Before creating the task, tell me I will need to approve it.",
+		"For schemas and examples, GET " + docsURL + ".",
+		"",
+		"Rules:",
+		"1. ALWAYS use the synthetic URL " + "https://" + ControlSyntheticHost + "/control/... ; Clawvisor rewrites it and injects fresh auth on every call. Do not call the daemon URL directly.",
+		"2. Do not copy or reuse `X-Clawvisor-Caller` values from previous tool calls — they are single-use and tied to the specific URL, method, and path Clawvisor minted them for.",
+		"3. Task creation does not grant permission until I approve it.",
+	}, "\n")
 }
 
 // InjectControlNotice adds a compact control-plane hint to the request context.
