@@ -174,6 +174,113 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
+// Regression: pure read-only bash commands (pwd, ls, cat, grep | wc)
+// should pass through the decision-gate without requiring a task
+// scope. The AST classifier is the source of truth — single-statement,
+// read-allowlist binaries, no write redirects, no command substitution.
+func TestPostprocess_ReadOnlyBashBypassesTaskScope(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"pwd", "pwd"},
+		{"ls", "ls -la /tmp"},
+		{"cat", "cat /etc/hosts"},
+		{"pipe_grep_wc", "ls /tmp | grep landing | wc -l"},
+		{"find", "find . -name '*.go'"},
+		{"head", "head -n 20 README.md"},
+		{"stderr_to_null", "ls /missing 2>/dev/null"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := anthropicJSONWithNamedToolUse("Bash", `{"command":`+jsonString(tc.cmd)+`}`)
+			req := httptest.NewRequest("POST", "/v1/messages", nil)
+			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+			got := Postprocess(req, body, "application/json", PostprocessConfig{
+				Inspector:        insp,
+				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+				Store:            st,
+				AgentUserID:      userID,
+				AgentID:          agentID,
+				Audit:            NewAuditEmitter(st, nil, nil),
+				RequestID:        "req-bash-readonly-" + tc.name,
+				CandidateTasks:   []*store.Task{}, // no task scope
+				ToolRules:        []*store.RuntimePolicyRule{},
+				EgressRules:      []*store.RuntimePolicyRule{},
+				PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+				Posture:          runtimedecision.PostureEnforce,
+			})
+
+			if got.Rewritten {
+				t.Fatalf("read-only bash %q should pass through; got rewrite body=%s", tc.cmd, got.Body)
+			}
+			rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+			if err != nil {
+				t.Fatalf("ListAuditEntries: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("expected 1 audit row, got %d", len(rows))
+			}
+			if rows[0].Outcome != "readonly_shell_pass_through" {
+				t.Errorf("expected outcome=readonly_shell_pass_through, got %q", rows[0].Outcome)
+			}
+		})
+	}
+}
+
+// Negative: write-mutating / network bash commands must still gate
+// on task scope. The classifier is the only thing standing between
+// "no task" and "permitted to run anything in shell."
+func TestPostprocess_MutatingBashStillRequiresApproval(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"rm", "rm -rf /tmp/x"},
+		{"mkdir", "mkdir /tmp/new"},
+		{"curl", "curl https://example.com"},
+		{"sed_inplace", "sed -i s/x/y/ file"},
+		{"write_redirect", "ls > /tmp/out"},
+		{"chain_to_mutation", "pwd && rm /tmp/x"},
+		{"cmd_subst", "echo $(rm /tmp/x)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := anthropicJSONWithNamedToolUse("Bash", `{"command":`+jsonString(tc.cmd)+`}`)
+			req := httptest.NewRequest("POST", "/v1/messages", nil)
+			insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+			got := Postprocess(req, body, "application/json", PostprocessConfig{
+				Inspector:        insp,
+				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+				Store:            st,
+				AgentUserID:      userID,
+				AgentID:          agentID,
+				Audit:            NewAuditEmitter(st, nil, nil),
+				RequestID:        "req-bash-mutating-" + tc.name,
+				CandidateTasks:   []*store.Task{},
+				ToolRules:        []*store.RuntimePolicyRule{},
+				EgressRules:      []*store.RuntimePolicyRule{},
+				PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+				Posture:          runtimedecision.PostureEnforce,
+			})
+			if !got.Rewritten {
+				t.Fatalf("mutating/network bash %q must require approval, got pass-through", tc.cmd)
+			}
+		})
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // Regression: local-only tools (Read, Edit, Glob, Skill, TodoWrite, …)
 // never make outbound HTTP calls. Requiring an approved task scope to
 // invoke them would force a user to approve every Read / Skill — high
@@ -235,7 +342,11 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 // still hit the approval prompt — the local-only bypass must not
 // leak to tools that can actually transmit credentials.
 func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
-	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"echo hi"}`)
+	// Mutating bash (mkdir) must still require approval — only the
+	// AST-classified read-only commands bypass scope. Bare `echo` is
+	// now read-only and would pass through; we want this test to
+	// guard the scope-required-for-mutations contract.
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"mkdir /tmp/something"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -262,7 +373,10 @@ func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
 }
 
 func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testing.T) {
-	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"ls /tmp/ | grep -i greet","description":"Find greet script in /tmp"}`)
+	// Use a mutating command (mkdir) so it doesn't get caught by the
+	// read-only bash bypass. The test asserts that scope-missing
+	// produces an approval prompt for tools that need it.
+	body := anthropicJSONWithNamedToolUse("Bash", `{"command":"mkdir -p /tmp/greet","description":"Create greet workspace"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")

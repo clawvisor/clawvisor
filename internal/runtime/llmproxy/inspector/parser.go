@@ -48,36 +48,51 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 	return Verdict{}, false
 }
 
-// localOnlyTools enumerates tool names that never originate outbound
-// HTTP traffic. They run inside the agent harness against local state
-// (filesystem, in-process planning, sub-skill dispatch). When a
-// placeholder substring appears in their args we know the credential
-// is not being sent to a third-party service, so the inspector can
-// safely pass through instead of routing to the (potentially absent)
-// LLM validator and failing closed.
+// localOnlyTools enumerates tool names that the postprocess decision-
+// gate may pass through without requiring an approved task scope.
+// Two categories live here:
 //
-// New entries should only be added for tools whose semantics are
-// strictly local. Meta-tools that fan out to other tools (Skill,
-// Agent) are safe because each sub-tool's tool_use is inspected
-// separately when it fires.
+//  1. Pure local reads. Read / Glob / Grep / BashOutput / ToolSearch
+//     and their Codex equivalent (read_file). These don't change
+//     state or transmit credentials.
+//
+//  2. Harness-internal lifecycle / planning state. Skill / Agent /
+//     EnterPlanMode / ExitPlanMode / EnterWorktree / ExitWorktree /
+//     ScheduleWakeup / TodoWrite / KillShell. These do mutate
+//     state, but the state is the harness's own scheduling / planning
+//     loop, not anything user-observable. Gating these on a task
+//     would force the user to approve "let me plan" — useless
+//     friction.
+//
+// User-observable writes (Edit / Write / NotebookEdit and Codex's
+// apply_patch) are NOT in this set; they go through the task-scope
+// gate per the design contract. The intent is: writes that the user
+// can see touch require an approved task; reads and harness internals
+// run freely.
+//
+// Meta-tools (Skill, Agent) are safe to allowlist because each
+// sub-tool's tool_use is inspected separately when it fires; the
+// dispatch itself just trampolines.
 var localOnlyTools = map[string]struct{}{
-	"Read":          {},
-	"Write":         {},
-	"Edit":          {},
-	"NotebookEdit":  {},
-	"Glob":          {},
-	"Grep":          {},
-	"TodoWrite":     {},
-	"BashOutput":    {},
-	"KillShell":     {},
-	"Skill":         {},
-	"Agent":         {},
-	"ExitPlanMode":  {},
-	"EnterPlanMode": {},
-	"EnterWorktree": {},
-	"ExitWorktree":  {},
+	// Pure local reads — Claude Code.
+	"Read":       {},
+	"Glob":       {},
+	"Grep":       {},
+	"BashOutput": {},
+	"ToolSearch": {},
+	// Pure local reads — Codex.
+	"read_file": {},
+	// Harness-internal lifecycle / planning state. Mutating, but the
+	// state is not user-observable.
+	"TodoWrite":      {},
+	"KillShell":      {},
+	"Skill":          {},
+	"Agent":          {},
+	"ExitPlanMode":   {},
+	"EnterPlanMode":  {},
+	"EnterWorktree":  {},
+	"ExitWorktree":   {},
 	"ScheduleWakeup": {},
-	"ToolSearch":    {},
 }
 
 func isLocalOnlyTool(name string) bool {

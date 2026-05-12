@@ -597,8 +597,11 @@ func TestLLMEndpoint_EmitsAuditRow(t *testing.T) {
 func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		// Use a mutating command — `echo hi` is now classified as
+		// read-only by the AST classifier and would bypass scope.
+		// This test specifically guards the scope-required path.
 		_, _ = w.Write(conversation.SynthOpenAIResponsesFunctionCallSSE("call_1", "exec_command", map[string]any{
-			"cmd": "echo hi",
+			"cmd": "mkdir /tmp/something",
 		}))
 	}))
 	defer upstream.Close()

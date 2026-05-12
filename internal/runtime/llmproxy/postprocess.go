@@ -340,6 +340,19 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						audit("allow", "local_only_pass_through", "local-only tool ("+tu.Name+")")
 						return conversation.ToolUseVerdict{Allowed: true}
 					}
+					// Read-only bash commands (pwd, ls, cat, grep |
+					// wc, …) classified as side-effect-free by the
+					// AST classifier run without task scope. Writes,
+					// network, mutating flags (sed -i, find -exec)
+					// still fall through to the approval prompt.
+					if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellTool(tu.Name) {
+						if cmd := shellCommandFromInput(tu.Input); cmd != "" {
+							if readOK, _ := inspector.IsReadOnlyBashCommand(cmd); readOK {
+								audit("allow", "readonly_shell_pass_through", "read-only bash command")
+								return conversation.ToolUseVerdict{Allowed: true}
+							}
+						}
+					}
 					substitute := approvalPrompt(tu, dec.Reason)
 					if cfg.PendingApprovals != nil {
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
@@ -747,6 +760,38 @@ func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 		return nil
 	}
 	return &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}
+}
+
+// isShellTool reports whether name matches one of the harness shell
+// tools whose input carries a literal bash command line. Used by the
+// scope-free-reads pass-through path to decide whether to invoke the
+// AST classifier on the tool's cmd field.
+func isShellTool(name string) bool {
+	switch name {
+	case "Bash", "shell", "exec_command":
+		return true
+	}
+	return false
+}
+
+// shellCommandFromInput extracts the command string from a shell-tool
+// input JSON. Claude Code's Bash uses `command`; Codex's exec_command
+// uses `cmd`. Returns "" when neither is present or non-string.
+func shellCommandFromInput(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return ""
+	}
+	if v, ok := input["cmd"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := input["command"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // taskIDFromDecision extracts the matched task's ID from a decision,

@@ -134,9 +134,10 @@ func TestParser_LocalOnlyToolsPassThrough(t *testing.T) {
 	}{
 		{"skill_with_placeholder_arg", "Skill", `{"skill":"clawvisor","args":"use autovault_github_xxx for the call"}`},
 		{"read_file_with_placeholder_path", "Read", `{"file_path":"/tmp/autovault_github_xxx.json"}`},
-		{"edit_with_placeholder_in_content", "Edit", `{"file_path":"/tmp/x","old_string":"","new_string":"autovault_github_xxx"}`},
 		{"todo_write_with_placeholder", "TodoWrite", `{"todos":[{"content":"call api with autovault_github_xxx","activeForm":"calling api"}]}`},
 		{"glob_with_placeholder_pattern", "Glob", `{"pattern":"autovault_github_xxx*.json"}`},
+		// Codex's read_file is treated the same as Claude Code's Read.
+		{"codex_read_file", "read_file", `{"path":"/tmp/autovault_github_xxx.json"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
