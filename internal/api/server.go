@@ -835,11 +835,16 @@ func (s *Server) routes() http.Handler {
 
 		// Wire the inspector into the response leg so credentialed
 		// tool_uses get rewritten through the resolver. The validator
-		// reuses the daemon's own LLM credentials when configured —
-		// nil falls back to the AmbiguousValidator (deterministic-only
-		// mode), which is fine for most flows since structured fetch
-		// tools and clean curl Bash invocations all parse deterministically.
-		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+		// reuses the daemon's own LLM provider config (Gemini /
+		// Anthropic / OpenAI / Vertex — whatever cfg.LLM.Verification
+		// points at). When verification is disabled or missing
+		// credentials, falls back to AmbiguousValidator so unparseable
+		// shapes refuse closed rather than passing through.
+		var validator inspector.Validator = inspector.AmbiguousValidator{}
+		if s.cfg.LLM.Verification.Enabled {
+			validator = inspector.NewLLMClientValidator(s.llmHealth.VerificationConfig, s.logger)
+		}
+		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
 		// Prefer the configured public URL so the rewritten resolver URL the
 		// agent dials is reachable across networks; fall back to the local
 		// baseURL so single-host self-installs still rewrite (without this
