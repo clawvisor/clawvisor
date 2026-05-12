@@ -159,7 +159,16 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 		return nil, false, nil
 	}
 
-	tokens, ok := simpleShellTokenize(cmdVal)
+	// For compound commands (pipelines, chains, redirections), only
+	// the credentialed simple-command needs rewriting; the rest of the
+	// pipeline operates on output and must survive verbatim. Extract
+	// the credentialed segment, rewrite that slice, and splice it back.
+	seg, segErr := extractCredentialedCurlSegment(cmdVal)
+	if segErr != "" || seg.text == "" {
+		return nil, false, nil
+	}
+
+	tokens, ok := simpleShellTokenize(seg.text)
 	if !ok || len(tokens) == 0 {
 		return nil, false, nil
 	}
@@ -226,7 +235,11 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 	tokens = append(tokens[:urlIdx],
 		append(injected, tokens[urlIdx:]...)...)
 
-	raw[cmdField] = joinShellTokens(tokens)
+	rewrittenSegment := joinShellTokens(tokens)
+	// Splice the rewritten curl back into the original command,
+	// preserving everything outside the credentialed sub-command
+	// (pipes, redirects, neighboring simple commands).
+	raw[cmdField] = cmdVal[:seg.start] + rewrittenSegment + cmdVal[seg.end:]
 	out, err := json.Marshal(raw)
 	if err != nil {
 		return nil, true, err

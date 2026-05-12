@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 )
 
@@ -175,17 +177,24 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		return Verdict{}, false
 	}
 
-	// Reject pathological shapes outright — these are out of scope for v1
-	// per the design's day-one Bash envelope.
-	if hasShellMetacharacter(cmd) {
-		return Verdict{
-			IsAPICall: false,
-			Ambiguous: true,
-			Reason:    "bash: shell metacharacters present, refusing to rewrite",
-		}, true
+	// Locate the single credentialed simple command in the AST. This
+	// permits pipelines (`curl … | jq '.login'`), redirections
+	// (`curl … 2>/dev/null > out.json`), and command chains
+	// (`set -e && curl …`) as long as exactly one command in the
+	// pipeline carries the placeholder and nothing unsafe (command
+	// substitution, backticks, process substitution) is present.
+	seg, segErr := extractCredentialedCurlSegment(cmd)
+	if segErr != "" {
+		return Verdict{IsAPICall: false, Ambiguous: true, Reason: segErr}, true
+	}
+	if seg.text == "" {
+		// No credentialed sub-command found. Could be a non-curl call
+		// or the placeholder appeared only in a non-curl segment;
+		// either way, parser doesn't claim this.
+		return Verdict{}, false
 	}
 
-	tokens, ok := simpleShellTokenize(cmd)
+	tokens, ok := simpleShellTokenize(seg.text)
 	if !ok || len(tokens) == 0 {
 		return Verdict{
 			IsAPICall: false,
@@ -270,6 +279,160 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		Placeholders:        placeholders,
 		Reason:              "bash curl with -H credential header",
 	}, true
+}
+
+// credentialedCurlSegment describes the byte range of the single
+// CallExpr inside a (possibly compound) bash command that carries an
+// autovault placeholder. The text field is the raw command substring
+// inside that range — the rest of the pipeline (e.g. `| jq` after a
+// curl) is intentionally outside it.
+type credentialedCurlSegment struct {
+	text  string
+	start int
+	end   int
+}
+
+// extractCredentialedCurlSegment parses cmd with mvdan/sh and locates
+// the single simple-command (CallExpr) whose static text contains an
+// autovault placeholder. Pipelines, chains (`&&`/`||`/`;`), and stdout
+// redirections are permitted — those constructs operate on the curl's
+// OUTPUT, not its credential. Command substitution, process
+// substitution, and backticks are refused outright because they let a
+// neighboring command exfiltrate the curl's output (which contains
+// data the credential authorized).
+//
+// Returns:
+//   - (segment, "") when exactly one credentialed CallExpr is found.
+//   - (zero, reason) when something unsafe is present — the caller
+//     emits a non-empty Verdict.Reason and refuses.
+//   - (zero, "") when no credentialed CallExpr is in the command, so
+//     the parser falls through and the validator can inspect.
+func extractCredentialedCurlSegment(cmd string) (credentialedCurlSegment, string) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return credentialedCurlSegment{}, "bash: parse error: " + err.Error()
+	}
+	if len(file.Stmts) == 0 {
+		return credentialedCurlSegment{}, ""
+	}
+	if len(file.Stmts) > 1 {
+		return credentialedCurlSegment{}, "bash: multiple statements; refusing to rewrite"
+	}
+	stmt := file.Stmts[0]
+	if stmt.Negated || stmt.Background || stmt.Coprocess {
+		return credentialedCurlSegment{}, "bash: backgrounded/negated statement; refusing to rewrite"
+	}
+
+	var (
+		callExprs []*syntax.CallExpr
+		unsafe    string
+	)
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if unsafe != "" || node == nil {
+			return false
+		}
+		switch n := node.(type) {
+		case *syntax.CmdSubst:
+			unsafe = "bash: command substitution `$(...)` present; refusing to rewrite"
+			return false
+		case *syntax.ProcSubst:
+			unsafe = "bash: process substitution `<(...)` present; refusing to rewrite"
+			return false
+		case *syntax.CallExpr:
+			callExprs = append(callExprs, n)
+		}
+		return true
+	})
+	if unsafe != "" {
+		return credentialedCurlSegment{}, unsafe
+	}
+	// Backtick command substitution is parsed by mvdan/sh as a
+	// DblQuoted/SglQuoted with a CmdSubst node inside, which the Walk
+	// above catches. But a stmt-level redirect whose word carries the
+	// placeholder is suspicious — refuse.
+	for _, redir := range stmt.Redirs {
+		if redir.Word != nil {
+			val, ok := staticWordValue(redir.Word)
+			if ok && autovault.HeaderMaybeContainsShadow(val) {
+				return credentialedCurlSegment{}, "bash: redirect target carries placeholder; refusing"
+			}
+		}
+	}
+
+	var matched []*syntax.CallExpr
+	for _, ce := range callExprs {
+		if callExprContainsPlaceholder(ce) {
+			matched = append(matched, ce)
+		}
+	}
+	if len(matched) == 0 {
+		return credentialedCurlSegment{}, ""
+	}
+	if len(matched) > 1 {
+		return credentialedCurlSegment{}, "bash: multiple credentialed commands; refusing to rewrite"
+	}
+	ce := matched[0]
+	start := int(ce.Pos().Offset())
+	end := int(ce.End().Offset())
+	if start < 0 || end <= start || end > len(cmd) {
+		return credentialedCurlSegment{}, "bash: invalid AST positions"
+	}
+	return credentialedCurlSegment{text: cmd[start:end], start: start, end: end}, ""
+}
+
+// callExprContainsPlaceholder reports whether any static-word
+// argument inside the call expression contains an autovault
+// placeholder substring. Dynamic words (anything that's not
+// a literal / quoted string) are conservatively treated as
+// not-containing — we err on the side of NOT classifying a
+// CallExpr as credentialed in the presence of dynamic args.
+func callExprContainsPlaceholder(ce *syntax.CallExpr) bool {
+	if ce == nil {
+		return false
+	}
+	for _, word := range ce.Args {
+		val, ok := staticWordValue(word)
+		if !ok {
+			continue
+		}
+		if autovault.HeaderMaybeContainsShadow(val) {
+			return true
+		}
+	}
+	return false
+}
+
+// staticWordValue concatenates literal / quoted parts of a Word into
+// its text value. Returns (text, true) only when the word is purely
+// static (no $var, $(cmd), arithmetic expansion, etc.). Mirrors
+// staticShellWord in control.go but lives here so the inspector
+// package doesn't take an internal dep on llmproxy.
+func staticWordValue(word *syntax.Word) (string, bool) {
+	if word == nil {
+		return "", false
+	}
+	return staticWordPartsValue(word.Parts)
+}
+
+func staticWordPartsValue(parts []syntax.WordPart) (string, bool) {
+	var b strings.Builder
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			b.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			b.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			value, ok := staticWordPartsValue(p.Parts)
+			if !ok {
+				return "", false
+			}
+			b.WriteString(value)
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }
 
 // isSafeBoolCurlFlag reports whether tok is a curl flag we know to be

@@ -77,14 +77,79 @@ func TestDefaultParser_BashCleanCurl(t *testing.T) {
 }
 
 func TestDefaultParser_BashShellMetacharacterRefused(t *testing.T) {
+	// The credentialed command in this pipeline is `echo` (not curl).
+	// The AST-based parser scopes to that one CallExpr, sees it's not
+	// a curl invocation, and falls through — at which point the
+	// validator (AmbiguousValidator in tests) refuses with
+	// ambiguous=true. The end behavior is the same as before: this
+	// command never gets rewritten.
+	insp := NewInspector(DefaultParser{}, AmbiguousValidator{})
+	got := insp.Inspect(context.Background(),
+		toolUse("Bash", `{"cmd":"echo autovault_github_xxx | tee /tmp/leak"}`))
+	if got.IsAPICall {
+		t.Fatalf("non-curl credentialed pipeline must not be classified as API call: %+v", got)
+	}
+	if !got.Ambiguous {
+		t.Fatalf("non-curl credentialed pipeline must end in ambiguous (refused): %+v", got)
+	}
+}
+
+// Regression: a curl with a benign trailing pipe (e.g. `| jq '.login'`)
+// no longer fails closed on the metacharacter check. The AST-based
+// parser scopes to the curl CallExpr; the pipe target operates on
+// the curl's response (already authorized) so it doesn't compromise
+// the credential.
+func TestDefaultParser_BashCurlPipedToJq(t *testing.T) {
 	p := DefaultParser{}
-	in := toolUse("Bash", `{"cmd":"echo autovault_github_xxx | tee /tmp/leak"}`)
+	in := toolUse("Bash", `{"cmd":"curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user | jq '.login'"}`)
 	v, ok := p.Parse(in)
 	if !ok {
-		t.Fatalf("expected parser to consume input (return ambiguous)")
+		t.Fatalf("parser must consume curl-piped-to-jq, fell through; verdict=%+v", v)
+	}
+	if !v.IsAPICall || v.Ambiguous {
+		t.Fatalf("curl-piped-to-jq should be IsAPICall=true non-ambiguous, got %+v", v)
+	}
+	if v.Host != "api.github.com" {
+		t.Fatalf("host=%q, want api.github.com", v.Host)
+	}
+}
+
+// Regression: a curl followed by `2>/dev/null` redirect must rewrite —
+// redirections operate on streams the credential doesn't flow through.
+func TestDefaultParser_BashCurlWithStderrRedirect(t *testing.T) {
+	p := DefaultParser{}
+	in := toolUse("Bash", `{"cmd":"curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user 2>/dev/null"}`)
+	v, ok := p.Parse(in)
+	if !ok || !v.IsAPICall || v.Ambiguous {
+		t.Fatalf("curl with stderr redirect must rewrite, got ok=%v %+v", ok, v)
+	}
+}
+
+// Security: command substitution `$(curl …)` can exfiltrate the curl
+// output to a sibling command. Refuse.
+func TestDefaultParser_BashCommandSubstitutionRefused(t *testing.T) {
+	p := DefaultParser{}
+	in := toolUse("Bash", `{"cmd":"echo $(curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user)"}`)
+	v, ok := p.Parse(in)
+	if !ok {
+		t.Fatalf("expected parser to claim and refuse command-substitution shape")
 	}
 	if !v.Ambiguous {
-		t.Fatalf("expected ambiguous on shell metacharacters, got %+v", v)
+		t.Fatalf("expected ambiguous on $() construct, got %+v", v)
+	}
+}
+
+// Security: two simultaneous credentialed commands can't both be
+// rewritten (we only mint one nonce/target per tool_use). Refuse.
+func TestDefaultParser_BashMultipleCredentialedRefused(t *testing.T) {
+	p := DefaultParser{}
+	in := toolUse("Bash", `{"cmd":"curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user && curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/orgs"}`)
+	v, ok := p.Parse(in)
+	if !ok {
+		t.Fatalf("expected parser to claim multi-credentialed input")
+	}
+	if !v.Ambiguous {
+		t.Fatalf("expected ambiguous on multiple credentialed commands, got %+v", v)
 	}
 }
 
@@ -215,6 +280,58 @@ func TestRewrite_BashAddsTargetHostHeader(t *testing.T) {
 // rewriter round-trip via the X-Clawvisor-Target-Host header. Without
 // this, a URL like https://api.github.com:8443/... would be forwarded
 // to the default port (443) at the resolver.
+// Regression: a curl piped to jq must rewrite the curl portion AND
+// preserve the pipeline so the harness can still parse the response.
+func TestRewrite_BashCurlPipedToJqPreservesTail(t *testing.T) {
+	in := toolUse("Bash", `{"cmd":"curl -sS -H 'Authorization: Bearer autovault_github_abc' https://api.github.com/user | jq '.login'"}`)
+	v, ok := DefaultParser{}.Parse(in)
+	if !ok || !v.IsAPICall {
+		t.Fatalf("setup: parser did not classify piped curl as IsAPICall")
+	}
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("rewritten output not JSON: %v", err)
+	}
+	cmd, _ := got["cmd"].(string)
+	if !strings.Contains(cmd, "https://proxy.clawvisor.example/proxy/v1/user") {
+		t.Fatalf("rewritten cmd missing resolver URL: %q", cmd)
+	}
+	if !strings.Contains(cmd, "| jq '.login'") {
+		t.Fatalf("pipe to jq lost in rewrite: %q", cmd)
+	}
+	if !strings.Contains(cmd, "X-Clawvisor-Target-Host: api.github.com") {
+		t.Fatalf("rewritten cmd missing target-host header: %q", cmd)
+	}
+}
+
+// Regression: a curl with `2>/dev/null` redirection must rewrite the
+// curl AND preserve the redirect, so the harness keeps suppressing
+// stderr noise.
+func TestRewrite_BashCurlWithStderrRedirectPreservesTail(t *testing.T) {
+	in := toolUse("Bash", `{"cmd":"curl -sS -H 'Authorization: Bearer autovault_github_abc' https://api.github.com/user 2>/dev/null"}`)
+	v, ok := DefaultParser{}.Parse(in)
+	if !ok || !v.IsAPICall {
+		t.Fatalf("setup: parser did not classify curl-with-redirect as IsAPICall")
+	}
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var got map[string]any
+	_ = json.Unmarshal(out, &got)
+	cmd, _ := got["cmd"].(string)
+	if !strings.Contains(cmd, "2>/dev/null") {
+		t.Fatalf("redirect lost in rewrite: %q", cmd)
+	}
+	if !strings.Contains(cmd, "https://proxy.clawvisor.example/proxy/v1/user") {
+		t.Fatalf("rewritten cmd missing resolver URL: %q", cmd)
+	}
+}
+
 func TestRewrite_BashPreservesExplicitPort(t *testing.T) {
 	in := toolUse("Bash", `{"cmd":"curl -X POST -H 'Authorization: Bearer autovault_github_abc' https://api.github.com:8443/repos/x/y/issues"}`)
 	v, ok := DefaultParser{}.Parse(in)
@@ -544,5 +661,32 @@ func TestBoundaryCheck(t *testing.T) {
 				t.Fatalf("BoundaryCheck = %v, want %v", ok, tc.ok)
 			}
 		})
+	}
+}
+
+// Security: backtick command substitution (legacy `` `cmd` `` form)
+// parses as CmdSubst under the hood; refuse for the same reason as $().
+func TestDefaultParser_BashBacktickRefused(t *testing.T) {
+	p := DefaultParser{}
+	in := toolUse("Bash", "{\"cmd\":\"echo `curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user`\"}")
+	v, ok := p.Parse(in)
+	if !ok {
+		t.Fatalf("expected parser to claim backtick-substitution shape")
+	}
+	if !v.Ambiguous {
+		t.Fatalf("expected ambiguous on backtick substitution, got %+v", v)
+	}
+}
+
+// Process substitution `<(cmd)` likewise refused.
+func TestDefaultParser_BashProcessSubstitutionRefused(t *testing.T) {
+	p := DefaultParser{}
+	in := toolUse("Bash", `{"cmd":"diff <(curl -sS -H 'Authorization: Bearer autovault_github_xxx' https://api.github.com/user) /tmp/x"}`)
+	v, ok := p.Parse(in)
+	if !ok {
+		t.Fatalf("expected parser to claim process-substitution shape")
+	}
+	if !v.Ambiguous {
+		t.Fatalf("expected ambiguous on process substitution, got %+v", v)
 	}
 }

@@ -508,6 +508,44 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 	}
 }
 
+// ambiguousRefusalGuidance produces the substitute message the model
+// sees when the inspector refused a credentialed call as ambiguous.
+// The model needs actionable instructions on how to rewrite the call
+// in a shape Clawvisor can mediate — otherwise it retries the same
+// shape and ends up in a loop, or worse, copies a fragment back into
+// the conversation and gets stuck.
+func ambiguousRefusalGuidance(tu conversation.ToolUse, v inspector.Verdict) string {
+	preview := conversation.MakeToolInputPreview(tu.Input)
+	var b strings.Builder
+	b.WriteString("Clawvisor refused this credentialed call: ")
+	b.WriteString(v.Reason)
+	b.WriteString(".")
+	if tu.Name != "" {
+		b.WriteString("\n\nTool: `")
+		b.WriteString(tu.Name)
+		b.WriteString("`")
+	}
+	if preview != "" {
+		b.WriteString("\nInput: ")
+		b.WriteString(preview)
+	}
+	// Tailored guidance based on the parser's specific objection.
+	reason := strings.ToLower(v.Reason)
+	switch {
+	case strings.Contains(reason, "shell metacharacter"):
+		b.WriteString("\n\nRewrite the command as a single curl invocation with no pipes, redirects, command chaining (`|`, `;`, `&&`, `>`, `2>&1`), command substitution (`$(...)`, backticks), or subshells. Clawvisor needs to parse the curl shape to inject credentials safely. If you need to filter or post-process the response, run a separate tool call after the curl returns.")
+	case strings.Contains(reason, "unknown curl flag"):
+		b.WriteString("\n\nThe curl flag isn't on Clawvisor's allowlist (only common safe flags like `-s`, `-S`, `-f`, `-i`, `-A`, `-o`, `--max-time` are accepted; `-L`, `-k`, `-x`, `-d`, `--data*`, `-T`, `-F` are refused). Rewrite without that flag.")
+	case strings.Contains(reason, "expected exactly one positional URL"):
+		b.WriteString("\n\nUse exactly one URL positional argument. If you need to call multiple endpoints, run separate tool calls.")
+	case strings.Contains(reason, "placeholder not in"):
+		b.WriteString("\n\nThe credential placeholder must appear in an HTTP header (e.g. `-H 'Authorization: Bearer autovault_…'`). Body, query, or non-header locations are not yet supported for rewrite.")
+	default:
+		b.WriteString("\n\nRewrite the call in the simplest shape Clawvisor can mediate: a single curl invocation with `-H 'Authorization: Bearer <autovault_placeholder>'` and one URL positional argument. No pipes, redirects, or command chaining.")
+	}
+	return b.String()
+}
+
 func approvalPrompt(tu conversation.ToolUse, reason string) string {
 	preview := conversation.MakeToolInputPreview(tu.Input)
 	var b strings.Builder
