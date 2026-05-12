@@ -96,6 +96,37 @@ func TestDefaultParser_FallthroughOnUnknown(t *testing.T) {
 	}
 }
 
+// hasShellMetacharacter must be quote-aware: characters that appear
+// inside single- or double-quoted regions of a curl line are literal,
+// not shell ops. Without this, real-world URLs containing & in their
+// query string are wrongly classified as injection-shaped and refused.
+func TestHasShellMetacharacter_QuoteAware(t *testing.T) {
+	safe := []string{
+		`curl 'https://api.github.com/repos/x/y/issues?state=open&labels=bug'`,
+		`curl "https://api.github.com/x?a=1&b=2"`,
+		`curl -H 'Accept: application/json; charset=utf-8' https://api.github.com/x`,
+		`curl 'https://example.com/?q=foo|bar'`, // pipe inside quotes
+	}
+	for _, s := range safe {
+		if hasShellMetacharacter(s) {
+			t.Errorf("safe quoted input rejected: %q", s)
+		}
+	}
+	dangerous := []string{
+		`curl https://api.github.com/x ; rm -rf /`,                  // unquoted ;
+		`curl https://api.github.com/x | cat`,                       // unquoted pipe
+		`curl $(whoami).github.com`,                                 // command substitution
+		`curl "https://api.github.com/$(whoami)"`,                   // $ inside double quotes
+		"curl \"https://example.com/`whoami`\"",                     // backtick inside double quotes
+		`curl https://api.github.com/x && rm`,                       // unquoted &&
+	}
+	for _, s := range dangerous {
+		if !hasShellMetacharacter(s) {
+			t.Errorf("dangerous input accepted: %q", s)
+		}
+	}
+}
+
 func TestInspector_TriggerMissShortCircuits(t *testing.T) {
 	insp := NewInspector(DefaultParser{}, AmbiguousValidator{})
 	v := insp.Inspect(context.Background(), toolUse("Bash", `{"cmd":"ls"}`))
@@ -467,9 +498,22 @@ func TestInspector_ValidatorPathDedupesMultiplePlaceholderMatches(t *testing.T) 
 	if len(v.Placeholders) != 2 {
 		t.Fatalf("expected 2 distinct placeholders, got %+v", v.Placeholders)
 	}
+	// Track which expected placeholders we've actually seen — without
+	// this, [autovault_github_xyz, autovault_github_xyz] (dedup broken)
+	// would satisfy len==2 and every value being in want.
+	seen := make(map[string]bool, len(want))
 	for _, p := range v.Placeholders {
 		if !want[p] {
 			t.Fatalf("unexpected placeholder: %q", p)
+		}
+		if seen[p] {
+			t.Fatalf("placeholder %q appeared more than once — dedup broken: %+v", p, v.Placeholders)
+		}
+		seen[p] = true
+	}
+	for p := range want {
+		if !seen[p] {
+			t.Fatalf("expected placeholder %q not present in result: %+v", p, v.Placeholders)
 		}
 	}
 }

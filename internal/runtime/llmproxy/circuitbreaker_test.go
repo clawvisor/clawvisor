@@ -159,3 +159,95 @@ func TestCircuitBreaker_SuccessResetsConsecutiveErrors(t *testing.T) {
 		t.Errorf("circuit should not be open — only 2 errors after reset")
 	}
 }
+
+// With HalfOpenMaxCalls > 1, a stale success from one probe must not
+// override another probe's failure during the same half-open burst.
+// Before the fix, the first returning success closed the circuit and
+// subsequent probe failures couldn't re-open it.
+func TestCircuitBreaker_MultiProbeFailureWinsOverEarlierSuccess(t *testing.T) {
+	now := time.Unix(0, 0)
+	clock := func() time.Time { return now }
+	// Switchable verifier — first call succeeds, second fails.
+	v := &switchableVerifier{}
+	cb := NewCircuitBreakerVerifier(v, CircuitBreakerConfig{
+		FailureThreshold: 1,
+		CooldownDuration: 10 * time.Second,
+		HalfOpenMaxCalls: 2,
+		Now:              clock,
+	})
+
+	// Trip the breaker.
+	v.err = errors.New("boom")
+	_, _ = cb.Verify(context.Background(), IntentVerifyRequest{})
+	if cb.State() != "open" {
+		t.Fatalf("expected open after first failure")
+	}
+
+	// Cool down → half-open.
+	now = now.Add(11 * time.Second)
+	if cb.State() != "half_open" {
+		t.Fatalf("expected half_open, got %s", cb.State())
+	}
+
+	// Probe 1: succeeds. Should NOT close yet (need 2 successes).
+	v.err = nil
+	v.verdict = &IntentVerdict{Allow: true}
+	if _, err := cb.Verify(context.Background(), IntentVerifyRequest{}); err != nil {
+		t.Fatalf("probe 1 should succeed, got %v", err)
+	}
+	if cb.State() != "half_open" {
+		t.Fatalf("after 1/2 successes circuit must stay half_open, got %s", cb.State())
+	}
+
+	// Probe 2: fails. Must re-open the circuit despite probe 1's success.
+	v.err = errors.New("boom-again")
+	if _, err := cb.Verify(context.Background(), IntentVerifyRequest{}); err == nil {
+		t.Fatalf("probe 2 should propagate upstream failure")
+	}
+	if cb.State() != "open" {
+		t.Fatalf("probe 2 failure must re-open the circuit, got %s", cb.State())
+	}
+}
+
+type switchableVerifier struct {
+	err     error
+	verdict *IntentVerdict
+}
+
+func (s *switchableVerifier) Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error) {
+	return s.verdict, s.err
+}
+
+// All-success probes must accumulate to HalfOpenMaxCalls before closing.
+func TestCircuitBreaker_RequiresAllProbesToClose(t *testing.T) {
+	now := time.Unix(0, 0)
+	clock := func() time.Time { return now }
+	v := &switchableVerifier{err: errors.New("boom")}
+	cb := NewCircuitBreakerVerifier(v, CircuitBreakerConfig{
+		FailureThreshold: 1,
+		CooldownDuration: 10 * time.Second,
+		HalfOpenMaxCalls: 3,
+		Now:              clock,
+	})
+	_, _ = cb.Verify(context.Background(), IntentVerifyRequest{})  // trip
+	now = now.Add(11 * time.Second)
+
+	v.err = nil
+	v.verdict = &IntentVerdict{Allow: true}
+	for i := 0; i < 2; i++ {
+		if _, err := cb.Verify(context.Background(), IntentVerifyRequest{}); err != nil {
+			t.Fatalf("probe %d should succeed: %v", i+1, err)
+		}
+		if cb.State() != "half_open" {
+			t.Fatalf("after %d/%d successes circuit must stay half_open, got %s",
+				i+1, 3, cb.State())
+		}
+	}
+	// Third success: closes.
+	if _, err := cb.Verify(context.Background(), IntentVerifyRequest{}); err != nil {
+		t.Fatalf("probe 3 should succeed: %v", err)
+	}
+	if cb.State() != "closed" {
+		t.Fatalf("3/3 successes must close circuit, got %s", cb.State())
+	}
+}

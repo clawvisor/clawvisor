@@ -66,6 +66,7 @@ type CircuitBreakerVerifier struct {
 	consecutiveErrors int
 	openedAt          time.Time
 	halfOpenInflight  int
+	halfOpenSuccesses int
 }
 
 // NewCircuitBreakerVerifier wraps inner with a circuit breaker. Pass
@@ -135,20 +136,46 @@ func (c *CircuitBreakerVerifier) preCall() error {
 func (c *CircuitBreakerVerifier) postCall(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state == circuitHalfOpen {
+	wasHalfOpen := c.state == circuitHalfOpen
+	if wasHalfOpen {
 		c.halfOpenInflight--
 		if c.halfOpenInflight < 0 {
 			c.halfOpenInflight = 0
 		}
 	}
 	if err == nil {
-		// Success — close the circuit, reset counter.
+		if wasHalfOpen {
+			// Require HalfOpenMaxCalls consecutive probe successes before
+			// closing. With max=1 (the default) this closes immediately
+			// like before. With max>1 a single stale success can't override
+			// other in-flight probe failures: the circuit stays half-open
+			// until enough probes succeed, and any failure re-opens.
+			c.halfOpenSuccesses++
+			if c.halfOpenSuccesses >= c.cfg.HalfOpenMaxCalls {
+				c.state = circuitClosed
+				c.consecutiveErrors = 0
+				c.halfOpenSuccesses = 0
+				c.halfOpenInflight = 0
+			}
+			return
+		}
+		// Success in closed state: reset failure counter.
 		c.state = circuitClosed
 		c.consecutiveErrors = 0
 		return
 	}
 	c.consecutiveErrors++
-	if c.state == circuitHalfOpen || c.consecutiveErrors >= c.cfg.FailureThreshold {
+	if wasHalfOpen {
+		// Any failure during the half-open burst trips the circuit again,
+		// regardless of other in-flight successes. Reset success count so
+		// the next half-open burst starts fresh.
+		c.state = circuitOpen
+		c.openedAt = c.cfg.Now()
+		c.halfOpenSuccesses = 0
+		c.halfOpenInflight = 0
+		return
+	}
+	if c.consecutiveErrors >= c.cfg.FailureThreshold {
 		c.state = circuitOpen
 		c.openedAt = c.cfg.Now()
 	}
@@ -161,5 +188,6 @@ func (c *CircuitBreakerVerifier) maybeTransitionToHalfOpenLocked() {
 	if c.cfg.Now().Sub(c.openedAt) >= c.cfg.CooldownDuration {
 		c.state = circuitHalfOpen
 		c.halfOpenInflight = 0
+		c.halfOpenSuccesses = 0
 	}
 }

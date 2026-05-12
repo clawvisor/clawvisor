@@ -167,17 +167,36 @@ func (h *LLMCredentialsHandler) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]entry, 0, 2)
 	for _, p := range []string{"anthropic", "openai"} {
 		e := entry{Provider: p}
-		if _, err := h.Vault.Get(r.Context(), user.ID, p); err == nil {
+		// Differentiate vault.ErrNotFound (legitimately not stored) from
+		// other errors (backend down, permissions, etc.). The latter should
+		// surface as a 500 rather than misreporting stored=false to the UI.
+		_, err := h.Vault.Get(r.Context(), user.ID, p)
+		switch {
+		case err == nil:
 			e.Stored = true
+		case errors.Is(err, vault.ErrNotFound):
+			// Not stored; leave e.Stored=false.
+		default:
+			h.Logger.WarnContext(r.Context(), "lite-proxy: vault get failed in List",
+				"user_id", user.ID, "provider", p, "err", err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "VAULT_ERROR", "could not read credential status")
+			return
 		}
 		if agentID != "" {
 			scoped := llmproxy.AgentScopedVaultServiceID(agentID, conversation.Provider(p))
 			if scoped != "" {
-				if _, err := h.Vault.Get(r.Context(), user.ID, scoped); err == nil {
+				_, err := h.Vault.Get(r.Context(), user.ID, scoped)
+				switch {
+				case err == nil:
 					e.AgentStored = true
 					e.AgentID = agentID
-				} else {
+				case errors.Is(err, vault.ErrNotFound):
 					e.AgentID = agentID
+				default:
+					h.Logger.WarnContext(r.Context(), "lite-proxy: vault get failed in List (agent-scoped)",
+						"user_id", user.ID, "service_id", scoped, "err", err.Error())
+					writeJSONError(w, http.StatusInternalServerError, "VAULT_ERROR", "could not read agent credential status")
+					return
 				}
 			}
 		}

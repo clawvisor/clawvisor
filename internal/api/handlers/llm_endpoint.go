@@ -364,6 +364,14 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if readErr != nil {
 			h.Logger.WarnContext(r.Context(), "lite-proxy upstream read error",
 				"agent_id", agent.ID, "err", readErr.Error())
+			// Update audit fields BEFORE the JSON write — the deferred
+			// audit emit at the top of serve() reads these, so without
+			// the override the row would claim auditStatus=resp.StatusCode
+			// (the upstream success) and auditOutcome=success from earlier.
+			auditStatus = http.StatusBadGateway
+			auditDecide = "deny"
+			auditOutcome = "upstream_too_large"
+			auditReason = readErr.Error()
 			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_TOO_LARGE", "upstream response exceeded size cap")
 			return
 		}

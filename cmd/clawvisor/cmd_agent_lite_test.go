@@ -30,11 +30,17 @@ func TestBuildLiteProxyEnvClaude(t *testing.T) {
 	if got := values["ANTHROPIC_AUTH_TOKEN"]; got != "cvis_token" {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN = %q", got)
 	}
-	if got := values["ANTHROPIC_API_KEY"]; got != "" {
+	// Two-step check: the key must be present in the env (so it explicitly
+	// overrides any inherited ANTHROPIC_API_KEY), AND its value must be "".
+	// `values[key]` returning "" alone can't distinguish "explicitly empty"
+	// from "missing entirely".
+	if got, ok := values["ANTHROPIC_API_KEY"]; !ok {
+		t.Fatalf("ANTHROPIC_API_KEY not present in env; expected explicit empty value to mask inherited key")
+	} else if got != "" {
 		t.Fatalf("ANTHROPIC_API_KEY = %q, want explicitly empty", got)
 	}
-	if got := values["OPENAI_BASE_URL"]; got != "" {
-		t.Fatalf("OPENAI_BASE_URL should be omitted for claude, got %q", got)
+	if _, ok := values["OPENAI_BASE_URL"]; ok {
+		t.Fatalf("OPENAI_BASE_URL should be omitted for claude, got %q", values["OPENAI_BASE_URL"])
 	}
 }
 

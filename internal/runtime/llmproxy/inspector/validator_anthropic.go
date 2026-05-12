@@ -177,10 +177,20 @@ func extractAnthropicVerdict(raw []byte) (Verdict, error) {
 		if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 			continue
 		}
+		// If the validator didn't supply a method, fall back to ambiguous.
+		// canonicalMethod defaults empty to "GET", which would silently
+		// claim a method the validator never asserted — egress rules that
+		// gate on method (e.g. deny DELETE) wouldn't match, and tests would
+		// see a phantom GET in audit.
+		ambiguous := parsed.Ambiguous
+		method := strings.TrimSpace(parsed.Method)
+		if parsed.IsAPICall && method == "" {
+			ambiguous = true
+		}
 		return Verdict{
 			IsAPICall:           parsed.IsAPICall,
-			Ambiguous:           parsed.Ambiguous,
-			Method:              canonicalMethod(parsed.Method),
+			Ambiguous:           ambiguous,
+			Method:              canonicalMethodOrEmpty(method),
 			Host:                strings.ToLower(strings.TrimSpace(parsed.Host)),
 			Path:                parsed.Path,
 			CredentialLocations: parsed.CredentialLocations,

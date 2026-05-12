@@ -295,11 +295,37 @@ func splitHeader(raw string) (name, value string, ok bool) {
 // scope per the design's Bash envelope and gets refused. The deny-list lives
 // here (not just at the rewriter) so we don't accidentally classify a
 // shell-injection-shaped input as a clean curl.
+//
+// Quote-aware: characters that appear inside a single- or double-quoted
+// region of the command line are literal, not shell metacharacters. Without
+// this, valid curls like
+//
+//	curl 'https://api.github.com/repos/x/y/issues?state=open&labels=bug'
+//
+// would be refused because of the `&` inside the URL's query string.
+// Backtick is the lone exception — it's still treated as metacharacter
+// inside double quotes since bash performs command substitution there.
 func hasShellMetacharacter(cmd string) bool {
+	var state rune // 0, '\'', '"'
 	for _, c := range cmd {
-		switch c {
-		case '|', ';', '&', '`', '$', '<', '>', '(', ')', '{', '}':
-			return true
+		switch {
+		case state == 0 && (c == '\'' || c == '"'):
+			state = c
+		case state != 0 && c == state:
+			state = 0
+		case state == '\'':
+			// Inside single quotes: every char is literal.
+		case state == '"':
+			// Inside double quotes: $ and ` still trigger substitution.
+			if c == '$' || c == '`' {
+				return true
+			}
+		default:
+			// Unquoted.
+			switch c {
+			case '|', ';', '&', '`', '$', '<', '>', '(', ')', '{', '}':
+				return true
+			}
 		}
 	}
 	// Catch backslash newlines specifically (multi-line via line continuation

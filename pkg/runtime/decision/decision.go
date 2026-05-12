@@ -378,7 +378,10 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 	if in.IntentVerifier == nil || action == nil {
 		return "", true, nil
 	}
-	mode := action.Verification
+	// Normalize before comparing — verification mode is sourced from YAML
+	// fixtures and store fields that have been observed with mixed casing
+	// or leading/trailing whitespace ("Off ", "LENIENT", etc.).
+	mode := strings.TrimSpace(strings.ToLower(action.Verification))
 	if mode == "off" {
 		return "", true, nil
 	}

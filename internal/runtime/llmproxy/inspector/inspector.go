@@ -245,10 +245,22 @@ func (AmbiguousValidator) Validate(_ context.Context, _ ToolUse) (Verdict, error
 var ErrNoMatch = errors.New("inspector: no parser match")
 
 // canonicalMethod returns method uppercased, defaulting to "GET" if empty.
+// Use ONLY for inputs where the method is structurally known (the
+// deterministic parser knows from the tool shape). For inputs sourced
+// from the LLM validator — which may omit method — use canonicalMethodOrEmpty
+// and mark the verdict ambiguous when method is missing.
 func canonicalMethod(m string) string {
 	m = strings.TrimSpace(strings.ToUpper(m))
 	if m == "" {
 		return "GET"
 	}
 	return m
+}
+
+// canonicalMethodOrEmpty uppercases and trims without defaulting. The
+// caller decides what to do with an empty method (typically: mark the
+// verdict ambiguous so authorization fails closed rather than acting
+// on a phantom GET).
+func canonicalMethodOrEmpty(m string) string {
+	return strings.TrimSpace(strings.ToUpper(m))
 }

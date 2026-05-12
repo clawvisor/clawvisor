@@ -125,3 +125,31 @@ func (failTransport) RoundTrip(*http.Request) (*http.Response, error) {
 
 // guard against compile drift on the canned response shape.
 var _ = json.RawMessage(nil)
+
+// A validator response that omits method must produce an ambiguous
+// verdict. Defaulting an unspecified method to GET silently asserts a
+// method the LLM never claimed and breaks egress-rule gating on
+// non-GET methods.
+func TestAnthropicValidator_MissingMethodMarksAmbiguous(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Method intentionally absent / empty.
+		_, _ = w.Write([]byte(`{
+			"content":[
+				{"type":"text","text":"{\"is_api_call\":true,\"ambiguous\":false,\"method\":\"\",\"host\":\"api.github.com\",\"path\":\"/repos/x/y\",\"credential_locations\":[{\"kind\":\"header\",\"name\":\"Authorization\",\"scheme\":\"Bearer\"}],\"reason\":\"clean curl\"}"}
+			]
+		}`))
+	}))
+	defer upstream.Close()
+
+	v := &AnthropicValidator{APIKey: "test-key", Model: "claude-haiku-4-5", HTTP: redirectingClient(upstream.URL)}
+	verdict, err := v.Validate(context.Background(), ToolUse{Name: "WebFetch", Input: []byte(`{"url":"https://api.github.com/x","headers":{"Authorization":"Bearer autovault_github_x"}}`)})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !verdict.Ambiguous {
+		t.Fatalf("missing method must mark verdict ambiguous; got %+v", verdict)
+	}
+	if verdict.Method != "" {
+		t.Fatalf("missing method must yield empty Method, not a default — got %q", verdict.Method)
+	}
+}
