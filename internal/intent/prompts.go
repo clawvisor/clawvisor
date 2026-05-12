@@ -307,15 +307,38 @@ func buildVerificationUserMessage(req VerifyRequest) string {
 		}
 	}
 
-	// Sanitize the agent's reason to prevent tag injection that could
-	// break out of the <reason> wrapper and confuse the verifier.
+	stripTags := func(s string) string {
+		for _, tag := range []string{
+			"<reason>", "</reason>",
+			"<system>", "</system>",
+			"<assistant>", "</assistant>",
+			"<user>", "</user>",
+			"<prompt>", "</prompt>",
+		} {
+			s = strings.ReplaceAll(s, tag, "")
+		}
+		return s
+	}
+
 	reason := req.Reason
 	const maxReasonLen = 2048
 	if len(reason) > maxReasonLen {
 		reason = reason[:maxReasonLen]
 	}
-	sanitizedReason := strings.ReplaceAll(reason, "</reason>", "")
-	sanitizedReason = strings.ReplaceAll(sanitizedReason, "<reason>", "")
+	sanitizedReason := stripTags(reason)
+	sanitizedExpectedUse := stripTags(req.ExpectedUse)
+	sanitizedExpansionRationale := stripTags(req.ExpansionRationale)
+	sanitizedServiceHints := stripTags(req.ServiceHints)
+
+	if sanitizedExpectedUse != "" {
+		expectedUseLine = fmt.Sprintf("Action expected use (declared by agent at task creation): %s", sanitizedExpectedUse)
+	}
+	if sanitizedExpansionRationale != "" {
+		expansionLine = fmt.Sprintf("\nApproved scope expansion rationale: %s", sanitizedExpansionRationale)
+	}
+	if sanitizedServiceHints != "" {
+		hintsLine = fmt.Sprintf("\nService-specific verification guidance: %s", sanitizedServiceHints)
+	}
 
 	return fmt.Sprintf(`Current date: %s
 Task purpose: %s
