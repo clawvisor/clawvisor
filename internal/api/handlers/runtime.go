@@ -378,6 +378,15 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	filtered := []*store.ApprovalRecord{}
 	now := time.Now().UTC()
 	for _, rec := range records {
+		// task_create / task_expand approvals already surface in the
+		// dedicated Tasks UI. Including them in the runtime-approvals
+		// queue too makes every approved task look like a duplicate
+		// pending item ("runtime retry approval" badge alongside the
+		// task row). Resolution machinery still finds them via
+		// resolveCanonicalTaskApproval — they just don't appear here.
+		if rec.Kind == "task_create" || rec.Kind == "task_expand" {
+			continue
+		}
 		if rec.SessionID == nil || *rec.SessionID == "" {
 			filtered = append(filtered, rec)
 			continue

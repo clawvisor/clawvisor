@@ -331,6 +331,107 @@ func TestRuntimeHandlerListApprovalsExcludesRevokedAndExpiredSessions(t *testing
 	}
 }
 
+// Regression: task_create and task_expand approvals already surface in
+// the dedicated Tasks UI. Including them in the runtime-approvals
+// queue too produced a confusing "duplicate" badge (the same task
+// appearing as both a Task row AND a "runtime retry approval" item).
+// They must be filtered out of ListApprovals.
+func TestRuntimeHandlerListApprovalsExcludesTaskApprovals(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-approvals-task-filter.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "task-approvals-filter@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "task-filter-agent", "task-filter-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	task := &store.Task{
+		ID:      "task-1",
+		UserID:  user.ID,
+		AgentID: agent.ID,
+		Status:  "pending",
+		Purpose: "Filter test",
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	taskApproval := &store.ApprovalRecord{
+		ID:                  "approval-task-create",
+		Kind:                "task_create",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		TaskID:              &task.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		ResolutionTransport: "task_state_update",
+	}
+	if err := st.CreateApprovalRecord(ctx, taskApproval); err != nil {
+		t.Fatalf("CreateApprovalRecord(task_create): %v", err)
+	}
+
+	// A normal runtime approval that DOES belong in the list.
+	payload, _ := json.Marshal(runtimeproxy.RuntimeApprovalPayload{
+		AgentID:            agent.ID,
+		RequestFingerprint: "request-once-1",
+		Method:             "GET",
+		Host:               "example.com",
+		Path:               "/x",
+	})
+	requestApproval := &store.ApprovalRecord{
+		ID:                  "approval-request-once",
+		Kind:                "request_once",
+		UserID:              user.ID,
+		AgentID:             &agent.ID,
+		Status:              "pending",
+		Surface:             "dashboard",
+		PayloadJSON:         payload,
+		ResolutionTransport: "consume_one_off_retry",
+	}
+	if err := st.CreateApprovalRecord(ctx, requestApproval); err != nil {
+		t.Fatalf("CreateApprovalRecord(request_once): %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/approvals", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, nil, nil, nil, nil)
+	h.ListApprovals(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListApprovals status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Entries []store.ApprovalRecord `json:"entries"`
+		Total   int                    `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Entries) != 1 || resp.Entries[0].ID != "approval-request-once" {
+		t.Fatalf("expected only the non-task approval to appear; got %+v", resp)
+	}
+
+	// The task approval must still exist in the store (resolution
+	// machinery looks it up by task_id later).
+	got, err := st.GetApprovalRecord(ctx, "approval-task-create")
+	if err != nil {
+		t.Fatalf("task approval should remain in store: %v", err)
+	}
+	if got.Status != "pending" {
+		t.Errorf("task approval status changed unexpectedly: %s", got.Status)
+	}
+}
+
 func TestRuntimeHandlerResolveApprovalCreatesOneOffEvent(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-approval-events.db"))
