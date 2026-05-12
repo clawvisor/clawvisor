@@ -108,12 +108,18 @@ func flattenAnthropicTaskReplyText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return ""
 	}
-	for i := len(blocks) - 1; i >= 0; i-- {
-		if blocks[i].Type == "text" && blocks[i].Text != "" {
-			return blocks[i].Text
+	// Concatenate every text-bearing block in order. Returning only
+	// the last block was a false-negative when the task reply was
+	// split across blocks or sat in an earlier block — the downstream
+	// parser finds the latest matching verb anywhere in the combined
+	// text.
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }
 
 func replaceOpenAIChatTaskReply(body []byte, replacement string) ([]byte, bool, error) {

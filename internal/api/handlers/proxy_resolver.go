@@ -74,7 +74,18 @@ func NewProxyResolverHandler(st store.Store, v vault.Vault, logger *slog.Logger)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	transport.DialContext = h.safeDialContext
-	h.Client = &http.Client{Timeout: 0, Transport: transport}
+	h.Client = &http.Client{
+		Timeout:   0,
+		Transport: transport,
+		// Refuse to follow redirects. Default http.Client follows up
+		// to 10 cross-host redirects, which would replay the swapped
+		// vault credential at the redirect target — bypassing the
+		// bound-service host allowlist and SSRF preflight. Surface
+		// the 3xx to the upstream call site as-is.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	return h
 }
 

@@ -389,6 +389,38 @@ func TestResolver_RejectsSelfTargetWithPort(t *testing.T) {
 	}
 }
 
+// Security: the outbound client must NOT follow redirects automatically.
+// A 3xx from the upstream would otherwise replay the swapped vault
+// credential at the redirect target, bypassing the bound-service host
+// allowlist and SSRF preflight.
+func TestResolver_DoesNotFollowRedirects(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://evil.example.com/")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer upstream.Close()
+
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// The resolver must surface the 302 to the caller verbatim — not
+	// follow it. The status code arriving at the client is the 302.
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 (no auto-follow), got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // Regression: the dial-time SSRF check must refuse private IPs even
 // when the original DNS resolution at request-build time happened to
 // return a public address (DNS rebinding TOCTOU). Direct exercise of

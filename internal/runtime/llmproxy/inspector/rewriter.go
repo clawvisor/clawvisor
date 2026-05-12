@@ -62,6 +62,16 @@ func Rewrite(t ToolUse, v Verdict, opts RewriteOpts) ([]byte, error) {
 	if opts.TargetHostHeader == "" {
 		opts.TargetHostHeader = "X-Clawvisor-Target-Host"
 	}
+	// CallerHeader has a documented default but the original code only
+	// applied it via DefaultRewriteOpts. Manually-constructed RewriteOpts
+	// with CallerToken set but CallerHeader empty would silently skip
+	// caller-auth injection (the `opts.CallerToken != "" && opts.CallerHeader != ""`
+	// guard fails when CallerHeader is empty). Apply the same default
+	// here so any caller passing a token gets the header without having
+	// to remember to set both fields.
+	if opts.CallerHeader == "" {
+		opts.CallerHeader = "X-Clawvisor-Caller"
+	}
 
 	resolverURL, err := url.Parse(opts.ResolverBaseURL)
 	if err != nil {

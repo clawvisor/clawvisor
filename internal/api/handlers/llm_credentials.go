@@ -62,6 +62,11 @@ func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+	// Cap the body before JSON-parsing — api_key max length is 4 KiB per
+	// validateLLMAPIKey, but the JSON envelope is unbounded otherwise.
+	// 16 KiB is plenty of slack for the wrapper + future fields without
+	// allowing pathological payloads to allocate memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	var body setLLMCredentialBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_BODY", err.Error())
@@ -280,6 +285,11 @@ func validateLLMAPIKey(provider, key string) (reason string, ok bool) {
 			return "anthropic api_key must start with sk-ant-", false
 		}
 	case "openai":
+		// Anthropic keys also begin with `sk-` (sk-ant-…). Explicitly
+		// reject those rather than letting the broader prefix swallow them.
+		if strings.HasPrefix(key, "sk-ant-") {
+			return "this looks like an Anthropic api_key (sk-ant-…); did you mean to set the anthropic provider?", false
+		}
 		if !(strings.HasPrefix(key, "sk-") || strings.HasPrefix(key, "sk-proj-")) {
 			return "openai api_key must start with sk-", false
 		}

@@ -1331,14 +1331,22 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
   const [copied, setCopied] = useState<string | null>(null)
 
   function copy(label: string, value: string) {
+    // navigator.clipboard is undefined in insecure (http://) or sandboxed
+    // contexts. Calling .writeText on undefined throws synchronously, so
+    // the .catch handler below never runs. Guard before dispatching.
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      setCopied(`${label}-failed`)
+      setTimeout(() => setCopied(null), 2000)
+      return
+    }
     navigator.clipboard.writeText(value)
       .then(() => {
         setCopied(label)
         setTimeout(() => setCopied(null), 2000)
       })
       .catch(() => {
-        // writeText can reject (insecure context, permission denied).
-        // Show a transient failure label rather than a false 'Copied!'.
+        // writeText can also reject asynchronously (permission denied,
+        // user gesture missing on Safari, etc.).
         setCopied(`${label}-failed`)
         setTimeout(() => setCopied(null), 2000)
       })

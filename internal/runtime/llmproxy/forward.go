@@ -230,6 +230,7 @@ func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key [
 var forwardSkipHeaders = map[string]struct{}{
 	"authorization":       {}, // agent token is for us, not upstream
 	"x-api-key":           {}, // agent token (Anthropic SDK convention) is for us
+	"cookie":              {}, // session cookies for the clawvisor UI must not reach api.anthropic.com / api.openai.com
 	"connection":          {},
 	"keep-alive":          {},
 	"proxy-authenticate":  {},
