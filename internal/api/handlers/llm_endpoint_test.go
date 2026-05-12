@@ -212,6 +212,10 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		"https://clawvisor.local/control/tasks?wait=true",
 		"timeout=120",
 		"Before creating the task, tell me I will need to approve it",
+		// Proactive task-creation steer: the model should declare scope
+		// up front, not wait until a tool call gets refused.
+		"start every non-trivial request with a task",
+		"Don't wait for a tool call to be refused",
 		// Vault-placeholder steer: tell the model these are SAFE to use
 		// directly, not raw credentials it should refuse to handle.
 		"VAULT PLACEHOLDERS",
