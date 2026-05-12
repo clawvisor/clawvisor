@@ -627,7 +627,7 @@ The MCP-driven Notion adapter ships with `id: notion-mcp` (display: `Notion`). T
 service:
   id: notion-mcp
   display_name: Notion
-  description: "Notion workspace via MCP — read pages, query databases, create content."
+  description: "Read pages, query databases, and create content in your Notion workspace."
   icon_url: "/logos/notion.svg"
 
 mcp:
@@ -647,7 +647,7 @@ mcp:
 service:
   id: supabase
   display_name: Supabase
-  description: "Supabase via MCP — query the database, manage projects, deploy edge functions."
+  description: "Query the database, manage projects, and deploy edge functions on Supabase."
   icon_url: "/logos/supabase.svg"
 
 mcp:

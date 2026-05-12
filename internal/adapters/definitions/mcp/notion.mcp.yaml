@@ -5,7 +5,7 @@
 service:
   id: notion-mcp
   display_name: Notion
-  description: "Notion workspace via MCP — read pages, query databases, create content."
+  description: "Read pages, query databases, and create content in your Notion workspace."
   icon_url: "/logos/notion.svg"
 
 mcp:
