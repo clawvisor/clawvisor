@@ -212,6 +212,11 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		"https://clawvisor.local/control/tasks?wait=true",
 		"timeout=120",
 		"Before creating the task, tell me I will need to approve it",
+		// Vault-placeholder steer: tell the model these are SAFE to use
+		// directly, not raw credentials it should refuse to handle.
+		"VAULT PLACEHOLDERS",
+		"autovault_",
+		"NOT raw credentials",
 		// Steer model to Bash+curl (Claude Code's WebFetch can't carry
 		// the headers/body the control plane needs).
 		"Bash with curl",
