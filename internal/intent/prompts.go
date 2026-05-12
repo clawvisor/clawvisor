@@ -277,8 +277,17 @@ The user has explicitly opted this task into lenient verification. Apply these a
 func buildVerificationUserMessage(req VerifyRequest) string {
 	params, _ := json.MarshalIndent(req.Params, "", "  ")
 
+	asciiLower := func(s string) string {
+		b := []byte(s)
+		for i, c := range b {
+			if 'A' <= c && c <= 'Z' {
+				b[i] = c + ('a' - 'A')
+			}
+		}
+		return string(b)
+	}
 	stripTags := func(s string) string {
-		lower := strings.ToLower(s)
+		lower := asciiLower(s)
 		for _, tag := range []string{
 			"<reason>", "</reason>",
 			"<system>", "</system>",
