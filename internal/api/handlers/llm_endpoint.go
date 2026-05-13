@@ -73,6 +73,14 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// InlineTaskCreator is the handlers-side helper invoked when an
+	// inline task gesture's second "approve" lands. Optional — when nil,
+	// inline task approval falls back to a deny response (the model
+	// can't create the task without a creator wired in). Production
+	// wires this to *TasksHandler so all task validation + audit logic
+	// is reused.
+	InlineTaskCreator llmproxy.InlineTaskCreator
+
 	// CallerNonces mints short-lived per-rewrite nonces that stand in
 	// for the agent's bearer token in the rewritten tool_use. The
 	// resolver-side middleware shares the same cache instance and
@@ -687,7 +695,8 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		Audit:           h.AuditEmitter,
 		// Mint a fresh nonce at release time; the original hold predates
 		// this release by an arbitrary amount, so any old nonce is gone.
-		CallerNonces: h.CallerNonces,
+		CallerNonces:      h.CallerNonces,
+		InlineTaskCreator: h.InlineTaskCreator,
 	})
 	if result.Handled {
 		h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled",

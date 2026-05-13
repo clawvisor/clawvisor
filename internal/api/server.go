@@ -951,6 +951,14 @@ func (s *Server) routes() http.Handler {
 		}
 		llmHandler.CallerNonces = callerNonces
 
+		// Inline task approval: when an agent's "approve" reply on a
+		// task-definition prompt lands, the release path calls
+		// tasksHandler.CreateInlineApprovedTask to atomically create
+		// the task pre-approved with surface=inline_chat. The handler
+		// also gets the same validation, risk assessment, and audit
+		// record creation the dashboard path uses.
+		llmHandler.InlineTaskCreator = tasksHandler
+
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
 
