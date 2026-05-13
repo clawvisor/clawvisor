@@ -231,6 +231,73 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScope(t *testing.T) {
 	}
 }
 
+// Codex's `write_stdin` with empty `chars` is the harness polling a
+// backgrounded shell for output — equivalent to BashOutput. It must
+// pass through without a task scope. Non-empty chars (actual typed
+// input) still gates.
+func TestPostprocess_WriteStdinPollBypassesTaskScope(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("write_stdin",
+		`{"session_id":79860,"chars":"","max_output_tokens":1200,"yield_time_ms":1000}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-write-stdin-poll",
+		CandidateTasks:   []*store.Task{},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+	if got.Rewritten {
+		t.Fatalf("write_stdin poll must pass through; got rewrite body=%s", got.Body)
+	}
+	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Outcome != "shell_poll_pass_through" {
+		t.Errorf("expected outcome=shell_poll_pass_through, got %d rows; outcome=%q", len(rows), rows[0].Outcome)
+	}
+}
+
+// Negative: write_stdin with non-empty chars is the model typing into
+// a shell — could be running `rm`. Must still gate.
+func TestPostprocess_WriteStdinWithCharsStillRequiresApproval(t *testing.T) {
+	body := anthropicJSONWithNamedToolUse("write_stdin",
+		`{"session_id":79860,"chars":"rm -rf /tmp/x\n","max_output_tokens":1200,"yield_time_ms":1000}`)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-write-stdin-active",
+		CandidateTasks:   []*store.Task{},
+		ToolRules:        []*store.RuntimePolicyRule{},
+		EgressRules:      []*store.RuntimePolicyRule{},
+		PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
+		Posture:          runtimedecision.PostureEnforce,
+	})
+	if !got.Rewritten {
+		t.Fatalf("write_stdin with non-empty chars must require approval, got pass-through")
+	}
+}
+
 // Negative: write-mutating / network bash commands must still gate
 // on task scope. The classifier is the only thing standing between
 // "no task" and "permitted to run anything in shell."

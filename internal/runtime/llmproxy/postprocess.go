@@ -338,6 +338,16 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				case runtimedecision.VerdictNeedsApproval:
 					if localOnly && dec.Source == runtimedecision.SourceTaskScopeMissing {
 						audit("allow", "local_only_pass_through", "local-only tool ("+tu.Name+")")
+						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "local_only_pass_through", "reason", "local-only tool ("+tu.Name+")")
+						return conversation.ToolUseVerdict{Allowed: true}
+					}
+					// Codex's write_stdin with empty chars is the
+					// harness polling a background shell for output —
+					// equivalent to Claude Code's BashOutput. No
+					// state change, no side effect. Pass through.
+					if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellPollTool(tu.Name, tu.Input) {
+						audit("allow", "shell_poll_pass_through", "background-shell poll ("+tu.Name+")")
+						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "shell_poll_pass_through", "reason", "background-shell poll")
 						return conversation.ToolUseVerdict{Allowed: true}
 					}
 					// Read-only bash commands (pwd, ls, cat, grep |
@@ -349,6 +359,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						if cmd := shellCommandFromInput(tu.Input); cmd != "" {
 							if readOK, _ := inspector.IsReadOnlyBashCommand(cmd); readOK {
 								audit("allow", "readonly_shell_pass_through", "read-only bash command")
+								trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "readonly_shell_pass_through", "reason", "read-only bash command", "cmd_preview", truncateForTrace(cmd, 200))
 								return conversation.ToolUseVerdict{Allowed: true}
 							}
 						}
@@ -772,6 +783,30 @@ func isShellTool(name string) bool {
 		return true
 	}
 	return false
+}
+
+// isShellPollTool reports whether a tool_use is a harness poll on a
+// background shell — read-equivalent and worth passing through. The
+// canonical case is Codex's `write_stdin` with empty `chars`, which
+// the harness emits continuously while a backgrounded `exec_command`
+// is running. Non-empty `chars` is actual input typed into a shell
+// (potentially mutating); stay strict.
+func isShellPollTool(name string, raw json.RawMessage) bool {
+	if name != "write_stdin" {
+		return false
+	}
+	if len(raw) == 0 {
+		return false
+	}
+	var input map[string]any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return false
+	}
+	chars, ok := input["chars"].(string)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(chars) == ""
 }
 
 // shellCommandFromInput extracts the command string from a shell-tool
