@@ -308,7 +308,11 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 // active, don't re-POST". Same shape as renderInlineTaskApprovedReply
 // without the per-task fields.
 func persistentInlineApprovalAugmentation() string {
-	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.]"
+	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s).\n\n" +
+		"PROGRESS RULES — these apply for the rest of this conversation:\n" +
+		"1. Do NOT POST /control/tasks again for the same work. The task above is already active; another POST would duplicate it.\n" +
+		"2. Do NOT emit the same tool_use twice in a row. After a tool_use returns a successful tool_result (e.g. `File created successfully` or `has been updated successfully`), the action is DONE. Your next response should advance to a different step (a different file, a different action, or finish) — not re-emit the same Write/Bash/etc. with the same or near-identical input. The harness does not need confirmation; the success message is the confirmation.\n" +
+		"3. When writing files: compose the FULL final content in ONE Write call per file. Don't write a draft and then re-Write with a header added, then re-Write again. Plan the content, write it once, move on.]"
 }
 
 // renderInlineTaskApprovedReply is the user-message text the LLM
