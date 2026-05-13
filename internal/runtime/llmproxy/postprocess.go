@@ -727,11 +727,17 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
+// taskToolWhy renders a default `why` for the model when the blocked
+// tool is being lifted into a fresh task definition. The text is
+// intentionally expansive about read/verify follow-ups so the LLM
+// intent verifier (which compares each tool_use to the matched
+// action's `why`) doesn't refuse the natural after-write inspect
+// commands an agent does to confirm its own work.
 func taskToolWhy(tu conversation.ToolUse) string {
 	switch strings.TrimSpace(tu.Name) {
 	case "Bash", "bash", "exec_command":
 		if command := toolInputString(tu.Input, "command", "cmd"); command != "" {
-			return "Run shell command(s) needed for the task, including: " + command
+			return "Run shell commands needed for the task, including writes AND verification reads (ls, wc, cat, stat) against the resulting files. Initial command: " + command
 		}
 	case "Read":
 		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
@@ -739,14 +745,14 @@ func taskToolWhy(tu conversation.ToolUse) string {
 		}
 	case "Write", "Edit", "NotebookEdit":
 		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
-			return "Modify files needed for the task, including: " + path
+			return "Create, modify, and read back files needed for the task (verifying writes is part of the workflow), including: " + path
 		}
 	case "WebFetch", "WebSearch":
 		if target := toolInputString(tu.Input, "url", "query"); target != "" {
 			return "Use web access needed for the task, including: " + target
 		}
 	}
-	return "Use this tool for the requested task. Include a concise description of the command pattern, file path, URL, or operation."
+	return "Use this tool for the requested task. Include a concise description of the command pattern, file path, URL, or operation; if writing or modifying, also cover the read-back verification you will do afterward."
 }
 
 func toolInputString(raw json.RawMessage, keys ...string) string {
