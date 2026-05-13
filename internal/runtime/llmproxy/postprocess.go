@@ -707,7 +707,17 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	if err != nil {
 		return ""
 	}
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a shell command to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120` so the command waits for my decision. Include the blocked action and any related tools or commands you expect to need.\n\nExample:\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	// The user just typed "task" at the inline prompt — they are
+	// definitionally at the chat surface. Pass ?surface=inline so the
+	// proxy holds the approve/deny gesture inline rather than routing
+	// to the dashboard's notification queue. wait=true is harmless for
+	// the inline path (the curl never actually runs) but keeps the
+	// shape compatible if the model decides to omit surface=inline.
+	//
+	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES
+	// accept a cat-heredoc-to-file then curl --data @file pattern, but
+	// it's strictly more error-prone — keep the prompt to one shape.
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a single curl invocation to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 func taskToolWhy(tu conversation.ToolUse) string {
