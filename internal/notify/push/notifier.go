@@ -183,6 +183,9 @@ func (n *Notifier) SendActivationRequest(ctx context.Context, req notify.Activat
 
 func (n *Notifier) SendTaskApprovalRequest(ctx context.Context, req notify.TaskApprovalRequest) (string, error) {
 	summary := actionSummary(req.Actions)
+	if summary == "" && len(req.ScopeSummary) > 0 {
+		summary = strings.Join(req.ScopeSummary, ", ")
+	}
 	data := map[string]string{
 		"target_id":  req.TaskID,
 		"type":       "task",
@@ -452,4 +455,3 @@ func actionSummary(actions []store.TaskAction) string {
 	}
 	return strings.Join(parts, ", ")
 }
-

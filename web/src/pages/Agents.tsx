@@ -386,6 +386,9 @@ function AgentDetailView({
 
       {runtimePolicyUI && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
 
+      <AgentLiteProxyPanel agentId={agent.id} />
+      <AgentLLMCredentialsPanel agentId={agent.id} />
+
       {runtimePolicyUI && (
         <AgentPolicyPanel
           agent={agent}
@@ -1167,6 +1170,270 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
           {approveMut.isPending ? 'Approving...' : 'Approve'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// ── Lite-proxy LLM credentials panel ─────────────────────────────────────────
+//
+// Stores the upstream API key (sk-ant-..., sk-...) the lite-proxy swaps in
+// when forwarding /v1/messages and /v1/chat/completions for this specific
+// agent. Falls back to the user-level credential when the agent-scoped one
+// isn't set, so configuring this is optional.
+function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [editingProvider, setEditingProvider] = useState<string | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  const { data: creds } = useQuery({
+    queryKey: ['llm-credentials', agentId],
+    queryFn: () => api.llmCredentials.list(agentId),
+    enabled: open,
+  })
+
+  const setMut = useMutation({
+    mutationFn: (params: { provider: string; key: string }) =>
+      api.llmCredentials.set(params.provider, params.key, agentId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId] })
+      setEditingProvider(null)
+      setApiKey('')
+      setError(null)
+      setSuccess(`Stored ${vars.provider} key for this agent`)
+      setTimeout(() => setSuccess(null), 5000)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (provider: string) => api.llmCredentials.delete(provider, agentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['llm-credentials', agentId] })
+      setSuccess('Deleted agent-scoped key — falling back to user-level credential')
+      setTimeout(() => setSuccess(null), 5000)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  function startEditing(provider: string) {
+    setEditingProvider(provider)
+    setApiKey('')
+    setError(null)
+  }
+
+  function handleSubmit(provider: string) {
+    if (!apiKey) { setError('API key is required'); return }
+    setError(null)
+    setMut.mutate({ provider, key: apiKey })
+  }
+
+  return (
+    <div className="mt-3 rounded border border-border-subtle bg-surface-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="text-sm font-medium text-text-primary">Lite-proxy LLM credentials</div>
+          <div className="text-xs text-text-tertiary">
+            Per-agent override for the upstream Anthropic / OpenAI API key the proxy swaps in. Falls back to your user-level key.
+          </div>
+        </div>
+        <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Configure'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border-subtle px-4 py-4 space-y-3">
+          {error && <div className="text-sm text-danger">{error}</div>}
+          {success && <div className="text-sm text-success">{success}</div>}
+          {creds?.credentials.map(c => (
+            <div key={c.provider} className="rounded border border-border-default bg-surface-1 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-text-primary capitalize">{c.provider}</div>
+                  <div className="text-xs text-text-tertiary mt-0.5">
+                    {c.agent_stored ? (
+                      <span className="text-success">Agent-scoped key set · overrides user-level</span>
+                    ) : c.stored ? (
+                      <span>Using user-level key (no agent-scoped override)</span>
+                    ) : (
+                      <span className="text-warning">No key configured at user or agent level</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {c.agent_stored && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Remove the ${c.provider} agent-scoped key? This agent will fall back to the user-level key.`)) {
+                          deleteMut.mutate(c.provider)
+                        }
+                      }}
+                      disabled={deleteMut.isPending}
+                      className="text-xs px-3 py-1 rounded border border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  )}
+                  <button
+                    onClick={() => startEditing(c.provider)}
+                    className="text-xs px-3 py-1 rounded border border-brand/30 text-brand hover:bg-brand/10"
+                  >
+                    {c.agent_stored ? 'Replace' : 'Set agent-scoped key'}
+                  </button>
+                </div>
+              </div>
+              {editingProvider === c.provider && (
+                <div className="space-y-2 pt-2 border-t border-border-subtle">
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={e => { setApiKey(e.target.value); setError(null) }}
+                    placeholder={c.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                    className="block w-full text-sm rounded border border-border-default bg-surface-0 text-text-primary px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSubmit(c.provider)}
+                      disabled={setMut.isPending || !apiKey}
+                      className="px-3 py-1 text-xs rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                    >
+                      {setMut.isPending ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingProvider(null); setApiKey(''); setError(null) }}
+                      className="text-xs text-text-tertiary hover:text-text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Lite-proxy connection details panel ─────────────────────────────────────
+//
+// Surfaces the URLs and env vars an agent harness needs to point at this
+// daemon's lite-proxy (vs. running through the runtime-proxy CONNECT
+// path). Covers the three flagship harnesses: Claude Code, Codex CLI,
+// and a generic OpenAI/Anthropic SDK.
+function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
+  const [open, setOpen] = useState(false)
+  const { data: pairInfo } = useQuery({
+    queryKey: ['pairInfo'],
+    queryFn: () => api.devices.pairInfo(),
+  })
+  // window.location.origin points at the relay when the dashboard is
+  // accessed via the cloud, not the per-daemon mount the agent harness
+  // must talk to. Prefer the daemon-scoped relay path when we have one
+  // and the dashboard isn't local; otherwise fall back to the origin.
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
+  const baseURL = !isLocal && hasRelay
+    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
+    : window.location.origin
+  const [copied, setCopied] = useState<string | null>(null)
+
+  function copy(label: string, value: string) {
+    // navigator.clipboard is undefined in insecure (http://) or sandboxed
+    // contexts. Calling .writeText on undefined throws synchronously, so
+    // the .catch handler below never runs. Guard before dispatching.
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      setCopied(`${label}-failed`)
+      setTimeout(() => setCopied(null), 2000)
+      return
+    }
+    navigator.clipboard.writeText(value)
+      .then(() => {
+        setCopied(label)
+        setTimeout(() => setCopied(null), 2000)
+      })
+      .catch(() => {
+        // writeText can also reject asynchronously (permission denied,
+        // user gesture missing on Safari, etc.).
+        setCopied(`${label}-failed`)
+        setTimeout(() => setCopied(null), 2000)
+      })
+  }
+
+  // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
+  // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/v1`
+  // because the client appends just the action path (`/chat/completions`).
+  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_API_KEY=cvis_<this-agent-token> claude`
+  const codex = `codex exec \\
+  -c model_provider=clawvisor \\
+  -c 'model_providers.clawvisor.base_url="${baseURL}/v1"' \\
+  -c 'model_providers.clawvisor.env_key="CLAWVISOR_AGENT_TOKEN"' \\
+  -c 'model="gpt-4o-mini"'`
+  const openaiSDK = `from openai import OpenAI
+client = OpenAI(
+    base_url="${baseURL}/v1",
+    api_key="cvis_<this-agent-token>",
+)`
+  const anthropicSDK = `import anthropic
+client = anthropic.Anthropic(
+    base_url="${baseURL}",
+    api_key="cvis_<this-agent-token>",
+)`
+
+  return (
+    <div className="mt-3 rounded border border-border-subtle bg-surface-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="text-sm font-medium text-text-primary">Lite-proxy connection</div>
+          <div className="text-xs text-text-tertiary">
+            Point an agent harness at this daemon's LLM endpoint. We'll swap your <code className="font-mono text-[11px]">cvis_…</code> token for the real upstream key on each call.
+          </div>
+        </div>
+        <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border-subtle px-4 py-4 space-y-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-text-tertiary">Base URL</div>
+            <div className="mt-1 flex items-center gap-2">
+              <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{baseURL}/v1</code>
+              <button
+                onClick={() => copy('base', `${baseURL}/v1`)}
+                className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
+              >
+                {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          {[
+            { label: 'Claude Code', key: 'claude', body: claudeCode },
+            { label: 'Codex CLI', key: 'codex', body: codex },
+            { label: 'OpenAI Python SDK', key: 'oai', body: openaiSDK },
+            { label: 'Anthropic Python SDK', key: 'ant', body: anthropicSDK },
+          ].map(snippet => (
+            <div key={snippet.key}>
+              <div className="flex items-center justify-between">
+                <div className="text-xs uppercase tracking-wider text-text-tertiary">{snippet.label}</div>
+                <button
+                  onClick={() => copy(snippet.key, snippet.body)}
+                  className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
+                >
+                  {copied === snippet.key ? 'Copied!' : copied === `${snippet.key}-failed` ? 'Copy failed' : 'Copy'}
+                </button>
+              </div>
+              <pre className="mt-1 px-3 py-2 text-xs font-mono rounded border border-border-default bg-surface-1 text-text-primary overflow-x-auto whitespace-pre-wrap">{snippet.body}</pre>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

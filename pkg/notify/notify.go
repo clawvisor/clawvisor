@@ -71,6 +71,7 @@ type TaskApprovalRequest struct {
 	Purpose      string
 	Actions      []store.TaskAction
 	PlannedCalls []store.PlannedCall
+	ScopeSummary []string
 	RiskLevel    string // "low", "medium", "high", "critical"
 	ApproveURL   string
 	DenyURL      string

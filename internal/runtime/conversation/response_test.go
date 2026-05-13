@@ -75,6 +75,56 @@ func TestAnthropicResponseRewriterBlocksToolUseJSON(t *testing.T) {
 	}
 }
 
+func TestAnthropicResponseRewriterOmitsEmptyTextBlocksWhenRewritingSSE(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"WebFetch","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://clawvisor.local/control/skill\",\"prompt\":\"What is here?\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+
+	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:      true,
+			RewriteInput: json.RawMessage(`{"url":"https://example.test/control/skill","prompt":"What is here?"}`),
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE")
+	}
+	out := string(result.Body)
+	if strings.Contains(out, `"type":"text","text":""`) {
+		t.Fatalf("rewritten SSE should not include an empty text block: %s", out)
+	}
+	if !strings.Contains(out, `"index":0`) || strings.Contains(out, `"index":1`) {
+		t.Fatalf("rewritten SSE should reindex the remaining tool block to 0: %s", out)
+	}
+}
+
 func TestAnthropicToolResultIDsFromRequest(t *testing.T) {
 	t.Parallel()
 
@@ -173,18 +223,58 @@ func TestOpenAIResponseRewriterBlocksChatToolCallsSSE(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseRewriterBlocksResponsesFunctionCallSSE(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := SynthOpenAIResponsesFunctionCallSSE("call_1", "exec_command", map[string]any{
+		"cmd": "cat /tmp/hello_world.sh",
+	})
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(ToolUse) ToolUseVerdict {
+		return ToolUseVerdict{
+			Allowed:        false,
+			Reason:         "Ask before running exec_command",
+			SubstituteWith: "Clawvisor paused this tool call for approval.\n\nReply `approve` to run it or `deny` to block it.",
+		}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatal("expected rewritten SSE response")
+	}
+	out := string(result.Body)
+	if !strings.Contains(out, "Reply `approve`") {
+		t.Fatalf("expected inline approval prompt in SSE output, got %q", out)
+	}
+	if !strings.Contains(out, `"output_text":"Clawvisor paused this tool call`) {
+		t.Fatalf("expected final response.completed output_text for Codex clients, got %q", out)
+	}
+	if !strings.Contains(out, `"content":[{"text":"Clawvisor paused this tool call`) {
+		t.Fatalf("expected completed message item content for Codex clients, got %q", out)
+	}
+	if !strings.Contains(out, "data: [DONE]") {
+		t.Fatalf("expected [DONE] terminator, got %q", out)
+	}
+}
+
 func TestOpenAIToolResultIDsAndApprovalReply(t *testing.T) {
 	t.Parallel()
 
 	responsesBody := []byte(`{
 	  "input":[
-	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdef123456"}]},
+	    {"type":"message","role":"user","content":[{"type":"input_text","text":"approve cv-abcdefghijklmnopqrstuvwxyz"}]},
 	    {"type":"function_call_output","call_id":"call_123","output":"ok"}
 	  ]
 	}`)
 	responsesReq, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
 	verb, id := OpenAIApprovalReply(responsesBody)
-	if verb != "approve" || id != "cv-abcdef123456" {
+	if verb != "approve" || id != "cv-abcdefghijklmnopqrstuvwxyz" {
 		t.Fatalf("unexpected responses approval reply: verb=%q id=%q", verb, id)
 	}
 	ids := OpenAIToolResultIDsFromRequest(responsesReq, responsesBody)
@@ -250,6 +340,46 @@ func TestApplyBlockSubstitutionsMatchesToolDecisionsByPosition(t *testing.T) {
 	}
 	if got[1].IsTool || !strings.Contains(got[1].Text, "requires approval") {
 		t.Fatalf("expected second Bash tool fragment to be substituted, got %+v", got[1])
+	}
+}
+
+// OpenAI Chat streams can interleave assistant prose with tool_calls.
+// When the rewriter mutates the tool_call arguments, the synthesized
+// re-emit must preserve the leading text. Previously the text buffer
+// was reset on finish_reason="tool_calls" and the re-emit was built
+// from the empty buffer, silently dropping the prose.
+func TestOpenAIResponseRewriterPreservesLeadingTextOnChatRewrite(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	rewriter := DefaultResponseRegistry().Match(req, &http.Response{})
+	if rewriter == nil {
+		t.Fatal("expected OpenAI response rewriter")
+	}
+
+	body := []byte(strings.Join([]string{
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Looking up your repo. "},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"github","arguments":"{\"repo\":\"acme\"}"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"chatcmpl_x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n"))
+
+	result, err := rewriter.Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
+		// Rewrite the tool_call arguments so the rewrite path fires.
+		return ToolUseVerdict{Allowed: true, RewriteInput: []byte(`{"repo":"acme/rewritten"}`)}
+	})
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if !result.Rewritten {
+		t.Fatalf("expected rewrite to fire")
+	}
+	if !strings.Contains(string(result.Body), "Looking up your repo.") {
+		t.Fatalf("leading prose dropped after rewrite:\n%s", result.Body)
 	}
 }
 

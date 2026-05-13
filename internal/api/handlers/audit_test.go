@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
 
 func TestAuditHandlerListExcludesMutedRuntimeEgressRows(t *testing.T) {
@@ -168,6 +168,77 @@ func TestAuditHandlerNormalizesRuntimeToolUseURLSummary(t *testing.T) {
 		t.Fatalf("unexpected action target: %+v", resp)
 	}
 	if resp.SummaryText != "web_fetch https://example.com" {
+		t.Fatalf("unexpected summary: %+v", resp)
+	}
+}
+
+func TestAuditHandlerNormalizesLiteProxyEndpointSummary(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "audit-lite-endpoint-summary.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+
+	user, err := st.CreateUser(ctx, "audit-lite@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	entry := &store.AuditEntry{
+		ID:        "audit-lite-1",
+		UserID:    user.ID,
+		RequestID: "req-lite-1",
+		Timestamp: time.Now().UTC(),
+		Service:   "anthropic",
+		Action:    "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{
+			"event":"lite_proxy.endpoint_call",
+			"provider":"anthropic",
+			"model":"claude-sonnet-4-6",
+			"method":"POST",
+			"path":"/v1/messages"
+		}`),
+		Decision:   "allow",
+		Outcome:    "success",
+		DurationMS: 90,
+	}
+	if err := st.LogAudit(ctx, entry); err != nil {
+		t.Fatalf("LogAudit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/"+entry.ID, nil)
+	req.SetPathValue("id", entry.ID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h := NewAuditHandler(st)
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Get status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		SummaryText  string `json:"summary_text"`
+		ActivityKind string `json:"activity_kind"`
+		ActionTarget string `json:"action_target"`
+		Method       string `json:"method"`
+		Path         string `json:"path"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.ActivityKind != "runtime" {
+		t.Fatalf("unexpected activity kind: %+v", resp)
+	}
+	if resp.ActionTarget != "claude-sonnet-4-6" {
+		t.Fatalf("unexpected action target: %+v", resp)
+	}
+	if resp.Method != "POST" || resp.Path != "/v1/messages" {
+		t.Fatalf("unexpected method/path: %+v", resp)
+	}
+	if resp.SummaryText != "Anthropic claude-sonnet-4-6 /v1/messages" {
 		t.Fatalf("unexpected summary: %+v", resp)
 	}
 }

@@ -1,0 +1,359 @@
+package llmproxy
+
+import (
+	"net/url"
+	"regexp"
+	"strings"
+	"sync"
+
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamldef"
+	"github.com/clawvisor/clawvisor/pkg/adapters/yamlruntime"
+)
+
+// yamlDefiner is implemented by adapters whose definition can be exposed —
+// currently only *yamlruntime.YAMLAdapter. We accept anything that satisfies
+// the contract so that future Go-only adapters could opt in.
+type yamlDefiner interface {
+	Def() yamldef.ServiceDef
+}
+
+// ResolvedAction is the (service, action) tuple a (host, method, path) maps to.
+// PathTemplate is the original YAML template (e.g. "/repos/{{.owner}}/{{.repo}}/issues")
+// preserved so callers can show the human-readable form in audit + approval UI.
+type ResolvedAction struct {
+	ServiceID    string
+	ActionID     string
+	Method       string
+	PathTemplate string
+}
+
+// ServiceCatalog reverse-resolves an outgoing HTTP request — (host, method, path)
+// — to a Clawvisor (service, action) pair using the YAML adapter definitions.
+//
+// This is the bridge between the lite-proxy inspector (which knows what URL
+// the agent intends to hit) and the policy/task-scope layer (which only
+// understands service IDs + action names).
+//
+// Resolution is host-first, then path-template-matched. Among multiple action
+// matches we pick the most specific by static-segment count — so
+// `/repos/{{.o}}/{{.r}}/issues` beats `/repos/{{.o}}/{{.r}}/{{.x}}` for path
+// `/repos/x/y/issues`. Method must match exactly.
+type ServiceCatalog struct {
+	entries []catalogEntry
+}
+
+type catalogEntry struct {
+	serviceID    string
+	actionID     string
+	method       string
+	host         string
+	pathTemplate string
+	pathRegex    *regexp.Regexp
+	staticScore  int
+}
+
+var (
+	templateVarRE = regexp.MustCompile(`\{\{\s*\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*\s*\}\}`)
+)
+
+// NewServiceCatalog builds a catalog from the loaded YAML service definitions.
+// Definitions with non-REST APIs, missing base URLs, or template-driven hosts
+// (e.g. `{{.workspace}}.example.com`) are silently skipped — the lite-proxy
+// will simply not be able to resolve those hosts back to (service, action),
+// and policy will fall through to whatever default it applies for unknown
+// destinations.
+func NewServiceCatalog(defs []yamldef.ServiceDef) *ServiceCatalog {
+	c := &ServiceCatalog{entries: make([]catalogEntry, 0, len(defs)*8)}
+	for _, def := range defs {
+		if !strings.EqualFold(strings.TrimSpace(def.API.Type), "rest") {
+			continue
+		}
+		host := hostFromBaseURL(def.API.BaseURL)
+		if host == "" {
+			continue
+		}
+		basePath := basePathFromBaseURL(def.API.BaseURL)
+		serviceID := def.Service.ID
+		for actionID, action := range def.Actions {
+			if action.Method == "" || action.Path == "" {
+				continue
+			}
+			fullPath := joinBaseAndActionPath(basePath, action.Path)
+			re, score, ok := compilePathTemplate(fullPath)
+			if !ok {
+				continue
+			}
+			c.entries = append(c.entries, catalogEntry{
+				serviceID:    serviceID,
+				actionID:     actionID,
+				method:       strings.ToUpper(action.Method),
+				host:         strings.ToLower(host),
+				pathTemplate: fullPath,
+				pathRegex:    re,
+				staticScore:  score,
+			})
+		}
+	}
+	return c
+}
+
+// Resolve returns the (service, action) for an outgoing request, or false
+// when no entry matches. Both the host and the method are required;
+// trailing slashes on the path are normalized away. Query strings, if
+// supplied, are stripped before matching.
+func (c *ServiceCatalog) Resolve(host, method, path string) (ResolvedAction, bool) {
+	if c == nil || len(c.entries) == 0 {
+		return ResolvedAction{}, false
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if host == "" || method == "" {
+		return ResolvedAction{}, false
+	}
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	if i := strings.IndexByte(path, '#'); i >= 0 {
+		path = path[:i]
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	// Strip a single trailing slash unless the path is just "/".
+	if len(path) > 1 && strings.HasSuffix(path, "/") {
+		path = strings.TrimRight(path, "/")
+	}
+
+	bestScore := -1
+	var best ResolvedAction
+	found := false
+	for _, e := range c.entries {
+		if e.host != host || e.method != method {
+			continue
+		}
+		if !e.pathRegex.MatchString(path) {
+			continue
+		}
+		switch {
+		case e.staticScore > bestScore:
+		case e.staticScore == bestScore && found && lessActionKey(e, best):
+			// Equal specificity: break the tie deterministically on
+			// (service, action, template) so the same request always
+			// resolves to the same action across processes. Without this
+			// tie-break, two overlapping templates with identical scores
+			// would otherwise be picked by entry order — which is stable
+			// per process but silently surprising under config edits.
+		default:
+			continue
+		}
+		bestScore = e.staticScore
+		best = ResolvedAction{
+			ServiceID:    e.serviceID,
+			ActionID:     e.actionID,
+			Method:       e.method,
+			PathTemplate: e.pathTemplate,
+		}
+		found = true
+	}
+	if !found {
+		return ResolvedAction{}, false
+	}
+	return best, true
+}
+
+// lessActionKey reports whether candidate e sorts before best on the
+// (serviceID, actionID, pathTemplate) tuple. Used to break tie-rank
+// matches in Resolve so the same request always picks the same action.
+func lessActionKey(e catalogEntry, best ResolvedAction) bool {
+	if e.serviceID != best.ServiceID {
+		return e.serviceID < best.ServiceID
+	}
+	if e.actionID != best.ActionID {
+		return e.actionID < best.ActionID
+	}
+	return e.pathTemplate < best.PathTemplate
+}
+
+// hostFromBaseURL extracts the host (excluding port) from a base_url. If
+// the host contains an unresolved template like
+// `{{.workspace}}.example.com`, returns "" so the catalog skips this def
+// — it can't be reverse-mapped without instance-specific config. A `{{`
+// elsewhere in the URL (e.g. in the path: `https://api.x.com/v1/{{.id}}/…`)
+// is fine — the host is still concrete and the catalog can resolve it.
+func hostFromBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	if host == "" || strings.Contains(host, "{{") {
+		return ""
+	}
+	return host
+}
+
+// joinBaseAndActionPath combines a base_url path prefix with an action's
+// path template. The base prefix is concrete; the action path may carry
+// `{{.var}}` templates which compilePathTemplate later converts to
+// `[^/]+`.
+func joinBaseAndActionPath(base, action string) string {
+	action = strings.TrimSpace(action)
+	if !strings.HasPrefix(action, "/") {
+		action = "/" + action
+	}
+	if base == "" {
+		return action
+	}
+	joined := strings.TrimRight(base, "/") + action
+	// When the action path is just "/", the join ends in a trailing
+	// slash (e.g. base=/v1, action=/  ->  /v1/). The resolver
+	// normalizes request paths by stripping the trailing slash, so
+	// the regex would never match the normalized form. Strip the
+	// trailing slash here unless the whole result IS "/".
+	if len(joined) > 1 && strings.HasSuffix(joined, "/") {
+		joined = strings.TrimRight(joined, "/")
+	}
+	return joined
+}
+
+// basePathFromBaseURL returns the path prefix from a base_url (or "" when
+// the URL has none). The compiled per-action regex prepends this prefix
+// so request paths that include it (e.g. `/v1/widgets` for a base_url
+// of `https://api.example.com/v1` and an action path of `/widgets`)
+// resolve correctly.
+func basePathFromBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	p := u.Path
+	if p == "" || p == "/" {
+		return ""
+	}
+	// Templated path segments are kept verbatim — compilePathTemplate
+	// will convert them downstream.
+	return strings.TrimRight(p, "/")
+}
+
+// compilePathTemplate converts a YAML path template like
+// `/repos/{{.owner}}/{{.repo}}/issues` into an anchored regex matching
+// concrete request paths. Each `{{.X}}` becomes `[^/]+`. Returns the
+// regex, a static-segment score (count of literal slash-separated
+// segments — used for specificity tiebreaking) and ok=false if the
+// template fails to compile.
+func compilePathTemplate(template string) (*regexp.Regexp, int, bool) {
+	if !strings.HasPrefix(template, "/") {
+		template = "/" + template
+	}
+	// Compute static score: count slash-separated segments that don't
+	// contain a `{{` placeholder.
+	staticScore := 0
+	for _, seg := range strings.Split(template, "/") {
+		if seg == "" {
+			continue
+		}
+		if !strings.Contains(seg, "{{") {
+			staticScore++
+		}
+	}
+	// Build regex by quoting fixed text and replacing template vars.
+	var b strings.Builder
+	b.WriteString(`^`)
+	last := 0
+	for _, m := range templateVarRE.FindAllStringIndex(template, -1) {
+		b.WriteString(regexp.QuoteMeta(template[last:m[0]]))
+		b.WriteString(`[^/]+`)
+		last = m[1]
+	}
+	b.WriteString(regexp.QuoteMeta(template[last:]))
+	b.WriteString(`$`)
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return nil, 0, false
+	}
+	return re, staticScore, true
+}
+
+// DefsFromRegistry extracts the YAML service definitions from the shared
+// adapter registry. Only YAML-driven REST adapters contribute entries;
+// Go-only adapters (iMessage, SQL) and GraphQL adapters are silently
+// skipped — the catalog is purely for HTTP path/method reverse-mapping.
+//
+// Useful for building a LazyServiceCatalog from server startup.
+func DefsFromRegistry(reg *adapters.Registry) []yamldef.ServiceDef {
+	if reg == nil {
+		return nil
+	}
+	defs := make([]yamldef.ServiceDef, 0)
+	for _, a := range reg.All() {
+		if ya, ok := a.(*yamlruntime.YAMLAdapter); ok {
+			defs = append(defs, ya.Def())
+			continue
+		}
+		if d, ok := a.(yamlDefiner); ok {
+			defs = append(defs, d.Def())
+		}
+	}
+	return defs
+}
+
+// NewServiceCatalogFromRegistry is a convenience over DefsFromRegistry +
+// NewServiceCatalog.
+func NewServiceCatalogFromRegistry(reg *adapters.Registry) *ServiceCatalog {
+	return NewServiceCatalog(DefsFromRegistry(reg))
+}
+
+// LazyServiceCatalog is a thread-safe wrapper that builds a ServiceCatalog
+// the first time Resolve is called. Useful when the caller has a hot path
+// that should not pay the build cost until first use, and wants to swap
+// in updated definitions without restarting.
+type LazyServiceCatalog struct {
+	mu      sync.RWMutex
+	defs    []yamldef.ServiceDef
+	built   *ServiceCatalog
+	dirty   bool
+}
+
+// NewLazyServiceCatalog returns a lazy catalog seeded with defs.
+func NewLazyServiceCatalog(defs []yamldef.ServiceDef) *LazyServiceCatalog {
+	return &LazyServiceCatalog{defs: defs, dirty: true}
+}
+
+// SetDefinitions replaces the underlying definitions and forces a rebuild
+// on the next Resolve call.
+func (l *LazyServiceCatalog) SetDefinitions(defs []yamldef.ServiceDef) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.defs = defs
+	l.dirty = true
+	l.built = nil
+}
+
+// Resolve mirrors ServiceCatalog.Resolve.
+func (l *LazyServiceCatalog) Resolve(host, method, path string) (ResolvedAction, bool) {
+	l.mu.RLock()
+	if !l.dirty && l.built != nil {
+		c := l.built
+		l.mu.RUnlock()
+		return c.Resolve(host, method, path)
+	}
+	l.mu.RUnlock()
+
+	l.mu.Lock()
+	if l.dirty || l.built == nil {
+		l.built = NewServiceCatalog(l.defs)
+		l.dirty = false
+	}
+	c := l.built
+	l.mu.Unlock()
+	return c.Resolve(host, method, path)
+}

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -15,11 +14,12 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/runtime/leases"
+	"github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -209,65 +209,14 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 		})
 	}
 
-	var bodyBytes []byte
-	contentType := "application/json"
-	switch {
-	case conversation.MatchProviderAnthropic(req):
-		stream := conversation.AnthropicRequestWantsStream(requestBody)
-		if allow {
-			if stream {
-				contentType = "text/event-stream"
-				bodyBytes = conversation.SynthAnthropicToolUseSSE("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
-			} else {
-				bodyBytes = conversation.SynthAnthropicToolUseJSON("", "", "assistant", held.ToolUseID, held.ToolName, held.ToolInput)
-			}
-		} else {
-			msg := "Approval denied. The requested tool call was not performed."
-			if stream {
-				contentType = "text/event-stream"
-				bodyBytes = conversation.SynthAnthropicTextSSE("", "", "assistant", msg)
-			} else {
-				bodyBytes = conversation.SynthAnthropicTextJSON("", "", "assistant", msg)
-			}
-		}
-	case conversation.MatchProviderOpenAI(req):
-		stream := conversation.OpenAIRequestWantsStream(requestBody)
-		if conversation.IsOpenAIChatCompletionsEndpoint(req) {
-			if allow {
-				if stream {
-					contentType = "text/event-stream"
-					bodyBytes = conversation.SynthOpenAIChatToolCallSSE(held.ToolUseID, held.ToolName, held.ToolInput)
-				} else {
-					bodyBytes = conversation.SynthOpenAIChatToolCallJSON(held.ToolUseID, held.ToolName, held.ToolInput)
-				}
-			} else {
-				msg := "Approval denied. The requested tool call was not performed."
-				if stream {
-					contentType = "text/event-stream"
-					bodyBytes = conversation.SynthOpenAIChatTextSSE(msg)
-				} else {
-					bodyBytes = conversation.SynthOpenAIChatTextJSON(msg)
-				}
-			}
-		} else {
-			if allow {
-				if stream {
-					contentType = "text/event-stream"
-					bodyBytes = conversation.SynthOpenAIResponsesFunctionCallSSE(held.ToolUseID, held.ToolName, held.ToolInput)
-				} else {
-					bodyBytes = conversation.SynthOpenAIResponsesFunctionCallJSON(held.ToolUseID, held.ToolName, held.ToolInput)
-				}
-			} else {
-				msg := "Approval denied. The requested tool call was not performed."
-				if stream {
-					contentType = "text/event-stream"
-					bodyBytes = conversation.SynthOpenAIResponsesTextSSE(msg)
-				} else {
-					bodyBytes = conversation.SynthOpenAIResponsesTextJSON(msg)
-				}
-			}
-		}
-	default:
+	provider := conversation.Provider("")
+	if conversation.MatchProviderAnthropic(req) {
+		provider = conversation.ProviderAnthropic
+	} else if conversation.MatchProviderOpenAI(req) {
+		provider = conversation.ProviderOpenAI
+	}
+	synth, ok := conversation.SyntheticApprovalToolUseResponse(req, provider, requestBody, allow, held.ToolUseID, held.ToolName, held.ToolInput)
+	if !ok {
 		return req, nil
 	}
 
@@ -276,9 +225,9 @@ func (s *Server) syntheticHeldToolUseResponse(req *http.Request, session *store.
 		Status:        "200 OK",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Header:        http.Header{"Content-Type": []string{contentType}, "Cache-Control": []string{"no-cache"}},
-		Body:          io.NopCloser(bytes.NewReader(bodyBytes)),
-		ContentLength: int64(len(bodyBytes)),
+		Header:        http.Header{"Content-Type": []string{synth.ContentType}, "Cache-Control": []string{"no-cache"}},
+		Body:          io.NopCloser(bytes.NewReader(synth.Body)),
+		ContentLength: int64(len(synth.Body)),
 		Request:       req,
 	}
 }
@@ -324,29 +273,34 @@ func (s *Server) handleToolUseBlockedResponse(resp *http.Response, ctx *goproxy.
 	evaluator := func(tu conversation.ToolUse) conversation.ToolUseVerdict {
 		input := decodeToolInput(tu.Input)
 		key := toolDecisionKey(tu)
-		if matchedRule, err := runtimepolicy.MatchRuntimePolicyTool(rules, st.Session.AgentID, tu.Name, input); err == nil && matchedRule != nil {
+		ruleDecision, err := runtimedecision.EvaluateAuthorization(ctx.Req.Context(), runtimedecision.AuthorizationInput{
+			ToolUse:   tu,
+			UserID:    st.Session.UserID,
+			AgentID:   st.Session.AgentID,
+			Posture:   runtimeDecisionPosture(st.Session),
+			ToolRules: rules,
+		})
+		if err == nil && ruleDecision.Rule != nil {
+			matchedRule := ruleDecision.Rule
 			_ = hooks.Store.TouchRuntimePolicyRule(ctx.Req.Context(), matchedRule.ID, time.Now().UTC())
-			switch strings.ToLower(matchedRule.Action) {
-			case "allow":
+			switch ruleDecision.Source {
+			case runtimedecision.SourceRuleAllow:
 				decisionState[key] = toolDecisionState{Rule: matchedRule}
-				if st.Session.ObservationMode {
-					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime allow rule matched this tool call")}
-				}
-				return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "runtime allow rule matched this tool call")}
-			case "deny":
-				if st.Session.ObservationMode {
+				return conversation.ToolUseVerdict{Allowed: true, Reason: ruleDecision.Reason}
+			case runtimedecision.SourceRuleDeny:
+				if ruleDecision.ObservationEffect == runtimedecision.ObservationWouldBlock {
 					decisionState[key] = toolDecisionState{Rule: matchedRule, WouldBlock: true}
-					return conversation.ToolUseVerdict{Allowed: true, Reason: firstNonEmpty(matchedRule.Reason, "observation mode: runtime deny rule would block this tool call")}
+					return conversation.ToolUseVerdict{Allowed: true, Reason: ruleDecision.Reason}
 				}
 				decisionState[key] = toolDecisionState{Rule: matchedRule, DeniedByRule: true}
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
-					Reason:         firstNonEmpty(matchedRule.Reason, "runtime deny rule blocked this tool call"),
+					Reason:         ruleDecision.Reason,
 					SubstituteWith: "This tool call was blocked by Clawvisor runtime policy.",
 				}
-			case "review":
-				reviewReason := firstNonEmpty(matchedRule.Reason, "runtime review rule matched this tool call")
-				if st.Session.ObservationMode {
+			case runtimedecision.SourceRuleReview:
+				reviewReason := ruleDecision.Reason
+				if ruleDecision.ObservationEffect == runtimedecision.ObservationWouldReview {
 					decisionState[key] = toolDecisionState{
 						Rule:              matchedRule,
 						Task:              reviewTask,
@@ -677,6 +631,13 @@ type toolDecisionState struct {
 	FailureReason           string
 }
 
+func runtimeDecisionPosture(session *store.RuntimeSession) runtimedecision.EvaluationPosture {
+	if session != nil && session.ObservationMode {
+		return runtimedecision.PostureObserve
+	}
+	return runtimedecision.PostureEnforce
+}
+
 func (s *Server) ensureHeldToolUseApproval(ctx context.Context, hooks ToolUseHooks, session *store.RuntimeSession, reviewTask *store.Task, tu conversation.ToolUse, input map[string]any) (*store.ApprovalRecord, *review.HeldApproval, string) {
 	return s.ensureHeldToolUseApprovalWithKind(ctx, hooks, session, reviewTask, tu, input, "task_call_review", runtimepolicy.RuntimeContextJudgment{}, "tool call requires runtime approval")
 }
@@ -847,59 +808,11 @@ func toolDecisionKey(tu conversation.ToolUse) string {
 }
 
 func parseAnthropicApprovalReply(body []byte) (verb, id string) {
-	var req anthropicApprovalRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", ""
-	}
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role != "user" {
-			continue
-		}
-		return conversation.ParseApprovalReplyText(extractAnthropicUserText(req.Messages[i].Content))
-	}
-	return "", ""
+	return conversation.AnthropicApprovalReply(body)
 }
 
 func parseApprovalReplyForProvider(provider conversation.Provider, body []byte) (verb, id string) {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return parseAnthropicApprovalReply(body)
-	case conversation.ProviderOpenAI:
-		return conversation.OpenAIApprovalReply(body)
-	default:
-		return "", ""
-	}
-}
-
-type anthropicApprovalRequest struct {
-	Messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"messages"`
-}
-
-func extractAnthropicUserText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var simple string
-	if err := json.Unmarshal(raw, &simple); err == nil {
-		return simple
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return ""
-	}
-	var out []string
-	for _, block := range blocks {
-		if block.Type == "text" && block.Text != "" {
-			out = append(out, block.Text)
-		}
-	}
-	return strings.Join(out, "\n")
+	return conversation.ApprovalReplyForProvider(provider, body)
 }
 
 func (s *Server) closeLeasesForToolResults(ctx context.Context, hooks ToolUseHooks, req *http.Request, reqState *RequestState, body []byte) {
