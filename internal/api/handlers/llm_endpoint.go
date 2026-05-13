@@ -331,6 +331,20 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			auditParams["inline_task_reason"] = inlineRewrite.Reason
 		}
 	}
+
+	// Persistent inline-approval context augmentation. The harness
+	// records what the user typed ("approve") not our one-shot
+	// rewrite ("approve [Clawvisor: ...]"), so on subsequent turns
+	// the context is lost and the model duplicates work
+	// (re-POSTs /control/tasks, re-emits tool_use). Walk conversation
+	// history and re-inject the persistent context on every request.
+	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider); augErr != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
+			"request_id", requestID, "agent_id", agent.ID, "err", augErr.Error())
+	} else if augmented {
+		body = augBody
+		auditParams["inline_task_history_augmented"] = true
+	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
 		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)

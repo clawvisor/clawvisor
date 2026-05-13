@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -177,6 +178,137 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	out.Body = rewritten
 	out.Rewritten = true
 	return out, nil
+}
+
+// InlineApprovalSubstitutedPromptMarker is the leading phrase of the
+// assistant text we substitute in place of a model-emitted POST
+// /control/tasks tool_use. The persistent-history rewriter looks for
+// this marker to find user "approve" turns that need their context
+// re-injected on every subsequent request.
+const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
+
+// InlineApprovalAugmentationMarker is a tag we embed in the rewritten
+// user message so subsequent passes can detect that a turn was
+// already augmented and skip it. Avoids double-augmentation across
+// retries / multi-step preprocess pipelines.
+const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
+
+// AugmentApprovedInlineTasksInHistory walks the conversation history
+// and re-injects the "[Clawvisor: ... task approved inline ...]"
+// context onto every user "approve" turn that follows the substituted
+// task-approval prompt.
+//
+// Why this is needed: our one-shot rewrite in
+// RewriteInlineTaskApprovalReply only persists for a single LLM call
+// — the harness records what the user actually typed ("approve"), not
+// our transit-rewritten version. On subsequent turns the conversation
+// history shows bare "approve" and the model loses the task-creation
+// context, leading to duplicate /control/tasks POSTs and other
+// confusions.
+//
+// This function runs on every request as a no-op-or-augment pass. It
+// rewrites in place, idempotent across calls (a previously-augmented
+// turn skips on subsequent passes via the augmentation marker).
+//
+// Returns (body, rewritten, err). When no qualifying turns are found,
+// returns the body unchanged with rewritten=false.
+func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider) ([]byte, bool, error) {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return augmentAnthropicApprovedInlineTasks(body)
+	case conversation.ProviderOpenAI:
+		// OpenAI Chat / Responses can share the same persistence work
+		// once we have a reproducer there. For now we keep the
+		// rewrite Anthropic-only — Claude Code is the harness this
+		// matters for and it's the one we've observed losing the
+		// context.
+		return body, false, nil
+	default:
+		return body, false, nil
+	}
+}
+
+func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body, false, err
+	}
+	rawMessages, ok := raw["messages"]
+	if !ok {
+		return body, false, nil
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+		return body, false, err
+	}
+
+	persistentNote := persistentInlineApprovalAugmentation()
+	changed := false
+
+	for i := 1; i < len(messages); i++ {
+		// Current must be user role.
+		var role string
+		if err := json.Unmarshal(messages[i]["role"], &role); err != nil || role != "user" {
+			continue
+		}
+		// Current content must parse to bare "approve" (the harness
+		// records exactly what the user typed — bare "approve" or
+		// "approve cv-xxx").
+		userText := flattenAnthropicTaskReplyText(messages[i]["content"])
+		verb, _ := conversation.ParseApprovalReplyText(userText)
+		if verb != "approve" {
+			continue
+		}
+		// Skip if we've already augmented this turn — the bracketed
+		// context contains a recognizable marker. Idempotency.
+		if strings.Contains(userText, InlineApprovalAugmentationMarker) {
+			continue
+		}
+
+		// Prior message must be assistant whose text starts with the
+		// substituted-prompt marker. That's how we know this approve
+		// was an inline task gesture (vs. a regular tool approval).
+		var priorRole string
+		if err := json.Unmarshal(messages[i-1]["role"], &priorRole); err != nil || priorRole != "assistant" {
+			continue
+		}
+		priorText := flattenAnthropicTaskReplyText(messages[i-1]["content"])
+		if !strings.Contains(priorText, InlineApprovalSubstitutedPromptMarker) {
+			continue
+		}
+
+		// Rewrite this user message's content with the persistent
+		// note appended. Preserve the original "approve" verb so the
+		// model can still see the user's actual reply.
+		newText := strings.TrimRight(userText, " \t\n") + "\n\n" + persistentNote
+		encoded, _ := json.Marshal(newText)
+		messages[i]["content"] = encoded
+		changed = true
+	}
+
+	if !changed {
+		return body, false, nil
+	}
+	updatedMessages, err := json.Marshal(messages)
+	if err != nil {
+		return body, false, err
+	}
+	raw["messages"] = updatedMessages
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body, false, err
+	}
+	return out, true, nil
+}
+
+// persistentInlineApprovalAugmentation is the bracketed context we
+// re-inject on every subsequent request. Intentionally generic — we
+// don't have the specific task_id when scanning history, and the
+// model doesn't actually need it. The key instruction is "task is
+// active, don't re-POST". Same shape as renderInlineTaskApprovedReply
+// without the per-task fields.
+func persistentInlineApprovalAugmentation() string {
+	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.]"
 }
 
 // renderInlineTaskApprovedReply is the user-message text the LLM
