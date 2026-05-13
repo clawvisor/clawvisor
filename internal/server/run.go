@@ -78,6 +78,9 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 		displayHost = "localhost"
 	}
 	serverURL := fmt.Sprintf("http://%s:%d", displayHost, cfg.Server.Port)
+	if cfg.Server.PublicURL != "" {
+		serverURL = cfg.Server.PublicURL
+	}
 
 	token, err := ms.Generate(localUser.ID)
 	if err != nil {
