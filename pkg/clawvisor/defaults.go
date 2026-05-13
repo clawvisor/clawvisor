@@ -37,6 +37,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
@@ -344,6 +345,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var pairingCodeStore handlers.PairingCodeStore
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
+	var callerNonceCache llmproxy.CallerNonceCache
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -376,6 +378,12 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		}
 		verdictCache = intent.NewRedisVerdictCache(client, verdictTTL)
 
+		// Lite-proxy caller-auth nonces: cross-instance consumption.
+		// 5-minute TTL covers the typical proxy-to-resolver round-trip
+		// (well under a minute in practice) plus held-tool-use release
+		// windows that re-mint a fresh nonce.
+		callerNonceCache = llmproxy.NewRedisCallerNonceCache(client, 5*time.Minute)
+
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
 		extractionTracker = handlers.NewRedisExtractionTracker(client, 60*time.Second)
@@ -395,15 +403,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		logger.Info("redis connected", "addr", client.Options().Addr)
 	}
 
-	features := FeatureSet{
-		PasswordAuth:      cfg.Server.AuthMode == "password",
-		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
-		SecretVault:       cfg.RuntimeProxy.Enabled && cfg.Features.SecretVault,
-		RuntimePolicyUI:   cfg.RuntimeProxy.Enabled,
-		RuntimeActivity:   cfg.RuntimeProxy.Enabled,
-		AgentLiveSessions: cfg.RuntimeProxy.Enabled,
-		ServicePresets:    cfg.RuntimeProxy.Enabled && cfg.Features.ServicePresets,
-	}
+	features := computeFeatureSet(cfg)
 
 	opts := &ServerOptions{
 		Logger:             logger,
@@ -429,6 +429,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		DedupCache:         dedupCache,
 		VerdictCache:       verdictCache,
 		ExtractionTracker:  extractionTracker,
+		CallerNonceCache:   callerNonceCache,
 		RedisClient:        rdb,
 	}
 
@@ -551,4 +552,31 @@ func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, err
 	default:
 		return nil, fmt.Errorf("unsupported vault backend %q (use \"local\" or \"gcp\")", cfg.Vault.Backend)
 	}
+}
+
+// computeFeatureSet returns the FeatureSet derived from cfg. Pulled
+// out of newServerOptions so the feature-flag matrix is testable in
+// isolation. Either proxy mode (runtime_proxy or proxy_lite) exposes
+// the autovault placeholder surfaces, since both paths consume the
+// same placeholders; features.secret_vault remains an independent
+// opt-in for installs that want the vault UI without any proxy.
+func computeFeatureSet(cfg *config.Config) FeatureSet {
+	if cfg == nil {
+		return FeatureSet{}
+	}
+	anyProxyEnabled := cfg.RuntimeProxy.Enabled || cfg.ProxyLite.Enabled
+	runtimeSurface := runtimePolicySurfaceEnabled(cfg)
+	return FeatureSet{
+		PasswordAuth:      cfg.Server.AuthMode == "password",
+		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
+		SecretVault:       anyProxyEnabled || cfg.Features.SecretVault,
+		RuntimePolicyUI:   runtimeSurface,
+		RuntimeActivity:   runtimeSurface,
+		AgentLiveSessions: anyProxyEnabled,
+		ServicePresets:    anyProxyEnabled && cfg.Features.ServicePresets,
+	}
+}
+
+func runtimePolicySurfaceEnabled(cfg *config.Config) bool {
+	return cfg != nil && (cfg.RuntimeProxy.Enabled || cfg.ProxyLite.Enabled)
 }

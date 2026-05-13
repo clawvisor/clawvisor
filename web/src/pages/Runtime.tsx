@@ -411,21 +411,95 @@ export function RuleSection({
   )
 }
 
+function RadioGroup({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: string; label: string }>
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    // Use aria-pressed (toggle-button semantics) rather than role="radio",
+    // which would require a surrounding role="radiogroup" container and
+    // arrow-key navigation we don't implement.
+    <div className="inline-flex rounded-md border border-border-default bg-surface-0 p-1">
+      {options.map(option => {
+        const active = value === option.value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className={`rounded px-3 py-1.5 text-sm font-medium transition ${
+              active
+                ? 'bg-surface-1 text-text-primary shadow-sm'
+                : 'text-text-tertiary hover:text-text-primary'
+            }`}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function RuleEditorCard({
   agents,
   draft,
   busy,
+  allowedKinds = ['egress', 'tool'],
+  defaultAgentId,
+  toolNameOptions = [],
   onCancel,
   onSave,
 }: {
   agents: Agent[]
   draft: RuleDraft
   busy: boolean
+  allowedKinds?: Array<'egress' | 'tool'>
+  defaultAgentId?: string
+  toolNameOptions?: string[]
   onCancel: () => void
   onSave: (draft: RuleDraft) => void
 }) {
-  const [local, setLocal] = useState<RuleDraft>(draft)
+  const initialDraft = useMemo(() => {
+    const next = { ...draft }
+    if (!allowedKinds.includes(next.kind as 'egress' | 'tool')) {
+      next.kind = allowedKinds[0]
+    }
+    if ((next.scope ?? 'agent') === 'agent' && !next.agent_id && defaultAgentId) {
+      next.agent_id = defaultAgentId
+    }
+    return next
+  }, [allowedKinds, defaultAgentId, draft])
+  const [local, setLocal] = useState<RuleDraft>(initialDraft)
+  const normalizedToolOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const name of toolNameOptions) {
+      const trimmed = name.trim()
+      if (trimmed) names.add(trimmed)
+    }
+    if (local.tool_name?.trim()) names.add(local.tool_name.trim())
+    return Array.from(names).sort((a, b) => a.localeCompare(b))
+  }, [local.tool_name, toolNameOptions])
+  const [toolNameMode, setToolNameMode] = useState<'known' | 'other'>(
+    local.tool_name && normalizedToolOptions.length > 0 && !normalizedToolOptions.includes(local.tool_name) ? 'other' : 'known',
+  )
   const update = (patch: Partial<RuleDraft>) => setLocal(current => ({ ...current, ...patch }))
+  const actionOptions: Array<{ value: 'allow' | 'review' | 'deny'; label: string }> = [
+    { value: 'allow', label: 'Allow' },
+    { value: 'review', label: 'Review' },
+    { value: 'deny', label: 'Deny' },
+  ]
+  const regexExamples = [
+    { label: 'Secrets', value: '(?i)(password|secret|token|api[_-]?key)' },
+    { label: 'Dangerous shell', value: '(^|\\s)(rm\\s+-rf|sudo|chmod\\s+777)(\\s|$)' },
+    { label: 'Dotenv files', value: '(^|/)\\.env(\\.|$|\\s)' },
+  ]
 
   return (
     <section className="rounded-md border border-brand/30 bg-surface-1 p-5 space-y-4">
@@ -438,27 +512,57 @@ export function RuleEditorCard({
           Cancel
         </button>
       </div>
-      <div className="grid gap-3 md:grid-cols-4">
-        <select value={local.kind ?? 'egress'} onChange={e => update({ kind: e.target.value as 'egress' | 'tool' })} className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary">
-          <option value="egress">Egress</option>
-          <option value="tool">Tool</option>
-        </select>
-        <select value={local.action ?? 'allow'} onChange={e => update({ action: e.target.value as 'allow' | 'deny' | 'review' })} className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary">
-          <option value="allow">Allow</option>
-          <option value="review">Review</option>
-          <option value="deny">Deny</option>
-        </select>
-        <select value={local.scope ?? 'agent'} onChange={e => update({ scope: e.target.value as 'agent' | 'global' })} className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary">
-          <option value="agent">This agent</option>
-          <option value="global">All agents</option>
-        </select>
-        <select value={local.agent_id ?? ''} onChange={e => update({ agent_id: e.target.value || undefined })} disabled={local.scope === 'global'} className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary disabled:opacity-50">
-          <option value="">Choose agent</option>
-          {agents.map(agent => (
-            <option key={agent.id} value={agent.id}>{agent.name}</option>
-          ))}
-        </select>
+      {allowedKinds.length > 1 && (
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Rule type</legend>
+          <RadioGroup
+            options={[
+              { value: 'egress', label: 'Egress' },
+              { value: 'tool', label: 'Tool' },
+            ].filter(option => allowedKinds.includes(option.value as 'egress' | 'tool'))}
+            value={local.kind ?? allowedKinds[0]}
+            onChange={value => update({ kind: value as 'egress' | 'tool' })}
+          />
+        </fieldset>
+      )}
+      <div className="grid gap-4 md:grid-cols-2">
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Decision</legend>
+          <RadioGroup
+            options={actionOptions}
+            value={local.action ?? 'allow'}
+            onChange={value => update({ action: value as 'allow' | 'review' | 'deny' })}
+          />
+        </fieldset>
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Applies to</legend>
+          <RadioGroup
+            options={[
+              { value: 'agent', label: 'One agent' },
+              { value: 'global', label: 'All agents' },
+            ]}
+            value={local.scope ?? 'agent'}
+            onChange={value => {
+              const scope = value as 'agent' | 'global'
+              update({
+                scope,
+                agent_id: scope === 'global' ? undefined : (local.agent_id || defaultAgentId),
+              })
+            }}
+          />
+        </fieldset>
       </div>
+      {(local.scope ?? 'agent') === 'agent' && (
+        <div className="max-w-md space-y-2">
+          <label className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Agent</label>
+          <select value={local.agent_id ?? ''} onChange={e => update({ agent_id: e.target.value || undefined })} className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary">
+            <option value="">Choose agent</option>
+            {agents.map(agent => (
+              <option key={agent.id} value={agent.id}>{agent.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       {local.kind === 'egress' ? (
         <div className="grid gap-3 md:grid-cols-3">
           <input value={local.host ?? ''} onChange={e => update({ host: e.target.value })} placeholder="host" className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />
@@ -468,8 +572,54 @@ export function RuleEditorCard({
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          <input value={local.tool_name ?? ''} onChange={e => update({ tool_name: e.target.value })} placeholder="tool name" className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />
-          <input value={local.input_regex ?? ''} onChange={e => update({ input_regex: e.target.value })} placeholder="optional input regex" className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />
+          <div className="space-y-2">
+            <label className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Tool name</label>
+            {normalizedToolOptions.length > 0 && toolNameMode === 'known' ? (
+              <select
+                value={local.tool_name ?? ''}
+                onChange={e => {
+                  if (e.target.value === '__other__') {
+                    setToolNameMode('other')
+                    update({ tool_name: '' })
+                    return
+                  }
+                  update({ tool_name: e.target.value })
+                }}
+                className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+              >
+                <option value="">Choose tool</option>
+                {normalizedToolOptions.map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+                <option value="__other__">Other...</option>
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <input value={local.tool_name ?? ''} onChange={e => update({ tool_name: e.target.value })} placeholder="Tool name" className="min-w-0 flex-1 rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />
+                {normalizedToolOptions.length > 0 && (
+                  <button type="button" onClick={() => setToolNameMode('known')} className="rounded border border-border-default px-3 py-2 text-sm text-text-secondary hover:bg-surface-2">
+                    Pick
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Input regex</label>
+            <input value={local.input_regex ?? ''} onChange={e => update({ input_regex: e.target.value })} placeholder="Optional input regex" className="w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />
+            <div className="flex flex-wrap gap-2">
+              {regexExamples.map(example => (
+                <button
+                  key={example.label}
+                  type="button"
+                  onClick={() => update({ input_regex: example.value })}
+                  className="rounded border border-border-subtle px-2.5 py-1 text-xs text-text-tertiary hover:bg-surface-2 hover:text-text-primary"
+                >
+                  {example.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
       <textarea value={local.reason ?? ''} onChange={e => update({ reason: e.target.value })} placeholder="Short reason / note" className="min-h-[88px] w-full rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary" />

@@ -15,11 +15,11 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/handlers"
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/llm"
-	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
+	runtimeleases "github.com/clawvisor/clawvisor/pkg/runtime/leases"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -151,8 +151,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}))
 
 	apiOpts = append(apiOpts, api.WithExtraRoutes(func(mux *http.ServeMux, deps api.Dependencies) {
-		if runtimeMgr != nil {
-			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeMgr, opts.Config, reviewCache)
+		if runtimeMgr != nil || (opts.Config != nil && opts.Config.ProxyLite.Enabled) {
+			var runtimeHandlerManager handlers.RuntimeManager
+			if runtimeMgr != nil {
+				runtimeHandlerManager = runtimeMgr
+			}
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeHandlerManager, opts.Config, reviewCache)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)
 			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))
@@ -174,6 +178,8 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.GetRule)))
 			mux.Handle("PUT /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.UpdateRule)))
 			mux.Handle("DELETE /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.DeleteRule)))
+			mux.Handle("GET /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.ListToolControls)))
+			mux.Handle("PUT /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.UpsertToolControl)))
 			mux.Handle("GET /api/runtime/starter-profiles", user(http.HandlerFunc(runtimeHandler.ListStarterProfiles)))
 			mux.Handle("POST /api/runtime/starter-profiles/{profile}/apply", user(http.HandlerFunc(runtimeHandler.ApplyStarterProfile)))
 			mux.Handle("GET /api/runtime/preset-decisions", user(http.HandlerFunc(runtimeHandler.GetPresetDecision)))
@@ -313,6 +319,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}
 	if opts.ExtractionTracker != nil {
 		apiOpts = append(apiOpts, api.WithExtractionTracker(opts.ExtractionTracker))
+	}
+	if opts.CallerNonceCache != nil {
+		apiOpts = append(apiOpts, api.WithCallerNonceCache(opts.CallerNonceCache))
 	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))

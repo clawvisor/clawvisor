@@ -618,6 +618,7 @@ export interface ActivityBucket {
 
 export interface RuntimeStatus {
   enabled: boolean
+  proxy_lite_enabled?: boolean
   proxy_url: string
   observation_mode_default: boolean
   inline_approval_enabled: boolean
@@ -686,6 +687,17 @@ export interface RuntimePolicyRule {
   last_matched_at?: string
   created_at: string
   updated_at: string
+}
+
+export interface RuntimeToolControl {
+  agent_id: string
+  tool_name: string
+  action: 'allow' | 'review' | 'deny'
+  rule_id?: string
+  source: 'default' | 'request' | 'observed' | 'rule'
+  last_seen_at?: string
+  advanced_rule_count: number
+  advanced_rules?: RuntimePolicyRule[]
 }
 
 export interface RuntimeRuleCandidate {
@@ -1241,6 +1253,10 @@ export const api = {
         agent_id: params?.agent_id,
         enabled: params?.enabled === undefined ? undefined : (params.enabled ? 'true' : 'false'),
       }),
+    listToolControls: (agentId: string) =>
+      get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
+    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) =>
+      put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),
     updateRule: (id: string, rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
@@ -1311,6 +1327,30 @@ export const api = {
     status: () => get<LLMStatus>('/api/llm/status'),
     update: (provider: string, endpoint: string, apiKey: string, model: string) =>
       put<{ status: string; warning?: string }>('/api/llm', { provider, endpoint, api_key: apiKey, model }),
+  },
+  // Lite-proxy upstream LLM credentials (separate from /api/llm which is
+  // the daemon's own intent verifier key). These keys are what the
+  // lite-proxy swaps in when forwarding /v1/messages and /v1/chat/completions
+  // to api.anthropic.com / api.openai.com. agent_id scopes the credential
+  // to a specific agent — when omitted, it's stored at the user level.
+  llmCredentials: {
+    list: (agentId?: string) =>
+      get<{ credentials: { provider: string; stored: boolean; agent_stored?: boolean; agent_id?: string }[] }>(
+        agentId ? `/api/runtime/llm-credentials?agent_id=${encodeURIComponent(agentId)}` : '/api/runtime/llm-credentials',
+      ),
+    set: (provider: string, apiKey: string, agentId?: string) =>
+      put<{ provider: string; service_id: string; status: string; agent_id?: string }>(
+        agentId
+          ? `/api/runtime/llm-credentials/${provider}?agent_id=${encodeURIComponent(agentId)}`
+          : `/api/runtime/llm-credentials/${provider}`,
+        { api_key: apiKey },
+      ),
+    delete: (provider: string, agentId?: string) =>
+      del<void>(
+        agentId
+          ? `/api/runtime/llm-credentials/${provider}?agent_id=${encodeURIComponent(agentId)}`
+          : `/api/runtime/llm-credentials/${provider}`,
+      ),
   },
   system: {
     getGoogleOAuth: () =>

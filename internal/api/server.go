@@ -29,6 +29,8 @@ import (
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -101,6 +103,7 @@ type Server struct {
 	dedupCache         handlers.DedupCache
 	verdictCache       intent.VerdictCacher
 	extractionTracker  handlers.ExtractionTracker
+	callerNonces       llmproxy.CallerNonceCache
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -310,6 +313,14 @@ func WithVerdictCache(vc intent.VerdictCacher) ServerOption {
 // Use the Redis-backed tracker in multi-instance deployments.
 func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 	return func(s *Server) { s.extractionTracker = t }
+}
+
+// WithCallerNonceCache overrides the default in-memory caller-nonce cache
+// used by the lite-proxy resolver. Use the Redis-backed cache in
+// multi-instance deployments so a nonce minted on one daemon can be
+// consumed on another.
+func WithCallerNonceCache(c llmproxy.CallerNonceCache) ServerOption {
+	return func(s *Server) { s.callerNonces = c }
 }
 
 // New creates a Server and registers all routes.
@@ -845,6 +856,141 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/audit/mutes", user(auditHandler.ListMutes))
 	mux.Handle("POST /api/audit/mutes", user(auditHandler.CreateMute))
 	mux.Handle("DELETE /api/audit/mutes/{id}", user(auditHandler.DeleteMute))
+
+	// Lite-proxy LLM endpoint (opt-in via config). Agents set
+	// ANTHROPIC_BASE_URL / OPENAI_BASE_URL at this server and present
+	// their existing cvis_… token via Authorization: Bearer (OpenAI
+	// SDK convention) or x-api-key (Anthropic SDK convention).
+	if s.cfg.ProxyLite.Enabled {
+		llmHandler := handlers.NewLLMEndpointHandler(s.store, s.vault, s.logger)
+		if v := s.cfg.ProxyLite.AnthropicBaseURL; v != "" {
+			llmHandler.Forwarder.Upstream.AnthropicBaseURL = v
+		}
+		if v := s.cfg.ProxyLite.OpenAIBaseURL; v != "" {
+			llmHandler.Forwarder.Upstream.OpenAIBaseURL = v
+		}
+
+		// Wire the inspector into the response leg so credentialed
+		// tool_uses get rewritten through the resolver. The validator
+		// reuses the daemon's own LLM provider config (Gemini /
+		// Anthropic / OpenAI / Vertex — whatever cfg.LLM.Verification
+		// points at). When verification is disabled or missing
+		// credentials, falls back to AmbiguousValidator so unparseable
+		// shapes refuse closed rather than passing through.
+		var validator inspector.Validator = inspector.AmbiguousValidator{}
+		if s.cfg.LLM.Verification.Enabled {
+			validator = inspector.NewLLMClientValidator(s.llmHealth.VerificationConfig, s.logger)
+		}
+		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
+		// Optional decision-trace log. Strictly observational; off
+		// unless cfg.ProxyLite.TraceLogPath or CLAWVISOR_PROXY_LITE_TRACE
+		// is set. Failure to open the file logs at WARN and the daemon
+		// continues without tracing.
+		tracePath := s.cfg.ProxyLite.TraceLogPath
+		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_TRACE")); env != "" {
+			tracePath = env
+		}
+		if traceLogger, err := llmproxy.OpenTraceLogger(tracePath); err != nil {
+			s.logger.Warn("lite-proxy: failed to open trace log", "path", tracePath, "err", err.Error())
+		} else if traceLogger != nil {
+			llmHandler.TraceLogger = traceLogger
+			s.logger.Info("lite-proxy: decision trace enabled", "path", tracePath)
+		}
+		// Prefer the configured public URL so the rewritten resolver URL the
+		// agent dials is reachable across networks; fall back to the local
+		// baseURL so single-host self-installs still rewrite (without this
+		// fallback, inspector.Rewrite fails closed on "missing ResolverBaseURL").
+		resolverBase := s.cfg.Server.PublicURL
+		if resolverBase == "" {
+			resolverBase = baseURL
+		}
+		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/proxy/v1"
+		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
+
+		// Audit emission for /v1/* endpoint calls + per-tool-use
+		// inspection rows + resolver swaps. All write into audit_log
+		// so the existing dashboard surfaces them automatically.
+		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
+		llmHandler.AuditEmitter = auditEmitter
+
+		// Task-scope authorization: reverse-resolve (host, method, path)
+		// to (service, action) via the YAML adapter catalog, then check
+		// against the agent's active tasks before letting a tool_use
+		// rewrite proceed. The catalog is lazy so newly-registered or
+		// hot-reloaded adapters get picked up on first use.
+		llmHandler.Catalog = llmproxy.NewLazyServiceCatalog(llmproxy.DefsFromRegistry(s.adapterReg))
+		llmHandler.TaskScope = llmproxy.NewStoreTaskScopeChecker(s.store)
+
+		// Intent verification reuses the gateway's existing verifier so
+		// prompts + caching + provider config stay consistent across
+		// runtime-proxy, MCP gateway, and lite-proxy. NoopVerifier
+		// returns nil verdicts → postprocess treats it as off-mode.
+		// Wrap in a circuit breaker so a sustained verifier outage
+		// fails closed rather than silently allowing every tool_use
+		// through with no scope check.
+		llmHandler.IntentVerifier = llmproxy.NewCircuitBreakerVerifier(
+			llmproxy.NewIntentVerifierAdapter(verifier),
+			llmproxy.DefaultCircuitBreakerConfig(),
+		)
+
+		resolverHandler := handlers.NewProxyResolverHandler(s.store, s.vault, s.logger)
+		resolverHandler.SelfHostnames = s.cfg.ProxyLite.SelfHostnames
+		resolverHandler.AllowPrivateNetworks = s.cfg.ProxyLite.AllowPrivateNetworks
+		resolverHandler.AuditEmitter = auditEmitter
+
+		// Caller-auth nonce cache: minted by the postprocess layer when
+		// rewriting credentialed tool_uses, consumed by the resolver
+		// middleware below. Configured via WithCallerNonceCache (Redis
+		// in multi-instance mode); falls back to in-process memory cache
+		// for single-daemon installs. The nonce stands in for the agent's
+		// bearer token so the token never appears in the model's
+		// conversation context.
+		callerNonces := s.callerNonces
+		if callerNonces == nil {
+			callerNonces = llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
+		}
+		llmHandler.CallerNonces = callerNonces
+
+		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
+		controlHandler := handlers.NewLLMControlHandler(baseURL)
+
+		// LLM endpoint accepts the agent token via Authorization or
+		// x-api-key (SDK conventions).
+		requireAgentLLM := middleware.RequireAgentLLM(s.store)
+
+		// Resolver expects a short-lived single-use nonce in
+		// X-Clawvisor-Caller — never the raw agent token. The nonce is
+		// bound to (agent, host, method, path), so a leaked nonce only
+		// authorizes the specific call the proxy already approved.
+		requireAgentLLMCaller := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
+
+		mux.Handle("POST /v1/messages", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
+		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
+		mux.Handle("POST /v1/chat/completions", requireAgentLLM(http.HandlerFunc(llmHandler.ChatCompletions)))
+		mux.Handle("POST /v1/responses", requireAgentLLM(http.HandlerFunc(llmHandler.Responses)))
+
+		// Synthetic Clawvisor control plane. Model-emitted calls to
+		// https://clawvisor.local/control/... are rewritten here with
+		// X-Clawvisor-Caller auth so agents can request task scope before
+		// that scope exists.
+		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
+		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
+		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
+		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
+
+		// Resolver — agent harness's outbound HTTPS calls land here so
+		// we can swap autovault placeholders in headers for real vault
+		// credentials before forwarding to the real upstream service.
+		mux.Handle("/proxy/v1/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))
+
+		// Upstream credential management (user JWT) — store the real
+		// sk-ant-… or sk-… in vault under (user_id, "anthropic"|"openai").
+		mux.Handle("PUT /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Set))
+		mux.Handle("DELETE /api/runtime/llm-credentials/{provider}", user(llmCredHandler.Delete))
+		mux.Handle("GET /api/runtime/llm-credentials", user(llmCredHandler.List))
+	}
 
 	// SSE event stream (user JWT or single-use ticket for EventSource)
 	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)
