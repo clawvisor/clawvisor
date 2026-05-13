@@ -143,3 +143,53 @@ func TestMatchRegexMapUsesFlattenedStructuredRepresentation(t *testing.T) {
 		t.Fatal("expected nested flattened key=value regex to match")
 	}
 }
+
+func TestToolNamesMatch(t *testing.T) {
+	cases := []struct {
+		declared string
+		actual   string
+		want     bool
+	}{
+		// Case-insensitive exact match.
+		{"Bash", "bash", true},
+		{"Bash", "Bash", true},
+		// Cross-harness shell aliases — the original failure mode.
+		{"Bash", "exec_command", true},
+		{"bash", "exec_command", true},
+		{"exec_command", "Bash", true},
+		{"shell", "Bash", true},
+		// Read aliases.
+		{"Read", "read_file", true},
+		{"read", "Read", true},
+		// Edit aliases.
+		{"Edit", "apply_patch", true},
+		{"NotebookEdit", "apply_patch", true},
+		// Web aliases.
+		{"WebFetch", "fetch", true},
+		{"WebFetch", "http_request", true},
+		// Cross-class must NOT match.
+		{"Bash", "Read", false},
+		{"WebFetch", "exec_command", false},
+		// Unknown tools fall back to case-insensitive equality.
+		{"CustomTool", "CustomTool", true},
+		{"customtool", "CustomTool", true},
+		{"CustomTool", "OtherTool", false},
+		// Canonical class names declared in expected_tools_json must
+		// also map to their class — otherwise the alias relation is
+		// asymmetric (Bash→exec_command works, but edit_file→Edit
+		// doesn't).
+		{"edit_file", "Edit", true},
+		{"edit_file", "apply_patch", true},
+		{"write_file", "Write", true},
+		{"web_fetch", "WebFetch", true},
+		{"web_fetch", "fetch", true},
+		{"shell", "exec_command", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.declared+"_vs_"+tc.actual, func(t *testing.T) {
+			if got := toolNamesMatch(tc.declared, tc.actual); got != tc.want {
+				t.Errorf("toolNamesMatch(%q, %q) = %v, want %v", tc.declared, tc.actual, got, tc.want)
+			}
+		})
+	}
+}

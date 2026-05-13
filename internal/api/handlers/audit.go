@@ -232,6 +232,21 @@ func normalizeAuditEntry(entry *store.AuditEntry) *auditEntryResponse {
 		}
 	}
 
+	if readString(params["event"]) == "lite_proxy.endpoint_call" {
+		provider := firstNonEmpty(readString(params["provider"]), entry.Service)
+		model := readString(params["model"])
+		path := readString(params["path"])
+		resp.ActivityKind = "runtime"
+		resp.ActionTarget = firstNonEmpty(model, path, strings.TrimPrefix(entry.Action, "lite_proxy."))
+		resp.Method = normalizeVerb(readString(params["method"]))
+		resp.Path = path
+		resp.SummaryText = strings.TrimSpace(strings.Join(compactParts(providerDisplayName(provider), model, path), " "))
+		if resp.SummaryText == "" {
+			resp.SummaryText = strings.TrimSpace(strings.Join(compactParts(entry.Service, entry.Action), " "))
+		}
+		return resp
+	}
+
 	switch entry.Service {
 	case "runtime.egress":
 		method := normalizeVerb(firstNonEmpty(readString(params["method"]), entry.Action))
@@ -247,6 +262,7 @@ func normalizeAuditEntry(entry *store.AuditEntry) *auditEntryResponse {
 		toolName := firstNonEmpty(readString(params["tool_name"]), entry.Action)
 		toolInput, _ := params["tool_input"].(map[string]any)
 		target := firstNonEmpty(
+			readString(params["tool_target"]),
 			readString(toolInput["url"]),
 			readString(toolInput["file_path"]),
 			readString(toolInput["path"]),
@@ -295,6 +311,23 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func providerDisplayName(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return ""
+	}
+	switch strings.ToLower(provider) {
+	case "anthropic":
+		return "Anthropic"
+	case "openai":
+		return "OpenAI"
+	default:
+		runes := []rune(provider)
+		runes[0] = unicode.ToUpper(runes[0])
+		return string(runes)
+	}
 }
 
 func stripSecretsRecursive(value any) map[string]any {

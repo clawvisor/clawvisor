@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -13,10 +14,10 @@ import (
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
-	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
-	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
+	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/google/uuid"
@@ -39,7 +40,23 @@ type RuntimeHandler struct {
 }
 
 func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache runtimereview.HeldApprovalCache) *RuntimeHandler {
+	if isNilRuntimeManager(manager) {
+		manager = nil
+	}
 	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache}
+}
+
+func isNilRuntimeManager(manager RuntimeManager) bool {
+	if manager == nil {
+		return true
+	}
+	v := reflect.ValueOf(manager)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func (h *RuntimeHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -247,10 +264,17 @@ func (h *RuntimeHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
-	sessions, err := h.manager.ListRuntimeSessionsForUser(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime sessions")
-		return
+	var sessions []*store.RuntimeSession
+	if h.manager != nil {
+		var err error
+		sessions, err = h.manager.ListRuntimeSessionsForUser(r.Context(), user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list runtime sessions")
+			return
+		}
+	}
+	if sessions == nil {
+		sessions = []*store.RuntimeSession{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": sessions,
@@ -278,6 +302,10 @@ func (h *RuntimeHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "not your runtime session")
 		return
 	}
+	if h.manager == nil {
+		writeError(w, http.StatusConflict, "RUNTIME_PROXY_DISABLED", "runtime proxy is not enabled")
+		return
+	}
 	if err := h.manager.RevokeRuntimeSession(r.Context(), sessionID); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not revoke runtime session")
 		return
@@ -295,9 +323,16 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = user
+	proxyURL := ""
+	caCertPEM := ""
+	if h.manager != nil {
+		proxyURL = h.manager.ProxyURL()
+		caCertPEM = h.manager.CACertPEM()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":                  h.cfg != nil && h.cfg.RuntimeProxy.Enabled,
-		"proxy_url":                h.manager.ProxyURL(),
+		"proxy_lite_enabled":       h.cfg != nil && h.cfg.ProxyLite.Enabled,
+		"proxy_url":                proxyURL,
 		"observation_mode_default": h.cfg != nil && h.cfg.RuntimePolicy.ObservationModeDefault,
 		"inline_approval_enabled":  h.cfg != nil && h.cfg.RuntimePolicy.InlineApprovalEnabled,
 		"tool_lease_timeout_seconds": func() int {
@@ -319,7 +354,7 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 			return h.cfg.RuntimePolicy.AutovaultMode
 		}(),
 		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
-		"ca_cert_pem":          h.manager.CACertPEM(),
+		"ca_cert_pem":          caCertPEM,
 		"starter_profiles":     runtimepolicy.StarterProfiles(),
 	})
 }
@@ -340,9 +375,18 @@ func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not inspect runtime approval sessions")
 		return
 	}
-	var filtered []*store.ApprovalRecord
+	filtered := []*store.ApprovalRecord{}
 	now := time.Now().UTC()
 	for _, rec := range records {
+		// task_create / task_expand approvals already surface in the
+		// dedicated Tasks UI. Including them in the runtime-approvals
+		// queue too makes every approved task look like a duplicate
+		// pending item ("runtime retry approval" badge alongside the
+		// task row). Resolution machinery still finds them via
+		// resolveCanonicalTaskApproval — they just don't appear here.
+		if rec.Kind == "task_create" || rec.Kind == "task_expand" {
+			continue
+		}
 		if rec.SessionID == nil || *rec.SessionID == "" {
 			filtered = append(filtered, rec)
 			continue

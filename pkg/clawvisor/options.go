@@ -15,6 +15,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/relay"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -145,6 +146,7 @@ type ServerOptions struct {
 	DedupCache         handlers.DedupCache
 	VerdictCache       intent.VerdictCacher
 	ExtractionTracker  handlers.ExtractionTracker
+	CallerNonceCache   llmproxy.CallerNonceCache
 	RedisClient        *redis.Client
 }
 

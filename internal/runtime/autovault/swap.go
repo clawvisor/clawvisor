@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var placeholderTokenRE = regexp.MustCompile(`[A-Za-z0-9._:-]*(?:autovault|clawvisor)[A-Za-z0-9._:-]+`)
+var placeholderTokenRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
 
 func ReplaceHeaderValue(value string, resolve func(placeholder string) (string, error)) (string, []string, error) {
 	if !HeaderMaybeContainsShadow(value) {

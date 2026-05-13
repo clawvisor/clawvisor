@@ -39,7 +39,21 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 			return nil, err
 		}
 		for _, item := range env.ExpectedTools {
-			if item.ToolName != toolName {
+			// Tool-name match. Two layers:
+			//
+			// 1. Case-insensitive equality — handles the model
+			//    pattern-matching from documentation and emitting the
+			//    lowercase form (`bash` instead of `Bash`).
+			// 2. Tool-class equivalence — handles cross-harness aliases
+			//    (Claude Code says `Bash`, Codex says `exec_command`;
+			//    Claude Code says `Read`, Codex says `read_file`).
+			//
+			// A task created in a Claude Code session that declares
+			// `Bash` should cover the same work in a Codex session
+			// that uses `exec_command`. The model doesn't always know
+			// which harness it's in; the task does what it semantically
+			// said, not what the literal string matched.
+			if !toolNamesMatch(item.ToolName, toolName) {
 				continue
 			}
 			if item.InputRegex != "" {
@@ -61,6 +75,45 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 		}
 	}
 	return best, nil
+}
+
+// toolNamesMatch decides whether a tool-call's actual name matches a
+// task's declared `expected_tools` entry. Equivalent names from
+// different harnesses share a class — declaring `Bash` in a Claude
+// Code session covers a `exec_command` invocation in a Codex session.
+// Falls back to case-insensitive equality so the model can use any
+// case it wants.
+func toolNamesMatch(declared, actual string) bool {
+	if strings.EqualFold(declared, actual) {
+		return true
+	}
+	dc := toolClass(declared)
+	ac := toolClass(actual)
+	return dc != "" && dc == ac
+}
+
+// toolClass returns the canonical class for a tool name, or "" when
+// the tool isn't part of a known cross-harness alias group. The match
+// is case-insensitive.
+//
+// Adding a new alias is intentionally one-step: append to this map.
+// Tools NOT in the map fall through to case-insensitive name equality
+// only — no risk of an unrelated tool name picking up an aliased
+// class by accident.
+func toolClass(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "shell", "exec_command":
+		return "shell"
+	case "read", "read_file":
+		return "read_file"
+	case "edit", "notebookedit", "apply_patch", "edit_file":
+		return "edit_file"
+	case "write", "write_file":
+		return "write_file"
+	case "webfetch", "fetch", "http_request", "web_fetch":
+		return "web_fetch"
+	}
+	return ""
 }
 
 func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, error) {
