@@ -11,7 +11,38 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+)
+
+// PendingApprovalStage is the per-hold state in the inline-task-approval
+// two-step flow. Empty / StageTool is the standard one-step approval
+// (existing behavior). The other stages run the two-step flow:
+//
+//	StageTool ──user types "task"──► StageAwaitingTaskDefinition
+//	                                 │
+//	                                 model emits POST /control/tasks
+//	                                 ▼
+//	                                 (new hold) StageAwaitingTaskApproval
+//	                                 │
+//	                                 user types "approve"
+//	                                 ▼
+//	                                 create task + release both holds
+type PendingApprovalStage string
+
+const (
+	// StageTool — the original tool_use hold awaiting approve/deny/task.
+	StageTool PendingApprovalStage = ""
+	// StageAwaitingTaskDefinition — user typed "task". The same hold's
+	// ToolUse field still points at the ORIGINAL tool. We're waiting for
+	// the model to emit a POST /control/tasks tool_use that defines the
+	// task that should cover this work.
+	StageAwaitingTaskDefinition PendingApprovalStage = "awaiting_task_definition"
+	// StageAwaitingTaskApproval — model has emitted the task definition.
+	// The hold's ToolUse is the task-creation POST itself; AwaitingTaskFor
+	// links back to the original tool hold. We're waiting for the user
+	// to approve/deny.
+	StageAwaitingTaskApproval PendingApprovalStage = "awaiting_task_approval"
 )
 
 type PendingLiteApproval struct {
@@ -27,6 +58,22 @@ type PendingLiteApproval struct {
 	Reason    string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+
+	// Stage controls the two-step inline-task flow. Empty == StageTool
+	// preserves legacy behavior so existing callers don't need to set it.
+	Stage PendingApprovalStage
+
+	// AwaitingTaskFor is the ID of the original tool-use hold this task
+	// definition will cover. Set ONLY on the inner StageAwaitingTaskApproval
+	// hold; empty otherwise. The release path uses this to find the
+	// upstream bash/tool hold and release-or-deny it in cascade.
+	AwaitingTaskFor string
+
+	// TaskDefinition is the parsed body of the POST /control/tasks the
+	// model emitted at StageAwaitingTaskDefinition. Used both to render the
+	// inline approval prompt and to create the task once the user approves.
+	// nil at the other stages.
+	TaskDefinition *runtimetasks.TaskCreateRequest
 }
 
 type ResolveRequest struct {
@@ -41,11 +88,29 @@ type HoldResult struct {
 	Evicted *PendingLiteApproval
 }
 
+// UpdateRequest carries a stage + optional ExpiresAt override applied to a
+// specific (user, agent, provider, id) hold. Zero ExpiresAt leaves expiry
+// untouched. Used to (a) transition the original tool hold to
+// StageAwaitingTaskDefinition when the user types "task" and (b) refresh
+// the original hold's TTL when the inner task-approval hold is created so
+// the two-step gesture has the full TTL window for the second approve.
+type UpdateRequest struct {
+	UserID     string
+	AgentID    string
+	Provider   conversation.Provider
+	ApprovalID string
+	Stage      PendingApprovalStage
+	ExpiresAt  time.Time
+}
+
 type PendingApprovalCache interface {
 	Hold(ctx context.Context, pending PendingLiteApproval) (HoldResult, error)
 	Peek(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Resolve(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Drop(ctx context.Context, req ResolveRequest) error
+	// Update mutates Stage and optionally ExpiresAt on the matching hold.
+	// Returns the updated entry, or nil if no match was found.
+	Update(ctx context.Context, req UpdateRequest) (*PendingLiteApproval, error)
 }
 
 type MemoryPendingApprovalCache struct {
@@ -166,6 +231,42 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 	}
 	pending := items[index]
 	return &pending, index, items
+}
+
+func (c *MemoryPendingApprovalCache) Update(_ context.Context, req UpdateRequest) (*PendingLiteApproval, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	items := c.pruneExpiredLocked(key, c.now().UTC())
+	if len(items) == 0 {
+		return nil, nil
+	}
+	index := -1
+	if req.ApprovalID == "" {
+		index = len(items) - 1
+	} else {
+		for i, pending := range items {
+			if pending.ID == req.ApprovalID {
+				index = i
+				break
+			}
+		}
+	}
+	if index < 0 {
+		return nil, nil
+	}
+	if req.Stage != "" {
+		items[index].Stage = req.Stage
+	}
+	if !req.ExpiresAt.IsZero() {
+		items[index].ExpiresAt = req.ExpiresAt
+	}
+	c.pending[key] = items
+	updated := items[index]
+	return &updated, nil
 }
 
 func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest) error {

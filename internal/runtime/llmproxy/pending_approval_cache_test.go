@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 )
 
 func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testing.T) {
@@ -256,6 +257,153 @@ func TestMemoryPendingApprovalCacheExpires(t *testing.T) {
 	}
 	if resolved != nil {
 		t.Fatalf("expired approval resolved: %+v", resolved)
+	}
+}
+
+func TestMemoryPendingApprovalCacheUpdateTransitionsStage(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-tool",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := cache.Update(ctx, UpdateRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-tool",
+		Stage:      StageAwaitingTaskDefinition,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == nil || updated.Stage != StageAwaitingTaskDefinition {
+		t.Fatalf("updated = %+v, want stage=awaiting_task_definition", updated)
+	}
+
+	peeked, err := cache.Peek(ctx, ResolveRequest{
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeked == nil || peeked.Stage != StageAwaitingTaskDefinition {
+		t.Fatalf("peeked = %+v, want stage transition persisted", peeked)
+	}
+}
+
+func TestMemoryPendingApprovalCacheUpdateRefreshesExpiry(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	start := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return start }
+	ctx := context.Background()
+
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-stale",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := held.Pending.ExpiresAt
+
+	fresh := original.Add(5 * time.Minute)
+	if _, err := cache.Update(ctx, UpdateRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-stale",
+		ExpiresAt:  fresh,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	peeked, err := cache.Peek(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-stale",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeked == nil || !peeked.ExpiresAt.Equal(fresh) {
+		t.Fatalf("peeked.ExpiresAt = %v, want %v", peeked.ExpiresAt, fresh)
+	}
+}
+
+func TestMemoryPendingApprovalCacheUpdateReturnsNilForUnknownID(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+	updated, err := cache.Update(ctx, UpdateRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-missing",
+		Stage:      StageAwaitingTaskDefinition,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated != nil {
+		t.Fatalf("update on missing returned %+v, want nil", updated)
+	}
+}
+
+func TestPendingLiteApprovalCarriesNewFields(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	taskDef := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Build a landing page",
+		IntentVerificationMode: "strict",
+	}
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:              "cv-inner",
+		UserID:          "user-1",
+		AgentID:         "agent-1",
+		Provider:        conversation.ProviderAnthropic,
+		Stage:           StageAwaitingTaskApproval,
+		AwaitingTaskFor: "cv-outer",
+		TaskDefinition:  taskDef,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Pending.Stage != StageAwaitingTaskApproval {
+		t.Fatalf("held.Stage = %q, want awaiting_task_approval", held.Pending.Stage)
+	}
+	if held.Pending.AwaitingTaskFor != "cv-outer" {
+		t.Fatalf("held.AwaitingTaskFor = %q, want cv-outer", held.Pending.AwaitingTaskFor)
+	}
+	if held.Pending.TaskDefinition == nil || held.Pending.TaskDefinition.Purpose != taskDef.Purpose {
+		t.Fatalf("held.TaskDefinition = %+v, want round-trip", held.Pending.TaskDefinition)
+	}
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-inner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil ||
+		resolved.Stage != StageAwaitingTaskApproval ||
+		resolved.AwaitingTaskFor != "cv-outer" ||
+		resolved.TaskDefinition == nil ||
+		resolved.TaskDefinition.Purpose != taskDef.Purpose {
+		t.Fatalf("resolved did not preserve fields: %+v", resolved)
 	}
 }
 
