@@ -328,6 +328,24 @@ func TestEvaluateAuthorization_ServiceActionFallsBackToExpectedTool(t *testing.T
 	}
 }
 
+// Regression: a task created in a Claude Code session declares Bash
+// in expected_tools_json; the same task should cover the equivalent
+// work when the user is in a Codex session that emits `exec_command`.
+// Cross-harness tool aliases must resolve through the toolClass map.
+func TestEvaluateAuthorization_ExpectedToolMatchAcceptsCrossHarnessAliases(t *testing.T) {
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("exec_command", map[string]any{"cmd": "mkdir -p /tmp/landing"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "scaffold the landing page")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow {
+		t.Fatalf("decision = %+v, want VerdictAllow (Bash should cover exec_command)", got)
+	}
+}
+
 // Regression: models populate expected_tools_json from documentation
 // and examples; they routinely use lowercase tool names (`bash`) even
 // when the harness reports `Bash`. The task-scope matcher must be
