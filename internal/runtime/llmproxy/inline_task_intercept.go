@@ -17,28 +17,40 @@ import (
 // model's next turn naturally re-prompts.
 const inlineTaskApprovalTTL = 10 * time.Minute
 
-// maybeInterceptInlineTaskDefinition is the postprocess hook for step 4
-// of the inline task approval state machine:
+// InlineSurfaceQueryParam is the query-string flag the model adds to
+// POST /control/tasks to opt in to the inline-approval flow when there
+// is no prior `task` reply (e.g. the agent knows the user is sitting
+// in the chat and prefers to approve there). Absent + no awaiting-
+// definition hold = the existing async dashboard path.
+const InlineSurfaceQueryParam = "surface"
+
+// InlineSurfaceQueryValue is the value of the surface query parameter
+// the model passes to opt in to the inline-approval flow.
+const InlineSurfaceQueryValue = "inline"
+
+// maybeInterceptInlineTaskDefinition is the postprocess hook that
+// routes a model-emitted POST /control/tasks tool_use through the
+// inline approval flow whenever one of two opt-in signals is present:
 //
-//	(prior turn) user typed "task" → original tool hold is now in
-//	             StageAwaitingTaskDefinition.
-//	(this turn) model emitted POST /control/tasks tool_use carrying the
-//	             task body.
+//  1. State signal: there's an existing StageAwaitingTaskDefinition
+//     hold for this (user, agent, provider). The plan's original
+//     trigger — user typed "task" on a prior tool prompt, and this is
+//     the model's response. Hold is updated + linked back via
+//     AwaitingTaskFor; original tool hold's TTL is refreshed.
 //
-// If we find a matching awaiting-definition hold, we:
-//  1. parse the task body
-//  2. register a NEW hold (StageAwaitingTaskApproval) linking back to
-//     the original via AwaitingTaskFor, carrying the parsed task body
-//  3. refresh the original hold's TTL so the two-step gesture sits in a
-//     single approval-cache window
-//  4. substitute the tool_use's response with the rendered approve/deny
-//     prompt — the model never actually POSTs to /control/tasks
+//  2. Query signal: the URL carries `?surface=inline`. The agent is
+//     declaring "the user is here, approve inline". No prior hold is
+//     required; the inner hold's AwaitingTaskFor stays empty so the
+//     release path knows not to look for an outer tool to cascade.
 //
-// Returns (verdict, true) when the interception fired. Returns
-// (_, false) when no matching hold exists, the body fails to parse,
-// or the path isn't POST /control/tasks — callers should fall through
-// to the regular control-rewrite path so async (non-inline) task
-// creation routes through the dashboard handler unchanged.
+// When either fires, the model never actually POSTs the task — the
+// tool_use_result is replaced with a rendered approve/deny prompt,
+// and the user's next "approve" creates the task pre-approved.
+//
+// Returns (_, false) when neither signal is present, the body fails
+// to parse, or the path isn't POST /control/tasks — callers should
+// fall through to the regular control-rewrite path so headless task
+// creation still routes through the dashboard handler unchanged.
 func maybeInterceptInlineTaskDefinition(
 	req *http.Request,
 	cfg PostprocessConfig,
@@ -57,12 +69,20 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	pending, err := cfg.PendingApprovals.Peek(req.Context(), ResolveRequest{
+	// Try the state signal first (prior `task` reply).
+	pending, _ := cfg.PendingApprovals.Peek(req.Context(), ResolveRequest{
 		UserID:   cfg.AgentUserID,
 		AgentID:  cfg.AgentID,
 		Provider: provider,
 	})
-	if err != nil || pending == nil || pending.Stage != StageAwaitingTaskDefinition {
+	stateSignal := pending != nil && pending.Stage == StageAwaitingTaskDefinition
+
+	// Query signal: agent explicitly opted in. Honored regardless of
+	// whether a state signal is also present (state takes precedence
+	// for the cascade linkage when both fire).
+	querySignal := strings.EqualFold(call.URL.Query().Get(InlineSurfaceQueryParam), InlineSurfaceQueryValue)
+
+	if !stateSignal && !querySignal {
 		return conversation.ToolUseVerdict{}, false
 	}
 
@@ -81,20 +101,24 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	// Refresh the original hold's TTL so the second gesture has the
-	// full inlineTaskApprovalTTL window. Without this, an original hold
-	// created near the end of its TTL could expire before the user
-	// finishes the second approve.
 	now := time.Now().UTC()
-	if _, err := cfg.PendingApprovals.Update(req.Context(), UpdateRequest{
-		UserID:     cfg.AgentUserID,
-		AgentID:    cfg.AgentID,
-		Provider:   provider,
-		ApprovalID: pending.ID,
-		ExpiresAt:  now.Add(inlineTaskApprovalTTL),
-	}); err != nil {
-		audit("block", "inline_task_refresh_failed", err.Error())
-		return conversation.ToolUseVerdict{}, false
+	awaitingTaskFor := ""
+	if stateSignal {
+		// Refresh the original hold's TTL so the second gesture has
+		// the full inlineTaskApprovalTTL window. Without this, a hold
+		// created near the end of its TTL could expire before the
+		// user finishes the second approve.
+		if _, err := cfg.PendingApprovals.Update(req.Context(), UpdateRequest{
+			UserID:     cfg.AgentUserID,
+			AgentID:    cfg.AgentID,
+			Provider:   provider,
+			ApprovalID: pending.ID,
+			ExpiresAt:  now.Add(inlineTaskApprovalTTL),
+		}); err != nil {
+			audit("block", "inline_task_refresh_failed", err.Error())
+			return conversation.ToolUseVerdict{}, false
+		}
+		awaitingTaskFor = pending.ID
 	}
 
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
@@ -104,7 +128,7 @@ func maybeInterceptInlineTaskDefinition(
 		ToolUse:         tu,
 		Reason:          "inline task creation awaiting user approval",
 		Stage:           StageAwaitingTaskApproval,
-		AwaitingTaskFor: pending.ID,
+		AwaitingTaskFor: awaitingTaskFor,
 		TaskDefinition:  parsed,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(inlineTaskApprovalTTL),
@@ -114,11 +138,18 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	audit("block", "inline_task_pending_approval", "awaiting user approve/deny on inline task definition")
+	signal := "state"
+	if !stateSignal && querySignal {
+		signal = "query"
+	} else if stateSignal && querySignal {
+		signal = "state+query"
+	}
+	audit("block", "inline_task_pending_approval", "awaiting user approve/deny on inline task definition ("+signal+")")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
-		"awaiting_task_for", pending.ID,
+		"awaiting_task_for", awaitingTaskFor,
 		"purpose", parsed.Purpose,
+		"signal", signal,
 	)
 	return conversation.ToolUseVerdict{
 		Allowed:        false,

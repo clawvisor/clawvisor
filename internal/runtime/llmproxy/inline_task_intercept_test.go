@@ -314,6 +314,139 @@ func (c *capturingInlineCreator) CreateInlineApprovedTask(_ context.Context, _ *
 	return c.resp, nil
 }
 
+// anthropicBashControlTasksPostWithQuery is anthropicBashControlTasksPost
+// with an extra URL query parameter (e.g. surface=inline).
+func anthropicBashControlTasksPostWithQuery(body string, extraQuery string) []byte {
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&` + extraQuery + `' -H 'Content-Type: application/json' --data '` + body + `'`
+	enc, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		panic(err)
+	}
+	return anthropicJSONWithNamedToolUse("Bash", string(enc))
+}
+
+func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing.T) {
+	// No prior `task` reply, no awaiting-definition hold. The agent
+	// explicitly opts into inline approval via ?surface=inline.
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+	})
+
+	out := string(got.Body)
+	if !strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Fatalf("expected inline approval prompt when surface=inline; got %s", out)
+	}
+	if strings.Contains(out, "X-Clawvisor-Caller") {
+		t.Fatalf("surface=inline should NOT rewrite the curl through to the daemon; got %s", out)
+	}
+
+	// One inner hold should now exist, with AwaitingTaskFor="" (no
+	// outer hold to cascade to).
+	cache.mu.Lock()
+	holds := append([]PendingLiteApproval(nil), cache.pending[pendingApprovalKey{
+		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
+	}]...)
+	cache.mu.Unlock()
+	if len(holds) != 1 {
+		t.Fatalf("expected 1 hold; got %d", len(holds))
+	}
+	if holds[0].Stage != StageAwaitingTaskApproval {
+		t.Errorf("hold stage = %q, want awaiting_task_approval", holds[0].Stage)
+	}
+	if holds[0].AwaitingTaskFor != "" {
+		t.Errorf("query-only intercept should leave AwaitingTaskFor empty; got %q", holds[0].AwaitingTaskFor)
+	}
+	_ = ctx
+}
+
+func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
+	// No prior `task` reply AND no surface=inline → fall through to
+	// the regular control-rewrite path (dashboard task creation).
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	body := anthropicBashControlTasksPost(inlineTaskBody)
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+	})
+	if !got.Rewritten {
+		t.Fatalf("expected dashboard control-rewrite when no inline signal; got %s", got.Body)
+	}
+	if !strings.Contains(string(got.Body), "http://localhost:25297/control/tasks") {
+		t.Fatalf("expected control URL rewritten; got %s", got.Body)
+	}
+}
+
+func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
+	// A query-signal inner hold has AwaitingTaskFor="" — the release
+	// path must NOT try to drop a non-existent outer hold.
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	inner, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-innerholdxxxxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		ToolUse:  conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
+		Stage:    StageAwaitingTaskApproval,
+		// AwaitingTaskFor intentionally empty — query-only inline.
+		TaskDefinition: &runtimetasks.TaskCreateRequest{
+			Purpose: "Inline-only task",
+			ExpectedTools: []runtimetasks.ExpectedTool{
+				{ToolName: "Bash", Why: "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	creator := &capturingInlineCreator{
+		resp: &InlineApprovedTask{ID: "task-q", Status: "active", ApprovalSource: "inline_chat", Lifetime: "session", ApprovalRecordID: "appr-q"},
+	}
+	approveBody := []byte(`{"messages":[{"role":"user","content":"approve ` + inner.Pending.ID + `"}]}`)
+	rel := TryReleasePendingApproval(ctx, ReleaseRequest{
+		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:          conversation.ProviderAnthropic,
+		Body:              approveBody,
+		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval:   cache,
+		InlineTaskCreator: creator,
+	})
+	if rel.Decision != "allow" || rel.Outcome != "inline_task_approved" {
+		t.Fatalf("release decision=%q outcome=%q reason=%q", rel.Decision, rel.Outcome, rel.Reason)
+	}
+	if !creator.called {
+		t.Fatal("creator should have been invoked")
+	}
+}
+
 func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
