@@ -77,6 +77,8 @@ func ControlNotice(controlBaseURL string) string {
 		"",
 		"USE ONE CURL — emit a single curl invocation with the JSON body inline. Don't write the JSON to a temp file via cat/echo and then curl --data @file: the proxy can parse that shape but it adds variance for no benefit. The simplest, most reliable shape is `--data @-` with a heredoc.",
 		"",
+		"RUN IT IN THE FOREGROUND — the task-creation curl must block until I approve or deny. Do NOT background the call (no trailing `&`, no `nohup`, no `disown`, no backgrounded `exec_command` with a tiny `yield_time_ms`, no putting it in a shell you'll poll separately). The proxy's `wait=true` makes the curl synchronously wait for my decision; for `surface=inline` the curl's result IS the inline approval being resolved. If you background it, you'll proceed before I've decided and hit a wall on every next tool_use.",
+		"",
 		"✗ WRONG — never emit anything that looks like the post-rewrite form:",
 		"  curl -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' \\",
 		"    -H 'X-Clawvisor-Caller: Bearer cv-nonce-…' \\",

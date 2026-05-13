@@ -717,7 +717,13 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES
 	// accept a cat-heredoc-to-file then curl --data @file pattern, but
 	// it's strictly more error-prone — keep the prompt to one shape.
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a single curl invocation to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	//
+	// RUN IT IN THE FOREGROUND. The task-creation curl must block on
+	// the user's decision; backgrounding it (`&`, `nohup`, tiny
+	// yield_time_ms, backgrounded exec_command) makes the agent
+	// proceed before approval lands and produces a worse experience
+	// than the dashboard path.
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a single curl invocation — run it in the FOREGROUND, do not background it — to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 func taskToolWhy(tu conversation.ToolUse) string {
