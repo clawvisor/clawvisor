@@ -37,6 +37,24 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
+	// Transition the held tool approval to StageAwaitingTaskDefinition so
+	// the postprocess path can recognize the next `POST /control/tasks`
+	// tool_use as the inline answer and intercept it instead of routing to
+	// the dashboard. Re-stage is idempotent — if the user types "task"
+	// twice on the same prompt, the same stage is set again.
+	//
+	// We intentionally leave the original tool hold's other fields
+	// (Inspector, Fingerprint, ToolUse) alone so the cascade-release path
+	// can replay the original tool_use after the task is approved.
+	if _, err := req.PendingApproval.Update(ctx, UpdateRequest{
+		UserID:     req.Agent.UserID,
+		AgentID:    req.Agent.ID,
+		Provider:   req.Provider,
+		ApprovalID: pending.ID,
+		Stage:      StageAwaitingTaskDefinition,
+	}); err != nil {
+		return TaskReplyRewriteResult{Body: req.Body}, err
+	}
 	rewritten, ok, err := replaceTaskReplyForProvider(req.HTTPRequest, req.Provider, req.Body, taskCreationPrompt(pending.ToolUse))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
