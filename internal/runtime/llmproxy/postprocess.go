@@ -222,6 +222,21 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
 			v = call.Verdict
+			// Inline task approval interception. When the user is
+			// mid-flight on a "task" gesture (the original tool hold has
+			// been transitioned to StageAwaitingTaskDefinition) and the
+			// model now emits POST /control/tasks, we route the task body
+			// through the inline approval path instead of letting it
+			// proxy through to the dashboard. The model never sees the
+			// real /control/tasks handler — its tool_use_result is
+			// replaced with a rendered approve/deny prompt; the user's
+			// next "approve" creates the task pre-approved and the
+			// follow-up turn auto-releases the original tool call.
+			if inlineVerdict, inlineHandled := maybeInterceptInlineTaskDefinition(
+				req, cfg, audit, trace, rewriter.Name(), tu, call,
+			); inlineHandled {
+				return inlineVerdict
+			}
 			// Mint a nonce bound to the rewritten control URL's
 			// (host, method, path) — the rewritten curl carries it in
 			// X-Clawvisor-Caller; the daemon's nonce middleware on
