@@ -198,26 +198,33 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 	}
 }
 
-// extractField pulls a top-level string field out of the JSON body
-// produced by the synthetic release response. Anthropic's synthesized
-// tool_use input field is rendered as JSON inside the response. Returns
-// "" if the field is missing.
+// extractField pulls a value out of the synthetic release response.
+// The task payload is now JSON-encoded inside a cat heredoc inside a
+// JSON-encoded tool_use command field, so the field appears as
+// `\"approval_record_id\":\"…\"` (with backslash-escaped quotes).
 func extractField(t *testing.T, body []byte, field string) string {
 	t.Helper()
-	// The body for an Anthropic synth-allow path is a JSON message with
-	// a tool_use whose `input` is the map we returned. Find the field
-	// inside the input object by string-matching the quoted key.
-	key := `"` + field + `":"`
-	idx := strings.Index(string(body), key)
-	if idx < 0 {
-		return ""
+	s := string(body)
+	// Try the JSON-escaped form first (the cat-heredoc content lives
+	// inside a JSON string and has its quotes escaped).
+	for _, key := range []string{`\"` + field + `\":\"`, `"` + field + `":"`} {
+		idx := strings.Index(s, key)
+		if idx < 0 {
+			continue
+		}
+		rest := s[idx+len(key):]
+		// Terminator matches the opening style: `\"` for escaped, `"` for raw.
+		terminator := `"`
+		if strings.HasPrefix(key, `\"`) {
+			terminator = `\"`
+		}
+		end := strings.Index(rest, terminator)
+		if end < 0 {
+			continue
+		}
+		return rest[:end]
 	}
-	rest := string(body)[idx+len(key):]
-	end := strings.Index(rest, `"`)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
+	return ""
 }
 
 // Deny path through the release: user types "deny" on inner hold;

@@ -178,16 +178,25 @@ func releaseInlineTaskApproval(ctx context.Context, req ReleaseRequest, inner *P
 		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_create_failed", "Clawvisor: inline task creation failed — "+err.Error())
 	}
 
-	// Synth an assistant tool_use_result-shaped response that surfaces
-	// the created task. The model sees the same shape it would have
-	// gotten from the real /control/tasks handler had it been called
-	// directly, plus the task is already active so its next tool_use
-	// passes the scope check.
-	taskInput := inlineTaskResultPayload(created)
+	// Synth an assistant turn containing a runnable tool_use that the
+	// harness will execute locally. The cmd is a `cat <<JSON ... JSON`
+	// that prints the created-task payload to stdout; the harness
+	// captures stdout and feeds it back to the model as the
+	// tool_use_result for the original POST. The model sees the same
+	// shape it would have gotten from a real /control/tasks call.
+	//
+	// We can't just hand the task payload as the tool_use input —
+	// that fails the harness's input schema (Bash wants `command`,
+	// not `task_id`/`status`/etc.). We can't re-emit the original
+	// curl either — that would double-create the task. The cat
+	// echo is the safe path: read-only, side-effect-free, no proxy
+	// intercept (no /control URL), and the model reads the JSON
+	// naturally without provider-specific branching.
 	syntheticToolName := inner.ToolUse.Name
 	if syntheticToolName == "" {
 		syntheticToolName = "Bash"
 	}
+	taskInput := inlineTaskSyntheticInput(inner, created, syntheticToolName)
 	synth, ok := conversation.SyntheticApprovalToolUseResponse(req.HTTPRequest, req.Provider, req.Body, true, inner.ToolUse.ID, syntheticToolName, taskInput)
 	if !ok {
 		req.logRelease(ctx, inner, "allow", "released", "task created but response synthesis unsupported")
@@ -208,33 +217,83 @@ func releaseInlineTaskApproval(ctx context.Context, req ReleaseRequest, inner *P
 	}
 }
 
-// inlineTaskResultPayload builds the synthesized tool_use input the
-// model sees in place of the never-executed POST /control/tasks. It
-// mirrors the shape of the real handler's response so the model can
-// proceed without provider-specific branching.
-func inlineTaskResultPayload(t *InlineApprovedTask) map[string]any {
-	if t == nil {
-		return map[string]any{"status": "active"}
+// inlineTaskSyntheticInput builds the input field of the synthetic
+// tool_use the harness will run after inline task approval. The
+// resulting tool_use is a real shell command (Bash's `command` or
+// Codex exec_command's `cmd`) that prints the task body as JSON via a
+// here-doc — when the harness executes it, the model receives the
+// task creation result as the tool_use_result and naturally proceeds.
+//
+// We preserve any other fields from the original tool_use input
+// (workdir, yield_time_ms, max_output_tokens, etc.) so the harness's
+// run environment matches what the model originally chose.
+func inlineTaskSyntheticInput(inner *PendingLiteApproval, t *InlineApprovedTask, toolName string) map[string]any {
+	payload := inlineTaskResultJSON(t)
+	cmd := "cat <<'CV_TASK_RESULT'\n" + payload + "\nCV_TASK_RESULT"
+
+	out := map[string]any{}
+	if inner != nil && len(inner.ToolUse.Input) > 0 {
+		_ = json.Unmarshal(inner.ToolUse.Input, &out)
 	}
-	out := map[string]any{
+	// Pick the right command field for the harness:
+	//   - Codex exec_command uses `cmd`
+	//   - Anthropic Bash uses `command`
+	// If the original input had one already, replace in place so we
+	// preserve the harness convention the model chose; otherwise pick
+	// based on the tool name.
+	switch {
+	case mapHasKey(out, "cmd"):
+		out["cmd"] = cmd
+		delete(out, "command")
+	case mapHasKey(out, "command"):
+		out["command"] = cmd
+		delete(out, "cmd")
+	default:
+		if toolName == "exec_command" {
+			out["cmd"] = cmd
+		} else {
+			out["command"] = cmd
+		}
+	}
+	return out
+}
+
+// inlineTaskResultJSON renders the created-task fields the model
+// would have seen from the real /control/tasks handler. Kept separate
+// from the synthetic-input builder so tests can assert the rendered
+// payload directly.
+func inlineTaskResultJSON(t *InlineApprovedTask) string {
+	if t == nil {
+		return `{"status":"active"}`
+	}
+	payload := map[string]any{
 		"task_id":         t.ID,
 		"status":          t.Status,
 		"approval_source": t.ApprovalSource,
+		"message":         "Task approved inline by user. Proceed with the originally requested work.",
 	}
 	if t.Purpose != "" {
-		out["purpose"] = t.Purpose
+		payload["purpose"] = t.Purpose
 	}
 	if t.Lifetime != "" {
-		out["lifetime"] = t.Lifetime
+		payload["lifetime"] = t.Lifetime
 	}
 	if t.ApprovalRecordID != "" {
-		out["approval_record_id"] = t.ApprovalRecordID
+		payload["approval_record_id"] = t.ApprovalRecordID
 	}
 	if t.ExpiresAtRFC3339 != "" {
-		out["expires_at"] = t.ExpiresAtRFC3339
+		payload["expires_at"] = t.ExpiresAtRFC3339
 	}
-	out["message"] = "Task approved inline by user. Proceed with the originally requested tool call."
-	return out
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return `{"status":"active"}`
+	}
+	return string(raw)
+}
+
+func mapHasKey(m map[string]any, key string) bool {
+	_, ok := m[key]
+	return ok
 }
 
 func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) (map[string]any, error) {

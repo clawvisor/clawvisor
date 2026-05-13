@@ -142,6 +142,111 @@ func TestReleaseInlineTaskApprovalCreatesTaskAndDropsOriginalHold(t *testing.T) 
 	}
 }
 
+func TestReleaseInlineTaskApprovalSynthesizesRunnableCatCmd(t *testing.T) {
+	// Regression: the synthetic tool_use input must be a real Bash
+	// invocation (command field carrying a heredoc cat) — not a raw
+	// task-payload JSON map. The harness validates tool_use inputs
+	// against the tool's schema; Bash with an unexpected `task_id`
+	// field rejects the entire call with InputValidationError.
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	_, innerID := seedInlineTaskHolds(t, cache)
+
+	creator := &fakeInlineTaskCreator{
+		resp: &InlineApprovedTask{
+			ID:             "task-uuid-rt",
+			Status:         "active",
+			ApprovalSource: "inline_chat",
+			Lifetime:       "session",
+			Purpose:        "Run command",
+		},
+	}
+	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
+	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
+		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:          conversation.ProviderAnthropic,
+		Body:              body,
+		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval:   cache,
+		InlineTaskCreator: creator,
+	})
+	if result.Decision != "allow" {
+		t.Fatalf("expected allow; got %+v", result)
+	}
+	// Body is an Anthropic synthesized assistant message; the
+	// tool_use input must include a `command` field with a cat
+	// heredoc, NOT a top-level `task_id` field.
+	out := string(result.Body)
+	if !strings.Contains(out, `"command"`) {
+		t.Errorf("synthetic tool_use must carry a `command` field for Bash; body=%s", out)
+	}
+	// The body is JSON-encoded so `<<` is escaped as `<<`.
+	if !strings.Contains(out, "cat \\u003c\\u003c") {
+		t.Errorf("synthetic command must be a cat heredoc; body=%s", out)
+	}
+	if !strings.Contains(out, `task-uuid-rt`) {
+		t.Errorf("synthetic command should print the task id; body=%s", out)
+	}
+	// Sanity: the JSON-decoded input shouldn't have task_id at the top
+	// level. That's what was failing the harness.
+	if strings.Contains(out, `"task_id":"task-uuid-rt"`) && !strings.Contains(out, `task-uuid-rt\nCV_TASK_RESULT`) {
+		// the only place "task_id":"task-uuid-rt" should appear is
+		// inside the cat heredoc body — not as a top-level input field.
+		// We assert that by requiring the closing CV_TASK_RESULT
+		// delimiter to appear nearby. (Heuristic; full structural
+		// check would require unmarshaling.)
+		idx := strings.Index(out, `"task_id":"task-uuid-rt"`)
+		region := out[max(idx-20, 0):min(idx+80, len(out))]
+		if !strings.Contains(region, "CV_TASK_RESULT") && !strings.Contains(region, "\\nCV_TASK_RESULT") {
+			t.Errorf("task_id appears OUTSIDE the cat heredoc — regression; nearby=%q", region)
+		}
+	}
+}
+
+func TestInlineTaskSyntheticInput_PreservesCodexExecCommandFields(t *testing.T) {
+	// Codex exec_command shape carries workdir/yield_time_ms/etc.
+	// alongside `cmd`. The synth must preserve those and replace
+	// only `cmd`.
+	inner := &PendingLiteApproval{
+		ToolUse: conversation.ToolUse{
+			Name: "exec_command",
+			Input: []byte(`{
+				"cmd": "curl -X POST ... --data @- <<JSON ...",
+				"workdir": "/tmp/x",
+				"yield_time_ms": 180000,
+				"max_output_tokens": 2000
+			}`),
+		},
+	}
+	task := &InlineApprovedTask{ID: "task-zz", Status: "active"}
+	got := inlineTaskSyntheticInput(inner, task, "exec_command")
+	if cmd, _ := got["cmd"].(string); !strings.HasPrefix(cmd, "cat <<") {
+		t.Errorf("expected `cmd` rewritten to cat heredoc; got %v", got["cmd"])
+	}
+	if _, present := got["command"]; present {
+		t.Errorf("exec_command shape should not gain `command` field; got %v", got)
+	}
+	if got["workdir"] != "/tmp/x" || got["max_output_tokens"] == nil {
+		t.Errorf("preserved fields were dropped; got %v", got)
+	}
+}
+
+func TestInlineTaskSyntheticInput_BashShape(t *testing.T) {
+	inner := &PendingLiteApproval{
+		ToolUse: conversation.ToolUse{
+			Name:  "Bash",
+			Input: []byte(`{"command":"curl ..."}`),
+		},
+	}
+	task := &InlineApprovedTask{ID: "task-bb", Status: "active"}
+	got := inlineTaskSyntheticInput(inner, task, "Bash")
+	if cmd, _ := got["command"].(string); !strings.HasPrefix(cmd, "cat <<") {
+		t.Errorf("expected `command` rewritten to cat heredoc; got %v", got["command"])
+	}
+	if _, present := got["cmd"]; present {
+		t.Errorf("Bash shape should not gain `cmd` field; got %v", got)
+	}
+}
+
 func TestReleaseInlineTaskApprovalDenyDropsBothHolds(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	outerID, innerID := seedInlineTaskHolds(t, cache)
