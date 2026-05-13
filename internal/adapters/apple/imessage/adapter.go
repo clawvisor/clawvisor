@@ -368,6 +368,11 @@ func (a *IMessageAdapter) downloadHelper(installDir string) (string, error) {
 	return filepath.Join(destApp, helperRelBinary), nil
 }
 
+// maxArchiveFileSize caps any single file extracted from the helper bundle to
+// guard against decompression bombs. The signed helper is a small macOS app
+// (well under 100 MiB total), so 256 MiB per entry leaves plenty of headroom.
+const maxArchiveFileSize = 256 << 20
+
 // extractTarGz extracts a gzipped tar archive into destDir.
 func extractTarGz(r io.Reader, destDir string) error {
 	gz, err := gzip.NewReader(r)
@@ -416,9 +421,14 @@ func extractTarGz(r io.Reader, destDir string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			n, err := io.CopyN(f, tr, maxArchiveFileSize+1)
+			if err != nil && err != io.EOF {
 				f.Close()
 				return err
+			}
+			if n > maxArchiveFileSize {
+				f.Close()
+				return fmt.Errorf("imessage: tar entry %q exceeds max file size %d", hdr.Name, maxArchiveFileSize)
 			}
 			f.Close()
 		}

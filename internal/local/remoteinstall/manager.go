@@ -477,6 +477,11 @@ func validateServicePayload(payloadPath, serviceID string, defaultTimeout time.D
 	return nil
 }
 
+// maxArchiveFileSize caps any single file extracted from a service bundle to
+// guard against decompression bombs. Bundles are signed release artifacts, so
+// 1 GiB per entry leaves room for chunky payloads while still bounding RAM/disk.
+const maxArchiveFileSize = 1 << 30
+
 func extractTarGz(src, dest string) ([]string, error) {
 	f, err := os.Open(src)
 	if err != nil {
@@ -523,9 +528,14 @@ func extractTarGz(src, dest string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			n, err := io.CopyN(out, tr, maxArchiveFileSize+1)
+			if err != nil && err != io.EOF {
 				out.Close()
 				return nil, err
+			}
+			if n > maxArchiveFileSize {
+				out.Close()
+				return nil, fmt.Errorf("archive entry %q exceeds max file size %d", hdr.Name, maxArchiveFileSize)
 			}
 			if err := out.Close(); err != nil {
 				return nil, err

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // startOAuthListener starts a one-shot HTTP server on a random localhost port.
@@ -32,7 +33,7 @@ func startOAuthListener() (port int, done chan struct{}, cleanup func()) {
 	}
 
 	port = ln.Addr().(*net.TCPAddr).Port
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	go func() { _ = srv.Serve(ln) }()
 
