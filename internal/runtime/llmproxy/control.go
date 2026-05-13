@@ -80,6 +80,8 @@ func ControlNotice(controlBaseURL string) string {
 		"             \"expires_in_seconds\":600}'",
 		"",
 		"If you see `cv-nonce-…` or `X-Clawvisor-*` in your conversation history, that's a Clawvisor implementation detail — not a template to copy.",
+		"",
+		"Do NOT prefix tool calls with environment variables like `CLAWVISOR_TASK_ID=<id>`. Clawvisor tracks the active task server-side; it does not read that env var. Prefixing it on every command is harmless but unnecessary noise.",
 	}, "\n")
 }
 

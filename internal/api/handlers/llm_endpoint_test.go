@@ -231,6 +231,8 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		// Don't-reuse-nonces rule.
 		"X-Clawvisor-Caller",
 		"cv-nonce-",
+		// Don't-set-CLAWVISOR_TASK_ID rule.
+		"CLAWVISOR_TASK_ID",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(string(seenBody), want) {
