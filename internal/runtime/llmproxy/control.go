@@ -386,11 +386,24 @@ func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*u
 	if cmd == "" {
 		return nil, "", nil, false
 	}
-	args, ok := parseControlCurlArgs(cmd)
+	args, dataFiles, ok := parseControlCmd(cmd)
 	if !ok {
 		return nil, "", nil, false
 	}
-	return controlPartsFromCurlArgs(args, controlBaseURL)
+	u, method, body, ok := controlPartsFromCurlArgs(args, controlBaseURL)
+	if !ok {
+		return nil, "", nil, false
+	}
+	// curl --data @path resolves to the prior cat-heredoc body so the
+	// inline intercept can read the model's task definition without
+	// the curl actually running.
+	if len(dataFiles) > 0 && len(body) > 0 && body[0] == '@' {
+		path := string(body[1:])
+		if resolved, ok := dataFiles[path]; ok {
+			body = resolved
+		}
+	}
+	return u, method, body, true
 }
 
 func controlPartsFromCurlArgs(args []controlCurlArg, controlBaseURL string) (*url.URL, string, []byte, bool) {
@@ -533,12 +546,85 @@ type controlCurlArg struct {
 }
 
 func parseControlCurlArgs(cmd string) ([]controlCurlArg, bool) {
+	args, _, ok := parseControlCmd(cmd)
+	return args, ok
+}
+
+// parseControlCmd accepts either a single curl statement or a
+// multi-statement script of the form
+//
+//	cat <<TAG >$staticpath     # (zero or more such writes)
+//	$body
+//	TAG
+//	curl ... --data @$staticpath ...
+//
+// and returns (a) the curl statement's args with their absolute offsets
+// in the original cmd string, and (b) a map of paths the prior cat
+// statements wrote, so a curl `--data @path` can be resolved to the
+// inline body. Any shape outside this allowlist (extra commands,
+// pipes, subshells, variable expansion in paths, …) refuses closed.
+func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
-	if err != nil || len(file.Stmts) != 1 {
-		return nil, false
+	if err != nil || len(file.Stmts) == 0 {
+		return nil, nil, false
 	}
-	stmt := file.Stmts[0]
-	if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown || stmt.Semicolon.IsValid() {
+	var curlStmt *syntax.Stmt
+	dataFiles := map[string][]byte{}
+	for i, stmt := range file.Stmts {
+		// A trailing `;` is fine; non-trailing `;` or `&` between
+		// commands smuggles in extra side effects we can't reason
+		// about safely, so refuse.
+		if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown {
+			return nil, nil, false
+		}
+		if stmt.Semicolon.IsValid() && i != len(file.Stmts)-1 {
+			return nil, nil, false
+		}
+		call, ok := stmt.Cmd.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return nil, nil, false
+		}
+		head, ok := staticShellWord(call.Args[0])
+		if !ok {
+			return nil, nil, false
+		}
+		switch head {
+		case "curl":
+			if curlStmt != nil {
+				return nil, nil, false
+			}
+			curlStmt = stmt
+		case "cat":
+			path, body, ok := parseHeredocToFile(stmt, call)
+			if !ok {
+				return nil, nil, false
+			}
+			dataFiles[path] = body
+		default:
+			return nil, nil, false
+		}
+	}
+	if curlStmt == nil {
+		return nil, nil, false
+	}
+	args, ok := parseSingleControlCurlStmt(cmd, curlStmt)
+	if !ok {
+		return nil, nil, false
+	}
+	if len(dataFiles) == 0 {
+		dataFiles = nil
+	}
+	return args, dataFiles, true
+}
+
+// parseSingleControlCurlStmt extracts the curl args from a single shell
+// statement, mirroring the strict single-stmt rules the parser used
+// before multi-stmt support: no negate/background/coprocess/disown,
+// allowed redirs are stdin heredocs to static words, no variable
+// assignments, args must be statically expandable, and args[0] must
+// be `curl`.
+func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg, bool) {
+	if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown {
 		return nil, false
 	}
 	for _, redir := range stmt.Redirs {
@@ -569,6 +655,52 @@ func parseControlCurlArgs(cmd string) ([]controlCurlArg, bool) {
 		return nil, false
 	}
 	return args, true
+}
+
+// parseHeredocToFile recognizes
+//
+//	cat <<TAG >$staticpath
+//	$body
+//	TAG
+//
+// and returns ($staticpath, $body). Refuses any other cat-form
+// (multiple redirs, pipes, dynamic path, missing heredoc).
+func parseHeredocToFile(stmt *syntax.Stmt, call *syntax.CallExpr) (string, []byte, bool) {
+	if len(call.Assigns) > 0 || len(call.Args) != 1 {
+		return "", nil, false
+	}
+	// `cat` with no extra args — the heredoc + > redirect are the
+	// shape we accept.
+	if len(stmt.Redirs) < 2 {
+		return "", nil, false
+	}
+	var heredocBody string
+	var outPath string
+	for _, redir := range stmt.Redirs {
+		switch redir.Op {
+		case syntax.Hdoc, syntax.DashHdoc:
+			if redir.Hdoc == nil {
+				return "", nil, false
+			}
+			body, ok := staticShellWord(redir.Hdoc)
+			if !ok {
+				return "", nil, false
+			}
+			heredocBody = body
+		case syntax.RdrOut, syntax.AppOut:
+			path, ok := staticShellWord(redir.Word)
+			if !ok || strings.TrimSpace(path) == "" {
+				return "", nil, false
+			}
+			outPath = path
+		default:
+			return "", nil, false
+		}
+	}
+	if outPath == "" || heredocBody == "" {
+		return "", nil, false
+	}
+	return outPath, []byte(heredocBody), true
 }
 
 func staticShellWord(word *syntax.Word) (string, bool) {

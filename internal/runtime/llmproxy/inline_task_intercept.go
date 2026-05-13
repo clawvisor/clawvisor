@@ -130,7 +130,10 @@ func maybeInterceptInlineTaskDefinition(
 // controlTaskBodyFromInput extracts the POST body from the tool_use's
 // structured or command form. Mirrors ParseControlToolUseWithBase's
 // reachable shapes but returns just the body bytes — the URL has
-// already been classified by the caller.
+// already been classified by the caller. Routes through the shared
+// parseControlCmd helper so both single-statement (curl with stdin
+// heredoc) and multi-statement (cat-heredoc + curl --data @file)
+// shapes resolve to the actual body bytes.
 func controlTaskBodyFromInput(in json.RawMessage) ([]byte, bool) {
 	if len(in) == 0 {
 		return nil, false
@@ -146,42 +149,12 @@ func controlTaskBodyFromInput(in json.RawMessage) ([]byte, bool) {
 		}
 		return structured.Body, true
 	}
-	// Bash form: { "cmd"/"command": "curl ... --data ... <URL>" }
-	var cmdShape struct {
-		Cmd     string `json:"cmd,omitempty"`
-		Command string `json:"command,omitempty"`
-	}
-	if err := json.Unmarshal(in, &cmdShape); err != nil {
-		return nil, false
-	}
-	cmd := strings.TrimSpace(cmdShape.Cmd)
-	if cmd == "" {
-		cmd = strings.TrimSpace(cmdShape.Command)
-	}
-	if cmd == "" {
-		return nil, false
-	}
-	args, ok := parseControlCurlArgs(cmd)
-	if !ok {
-		return nil, false
-	}
-	for i := 1; i < len(args); i++ {
-		tok := args[i].value
-		switch {
-		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary":
-			if i+1 >= len(args) {
-				return nil, false
-			}
-			return []byte(args[i+1].value), true
-		case strings.HasPrefix(tok, "-d") && tok != "-d":
-			return []byte(strings.TrimPrefix(tok, "-d")), true
-		case strings.HasPrefix(tok, "--data="):
-			return []byte(strings.TrimPrefix(tok, "--data=")), true
-		case strings.HasPrefix(tok, "--data-raw="):
-			return []byte(strings.TrimPrefix(tok, "--data-raw=")), true
-		case strings.HasPrefix(tok, "--data-binary="):
-			return []byte(strings.TrimPrefix(tok, "--data-binary=")), true
-		}
+	// Bash form: { "cmd"/"command": "..." }. Re-use the same parser the
+	// rewrite path uses so single-stmt and cat-then-curl resolve
+	// identically; controlPartsFromCommandInput already handles
+	// @path → heredoc body substitution.
+	if _, _, body, ok := controlPartsFromCommandInput(in, ""); ok && len(body) > 0 {
+		return body, true
 	}
 	return nil, false
 }
