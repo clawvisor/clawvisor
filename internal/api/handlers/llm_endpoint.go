@@ -94,6 +94,15 @@ type LLMEndpointHandler struct {
 	// default; opted in via cfg.ProxyLite.TraceLogPath.
 	TraceLogger *llmproxy.TraceLogger
 
+	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
+	// inbound requests, upstream responses, and the bodies returned
+	// to the harness. Off by default; opted in via
+	// CLAWVISOR_PROXY_LITE_RAW_LOG or cfg.ProxyLite.RawLogPath.
+	// Bodies contain conversation content; the file is mode 0600 so
+	// only the daemon's user can read it, but operators should still
+	// avoid leaving this on outside of diagnostic sessions.
+	RawIOLogger *llmproxy.RawIOLogger
+
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
 
@@ -393,6 +402,22 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"upstream_url", upstreamURL,
 		"model", reqSummary.Model,
 	)
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "inbound_request",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Headers:      llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(body),
+		})
+	}
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
 		if isVaultMiss(err) {
@@ -473,6 +498,24 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"status", resp.StatusCode,
 				"body_preview", truncateForLog(string(full), 2048),
 			)
+		}
+		if h.RawIOLogger != nil {
+			bodyStr, bodyEnc := llmproxy.EncodeBody(full)
+			h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+				Phase:        "upstream_response",
+				RequestID:    requestID,
+				UserID:       agent.UserID,
+				AgentID:      agent.ID,
+				Provider:     string(provider),
+				Method:       r.Method,
+				Path:         r.URL.RequestURI(),
+				Status:       resp.StatusCode,
+				ContentType:  upstreamCT,
+				Headers:      llmproxy.SafeHeaderSnapshot(resp.Header),
+				Body:         bodyStr,
+				BodyEncoding: bodyEnc,
+				BodyBytes:    len(full),
+			})
 		}
 		callerToken := middleware.CallerTokenFromContext(r.Context())
 		if callerToken == "" {
@@ -560,6 +603,29 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// after upstream may have compressed it; the harness should
 			// not try to gunzip our plaintext.
 			w.Header().Del("Content-Encoding")
+		}
+		if h.RawIOLogger != nil {
+			bodyStr, bodyEnc := llmproxy.EncodeBody(processed.Body)
+			marker := "passthrough"
+			if processed.Rewritten {
+				marker = "rewritten"
+			}
+			h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+				Phase:        "harness_response",
+				RequestID:    requestID,
+				UserID:       agent.UserID,
+				AgentID:      agent.ID,
+				Provider:     string(provider),
+				Method:       r.Method,
+				Path:         r.URL.RequestURI(),
+				Status:       resp.StatusCode,
+				ContentType:  processed.ContentType,
+				Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+				Body:         bodyStr,
+				BodyEncoding: bodyEnc,
+				BodyBytes:    len(processed.Body),
+				Marker:       marker,
+			})
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(processed.Body)
@@ -762,6 +828,25 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	}
 	w.Header().Set("Content-Type", result.ContentType)
 	w.Header().Set("Cache-Control", "no-cache")
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(result.Body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "harness_response",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Status:       result.HTTPStatus,
+			ContentType:  result.ContentType,
+			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(result.Body),
+			Marker:       "synth_release_" + result.Outcome,
+		})
+	}
 	w.WriteHeader(result.HTTPStatus)
 	_, _ = io.Copy(w, bytes.NewReader(result.Body))
 	return true
