@@ -123,6 +123,43 @@ func TestIsReadOnlyBashCommand_RejectsMixedPipelines(t *testing.T) {
 	}
 }
 
+// P0 regression: the `command` shell builtin without -v/-V runs its
+// argument. Allowlisting `command` as read-only was a security bypass
+// — `command rm -rf /` would have passed. Only the inspection flags
+// (-v / -V print what a name resolves to) are safe.
+func TestIsReadOnlyBashCommand_CommandBuiltinBypass(t *testing.T) {
+	allowed := []string{
+		"command -v rm",
+		"command -V cat",
+		"command -v which",
+	}
+	for _, cmd := range allowed {
+		t.Run("allow_"+cmd, func(t *testing.T) {
+			ok, reason := IsReadOnlyBashCommand(cmd)
+			if !ok {
+				t.Errorf("%q should be read-only (inspect flag), got refusal: %s", cmd, reason)
+			}
+		})
+	}
+	refused := []string{
+		"command rm -rf /tmp",
+		"command ls",
+		"command -p rm /tmp/x",
+		"command",
+	}
+	for _, cmd := range refused {
+		t.Run("refuse_"+cmd, func(t *testing.T) {
+			ok, reason := IsReadOnlyBashCommand(cmd)
+			if ok {
+				t.Fatalf("SECURITY: `command` without -v/-V must refuse — %q passed", cmd)
+			}
+			if reason == "" {
+				t.Errorf("refusal must include a reason")
+			}
+		})
+	}
+}
+
 // Empty / malformed inputs must refuse cleanly, never crash.
 func TestIsReadOnlyBashCommand_EdgeCases(t *testing.T) {
 	cases := []string{"", "   ", "$(", `'unterminated`}

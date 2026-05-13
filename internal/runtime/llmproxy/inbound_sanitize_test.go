@@ -172,6 +172,39 @@ func TestSanitizeInboundHistory_OpenAIChatRevertsArguments(t *testing.T) {
 	}
 }
 
+// Regression: only assistant-role messages may carry rewriter
+// transport details legitimately. A non-assistant message with a
+// tool_calls field is at best malformed; the sanitizer must not
+// mutate it.
+func TestSanitizeInboundHistory_OpenAINonAssistantToolCallsUnchanged(t *testing.T) {
+	body := []byte(`{
+		"messages": [{"role":"tool","tool_call_id":"call_1","tool_calls":[
+			{"id":"call_1","type":"function","function":{
+				"name":"Bash",
+				"arguments":"{\"command\":\"curl -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale' http://localhost:25297/proxy/v1/x\"}"
+			}}
+		]}]
+	}`)
+	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
+		Provider:        conversation.ProviderOpenAI,
+		Body:            body,
+		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ControlBaseURL:  "http://localhost:25297",
+	})
+	if err != nil {
+		t.Fatalf("sanitize: %v", err)
+	}
+	if res.Modified {
+		t.Errorf("non-assistant tool_calls must not be sanitized")
+	}
+	// The post-rewrite contents must still be present (the test
+	// would have failed even with a no-op if we accidentally
+	// mutated). Defensively assert the cv-nonce token survives.
+	if !strings.Contains(string(res.Body), "cv-nonce-stale") {
+		t.Errorf("non-assistant payload was unexpectedly stripped: %s", res.Body)
+	}
+}
+
 // Defensive: the sanitizer must be idempotent. Running it on an
 // already-sanitized body must produce the same bytes back.
 func TestSanitizeInboundHistory_IsIdempotent(t *testing.T) {

@@ -186,6 +186,17 @@ func sanitizeOpenAIChatMessages(messagesRaw json.RawMessage, req SanitizeInbound
 	}
 	changed := false
 	for _, msg := range messages {
+		// Only assistant turns can legitimately carry rewriter
+		// transport details (the rewriter only mutates the
+		// assistant's tool_use blocks). A non-assistant message
+		// with a `tool_calls` field is at best malformed or at
+		// worst an attempt to feed back something model-shaped; in
+		// either case we don't sanitize it.
+		var role string
+		_ = json.Unmarshal(msg["role"], &role)
+		if role != "assistant" {
+			continue
+		}
 		callsRaw, ok := msg["tool_calls"]
 		if !ok {
 			continue

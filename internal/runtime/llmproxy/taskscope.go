@@ -2,7 +2,6 @@ package llmproxy
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/policy"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -77,7 +76,12 @@ func (c *StoreTaskScopeChecker) Check(ctx context.Context, userID, agentID, serv
 	}
 	tasks, _, err := c.store.ListTasks(ctx, userID, store.TaskFilter{ActiveOnly: true})
 	if err != nil {
-		return TaskScopeDecision{Reason: fmt.Sprintf("list_tasks_error: %s", err.Error())}
+		// Don't surface raw store errors to clients — they can leak
+		// driver-specific details (constraint names, file paths,
+		// SQL fragments). The caller's audit row already records
+		// the agent context; an operator can correlate it with the
+		// daemon's slog output for the underlying error text.
+		return TaskScopeDecision{Reason: "task_store_unavailable"}
 	}
 	classification := policy.ClassifyGatewayRequest(tasks, agentID, serviceID, "", actionID)
 	return classifyToDecision(classification, serviceID, actionID)

@@ -174,6 +174,16 @@ func TestToolNamesMatch(t *testing.T) {
 		{"CustomTool", "CustomTool", true},
 		{"customtool", "CustomTool", true},
 		{"CustomTool", "OtherTool", false},
+		// Canonical class names declared in expected_tools_json must
+		// also map to their class — otherwise the alias relation is
+		// asymmetric (Bash→exec_command works, but edit_file→Edit
+		// doesn't).
+		{"edit_file", "Edit", true},
+		{"edit_file", "apply_patch", true},
+		{"write_file", "Write", true},
+		{"web_fetch", "WebFetch", true},
+		{"web_fetch", "fetch", true},
+		{"shell", "exec_command", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.declared+"_vs_"+tc.actual, func(t *testing.T) {

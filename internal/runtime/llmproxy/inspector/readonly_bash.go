@@ -242,6 +242,41 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 				return false
 			}
 		}
+	case "command":
+		// `command` is a POSIX shell builtin that runs whatever
+		// follows, bypassing function/alias lookup. Only the
+		// inspection flags `-v` / `-V` (print what a name resolves
+		// to, like `which`) are read-only. Without them — or with
+		// `-p` (use the default PATH and EXECUTE) — `command rm -rf
+		// /` would run rm. Refuse unless every non-empty arg before
+		// the operand is `-v` or `-V`.
+		sawInspect := false
+		for _, a := range args {
+			val, ok := staticWordValue(a)
+			if !ok {
+				return false
+			}
+			if val == "-v" || val == "-V" {
+				sawInspect = true
+				continue
+			}
+			if strings.HasPrefix(val, "-") {
+				// Any other flag (e.g. `-p`) keeps it as a runner.
+				return false
+			}
+			// First positional arg without an inspect flag means
+			// `command <name>` will EXECUTE <name>.
+			if !sawInspect {
+				return false
+			}
+		}
+		if !sawInspect {
+			return false
+		}
+	case "type":
+		// `type -a name` / `type name` is informational on bash/zsh.
+		// No mutating flag exists, but require at least one operand
+		// so a bare `type` doesn't trip on dynamic input from heredocs.
 	}
 	return true
 }

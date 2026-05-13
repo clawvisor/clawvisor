@@ -196,7 +196,7 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "SELF_TARGET", "target host points at the proxy itself")
 		return
 	}
-	if err := h.checkSSRF(targetHost); err != nil {
+	if err := h.checkSSRF(r.Context(), targetHost); err != nil {
 		auditStatus = http.StatusForbidden
 		auditDecide = "deny"
 		auditOutcome = "ssrf_blocked"
@@ -557,8 +557,10 @@ func (h *ProxyResolverHandler) isSelfHost(host string) bool {
 }
 
 // checkSSRF guards against RFC1918 / loopback / link-local destinations
-// unless AllowPrivateNetworks is set. Resolves DNS once.
-func (h *ProxyResolverHandler) checkSSRF(host string) error {
+// unless AllowPrivateNetworks is set. Resolves DNS once via the
+// request's context so a slow/hostile resolver can't pin the goroutine
+// forever.
+func (h *ProxyResolverHandler) checkSSRF(ctx context.Context, host string) error {
 	if h.AllowPrivateNetworks {
 		return nil
 	}
@@ -572,7 +574,7 @@ func (h *ProxyResolverHandler) checkSSRF(host string) error {
 		}
 		return nil
 	}
-	addrs, err := net.LookupIP(hostOnly)
+	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip", hostOnly)
 	if err != nil {
 		return fmt.Errorf("resolve target host: %w", err)
 	}

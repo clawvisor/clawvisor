@@ -106,11 +106,11 @@ func toolClass(name string) string {
 		return "shell"
 	case "read", "read_file":
 		return "read_file"
-	case "edit", "notebookedit", "apply_patch":
+	case "edit", "notebookedit", "apply_patch", "edit_file":
 		return "edit_file"
-	case "write":
+	case "write", "write_file":
 		return "write_file"
-	case "webfetch", "fetch", "http_request":
+	case "webfetch", "fetch", "http_request", "web_fetch":
 		return "web_fetch"
 	}
 	return ""

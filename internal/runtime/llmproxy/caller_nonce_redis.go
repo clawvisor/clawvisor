@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -43,6 +44,9 @@ func (c *RedisCallerNonceCache) Mint(ctx context.Context, agentID string, target
 		return "", err
 	}
 	target = normalizeNonceTarget(target)
+	// Mirror the memory impl's normalization so consumers observe the
+	// same agent ID shape regardless of which backend is configured.
+	agentID = strings.TrimSpace(agentID)
 	payload, err := json.Marshal(redisNoncePayload{
 		AgentID: agentID,
 		Host:    target.Host,
