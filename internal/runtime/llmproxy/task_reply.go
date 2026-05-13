@@ -63,20 +63,30 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 }
 
 func replaceTaskReplyForProvider(req *http.Request, provider conversation.Provider, body []byte, replacement string) ([]byte, bool, error) {
+	return replaceApprovalReplyForProvider(req, provider, body, "task", replacement)
+}
+
+// replaceApprovalReplyForProvider rewrites the most recent user
+// message's text content when its parsed verb matches expectedVerb.
+// Used for both "task" (rewriting to the task-creation prompt) and
+// "approve"/"deny" (rewriting to inline-task approval context, so
+// the LLM sees a clean conversation state instead of a synthesized
+// tool_use it never authored).
+func replaceApprovalReplyForProvider(req *http.Request, provider conversation.Provider, body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
 	switch provider {
 	case conversation.ProviderAnthropic:
-		return replaceAnthropicTaskReply(body, replacement)
+		return replaceAnthropicApprovalReply(body, expectedVerb, replacement)
 	case conversation.ProviderOpenAI:
 		if conversation.IsOpenAIChatCompletionsEndpoint(req) {
-			return replaceOpenAIChatTaskReply(body, replacement)
+			return replaceOpenAIChatApprovalReply(body, expectedVerb, replacement)
 		}
-		return replaceOpenAIResponsesTaskReply(body, replacement)
+		return replaceOpenAIResponsesApprovalReply(body, expectedVerb, replacement)
 	default:
 		return body, false, nil
 	}
 }
 
-func replaceAnthropicTaskReply(body []byte, replacement string) ([]byte, bool, error) {
+func replaceAnthropicApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Messages []struct {
 			Role    string          `json:"role"`
@@ -95,7 +105,7 @@ func replaceAnthropicTaskReply(body []byte, replacement string) ([]byte, bool, e
 			continue
 		}
 		verb, _ := conversation.ParseApprovalReplyText(flattenAnthropicTaskReplyText(req.Messages[i].Content))
-		if verb != "task" {
+		if verb != expectedVerb {
 			return body, false, nil
 		}
 		encoded, _ := json.Marshal(replacement)
@@ -140,7 +150,7 @@ func flattenAnthropicTaskReplyText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-func replaceOpenAIChatTaskReply(body []byte, replacement string) ([]byte, bool, error) {
+func replaceOpenAIChatApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Messages []map[string]any `json:"messages"`
 	}
@@ -158,7 +168,7 @@ func replaceOpenAIChatTaskReply(body []byte, replacement string) ([]byte, bool, 
 		}
 		contentRaw, _ := json.Marshal(req.Messages[i]["content"])
 		verb, _ := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
-		if verb != "task" {
+		if verb != expectedVerb {
 			return body, false, nil
 		}
 		req.Messages[i]["content"] = replacement
@@ -173,7 +183,7 @@ func replaceOpenAIChatTaskReply(body []byte, replacement string) ([]byte, bool, 
 	return body, false, nil
 }
 
-func replaceOpenAIResponsesTaskReply(body []byte, replacement string) ([]byte, bool, error) {
+func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Input json.RawMessage `json:"input"`
 	}
@@ -187,7 +197,7 @@ func replaceOpenAIResponsesTaskReply(body []byte, replacement string) ([]byte, b
 	var inputString string
 	if err := json.Unmarshal(req.Input, &inputString); err == nil {
 		verb, _ := conversation.ParseApprovalReplyText(inputString)
-		if verb != "task" {
+		if verb != expectedVerb {
 			return body, false, nil
 		}
 		encoded, _ := json.Marshal(replacement)
@@ -207,7 +217,7 @@ func replaceOpenAIResponsesTaskReply(body []byte, replacement string) ([]byte, b
 		}
 		contentRaw, _ := json.Marshal(items[i]["content"])
 		verb, _ := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
-		if verb != "task" {
+		if verb != expectedVerb {
 			return body, false, nil
 		}
 		items[i]["content"] = []map[string]any{{"type": "input_text", "text": replacement}}

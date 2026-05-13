@@ -273,22 +273,25 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 		},
 	}
 	approveBody := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
-	rel := TryReleasePendingApproval(ctx, ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              approveBody,
-		Agent:             &store.Agent{ID: agentID, UserID: userID},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
+	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            approveBody,
+		Agent:           &store.Agent{ID: agentID, UserID: userID},
+		PendingApproval: cache,
+		Creator:         creator,
 	})
-	if rel.Decision != "allow" || rel.Outcome != "inline_task_approved" {
-		t.Fatalf("release decision=%q outcome=%q", rel.Decision, rel.Outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rewrite.Rewritten || rewrite.Decision != "allow" || rewrite.Outcome != "inline_task_approved" {
+		t.Fatalf("rewrite decision=%q outcome=%q rewritten=%v", rewrite.Decision, rewrite.Outcome, rewrite.Rewritten)
 	}
 	if !creator.called {
-		t.Fatal("InlineTaskCreator should have been invoked")
+		t.Fatal("Creator should have been invoked")
 	}
-	if !strings.Contains(string(rel.Body), "task-uuid-final") {
-		t.Fatalf("synthetic response missing task id: %s", rel.Body)
+	if !strings.Contains(string(rewrite.Body), "task-uuid-final") {
+		t.Fatalf("rewritten body missing task id: %s", rewrite.Body)
 	}
 
 	// Both holds should be gone now.
@@ -431,16 +434,20 @@ func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 		resp: &InlineApprovedTask{ID: "task-q", Status: "active", ApprovalSource: "inline_chat", Lifetime: "session", ApprovalRecordID: "appr-q"},
 	}
 	approveBody := []byte(`{"messages":[{"role":"user","content":"approve ` + inner.Pending.ID + `"}]}`)
-	rel := TryReleasePendingApproval(ctx, ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              approveBody,
-		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
+	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            approveBody,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
 	})
-	if rel.Decision != "allow" || rel.Outcome != "inline_task_approved" {
-		t.Fatalf("release decision=%q outcome=%q reason=%q", rel.Decision, rel.Outcome, rel.Reason)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rewrite.Rewritten || rewrite.Decision != "allow" || rewrite.Outcome != "inline_task_approved" {
+		t.Fatalf("rewrite decision=%q outcome=%q rewritten=%v reason=%q",
+			rewrite.Decision, rewrite.Outcome, rewrite.Rewritten, rewrite.Reason)
 	}
 	if !creator.called {
 		t.Fatal("creator should have been invoked")

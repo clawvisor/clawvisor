@@ -18,12 +18,12 @@ import (
 // so tests can verify both the inputs (parsed body, original tool_use)
 // AND control the outputs (success/failure, returned task body).
 type fakeInlineTaskCreator struct {
-	called       bool
-	gotAgent     *store.Agent
-	gotReq       *runtimetasks.TaskCreateRequest
-	gotOrigID    string
-	resp         *InlineApprovedTask
-	err          error
+	called    bool
+	gotAgent  *store.Agent
+	gotReq    *runtimetasks.TaskCreateRequest
+	gotOrigID string
+	resp      *InlineApprovedTask
+	err       error
 }
 
 func (f *fakeInlineTaskCreator) CreateInlineApprovedTask(_ context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*InlineApprovedTask, error) {
@@ -81,7 +81,7 @@ func seedInlineTaskHolds(t *testing.T, cache *MemoryPendingApprovalCache) (outer
 	return outer.Pending.ID, inner.Pending.ID
 }
 
-func TestReleaseInlineTaskApprovalCreatesTaskAndDropsOriginalHold(t *testing.T) {
+func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	outerID, innerID := seedInlineTaskHolds(t, cache)
 
@@ -93,216 +93,180 @@ func TestReleaseInlineTaskApprovalCreatesTaskAndDropsOriginalHold(t *testing.T) 
 			Lifetime:         "session",
 			ApprovalSource:   "inline_chat",
 			ApprovalRecordID: "appr-uuid-456",
-			ExpiresAtRFC3339: time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),
 		},
 	}
 
 	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
-	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              body,
-		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
+	out, err := RewriteInlineTaskApprovalReply(context.Background(), InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
 	})
-	if !result.Handled {
-		t.Fatal("expected release to be handled")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if result.Decision != "allow" {
-		t.Fatalf("decision=%q, want allow; outcome=%s reason=%s", result.Decision, result.Outcome, result.Reason)
+	if !out.Rewritten {
+		t.Fatal("expected body to be rewritten")
 	}
-	if result.Outcome != "inline_task_approved" {
-		t.Fatalf("outcome=%q, want inline_task_approved", result.Outcome)
+	if out.Decision != "allow" || out.Outcome != "inline_task_approved" {
+		t.Fatalf("decision=%q outcome=%q", out.Decision, out.Outcome)
+	}
+	if out.TaskID != "task-uuid-123" {
+		t.Errorf("TaskID=%q, want task-uuid-123", out.TaskID)
 	}
 	if !creator.called {
-		t.Fatal("expected InlineTaskCreator.CreateInlineApprovedTask to be called")
-	}
-	if creator.gotAgent == nil || creator.gotAgent.ID != "agent-1" {
-		t.Fatalf("creator received agent=%+v", creator.gotAgent)
-	}
-	if creator.gotReq == nil || creator.gotReq.Purpose != "Build a landing page" {
-		t.Fatalf("creator received req=%+v", creator.gotReq)
+		t.Fatal("expected creator to be called")
 	}
 	if creator.gotOrigID != outerID {
-		t.Fatalf("creator received originalToolUseID=%q, want %q (outer hold id)", creator.gotOrigID, outerID)
+		t.Errorf("creator gotOrigID=%q, want %q", creator.gotOrigID, outerID)
 	}
-
-	// The original hold must be dropped.
-	peeked, _ := cache.Peek(context.Background(), ResolveRequest{
-		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ApprovalID: outerID,
-	})
-	if peeked != nil {
-		t.Fatalf("expected original hold dropped; got %+v", peeked)
+	// Body should now carry the rewritten user message — task id +
+	// "do not POST again" instruction.
+	rewrittenBody := string(out.Body)
+	if !strings.Contains(rewrittenBody, "task-uuid-123") {
+		t.Errorf("rewritten body missing task id: %s", rewrittenBody)
 	}
-
-	// Body should be the synthetic ALLOW response with the task payload.
-	if !strings.Contains(string(result.Body), "task-uuid-123") {
-		t.Fatalf("synthetic response missing task id; body=%s", result.Body)
+	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {
+		t.Errorf("rewritten body missing do-not-repost guidance: %s", rewrittenBody)
 	}
-}
-
-func TestReleaseInlineTaskApprovalSynthesizesRunnableCatCmd(t *testing.T) {
-	// Regression: the synthetic tool_use input must be a real Bash
-	// invocation (command field carrying a heredoc cat) — not a raw
-	// task-payload JSON map. The harness validates tool_use inputs
-	// against the tool's schema; Bash with an unexpected `task_id`
-	// field rejects the entire call with InputValidationError.
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	_, innerID := seedInlineTaskHolds(t, cache)
-
-	creator := &fakeInlineTaskCreator{
-		resp: &InlineApprovedTask{
-			ID:             "task-uuid-rt",
-			Status:         "active",
-			ApprovalSource: "inline_chat",
-			Lifetime:       "session",
-			Purpose:        "Run command",
-		},
-	}
-	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
-	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              body,
-		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
-	})
-	if result.Decision != "allow" {
-		t.Fatalf("expected allow; got %+v", result)
-	}
-	// Body is an Anthropic synthesized assistant message; the
-	// tool_use input must include a `command` field with a cat
-	// heredoc, NOT a top-level `task_id` field.
-	out := string(result.Body)
-	if !strings.Contains(out, `"command"`) {
-		t.Errorf("synthetic tool_use must carry a `command` field for Bash; body=%s", out)
-	}
-	// The body is JSON-encoded so `<<` is escaped as `<<`.
-	if !strings.Contains(out, "cat \\u003c\\u003c") {
-		t.Errorf("synthetic command must be a cat heredoc; body=%s", out)
-	}
-	if !strings.Contains(out, `task-uuid-rt`) {
-		t.Errorf("synthetic command should print the task id; body=%s", out)
-	}
-	// Sanity: the JSON-decoded input shouldn't have task_id at the top
-	// level. That's what was failing the harness.
-	if strings.Contains(out, `"task_id":"task-uuid-rt"`) && !strings.Contains(out, `task-uuid-rt\nCV_TASK_RESULT`) {
-		// the only place "task_id":"task-uuid-rt" should appear is
-		// inside the cat heredoc body — not as a top-level input field.
-		// We assert that by requiring the closing CV_TASK_RESULT
-		// delimiter to appear nearby. (Heuristic; full structural
-		// check would require unmarshaling.)
-		idx := strings.Index(out, `"task_id":"task-uuid-rt"`)
-		region := out[max(idx-20, 0):min(idx+80, len(out))]
-		if !strings.Contains(region, "CV_TASK_RESULT") && !strings.Contains(region, "\\nCV_TASK_RESULT") {
-			t.Errorf("task_id appears OUTSIDE the cat heredoc — regression; nearby=%q", region)
+	// Both holds gone.
+	for _, id := range []string{outerID, innerID} {
+		peeked, _ := cache.Peek(context.Background(), ResolveRequest{
+			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ApprovalID: id,
+		})
+		if peeked != nil {
+			t.Errorf("hold %s should be dropped on approve; got %+v", id, peeked)
 		}
 	}
 }
 
-func TestInlineTaskSyntheticInput_PreservesCodexExecCommandFields(t *testing.T) {
-	// Codex exec_command shape carries workdir/yield_time_ms/etc.
-	// alongside `cmd`. The synth must preserve those and replace
-	// only `cmd`.
-	inner := &PendingLiteApproval{
-		ToolUse: conversation.ToolUse{
-			Name: "exec_command",
-			Input: []byte(`{
-				"cmd": "curl -X POST ... --data @- <<JSON ...",
-				"workdir": "/tmp/x",
-				"yield_time_ms": 180000,
-				"max_output_tokens": 2000
-			}`),
-		},
-	}
-	task := &InlineApprovedTask{ID: "task-zz", Status: "active"}
-	got := inlineTaskSyntheticInput(inner, task, "exec_command")
-	if cmd, _ := got["cmd"].(string); !strings.HasPrefix(cmd, "cat <<") {
-		t.Errorf("expected `cmd` rewritten to cat heredoc; got %v", got["cmd"])
-	}
-	if _, present := got["command"]; present {
-		t.Errorf("exec_command shape should not gain `command` field; got %v", got)
-	}
-	if got["workdir"] != "/tmp/x" || got["max_output_tokens"] == nil {
-		t.Errorf("preserved fields were dropped; got %v", got)
-	}
-}
-
-func TestInlineTaskSyntheticInput_BashShape(t *testing.T) {
-	inner := &PendingLiteApproval{
-		ToolUse: conversation.ToolUse{
-			Name:  "Bash",
-			Input: []byte(`{"command":"curl ..."}`),
-		},
-	}
-	task := &InlineApprovedTask{ID: "task-bb", Status: "active"}
-	got := inlineTaskSyntheticInput(inner, task, "Bash")
-	if cmd, _ := got["command"].(string); !strings.HasPrefix(cmd, "cat <<") {
-		t.Errorf("expected `command` rewritten to cat heredoc; got %v", got["command"])
-	}
-	if _, present := got["cmd"]; present {
-		t.Errorf("Bash shape should not gain `cmd` field; got %v", got)
-	}
-}
-
-func TestReleaseInlineTaskApprovalDenyDropsBothHolds(t *testing.T) {
+func TestRewriteInlineTaskApproval_DenyDropsBothHoldsNoCreator(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	outerID, innerID := seedInlineTaskHolds(t, cache)
 
 	creator := &fakeInlineTaskCreator{}
 	body := []byte(`{"messages":[{"role":"user","content":"deny ` + innerID + `"}]}`)
-	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              body,
-		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
+	out, err := RewriteInlineTaskApprovalReply(context.Background(), InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
 	})
-	if result.Decision != "deny" {
-		t.Fatalf("decision=%q, want deny", result.Decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Rewritten || out.Decision != "deny" {
+		t.Fatalf("decision=%q rewritten=%v", out.Decision, out.Rewritten)
 	}
 	if creator.called {
-		t.Fatal("denied inline task must NOT call the creator")
+		t.Fatal("creator must not be called on deny")
+	}
+	rewrittenBody := string(out.Body)
+	if !strings.Contains(rewrittenBody, "user denied") &&
+		!strings.Contains(rewrittenBody, "denied the task-creation") {
+		t.Errorf("rewritten body missing denial language: %s", rewrittenBody)
 	}
 	for _, id := range []string{outerID, innerID} {
 		peeked, _ := cache.Peek(context.Background(), ResolveRequest{
 			UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic, ApprovalID: id,
 		})
 		if peeked != nil {
-			t.Fatalf("hold %s should be dropped on deny; got %+v", id, peeked)
+			t.Errorf("hold %s should be dropped on deny; got %+v", id, peeked)
 		}
 	}
 }
 
-func TestReleaseInlineTaskApprovalCreatorFailureSurfacesAsDeny(t *testing.T) {
+func TestRewriteInlineTaskApproval_CreatorFailureRewritesAsDeny(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	_, innerID := seedInlineTaskHolds(t, cache)
 
 	creator := &fakeInlineTaskCreator{err: errors.New("invalid task envelope")}
 	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
-	result := TryReleasePendingApproval(context.Background(), ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              body,
-		Agent:             &store.Agent{ID: "agent-1", UserID: "user-1"},
-		PendingApproval:   cache,
-		InlineTaskCreator: creator,
+	out, err := RewriteInlineTaskApprovalReply(context.Background(), InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
 	})
-	if result.Decision != "deny" {
-		t.Fatalf("decision=%q, want deny", result.Decision)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if result.Outcome != "inline_task_create_failed" {
-		t.Fatalf("outcome=%q, want inline_task_create_failed", result.Outcome)
+	if !out.Rewritten || out.Decision != "deny" || out.Outcome != "inline_task_create_failed" {
+		t.Fatalf("decision=%q outcome=%q rewritten=%v", out.Decision, out.Outcome, out.Rewritten)
 	}
-	if !strings.Contains(result.Reason, "invalid task envelope") {
-		t.Fatalf("reason missing creator error: %q", result.Reason)
+	if !strings.Contains(string(out.Body), "invalid task envelope") {
+		t.Errorf("rewritten body missing creator error message: %s", out.Body)
 	}
 }
 
-func TestReleaseInlineTaskApprovalMissingCreatorFailsClosed(t *testing.T) {
+func TestRewriteInlineTaskApproval_MissingCreatorRewritesAsDeny(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	_, innerID := seedInlineTaskHolds(t, cache)
+
+	body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
+	out, err := RewriteInlineTaskApprovalReply(context.Background(), InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		// Creator nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Decision != "deny" || out.Outcome != "inline_task_creator_missing" {
+		t.Fatalf("decision=%q outcome=%q", out.Decision, out.Outcome)
+	}
+}
+
+func TestRewriteInlineTaskApproval_NoToolHoldIsNoop(t *testing.T) {
+	// User typed "approve" but there's no inner hold (e.g. it's a
+	// regular tool-stage approval, not an inline-task one). The
+	// rewrite should be a no-op so TryReleasePendingApproval can
+	// handle it.
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	if _, err := cache.Hold(context.Background(), PendingLiteApproval{
+		ID:       "cv-toolstageholdxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool, // not the awaiting_task_approval stage
+		ToolUse:  conversation.ToolUse{ID: "toolu_x", Name: "Bash"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"messages":[{"role":"user","content":"approve cv-toolstageholdxxxxxxxxxxxxx"}]}`)
+	out, err := RewriteInlineTaskApprovalReply(context.Background(), InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Rewritten {
+		t.Fatal("tool-stage approve should NOT trigger inline rewrite")
+	}
+	if !equalBytes(out.Body, body) {
+		t.Errorf("body should be unchanged; got %s", out.Body)
+	}
+}
+
+// TryReleasePendingApproval should fail-closed if it sees an
+// awaiting_task_approval hold (defensive check; production wires the
+// preprocess so the hold is consumed before release ever sees it).
+func TestTryReleasePendingApproval_FailsClosedOnAwaitingTaskApproval(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	_, innerID := seedInlineTaskHolds(t, cache)
 
@@ -314,7 +278,19 @@ func TestReleaseInlineTaskApprovalMissingCreatorFailsClosed(t *testing.T) {
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
 		PendingApproval: cache,
 	})
-	if result.Decision != "deny" || result.Outcome != "inline_task_creator_missing" {
-		t.Fatalf("expected deny+inline_task_creator_missing; got %+v", result)
+	if result.Decision != "deny" || result.Outcome != "inline_task_preprocess_missing" {
+		t.Fatalf("expected fail-closed: deny + inline_task_preprocess_missing; got %+v", result)
 	}
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

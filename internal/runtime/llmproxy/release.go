@@ -69,12 +69,6 @@ type ReleaseRequest struct {
 	// path), one-shot, consumed by the resolver. Required when releasing
 	// a credentialed tool_use; release fails closed if nil.
 	CallerNonces CallerNonceCache
-
-	// InlineTaskCreator is invoked when releasing an
-	// awaiting_task_approval hold (the user typed "approve" on an inline
-	// task definition prompt). Optional — when nil and a task hold is
-	// resolved, release fails closed with a 503.
-	InlineTaskCreator InlineTaskCreator
 }
 
 type ReleaseResult struct {
@@ -110,12 +104,22 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		}
 		return ReleaseResult{}
 	}
-	// Inline task approval: resolved hold is the inner
-	// StageAwaitingTaskApproval entry. Cascade to the original tool hold
-	// so the user's single "approve" gesture both creates the task AND
-	// re-emits the original tool_use for the harness to run.
+	// Inline task approval (StageAwaitingTaskApproval) is now handled
+	// upstream by RewriteInlineTaskApprovalReply during request
+	// preprocess — the hold is consumed there and the user message is
+	// rewritten to flow naturally to the LLM. If we reach here with
+	// such a hold something is misconfigured (preprocess not wired);
+	// fail closed rather than fabricate a synthesized tool_use that
+	// would spoof the harness.
 	if pending.Stage == StageAwaitingTaskApproval {
-		return releaseInlineTaskApproval(ctx, req, pending, verb)
+		req.logRelease(ctx, pending, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
+		return ReleaseResult{
+			Handled:    true,
+			HTTPStatus: http.StatusInternalServerError,
+			Decision:   "deny",
+			Outcome:    "inline_task_preprocess_missing",
+			Reason:     "inline task hold reached release without preprocess rewrite",
+		}
 	}
 	if verb == "deny" {
 		req.logRelease(ctx, pending, "deny", "denied", "denied inline by user")
@@ -129,171 +133,6 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	}
 	req.logRelease(ctx, pending, "allow", "released", "approved inline by user")
 	return syntheticReleaseResult(req, pending, true, rewrittenInput, "allow", "approval_released", "")
-}
-
-// releaseInlineTaskApproval runs the cascade-release for the inner
-// StageAwaitingTaskApproval hold. The user's "approve" creates the task
-// pre-approved, drops the original tool hold from the cache (the model
-// will re-emit the tool naturally and pass the new task-scope check on
-// the next turn), and synthesizes a confirmation response. "deny" drops
-// both holds and synthesizes a denial. Either way the response goes back
-// to the harness as a normal turn — no multi-block bending of the
-// existing single-block synthesized release path.
-func releaseInlineTaskApproval(ctx context.Context, req ReleaseRequest, inner *PendingLiteApproval, verb string) ReleaseResult {
-	// Drop the original tool hold from the cache regardless of outcome.
-	// On approve, the model will re-emit the original tool on its next
-	// turn and the new task-scope check will allow it (and run normal
-	// credential rewrites for credentialed tools). On deny, the original
-	// is moot — the model should give up on the tool entirely.
-	if inner.AwaitingTaskFor != "" {
-		_ = req.PendingApproval.Drop(ctx, ResolveRequest{
-			UserID:     req.Agent.UserID,
-			AgentID:    req.Agent.ID,
-			Provider:   req.Provider,
-			ApprovalID: inner.AwaitingTaskFor,
-		})
-	}
-
-	if verb == "deny" {
-		req.logRelease(ctx, inner, "deny", "denied", "inline task creation denied by user")
-		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_denied", "user denied inline task")
-	}
-
-	// Approve path: create the task pre-approved.
-	if req.InlineTaskCreator == nil {
-		req.logRelease(ctx, inner, "deny", "blocked", "no inline task creator configured")
-		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_creator_missing", "Clawvisor: inline task creation not available")
-	}
-	if inner.TaskDefinition == nil {
-		req.logRelease(ctx, inner, "deny", "blocked", "no task definition on inner hold")
-		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_definition_missing", "Clawvisor: missing task definition on approval")
-	}
-	originalToolUseID := ""
-	if inner.AwaitingTaskFor != "" {
-		originalToolUseID = inner.AwaitingTaskFor
-	}
-	created, err := req.InlineTaskCreator.CreateInlineApprovedTask(ctx, req.Agent, inner.TaskDefinition, originalToolUseID)
-	if err != nil {
-		req.logRelease(ctx, inner, "deny", "blocked", "inline task creation failed: "+err.Error())
-		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_create_failed", "Clawvisor: inline task creation failed — "+err.Error())
-	}
-
-	// Synth an assistant turn containing a runnable tool_use that the
-	// harness will execute locally. The cmd is a `cat <<JSON ... JSON`
-	// that prints the created-task payload to stdout; the harness
-	// captures stdout and feeds it back to the model as the
-	// tool_use_result for the original POST. The model sees the same
-	// shape it would have gotten from a real /control/tasks call.
-	//
-	// We can't just hand the task payload as the tool_use input —
-	// that fails the harness's input schema (Bash wants `command`,
-	// not `task_id`/`status`/etc.). We can't re-emit the original
-	// curl either — that would double-create the task. The cat
-	// echo is the safe path: read-only, side-effect-free, no proxy
-	// intercept (no /control URL), and the model reads the JSON
-	// naturally without provider-specific branching.
-	syntheticToolName := inner.ToolUse.Name
-	if syntheticToolName == "" {
-		syntheticToolName = "Bash"
-	}
-	taskInput := inlineTaskSyntheticInput(inner, created, syntheticToolName)
-	synth, ok := conversation.SyntheticApprovalToolUseResponse(req.HTTPRequest, req.Provider, req.Body, true, inner.ToolUse.ID, syntheticToolName, taskInput)
-	if !ok {
-		req.logRelease(ctx, inner, "allow", "released", "task created but response synthesis unsupported")
-		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "inline_task_synthesis_unsupported", Reason: "unsupported approval release provider"}
-	}
-	req.logRelease(ctx, inner, "allow", "released", "inline task created and approved")
-	if req.Audit != nil {
-		req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, inner, created)
-	}
-	return ReleaseResult{
-		Handled:     true,
-		HTTPStatus:  http.StatusOK,
-		Decision:    "allow",
-		Outcome:     "inline_task_approved",
-		Reason:      "",
-		ContentType: synth.ContentType,
-		Body:        synth.Body,
-	}
-}
-
-// inlineTaskSyntheticInput builds the input field of the synthetic
-// tool_use the harness will run after inline task approval. The
-// resulting tool_use is a real shell command (Bash's `command` or
-// Codex exec_command's `cmd`) that prints the task body as JSON via a
-// here-doc — when the harness executes it, the model receives the
-// task creation result as the tool_use_result and naturally proceeds.
-//
-// We preserve any other fields from the original tool_use input
-// (workdir, yield_time_ms, max_output_tokens, etc.) so the harness's
-// run environment matches what the model originally chose.
-func inlineTaskSyntheticInput(inner *PendingLiteApproval, t *InlineApprovedTask, toolName string) map[string]any {
-	payload := inlineTaskResultJSON(t)
-	cmd := "cat <<'CV_TASK_RESULT'\n" + payload + "\nCV_TASK_RESULT"
-
-	out := map[string]any{}
-	if inner != nil && len(inner.ToolUse.Input) > 0 {
-		_ = json.Unmarshal(inner.ToolUse.Input, &out)
-	}
-	// Pick the right command field for the harness:
-	//   - Codex exec_command uses `cmd`
-	//   - Anthropic Bash uses `command`
-	// If the original input had one already, replace in place so we
-	// preserve the harness convention the model chose; otherwise pick
-	// based on the tool name.
-	switch {
-	case mapHasKey(out, "cmd"):
-		out["cmd"] = cmd
-		delete(out, "command")
-	case mapHasKey(out, "command"):
-		out["command"] = cmd
-		delete(out, "cmd")
-	default:
-		if toolName == "exec_command" {
-			out["cmd"] = cmd
-		} else {
-			out["command"] = cmd
-		}
-	}
-	return out
-}
-
-// inlineTaskResultJSON renders the created-task fields the model
-// would have seen from the real /control/tasks handler. Kept separate
-// from the synthetic-input builder so tests can assert the rendered
-// payload directly.
-func inlineTaskResultJSON(t *InlineApprovedTask) string {
-	if t == nil {
-		return `{"status":"active"}`
-	}
-	payload := map[string]any{
-		"task_id":         t.ID,
-		"status":          t.Status,
-		"approval_source": t.ApprovalSource,
-		"message":         "Task approved inline by user. Proceed with the originally requested work.",
-	}
-	if t.Purpose != "" {
-		payload["purpose"] = t.Purpose
-	}
-	if t.Lifetime != "" {
-		payload["lifetime"] = t.Lifetime
-	}
-	if t.ApprovalRecordID != "" {
-		payload["approval_record_id"] = t.ApprovalRecordID
-	}
-	if t.ExpiresAtRFC3339 != "" {
-		payload["expires_at"] = t.ExpiresAtRFC3339
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return `{"status":"active"}`
-	}
-	return string(raw)
-}
-
-func mapHasKey(m map[string]any, key string) bool {
-	_, ok := m[key]
-	return ok
 }
 
 func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) (map[string]any, error) {

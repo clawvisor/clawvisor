@@ -281,6 +281,47 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		auditParams["approval_task_rewritten"] = true
 	}
+
+	// Inline task approval: when the user's "approve"/"deny" reply
+	// resolves an awaiting_task_approval hold, create the task and
+	// rewrite the user message so the LLM gets clean context (rather
+	// than a synthesized cat-heredoc tool_use that confuses the model
+	// into re-POSTing /control/tasks).
+	if inlineRewrite, inlineErr := llmproxy.RewriteInlineTaskApprovalReply(r.Context(), llmproxy.InlineApprovalRewriteRequest{
+		HTTPRequest:     r,
+		Provider:        provider,
+		Body:            body,
+		Agent:           agent,
+		PendingApproval: h.PendingApprovals,
+		Creator:         h.InlineTaskCreator,
+		Audit:           h.AuditEmitter,
+		RequestID:       requestID,
+	}); inlineErr != nil {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "malformed_request"
+		auditReason = inlineErr.Error()
+		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", inlineErr.Error())
+		return
+	} else if inlineRewrite.Rewritten {
+		body = inlineRewrite.Body
+		if _, err := parser.ParseRequest(body); err != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = err.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			return
+		}
+		auditParams["inline_task_approval_rewritten"] = true
+		auditParams["inline_task_outcome"] = inlineRewrite.Outcome
+		if inlineRewrite.TaskID != "" {
+			auditParams["inline_task_id"] = inlineRewrite.TaskID
+		}
+		if inlineRewrite.Reason != "" {
+			auditParams["inline_task_reason"] = inlineRewrite.Reason
+		}
+	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
 		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)
@@ -695,8 +736,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 		Audit:           h.AuditEmitter,
 		// Mint a fresh nonce at release time; the original hold predates
 		// this release by an arbitrary amount, so any old nonce is gone.
-		CallerNonces:      h.CallerNonces,
-		InlineTaskCreator: h.InlineTaskCreator,
+		CallerNonces: h.CallerNonces,
 	})
 	if result.Handled {
 		h.Logger.DebugContext(r.Context(), "lite-proxy approval release handled",

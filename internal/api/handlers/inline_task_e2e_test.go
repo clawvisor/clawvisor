@@ -117,16 +117,19 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 
 	// ── T4: user types "approve" on inner hold ───────────────────────
 	t4Body := []byte(`{"messages":[{"role":"user","content":"approve ` + innerHold.Pending.ID + `"}]}`)
-	t4Result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              t4Body,
-		Agent:             agent,
-		PendingApproval:   cache,
-		InlineTaskCreator: h,
+	t4Result, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            t4Body,
+		Agent:           agent,
+		PendingApproval: cache,
+		Creator:         h,
 	})
-	if !t4Result.Handled {
-		t.Fatal("T4: expected release to handle the approve")
+	if err != nil {
+		t.Fatalf("T4: rewrite err: %v", err)
+	}
+	if !t4Result.Rewritten {
+		t.Fatal("T4: expected body to be rewritten")
 	}
 	if t4Result.Decision != "allow" {
 		t.Fatalf("T4: decision=%q, want allow; outcome=%s reason=%s", t4Result.Decision, t4Result.Outcome, t4Result.Reason)
@@ -151,9 +154,13 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		t.Errorf("task.Purpose=%q, want 'Build a landing page'", task.Purpose)
 	}
 
-	// Synthetic response includes the new task id.
+	// Rewritten user message includes the new task id so the model
+	// sees explicit task-created context.
 	if !strings.Contains(string(t4Result.Body), task.ID) {
-		t.Errorf("synthetic response should mention task id %q; body=%s", task.ID, t4Result.Body)
+		t.Errorf("rewritten body should mention task id %q; body=%s", task.ID, t4Result.Body)
+	}
+	if t4Result.TaskID != task.ID {
+		t.Errorf("t4Result.TaskID=%q, want %q", t4Result.TaskID, task.ID)
 	}
 
 	// Both holds are dropped.
@@ -178,14 +185,14 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		}
 	}
 
-	// The synthetic response surfaced the approval_record_id, fetch it.
-	approvalRecordID := extractField(t, t4Result.Body, "approval_record_id")
-	if approvalRecordID == "" {
-		t.Fatal("synthetic response missing approval_record_id; cannot verify approval surface")
+	// The approval record exists with surface=inline_chat, resolved
+	// at creation time. The rewrite result surfaces its ID directly.
+	if t4Result.ApprovalRecordID == "" {
+		t.Fatal("rewrite result missing ApprovalRecordID")
 	}
-	rec, err := st.GetApprovalRecord(ctx, approvalRecordID)
+	rec, err := st.GetApprovalRecord(ctx, t4Result.ApprovalRecordID)
 	if err != nil {
-		t.Fatalf("GetApprovalRecord(%s): %v", approvalRecordID, err)
+		t.Fatalf("GetApprovalRecord(%s): %v", t4Result.ApprovalRecordID, err)
 	}
 	if rec.Surface != "inline_chat" {
 		t.Errorf("rec.Surface=%q, want inline_chat", rec.Surface)
@@ -197,6 +204,7 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		t.Error("rec.ResolvedAt should be set")
 	}
 }
+
 
 // extractField pulls a value out of the synthetic release response.
 // The task payload is now JSON-encoded inside a cat heredoc inside a
@@ -262,16 +270,19 @@ func TestInlineTaskApprovalDenyPath(t *testing.T) {
 	}
 
 	denyBody := []byte(`{"messages":[{"role":"user","content":"deny ` + innerHold.Pending.ID + `"}]}`)
-	result := llmproxy.TryReleasePendingApproval(ctx, llmproxy.ReleaseRequest{
-		HTTPRequest:       httptest.NewRequest("POST", "/v1/messages", nil),
-		Provider:          conversation.ProviderAnthropic,
-		Body:              denyBody,
-		Agent:             agent,
-		PendingApproval:   cache,
-		InlineTaskCreator: h,
+	result, err := llmproxy.RewriteInlineTaskApprovalReply(ctx, llmproxy.InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            denyBody,
+		Agent:           agent,
+		PendingApproval: cache,
+		Creator:         h,
 	})
-	if result.Decision != "deny" {
-		t.Fatalf("decision=%q, want deny", result.Decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Rewritten || result.Decision != "deny" {
+		t.Fatalf("rewrite decision=%q rewritten=%v", result.Decision, result.Rewritten)
 	}
 
 	tasks := listTasksForAgent(t, st, agent)
