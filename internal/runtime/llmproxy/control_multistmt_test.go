@@ -24,6 +24,51 @@ const multiStmtCatCurlCmd = `cat <<'EOF' >/tmp/clawvisor-task.json
 EOF
 curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' -H 'Content-Type: application/json' --data @/tmp/clawvisor-task.json`
 
+// The canonical shape the proxy's prompt teaches:
+//
+//	curl ... --data @- <<'JSON'
+//	{...}
+//	JSON
+//
+// Single statement, body in the stdin heredoc. Earlier code returned
+// `@-` as the literal body and the inline intercept failed at JSON
+// parse with `invalid character '@'`. This is the regression test for
+// that production bug.
+const singleStmtCurlStdinHeredoc = `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data @- <<'JSON'
+{"purpose":"Build a landing page","expected_tools_json":[{"tool_name":"bash","why":"x"}]}
+JSON`
+
+func TestParseControlCmd_ResolvesDataAtDashFromStdinHeredoc(t *testing.T) {
+	_, dataFiles, ok := parseControlCmd(singleStmtCurlStdinHeredoc)
+	if !ok {
+		t.Fatalf("expected parser to accept canonical curl --data @- <<JSON shape")
+	}
+	body, ok := dataFiles["-"]
+	if !ok {
+		t.Fatalf("expected stdin heredoc registered under '-'; got dataFiles=%v", dataFiles)
+	}
+	if !strings.Contains(string(body), `"purpose":"Build a landing page"`) {
+		t.Fatalf("stdin heredoc body lost original content: %s", body)
+	}
+}
+
+func TestControlPartsFromCommandInput_ResolvesDataAtDashFromHeredoc(t *testing.T) {
+	in, _ := json.Marshal(map[string]string{"cmd": singleStmtCurlStdinHeredoc})
+	u, method, body, ok := controlPartsFromCommandInput(json.RawMessage(in), "")
+	if !ok {
+		t.Fatalf("expected controlPartsFromCommandInput to succeed on canonical shape")
+	}
+	if method != "POST" || u == nil {
+		t.Fatalf("method=%q u=%v, want POST + parsed URL", method, u)
+	}
+	if !strings.Contains(string(body), `"purpose":"Build a landing page"`) {
+		t.Fatalf("body should be the heredoc content, not '@-'; got %s", body)
+	}
+	if string(body) == "@-" {
+		t.Fatal("regression: body extraction returned literal '@-' instead of heredoc body")
+	}
+}
+
 func TestParseControlCmd_MultiStmtCatHeredocPlusCurl(t *testing.T) {
 	args, dataFiles, ok := parseControlCmd(multiStmtCatCurlCmd)
 	if !ok {

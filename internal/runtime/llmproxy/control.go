@@ -628,8 +628,10 @@ func parseControlCurlArgs(cmd string) ([]controlCurlArg, bool) {
 // and returns (a) the curl statement's args with their absolute offsets
 // in the original cmd string, and (b) a map of paths the prior cat
 // statements wrote, so a curl `--data @path` can be resolved to the
-// inline body. Any shape outside this allowlist (extra commands,
-// pipes, subshells, variable expansion in paths, …) refuses closed.
+// inline body. The curl's own stdin heredoc is also registered under
+// the special key "-" so `--data @-` resolves to its body. Any shape
+// outside this allowlist (extra commands, pipes, subshells, variable
+// expansion in paths, …) refuses closed.
 func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
 	if err != nil || len(file.Stmts) == 0 {
@@ -678,10 +680,43 @@ func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 	if !ok {
 		return nil, nil, false
 	}
+	// Capture the curl's own stdin heredoc so `--data @-` resolves to
+	// its body. This is the canonical shape the proxy's prompt teaches
+	// the model:
+	//
+	//	curl ... --data @- <<'JSON'
+	//	{...}
+	//	JSON
+	if body, ok := stdinHeredocBody(curlStmt); ok {
+		dataFiles["-"] = body
+	}
 	if len(dataFiles) == 0 {
 		dataFiles = nil
 	}
 	return args, dataFiles, true
+}
+
+// stdinHeredocBody returns the heredoc body redirected into stdin for
+// the given statement, if any. Used so a curl `--data @-` invocation
+// can pick up the body the model wrote between <<TAG and TAG.
+func stdinHeredocBody(stmt *syntax.Stmt) ([]byte, bool) {
+	if stmt == nil {
+		return nil, false
+	}
+	for _, redir := range stmt.Redirs {
+		if redir.Op != syntax.Hdoc && redir.Op != syntax.DashHdoc {
+			continue
+		}
+		if redir.Hdoc == nil {
+			continue
+		}
+		body, ok := staticShellWord(redir.Hdoc)
+		if !ok {
+			continue
+		}
+		return []byte(body), true
+	}
+	return nil, false
 }
 
 // parseSingleControlCurlStmt extracts the curl args from a single shell
