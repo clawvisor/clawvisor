@@ -8,9 +8,40 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// InlineTaskCreator is the lite-proxy's contract for creating an
+// inline-approved task. The handlers package implements this via the
+// canonical TasksHandler.Create flow (sharing all validation), but
+// runs in a single function call so the release path doesn't have to
+// import handlers (which would cycle).
+//
+// On success the returned task is already active with an
+// approval_records row marking surface="inline_chat" + resolution
+// derived from lifetime ("standing"→allow_always, otherwise
+// allow_session). On validation failure the error message is shown
+// back to the user in the synthetic deny response so they can fix the
+// request (or ask the agent to).
+type InlineTaskCreator interface {
+	CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*InlineApprovedTask, error)
+}
+
+// InlineApprovedTask is the slice of the created task surfaced back
+// through the synthetic release response. The fields here are what the
+// model needs to see — it isn't a full store.Task because the LLM
+// doesn't care about every column.
+type InlineApprovedTask struct {
+	ID                string `json:"task_id"`
+	Status            string `json:"status"`
+	Purpose           string `json:"purpose,omitempty"`
+	Lifetime          string `json:"lifetime,omitempty"`
+	ApprovalSource    string `json:"approval_source,omitempty"`
+	ApprovalRecordID  string `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339  string `json:"expires_at,omitempty"`
+}
 
 type ReleaseRequest struct {
 	HTTPRequest *http.Request
@@ -38,6 +69,12 @@ type ReleaseRequest struct {
 	// path), one-shot, consumed by the resolver. Required when releasing
 	// a credentialed tool_use; release fails closed if nil.
 	CallerNonces CallerNonceCache
+
+	// InlineTaskCreator is invoked when releasing an
+	// awaiting_task_approval hold (the user typed "approve" on an inline
+	// task definition prompt). Optional — when nil and a task hold is
+	// resolved, release fails closed with a 503.
+	InlineTaskCreator InlineTaskCreator
 }
 
 type ReleaseResult struct {
@@ -73,6 +110,13 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		}
 		return ReleaseResult{}
 	}
+	// Inline task approval: resolved hold is the inner
+	// StageAwaitingTaskApproval entry. Cascade to the original tool hold
+	// so the user's single "approve" gesture both creates the task AND
+	// re-emits the original tool_use for the harness to run.
+	if pending.Stage == StageAwaitingTaskApproval {
+		return releaseInlineTaskApproval(ctx, req, pending, verb)
+	}
 	if verb == "deny" {
 		req.logRelease(ctx, pending, "deny", "denied", "denied inline by user")
 		return syntheticReleaseResult(req, pending, false, nil, "deny", "approval_denied", "")
@@ -85,6 +129,112 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	}
 	req.logRelease(ctx, pending, "allow", "released", "approved inline by user")
 	return syntheticReleaseResult(req, pending, true, rewrittenInput, "allow", "approval_released", "")
+}
+
+// releaseInlineTaskApproval runs the cascade-release for the inner
+// StageAwaitingTaskApproval hold. The user's "approve" creates the task
+// pre-approved, drops the original tool hold from the cache (the model
+// will re-emit the tool naturally and pass the new task-scope check on
+// the next turn), and synthesizes a confirmation response. "deny" drops
+// both holds and synthesizes a denial. Either way the response goes back
+// to the harness as a normal turn — no multi-block bending of the
+// existing single-block synthesized release path.
+func releaseInlineTaskApproval(ctx context.Context, req ReleaseRequest, inner *PendingLiteApproval, verb string) ReleaseResult {
+	// Drop the original tool hold from the cache regardless of outcome.
+	// On approve, the model will re-emit the original tool on its next
+	// turn and the new task-scope check will allow it (and run normal
+	// credential rewrites for credentialed tools). On deny, the original
+	// is moot — the model should give up on the tool entirely.
+	if inner.AwaitingTaskFor != "" {
+		_ = req.PendingApproval.Drop(ctx, ResolveRequest{
+			UserID:     req.Agent.UserID,
+			AgentID:    req.Agent.ID,
+			Provider:   req.Provider,
+			ApprovalID: inner.AwaitingTaskFor,
+		})
+	}
+
+	if verb == "deny" {
+		req.logRelease(ctx, inner, "deny", "denied", "inline task creation denied by user")
+		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_denied", "user denied inline task")
+	}
+
+	// Approve path: create the task pre-approved.
+	if req.InlineTaskCreator == nil {
+		req.logRelease(ctx, inner, "deny", "blocked", "no inline task creator configured")
+		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_creator_missing", "Clawvisor: inline task creation not available")
+	}
+	if inner.TaskDefinition == nil {
+		req.logRelease(ctx, inner, "deny", "blocked", "no task definition on inner hold")
+		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_definition_missing", "Clawvisor: missing task definition on approval")
+	}
+	originalToolUseID := ""
+	if inner.AwaitingTaskFor != "" {
+		originalToolUseID = inner.AwaitingTaskFor
+	}
+	created, err := req.InlineTaskCreator.CreateInlineApprovedTask(ctx, req.Agent, inner.TaskDefinition, originalToolUseID)
+	if err != nil {
+		req.logRelease(ctx, inner, "deny", "blocked", "inline task creation failed: "+err.Error())
+		return syntheticReleaseResult(req, inner, false, nil, "deny", "inline_task_create_failed", "Clawvisor: inline task creation failed — "+err.Error())
+	}
+
+	// Synth an assistant tool_use_result-shaped response that surfaces
+	// the created task. The model sees the same shape it would have
+	// gotten from the real /control/tasks handler had it been called
+	// directly, plus the task is already active so its next tool_use
+	// passes the scope check.
+	taskInput := inlineTaskResultPayload(created)
+	syntheticToolName := inner.ToolUse.Name
+	if syntheticToolName == "" {
+		syntheticToolName = "Bash"
+	}
+	synth, ok := conversation.SyntheticApprovalToolUseResponse(req.HTTPRequest, req.Provider, req.Body, true, inner.ToolUse.ID, syntheticToolName, taskInput)
+	if !ok {
+		req.logRelease(ctx, inner, "allow", "released", "task created but response synthesis unsupported")
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "inline_task_synthesis_unsupported", Reason: "unsupported approval release provider"}
+	}
+	req.logRelease(ctx, inner, "allow", "released", "inline task created and approved")
+	if req.Audit != nil {
+		req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, inner, created)
+	}
+	return ReleaseResult{
+		Handled:     true,
+		HTTPStatus:  http.StatusOK,
+		Decision:    "allow",
+		Outcome:     "inline_task_approved",
+		Reason:      "",
+		ContentType: synth.ContentType,
+		Body:        synth.Body,
+	}
+}
+
+// inlineTaskResultPayload builds the synthesized tool_use input the
+// model sees in place of the never-executed POST /control/tasks. It
+// mirrors the shape of the real handler's response so the model can
+// proceed without provider-specific branching.
+func inlineTaskResultPayload(t *InlineApprovedTask) map[string]any {
+	if t == nil {
+		return map[string]any{"status": "active"}
+	}
+	out := map[string]any{
+		"task_id":         t.ID,
+		"status":          t.Status,
+		"approval_source": t.ApprovalSource,
+	}
+	if t.Purpose != "" {
+		out["purpose"] = t.Purpose
+	}
+	if t.Lifetime != "" {
+		out["lifetime"] = t.Lifetime
+	}
+	if t.ApprovalRecordID != "" {
+		out["approval_record_id"] = t.ApprovalRecordID
+	}
+	if t.ExpiresAtRFC3339 != "" {
+		out["expires_at"] = t.ExpiresAtRFC3339
+	}
+	out["message"] = "Task approved inline by user. Proceed with the originally requested tool call."
+	return out
 }
 
 func rewriteApprovedToolUse(ctx context.Context, req ReleaseRequest, pending *PendingLiteApproval) (map[string]any, error) {

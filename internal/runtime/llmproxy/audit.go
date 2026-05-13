@@ -189,6 +189,50 @@ func (e *AuditEmitter) LogApprovalRelease(ctx context.Context, agent *store.Agen
 	}
 }
 
+// LogInlineTaskApproved records the one-row audit trail for an
+// inline-approved task. The row links the original tool_use that
+// triggered the gesture, the created task, and the surface gesture
+// (always "inline_chat") so dashboards can answer "did a human approve
+// this task and how" without joining across multiple tables.
+func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.Agent, requestID string, inner *PendingLiteApproval, task *InlineApprovedTask) {
+	if e == nil || e.Store == nil || agent == nil || inner == nil || task == nil {
+		return
+	}
+	params := map[string]any{
+		"event":              "lite_proxy.task_create.inline_approved",
+		"approval_id":        inner.ID,
+		"awaiting_task_for":  inner.AwaitingTaskFor,
+		"task_id":            task.ID,
+		"approval_record_id": task.ApprovalRecordID,
+		"approval_source":    task.ApprovalSource,
+		"task_status":        task.Status,
+		"task_lifetime":      task.Lifetime,
+		"surface":            "inline_chat",
+		"build_sha":          buildSHA(),
+		"clawvisor_version":  version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	toolUseID := inner.ToolUse.ID
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  &toolUseID,
+		TaskID:     &task.ID,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.task_create.inline_approved",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "inline_task_approved",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: inline task approval audit failed",
+			"agent_id", agent.ID, "approval_id", inner.ID, "task_id", task.ID, "err", err.Error())
+	}
+}
+
 // LogResolverSwap records one credential swap at the resolver. Each row
 // links to the placeholder, target host, and upstream status.
 func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, requestID, placeholder, boundService, targetHost, targetPath, method string, statusCode int, decision, outcome, reason string, duration time.Duration) {
