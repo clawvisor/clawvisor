@@ -123,11 +123,12 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	if creator.gotOrigID != outerID {
 		t.Errorf("creator gotOrigID=%q, want %q", creator.gotOrigID, outerID)
 	}
-	// Body should now carry the rewritten user message — task id +
-	// "do not POST again" instruction.
+	// Body carries the canonical augmentation context. The per-task
+	// task_id is intentionally NOT in the rewrite — see the no-drift
+	// invariant in TestAugment_OneShotAndPersistentProduceIdenticalText.
 	rewrittenBody := string(out.Body)
-	if !strings.Contains(rewrittenBody, "task-uuid-123") {
-		t.Errorf("rewritten body missing task id: %s", rewrittenBody)
+	if !strings.Contains(rewrittenBody, "task was created and approved by the user inline") {
+		t.Errorf("rewritten body missing canonical augmentation context: %s", rewrittenBody)
 	}
 	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {
 		t.Errorf("rewritten body missing do-not-repost guidance: %s", rewrittenBody)

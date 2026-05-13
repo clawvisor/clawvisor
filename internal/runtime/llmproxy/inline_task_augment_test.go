@@ -128,6 +128,24 @@ func TestAugment_DoesNotTouchOtherUserMessages(t *testing.T) {
 	}
 }
 
+// TestAugment_OneShotAndPersistentProduceIdenticalText is the key
+// no-drift guarantee. The user "approve" turn must render identically
+// whether produced by the one-shot RewriteInlineTaskApprovalReply (on
+// the turn the user types approve) or by the persistent
+// AugmentApprovedInlineTasksInHistory (on every subsequent turn).
+// Without this, the model sees the same past message change shape
+// across consecutive turns — a signal that historically induced it
+// to second-guess prior state and re-emit redundant tool_uses.
+func TestAugment_OneShotAndPersistentProduceIdenticalText(t *testing.T) {
+	oneShot := inlineApprovedReplyAugmentation()
+	// What the augmenter would produce when re-rewriting a bare
+	// "approve" in conversation history.
+	persistent := "approve" + "\n\n" + inlineApprovedReplyAugmentationContext()
+	if oneShot != persistent {
+		t.Fatalf("one-shot and persistent renderings differ — drift bug.\n  one-shot:\n%s\n  persistent:\n%s", oneShot, persistent)
+	}
+}
+
 func TestAugment_OpenAIProviderIsNoop(t *testing.T) {
 	body := []byte(`{"input":"approve"}`)
 	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderOpenAI)

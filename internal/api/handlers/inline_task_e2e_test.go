@@ -154,10 +154,18 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		t.Errorf("task.Purpose=%q, want 'Build a landing page'", task.Purpose)
 	}
 
-	// Rewritten user message includes the new task id so the model
-	// sees explicit task-created context.
-	if !strings.Contains(string(t4Result.Body), task.ID) {
-		t.Errorf("rewritten body should mention task id %q; body=%s", task.ID, t4Result.Body)
+	// Rewritten user message carries the canonical inline-approval
+	// augmentation context. We intentionally do NOT include the
+	// per-task id/purpose in the rewrite — that would cause it to
+	// drift from the augmenter's rendering on subsequent turns (the
+	// augmenter scans history without DB access). The result
+	// struct still surfaces the task id for audit purposes.
+	rewrittenBody := string(t4Result.Body)
+	if !strings.Contains(rewrittenBody, "task was created and approved by the user inline") {
+		t.Errorf("rewritten body missing canonical augmentation context; got %s", rewrittenBody)
+	}
+	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {
+		t.Errorf("rewritten body missing do-not-repost guidance; got %s", rewrittenBody)
 	}
 	if t4Result.TaskID != task.ID {
 		t.Errorf("t4Result.TaskID=%q, want %q", t4Result.TaskID, task.ID)

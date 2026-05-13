@@ -153,7 +153,15 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 				out.Outcome = "inline_task_create_failed"
 				out.Reason = "create failed: " + createErr.Error()
 			} else {
-				replacement = renderInlineTaskApprovedReply(created)
+				// Use the SAME text the persistent augmenter
+				// produces on subsequent turns. If turn 1 said
+				// "task 7827... purpose=..." and turn 2+ said
+				// "task was created and approved...", the model
+				// sees the same user message appear with DIFFERENT
+				// content across turns — measurable drift that
+				// invites the model to second-guess prior state.
+				// One canonical rendering, no drift.
+				replacement = inlineApprovedReplyAugmentation()
 				out.Decision = "allow"
 				out.Outcome = "inline_task_approved"
 				out.TaskID = created.ID
@@ -242,7 +250,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 		return body, false, err
 	}
 
-	persistentNote := persistentInlineApprovalAugmentation()
+	persistentNote := inlineApprovedReplyAugmentationContext()
 	changed := false
 
 	for i := 1; i < len(messages); i++ {
@@ -301,38 +309,33 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 	return out, true, nil
 }
 
-// persistentInlineApprovalAugmentation is the bracketed context we
-// re-inject on every subsequent request. Intentionally generic — we
-// don't have the specific task_id when scanning history, and the
-// model doesn't actually need it. The key instruction is "task is
-// active, don't re-POST". Same shape as renderInlineTaskApprovedReply
-// without the per-task fields.
-func persistentInlineApprovalAugmentation() string {
-	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s).\n\n" +
-		"PROGRESS RULES — these apply for the rest of this conversation:\n" +
-		"1. Do NOT POST /control/tasks again for the same work. The task above is already active; another POST would duplicate it.\n" +
-		"2. Do NOT emit the same tool_use twice in a row. After a tool_use returns a successful tool_result (e.g. `File created successfully` or `has been updated successfully`), the action is DONE. Your next response should advance to a different step (a different file, a different action, or finish) — not re-emit the same Write/Bash/etc. with the same or near-identical input. The harness does not need confirmation; the success message is the confirmation.\n" +
-		"3. When writing files: compose the FULL final content in ONE Write call per file. Don't write a draft and then re-Write with a header added, then re-Write again. Plan the content, write it once, move on.]"
+// inlineApprovedReplyAugmentation is the SINGLE canonical bracketed
+// context that both the one-shot RewriteInlineTaskApprovalReply and
+// the persistent AugmentApprovedInlineTasksInHistory inject. Both
+// must produce byte-identical output so the model never sees the
+// same user "approve" turn render differently across calls.
+//
+// We intentionally omit per-task specifics (task_id, purpose,
+// lifetime). The augmenter scans conversation history without DB
+// access, so it can't reconstruct those fields without a store
+// lookup; the one-shot path COULD include them on turn 1, but then
+// turn 2+ would diverge. Drift hurts the model more than the missing
+// specifics help — the model doesn't need the task_id to behave
+// correctly, only "task is active, don't re-POST, don't re-emit
+// successful tool_uses".
+//
+// Returns just the bracketed context. Callers prepend "approve\n\n"
+// (or "deny\n\n") to keep the verb intact for the parser.
+func inlineApprovedReplyAugmentation() string {
+	return "approve\n\n" + inlineApprovedReplyAugmentationContext()
 }
 
-// renderInlineTaskApprovedReply is the user-message text the LLM
-// sees in place of bare "approve cv-xxx". The bracketed context tells
-// the model the task is active and that it should proceed without
-// re-POSTing /control/tasks.
-func renderInlineTaskApprovedReply(t *InlineApprovedTask) string {
-	if t == nil {
-		return "approve\n\n[Clawvisor: inline task created and active. Proceed with the originally requested work; do NOT POST /control/tasks again — that would create a duplicate task.]"
-	}
-	lifetime := strings.TrimSpace(t.Lifetime)
-	if lifetime == "" {
-		lifetime = "session"
-	}
-	purpose := strings.TrimSpace(t.Purpose)
-	if purpose == "" {
-		purpose = "(unspecified)"
-	}
-	return fmt.Sprintf("approve\n\n[Clawvisor: inline task %s created and active. Approval source: inline_chat. Lifetime: %s. Purpose: %s. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again — that would create a duplicate task.]",
-		t.ID, lifetime, purpose)
+// inlineApprovedReplyAugmentationContext is the bracketed body,
+// without the leading "approve" verb. Shared with the augmenter so
+// it can prepend the verb-as-typed (always "approve" today, but
+// kept symmetrical with the deny path for parser robustness).
+func inlineApprovedReplyAugmentationContext() string {
+	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.]"
 }
 
 // renderInlineTaskDenyReply is the user-message text the LLM sees

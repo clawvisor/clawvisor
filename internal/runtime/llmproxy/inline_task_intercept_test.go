@@ -290,8 +290,11 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	if !creator.called {
 		t.Fatal("Creator should have been invoked")
 	}
-	if !strings.Contains(string(rewrite.Body), "task-uuid-final") {
-		t.Fatalf("rewritten body missing task id: %s", rewrite.Body)
+	if !strings.Contains(string(rewrite.Body), "task was created and approved by the user inline") {
+		t.Fatalf("rewritten body missing canonical augmentation context: %s", rewrite.Body)
+	}
+	if rewrite.TaskID != "task-uuid-final" {
+		t.Errorf("TaskID=%q, want task-uuid-final", rewrite.TaskID)
 	}
 
 	// Both holds should be gone now.
