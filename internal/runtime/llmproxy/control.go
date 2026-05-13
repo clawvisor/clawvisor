@@ -77,7 +77,7 @@ func ControlNotice(controlBaseURL string) string {
 		"",
 		"USE ONE CURL — emit a single curl invocation with the JSON body inline. Don't write the JSON to a temp file via cat/echo and then curl --data @file: the proxy can parse that shape but it adds variance for no benefit. The simplest, most reliable shape is `--data @-` with a heredoc.",
 		"",
-		"RUN IT IN THE FOREGROUND — the task-creation curl must block until I approve or deny. Do NOT background the call (no trailing `&`, no `nohup`, no `disown`, no backgrounded `exec_command` with a tiny `yield_time_ms`, no putting it in a shell you'll poll separately). The proxy's `wait=true` makes the curl synchronously wait for my decision; for `surface=inline` the curl's result IS the inline approval being resolved. If you background it, you'll proceed before I've decided and hit a wall on every next tool_use.",
+		"RUN IT IN THE FOREGROUND — the task-creation curl must block on the user's decision. Do NOT background it (no trailing `&`, no `nohup`, no `disown`, no \"start it then poll a separate shell for output\" pattern). Emit it as a single synchronous tool_use and wait for the result before doing anything else. The proxy makes the curl block for up to two minutes; that wait is the user reading the prompt and replying.",
 		"",
 		"✗ WRONG — never emit anything that looks like the post-rewrite form:",
 		"  curl -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' \\",
@@ -252,8 +252,60 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 		return nil, false, nil
 	}
 	raw[cmdField] = rewritten
+	// Codex's exec_command backgrounds the call when yield_time_ms
+	// elapses. The default tends to be ~1s, which is way shorter than
+	// the task-creation curl's `wait=true&timeout=120` block window —
+	// without clamping, the agent's task POST gets backgrounded and
+	// the agent proceeds before the user can approve. Mention of
+	// yield_time_ms in the prompt only makes the model cargo-cult a
+	// small value back, so clamp here. Harmless on Bash (Claude Code
+	// has no such parameter).
+	clampControlToolUseTimeouts(raw)
 	out, err := json.Marshal(raw)
 	return out, true, err
+}
+
+// controlToolUseMinYieldMs is the floor we clamp Codex's
+// exec_command yield_time_ms to when the call is a /control/* curl.
+// The curl's max block is wait timeout (120s) plus network slop; 180s
+// gives a comfortable margin without forcing the agent to wait
+// substantially longer than necessary if the user replies quickly.
+const controlToolUseMinYieldMs = 180_000
+
+func clampControlToolUseTimeouts(raw map[string]any) {
+	if raw == nil {
+		return
+	}
+	// Codex's exec_command shape uses yield_time_ms.
+	if cur, ok := numericFromAny(raw["yield_time_ms"]); ok {
+		if cur < controlToolUseMinYieldMs {
+			raw["yield_time_ms"] = controlToolUseMinYieldMs
+		}
+	} else if _, hasCmd := raw["cmd"]; hasCmd {
+		// `cmd` field present + no yield_time_ms = Codex exec_command
+		// using the harness default (~1s). Set the field explicitly so
+		// the harness keeps the curl in the foreground long enough.
+		raw["yield_time_ms"] = controlToolUseMinYieldMs
+	}
+}
+
+// numericFromAny coerces an interface{} from a json.Unmarshal-decoded
+// map (always float64 for JSON numbers) into int64. Returns (0, false)
+// when the value isn't a number.
+func numericFromAny(v any) (int64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int64(x), true
+	case int:
+		return int64(x), true
+	case int64:
+		return x, true
+	case json.Number:
+		n, err := x.Int64()
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector.RewriteOpts) (string, bool) {

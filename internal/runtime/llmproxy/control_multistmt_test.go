@@ -129,3 +129,106 @@ func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+func TestRewriteControlToolUse_ClampsExecCommandYieldTimeMs(t *testing.T) {
+	// Codex exec_command shape with a small yield_time_ms (harness
+	// default backgrounds the curl in ~1s). Proxy must clamp it up
+	// so the task-creation curl stays in the foreground for the
+	// full wait window.
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "exec_command",
+		Input: json.RawMessage(`{
+			"cmd": "curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' --data '{}'",
+			"workdir": "/tmp",
+			"yield_time_ms": 1000,
+			"max_output_tokens": 2000
+		}`),
+	}
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	if err != nil || !ok {
+		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rewritten, &raw); err != nil {
+		t.Fatalf("rewritten input not valid JSON: %v", err)
+	}
+	got, ok := numericFromAny(raw["yield_time_ms"])
+	if !ok {
+		t.Fatalf("yield_time_ms missing from rewritten input: %s", rewritten)
+	}
+	if got < controlToolUseMinYieldMs {
+		t.Fatalf("yield_time_ms = %d, want >= %d", got, controlToolUseMinYieldMs)
+	}
+	// Preserved fields.
+	if raw["workdir"] != "/tmp" || raw["max_output_tokens"] == nil {
+		t.Errorf("rewrite dropped unrelated fields: %s", rewritten)
+	}
+}
+
+func TestRewriteControlToolUse_AddsYieldTimeMsWhenAbsent(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "exec_command",
+		Input: json.RawMessage(`{
+			"cmd": "curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'",
+			"workdir": "/tmp"
+		}`),
+	}
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	if err != nil || !ok {
+		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rewritten, &raw); err != nil {
+		t.Fatalf("rewritten input not valid JSON: %v", err)
+	}
+	got, ok := numericFromAny(raw["yield_time_ms"])
+	if !ok || got < controlToolUseMinYieldMs {
+		t.Fatalf("yield_time_ms = %v, want set to >= %d", raw["yield_time_ms"], controlToolUseMinYieldMs)
+	}
+}
+
+func TestRewriteControlToolUse_BashShapeUnchangedByYieldClamp(t *testing.T) {
+	// Claude Code's Bash input has `command`, not `cmd`. The clamp
+	// should not introduce a yield_time_ms field for Bash.
+	tu := conversation.ToolUse{
+		ID:    "tu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command": "curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'"}`),
+	}
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	if err != nil || !ok {
+		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rewritten, &raw); err != nil {
+		t.Fatalf("rewritten input not valid JSON: %v", err)
+	}
+	if _, present := raw["yield_time_ms"]; present {
+		t.Fatalf("Bash shape should not gain yield_time_ms; got %s", rewritten)
+	}
+}
+
+func TestRewriteControlToolUse_PreservesLargeYieldTimeMs(t *testing.T) {
+	// If the agent already set a yield > floor, leave it alone.
+	const explicit = 300_000
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'`
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "exec_command",
+		Input: json.RawMessage(`{
+			"cmd": ` + jsonQuote(cmd) + `,
+			"yield_time_ms": 300000
+		}`),
+	}
+	rewritten, _, ok, _ := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(rewritten, &raw)
+	if got, _ := numericFromAny(raw["yield_time_ms"]); got != explicit {
+		t.Errorf("yield_time_ms = %d, want preserved value %d", got, explicit)
+	}
+}
