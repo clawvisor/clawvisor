@@ -364,6 +364,14 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 		{"read_file", "Read", `{"file_path":"/tmp/foo.txt"}`},
 		{"todo_write", "TodoWrite", `{"todos":[{"content":"item","activeForm":"item"}]}`},
 		{"glob", "Glob", `{"pattern":"**/*.go"}`},
+		// Claude Code's in-conversation Task family — harness-internal
+		// TODO list / subagent management. No outbound HTTP.
+		{"task_create", "TaskCreate", `{"subject":"plan a thing","description":"do steps"}`},
+		{"task_update", "TaskUpdate", `{"taskId":"1","status":"completed"}`},
+		{"task_list", "TaskList", `{}`},
+		{"task_get", "TaskGet", `{"taskId":"1"}`},
+		{"task_output", "TaskOutput", `{"taskId":"1"}`},
+		{"task_stop", "TaskStop", `{"taskId":"1"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -817,19 +825,22 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 		!strings.Contains(string(got.Body), "https://example.com/one") {
 		t.Fatalf("approval prompt should identify held tool and input: %s", got.Body)
 	}
+	// Bare no-ID resolve returns the most recent hold first (LIFO).
+	// The user is replying to the most recent prompt the harness
+	// rendered, not the oldest unresolved one.
 	first, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first == nil || first.ToolUse.ID != "toolu_1" {
-		t.Fatalf("first resolved pending = %+v, want toolu_1", first)
+	if first == nil || first.ToolUse.ID != "toolu_2" {
+		t.Fatalf("first bare resolve = %+v, want toolu_2 (most recent)", first)
 	}
 	second, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second == nil || second.ToolUse.ID != "toolu_2" {
-		t.Fatalf("second resolved pending = %+v, want toolu_2", second)
+	if second == nil || second.ToolUse.ID != "toolu_1" {
+		t.Fatalf("second bare resolve = %+v, want toolu_1 (older after most-recent consumed)", second)
 	}
 }
 

@@ -73,6 +73,22 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// InlineTaskCreator is the handlers-side helper invoked when an
+	// inline task gesture's second "approve" lands. Optional — when nil,
+	// inline task approval falls back to a deny response (the model
+	// can't create the task without a creator wired in). Production
+	// wires this to *TasksHandler so all task validation + audit logic
+	// is reused.
+	InlineTaskCreator llmproxy.InlineTaskCreator
+
+	// InlineApprovalOutcomes records the result of each inline task
+	// approval so the history augmenter on later turns can re-inject
+	// the correct context (success vs. failure) instead of blindly
+	// claiming the task was created. Optional — when nil, the
+	// augmenter skips inline-approval re-injection entirely (safer
+	// than the prior unconditional "task approved" claim).
+	InlineApprovalOutcomes llmproxy.InlineApprovalOutcomeStore
+
 	// CallerNonces mints short-lived per-rewrite nonces that stand in
 	// for the agent's bearer token in the rewritten tool_use. The
 	// resolver-side middleware shares the same cache instance and
@@ -85,6 +101,15 @@ type LLMEndpointHandler struct {
 	// inspector decision point for diagnostic purposes. Off by
 	// default; opted in via cfg.ProxyLite.TraceLogPath.
 	TraceLogger *llmproxy.TraceLogger
+
+	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
+	// inbound requests, upstream responses, and the bodies returned
+	// to the harness. Off by default; opted in via
+	// CLAWVISOR_PROXY_LITE_RAW_LOG or cfg.ProxyLite.RawLogPath.
+	// Bodies contain conversation content; the file is mode 0600 so
+	// only the daemon's user can read it, but operators should still
+	// avoid leaving this on outside of diagnostic sessions.
+	RawIOLogger *llmproxy.RawIOLogger
 
 	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
 	MaxRequestBytes int64
@@ -101,12 +126,13 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		logger = slog.Default()
 	}
 	return &LLMEndpointHandler{
-		Store:            st,
-		Vault:            v,
-		Forwarder:        llmproxy.NewForwarder(v),
-		Parsers:          conversation.DefaultRegistry(),
-		Logger:           logger,
-		PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		Store:                  st,
+		Vault:                  v,
+		Forwarder:              llmproxy.NewForwarder(v),
+		Parsers:                conversation.DefaultRegistry(),
+		Logger:                 logger,
+		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
@@ -150,6 +176,22 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams  map[string]any
 	)
 	defer func() {
+		// One-liner summary at handler exit — visible in slog even
+		// when the audit row would otherwise be lost (e.g. client
+		// cancelled, store error). Pairs with the per-byte progress
+		// log from ProgressReader so we can reconstruct a stalled
+		// request's full timeline from logs alone.
+		h.Logger.InfoContext(context.Background(), "lite-proxy request completed",
+			"request_id", requestID,
+			"agent_id", agentLogID(auditAgent),
+			"action", auditAction,
+			"http_status", auditStatus,
+			"decision", auditDecide,
+			"outcome", auditOutcome,
+			"reason", auditReason,
+			"client_cancelled", r.Context().Err() != nil,
+			"total_ms", time.Since(start).Milliseconds(),
+		)
 		if h.AuditEmitter == nil || auditAgent == nil {
 			return
 		}
@@ -157,7 +199,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if p := h.Parsers.ParserForRoute(r.URL.Path); p != nil {
 			provName = string(p.Name())
 		}
-		h.AuditEmitter.LogEndpointCall(r.Context(), auditAgent, requestID, provName,
+		// Audit emission uses context.Background() rather than
+		// r.Context() so a client disconnect doesn't silently drop
+		// the audit row. Client cancellation IS an audit signal —
+		// without this, hung/cancelled requests vanish from the
+		// audit log entirely (which is what made the Openclaw
+		// stalls invisible until we added the raw I/O log).
+		h.AuditEmitter.LogEndpointCall(context.Background(), auditAgent, requestID, provName,
 			auditAction, auditStatus, auditDecide, auditOutcome, auditReason,
 			time.Since(start), auditParams)
 	}()
@@ -273,6 +321,64 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		auditParams["approval_task_rewritten"] = true
 	}
+
+	// Inline task approval: when the user's "approve"/"deny" reply
+	// resolves an awaiting_task_approval hold, create the task and
+	// rewrite the user message so the LLM gets clean context (rather
+	// than a synthesized cat-heredoc tool_use that confuses the model
+	// into re-POSTing /control/tasks).
+	inlineApprovalConsumed := false
+	if inlineRewrite, inlineErr := llmproxy.RewriteInlineTaskApprovalReply(r.Context(), llmproxy.InlineApprovalRewriteRequest{
+		HTTPRequest:     r,
+		Provider:        provider,
+		Body:            body,
+		Agent:           agent,
+		PendingApproval: h.PendingApprovals,
+		Creator:         h.InlineTaskCreator,
+		Audit:           h.AuditEmitter,
+		RequestID:       requestID,
+		Outcomes:        h.InlineApprovalOutcomes,
+	}); inlineErr != nil {
+		auditStatus = http.StatusBadRequest
+		auditDecide = "deny"
+		auditOutcome = "malformed_request"
+		auditReason = inlineErr.Error()
+		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", inlineErr.Error())
+		return
+	} else if inlineRewrite.Rewritten {
+		body = inlineRewrite.Body
+		if _, err := parser.ParseRequest(body); err != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = err.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			return
+		}
+		inlineApprovalConsumed = true
+		auditParams["inline_task_approval_rewritten"] = true
+		auditParams["inline_task_outcome"] = inlineRewrite.Outcome
+		if inlineRewrite.TaskID != "" {
+			auditParams["inline_task_id"] = inlineRewrite.TaskID
+		}
+		if inlineRewrite.Reason != "" {
+			auditParams["inline_task_reason"] = inlineRewrite.Reason
+		}
+	}
+
+	// Persistent inline-approval context augmentation. The harness
+	// records what the user typed ("approve") not our one-shot
+	// rewrite ("approve [Clawvisor: ...]"), so on subsequent turns
+	// the context is lost and the model duplicates work
+	// (re-POSTs /control/tasks, re-emits tool_use). Walk conversation
+	// history and re-inject the persistent context on every request.
+	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes, agent.UserID, agent.ID); augErr != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
+			"request_id", requestID, "agent_id", agent.ID, "err", augErr.Error())
+	} else if augmented {
+		body = augBody
+		auditParams["inline_task_history_augmented"] = true
+	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
 		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)
@@ -317,8 +423,18 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"resolver_base_url_set", h.ResolverBaseURL != "",
 	)
 
-	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
-		return
+	// Skip the regular release path when the inline rewrite already
+	// consumed its hold. The rewritten user message still starts with
+	// the literal "approve" verb (the rewrite preserves it so the LLM
+	// can see the user's actual reply); without this guard the release
+	// path would re-parse that verb, LIFO-Peek the cache, and resolve
+	// some UNRELATED hold (e.g., a parallel tool-stage approval the
+	// model emitted alongside the inline-task POST in the same turn).
+	// A single user "approve" would then approve two distinct holds.
+	if !inlineApprovalConsumed {
+		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+			return
+		}
 	}
 
 	upstreamURL := ""
@@ -344,8 +460,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"upstream_url", upstreamURL,
 		"model", reqSummary.Model,
 	)
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "inbound_request",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Headers:      llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(body),
+		})
+	}
+	forwardStart := time.Now()
 	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
 	if err != nil {
+		// Distinguish client-cancelled from genuine upstream failures
+		// so the audit / log signal is unambiguous when chasing
+		// stalls. r.Context().Err() != nil means the inbound HTTP
+		// request was closed by the client mid-flight.
+		clientCancelled := r.Context().Err() != nil
 		if isVaultMiss(err) {
 			auditStatus = http.StatusUnauthorized
 			auditDecide = "deny"
@@ -354,19 +492,30 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"no upstream API key configured in vault for this provider")
 			return
 		}
-		h.Logger.WarnContext(r.Context(), "lite-proxy forward failed",
-			"agent_id", agent.ID, "provider", string(provider), "err", err.Error())
+		h.Logger.WarnContext(context.Background(), "lite-proxy forward failed",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"provider", string(provider),
+			"err", err.Error(),
+			"client_cancelled", clientCancelled,
+			"forward_elapsed_ms", time.Since(forwardStart).Milliseconds(),
+		)
 		auditStatus = http.StatusBadGateway
 		auditDecide = "deny"
-		auditOutcome = "upstream_error"
+		if clientCancelled {
+			auditOutcome = "client_cancelled_pre_response"
+		} else {
+			auditOutcome = "upstream_error"
+		}
 		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
+	upstreamHeadersMs := time.Since(forwardStart).Milliseconds()
 	auditStatus = resp.StatusCode
 	auditOutcome = outcomeFromStatus(resp.StatusCode)
-	h.Logger.DebugContext(r.Context(), "lite-proxy upstream response",
+	h.Logger.InfoContext(context.Background(), "lite-proxy upstream headers received",
 		"request_id", requestID,
 		"agent_id", agent.ID,
 		"provider", string(provider),
@@ -375,7 +524,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"content_type", resp.Header.Get("Content-Type"),
 		"anthropic_request_id", firstNonEmptyLog(resp.Header.Get("request-id"), resp.Header.Get("anthropic-request-id")),
 		"openai_request_id", resp.Header.Get("x-request-id"),
+		"ttfb_headers_ms", upstreamHeadersMs,
 	)
+	if auditParams == nil {
+		auditParams = map[string]any{}
+	}
+	auditParams["ttfb_headers_ms"] = upstreamHeadersMs
 
 	// Mirror upstream status + headers. Strip hop-by-hop. We rewrite
 	// Content-Length below if postprocess mutates the body.
@@ -397,23 +551,50 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// decisions must still run on local proxy-lite installs that do not set
 	// server.public_url.
 	if h.Inspector != nil {
-		full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
+		// Wrap the upstream body so we get TTFB / progress / final
+		// stats in slog and the raw log. Reads pass through unchanged;
+		// it's purely observational. Stalls in this read are the
+		// most likely root cause of phantom hung requests (Anthropic
+		// streams slowly + Openclaw client times out → we never log
+		// upstream_response and the audit row vanishes when the
+		// cancelled context falls into the deferred LogAudit call).
+		progress := llmproxy.NewProgressReader(resp.Body, h.Logger, h.RawIOLogger, requestID)
+		full, readErr := readResponseLimited(progress, h.MaxResponseBytes)
+		bytesRead, readElapsed, readTTFB := progress.Stats()
+		auditParams["upstream_body_bytes"] = bytesRead
+		auditParams["upstream_read_ms"] = readElapsed.Milliseconds()
+		auditParams["upstream_ttfb_body_ms"] = readTTFB.Milliseconds()
 		if readErr != nil {
-			h.Logger.WarnContext(r.Context(), "lite-proxy upstream read error",
-				"agent_id", agent.ID, "err", readErr.Error())
+			clientCancelled := r.Context().Err() != nil
+			h.Logger.WarnContext(context.Background(), "lite-proxy upstream read error",
+				"request_id", requestID,
+				"agent_id", agent.ID,
+				"err", readErr.Error(),
+				"bytes_read", bytesRead,
+				"read_ms", readElapsed.Milliseconds(),
+				"ttfb_body_ms", readTTFB.Milliseconds(),
+				"client_cancelled", clientCancelled,
+			)
 			// Update audit fields BEFORE the JSON write — the deferred
 			// audit emit at the top of serve() reads these, so without
 			// the override the row would claim auditStatus=resp.StatusCode
 			// (the upstream success) and auditOutcome=success from earlier.
 			auditStatus = http.StatusBadGateway
 			auditDecide = "deny"
-			auditOutcome = "upstream_too_large"
+			switch {
+			case clientCancelled:
+				auditOutcome = "client_cancelled_mid_read"
+			case strings.Contains(readErr.Error(), "too large"):
+				auditOutcome = "upstream_too_large"
+			default:
+				auditOutcome = "upstream_read_error"
+			}
 			auditReason = readErr.Error()
 			// Clear the upstream-mirrored headers (Content-Length now
 			// lies about our JSON error body, vendor request-id leaks)
 			// before writing the JSON error.
 			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_TOO_LARGE", "upstream response exceeded size cap")
+			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
 			return
 		}
 		if resp.StatusCode >= 400 {
@@ -424,6 +605,24 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"status", resp.StatusCode,
 				"body_preview", truncateForLog(string(full), 2048),
 			)
+		}
+		if h.RawIOLogger != nil {
+			bodyStr, bodyEnc := llmproxy.EncodeBody(full)
+			h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+				Phase:        "upstream_response",
+				RequestID:    requestID,
+				UserID:       agent.UserID,
+				AgentID:      agent.ID,
+				Provider:     string(provider),
+				Method:       r.Method,
+				Path:         r.URL.RequestURI(),
+				Status:       resp.StatusCode,
+				ContentType:  upstreamCT,
+				Headers:      llmproxy.SafeHeaderSnapshot(resp.Header),
+				Body:         bodyStr,
+				BodyEncoding: bodyEnc,
+				BodyBytes:    len(full),
+			})
 		}
 		callerToken := middleware.CallerTokenFromContext(r.Context())
 		if callerToken == "" {
@@ -511,6 +710,29 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// after upstream may have compressed it; the harness should
 			// not try to gunzip our plaintext.
 			w.Header().Del("Content-Encoding")
+		}
+		if h.RawIOLogger != nil {
+			bodyStr, bodyEnc := llmproxy.EncodeBody(processed.Body)
+			marker := "passthrough"
+			if processed.Rewritten {
+				marker = "rewritten"
+			}
+			h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+				Phase:        "harness_response",
+				RequestID:    requestID,
+				UserID:       agent.UserID,
+				AgentID:      agent.ID,
+				Provider:     string(provider),
+				Method:       r.Method,
+				Path:         r.URL.RequestURI(),
+				Status:       resp.StatusCode,
+				ContentType:  processed.ContentType,
+				Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+				Body:         bodyStr,
+				BodyEncoding: bodyEnc,
+				BodyBytes:    len(processed.Body),
+				Marker:       marker,
+			})
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(processed.Body)
@@ -713,6 +935,25 @@ func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWrite
 	}
 	w.Header().Set("Content-Type", result.ContentType)
 	w.Header().Set("Cache-Control", "no-cache")
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(result.Body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "harness_response",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Status:       result.HTTPStatus,
+			ContentType:  result.ContentType,
+			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(result.Body),
+			Marker:       "synth_release_" + result.Outcome,
+		})
+	}
 	w.WriteHeader(result.HTTPStatus)
 	_, _ = io.Copy(w, bytes.NewReader(result.Body))
 	return true
@@ -787,6 +1028,16 @@ func appendToolName(tools []string, name string) []string {
 		}
 	}
 	return append(tools, name)
+}
+
+// agentLogID returns the agent id or "-" when no agent has been
+// associated yet. Used in summary log lines to avoid printing a
+// confusing empty-string field for rejected-pre-auth requests.
+func agentLogID(a *store.Agent) string {
+	if a == nil {
+		return "-"
+	}
+	return a.ID
 }
 
 func liteProxyAuthMode(r *http.Request) string {

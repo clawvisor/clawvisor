@@ -93,6 +93,18 @@ var localOnlyTools = map[string]struct{}{
 	"EnterWorktree":  {},
 	"ExitWorktree":   {},
 	"ScheduleWakeup": {},
+	// Claude Code's in-conversation Task family — manage the
+	// harness's TODO list / read/stop already-running subagents.
+	// TaskOutput/TaskStop trampoline to subagent state whose own
+	// tool_uses were inspected when they ran (same trampoline
+	// rationale as Agent / Skill above). None of these reach
+	// outside the harness.
+	"TaskCreate": {},
+	"TaskUpdate": {},
+	"TaskList":   {},
+	"TaskGet":    {},
+	"TaskOutput": {},
+	"TaskStop":   {},
 }
 
 func isLocalOnlyTool(name string) bool {

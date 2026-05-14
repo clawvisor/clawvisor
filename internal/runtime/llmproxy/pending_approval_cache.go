@@ -11,7 +11,38 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+)
+
+// PendingApprovalStage is the per-hold state in the inline-task-approval
+// two-step flow. Empty / StageTool is the standard one-step approval
+// (existing behavior). The other stages run the two-step flow:
+//
+//	StageTool ──user types "task"──► StageAwaitingTaskDefinition
+//	                                 │
+//	                                 model emits POST /control/tasks
+//	                                 ▼
+//	                                 (new hold) StageAwaitingTaskApproval
+//	                                 │
+//	                                 user types "approve"
+//	                                 ▼
+//	                                 create task + release both holds
+type PendingApprovalStage string
+
+const (
+	// StageTool — the original tool_use hold awaiting approve/deny/task.
+	StageTool PendingApprovalStage = ""
+	// StageAwaitingTaskDefinition — user typed "task". The same hold's
+	// ToolUse field still points at the ORIGINAL tool. We're waiting for
+	// the model to emit a POST /control/tasks tool_use that defines the
+	// task that should cover this work.
+	StageAwaitingTaskDefinition PendingApprovalStage = "awaiting_task_definition"
+	// StageAwaitingTaskApproval — model has emitted the task definition.
+	// The hold's ToolUse is the task-creation POST itself; AwaitingTaskFor
+	// links back to the original tool hold. We're waiting for the user
+	// to approve/deny.
+	StageAwaitingTaskApproval PendingApprovalStage = "awaiting_task_approval"
 )
 
 type PendingLiteApproval struct {
@@ -27,6 +58,22 @@ type PendingLiteApproval struct {
 	Reason    string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+
+	// Stage controls the two-step inline-task flow. Empty == StageTool
+	// preserves legacy behavior so existing callers don't need to set it.
+	Stage PendingApprovalStage
+
+	// AwaitingTaskFor is the ID of the original tool-use hold this task
+	// definition will cover. Set ONLY on the inner StageAwaitingTaskApproval
+	// hold; empty otherwise. The release path uses this to find the
+	// upstream bash/tool hold and release-or-deny it in cascade.
+	AwaitingTaskFor string
+
+	// TaskDefinition is the parsed body of the POST /control/tasks the
+	// model emitted at StageAwaitingTaskDefinition. Used both to render the
+	// inline approval prompt and to create the task once the user approves.
+	// nil at the other stages.
+	TaskDefinition *runtimetasks.TaskCreateRequest
 }
 
 type ResolveRequest struct {
@@ -34,6 +81,14 @@ type ResolveRequest struct {
 	AgentID    string
 	Provider   conversation.Provider
 	ApprovalID string
+	// Stage, when non-empty, restricts Peek/Resolve/Drop to holds at
+	// the named stage. Used by the inline-task path to target its
+	// StageAwaitingTaskApproval hold specifically even when older,
+	// unresolved tool-stage holds for the same (user, agent, provider)
+	// scope sit ahead of it in the cache. Empty matches any stage,
+	// preserving existing behavior for callers that don't need to
+	// disambiguate.
+	Stage PendingApprovalStage
 }
 
 type HoldResult struct {
@@ -151,21 +206,46 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 	if len(items) == 0 {
 		return nil, -1, items
 	}
-	index := 0
+	// Explicit ApprovalID wins outright — that's the unambiguous form
+	// the user typed (e.g. "approve cv-xyz").
 	if req.ApprovalID != "" {
-		index = -1
 		for i, pending := range items {
-			if pending.ID == req.ApprovalID {
-				index = i
-				break
+			if pending.ID != req.ApprovalID {
+				continue
+			}
+			if req.Stage != "" && pending.Stage != req.Stage {
+				return nil, -1, items
+			}
+			return &pending, i, items
+		}
+		return nil, -1, items
+	}
+	// Stage-filtered scan: callers that know which kind of hold they
+	// want (e.g. the inline-task release path) pass req.Stage so a
+	// stale tool-stage hold doesn't shadow the inline-task hold they
+	// care about. Scan from the END so the MOST RECENT matching hold
+	// wins — same LIFO rule the no-stage branch below uses. The two
+	// must agree: a user reply lands on the freshest prompt of its
+	// kind, never the oldest.
+	if req.Stage != "" {
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].Stage == req.Stage {
+				pending := items[i]
+				return &pending, i, items
 			}
 		}
-		if index < 0 {
-			return nil, -1, items
-		}
+		return nil, -1, items
 	}
-	pending := items[index]
-	return &pending, index, items
+	// No ID, no stage filter — pick the MOST RECENT hold (items[-1]).
+	// The user is replying to the most recent approval prompt the
+	// harness rendered; resolving the oldest hold (FIFO) is
+	// counterintuitive and was a source of "I approved but nothing
+	// happened" bugs when one prompt sat unresolved while another
+	// arrived. Explicit-ID lookups (above) and Stage-filtered lookups
+	// are unaffected — they're scoped by construction.
+	idx := len(items) - 1
+	pending := items[idx]
+	return &pending, idx, items
 }
 
 func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest) error {
