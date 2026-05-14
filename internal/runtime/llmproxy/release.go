@@ -34,13 +34,13 @@ type InlineTaskCreator interface {
 // model needs to see — it isn't a full store.Task because the LLM
 // doesn't care about every column.
 type InlineApprovedTask struct {
-	ID                string `json:"task_id"`
-	Status            string `json:"status"`
-	Purpose           string `json:"purpose,omitempty"`
-	Lifetime          string `json:"lifetime,omitempty"`
-	ApprovalSource    string `json:"approval_source,omitempty"`
-	ApprovalRecordID  string `json:"approval_record_id,omitempty"`
-	ExpiresAtRFC3339  string `json:"expires_at,omitempty"`
+	ID               string `json:"task_id"`
+	Status           string `json:"status"`
+	Purpose          string `json:"purpose,omitempty"`
+	Lifetime         string `json:"lifetime,omitempty"`
+	ApprovalSource   string `json:"approval_source,omitempty"`
+	ApprovalRecordID string `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339 string `json:"expires_at,omitempty"`
 }
 
 type ReleaseRequest struct {
@@ -89,28 +89,18 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	if verb == "task" {
 		return ReleaseResult{}
 	}
-	// Peek first to inspect the hold's stage. Resolving up-front would
-	// destroy an inline-task hold on the fail-closed guard below — the
-	// next user retry would find no hold and the inline flow would
-	// stay broken until TTL expiry. Resolve only after we know the
-	// stage is one this path should consume.
-	//
-	// Routing rule for bare replies (no ApprovalID): the user is
-	// answering the MOST RECENT prompt the harness rendered. We peek
-	// LIFO across all stages — if that newest hold is an inline-task
-	// hold, the preprocess didn't fire and we fail closed; if it's a
-	// regular tool hold, we proceed even when an OLDER inline hold is
-	// also pending (that older hold isn't what the user is replying
-	// to and stays in the cache for its own resolution path).
-	peeked, err := req.PendingApproval.Peek(ctx, ResolveRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: approvalID,
+	action, err := resolveApprovalReplyAction(ctx, approvalReplyRoutingRequest{
+		UserID:          req.Agent.UserID,
+		AgentID:         req.Agent.ID,
+		Provider:        req.Provider,
+		PendingApproval: req.PendingApproval,
+		Verb:            verb,
+		ApprovalID:      approvalID,
 	})
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
 	}
+	peeked := action.Hold
 	if peeked == nil {
 		if approvalID != "" {
 			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
@@ -124,7 +114,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	// naming an inline-task hold directly. Older inline holds sitting
 	// behind a newer non-inline hold are NOT the user's target here
 	// and stay in the cache untouched.
-	if peeked.Stage == StageAwaitingTaskApproval {
+	if action.Kind == approvalReplyActionApproveInlineTask || action.Kind == approvalReplyActionDenyInlineTask {
 		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
 		// 503 (Service Unavailable) reads more honestly than 500
 		// here: the inline-approval preprocess is missing, the

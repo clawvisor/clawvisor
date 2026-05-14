@@ -28,11 +28,22 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 	if verb != "task" || req.PendingApproval == nil || req.Agent == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, nil
 	}
+	action, err := resolveApprovalReplyAction(ctx, approvalReplyRoutingRequest{
+		UserID:          req.Agent.UserID,
+		AgentID:         req.Agent.ID,
+		Provider:        req.Provider,
+		PendingApproval: req.PendingApproval,
+		Verb:            verb,
+		ApprovalID:      approvalID,
+	})
+	if err != nil || action.Kind != approvalReplyActionStartInlineTaskDefinition || action.Hold == nil {
+		return TaskReplyRewriteResult{Body: req.Body}, err
+	}
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
-		ApprovalID: approvalID,
+		ApprovalID: action.Hold.ID,
 	})
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err

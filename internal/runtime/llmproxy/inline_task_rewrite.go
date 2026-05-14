@@ -86,31 +86,24 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
-	// Peek the MOST RECENT hold (LIFO, no stage filter). The user's
-	// bare "approve" lands on whatever prompt the harness most
-	// recently rendered — if that's an inline-task prompt, we
-	// handle it here; if it's a regular tool prompt that just
-	// happened to land after an older inline gesture, the release
-	// path is the right place to consume it.
-	//
-	// Stage-filtering this Peek used to cause the inverse race:
-	// an OLDER inline hold could steal a bare "approve" intended
-	// for a NEWER tool prompt the user actually just saw.
-	inner, err := req.PendingApproval.Peek(ctx, ResolveRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: approvalID,
+	action, err := resolveApprovalReplyAction(ctx, approvalReplyRoutingRequest{
+		UserID:          req.Agent.UserID,
+		AgentID:         req.Agent.ID,
+		Provider:        req.Provider,
+		PendingApproval: req.PendingApproval,
+		Verb:            verb,
+		ApprovalID:      approvalID,
 	})
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
-	if inner == nil {
-		return InlineApprovalRewriteResult{Body: req.Body}, nil
-	}
-	if inner.Stage != StageAwaitingTaskApproval {
+	if action.Kind != approvalReplyActionApproveInlineTask && action.Kind != approvalReplyActionDenyInlineTask {
 		// Most recent hold isn't an inline-task hold (or the named
 		// approval isn't one). Defer to TryReleasePendingApproval.
+		return InlineApprovalRewriteResult{Body: req.Body}, nil
+	}
+	inner := action.Hold
+	if inner == nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
