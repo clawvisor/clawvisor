@@ -817,19 +817,22 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 		!strings.Contains(string(got.Body), "https://example.com/one") {
 		t.Fatalf("approval prompt should identify held tool and input: %s", got.Body)
 	}
+	// Bare no-ID resolve returns the most recent hold first (LIFO).
+	// The user is replying to the most recent prompt the harness
+	// rendered, not the oldest unresolved one.
 	first, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first == nil || first.ToolUse.ID != "toolu_1" {
-		t.Fatalf("first resolved pending = %+v, want toolu_1", first)
+	if first == nil || first.ToolUse.ID != "toolu_2" {
+		t.Fatalf("first bare resolve = %+v, want toolu_2 (most recent)", first)
 	}
 	second, err := cache.Resolve(req.Context(), ResolveRequest{UserID: userID, AgentID: agentID, Provider: conversation.ProviderAnthropic})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second == nil || second.ToolUse.ID != "toolu_2" {
-		t.Fatalf("second resolved pending = %+v, want toolu_2", second)
+	if second == nil || second.ToolUse.ID != "toolu_1" {
+		t.Fatalf("second bare resolve = %+v, want toolu_1 (older after most-recent consumed)", second)
 	}
 }
 

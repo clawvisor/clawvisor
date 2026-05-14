@@ -78,7 +78,12 @@ func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testi
 	}
 }
 
-func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
+// Bare "approve" (no ApprovalID) resolves the MOST RECENT hold first,
+// not the oldest. The user is replying to the most recent approval
+// prompt the harness rendered; resolving the oldest hold first was
+// the cause of "I approved but nothing happened" — older unresolved
+// holds shadowed newer ones.
+func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeLIFO(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
 
@@ -108,8 +113,8 @@ func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-first" {
-		t.Fatalf("resolved = %+v, want first", resolved)
+	if resolved == nil || resolved.ID != "cv-second" {
+		t.Fatalf("first bare resolve = %+v, want most-recent (cv-second)", resolved)
 	}
 	resolved, err = cache.Resolve(ctx, ResolveRequest{
 		UserID:   "user-1",
@@ -119,8 +124,8 @@ func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-second" {
-		t.Fatalf("resolved = %+v, want second", resolved)
+	if resolved == nil || resolved.ID != "cv-first" {
+		t.Fatalf("second bare resolve = %+v, want older (cv-first) after newer consumed", resolved)
 	}
 }
 
@@ -226,8 +231,11 @@ func TestMemoryPendingApprovalCacheEvictsOldestOnOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-second" {
-		t.Fatalf("resolved = %+v, want second", resolved)
+	// Eviction dropped cv-first (oldest); cv-second and cv-third
+	// remain. Bare resolve picks the most recent (cv-third) under
+	// the LIFO default.
+	if resolved == nil || resolved.ID != "cv-third" {
+		t.Fatalf("resolved = %+v, want cv-third (most recent surviving)", resolved)
 	}
 }
 

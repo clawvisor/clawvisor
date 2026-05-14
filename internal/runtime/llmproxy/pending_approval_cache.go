@@ -250,12 +250,16 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 		}
 		return nil, -1, items
 	}
-	// No ID, no stage filter — default to items[0] (FIFO). The LIFO
-	// "newest wins" UX fix is a separate commit; this one only adds
-	// the stage filter so the inline-task path can target its hold
-	// regardless of order.
-	pending := items[0]
-	return &pending, 0, items
+	// No ID, no stage filter — pick the MOST RECENT hold (items[-1]).
+	// The user is replying to the most recent approval prompt the
+	// harness rendered; resolving the oldest hold (FIFO) is
+	// counterintuitive and was a source of "I approved but nothing
+	// happened" bugs when one prompt sat unresolved while another
+	// arrived. Explicit-ID lookups (above) and Stage-filtered lookups
+	// are unaffected — they're scoped by construction.
+	idx := len(items) - 1
+	pending := items[idx]
+	return &pending, idx, items
 }
 
 func (c *MemoryPendingApprovalCache) Update(_ context.Context, req UpdateRequest) (*PendingLiteApproval, error) {
