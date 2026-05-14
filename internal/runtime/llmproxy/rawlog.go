@@ -140,6 +140,29 @@ func (l *RawIOLogger) Emit(ev RawIOEvent) {
 	_, _ = l.w.Write([]byte{'\n'})
 }
 
+// EmitRaw writes an arbitrary JSON object as one line. Used by
+// streaming-progress instrumentation that doesn't fit the RawIOEvent
+// schema — these are short, diagnostic-only records, not body
+// captures. A timestamp is always added; the caller's fields override
+// anything except `timestamp`.
+func (l *RawIOLogger) EmitRaw(fields map[string]any) {
+	if l == nil || l.w == nil {
+		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["timestamp"] = l.now().UTC().Format(time.RFC3339Nano)
+	line, err := json.Marshal(fields)
+	if err != nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _ = l.w.Write(line)
+	_, _ = l.w.Write([]byte{'\n'})
+}
+
 // EncodeBody returns (body, encoding) ready to drop into RawIOEvent.
 // Valid UTF-8 (the common case — JSON, SSE) is stored as a string for
 // easy `jq` traversal. Anything else gets base64-encoded so we don't
