@@ -322,7 +322,7 @@ func TestInlineTaskApprovalDenyPath(t *testing.T) {
 // v1 — we just confirm it doesn't double-create.)
 func TestInlineTaskRepeatTaskReplyOnInnerHoldDoesNothing(t *testing.T) {
 	ctx := context.Background()
-	_, _, _, agent := newInlineTasksHandlerForTest(t)
+	_, st, _, agent := newInlineTasksHandlerForTest(t)
 	cache := llmproxy.NewMemoryPendingApprovalCache(time.Minute)
 
 	innerHold, err := cache.Hold(ctx, llmproxy.PendingLiteApproval{
@@ -356,22 +356,13 @@ func TestInlineTaskRepeatTaskReplyOnInnerHoldDoesNothing(t *testing.T) {
 	// the next POST /control/tasks will be intercepted again. The key
 	// invariant: no task was created, no double approval record.
 	_ = out
-	// Verify no Task or ApprovalRecord side-effects fired in the store.
-	// (This test seeds an isolated DB so any persistence would surface.)
-	tasks := listTasksForAgent(t, newInlineTasksHandlerStore(t), agent)
+	// Verify no Task or ApprovalRecord side-effects fired in the SAME
+	// store the test scenario is using. Querying a fresh store would
+	// always be empty and silently pass even on a regression.
+	tasks := listTasksForAgent(t, st, agent)
 	if len(tasks) != 0 {
 		t.Errorf("rewrite should be side-effect-free in the store; got %d tasks", len(tasks))
 	}
-}
-
-// newInlineTasksHandlerStore is a tiny helper that returns a fresh empty
-// store — used only by the "no side effects in store" guard in the
-// re-task test above. The handler is constructed elsewhere; we just
-// need a way to inspect that no rogue writes happened.
-func newInlineTasksHandlerStore(t *testing.T) store.Store {
-	t.Helper()
-	_, st, _, _ := newInlineTasksHandlerForTest(t)
-	return st
 }
 
 // listTasksForAgent returns every task the agent owns, via the generic
@@ -390,4 +381,3 @@ func listTasksForAgent(t *testing.T, st store.Store, agent *store.Agent) []*stor
 	}
 	return out
 }
-
