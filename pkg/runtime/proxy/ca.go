@@ -54,7 +54,10 @@ func GenerateCA(dataDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("parse CA certificate: %w", err)
 	}
 
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	// 0o700: dataDir holds the proxy CA's EC private key. The key file itself
+	// is 0o600, but tightening the parent dir prevents enumeration on shared
+	// hosts and matches conventional permissions for key-material directories.
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create data dir: %w", err)
 	}
 
