@@ -187,23 +187,24 @@ func resolveAuth() (serverURL, token string) {
 
 	// Config file as last resort.
 	if serverURL == "" || token == "" {
-		cfgPath, err := tuiconfig.DefaultPath()
-		if err != nil {
-			return
+		if cfgPath, err := tuiconfig.DefaultPath(); err == nil {
+			if cfg, err := tuiconfig.Load(cfgPath); err == nil {
+				if profile, err := cfg.Active(); err == nil {
+					if serverURL == "" {
+						serverURL = profile.ServerURL
+					}
+					if token == "" {
+						token = profile.Token
+					}
+				}
+			}
 		}
-		cfg, err := tuiconfig.Load(cfgPath)
-		if err != nil {
-			return
-		}
-		profile, err := cfg.Active()
-		if err != nil {
-			return
-		}
-		if serverURL == "" {
-			serverURL = profile.ServerURL
-		}
-		if token == "" {
-			token = profile.Token
+	}
+
+	// Fall back to .local-session
+	if serverURL == "" {
+		if sess, err := readLocalSession(); err == nil {
+			serverURL = sess.ServerURL
 		}
 	}
 
