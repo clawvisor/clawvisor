@@ -228,6 +228,105 @@ func TestRewriteInlineTaskApproval_MissingCreatorRewritesAsDeny(t *testing.T) {
 	}
 }
 
+// Regression for 2026-05-14T04:03:23 production failure: an
+// unresolved tool-stage hold sat ahead of the inline-task hold in
+// the cache. User typed bare "approve". The cache's no-ID peek
+// returned the OLDER tool-stage hold (FIFO), our rewrite saw it
+// wasn't StageAwaitingTaskApproval and bailed. TryReleasePendingApproval
+// then resolved the older tool hold as a regular approve, and the
+// inline-task hold sat unresolved — no task created, no audit row,
+// next agent turn hit task_scope_missing.
+//
+// With the Stage filter, the inline-task rewriter targets its
+// hold specifically regardless of cache ordering.
+func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	// Older tool-stage hold (e.g. from a prior intent_refusal the
+	// user never replied to). This goes into items[0].
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-staletoolholdxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool,
+		ToolUse:  conversation.ToolUse{ID: "toolu_stale", Name: "Read"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Inline-task hold added AFTER → goes into items[1].
+	inner, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-innerholdxxxxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+		ToolUse:  conversation.ToolUse{ID: "toolu_post", Name: "Bash"},
+		TaskDefinition: &runtimetasks.TaskCreateRequest{
+			Purpose: "Test inline task",
+			ExpectedTools: []runtimetasks.ExpectedTool{
+				{ToolName: "Bash", Why: "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	creator := &fakeInlineTaskCreator{
+		resp: &InlineApprovedTask{
+			ID:             "task-stale-test",
+			Status:         "active",
+			ApprovalSource: "inline_chat",
+			Lifetime:       "session",
+		},
+	}
+	// Bare "approve" — no cv-id. This is the production failure mode.
+	body := []byte(`{"messages":[{"role":"user","content":"approve"}]}`)
+	out, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Rewritten {
+		t.Fatal("inline-task rewrite must fire even when a stale tool hold sits ahead in the cache")
+	}
+	if out.Decision != "allow" || out.Outcome != "inline_task_approved" {
+		t.Fatalf("decision=%q outcome=%q", out.Decision, out.Outcome)
+	}
+	if !creator.called {
+		t.Fatal("creator was not called — inline-task hold was not resolved")
+	}
+	if out.TaskID != "task-stale-test" {
+		t.Errorf("TaskID=%q, want task-stale-test", out.TaskID)
+	}
+	// Stale tool hold must still be there for the regular release
+	// path to handle separately — we should not have collateral-
+	// damaged it.
+	stale, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic,
+		ApprovalID: "cv-staletoolholdxxxxxxxxxxxxx",
+	})
+	if stale == nil {
+		t.Error("stale tool hold should remain; the rewriter must not touch other holds")
+	}
+	// Inline-task hold must be consumed.
+	gone, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1", Provider: conversation.ProviderAnthropic,
+		ApprovalID: inner.Pending.ID,
+	})
+	if gone != nil {
+		t.Errorf("inline-task hold should be consumed; got %+v", gone)
+	}
+}
+
 func TestRewriteInlineTaskApproval_NoToolHoldIsNoop(t *testing.T) {
 	// User typed "approve" but there's no inner hold (e.g. it's a
 	// regular tool-stage approval, not an inline-task one). The

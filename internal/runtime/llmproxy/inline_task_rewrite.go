@@ -81,18 +81,28 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
+	// Target the inline-task hold specifically. Without the Stage
+	// filter, an older unresolved tool-stage hold (e.g. from a
+	// previous intent_refusal the user didn't reply to) would
+	// shadow the inline-task hold and the user's bare "approve"
+	// would resolve the stale tool hold instead of creating the
+	// task. Production trace 2026-05-14T04:03:23 reproduced exactly
+	// this — fail-mode in two parts: no task in the dashboard, and
+	// the next agent turn hits task_scope_missing.
 	inner, err := req.PendingApproval.Peek(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
 		ApprovalID: approvalID,
+		Stage:      StageAwaitingTaskApproval,
 	})
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
-	if inner == nil || inner.Stage != StageAwaitingTaskApproval {
-		// Either no hold or it's a tool-stage hold; let the regular
-		// TryReleasePendingApproval path handle it.
+	if inner == nil {
+		// No matching inline-task hold; this is a regular
+		// tool-stage approve/deny and TryReleasePendingApproval
+		// will handle it.
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 

@@ -81,6 +81,14 @@ type ResolveRequest struct {
 	AgentID    string
 	Provider   conversation.Provider
 	ApprovalID string
+	// Stage, when non-empty, restricts Peek/Resolve/Drop to holds at
+	// the named stage. Used by the inline-task path to target its
+	// StageAwaitingTaskApproval hold specifically even when older,
+	// unresolved tool-stage holds for the same (user, agent, provider)
+	// scope sit ahead of it in the cache. Empty matches any stage,
+	// preserving existing behavior for callers that don't need to
+	// disambiguate.
+	Stage PendingApprovalStage
 }
 
 type HoldResult struct {
@@ -216,21 +224,38 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 	if len(items) == 0 {
 		return nil, -1, items
 	}
-	index := 0
+	// Explicit ApprovalID wins outright — that's the unambiguous form
+	// the user typed (e.g. "approve cv-xyz").
 	if req.ApprovalID != "" {
-		index = -1
 		for i, pending := range items {
-			if pending.ID == req.ApprovalID {
-				index = i
-				break
+			if pending.ID != req.ApprovalID {
+				continue
+			}
+			if req.Stage != "" && pending.Stage != req.Stage {
+				return nil, -1, items
+			}
+			return &pending, i, items
+		}
+		return nil, -1, items
+	}
+	// Stage-filtered scan: callers that know which kind of hold they
+	// want (e.g. the inline-task release path) pass req.Stage so a
+	// stale tool-stage hold doesn't shadow the inline-task hold they
+	// care about.
+	if req.Stage != "" {
+		for i, pending := range items {
+			if pending.Stage == req.Stage {
+				return &pending, i, items
 			}
 		}
-		if index < 0 {
-			return nil, -1, items
-		}
+		return nil, -1, items
 	}
-	pending := items[index]
-	return &pending, index, items
+	// No ID, no stage filter — default to items[0] (FIFO). The LIFO
+	// "newest wins" UX fix is a separate commit; this one only adds
+	// the stage filter so the inline-task path can target its hold
+	// regardless of order.
+	pending := items[0]
+	return &pending, 0, items
 }
 
 func (c *MemoryPendingApprovalCache) Update(_ context.Context, req UpdateRequest) (*PendingLiteApproval, error) {
