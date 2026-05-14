@@ -27,92 +27,13 @@ func anthropicBashControlTasksPost(body string) []byte {
 	return anthropicJSONWithNamedToolUse("Bash", string(enc))
 }
 
-func TestPostprocess_InlineTaskInterceptedWhenAwaiting(t *testing.T) {
-	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
-
-	// Pre-seed the original tool hold in StageAwaitingTaskDefinition,
-	// the state RewriteTaskApprovalReply leaves it in.
-	originalHold, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-origtooluuid00000000000000",
-		UserID:   userID,
-		AgentID:  agentID,
-		Provider: conversation.ProviderAnthropic,
-		ToolUse: conversation.ToolUse{
-			ID:    "toolu_orig",
-			Name:  "Bash",
-			Input: json.RawMessage(`{"command":"mkdir -p /tmp/landing"}`),
-		},
-		Stage: StageAwaitingTaskDefinition,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	body := anthropicBashControlTasksPost(inlineTaskBody)
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-
-	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
-		Store:            st,
-		AgentUserID:      userID,
-		AgentID:          agentID,
-		ControlBaseURL:   "http://localhost:25297",
-		PendingApprovals: cache,
-	})
-
-	if got.SkippedReason != "" {
-		t.Fatalf("postprocess skipped: %s", got.SkippedReason)
-	}
-
-	out := string(got.Body)
-	// The substitute prompt — NOT the rewritten curl — should appear.
-	if !strings.Contains(out, "Clawvisor wants to create a task") {
-		t.Fatalf("expected inline approval prompt in body; got %s", out)
-	}
-	if !strings.Contains(out, "Build a landing page at /tmp/landing") {
-		t.Fatalf("expected purpose in substituted prompt; got %s", out)
-	}
-	// Sanity: the rewritten /control/tasks URL must NOT leak through
-	// (otherwise the bash would actually run and create the task).
-	if strings.Contains(out, "X-Clawvisor-Caller") {
-		t.Fatalf("expected the POST tool_use to be replaced, not rewritten through; got %s", out)
-	}
-
-	// Both the original (awaiting_task_definition) and the new
-	// (awaiting_task_approval) holds should be in the cache. Find them
-	// by scanning the cache's internal store.
-	cache.mu.Lock()
-	allHolds := append([]PendingLiteApproval(nil), cache.pending[pendingApprovalKey{
-		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
-	}]...)
-	cache.mu.Unlock()
-	if len(allHolds) != 2 {
-		t.Fatalf("expected 2 holds in cache; got %d", len(allHolds))
-	}
-	var inner *PendingLiteApproval
-	for i := range allHolds {
-		if allHolds[i].Stage == StageAwaitingTaskApproval {
-			inner = &allHolds[i]
-		}
-	}
-	if inner == nil {
-		t.Fatal("no awaiting_task_approval hold found")
-	}
-	if inner.AwaitingTaskFor != originalHold.Pending.ID {
-		t.Fatalf("inner hold should link back via AwaitingTaskFor=%q; got %q", originalHold.Pending.ID, inner.AwaitingTaskFor)
-	}
-	if inner.TaskDefinition == nil || inner.TaskDefinition.Purpose == "" {
-		t.Fatalf("inner hold should carry parsed TaskDefinition; got %+v", inner.TaskDefinition)
-	}
-	if inner.ToolUse.ID != "toolu_1" {
-		t.Fatalf("inner hold ToolUse should be the POST tool_use; got %+v", inner.ToolUse)
-	}
-}
+// The legacy "state signal" path (a prior StageAwaitingTaskDefinition
+// hold seeded by RewriteTaskApprovalReply) is no longer reachable in
+// production — task replies now fully Resolve the original hold rather
+// than transitioning its stage, so there is no awaiting-definition
+// hold for the intercept to observe. Inline approvals flow only
+// through the ?surface=inline query signal, exercised by
+// TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam.
 
 func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	// No awaiting_task_definition hold → the model is doing async task
@@ -145,88 +66,23 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	}
 }
 
-func TestPostprocess_InlineTaskRefreshesOriginalHoldTTL(t *testing.T) {
-	ctx := context.Background()
-	cache := NewMemoryPendingApprovalCache(time.Minute)
-	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
-
-	// Original hold near expiry (1 second left).
-	nearExpiry := time.Now().Add(time.Second)
-	if _, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:        "cv-stalentooluuid0000000000000",
-		UserID:    userID,
-		AgentID:   agentID,
-		Provider:  conversation.ProviderAnthropic,
-		ToolUse:   conversation.ToolUse{ID: "toolu_x", Name: "Bash"},
-		Stage:     StageAwaitingTaskDefinition,
-		ExpiresAt: nearExpiry,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	body := anthropicBashControlTasksPost(inlineTaskBody)
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
-	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-
-	_ = Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
-		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
-		Store:            st,
-		AgentUserID:      userID,
-		AgentID:          agentID,
-		ControlBaseURL:   "http://localhost:25297",
-		PendingApprovals: cache,
-	})
-
-	refreshed, err := cache.Peek(ctx, ResolveRequest{
-		UserID:     userID,
-		AgentID:    agentID,
-		Provider:   conversation.ProviderAnthropic,
-		ApprovalID: "cv-stalentooluuid0000000000000",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if refreshed == nil {
-		t.Fatal("expected original hold to survive intercept")
-	}
-	if !refreshed.ExpiresAt.After(nearExpiry.Add(time.Minute)) {
-		t.Fatalf("expected original hold TTL to be refreshed past near-expiry; got %v", refreshed.ExpiresAt)
-	}
-}
-
 // TestInlineTask_PostprocessIntoRelease drives both halves of the
 // state machine through real exported entry points: Postprocess
-// intercepts the model-emitted POST /control/tasks and registers the
-// inner hold; TryReleasePendingApproval consumes the user's "approve"
-// reply, drives the InlineTaskCreator, and emits the synthetic
-// response. Mirrors the production wiring with stubs for the creator.
+// intercepts the model-emitted POST /control/tasks (via the
+// ?surface=inline query signal — the only production-reachable signal
+// today) and registers the inner hold; TryReleasePendingApproval
+// consumes the user's "approve" reply, drives the InlineTaskCreator,
+// and emits the synthetic response. Mirrors the production wiring
+// with stubs for the creator.
 func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
-	// Pre-seed the outer hold the way RewriteTaskApprovalReply would
-	// have done after the user typed "task" on the original Bash prompt.
-	if _, err := cache.Hold(ctx, PendingLiteApproval{
-		ID:       "cv-origtoolxxxxxxxxxxxxxxxxxx",
-		UserID:   userID,
-		AgentID:  agentID,
-		Provider: conversation.ProviderAnthropic,
-		ToolUse: conversation.ToolUse{
-			ID:    "toolu_orig",
-			Name:  "Bash",
-			Input: json.RawMessage(`{"command":"mkdir -p /tmp/landing"}`),
-		},
-		Stage: StageAwaitingTaskDefinition,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	// Drive Postprocess on a model response that emits the bash-form
-	// POST /control/tasks.
-	body := anthropicBashControlTasksPost(inlineTaskBody)
+	// POST /control/tasks WITH the surface=inline query — that's how a
+	// compliant model signals an inline approval gesture in production.
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	postResult := Postprocess(req, body, "application/json", PostprocessConfig{

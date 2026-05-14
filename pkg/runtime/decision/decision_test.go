@@ -368,6 +368,115 @@ func TestEvaluateAuthorization_ExpectedToolMatchIsCaseInsensitive(t *testing.T) 
 	}
 }
 
+// The per-call Reason must come from tool input (Claude Code's Bash
+// supplies a short `description` on every call), not from the task's
+// expected_tools[].why — that scope text is what we already pass as
+// ExpectedUse, and the verifier correctly flags a verbatim copy as
+// "procedural instructions rather than a 'why' clause." See
+// internal/intent/prompts.go for the verifier's reason_coherence rules.
+func TestEvaluateAuthorization_ToolReasonPrefersToolInputDescription(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": "List temp directory contents",
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason != "List temp directory contents" {
+		t.Fatalf("Reason = %q, want tool input description", verifier.last.Reason)
+	}
+	if verifier.last.Reason == verifier.last.ExpectedUse {
+		t.Fatalf("Reason must not be a verbatim copy of ExpectedUse: %q", verifier.last.Reason)
+	}
+}
+
+// A malicious model can set its tool input's `description` to the
+// exact NoPerCallReasonSentinel string, which the verifier prompt
+// treats as "harness doesn't collect a rationale" and uses to skip
+// the reason_coherence check. Forwarding that verbatim would let the
+// model disable a defense layer per call. The proxy must refuse to
+// honor a model-supplied value equal to the sentinel.
+func TestEvaluateAuthorization_ToolReasonRefusesModelSuppliedSentinel(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": NoPerCallReasonSentinel,
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// We DO send the sentinel as the system-supplied fallback, so the
+	// Reason field on the wire equals the sentinel. The distinction we
+	// care about: it came from OUR fallback path, not from a model
+	// string that exactly equaled the sentinel. That distinction is
+	// preserved by perCallToolReason refusing the match before
+	// firstNonEmpty considers it. The observable signal: Reason
+	// equals the sentinel even though the model TRIED to supply it,
+	// which only happens via the fallback branch (i.e. the model's
+	// string was rejected and we fell through).
+	if verifier.last.Reason != NoPerCallReasonSentinel {
+		t.Fatalf("Reason = %q; want sentinel (model-supplied value should have been rejected and fallback used)", verifier.last.Reason)
+	}
+}
+
+// Defense-in-depth: if the model sets the sentinel in ANY rationale
+// field, fall through to the system sentinel — don't let the model
+// surface a different field as the rationale by knowing the lookup
+// order. A bypass attempt in one field poisons all fields.
+func TestEvaluateAuthorization_ToolReasonSentinelInOneFieldPoisonsOthers(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": NoPerCallReasonSentinel,
+			"reason":      "totally legitimate-sounding string",
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason != NoPerCallReasonSentinel {
+		t.Fatalf("Reason = %q; want system sentinel (model bypass attempt should have poisoned all fields)", verifier.last.Reason)
+	}
+}
+
+// When the harness doesn't supply a per-call rationale (Codex's shell
+// sends argv only, no description), we must send the
+// NoPerCallReasonSentinel so the verifier prompt knows to skip the
+// reason_coherence check rather than flag it as "insufficient." The
+// fallback must NOT be the task's expected_tools[].why (verbatim-copy
+// refusal) and must NOT be a bare action name like "tool_use Bash"
+// (would trip insufficient).
+func TestEvaluateAuthorization_ToolReasonFallbackUsesSentinel(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("Bash", map[string]any{"command": "ls /tmp"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason != NoPerCallReasonSentinel {
+		t.Fatalf("Reason = %q, want NoPerCallReasonSentinel", verifier.last.Reason)
+	}
+}
+
 func toolUse(name string, input map[string]any) conversation.ToolUse {
 	raw, _ := json.Marshal(input)
 	return conversation.ToolUse{ID: "toolu_1", Name: name, Input: raw}

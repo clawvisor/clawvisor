@@ -204,12 +204,19 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 		"awaiting_task_for":  inner.AwaitingTaskFor,
 		"task_id":            task.ID,
 		"approval_record_id": task.ApprovalRecordID,
-		"approval_source":    task.ApprovalSource,
-		"task_status":        task.Status,
-		"task_lifetime":      task.Lifetime,
-		"surface":            "inline_chat",
-		"build_sha":          buildSHA(),
-		"clawvisor_version":  version.Version,
+		// approval_record_missing flips true when the task was created
+		// but the canonical approval_records row failed to insert. The
+		// task is still active — dashboards filtering by surface will
+		// see it — but the audit trail is degraded. Surface explicitly
+		// so monitoring can alert on the inconsistency rather than
+		// guessing from an empty approval_record_id field.
+		"approval_record_missing": task.ApprovalRecordID == "",
+		"approval_source":         task.ApprovalSource,
+		"task_status":             task.Status,
+		"task_lifetime":           task.Lifetime,
+		"surface":                 "inline_chat",
+		"build_sha":               buildSHA(),
+		"clawvisor_version":       version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
 	toolUseID := inner.ToolUse.ID

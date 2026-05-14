@@ -327,6 +327,77 @@ func TestRewriteInlineTaskApproval_FindsInlineHoldBehindStaleToolHold(t *testing
 	}
 }
 
+// A bare approve belongs to the newest visible prompt, not merely the
+// newest inline-task prompt. If an older inline-task hold is still
+// pending but a newer regular tool approval prompt has been rendered,
+// the inline rewriter must leave the bare reply alone so the regular
+// release path can resolve the newest tool hold.
+func TestRewriteInlineTaskApproval_BareApproveDoesNotStealNewerToolHold(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	// Older inline-task hold that should NOT consume a later bare approve.
+	inlineHeld, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-inlineolderxxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+		TaskDefinition: &runtimetasks.TaskCreateRequest{
+			Purpose: "Older inline task",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Newer regular tool hold: this is the prompt the user just saw.
+	toolHeld, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-toolnewerxxxxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool,
+		ToolUse:  conversation.ToolUse{ID: "toolu_newer", Name: "Bash"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	creator := &fakeInlineTaskCreator{
+		resp: &InlineApprovedTask{ID: "task-should-not-be-created"},
+	}
+	body := []byte(`{"messages":[{"role":"user","content":"approve"}]}`)
+	out, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            body,
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Creator:         creator,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Rewritten || out.Decision != "" {
+		t.Fatalf("bare approve should not be consumed by older inline hold; got %+v", out)
+	}
+	if creator.called {
+		t.Fatal("older inline hold incorrectly created a task from a bare reply to a newer tool prompt")
+	}
+	for _, id := range []string{inlineHeld.Pending.ID, toolHeld.Pending.ID} {
+		peeked, err := cache.Peek(ctx, ResolveRequest{
+			UserID: "user-1", AgentID: "agent-1",
+			Provider: conversation.ProviderAnthropic, ApprovalID: id,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if peeked == nil {
+			t.Fatalf("hold %s should remain for the correct release path", id)
+		}
+	}
+}
+
 func TestRewriteInlineTaskApproval_NoToolHoldIsNoop(t *testing.T) {
 	// User typed "approve" but there's no inner hold (e.g. it's a
 	// regular tool-stage approval, not an inline-task one). The

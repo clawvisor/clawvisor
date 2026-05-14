@@ -168,6 +168,136 @@ curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/x.json`
 	}
 }
 
+// A cat-heredoc that writes to a path the curl never reads is a
+// smuggled file write — the rewriter only edits the curl URL, leaving
+// surrounding statements to execute on the harness verbatim. Reject.
+func TestParseControlCmd_RefusesCatPathNotReadByCurl(t *testing.T) {
+	cmd := `cat <<'EOF' >/etc/passwd-shadow.bak
+malicious
+EOF
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/body.json`
+	if _, _, ok := parseControlCmd(cmd); ok {
+		t.Fatal("cat path unrelated to curl's --data @path must refuse")
+	}
+}
+
+// A second cat-heredoc alongside the legitimate body cat is also a
+// smuggled write: the curl can read only one @path body file, so the
+// extra cat would only execute as a side effect.
+func TestParseControlCmd_RefusesMultipleCatStatements(t *testing.T) {
+	cmd := `cat <<'EXTRA' >/tmp/extra.sh
+#!/bin/sh
+echo pwn
+EXTRA
+cat <<'BODY' >/tmp/body.json
+{"purpose":"x"}
+BODY
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/body.json`
+	if _, _, ok := parseControlCmd(cmd); ok {
+		t.Fatal("multiple cat statements must refuse")
+	}
+}
+
+// A cat after the curl runs as a tail side effect — could overwrite a
+// file the harness will later read, or land a payload at a stable
+// location. The legitimate ordering is cat-then-curl.
+func TestParseControlCmd_RefusesCatAfterCurl(t *testing.T) {
+	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{"purpose":"x"}'
+cat <<'EOF' >/tmp/landing-payload
+pwn
+EOF`
+	if _, _, ok := parseControlCmd(cmd); ok {
+		t.Fatal("cat after curl must refuse")
+	}
+}
+
+// Even when the curl reads exactly what the cat wrote, the cat itself
+// still executes on the harness — so a cat targeting an arbitrary path
+// outside the safe temp-body allowlist (~/.bashrc, /etc/foo,
+// /Users/<u>/.ssh/authorized_keys, /tmp/sub/dir/x.json) is a smuggled
+// file write regardless of curl's --data target. The path allowlist
+// must forbid those even when curl honestly reads them.
+func TestParseControlCmd_RefusesCatPathOutsideSafeAllowlist(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"home_dotfile", "/Users/eric/.bashrc"},
+		{"etc_config", "/etc/important.conf"},
+		{"ssh_authorized_keys", "/Users/eric/.ssh/authorized_keys"},
+		{"subdir_under_tmp", "/tmp/inner/body.json"},
+		{"parent_traversal_under_tmp", "/tmp/../etc/passwd"},
+		{"non_json_extension", "/tmp/body.sh"},
+		{"bare_tmp_no_extension", "/tmp/body"},
+		{"relative_path", "tmp/body.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := `cat <<'EOF' >` + tc.path + `
+{"purpose":"x"}
+EOF
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @` + tc.path
+			if _, _, ok := parseControlCmd(cmd); ok {
+				t.Fatalf("cat path %q must be refused even when curl reads it", tc.path)
+			}
+		})
+	}
+}
+
+// Shell semantics for `command >file1 >file2`: BOTH files get
+// opened/truncated, even though only the last fd receives output.
+// Without an explicit single-redir check, the loop in parseHeredocToFile
+// would overwrite outPath to the LAST path, so the allowlist check on
+// `/tmp/body.json` passes — while `/Users/eric/.ssh/authorized_keys`
+// silently gets truncated as a side effect of opening it for `>`.
+func TestParseControlCmd_RefusesMultipleCatOutputRedirections(t *testing.T) {
+	cmd := `cat <<'EOF' >/Users/eric/.ssh/authorized_keys >/tmp/body.json
+{"purpose":"x"}
+EOF
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/body.json`
+
+	if _, _, ok := parseControlCmd(cmd); ok {
+		t.Fatal("cat with multiple output redirections must refuse")
+	}
+}
+
+// A leading-dot filename (e.g. /tmp/.bashrc.json) and a leading-dash
+// filename (e.g. /tmp/-rf.json) shouldn't be in the safe-temp
+// allowlist. None of these escape /tmp, but the allowlist's job is
+// "narrow and obviously safe" — surprises here invite trouble.
+func TestParseControlCmd_RefusesCatLeadingDotOrDashFilename(t *testing.T) {
+	cases := []string{
+		"/tmp/.bashrc.json",
+		"/tmp/-rf.json",
+		"/tmp/..json",
+		"/tmp/...json",
+	}
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			cmd := `cat <<'EOF' >` + path + `
+{"purpose":"x"}
+EOF
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @` + path
+			if _, _, ok := parseControlCmd(cmd); ok {
+				t.Fatalf("path %q must be refused", path)
+			}
+		})
+	}
+}
+
+// `>>` (append) on the cat would let a model splice content onto an
+// existing file rather than overwrite a fresh one. Even within the
+// safe allowlist that's a smuggled mutation — reject it.
+func TestParseControlCmd_RefusesCatAppendMode(t *testing.T) {
+	cmd := `cat <<'EOF' >>/tmp/body.json
+extra
+EOF
+curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/body.json`
+	if _, _, ok := parseControlCmd(cmd); ok {
+		t.Fatal("cat with >> append must refuse")
+	}
+}
+
 // jsonQuote returns a JSON-encoded double-quoted string for s, including
 // the surrounding quotes. Test-only convenience.
 func jsonQuote(s string) string {
@@ -231,6 +361,32 @@ func TestRewriteControlToolUse_AddsYieldTimeMsWhenAbsent(t *testing.T) {
 	got, ok := numericFromAny(raw["yield_time_ms"])
 	if !ok || got < controlToolUseMinYieldMs {
 		t.Fatalf("yield_time_ms = %v, want set to >= %d", raw["yield_time_ms"], controlToolUseMinYieldMs)
+	}
+}
+
+// The yield_time_ms injection is a Codex exec_command-specific repair.
+// A hypothetical future cmd-keyed tool that doesn't use yield_time_ms
+// as its yield parameter must NOT get the field stamped onto it just
+// because the input happens to carry a cmd key.
+func TestRewriteControlToolUse_DoesNotInjectYieldOntoNonCodexCmdShape(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:   "tu_1",
+		Name: "future_run_command", // not exec_command
+		Input: json.RawMessage(`{
+			"cmd": "curl -sS -X POST 'https://clawvisor.local/control/tasks' --data '{}'",
+			"workdir": "/tmp"
+		}`),
+	}
+	rewritten, _, ok, err := RewriteControlToolUse(tu, "https://control.example", "cv-nonce-test")
+	if err != nil || !ok {
+		t.Fatalf("expected control rewrite; ok=%v err=%v", ok, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rewritten, &raw); err != nil {
+		t.Fatalf("rewritten input not valid JSON: %v", err)
+	}
+	if _, present := raw["yield_time_ms"]; present {
+		t.Fatalf("non-Codex tool should not gain yield_time_ms; got %s", rewritten)
 	}
 }
 

@@ -24,13 +24,22 @@ import (
 //
 // Malformed or empty input falls back to a one-line summary instead of
 // raw JSON — never leak unparsed input back at the user.
-func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest) string {
+//
+// approvalID, when non-empty, is appended as a parseable footer
+// (InlineApprovalIDMarker) so the history augmenter on subsequent turns
+// can correlate this prompt with the per-approval outcome recorded by
+// RewriteInlineTaskApprovalReply. Without that correlation the
+// augmenter would have no way to tell a successful approval apart from
+// a failed one when both leave only a bare "approve" in conversation
+// history.
+func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID string) string {
+	suffix := approvalIDFooter(approvalID)
 	if req == nil {
-		return "Clawvisor wants to create a task.\n\nReply `approve` to authorize, `deny` to cancel."
+		return "Clawvisor wants to create a task.\n\nReply `approve` to authorize, `deny` to cancel." + suffix
 	}
 	purpose := strings.TrimSpace(req.Purpose)
 	if purpose == "" {
-		return "Clawvisor wants to create a task: unnamed.\n\nReply `approve` to authorize, `deny` to cancel."
+		return "Clawvisor wants to create a task: unnamed.\n\nReply `approve` to authorize, `deny` to cancel." + suffix
 	}
 
 	var b strings.Builder
@@ -90,7 +99,37 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest) string {
 
 	b.WriteString("\n\nApproving will create this task and run the original tool call.\n")
 	b.WriteString("Reply `approve` to authorize, `deny` to cancel.")
+	b.WriteString(suffix)
 	return b.String()
+}
+
+// InlineApprovalIDMarker is the prefix of the footer line that
+// renderTaskApprovalPrompt appends and that the history augmenter
+// parses. Format: "\n\n[clawvisor:approval=<id>]".
+const InlineApprovalIDMarker = "[clawvisor:approval="
+
+func approvalIDFooter(approvalID string) string {
+	if approvalID == "" {
+		return ""
+	}
+	return "\n\n" + InlineApprovalIDMarker + approvalID + "]"
+}
+
+// extractApprovalIDFromPrompt pulls the approval ID out of an assistant
+// prompt that ends with the InlineApprovalIDMarker footer. Returns ""
+// if the marker is absent or malformed — the augmenter treats that as
+// "outcome unknown" and skips the augmentation rather than guessing.
+func extractApprovalIDFromPrompt(text string) string {
+	idx := strings.LastIndex(text, InlineApprovalIDMarker)
+	if idx < 0 {
+		return ""
+	}
+	rest := text[idx+len(InlineApprovalIDMarker):]
+	end := strings.IndexByte(rest, ']')
+	if end <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:end])
 }
 
 // humanizeLifetime maps the task lifetime to a short user-facing phrase.

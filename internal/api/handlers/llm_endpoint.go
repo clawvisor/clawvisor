@@ -81,6 +81,14 @@ type LLMEndpointHandler struct {
 	// is reused.
 	InlineTaskCreator llmproxy.InlineTaskCreator
 
+	// InlineApprovalOutcomes records the result of each inline task
+	// approval so the history augmenter on later turns can re-inject
+	// the correct context (success vs. failure) instead of blindly
+	// claiming the task was created. Optional — when nil, the
+	// augmenter skips inline-approval re-injection entirely (safer
+	// than the prior unconditional "task approved" claim).
+	InlineApprovalOutcomes llmproxy.InlineApprovalOutcomeStore
+
 	// CallerNonces mints short-lived per-rewrite nonces that stand in
 	// for the agent's bearer token in the rewritten tool_use. The
 	// resolver-side middleware shares the same cache instance and
@@ -118,12 +126,13 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		logger = slog.Default()
 	}
 	return &LLMEndpointHandler{
-		Store:            st,
-		Vault:            v,
-		Forwarder:        llmproxy.NewForwarder(v),
-		Parsers:          conversation.DefaultRegistry(),
-		Logger:           logger,
-		PendingApprovals: llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		Store:                  st,
+		Vault:                  v,
+		Forwarder:              llmproxy.NewForwarder(v),
+		Parsers:                conversation.DefaultRegistry(),
+		Logger:                 logger,
+		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
@@ -318,6 +327,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// rewrite the user message so the LLM gets clean context (rather
 	// than a synthesized cat-heredoc tool_use that confuses the model
 	// into re-POSTing /control/tasks).
+	inlineApprovalConsumed := false
 	if inlineRewrite, inlineErr := llmproxy.RewriteInlineTaskApprovalReply(r.Context(), llmproxy.InlineApprovalRewriteRequest{
 		HTTPRequest:     r,
 		Provider:        provider,
@@ -327,6 +337,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		Creator:         h.InlineTaskCreator,
 		Audit:           h.AuditEmitter,
 		RequestID:       requestID,
+		Outcomes:        h.InlineApprovalOutcomes,
 	}); inlineErr != nil {
 		auditStatus = http.StatusBadRequest
 		auditDecide = "deny"
@@ -344,6 +355,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 			return
 		}
+		inlineApprovalConsumed = true
 		auditParams["inline_task_approval_rewritten"] = true
 		auditParams["inline_task_outcome"] = inlineRewrite.Outcome
 		if inlineRewrite.TaskID != "" {
@@ -360,7 +372,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the context is lost and the model duplicates work
 	// (re-POSTs /control/tasks, re-emits tool_use). Walk conversation
 	// history and re-inject the persistent context on every request.
-	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider); augErr != nil {
+	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes); augErr != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
 			"request_id", requestID, "agent_id", agent.ID, "err", augErr.Error())
 	} else if augmented {
@@ -411,8 +423,18 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"resolver_base_url_set", h.ResolverBaseURL != "",
 	)
 
-	if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
-		return
+	// Skip the regular release path when the inline rewrite already
+	// consumed its hold. The rewritten user message still starts with
+	// the literal "approve" verb (the rewrite preserves it so the LLM
+	// can see the user's actual reply); without this guard the release
+	// path would re-parse that verb, LIFO-Peek the cache, and resolve
+	// some UNRELATED hold (e.g., a parallel tool-stage approval the
+	// model emitted alongside the inline-task POST in the same turn).
+	// A single user "approve" would then approve two distinct holds.
+	if !inlineApprovalConsumed {
+		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+			return
+		}
 	}
 
 	upstreamURL := ""

@@ -241,10 +241,14 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 	// Stage-filtered scan: callers that know which kind of hold they
 	// want (e.g. the inline-task release path) pass req.Stage so a
 	// stale tool-stage hold doesn't shadow the inline-task hold they
-	// care about.
+	// care about. Scan from the END so the MOST RECENT matching hold
+	// wins — same LIFO rule the no-stage branch below uses. The two
+	// must agree: a user reply lands on the freshest prompt of its
+	// kind, never the oldest.
 	if req.Stage != "" {
-		for i, pending := range items {
-			if pending.Stage == req.Stage {
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].Stage == req.Stage {
+				pending := items[i]
 				return &pending, i, items
 			}
 		}

@@ -11,6 +11,16 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+// NoPerCallReasonSentinel is the Reason value we send to the intent
+// verifier when the agent's harness does not collect a per-call
+// rationale at the tool layer (e.g., Codex's shell tool sends argv
+// only, with no `description` field like Claude Code's Bash). The
+// verifier prompt recognizes this exact string and skips the
+// reason_coherence check in that case, evaluating the request on
+// params and task scope alone. Keep this string in sync with the
+// matching block in internal/intent/prompts.go.
+const NoPerCallReasonSentinel = "<no per-call rationale: harness tool schema does not collect one>"
+
 type VerdictKind string
 
 const (
@@ -426,7 +436,7 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 		Service:     in.Service,
 		Action:      in.Action,
 		Params:      params,
-		Reason:      "runtime decision tool_use " + in.ToolUse.Name,
+		Reason:      firstNonEmpty(perCallToolReason(params), NoPerCallReasonSentinel),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
 	})
@@ -462,13 +472,21 @@ func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store
 	if expectedUse == "" {
 		expectedUse = match.Item.Why
 	}
+	// The verifier expects Reason to be the agent's per-call rationale —
+	// "why am I making THIS specific call." Do NOT fall back to
+	// match.Item.Why: that's the task's pre-declared scope description
+	// (same text we already pass as ExpectedUse), and the verifier
+	// correctly flags a verbatim copy as "instructions/procedural steps
+	// rather than a 'why' clause." Pull a fresh rationale from the tool
+	// input instead; harnesses like Claude Code prompt the model for a
+	// short `description` on each Bash call for exactly this purpose.
 	verdict, err := in.IntentVerifier.Verify(ctx, IntentVerifyRequest{
 		TaskPurpose: purpose,
 		ExpectedUse: expectedUse,
 		Service:     "runtime.tool",
 		Action:      in.ToolUse.Name,
 		Params:      params,
-		Reason:      firstNonEmpty(match.Item.Why, "runtime decision tool_use "+in.ToolUse.Name),
+		Reason:      firstNonEmpty(perCallToolReason(params), NoPerCallReasonSentinel),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
 	})
@@ -562,6 +580,45 @@ func decodeToolInput(raw json.RawMessage) map[string]any {
 		return nil
 	}
 	return out
+}
+
+// perCallToolReason pulls a per-call rationale out of tool input. Claude
+// Code's Bash tool prompts the model for a short `description` on every
+// call; Codex and other harnesses use similar conventions. When the
+// agent supplies one we forward it to the verifier as the Reason — it's
+// the only field meant to capture "why THIS call, right now," distinct
+// from the task's pre-declared scope.
+//
+// Keys are limited to names that semantically mean "rationale": a
+// generic `purpose` field on a task-creation or evaluator tool would
+// be USER data (a task's purpose, an evaluator's subject), not the
+// agent's why-clause for this specific call — feeding that to the
+// verifier risks false coherence findings.
+func perCallToolReason(params map[string]any) string {
+	if params == nil {
+		return ""
+	}
+	// First pass: detect a sentinel forgery in ANY inspected field. A
+	// model that drops the sentinel into `description` and a plausible
+	// rationale into `reason` would otherwise still get a rationale
+	// forwarded — the bypass attempt itself is the signal we care
+	// about, and "advance past sentinel to the next field" lets the
+	// model surface the wrong-but-not-flagged field as the rationale
+	// by knowing this lookup order. Fall through to the system
+	// sentinel instead.
+	for _, key := range []string{"description", "reason", "rationale"} {
+		if v, ok := params[key].(string); ok && strings.TrimSpace(v) == NoPerCallReasonSentinel {
+			return ""
+		}
+	}
+	for _, key := range []string{"description", "reason", "rationale"} {
+		if v, ok := params[key].(string); ok {
+			if s := strings.TrimSpace(v); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {

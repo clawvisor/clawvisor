@@ -64,97 +64,76 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 	// Only intercept POSTs to /control/tasks; the dashboard handler
-	// covers GETs (skill catalog) and other control paths.
-	if !strings.EqualFold(call.Method, "POST") || !strings.HasSuffix(call.URL.Path, "/control/tasks") {
+	// covers GETs (skill catalog) and other control paths. Exact
+	// path equality — HasSuffix would also match attacker-shaped paths
+	// like /foo/bar/control/tasks if the host check ever loosened.
+	if !strings.EqualFold(call.Method, "POST") || call.URL.Path != "/control/tasks" {
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	// Try the state signal first (prior `task` reply).
-	pending, _ := cfg.PendingApprovals.Peek(req.Context(), ResolveRequest{
-		UserID:   cfg.AgentUserID,
-		AgentID:  cfg.AgentID,
-		Provider: provider,
-	})
-	stateSignal := pending != nil && pending.Stage == StageAwaitingTaskDefinition
-
-	// Query signal: agent explicitly opted in. Honored regardless of
-	// whether a state signal is also present (state takes precedence
-	// for the cascade linkage when both fire).
+	// Query signal: agent explicitly opted in via ?surface=inline. This
+	// is the only signal we honor in production — the older "state
+	// signal" branch (a prior StageAwaitingTaskDefinition hold from a
+	// "task" reply) is unreachable now that RewriteTaskApprovalReply
+	// fully Resolves the original tool hold rather than transitioning
+	// its stage. taskCreationPrompt teaches the model to include
+	// ?surface=inline, so compliant traffic flows through here; the
+	// query-less path correctly falls through to the dashboard rewrite.
 	querySignal := strings.EqualFold(call.URL.Query().Get(InlineSurfaceQueryParam), InlineSurfaceQueryValue)
-
-	if !stateSignal && !querySignal {
+	if !querySignal {
 		return conversation.ToolUseVerdict{}, false
 	}
 
+	// On the failure paths below, we audit with decision="fallthrough"
+	// rather than "block" because the function returns (verdict{}, false)
+	// and the caller proceeds to the regular control-rewrite path.
+	// Emitting "block" here would record a misleading audit row paired
+	// with whatever decision the dashboard rewriter ultimately reaches
+	// for the same tool_use — operators chasing inline-task failures
+	// would see a "block" followed by an unrelated outcome for the
+	// same request.
 	bodyBytes, ok := controlTaskBodyFromInput(tu.Input)
 	if !ok || len(bodyBytes) == 0 {
-		audit("block", "inline_task_body_missing", "POST /control/tasks had no body")
+		audit("fallthrough", "inline_task_body_missing", "POST /control/tasks had no body; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
 	parsed := &runtimetasks.TaskCreateRequest{}
 	if err := json.Unmarshal(bodyBytes, parsed); err != nil {
-		audit("block", "inline_task_body_malformed", err.Error())
+		audit("fallthrough", "inline_task_body_malformed", err.Error())
 		return conversation.ToolUseVerdict{}, false
 	}
 	if strings.TrimSpace(parsed.Purpose) == "" {
-		audit("block", "inline_task_missing_purpose", "task body missing purpose")
+		audit("fallthrough", "inline_task_missing_purpose", "task body missing purpose; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
 
 	now := time.Now().UTC()
-	awaitingTaskFor := ""
-	if stateSignal {
-		// Refresh the original hold's TTL so the second gesture has
-		// the full inlineTaskApprovalTTL window. Without this, a hold
-		// created near the end of its TTL could expire before the
-		// user finishes the second approve.
-		if _, err := cfg.PendingApprovals.Update(req.Context(), UpdateRequest{
-			UserID:     cfg.AgentUserID,
-			AgentID:    cfg.AgentID,
-			Provider:   provider,
-			ApprovalID: pending.ID,
-			ExpiresAt:  now.Add(inlineTaskApprovalTTL),
-		}); err != nil {
-			audit("block", "inline_task_refresh_failed", err.Error())
-			return conversation.ToolUseVerdict{}, false
-		}
-		awaitingTaskFor = pending.ID
-	}
-
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-		UserID:          cfg.AgentUserID,
-		AgentID:         cfg.AgentID,
-		Provider:        provider,
-		ToolUse:         tu,
-		Reason:          "inline task creation awaiting user approval",
-		Stage:           StageAwaitingTaskApproval,
-		AwaitingTaskFor: awaitingTaskFor,
-		TaskDefinition:  parsed,
-		CreatedAt:       now,
-		ExpiresAt:       now.Add(inlineTaskApprovalTTL),
+		UserID:         cfg.AgentUserID,
+		AgentID:        cfg.AgentID,
+		Provider:       provider,
+		ToolUse:        tu,
+		Reason:         "inline task creation awaiting user approval",
+		Stage:          StageAwaitingTaskApproval,
+		TaskDefinition: parsed,
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(inlineTaskApprovalTTL),
 	})
 	if holdErr != nil {
 		audit("block", "inline_task_hold_failed", holdErr.Error())
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	signal := "state"
-	if !stateSignal && querySignal {
-		signal = "query"
-	} else if stateSignal && querySignal {
-		signal = "state+query"
-	}
-	audit("block", "inline_task_pending_approval", "awaiting user approve/deny on inline task definition ("+signal+")")
+	audit("block", "inline_task_pending_approval", "awaiting user approve/deny on inline task definition (query)")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
-		"awaiting_task_for", awaitingTaskFor,
 		"purpose", parsed.Purpose,
-		"signal", signal,
+		"signal", "query",
 	)
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
-		SubstituteWith: renderTaskApprovalPrompt(parsed),
+		SubstituteWith: renderTaskApprovalPrompt(parsed, innerHold.Pending.ID),
 	}, true
 }
 

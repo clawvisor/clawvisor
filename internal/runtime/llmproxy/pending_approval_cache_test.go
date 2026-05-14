@@ -415,6 +415,45 @@ func TestPendingLiteApprovalCarriesNewFields(t *testing.T) {
 	}
 }
 
+// Two StageAwaitingTaskApproval holds alive at once must resolve LIFO
+// when a stage-filtered lookup runs without an ApprovalID. The user
+// is replying to the MOST RECENT inline prompt the harness rendered;
+// resolving the older one would silently land on stale state — the
+// same failure pattern the no-stage LIFO fix addressed, just in the
+// stage-filtered code path.
+func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	older, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-older", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-newer", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peeked, err := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeked == nil || peeked.ID != newer.Pending.ID {
+		t.Fatalf("stage-filtered no-ID Peek returned %+v, want most recent %q", peeked, newer.Pending.ID)
+	}
+	_ = older
+}
+
 func TestMemoryPendingApprovalCacheFailsClosedWhenIDGenerationFails(t *testing.T) {
 	old := liteApprovalRandRead
 	liteApprovalRandRead = func(_ []byte) (int, error) {

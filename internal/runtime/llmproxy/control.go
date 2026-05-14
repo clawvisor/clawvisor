@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -260,7 +261,7 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	// yield_time_ms in the prompt only makes the model cargo-cult a
 	// small value back, so clamp here. Harmless on Bash (Claude Code
 	// has no such parameter).
-	clampControlToolUseTimeouts(raw)
+	clampControlToolUseTimeouts(raw, t.Name)
 	out, err := json.Marshal(raw)
 	return out, true, err
 }
@@ -272,21 +273,36 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 // substantially longer than necessary if the user replies quickly.
 const controlToolUseMinYieldMs = 180_000
 
-func clampControlToolUseTimeouts(raw map[string]any) {
+func clampControlToolUseTimeouts(raw map[string]any, toolName string) {
 	if raw == nil {
 		return
 	}
-	// Codex's exec_command shape uses yield_time_ms.
+	// Always clamp an EXISTING small yield_time_ms regardless of tool
+	// name — the field has a single meaning across the harnesses that
+	// adopt it (Codex's exec_command today), and a stale small value
+	// still backgrounds the control curl.
 	if cur, ok := numericFromAny(raw["yield_time_ms"]); ok {
 		if cur < controlToolUseMinYieldMs {
 			raw["yield_time_ms"] = controlToolUseMinYieldMs
 		}
-	} else if _, hasCmd := raw["cmd"]; hasCmd {
-		// `cmd` field present + no yield_time_ms = Codex exec_command
-		// using the harness default (~1s). Set the field explicitly so
-		// the harness keeps the curl in the foreground long enough.
-		raw["yield_time_ms"] = controlToolUseMinYieldMs
+		return
 	}
+	// INTRODUCING a yield_time_ms field is a Codex-specific repair:
+	// the field doesn't exist on Bash or any other harness's tool
+	// shape, and stamping it onto a future cmd-keyed tool that
+	// doesn't use yield_time_ms as its yield parameter would be a
+	// stray field at best, a silent shape-corruption at worst. Gate
+	// strictly by tool name.
+	if toolName != "exec_command" {
+		return
+	}
+	if _, hasCmd := raw["cmd"]; !hasCmd {
+		return
+	}
+	// `cmd` field present + no yield_time_ms = Codex exec_command
+	// using the harness default (~1s). Set the field explicitly so
+	// the harness keeps the curl in the foreground long enough.
+	raw["yield_time_ms"] = controlToolUseMinYieldMs
 }
 
 // numericFromAny coerces an interface{} from a json.Unmarshal-decoded
@@ -638,7 +654,16 @@ func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 		return nil, nil, false
 	}
 	var curlStmt *syntax.Stmt
-	dataFiles := map[string][]byte{}
+	// The cat-heredoc form exists solely to materialize the curl's
+	// `--data @path` body. We allow at most one cat statement and it
+	// must come strictly before the curl. After parsing, the cat's
+	// path must match the curl's `--data @path` target — otherwise
+	// it's a smuggled file write to an unrelated location that would
+	// survive into the rewritten command (the rewriter only edits the
+	// curl URL; surrounding statements pass through verbatim).
+	var catPath string
+	var catBody []byte
+	seenCat := false
 	for i, stmt := range file.Stmts {
 		// A trailing `;` is fine; non-trailing `;` or `&` between
 		// commands smuggles in extra side effects we can't reason
@@ -664,11 +689,18 @@ func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 			}
 			curlStmt = stmt
 		case "cat":
+			if seenCat || curlStmt != nil {
+				// Multiple cats or a cat after the curl could write
+				// arbitrary additional files that the curl never reads.
+				return nil, nil, false
+			}
 			path, body, ok := parseHeredocToFile(stmt, call)
 			if !ok {
 				return nil, nil, false
 			}
-			dataFiles[path] = body
+			catPath = path
+			catBody = body
+			seenCat = true
 		default:
 			return nil, nil, false
 		}
@@ -679,6 +711,15 @@ func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 	args, ok := parseSingleControlCurlStmt(cmd, curlStmt)
 	if !ok {
 		return nil, nil, false
+	}
+	dataFiles := map[string][]byte{}
+	if seenCat {
+		// The cat must be the curl's body source; if curl doesn't
+		// read @catPath we'd be allowing an unused file write.
+		if !curlReadsDataAtPath(args, catPath) {
+			return nil, nil, false
+		}
+		dataFiles[catPath] = catBody
 	}
 	// Capture the curl's own stdin heredoc so `--data @-` resolves to
 	// its body. This is the canonical shape the proxy's prompt teaches
@@ -694,6 +735,44 @@ func parseControlCmd(cmd string) ([]controlCurlArg, map[string][]byte, bool) {
 		dataFiles = nil
 	}
 	return args, dataFiles, true
+}
+
+// curlReadsDataAtPath returns true when the curl args contain a
+// `--data @<path>` (or -d, --data-raw, --data-binary in any of their
+// `=` / split forms) whose target is exactly the given path. Used to
+// confirm a cat-heredoc statement is the curl's body source rather
+// than a smuggled write to an unrelated location.
+func curlReadsDataAtPath(args []controlCurlArg, path string) bool {
+	if path == "" {
+		return false
+	}
+	target := "@" + path
+	for i := 1; i < len(args); i++ {
+		tok := args[i].value
+		switch {
+		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary":
+			if i+1 < len(args) && args[i+1].value == target {
+				return true
+			}
+		case strings.HasPrefix(tok, "-d") && tok != "-d":
+			if strings.TrimPrefix(tok, "-d") == target {
+				return true
+			}
+		case strings.HasPrefix(tok, "--data="):
+			if strings.TrimPrefix(tok, "--data=") == target {
+				return true
+			}
+		case strings.HasPrefix(tok, "--data-raw="):
+			if strings.TrimPrefix(tok, "--data-raw=") == target {
+				return true
+			}
+		case strings.HasPrefix(tok, "--data-binary="):
+			if strings.TrimPrefix(tok, "--data-binary=") == target {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // stdinHeredocBody returns the heredoc body redirected into stdin for
@@ -759,6 +838,33 @@ func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg
 	return args, true
 }
 
+// safeCatTargetPath restricts cat-heredoc output to a narrow temp-file
+// shape so a model that uses the multi-statement form can't pick the
+// path. Even though the parser already requires the cat's path to be
+// the curl's `--data @path` target, the cat still executes on the
+// harness — so without a path allowlist a model could write or
+// overwrite arbitrary files (think `cat <<X >~/.bashrc`,
+// `>/etc/important.conf`, `>/Users/<u>/.ssh/authorized_keys`) while
+// the request looks like a normal /control/tasks call.
+//
+// The allowed shape is `/tmp/<flat-name>.json`:
+//   - absolute, anchored at `/tmp/` — no $HOME expansion, no relative
+//   - no subdirectories under `/tmp/` (the body file is flat)
+//   - filename must START with an alnum or underscore — leading `.`
+//     would create a dotfile (`/tmp/.bashrc.json`), leading `-` could
+//     trip future tooling that walks `/tmp/` and parses filenames as
+//     flags (`-rf.json` to a careless `find … -delete`). Neither is
+//     security-critical given the `.json` suffix, but the goal of the
+//     allowlist is "narrow and obviously safe," not "narrow with
+//     surprising edges."
+//   - filename body limited to safe chars; ends in `.json` so we
+//     don't accidentally clobber a binary, dotfile, or shell init
+//     script
+//   - the parser separately requires the path to be statically
+//     expandable, so `$HOME`/`$(…)`/`${…}` are already rejected
+//     upstream.
+var safeCatTargetPath = regexp.MustCompile(`^/tmp/[A-Za-z0-9_][A-Za-z0-9_.\-]*\.json$`)
+
 // parseHeredocToFile recognizes
 //
 //	cat <<TAG >$staticpath
@@ -766,21 +872,30 @@ func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg
 //	TAG
 //
 // and returns ($staticpath, $body). Refuses any other cat-form
-// (multiple redirs, pipes, dynamic path, missing heredoc).
+// (multiple redirs, pipes, dynamic path, append-mode `>>`, output path
+// outside the safe temp-body allowlist).
 func parseHeredocToFile(stmt *syntax.Stmt, call *syntax.CallExpr) (string, []byte, bool) {
 	if len(call.Assigns) > 0 || len(call.Args) != 1 {
 		return "", nil, false
 	}
-	// `cat` with no extra args — the heredoc + > redirect are the
-	// shape we accept.
-	if len(stmt.Redirs) < 2 {
+	// Exactly one heredoc and exactly one truncating `>` redirection.
+	// More than one `>path` is a real smuggle: shell semantics for
+	// `command >a >b` open AND truncate both files even though only
+	// the last fd receives output, so `cat <<X >/private/file >/tmp/ok.json`
+	// would silently zero out /private/file while the allowlist check
+	// on the last path passes. Require exactly two redirs total
+	// (1 Hdoc + 1 RdrOut) so we can't be tricked by extras.
+	if len(stmt.Redirs) != 2 {
 		return "", nil, false
 	}
 	var heredocBody string
 	var outPath string
+	hdocCount := 0
+	outCount := 0
 	for _, redir := range stmt.Redirs {
 		switch redir.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
+			hdocCount++
 			if redir.Hdoc == nil {
 				return "", nil, false
 			}
@@ -789,7 +904,12 @@ func parseHeredocToFile(stmt *syntax.Stmt, call *syntax.CallExpr) (string, []byt
 				return "", nil, false
 			}
 			heredocBody = body
-		case syntax.RdrOut, syntax.AppOut:
+		case syntax.RdrOut:
+			// Truncating `>` only. Append `>>` is rejected — it
+			// would let a model splice content onto an existing
+			// file (history files, dotfiles, harness state) while
+			// looking like a normal task-body write.
+			outCount++
 			path, ok := staticShellWord(redir.Word)
 			if !ok || strings.TrimSpace(path) == "" {
 				return "", nil, false
@@ -799,7 +919,13 @@ func parseHeredocToFile(stmt *syntax.Stmt, call *syntax.CallExpr) (string, []byt
 			return "", nil, false
 		}
 	}
+	if hdocCount != 1 || outCount != 1 {
+		return "", nil, false
+	}
 	if outPath == "" || heredocBody == "" {
+		return "", nil, false
+	}
+	if !safeCatTargetPath.MatchString(outPath) {
 		return "", nil, false
 	}
 	return outPath, []byte(heredocBody), true

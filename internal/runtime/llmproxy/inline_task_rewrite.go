@@ -29,6 +29,11 @@ type InlineApprovalRewriteRequest struct {
 	// RequestID is forwarded into the audit row produced when the
 	// rewrite resolves an inline task.
 	RequestID string
+	// Outcomes records the success/failure of each approval keyed by
+	// the inner hold's approval ID so the history augmenter on later
+	// turns can re-inject the correct context (success vs. failure)
+	// instead of blindly claiming the task was created.
+	Outcomes InlineApprovalOutcomeStore
 }
 
 // InlineApprovalRewriteResult reports what happened. When Rewritten
@@ -81,29 +86,59 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
-	// Target the inline-task hold specifically. Without the Stage
-	// filter, an older unresolved tool-stage hold (e.g. from a
-	// previous intent_refusal the user didn't reply to) would
-	// shadow the inline-task hold and the user's bare "approve"
-	// would resolve the stale tool hold instead of creating the
-	// task. Production trace 2026-05-14T04:03:23 reproduced exactly
-	// this — fail-mode in two parts: no task in the dashboard, and
-	// the next agent turn hits task_scope_missing.
+	// Peek the MOST RECENT hold (LIFO, no stage filter). The user's
+	// bare "approve" lands on whatever prompt the harness most
+	// recently rendered — if that's an inline-task prompt, we
+	// handle it here; if it's a regular tool prompt that just
+	// happened to land after an older inline gesture, the release
+	// path is the right place to consume it.
+	//
+	// Stage-filtering this Peek used to cause the inverse race:
+	// an OLDER inline hold could steal a bare "approve" intended
+	// for a NEWER tool prompt the user actually just saw.
 	inner, err := req.PendingApproval.Peek(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
 		ApprovalID: approvalID,
-		Stage:      StageAwaitingTaskApproval,
 	})
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
 	if inner == nil {
-		// No matching inline-task hold; this is a regular
-		// tool-stage approve/deny and TryReleasePendingApproval
-		// will handle it.
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
+	}
+	if inner.Stage != StageAwaitingTaskApproval {
+		// Most recent hold isn't an inline-task hold (or the named
+		// approval isn't one). Defer to TryReleasePendingApproval.
+		return InlineApprovalRewriteResult{Body: req.Body}, nil
+	}
+
+	// Pre-flight: confirm we can rewrite the body BEFORE touching
+	// ANY mutable state (cache, store). A "yes verb, no rewritable
+	// shape" outcome (unsupported provider, body parsed but shape
+	// unexpected) used to consume the inner hold and drop the outer
+	// before failing — stranding the user with no recoverable cache
+	// entries. Probe up front; if the shape can't be rewritten,
+	// fail closed without disturbing the cache so a fixed retry can
+	// drive the flow.
+	out := InlineApprovalRewriteResult{Body: req.Body}
+	_, canRewrite, probeErr := replaceApprovalReplyForProvider(req.HTTPRequest, req.Provider, req.Body, verb, "")
+	if probeErr != nil {
+		return out, probeErr
+	}
+	if !canRewrite {
+		out.Decision = "deny"
+		out.Outcome = "inline_task_body_rewrite_unsupported"
+		out.Reason = "could not rewrite user message in current request body shape"
+		// Deliberately DO NOT record an outcome: the hold is still in
+		// the cache for retry, and recording a failure under inner.ID
+		// would poison the augmenter on the next turn. The augmenter
+		// would look up the same ID, find the stale failure, and inject
+		// "task creation was NOT completed" onto a fresh approval that
+		// might still succeed. No outcome → augmenter skips → the
+		// retry runs clean.
+		return out, nil
 	}
 
 	// Consume the inner hold so TryReleasePendingApproval doesn't
@@ -134,7 +169,6 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	}
 
 	var replacement string
-	out := InlineApprovalRewriteResult{Body: req.Body}
 
 	if verb == "deny" {
 		replacement = renderInlineTaskDenyReply()
@@ -181,6 +215,18 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 				}
 			}
 		}
+	}
+
+	// Record the outcome before returning. The augmenter on later
+	// turns reads this to decide whether to inject success or failure
+	// context — without it, every "approve" in conversation history
+	// would be augmented as success even when creation failed.
+	if req.Outcomes != nil {
+		req.Outcomes.Record(resolved.ID, InlineApprovalOutcome{
+			Succeeded:     out.Decision == "allow",
+			TaskID:        out.TaskID,
+			FailureReason: out.Reason,
+		})
 	}
 
 	rewritten, ok, err := replaceApprovalReplyForProvider(req.HTTPRequest, req.Provider, req.Body, verb, replacement)
@@ -230,10 +276,17 @@ const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
 //
 // Returns (body, rewritten, err). When no qualifying turns are found,
 // returns the body unchanged with rewritten=false.
-func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider) ([]byte, bool, error) {
+//
+// outcomes lets the augmenter distinguish a previously-successful
+// approval from a previously-failed one. The renderTaskApprovalPrompt
+// footer embeds the approval ID; we parse it here and look up the
+// outcome RewriteInlineTaskApprovalReply recorded on the original turn.
+// Outcomes nil or "unknown" → skip augmentation, since we can't safely
+// claim either success or failure.
+func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider, outcomes InlineApprovalOutcomeStore) ([]byte, bool, error) {
 	switch provider {
 	case conversation.ProviderAnthropic:
-		return augmentAnthropicApprovedInlineTasks(body)
+		return augmentAnthropicApprovedInlineTasks(body, outcomes)
 	case conversation.ProviderOpenAI:
 		// OpenAI Chat / Responses can share the same persistence work
 		// once we have a reproducer there. For now we keep the
@@ -246,7 +299,7 @@ func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Prov
 	}
 }
 
-func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
+func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOutcomeStore) ([]byte, bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return body, false, err
@@ -260,7 +313,6 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 		return body, false, err
 	}
 
-	persistentNote := inlineApprovedReplyAugmentationContext()
 	changed := false
 
 	for i := 1; i < len(messages); i++ {
@@ -295,12 +347,43 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 			continue
 		}
 
-		// Rewrite this user message's content with the persistent
-		// note appended. Preserve the original "approve" verb so the
-		// model can still see the user's actual reply.
-		newText := strings.TrimRight(userText, " \t\n") + "\n\n" + persistentNote
-		encoded, _ := json.Marshal(newText)
-		messages[i]["content"] = encoded
+		// Decide the augmentation text by looking up the per-approval
+		// outcome the rewrite path recorded on the original turn.
+		// Failed approvals must NOT be re-rendered as success on later
+		// turns — that would falsely tell the model the task is active.
+		approvalID := extractApprovalIDFromPrompt(priorText)
+		note, ok := augmentationContextForOutcome(approvalID, outcomes)
+		if !ok {
+			// Unknown outcome: prompt is from before the footer was
+			// added, or the outcome cache evicted/never recorded.
+			// Skip rather than guess.
+			continue
+		}
+
+		// Rewrite this user message's content. Two shapes from the
+		// harness:
+		//
+		//   - Bare string: replace with verb + "\n\n" + note. Verb is
+		//     preserved at the start because the LLM should still see
+		//     the user's actual reply.
+		//
+		//   - Array of blocks: any text block whose text parses as a
+		//     bare verb is collapsed — the bare-verb LINE is stripped
+		//     and the augmentation note takes its place. We do NOT
+		//     leave the bare verb on its own line: a downstream parse
+		//     of the augmented body would otherwise find "approve" and
+		//     treat it as a fresh, unattributed approval (mirror of
+		//     the same defense the handler's release-skip provides for
+		//     the one-shot path). Non-text blocks (images,
+		//     tool_results) and text blocks that DON'T parse as a verb
+		//     are preserved.
+		updated, ok := augmentUserContent(messages[i]["content"], verb, note)
+		if !ok {
+			// Shape we don't know how to edit safely. Skip rather
+			// than risk losing image/tool_result blocks.
+			continue
+		}
+		messages[i]["content"] = updated
 		changed = true
 	}
 
@@ -319,6 +402,158 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 	return out, true, nil
 }
 
+// augmentUserContent rewrites a user message's content with the
+// approval augmentation while preserving non-text blocks (images,
+// tool_results) the harness may have included alongside.
+//
+// Both content shapes have the verb STRIPPED — neither string nor
+// array form leaves a bare "approve" line behind. A downstream
+// re-parse (release path, future augmenter pass, defensive scan) must
+// never find a fresh-looking approval gesture in already-augmented
+// content. The bracketed note conveys what happened ("created and
+// approved by the user inline" / "creation was NOT completed").
+//
+//   - Bare string: replaced wholesale with note.
+//   - Array of blocks: every text block whose text parses as a verb
+//     has its bare-verb lines STRIPPED; the note is spliced in at the
+//     first verb-bearing block's position. Non-text blocks and text
+//     blocks that don't carry the verb pass through unchanged.
+//
+// Returns (encoded, true) on success; (_, false) when the content
+// shape isn't one we can edit safely (e.g., an array with no
+// verb-bearing text block).
+func augmentUserContent(content json.RawMessage, verb, note string) (json.RawMessage, bool) {
+	_ = verb // historical signature; verb is no longer prepended
+
+	if len(content) == 0 {
+		encoded, err := json.Marshal(note)
+		return encoded, err == nil
+	}
+	// Bare string content.
+	var s string
+	if err := json.Unmarshal(content, &s); err == nil {
+		encoded, marshalErr := json.Marshal(note)
+		return encoded, marshalErr == nil
+	}
+	// Array-of-blocks content. Multi-block user messages can carry
+	// verb-bearing lines in more than one text block (e.g., an
+	// earlier "deny cv-stale" plus a later bare "approve"). Strip
+	// bare-verb lines from EVERY text block so none of them remains
+	// parseable as a fresh approval; splice the augmentation note in
+	// at the first verb-bearing block's position.
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return nil, false
+	}
+	spliceAt := -1
+	for i, blk := range blocks {
+		var t string
+		if err := json.Unmarshal(blk["type"], &t); err != nil {
+			continue
+		}
+		if t != "text" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(blk["text"], &text); err != nil {
+			continue
+		}
+		if v, _ := conversation.ParseApprovalReplyText(text); v == "" {
+			continue
+		}
+		if spliceAt < 0 {
+			spliceAt = i
+		}
+		stripped := stripBareApprovalLines(text)
+		encoded, err := json.Marshal(stripped)
+		if err != nil {
+			return nil, false
+		}
+		blocks[i]["text"] = encoded
+	}
+	if spliceAt < 0 {
+		return nil, false
+	}
+	// Splice the note into the first verb-bearing block. If that
+	// block is now empty (its content was only verb lines), the note
+	// becomes its content; otherwise the note is appended to whatever
+	// non-verb prose remained.
+	var spliceText string
+	_ = json.Unmarshal(blocks[spliceAt]["text"], &spliceText)
+	newSpliceText := note
+	if spliceText != "" {
+		newSpliceText = spliceText + "\n\n" + note
+	}
+	encoded, err := json.Marshal(newSpliceText)
+	if err != nil {
+		return nil, false
+	}
+	blocks[spliceAt]["text"] = encoded
+
+	out, err := json.Marshal(blocks)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// stripBareApprovalLines removes lines that match the bare or
+// verb+cv-id approval shape — exactly the lines ParseApprovalReplyText
+// would have flagged. Used to ensure the augmented message doesn't
+// leave a parseable "approve" / "approve cv-xxx" line behind in the
+// content, which a downstream re-parse could interpret as a fresh
+// approval gesture.
+func stripBareApprovalLines(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		probe := strings.TrimSpace(line)
+		if probe == "" {
+			kept = append(kept, line)
+			continue
+		}
+		// Use the same parser that decides whether a line is an
+		// approval — anything it would match, we drop.
+		if verb, _ := conversation.ParseApprovalReplyText(probe); verb != "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// augmentationContextForOutcome maps an outcome lookup to the bracketed
+// context the augmenter should inject after the user's "approve". The
+// store argument is treated nil-safe so call sites in tests and any
+// transitional code without an outcome store still compile cleanly —
+// nil store always returns ok=false (skip augmentation).
+func augmentationContextForOutcome(approvalID string, store InlineApprovalOutcomeStore) (string, bool) {
+	if store == nil || approvalID == "" {
+		return "", false
+	}
+	outcome, ok := store.Lookup(approvalID)
+	if !ok {
+		return "", false
+	}
+	if outcome.Succeeded {
+		return inlineApprovedReplyAugmentationContext(), true
+	}
+	return inlineFailedReplyAugmentationContext(outcome.FailureReason), true
+}
+
+// inlineFailedReplyAugmentationContext is the persistent-history
+// counterpart to renderInlineTaskCreatorErrorReply. Tells the model
+// the previously-approved task was NOT created so it doesn't proceed
+// as if scope were granted.
+func inlineFailedReplyAugmentationContext(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "creation failed"
+	}
+	return InlineApprovalAugmentationMarker + " creation was NOT completed (" + reason + "). No task is active; the originally-requested tool call is still out of scope. Acknowledge the failure to the user; do not retry without changes.]"
+}
+
 // inlineApprovedReplyAugmentation is the SINGLE canonical bracketed
 // context that both the one-shot RewriteInlineTaskApprovalReply and
 // the persistent AugmentApprovedInlineTasksInHistory inject. Both
@@ -334,25 +569,28 @@ func augmentAnthropicApprovedInlineTasks(body []byte) ([]byte, bool, error) {
 // correctly, only "task is active, don't re-POST, don't re-emit
 // successful tool_uses".
 //
-// Returns just the bracketed context. Callers prepend "approve\n\n"
-// (or "deny\n\n") to keep the verb intact for the parser.
+// The verb itself is NOT included — the rewrite replaces the user's
+// "approve" message wholesale with this bracketed context. Leaving
+// "approve" on its own line would still parse as a fresh bare
+// approval to a downstream re-parse; the bracketed text fully
+// conveys what happened ("created and approved by the user inline")
+// without that sharp edge.
 func inlineApprovedReplyAugmentation() string {
-	return "approve\n\n" + inlineApprovedReplyAugmentationContext()
+	return inlineApprovedReplyAugmentationContext()
 }
 
-// inlineApprovedReplyAugmentationContext is the bracketed body,
-// without the leading "approve" verb. Shared with the augmenter so
-// it can prepend the verb-as-typed (always "approve" today, but
-// kept symmetrical with the deny path for parser robustness).
+// inlineApprovedReplyAugmentationContext is the bracketed body shared
+// between the one-shot rewrite and the persistent augmenter.
 func inlineApprovedReplyAugmentationContext() string {
 	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.]"
 }
 
 // renderInlineTaskDenyReply is the user-message text the LLM sees
 // in place of bare "deny cv-xxx". Tells the model to stop and not
-// retry the task-creation request.
+// retry the task-creation request. No leading verb — see the
+// inlineApprovedReplyAugmentation comment for why.
 func renderInlineTaskDenyReply() string {
-	return "deny\n\n[Clawvisor: the user denied the task-creation request. Do not retry. Acknowledge the denial; stop unless the user issues a new request.]"
+	return "[Clawvisor: the user denied the task-creation request. Do not retry. Acknowledge the denial; stop unless the user issues a new request.]"
 }
 
 // renderInlineTaskCreatorErrorReply is used when the user approved
@@ -360,5 +598,5 @@ func renderInlineTaskDenyReply() string {
 // missing creator wiring). The LLM should treat this as a denial and
 // surface the failure to the user.
 func renderInlineTaskCreatorErrorReply(msg string) string {
-	return fmt.Sprintf("deny\n\n[Clawvisor: inline task creation failed — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
+	return fmt.Sprintf("[Clawvisor: inline task creation failed — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
 }

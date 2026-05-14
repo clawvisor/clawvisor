@@ -89,6 +89,51 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	if verb == "task" {
 		return ReleaseResult{}
 	}
+	// Peek first to inspect the hold's stage. Resolving up-front would
+	// destroy an inline-task hold on the fail-closed guard below — the
+	// next user retry would find no hold and the inline flow would
+	// stay broken until TTL expiry. Resolve only after we know the
+	// stage is one this path should consume.
+	//
+	// Routing rule for bare replies (no ApprovalID): the user is
+	// answering the MOST RECENT prompt the harness rendered. We peek
+	// LIFO across all stages — if that newest hold is an inline-task
+	// hold, the preprocess didn't fire and we fail closed; if it's a
+	// regular tool hold, we proceed even when an OLDER inline hold is
+	// also pending (that older hold isn't what the user is replying
+	// to and stays in the cache for its own resolution path).
+	peeked, err := req.PendingApproval.Peek(ctx, ResolveRequest{
+		UserID:     req.Agent.UserID,
+		AgentID:    req.Agent.ID,
+		Provider:   req.Provider,
+		ApprovalID: approvalID,
+	})
+	if err != nil {
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
+	}
+	if peeked == nil {
+		if approvalID != "" {
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+		}
+		return ReleaseResult{}
+	}
+	// Preprocess-missing defense: if the hold the bare reply targets
+	// is itself an inline-task hold, the preprocess didn't fire. Fail
+	// closed without consuming so a retry once preprocess is restored
+	// can drive the inline flow. Same applies to an explicit-ID reply
+	// naming an inline-task hold directly. Older inline holds sitting
+	// behind a newer non-inline hold are NOT the user's target here
+	// and stay in the cache untouched.
+	if peeked.Stage == StageAwaitingTaskApproval {
+		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
+		return ReleaseResult{
+			Handled:    true,
+			HTTPStatus: http.StatusInternalServerError,
+			Decision:   "deny",
+			Outcome:    "inline_task_preprocess_missing",
+			Reason:     "inline task hold reached release without preprocess rewrite",
+		}
+	}
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
@@ -99,27 +144,12 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
 	}
 	if pending == nil {
+		// Peeked one moment ago but it's gone now — a concurrent
+		// preprocess pass consumed it. Treat as not-found.
 		if approvalID != "" {
 			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
 		}
 		return ReleaseResult{}
-	}
-	// Inline task approval (StageAwaitingTaskApproval) is now handled
-	// upstream by RewriteInlineTaskApprovalReply during request
-	// preprocess — the hold is consumed there and the user message is
-	// rewritten to flow naturally to the LLM. If we reach here with
-	// such a hold something is misconfigured (preprocess not wired);
-	// fail closed rather than fabricate a synthesized tool_use that
-	// would spoof the harness.
-	if pending.Stage == StageAwaitingTaskApproval {
-		req.logRelease(ctx, pending, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
-		return ReleaseResult{
-			Handled:    true,
-			HTTPStatus: http.StatusInternalServerError,
-			Decision:   "deny",
-			Outcome:    "inline_task_preprocess_missing",
-			Reason:     "inline task hold reached release without preprocess rewrite",
-		}
 	}
 	if verb == "deny" {
 		req.logRelease(ctx, pending, "deny", "denied", "denied inline by user")

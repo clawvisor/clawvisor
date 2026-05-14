@@ -17,7 +17,7 @@ func TestRenderTaskApprovalPromptWellFormed(t *testing.T) {
 		IntentVerificationMode: "strict",
 		Lifetime:               "session",
 		ExpiresInSeconds:       600,
-	})
+	}, "")
 	if !strings.Contains(prompt, "Clawvisor wants to create a task") {
 		t.Errorf("missing header in prompt: %q", prompt)
 	}
@@ -51,7 +51,7 @@ func TestRenderTaskApprovalPromptStandingLifetime(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose:  "Long-running data ingest",
 		Lifetime: "standing",
-	})
+	}, "")
 	if !strings.Contains(prompt, "Lifetime: always") {
 		t.Errorf("expected 'Lifetime: always' in standing prompt, got %q", prompt)
 	}
@@ -60,7 +60,7 @@ func TestRenderTaskApprovalPromptStandingLifetime(t *testing.T) {
 func TestRenderTaskApprovalPromptDefaultsVerification(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose: "Send a single test email",
-	})
+	}, "")
 	if !strings.Contains(prompt, "Verification: strict") {
 		t.Errorf("expected default strict verification, got %q", prompt)
 	}
@@ -71,7 +71,7 @@ func TestRenderTaskApprovalPromptOmitsExpiryWhenUnset(t *testing.T) {
 		Purpose:                "x",
 		ExpiresInSeconds:       0,
 		IntentVerificationMode: "lenient",
-	})
+	}, "")
 	if strings.Contains(prompt, "Expires:") {
 		t.Errorf("expected no Expires line when seconds<=0, got %q", prompt)
 	}
@@ -80,7 +80,7 @@ func TestRenderTaskApprovalPromptOmitsExpiryWhenUnset(t *testing.T) {
 func TestRenderTaskApprovalPromptFallbackForEmptyPurpose(t *testing.T) {
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose: "   ",
-	})
+	}, "")
 	if !strings.Contains(prompt, "unnamed") {
 		t.Errorf("expected 'unnamed' fallback, got %q", prompt)
 	}
@@ -90,7 +90,7 @@ func TestRenderTaskApprovalPromptFallbackForEmptyPurpose(t *testing.T) {
 }
 
 func TestRenderTaskApprovalPromptFallbackForNil(t *testing.T) {
-	prompt := renderTaskApprovalPrompt(nil)
+	prompt := renderTaskApprovalPrompt(nil, "")
 	if !strings.Contains(prompt, "Clawvisor wants to create a task") {
 		t.Errorf("nil input: missing fallback text: %q", prompt)
 	}
@@ -103,7 +103,7 @@ func TestRenderTaskApprovalPromptWrapsLongPurpose(t *testing.T) {
 	longPurpose := "Build and deploy a complete production-ready landing page that demonstrates Clawvisor's inline task approval flow including all the various edge cases people care about"
 	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
 		Purpose: longPurpose,
-	})
+	}, "")
 	// every line should be ≤ 80 cols
 	for _, line := range strings.Split(prompt, "\n") {
 		if len(line) > 80 {
@@ -118,7 +118,7 @@ func TestRenderTaskApprovalPromptRendersEgress(t *testing.T) {
 		ExpectedEgress: []runtimetasks.ExpectedEgress{
 			{Host: "api.github.com", Why: "Read public repo metadata"},
 		},
-	})
+	}, "")
 	if !strings.Contains(prompt, "Network egress") {
 		t.Errorf("expected Network egress section, got %q", prompt)
 	}
