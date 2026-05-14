@@ -372,7 +372,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// the context is lost and the model duplicates work
 	// (re-POSTs /control/tasks, re-emits tool_use). Walk conversation
 	// history and re-inject the persistent context on every request.
-	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes); augErr != nil {
+	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes, agent.UserID, agent.ID); augErr != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
 			"request_id", requestID, "agent_id", agent.ID, "err", augErr.Error())
 	} else if augmented {

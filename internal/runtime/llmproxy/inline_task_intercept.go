@@ -30,25 +30,22 @@ const InlineSurfaceQueryValue = "inline"
 
 // maybeInterceptInlineTaskDefinition is the postprocess hook that
 // routes a model-emitted POST /control/tasks tool_use through the
-// inline approval flow whenever one of two opt-in signals is present:
+// inline approval flow.
 //
-//  1. State signal: there's an existing StageAwaitingTaskDefinition
-//     hold for this (user, agent, provider). The plan's original
-//     trigger — user typed "task" on a prior tool prompt, and this is
-//     the model's response. Hold is updated + linked back via
-//     AwaitingTaskFor; original tool hold's TTL is refreshed.
+// The single opt-in signal is a `?surface=inline` query parameter on
+// the URL: the agent is declaring "the user is here, approve inline."
+// (An earlier state-signal path keyed on a prior
+// StageAwaitingTaskDefinition hold was removed once
+// RewriteTaskApprovalReply switched to fully Resolving the original
+// tool hold on "task" reply — no awaiting-definition hold ever exists
+// in production traffic for the intercept to observe.)
 //
-//  2. Query signal: the URL carries `?surface=inline`. The agent is
-//     declaring "the user is here, approve inline". No prior hold is
-//     required; the inner hold's AwaitingTaskFor stays empty so the
-//     release path knows not to look for an outer tool to cascade.
+// When the query signal fires, the model never actually POSTs the
+// task — the tool_use_result is replaced with a rendered approve/deny
+// prompt, and the user's next "approve" creates the task pre-approved.
 //
-// When either fires, the model never actually POSTs the task — the
-// tool_use_result is replaced with a rendered approve/deny prompt,
-// and the user's next "approve" creates the task pre-approved.
-//
-// Returns (_, false) when neither signal is present, the body fails
-// to parse, or the path isn't POST /control/tasks — callers should
+// Returns (_, false) when the signal is absent, the body fails to
+// parse, or the path isn't POST /control/tasks — callers should
 // fall through to the regular control-rewrite path so headless task
 // creation still routes through the dashboard handler unchanged.
 func maybeInterceptInlineTaskDefinition(

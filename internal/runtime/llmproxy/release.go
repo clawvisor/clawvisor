@@ -134,18 +134,27 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 			Reason:     "inline task hold reached release without preprocess rewrite",
 		}
 	}
+	// Resolve the SAME hold we inspected, by explicit ID. Calling
+	// Resolve with a bare (no-ID) request again would re-run the LIFO
+	// selection at a fresh lock acquisition — a concurrent Hold
+	// arriving between Peek and Resolve could surface a different
+	// newest hold (potentially an inline-task one) and we'd consume
+	// it under the tool-release path, destroying the inline flow.
+	// Pinning to peeked.ID closes that TOCTOU window: if the peeked
+	// hold has since been consumed, Resolve returns nil and we treat
+	// as not-found rather than grab whatever else is newest.
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
-		ApprovalID: approvalID,
+		ApprovalID: peeked.ID,
 	})
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
 	}
 	if pending == nil {
 		// Peeked one moment ago but it's gone now — a concurrent
-		// preprocess pass consumed it. Treat as not-found.
+		// release/rewrite pass consumed it. Treat as not-found.
 		if approvalID != "" {
 			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
 		}

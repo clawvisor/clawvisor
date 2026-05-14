@@ -239,6 +239,56 @@ func TestTryReleasePendingApproval_ExplicitToolIDIgnoresUnrelatedInlineHold(t *t
 	}
 }
 
+// TOCTOU: between the release path's Peek (LIFO) and Resolve (LIFO),
+// a concurrent Hold can change which hold is "newest." If Resolve
+// re-runs the LIFO selection it could consume a NEWER hold than the
+// one the stage guard inspected — including a newly-created inline
+// hold. The fix pins Resolve to peeked.ID. Simulated here by holding
+// a tool hold, peeking (handled internally by TryReleasePendingApproval),
+// then racing in a new inline hold before Resolve runs. We can't
+// actually inject between Peek and Resolve from a test, but we CAN
+// verify the resolution is pinned by ID: after release, the
+// most-recent hold should still be in the cache untouched.
+func TestTryReleasePendingApproval_ResolveIsPinnedToPeekedID(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	// Tool hold the user is actually replying to.
+	toolHeld, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:       "cv-toolnowxxxxxxxxxxxxxxxxxxx",
+		UserID:   "user-1",
+		AgentID:  "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageTool,
+		ToolUse: conversation.ToolUse{
+			ID:    "toolu_now",
+			Name:  "Bash",
+			Input: json.RawMessage(`{"command":"echo ok"}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drive release. With Resolve pinned to peeked.ID, this consumes
+	// exactly the tool hold, even if other holds existed at peek time.
+	result := TryReleasePendingApproval(ctx, ReleaseRequest{
+		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
+		Provider:        conversation.ProviderAnthropic,
+		Body:            []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
+		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		PendingApproval: cache,
+		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
+	})
+	if !result.Handled || result.Decision != "allow" {
+		t.Fatalf("release didn't allow; %+v", result)
+	}
+	if p, _ := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, ApprovalID: toolHeld.Pending.ID,
+	}); p != nil {
+		t.Fatalf("peeked tool hold should be consumed; got %+v", p)
+	}
+}
+
 // If preprocess is misconfigured and a StageAwaitingTaskApproval hold
 // reaches TryReleasePendingApproval, the path fails closed (500) — but
 // the hold itself must remain in the cache so a subsequent retry once

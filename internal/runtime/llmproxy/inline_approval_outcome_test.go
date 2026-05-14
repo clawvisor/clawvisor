@@ -13,25 +13,33 @@ import (
 )
 
 func TestMemoryInlineApprovalOutcomeStore_RecordAndLookup(t *testing.T) {
-	store := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	store.Record("cv-1", InlineApprovalOutcome{Succeeded: true, TaskID: "task-1"})
-	out, ok := store.Lookup("cv-1")
+	s := NewMemoryInlineApprovalOutcomeStore(time.Minute)
+	key := InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-1"}
+	s.Record(key, InlineApprovalOutcome{Succeeded: true, TaskID: "task-1"})
+	out, ok := s.Lookup(key)
 	if !ok || !out.Succeeded || out.TaskID != "task-1" {
 		t.Fatalf("lookup = (%+v, %v)", out, ok)
 	}
-	if _, ok := store.Lookup(""); ok {
-		t.Fatal("empty ID should miss")
+	if _, ok := s.Lookup(InlineApprovalOutcomeKey{}); ok {
+		t.Fatal("empty key should miss")
 	}
-	if _, ok := store.Lookup("cv-missing"); ok {
-		t.Fatal("missing ID should miss")
+	if _, ok := s.Lookup(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-missing"}); ok {
+		t.Fatal("missing approval ID should miss")
+	}
+	// Same approval ID under a different agent must miss — outcomes
+	// are scoped per (userID, agentID, approvalID), not by approval
+	// ID alone.
+	if _, ok := s.Lookup(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-OTHER", ApprovalID: "cv-1"}); ok {
+		t.Fatal("scoped lookup must not return a different agent's outcome")
 	}
 }
 
 func TestMemoryInlineApprovalOutcomeStore_TTL(t *testing.T) {
-	store := NewMemoryInlineApprovalOutcomeStore(time.Millisecond)
-	store.Record("cv-1", InlineApprovalOutcome{Succeeded: true})
+	s := NewMemoryInlineApprovalOutcomeStore(time.Millisecond)
+	key := InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-1"}
+	s.Record(key, InlineApprovalOutcome{Succeeded: true})
 	time.Sleep(5 * time.Millisecond)
-	if _, ok := store.Lookup("cv-1"); ok {
+	if _, ok := s.Lookup(key); ok {
 		t.Fatal("expired entry must not be returned")
 	}
 }
@@ -94,7 +102,7 @@ func TestRewriteInlineTaskApprovalReply_RecordsSuccessOutcome(t *testing.T) {
 	if out.Decision != "allow" {
 		t.Fatalf("decision = %q; want allow", out.Decision)
 	}
-	recorded, ok := outcomes.Lookup(held.Pending.ID)
+	recorded, ok := outcomes.Lookup(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: held.Pending.ID})
 	if !ok {
 		t.Fatal("expected outcome to be recorded under the inner approval ID")
 	}
@@ -137,7 +145,7 @@ func TestRewriteInlineTaskApprovalReply_RecordsFailureOutcome(t *testing.T) {
 	if out.Decision != "deny" {
 		t.Fatalf("decision = %q; want deny on failure", out.Decision)
 	}
-	recorded, ok := outcomes.Lookup(held.Pending.ID)
+	recorded, ok := outcomes.Lookup(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: held.Pending.ID})
 	if !ok {
 		t.Fatal("expected outcome to be recorded even on failure")
 	}
@@ -166,12 +174,16 @@ type inlineCreatorTestError struct{ msg string }
 
 func (e *inlineCreatorTestError) Error() string { return e.msg }
 
-// When the body shape can't be rewritten, the cache state must be
-// untouched — earlier code Resolved the inner hold and Dropped the
-// outer BEFORE the probe ran, stranding the user with no recoverable
-// entries on a failed shape. The probe should now precede ALL cache
-// mutations.
-func TestRewriteInlineTaskApprovalReply_RewriteUnsupportedLeavesCacheIntact(t *testing.T) {
+// An unrecognized provider produces verb="" from
+// ApprovalReplyForProvider, so the rewriter early-returns at the verb
+// check before touching ANY cache state. This test pins that
+// invariant. (The probe-before-mutate path that handles
+// known-but-unrewritable shapes is exercised indirectly by the
+// success/failure tests above — the verb parser and the replace
+// function are aligned by construction for the supported providers,
+// so a unit-level probe failure is hard to fabricate without a stub
+// provider.)
+func TestRewriteInlineTaskApprovalReply_UnrecognizedProviderLeavesCacheIntact(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 
@@ -209,14 +221,13 @@ func TestRewriteInlineTaskApprovalReply_RewriteUnsupportedLeavesCacheIntact(t *t
 		PendingApproval: cache,
 		Creator:         stubInlineTaskCreator{taskID: "task-should-not-be-created"},
 	})
-	// Body lacks a verb-bearing shape this provider can locate;
-	// expect a clean no-op return (not Rewritten, no decision set)
-	// rather than a body_rewrite_unsupported outcome.
+	// Unrecognized provider → ApprovalReplyForProvider returns "" →
+	// rewriter exits at the verb check without touching the cache.
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Rewritten {
-		t.Fatalf("rewrite should not fire on unsupported provider; out=%+v", out)
+		t.Fatalf("rewrite should not fire on unrecognized provider; out=%+v", out)
 	}
 
 	// Both holds must still be in the cache.

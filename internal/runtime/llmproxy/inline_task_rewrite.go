@@ -222,7 +222,11 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// context — without it, every "approve" in conversation history
 	// would be augmented as success even when creation failed.
 	if req.Outcomes != nil {
-		req.Outcomes.Record(resolved.ID, InlineApprovalOutcome{
+		req.Outcomes.Record(InlineApprovalOutcomeKey{
+			UserID:     req.Agent.UserID,
+			AgentID:    req.Agent.ID,
+			ApprovalID: resolved.ID,
+		}, InlineApprovalOutcome{
 			Succeeded:     out.Decision == "allow",
 			TaskID:        out.TaskID,
 			FailureReason: out.Reason,
@@ -283,10 +287,16 @@ const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
 // outcome RewriteInlineTaskApprovalReply recorded on the original turn.
 // Outcomes nil or "unknown" → skip augmentation, since we can't safely
 // claim either success or failure.
-func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider, outcomes InlineApprovalOutcomeStore) ([]byte, bool, error) {
+//
+// userID/agentID scope the lookup. Outcomes are recorded under
+// (userID, agentID, approvalID); a model in agent B can't replay an
+// approval ID from agent A and steer the augmenter — purely a
+// model-confusion vector since real authorization runs against the
+// task store, but consistent with the rest of the approval scoping.
+func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider, outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
 	switch provider {
 	case conversation.ProviderAnthropic:
-		return augmentAnthropicApprovedInlineTasks(body, outcomes)
+		return augmentAnthropicApprovedInlineTasks(body, outcomes, userID, agentID)
 	case conversation.ProviderOpenAI:
 		// OpenAI Chat / Responses can share the same persistence work
 		// once we have a reproducer there. For now we keep the
@@ -299,7 +309,7 @@ func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Prov
 	}
 }
 
-func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOutcomeStore) ([]byte, bool, error) {
+func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return body, false, err
@@ -352,7 +362,11 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		// Failed approvals must NOT be re-rendered as success on later
 		// turns — that would falsely tell the model the task is active.
 		approvalID := extractApprovalIDFromPrompt(priorText)
-		note, ok := augmentationContextForOutcome(approvalID, outcomes)
+		note, ok := augmentationContextForOutcome(InlineApprovalOutcomeKey{
+			UserID:     userID,
+			AgentID:    agentID,
+			ApprovalID: approvalID,
+		}, outcomes)
 		if !ok {
 			// Unknown outcome: prompt is from before the footer was
 			// added, or the outcome cache evicted/never recorded.
@@ -360,23 +374,17 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 			continue
 		}
 
-		// Rewrite this user message's content. Two shapes from the
-		// harness:
+		// Rewrite this user message's content. Verb is STRIPPED on
+		// both shapes — the bracketed note conveys what the user did
+		// and leaving "approve" on its own line would parse as a
+		// fresh approval to any downstream consumer (release path,
+		// future augmenter pass). See augmentUserContent for details.
 		//
-		//   - Bare string: replace with verb + "\n\n" + note. Verb is
-		//     preserved at the start because the LLM should still see
-		//     the user's actual reply.
-		//
-		//   - Array of blocks: any text block whose text parses as a
-		//     bare verb is collapsed — the bare-verb LINE is stripped
-		//     and the augmentation note takes its place. We do NOT
-		//     leave the bare verb on its own line: a downstream parse
-		//     of the augmented body would otherwise find "approve" and
-		//     treat it as a fresh, unattributed approval (mirror of
-		//     the same defense the handler's release-skip provides for
-		//     the one-shot path). Non-text blocks (images,
-		//     tool_results) and text blocks that DON'T parse as a verb
-		//     are preserved.
+		//   - Bare string: replaced wholesale with note.
+		//   - Array of blocks: bare-verb lines stripped from every
+		//     text block; note spliced in at the first verb-bearing
+		//     block's position. Non-text blocks and prose pass
+		//     through unchanged.
 		updated, ok := augmentUserContent(messages[i]["content"], verb, note)
 		if !ok {
 			// Shape we don't know how to edit safely. Skip rather
@@ -528,11 +536,11 @@ func stripBareApprovalLines(text string) string {
 // store argument is treated nil-safe so call sites in tests and any
 // transitional code without an outcome store still compile cleanly —
 // nil store always returns ok=false (skip augmentation).
-func augmentationContextForOutcome(approvalID string, store InlineApprovalOutcomeStore) (string, bool) {
-	if store == nil || approvalID == "" {
+func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApprovalOutcomeStore) (string, bool) {
+	if store == nil || key.ApprovalID == "" {
 		return "", false
 	}
-	outcome, ok := store.Lookup(approvalID)
+	outcome, ok := store.Lookup(key)
 	if !ok {
 		return "", false
 	}

@@ -32,7 +32,7 @@ func promptWithFooter(approvalID, purposeLine string) string {
 
 func TestAugment_InjectsContextOnBareApproveAfterSubstitutedPrompt(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-1", InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-1"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
 
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "Can you create a series of fake LLM conversations in /tmp/x?"},
@@ -41,7 +41,7 @@ func TestAugment_InjectsContextOnBareApproveAfterSubstitutedPrompt(t *testing.T)
 		map[string]string{"role": "assistant", "content": "Running mkdir..."},
 		map[string]string{"role": "user", "content": "mkdir output"},
 	)
-	out, rewritten, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	out, rewritten, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,18 +66,18 @@ func TestAugment_InjectsContextOnBareApproveAfterSubstitutedPrompt(t *testing.T)
 
 func TestAugment_IdempotentOnSecondPass(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-1", InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-1"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
 
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "x"},
 		map[string]string{"role": "assistant", "content": promptWithFooter("cv-approve-1", "...")},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	first, ok1, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	first, ok1, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if !ok1 {
 		t.Fatal("first pass should augment")
 	}
-	second, ok2, _ := AugmentApprovedInlineTasksInHistory(first, conversation.ProviderAnthropic, outcomes)
+	second, ok2, _ := AugmentApprovedInlineTasksInHistory(first, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if ok2 {
 		t.Fatal("second pass on already-augmented body should be a no-op")
 	}
@@ -92,7 +92,7 @@ func TestAugment_NoopOnRegularToolApprove(t *testing.T) {
 		map[string]string{"role": "assistant", "content": "Clawvisor paused this tool call for approval.\n\nTool: Bash\nInput: ls\n\nReply approve to run, deny to block, or task to ..."},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute))
+	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute), "user-1", "agent-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +103,8 @@ func TestAugment_NoopOnRegularToolApprove(t *testing.T) {
 
 func TestAugment_HandlesMultipleApprovesInHistory(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-A", InlineApprovalOutcome{Succeeded: true, TaskID: "task-a"})
-	outcomes.Record("cv-approve-B", InlineApprovalOutcome{Succeeded: true, TaskID: "task-b"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-A"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-a"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-B"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-b"})
 
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "Create files in /tmp/x"},
@@ -115,7 +115,7 @@ func TestAugment_HandlesMultipleApprovesInHistory(t *testing.T) {
 		map[string]string{"role": "assistant", "content": promptWithFooter("cv-approve-B", "second")},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	out, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	out, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if !ok {
 		t.Fatal("expected augmentation")
 	}
@@ -127,7 +127,7 @@ func TestAugment_HandlesMultipleApprovesInHistory(t *testing.T) {
 
 func TestAugment_BlockContentDoesNotLeaveTrailingBareApprove(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-1", InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-1"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
 
 	bodyMap := map[string]any{
 		"model": "claude-haiku-4-5",
@@ -144,7 +144,7 @@ func TestAugment_BlockContentDoesNotLeaveTrailingBareApprove(t *testing.T) {
 	}
 	body, _ := json.Marshal(bodyMap)
 
-	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestAugment_BlockContentDoesNotLeaveTrailingBareApprove(t *testing.T) {
 
 func TestAugment_BlockContentStripsLaterApprovalAfterEarlierApprovalLikeBlock(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-1", InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-1"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
 
 	bodyMap := map[string]any{
 		"model": "claude-haiku-4-5",
@@ -215,7 +215,7 @@ func TestAugment_BlockContentStripsLaterApprovalAfterEarlierApprovalLikeBlock(t 
 	}
 	body, _ := json.Marshal(bodyMap)
 
-	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAugment_DoesNotTouchOtherUserMessages(t *testing.T) {
 		map[string]string{"role": "assistant", "content": "ok"},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	out, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute))
+	out, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute), "user-1", "agent-1")
 	if ok {
 		t.Fatal("bare approve without substituted prompt should NOT augment")
 	}
@@ -275,7 +275,7 @@ func TestAugment_DoesNotTouchOtherUserMessages(t *testing.T) {
 // had actually failed (validation error, missing creator, store error).
 func TestAugment_FailedApprovalGetsFailureContext(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
-	outcomes.Record("cv-approve-fail", InlineApprovalOutcome{
+	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-fail"}, InlineApprovalOutcome{
 		Succeeded:     false,
 		FailureReason: "create failed: validation error",
 	})
@@ -285,7 +285,7 @@ func TestAugment_FailedApprovalGetsFailureContext(t *testing.T) {
 		map[string]string{"role": "assistant", "content": promptWithFooter("cv-approve-fail", "...")},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	out, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if err != nil || !ok {
 		t.Fatalf("expected augmentation; ok=%v err=%v", ok, err)
 	}
@@ -313,9 +313,33 @@ func TestAugment_UnknownOutcomeSkipsAugmentation(t *testing.T) {
 		map[string]string{"role": "assistant", "content": promptWithFooter("cv-approve-unknown", "...")},
 		map[string]string{"role": "user", "content": "approve"},
 	)
-	_, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes)
+	_, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-1")
 	if ok {
 		t.Fatal("unknown outcome must NOT augment — would risk a false success claim")
+	}
+}
+
+// Outcomes are scoped per (userID, agentID, approvalID). A model in
+// one agent that learned an approval ID from another agent's session
+// must NOT trigger augmentation in the wrong scope. Real authorization
+// runs against the task store regardless; this is the defense-in-depth
+// scoping the rest of the approval system uses.
+func TestAugment_OutcomeLookupIsScopedPerAgent(t *testing.T) {
+	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
+	// Outcome recorded under agent A.
+	outcomes.Record(
+		InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-A", ApprovalID: "cv-shared-id"},
+		InlineApprovalOutcome{Succeeded: true, TaskID: "task-a"},
+	)
+	body := anthropicTextBody(
+		map[string]string{"role": "user", "content": "x"},
+		map[string]string{"role": "assistant", "content": promptWithFooter("cv-shared-id", "...")},
+		map[string]string{"role": "user", "content": "approve"},
+	)
+	// Augmenter runs for agent B with the SAME approval ID — must miss.
+	_, ok, _ := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, outcomes, "user-1", "agent-B")
+	if ok {
+		t.Fatal("augmentation fired across agent boundary; scoping is broken")
 	}
 }
 
@@ -333,7 +357,7 @@ func TestAugment_OneShotAndPersistentProduceIdenticalText(t *testing.T) {
 
 func TestAugment_OpenAIProviderIsNoop(t *testing.T) {
 	body := []byte(`{"input":"approve"}`)
-	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderOpenAI, nil)
+	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderOpenAI, nil, "user-1", "agent-1")
 	if err != nil {
 		t.Fatal(err)
 	}
