@@ -8,9 +8,40 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
+
+// InlineTaskCreator is the lite-proxy's contract for creating an
+// inline-approved task. The handlers package implements this via the
+// canonical TasksHandler.Create flow (sharing all validation), but
+// runs in a single function call so the release path doesn't have to
+// import handlers (which would cycle).
+//
+// On success the returned task is already active with an
+// approval_records row marking surface="inline_chat" + resolution
+// derived from lifetime ("standing"→allow_always, otherwise
+// allow_session). On validation failure the error message is shown
+// back to the user in the synthetic deny response so they can fix the
+// request (or ask the agent to).
+type InlineTaskCreator interface {
+	CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*InlineApprovedTask, error)
+}
+
+// InlineApprovedTask is the slice of the created task surfaced back
+// through the synthetic release response. The fields here are what the
+// model needs to see — it isn't a full store.Task because the LLM
+// doesn't care about every column.
+type InlineApprovedTask struct {
+	ID                string `json:"task_id"`
+	Status            string `json:"status"`
+	Purpose           string `json:"purpose,omitempty"`
+	Lifetime          string `json:"lifetime,omitempty"`
+	ApprovalSource    string `json:"approval_source,omitempty"`
+	ApprovalRecordID  string `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339  string `json:"expires_at,omitempty"`
+}
 
 type ReleaseRequest struct {
 	HTTPRequest *http.Request
@@ -58,7 +89,20 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	if verb == "task" {
 		return ReleaseResult{}
 	}
-	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
+	// Peek first to inspect the hold's stage. Resolving up-front would
+	// destroy an inline-task hold on the fail-closed guard below — the
+	// next user retry would find no hold and the inline flow would
+	// stay broken until TTL expiry. Resolve only after we know the
+	// stage is one this path should consume.
+	//
+	// Routing rule for bare replies (no ApprovalID): the user is
+	// answering the MOST RECENT prompt the harness rendered. We peek
+	// LIFO across all stages — if that newest hold is an inline-task
+	// hold, the preprocess didn't fire and we fail closed; if it's a
+	// regular tool hold, we proceed even when an OLDER inline hold is
+	// also pending (that older hold isn't what the user is replying
+	// to and stays in the cache for its own resolution path).
+	peeked, err := req.PendingApproval.Peek(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
@@ -67,7 +111,56 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
 	}
+	if peeked == nil {
+		if approvalID != "" {
+			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
+		}
+		return ReleaseResult{}
+	}
+	// Preprocess-missing defense: if the hold the bare reply targets
+	// is itself an inline-task hold, the preprocess didn't fire. Fail
+	// closed without consuming so a retry once preprocess is restored
+	// can drive the inline flow. Same applies to an explicit-ID reply
+	// naming an inline-task hold directly. Older inline holds sitting
+	// behind a newer non-inline hold are NOT the user's target here
+	// and stay in the cache untouched.
+	if peeked.Stage == StageAwaitingTaskApproval {
+		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
+		// 503 (Service Unavailable) reads more honestly than 500
+		// here: the inline-approval preprocess is missing, the
+		// feature isn't currently servable. The hold stays in the
+		// cache; once preprocess is restored a retry drives the
+		// flow. 500 would imply a runtime crash; this is a wiring
+		// gap.
+		return ReleaseResult{
+			Handled:    true,
+			HTTPStatus: http.StatusServiceUnavailable,
+			Decision:   "deny",
+			Outcome:    "inline_task_preprocess_missing",
+			Reason:     "inline task hold reached release without preprocess rewrite",
+		}
+	}
+	// Resolve the SAME hold we inspected, by explicit ID. Calling
+	// Resolve with a bare (no-ID) request again would re-run the LIFO
+	// selection at a fresh lock acquisition — a concurrent Hold
+	// arriving between Peek and Resolve could surface a different
+	// newest hold (potentially an inline-task one) and we'd consume
+	// it under the tool-release path, destroying the inline flow.
+	// Pinning to peeked.ID closes that TOCTOU window: if the peeked
+	// hold has since been consumed, Resolve returns nil and we treat
+	// as not-found rather than grab whatever else is newest.
+	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
+		UserID:     req.Agent.UserID,
+		AgentID:    req.Agent.ID,
+		Provider:   req.Provider,
+		ApprovalID: peeked.ID,
+	})
+	if err != nil {
+		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
+	}
 	if pending == nil {
+		// Peeked one moment ago but it's gone now — a concurrent
+		// release/rewrite pass consumed it. Treat as not-found.
 		if approvalID != "" {
 			return ReleaseResult{Handled: true, HTTPStatus: http.StatusNotFound, Decision: "deny", Outcome: "approval_not_found", Reason: "no matching pending approval"}
 		}

@@ -896,6 +896,21 @@ func (s *Server) routes() http.Handler {
 			llmHandler.TraceLogger = traceLogger
 			s.logger.Info("lite-proxy: decision trace enabled", "path", tracePath)
 		}
+		// Optional raw I/O log — captures full request/response bodies
+		// for every LLM call. Off by default. Opt in via
+		// CLAWVISOR_PROXY_LITE_RAW_LOG or cfg.ProxyLite.RawLogPath.
+		// Bodies contain conversation content; keep this on only
+		// during diagnostic sessions.
+		rawLogPath := s.cfg.ProxyLite.RawLogPath
+		if env := strings.TrimSpace(os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG")); env != "" {
+			rawLogPath = env
+		}
+		if rawLogger, err := llmproxy.OpenRawIOLogger(rawLogPath); err != nil {
+			s.logger.Warn("lite-proxy: failed to open raw-io log", "path", rawLogPath, "err", err.Error())
+		} else if rawLogger != nil {
+			llmHandler.RawIOLogger = rawLogger
+			s.logger.Info("lite-proxy: raw I/O log enabled", "path", rawLogPath)
+		}
 		// Prefer the configured public URL so the rewritten resolver URL the
 		// agent dials is reachable across networks; fall back to the local
 		// baseURL so single-host self-installs still rewrite (without this
@@ -950,6 +965,14 @@ func (s *Server) routes() http.Handler {
 			callerNonces = llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
 		}
 		llmHandler.CallerNonces = callerNonces
+
+		// Inline task approval: when an agent's "approve" reply on a
+		// task-definition prompt lands, the release path calls
+		// tasksHandler.CreateInlineApprovedTask to atomically create
+		// the task pre-approved with surface=inline_chat. The handler
+		// also gets the same validation, risk assessment, and audit
+		// record creation the dashboard path uses.
+		llmHandler.InlineTaskCreator = tasksHandler
 
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
 		controlHandler := handlers.NewLLMControlHandler(baseURL)

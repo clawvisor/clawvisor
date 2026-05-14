@@ -222,6 +222,21 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 
 		if call, ok := ParseControlToolUseWithBase(tu, cfg.ControlBaseURL); ok {
 			v = call.Verdict
+			// Inline task approval interception. When the user is
+			// mid-flight on a "task" gesture (the original tool hold has
+			// been transitioned to StageAwaitingTaskDefinition) and the
+			// model now emits POST /control/tasks, we route the task body
+			// through the inline approval path instead of letting it
+			// proxy through to the dashboard. The model never sees the
+			// real /control/tasks handler — its tool_use_result is
+			// replaced with a rendered approve/deny prompt; the user's
+			// next "approve" creates the task pre-approved and the
+			// follow-up turn auto-releases the original tool call.
+			if inlineVerdict, inlineHandled := maybeInterceptInlineTaskDefinition(
+				req, cfg, audit, trace, rewriter.Name(), tu, call,
+			); inlineHandled {
+				return inlineVerdict
+			}
 			// Mint a nonce bound to the rewritten control URL's
 			// (host, method, path) — the rewritten curl carries it in
 			// X-Clawvisor-Caller; the daemon's nonce middleware on
@@ -692,14 +707,37 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	if err != nil {
 		return ""
 	}
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a shell command to POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120` so the command waits for my decision. Include the blocked action and any related tools or commands you expect to need.\n\nExample:\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	// The user just typed "task" at the inline prompt — they are
+	// definitionally at the chat surface. Pass ?surface=inline so the
+	// proxy holds the approve/deny gesture inline rather than routing
+	// to the dashboard's notification queue. wait=true is harmless for
+	// the inline path (the curl never actually runs) but keeps the
+	// shape compatible if the model decides to omit surface=inline.
+	//
+	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES
+	// accept a cat-heredoc-to-file then curl --data @file pattern, but
+	// it's strictly more error-prone — keep the prompt to one shape.
+	//
+	// RUN IT IN THE FOREGROUND. The task-creation curl must block on
+	// my decision; backgrounding it makes the agent proceed before
+	// approval lands. Avoid Codex-specific parameter names in the
+	// prompt — naming yield_time_ms tends to make the model set it
+	// to a small default. The proxy clamps the parameter to a safe
+	// minimum as a belt-and-suspenders fallback.
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
+// taskToolWhy renders a default `why` for the model when the blocked
+// tool is being lifted into a fresh task definition. The text is
+// intentionally expansive about read/verify follow-ups so the LLM
+// intent verifier (which compares each tool_use to the matched
+// action's `why`) doesn't refuse the natural after-write inspect
+// commands an agent does to confirm its own work.
 func taskToolWhy(tu conversation.ToolUse) string {
 	switch strings.TrimSpace(tu.Name) {
 	case "Bash", "bash", "exec_command":
 		if command := toolInputString(tu.Input, "command", "cmd"); command != "" {
-			return "Run shell command(s) needed for the task, including: " + command
+			return "Run shell commands needed for the task, including writes AND verification reads (ls, wc, cat, stat) against the resulting files. Initial command: " + command
 		}
 	case "Read":
 		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
@@ -707,14 +745,14 @@ func taskToolWhy(tu conversation.ToolUse) string {
 		}
 	case "Write", "Edit", "NotebookEdit":
 		if path := toolInputString(tu.Input, "file_path", "path"); path != "" {
-			return "Modify files needed for the task, including: " + path
+			return "Create, modify, and read back files needed for the task (verifying writes is part of the workflow), including: " + path
 		}
 	case "WebFetch", "WebSearch":
 		if target := toolInputString(tu.Input, "url", "query"); target != "" {
 			return "Use web access needed for the task, including: " + target
 		}
 	}
-	return "Use this tool for the requested task. Include a concise description of the command pattern, file path, URL, or operation."
+	return "Use this tool for the requested task. Include a concise description of the command pattern, file path, URL, or operation; if writing or modifying, also cover the read-back verification you will do afterward."
 }
 
 func toolInputString(raw json.RawMessage, keys ...string) string {

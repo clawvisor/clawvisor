@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 )
 
 func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testing.T) {
@@ -77,7 +78,12 @@ func TestMemoryPendingApprovalCacheResolveValidatesScopeAndConsumesOnce(t *testi
 	}
 }
 
-func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
+// Bare "approve" (no ApprovalID) resolves the MOST RECENT hold first,
+// not the oldest. The user is replying to the most recent approval
+// prompt the harness rendered; resolving the oldest hold first was
+// the cause of "I approved but nothing happened" — older unresolved
+// holds shadowed newer ones.
+func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeLIFO(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	ctx := context.Background()
 
@@ -107,8 +113,8 @@ func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-first" {
-		t.Fatalf("resolved = %+v, want first", resolved)
+	if resolved == nil || resolved.ID != "cv-second" {
+		t.Fatalf("first bare resolve = %+v, want most-recent (cv-second)", resolved)
 	}
 	resolved, err = cache.Resolve(ctx, ResolveRequest{
 		UserID:   "user-1",
@@ -118,8 +124,8 @@ func TestMemoryPendingApprovalCacheResolvesMultipleSameScopeFIFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-second" {
-		t.Fatalf("resolved = %+v, want second", resolved)
+	if resolved == nil || resolved.ID != "cv-first" {
+		t.Fatalf("second bare resolve = %+v, want older (cv-first) after newer consumed", resolved)
 	}
 }
 
@@ -225,8 +231,11 @@ func TestMemoryPendingApprovalCacheEvictsOldestOnOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != "cv-second" {
-		t.Fatalf("resolved = %+v, want second", resolved)
+	// Eviction dropped cv-first (oldest); cv-second and cv-third
+	// remain. Bare resolve picks the most recent (cv-third) under
+	// the LIFO default.
+	if resolved == nil || resolved.ID != "cv-third" {
+		t.Fatalf("resolved = %+v, want cv-third (most recent surviving)", resolved)
 	}
 }
 
@@ -257,6 +266,92 @@ func TestMemoryPendingApprovalCacheExpires(t *testing.T) {
 	if resolved != nil {
 		t.Fatalf("expired approval resolved: %+v", resolved)
 	}
+}
+
+func TestPendingLiteApprovalCarriesNewFields(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	taskDef := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Build a landing page",
+		IntentVerificationMode: "strict",
+	}
+	held, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:              "cv-inner",
+		UserID:          "user-1",
+		AgentID:         "agent-1",
+		Provider:        conversation.ProviderAnthropic,
+		Stage:           StageAwaitingTaskApproval,
+		AwaitingTaskFor: "cv-outer",
+		TaskDefinition:  taskDef,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Pending.Stage != StageAwaitingTaskApproval {
+		t.Fatalf("held.Stage = %q, want awaiting_task_approval", held.Pending.Stage)
+	}
+	if held.Pending.AwaitingTaskFor != "cv-outer" {
+		t.Fatalf("held.AwaitingTaskFor = %q, want cv-outer", held.Pending.AwaitingTaskFor)
+	}
+	if held.Pending.TaskDefinition == nil || held.Pending.TaskDefinition.Purpose != taskDef.Purpose {
+		t.Fatalf("held.TaskDefinition = %+v, want round-trip", held.Pending.TaskDefinition)
+	}
+	resolved, err := cache.Resolve(ctx, ResolveRequest{
+		UserID:     "user-1",
+		AgentID:    "agent-1",
+		Provider:   conversation.ProviderAnthropic,
+		ApprovalID: "cv-inner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == nil ||
+		resolved.Stage != StageAwaitingTaskApproval ||
+		resolved.AwaitingTaskFor != "cv-outer" ||
+		resolved.TaskDefinition == nil ||
+		resolved.TaskDefinition.Purpose != taskDef.Purpose {
+		t.Fatalf("resolved did not preserve fields: %+v", resolved)
+	}
+}
+
+// Two StageAwaitingTaskApproval holds alive at once must resolve LIFO
+// when a stage-filtered lookup runs without an ApprovalID. The user
+// is replying to the MOST RECENT inline prompt the harness rendered;
+// resolving the older one would silently land on stale state — the
+// same failure pattern the no-stage LIFO fix addressed, just in the
+// stage-filtered code path.
+func TestMemoryPendingApprovalCache_StageFilteredLookupIsLIFO(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	ctx := context.Background()
+
+	older, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-older", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := cache.Hold(ctx, PendingLiteApproval{
+		ID: "cv-newer", UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic, Stage: StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peeked, err := cache.Peek(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider: conversation.ProviderAnthropic,
+		Stage:    StageAwaitingTaskApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeked == nil || peeked.ID != newer.Pending.ID {
+		t.Fatalf("stage-filtered no-ID Peek returned %+v, want most recent %q", peeked, newer.Pending.ID)
+	}
+	_ = older
 }
 
 func TestMemoryPendingApprovalCacheFailsClosedWhenIDGenerationFails(t *testing.T) {
