@@ -306,6 +306,16 @@ type ProxyLiteConfig struct {
 	// without rebuilding the daemon. The env var
 	// CLAWVISOR_PROXY_LITE_TRACE overrides this when set.
 	TraceLogPath string `yaml:"trace_log_path"`
+
+	// RawLogPath, when set, enables full raw-body logging for every
+	// LLM call through the proxy: inbound request body, upstream
+	// response body, and the body sent back to the harness. Used to
+	// diagnose model-side loops and unexpected behavior. Bodies
+	// contain conversation content; the file is written with mode
+	// 0600 but operators should still keep this off outside of
+	// diagnostic sessions. The env var
+	// CLAWVISOR_PROXY_LITE_RAW_LOG overrides this when set.
+	RawLogPath string `yaml:"raw_log_path"`
 }
 
 // FeaturesConfig gates progressively enhanced UI and runtime surfaces.

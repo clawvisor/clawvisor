@@ -33,6 +33,30 @@ type Envelope struct {
 	SchemaVersion          int
 }
 
+// TaskCreateRequest is the parsed body of `POST /control/tasks` (or
+// equivalently `POST /api/tasks`). The full validating handler lives in
+// internal/api/handlers; this lighter shape is used by the lite-proxy's
+// inline task-approval flow to inspect a model-emitted task definition
+// and (on approval) hand the same payload back to the task-creation
+// helper.
+//
+// Field tags match the wire format. The runtime/tasks package lives
+// outside internal/api/handlers to avoid an import cycle between the
+// llm-proxy and the handlers package.
+type TaskCreateRequest struct {
+	Purpose                string           `json:"purpose"`
+	AuthorizedActions      []map[string]any `json:"authorized_actions,omitempty"`
+	PlannedCalls           []map[string]any `json:"planned_calls,omitempty"`
+	ExpectedTools          []ExpectedTool   `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []ExpectedEgress `json:"expected_egress_json,omitempty"`
+	IntentVerificationMode string           `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string           `json:"expected_use,omitempty"`
+	SchemaVersion          int              `json:"schema_version,omitempty"`
+	ExpiresInSeconds       int              `json:"expires_in_seconds,omitempty"`
+	CallbackURL            string           `json:"callback_url,omitempty"`
+	Lifetime               string           `json:"lifetime,omitempty"`
+}
+
 func EnvelopeFromTask(task *store.Task) (Envelope, error) {
 	env := Envelope{
 		IntentVerificationMode: task.IntentVerificationMode,

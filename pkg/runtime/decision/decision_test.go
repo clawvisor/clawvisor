@@ -368,6 +368,134 @@ func TestEvaluateAuthorization_ExpectedToolMatchIsCaseInsensitive(t *testing.T) 
 	}
 }
 
+// The per-call Reason must come from tool input (Claude Code's Bash
+// supplies a short `description` on every call), not from the task's
+// expected_tools[].why — that scope text is what we already pass as
+// ExpectedUse, and the verifier correctly flags a verbatim copy as
+// "procedural instructions rather than a 'why' clause." See
+// internal/intent/prompts.go for the verifier's reason_coherence rules.
+func TestEvaluateAuthorization_ToolReasonPrefersToolInputDescription(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": "List temp directory contents",
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason != "List temp directory contents" {
+		t.Fatalf("Reason = %q, want tool input description", verifier.last.Reason)
+	}
+	if verifier.last.Reason == verifier.last.ExpectedUse {
+		t.Fatalf("Reason must not be a verbatim copy of ExpectedUse: %q", verifier.last.Reason)
+	}
+}
+
+// A model can set its tool input's `description` to the exact
+// NoPerCallReasonSentinel string, which the verifier prompt treats
+// as "harness doesn't collect a rationale" and uses to skip the
+// reason_coherence check. For a rationale-expected tool (Bash), a
+// sentinel-stuffed description must NOT propagate as the sentinel —
+// that would let the model defeat coherence. Tool-aware fallback
+// sends empty Reason so the verifier evaluates coherence and flags
+// insufficient.
+func TestEvaluateAuthorization_ToolReasonRefusesModelSuppliedSentinelOnRationaleExpectingTool(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": NoPerCallReasonSentinel,
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Reason equals the system sentinel; Bash bypass via description=sentinel was not blocked")
+	}
+	if verifier.last.Reason != "" {
+		t.Fatalf("Reason = %q; want empty so verifier evaluates coherence", verifier.last.Reason)
+	}
+}
+
+// Defense-in-depth: if the model sets the sentinel in ANY rationale
+// field, all fields are poisoned. For a rationale-expected tool
+// (Bash), the result is empty Reason — not the system sentinel —
+// because Bash is on the rationale-expected list.
+func TestEvaluateAuthorization_ToolReasonSentinelInOneFieldPoisonsOthers(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse: toolUse("Bash", map[string]any{
+			"command":     "ls /tmp",
+			"description": NoPerCallReasonSentinel,
+			"reason":      "totally legitimate-sounding string",
+		}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason == "totally legitimate-sounding string" {
+		t.Fatalf("Reason surfaced a different field after a sentinel bypass attempt: %q", verifier.last.Reason)
+	}
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Reason fell through to the system sentinel on a rationale-expected tool (Bash)")
+	}
+}
+
+// Bash schema requires `description`. A Bash call without one is
+// non-compliant, not a harness limitation — the verifier MUST run
+// the coherence check (which on empty reason will flag insufficient).
+// Sending the sentinel here would silently skip coherence.
+func TestEvaluateAuthorization_RationaleExpectingToolMissingDescriptionGetsEmpty(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("Bash", map[string]any{"command": "ls /tmp"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Bash without description got the system sentinel — coherence would be skipped: %q", verifier.last.Reason)
+	}
+	if verifier.last.Reason != "" {
+		t.Fatalf("Reason = %q; want empty", verifier.last.Reason)
+	}
+}
+
+// Codex's shell tool genuinely doesn't have a rationale field in its
+// schema (argv only). For these, sending NoPerCallReasonSentinel is
+// correct — the verifier prompt knows to skip coherence rather than
+// flag insufficient on the harness's non-fault.
+func TestEvaluateAuthorization_GenuineNoRationaleHarnessUsesSentinel(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("exec_command", map[string]any{"cmd": "ls /tmp"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "exec_command", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.last.Reason != NoPerCallReasonSentinel {
+		t.Fatalf("Reason = %q, want NoPerCallReasonSentinel for argv-only Codex shell", verifier.last.Reason)
+	}
+}
+
 func toolUse(name string, input map[string]any) conversation.ToolUse {
 	raw, _ := json.Marshal(input)
 	return conversation.ToolUse{ID: "toolu_1", Name: name, Input: raw}
