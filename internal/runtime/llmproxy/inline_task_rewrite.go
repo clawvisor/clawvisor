@@ -135,14 +135,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		return out, nil
 	}
 
-	// Consume the inner hold so TryReleasePendingApproval doesn't
-	// double-handle it.
-	resolved, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: inner.ID,
-	})
+	resolved, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, action)
 	if err != nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, err
 	}
@@ -153,63 +146,8 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// Drop the linked outer tool hold so it doesn't sit in the cache
 	// re-matching subsequent approval prompts. The model will re-emit
 	// the original tool naturally now that the task scope covers it.
-	if resolved.AwaitingTaskFor != "" {
-		_ = req.PendingApproval.Drop(ctx, ResolveRequest{
-			UserID:     req.Agent.UserID,
-			AgentID:    req.Agent.ID,
-			Provider:   req.Provider,
-			ApprovalID: resolved.AwaitingTaskFor,
-		})
-	}
-
-	var replacement string
-
-	if verb == "deny" {
-		replacement = renderInlineTaskDenyReply()
-		out.Decision = "deny"
-		out.Outcome = "inline_task_denied"
-		out.Reason = "user denied inline task"
-	} else {
-		// approve
-		switch {
-		case req.Creator == nil:
-			replacement = renderInlineTaskCreatorErrorReply("inline task creation is not available on this daemon")
-			out.Decision = "deny"
-			out.Outcome = "inline_task_creator_missing"
-			out.Reason = "no inline task creator configured"
-		case resolved.TaskDefinition == nil:
-			replacement = renderInlineTaskCreatorErrorReply("missing task definition on approval")
-			out.Decision = "deny"
-			out.Outcome = "inline_task_definition_missing"
-			out.Reason = "missing task definition on approval"
-		default:
-			originalToolUseID := resolved.AwaitingTaskFor
-			created, createErr := req.Creator.CreateInlineApprovedTask(ctx, req.Agent, resolved.TaskDefinition, originalToolUseID)
-			if createErr != nil {
-				replacement = renderInlineTaskCreatorErrorReply(createErr.Error())
-				out.Decision = "deny"
-				out.Outcome = "inline_task_create_failed"
-				out.Reason = "create failed: " + createErr.Error()
-			} else {
-				// Use the SAME text the persistent augmenter
-				// produces on subsequent turns. If turn 1 said
-				// "task 7827... purpose=..." and turn 2+ said
-				// "task was created and approved...", the model
-				// sees the same user message appear with DIFFERENT
-				// content across turns — measurable drift that
-				// invites the model to second-guess prior state.
-				// One canonical rendering, no drift.
-				replacement = inlineApprovedReplyAugmentation()
-				out.Decision = "allow"
-				out.Outcome = "inline_task_approved"
-				out.TaskID = created.ID
-				out.ApprovalRecordID = created.ApprovalRecordID
-				if req.Audit != nil {
-					req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, resolved, created)
-				}
-			}
-		}
-	}
+	dropLinkedToolHold(ctx, req.PendingApproval, req.Agent, req.Provider, resolved)
+	replacement, out := resolveInlineTaskApproval(ctx, req, resolved, verb)
 
 	// Record the outcome before returning. The augmenter on later
 	// turns reads this to decide whether to inject success or failure
