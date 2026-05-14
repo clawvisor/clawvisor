@@ -364,6 +364,14 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 		{"read_file", "Read", `{"file_path":"/tmp/foo.txt"}`},
 		{"todo_write", "TodoWrite", `{"todos":[{"content":"item","activeForm":"item"}]}`},
 		{"glob", "Glob", `{"pattern":"**/*.go"}`},
+		// Claude Code's in-conversation Task family — harness-internal
+		// TODO list / subagent management. No outbound HTTP.
+		{"task_create", "TaskCreate", `{"subject":"plan a thing","description":"do steps"}`},
+		{"task_update", "TaskUpdate", `{"taskId":"1","status":"completed"}`},
+		{"task_list", "TaskList", `{}`},
+		{"task_get", "TaskGet", `{"taskId":"1"}`},
+		{"task_output", "TaskOutput", `{"taskId":"1"}`},
+		{"task_stop", "TaskStop", `{"taskId":"1"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
