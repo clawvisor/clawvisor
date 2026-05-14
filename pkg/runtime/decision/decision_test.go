@@ -396,13 +396,15 @@ func TestEvaluateAuthorization_ToolReasonPrefersToolInputDescription(t *testing.
 	}
 }
 
-// A malicious model can set its tool input's `description` to the
-// exact NoPerCallReasonSentinel string, which the verifier prompt
-// treats as "harness doesn't collect a rationale" and uses to skip
-// the reason_coherence check. Forwarding that verbatim would let the
-// model disable a defense layer per call. The proxy must refuse to
-// honor a model-supplied value equal to the sentinel.
-func TestEvaluateAuthorization_ToolReasonRefusesModelSuppliedSentinel(t *testing.T) {
+// A model can set its tool input's `description` to the exact
+// NoPerCallReasonSentinel string, which the verifier prompt treats
+// as "harness doesn't collect a rationale" and uses to skip the
+// reason_coherence check. For a rationale-expected tool (Bash), a
+// sentinel-stuffed description must NOT propagate as the sentinel —
+// that would let the model defeat coherence. Tool-aware fallback
+// sends empty Reason so the verifier evaluates coherence and flags
+// insufficient.
+func TestEvaluateAuthorization_ToolReasonRefusesModelSuppliedSentinelOnRationaleExpectingTool(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
 	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
 		ToolUse: toolUse("Bash", map[string]any{
@@ -416,24 +418,18 @@ func TestEvaluateAuthorization_ToolReasonRefusesModelSuppliedSentinel(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	// We DO send the sentinel as the system-supplied fallback, so the
-	// Reason field on the wire equals the sentinel. The distinction we
-	// care about: it came from OUR fallback path, not from a model
-	// string that exactly equaled the sentinel. That distinction is
-	// preserved by perCallToolReason refusing the match before
-	// firstNonEmpty considers it. The observable signal: Reason
-	// equals the sentinel even though the model TRIED to supply it,
-	// which only happens via the fallback branch (i.e. the model's
-	// string was rejected and we fell through).
-	if verifier.last.Reason != NoPerCallReasonSentinel {
-		t.Fatalf("Reason = %q; want sentinel (model-supplied value should have been rejected and fallback used)", verifier.last.Reason)
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Reason equals the system sentinel; Bash bypass via description=sentinel was not blocked")
+	}
+	if verifier.last.Reason != "" {
+		t.Fatalf("Reason = %q; want empty so verifier evaluates coherence", verifier.last.Reason)
 	}
 }
 
 // Defense-in-depth: if the model sets the sentinel in ANY rationale
-// field, fall through to the system sentinel — don't let the model
-// surface a different field as the rationale by knowing the lookup
-// order. A bypass attempt in one field poisons all fields.
+// field, all fields are poisoned. For a rationale-expected tool
+// (Bash), the result is empty Reason — not the system sentinel —
+// because Bash is on the rationale-expected list.
 func TestEvaluateAuthorization_ToolReasonSentinelInOneFieldPoisonsOthers(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
 	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
@@ -449,19 +445,19 @@ func TestEvaluateAuthorization_ToolReasonSentinelInOneFieldPoisonsOthers(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verifier.last.Reason != NoPerCallReasonSentinel {
-		t.Fatalf("Reason = %q; want system sentinel (model bypass attempt should have poisoned all fields)", verifier.last.Reason)
+	if verifier.last.Reason == "totally legitimate-sounding string" {
+		t.Fatalf("Reason surfaced a different field after a sentinel bypass attempt: %q", verifier.last.Reason)
+	}
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Reason fell through to the system sentinel on a rationale-expected tool (Bash)")
 	}
 }
 
-// When the harness doesn't supply a per-call rationale (Codex's shell
-// sends argv only, no description), we must send the
-// NoPerCallReasonSentinel so the verifier prompt knows to skip the
-// reason_coherence check rather than flag it as "insufficient." The
-// fallback must NOT be the task's expected_tools[].why (verbatim-copy
-// refusal) and must NOT be a bare action name like "tool_use Bash"
-// (would trip insufficient).
-func TestEvaluateAuthorization_ToolReasonFallbackUsesSentinel(t *testing.T) {
+// Bash schema requires `description`. A Bash call without one is
+// non-compliant, not a harness limitation — the verifier MUST run
+// the coherence check (which on empty reason will flag insufficient).
+// Sending the sentinel here would silently skip coherence.
+func TestEvaluateAuthorization_RationaleExpectingToolMissingDescriptionGetsEmpty(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
 	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
 		ToolUse:        toolUse("Bash", map[string]any{"command": "ls /tmp"}),
@@ -472,8 +468,31 @@ func TestEvaluateAuthorization_ToolReasonFallbackUsesSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if verifier.last.Reason == NoPerCallReasonSentinel {
+		t.Fatalf("Bash without description got the system sentinel — coherence would be skipped: %q", verifier.last.Reason)
+	}
+	if verifier.last.Reason != "" {
+		t.Fatalf("Reason = %q; want empty", verifier.last.Reason)
+	}
+}
+
+// Codex's shell tool genuinely doesn't have a rationale field in its
+// schema (argv only). For these, sending NoPerCallReasonSentinel is
+// correct — the verifier prompt knows to skip coherence rather than
+// flag insufficient on the harness's non-fault.
+func TestEvaluateAuthorization_GenuineNoRationaleHarnessUsesSentinel(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true}}
+	_, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("exec_command", map[string]any{"cmd": "ls /tmp"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "exec_command", "inspect filesystem")},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if verifier.last.Reason != NoPerCallReasonSentinel {
-		t.Fatalf("Reason = %q, want NoPerCallReasonSentinel", verifier.last.Reason)
+		t.Fatalf("Reason = %q, want NoPerCallReasonSentinel for argv-only Codex shell", verifier.last.Reason)
 	}
 }
 

@@ -261,16 +261,19 @@ curl -sS -X POST 'https://clawvisor.local/control/tasks' --data @/tmp/body.json`
 	}
 }
 
-// A leading-dot filename (e.g. /tmp/.bashrc.json) and a leading-dash
-// filename (e.g. /tmp/-rf.json) shouldn't be in the safe-temp
-// allowlist. None of these escape /tmp, but the allowlist's job is
-// "narrow and obviously safe" — surprises here invite trouble.
+// A leading-dot filename (e.g. /tmp/.bashrc.json), a leading-dash
+// filename (e.g. /tmp/-rf.json), or consecutive dots (/tmp/foo..bar.json)
+// shouldn't be in the safe-temp allowlist. None of these escape /tmp,
+// but the allowlist's job is "narrow and obviously safe" — surprises
+// here invite trouble.
 func TestParseControlCmd_RefusesCatLeadingDotOrDashFilename(t *testing.T) {
 	cases := []string{
 		"/tmp/.bashrc.json",
 		"/tmp/-rf.json",
 		"/tmp/..json",
 		"/tmp/...json",
+		"/tmp/foo..bar.json",
+		"/tmp/foo.....json",
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {

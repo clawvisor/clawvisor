@@ -96,29 +96,11 @@ type HoldResult struct {
 	Evicted *PendingLiteApproval
 }
 
-// UpdateRequest carries a stage + optional ExpiresAt override applied to a
-// specific (user, agent, provider, id) hold. Zero ExpiresAt leaves expiry
-// untouched. Used to (a) transition the original tool hold to
-// StageAwaitingTaskDefinition when the user types "task" and (b) refresh
-// the original hold's TTL when the inner task-approval hold is created so
-// the two-step gesture has the full TTL window for the second approve.
-type UpdateRequest struct {
-	UserID     string
-	AgentID    string
-	Provider   conversation.Provider
-	ApprovalID string
-	Stage      PendingApprovalStage
-	ExpiresAt  time.Time
-}
-
 type PendingApprovalCache interface {
 	Hold(ctx context.Context, pending PendingLiteApproval) (HoldResult, error)
 	Peek(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Resolve(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error)
 	Drop(ctx context.Context, req ResolveRequest) error
-	// Update mutates Stage and optionally ExpiresAt on the matching hold.
-	// Returns the updated entry, or nil if no match was found.
-	Update(ctx context.Context, req UpdateRequest) (*PendingLiteApproval, error)
 }
 
 type MemoryPendingApprovalCache struct {
@@ -264,42 +246,6 @@ func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLit
 	idx := len(items) - 1
 	pending := items[idx]
 	return &pending, idx, items
-}
-
-func (c *MemoryPendingApprovalCache) Update(_ context.Context, req UpdateRequest) (*PendingLiteApproval, error) {
-	if c == nil {
-		return nil, nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
-	items := c.pruneExpiredLocked(key, c.now().UTC())
-	if len(items) == 0 {
-		return nil, nil
-	}
-	index := -1
-	if req.ApprovalID == "" {
-		index = len(items) - 1
-	} else {
-		for i, pending := range items {
-			if pending.ID == req.ApprovalID {
-				index = i
-				break
-			}
-		}
-	}
-	if index < 0 {
-		return nil, nil
-	}
-	if req.Stage != "" {
-		items[index].Stage = req.Stage
-	}
-	if !req.ExpiresAt.IsZero() {
-		items[index].ExpiresAt = req.ExpiresAt
-	}
-	c.pending[key] = items
-	updated := items[index]
-	return &updated, nil
 }
 
 func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest) error {

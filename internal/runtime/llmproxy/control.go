@@ -863,7 +863,12 @@ func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg
 //   - the parser separately requires the path to be statically
 //     expandable, so `$HOME`/`$(…)`/`${…}` are already rejected
 //     upstream.
-var safeCatTargetPath = regexp.MustCompile(`^/tmp/[A-Za-z0-9_][A-Za-z0-9_.\-]*\.json$`)
+// Filename body allows alnum/underscore/hyphen segments separated by
+// single dots, ending with a literal `.json`. This rules out
+// `/tmp/foo..bar.json`, `/tmp/...json`, etc. — paths that aren't
+// security-critical given the suffix lock-in, but contradict the
+// "narrow and obviously safe" property the comment articulates.
+var safeCatTargetPath = regexp.MustCompile(`^/tmp/[A-Za-z0-9_][A-Za-z0-9_\-]*(\.[A-Za-z0-9_\-]+)*\.json$`)
 
 // parseHeredocToFile recognizes
 //

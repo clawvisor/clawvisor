@@ -126,9 +126,15 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	// and stay in the cache untouched.
 	if peeked.Stage == StageAwaitingTaskApproval {
 		req.logRelease(ctx, peeked, "deny", "blocked", "inline-task hold reached release path; preprocess not wired")
+		// 503 (Service Unavailable) reads more honestly than 500
+		// here: the inline-approval preprocess is missing, the
+		// feature isn't currently servable. The hold stays in the
+		// cache; once preprocess is restored a retry drives the
+		// flow. 500 would imply a runtime crash; this is a wiring
+		// gap.
 		return ReleaseResult{
 			Handled:    true,
-			HTTPStatus: http.StatusInternalServerError,
+			HTTPStatus: http.StatusServiceUnavailable,
 			Decision:   "deny",
 			Outcome:    "inline_task_preprocess_missing",
 			Reason:     "inline task hold reached release without preprocess rewrite",

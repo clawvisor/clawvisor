@@ -498,7 +498,26 @@ func augmentUserContent(content json.RawMessage, verb, note string) (json.RawMes
 	}
 	blocks[spliceAt]["text"] = encoded
 
-	out, err := json.Marshal(blocks)
+	// Drop any text block whose text became empty after stripping.
+	// Anthropic rejects requests containing empty text blocks
+	// (`messages: text content blocks must be non-empty`), and a
+	// multi-block user message with two verb-bearing blocks would
+	// otherwise leave the non-spliced one as {"type":"text","text":""}.
+	// The spliceAt block is not at risk — we just filled it with the
+	// note above.
+	kept := blocks[:0]
+	for _, blk := range blocks {
+		var t string
+		if err := json.Unmarshal(blk["type"], &t); err == nil && t == "text" {
+			var bt string
+			if err := json.Unmarshal(blk["text"], &bt); err == nil && bt == "" {
+				continue
+			}
+		}
+		kept = append(kept, blk)
+	}
+
+	out, err := json.Marshal(kept)
 	if err != nil {
 		return nil, false
 	}
@@ -555,11 +574,32 @@ func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApp
 // the previously-approved task was NOT created so it doesn't proceed
 // as if scope were granted.
 func inlineFailedReplyAugmentationContext(reason string) string {
-	reason = strings.TrimSpace(reason)
+	reason = sanitizeFailureReasonForBracketEnvelope(reason)
 	if reason == "" {
 		reason = "creation failed"
 	}
 	return InlineApprovalAugmentationMarker + " creation was NOT completed (" + reason + "). No task is active; the originally-requested tool call is still out of scope. Acknowledge the failure to the user; do not retry without changes.]"
+}
+
+// sanitizeFailureReasonForBracketEnvelope strips characters that would
+// break the bracket envelope the augmentation context lives inside.
+// FailureReason comes from createErr.Error() — which can include
+// model-controlled strings (task purpose, command echoes) — and a
+// stray `]` would prematurely close the [Clawvisor: …] wrapper the
+// LLM sees, fragmenting the message. Newlines are also dropped so
+// the parser's line-by-line scan can't pick up a stray verb line.
+// Also caps length to keep one runaway error from drowning the model
+// in noise.
+func sanitizeFailureReasonForBracketEnvelope(reason string) string {
+	reason = strings.TrimSpace(reason)
+	reason = strings.ReplaceAll(reason, "]", "")
+	reason = strings.ReplaceAll(reason, "\r", " ")
+	reason = strings.ReplaceAll(reason, "\n", " ")
+	const maxLen = 256
+	if len(reason) > maxLen {
+		reason = reason[:maxLen] + "…"
+	}
+	return strings.TrimSpace(reason)
 }
 
 // inlineApprovedReplyAugmentation is the SINGLE canonical bracketed

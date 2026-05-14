@@ -436,7 +436,7 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 		Service:     in.Service,
 		Action:      in.Action,
 		Params:      params,
-		Reason:      firstNonEmpty(perCallToolReason(params), NoPerCallReasonSentinel),
+		Reason:      resolveToolReason(in.ToolUse.Name, params),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
 	})
@@ -486,7 +486,7 @@ func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store
 		Service:     "runtime.tool",
 		Action:      in.ToolUse.Name,
 		Params:      params,
-		Reason:      firstNonEmpty(perCallToolReason(params), NoPerCallReasonSentinel),
+		Reason:      resolveToolReason(in.ToolUse.Name, params),
 		TaskID:      taskID,
 		Lenient:     mode == "lenient",
 	})
@@ -580,6 +580,45 @@ func decodeToolInput(raw json.RawMessage) map[string]any {
 		return nil
 	}
 	return out
+}
+
+// toolsExpectingPerCallRationale enumerates tool names whose harness
+// schema requires a per-call rationale field. For these tools, an
+// absent or sentinel-stuffed rationale field is a non-compliance
+// signal (or a bypass attempt), NOT a harness limitation — the
+// verifier's coherence check must still run rather than be skipped
+// via NoPerCallReasonSentinel.
+//
+// Without this list, a model on Claude Code (whose Bash schema
+// requires `description`) could trivially defeat the coherence check
+// by omitting the description field: the proxy would substitute the
+// system sentinel, the verifier would treat it as "harness has no
+// rationale" and skip the check entirely.
+//
+// Lowercase + trimmed. Keep in sync with the tool schemas actual
+// harnesses enforce. Tools that legitimately ship without a
+// rationale convention (Codex's argv-only `shell`/`exec_command`)
+// stay out of this set — for them the sentinel correctly signals a
+// genuine harness limitation.
+var toolsExpectingPerCallRationale = map[string]bool{
+	"bash":     true, // Claude Code: `description` is required by tool schema
+	"webfetch": true, // Claude Code: `prompt` is the per-call rationale
+}
+
+// resolveToolReason picks the per-call Reason to send to the
+// verifier. Tools known to require a rationale and lacking one get
+// an empty string (verifier evaluates coherence and likely flags
+// insufficient — desired). Tools without a known rationale
+// convention get the NoPerCallReasonSentinel so the verifier prompt
+// knows to skip the coherence check.
+func resolveToolReason(toolName string, params map[string]any) string {
+	if reason := perCallToolReason(params); reason != "" {
+		return reason
+	}
+	if toolsExpectingPerCallRationale[strings.ToLower(strings.TrimSpace(toolName))] {
+		return ""
+	}
+	return NoPerCallReasonSentinel
 }
 
 // perCallToolReason pulls a per-call rationale out of tool input. Claude

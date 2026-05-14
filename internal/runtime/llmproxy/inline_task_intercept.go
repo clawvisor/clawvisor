@@ -76,7 +76,12 @@ func maybeInterceptInlineTaskDefinition(
 	// its stage. taskCreationPrompt teaches the model to include
 	// ?surface=inline, so compliant traffic flows through here; the
 	// query-less path correctly falls through to the dashboard rewrite.
-	querySignal := strings.EqualFold(call.URL.Query().Get(InlineSurfaceQueryParam), InlineSurfaceQueryValue)
+	// Both key and value match case-SENSITIVELY: `url.Values.Get` is
+	// case-sensitive on the key, and harnesses emit the exact
+	// surface=inline string we teach them in taskCreationPrompt.
+	// Mixed-case (Surface=INLINE) is not a shape we promise to honor;
+	// keeping symmetric strictness avoids future-reader surprise.
+	querySignal := call.URL.Query().Get(InlineSurfaceQueryParam) == InlineSurfaceQueryValue
 	if !querySignal {
 		return conversation.ToolUseVerdict{}, false
 	}

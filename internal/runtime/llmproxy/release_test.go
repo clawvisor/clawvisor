@@ -314,8 +314,8 @@ func TestTryReleasePendingApproval_InlineHoldSurvivesPreprocessGuard(t *testing.
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
 		PendingApproval: cache,
 	})
-	if !result.Handled || result.HTTPStatus != 500 {
-		t.Fatalf("preprocess-missing guard should respond 500; got %+v", result)
+	if !result.Handled || result.HTTPStatus != 503 {
+		t.Fatalf("preprocess-missing guard should respond 503; got %+v", result)
 	}
 	if result.Outcome != "inline_task_preprocess_missing" {
 		t.Fatalf("outcome = %q, want inline_task_preprocess_missing", result.Outcome)

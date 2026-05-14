@@ -163,10 +163,23 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	resolution := taskApprovalResolution(task)
 	rec, err := h.createCanonicalInlineApprovalRecord(ctx, task, resolution, now)
 	if err != nil {
-		h.logger.Error("failed to create inline approval record", "task_id", task.ID, "err", err)
-		// We still return the task — the task is real and active; the
-		// missing approval_records row is a degraded audit signal but
-		// shouldn't block the user-visible flow.
+		// Audit invariant: every active inline_chat task must have a
+		// matching approval_records row. Without that row, we'd leave
+		// a usable pre-approved task that no SOC/compliance trail can
+		// account for. Roll the task back to status=denied so it can't
+		// authorize anything, then fail the inline-create — the caller
+		// will rewrite the user message as a deny with the approval
+		// error surfaced to the LLM.
+		h.logger.Error("failed to create inline approval record; denying task to preserve audit invariant",
+			"task_id", task.ID, "err", err)
+		if rollbackErr := h.st.UpdateTaskStatus(ctx, task.ID, "denied"); rollbackErr != nil {
+			// Best-effort: log loudly. The original error is what we
+			// surface; an orphaned active task here is far worse than
+			// any other failure mode, so flag it.
+			h.logger.Error("CRITICAL: approval record failed AND rollback failed; task is now orphaned active",
+				"task_id", task.ID, "approval_err", err, "rollback_err", rollbackErr)
+		}
+		return nil, fmt.Errorf("create inline approval record: %w", err)
 	}
 
 	// SSE 'tasks' event so the dashboard reflects the new task. We
