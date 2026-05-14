@@ -82,7 +82,7 @@ type ReleaseResult struct {
 }
 
 func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseResult {
-	verb, approvalID := conversation.ApprovalReplyForProvider(req.Provider, req.Body)
+	verb, approvalID := approvalReplyFromBody(req.HTTPRequest, req.Provider, req.Body)
 	if verb == "" || req.PendingApproval == nil || req.Agent == nil {
 		return ReleaseResult{}
 	}

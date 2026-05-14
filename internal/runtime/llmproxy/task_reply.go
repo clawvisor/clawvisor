@@ -24,7 +24,7 @@ type TaskReplyRewriteResult struct {
 }
 
 func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) (TaskReplyRewriteResult, error) {
-	verb, approvalID := conversation.ApprovalReplyForProvider(req.Provider, req.Body)
+	verb, approvalID := approvalReplyFromBody(req.HTTPRequest, req.Provider, req.Body)
 	if verb != "task" || req.PendingApproval == nil || req.Agent == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, nil
 	}
@@ -86,17 +86,11 @@ func replaceTaskReplyForProvider(req *http.Request, provider conversation.Provid
 // the LLM sees a clean conversation state instead of a synthesized
 // tool_use it never authored).
 func replaceApprovalReplyForProvider(req *http.Request, provider conversation.Provider, body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return replaceAnthropicApprovalReply(body, expectedVerb, replacement)
-	case conversation.ProviderOpenAI:
-		if conversation.IsOpenAIChatCompletionsEndpoint(req) {
-			return replaceOpenAIChatApprovalReply(body, expectedVerb, replacement)
-		}
-		return replaceOpenAIResponsesApprovalReply(body, expectedVerb, replacement)
-	default:
+	editor, ok := newApprovalBodyEditor(req, provider, body)
+	if !ok {
 		return body, false, nil
 	}
+	return editor.ReplaceLatestUserText(expectedVerb, replacement)
 }
 
 func replaceAnthropicApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {

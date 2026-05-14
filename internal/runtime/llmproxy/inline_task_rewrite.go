@@ -81,7 +81,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	if req.PendingApproval == nil || req.Agent == nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
-	verb, approvalID := conversation.ApprovalReplyForProvider(req.Provider, req.Body)
+	verb, approvalID := approvalReplyFromBody(req.HTTPRequest, req.Provider, req.Body)
 	if verb != "approve" && verb != "deny" {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
