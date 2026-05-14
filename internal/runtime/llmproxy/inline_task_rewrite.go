@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -219,11 +220,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 			UserID:     req.Agent.UserID,
 			AgentID:    req.Agent.ID,
 			ApprovalID: resolved.ID,
-		}, InlineApprovalOutcome{
-			Succeeded:     out.Decision == "allow",
-			TaskID:        out.TaskID,
-			FailureReason: out.Reason,
-		})
+		}, inlineApprovalOutcomeFromRewrite(req.RequestID, out))
 	}
 
 	rewritten, ok, err := replaceApprovalReplyForProvider(req.HTTPRequest, req.Provider, req.Body, verb, replacement)
@@ -239,6 +236,19 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	out.Body = rewritten
 	out.Rewritten = true
 	return out, nil
+}
+
+func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewriteResult) InlineApprovalOutcome {
+	return InlineApprovalOutcome{
+		Decision:         out.Decision,
+		Outcome:          out.Outcome,
+		Succeeded:        out.Decision == "allow",
+		TaskID:           out.TaskID,
+		ApprovalRecordID: out.ApprovalRecordID,
+		FailureReason:    out.Reason,
+		RequestID:        requestID,
+		ResolvedAt:       time.Now().UTC(),
+	}
 }
 
 // InlineApprovalSubstitutedPromptMarker is the leading phrase of the
