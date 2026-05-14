@@ -28,7 +28,7 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 	if verb != "task" || req.PendingApproval == nil || req.Agent == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, nil
 	}
-	pending, err := req.PendingApproval.Peek(ctx, ResolveRequest{
+	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
 		UserID:     req.Agent.UserID,
 		AgentID:    req.Agent.ID,
 		Provider:   req.Provider,
@@ -37,24 +37,26 @@ func RewriteTaskApprovalReply(ctx context.Context, req TaskReplyRewriteRequest) 
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
-	// Transition the held tool approval to StageAwaitingTaskDefinition so
-	// the postprocess path can recognize the next `POST /control/tasks`
-	// tool_use as the inline answer and intercept it instead of routing to
-	// the dashboard. Re-stage is idempotent — if the user types "task"
-	// twice on the same prompt, the same stage is set again.
+	// Drop the original tool hold. The user typed "task" so the
+	// harness now shows the task-creation prompt instead — there's
+	// no way back to approving the original tool. Leaving the hold
+	// in the cache (the previous behavior, which only transitioned
+	// the stage) was a latent safety issue: if the model didn't
+	// follow through with POST /control/tasks, the orphan hold
+	// could later be resolved as a regular tool approval by a bare
+	// `approve` reply on something else (LIFO ordering picks the
+	// newest, but the orphan can still surface when it's the only
+	// hold left), which would run the originally-blocked tool with
+	// no real human authorization.
 	//
-	// We intentionally leave the original tool hold's other fields
-	// (Inspector, Fingerprint, ToolUse) alone so the cascade-release path
-	// can replay the original tool_use after the task is approved.
-	if _, err := req.PendingApproval.Update(ctx, UpdateRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: pending.ID,
-		Stage:      StageAwaitingTaskDefinition,
-	}); err != nil {
-		return TaskReplyRewriteResult{Body: req.Body}, err
-	}
+	// Note: this leaves the inline-task intercept relying entirely
+	// on the query signal (surface=inline in the URL) rather than
+	// the state signal (a prior awaiting_task_definition hold).
+	// taskCreationPrompt always renders surface=inline in the
+	// example URL, so this is robust for compliant models. A model
+	// that drops surface=inline falls through to the dashboard
+	// path, which is the same fallback as before any of this
+	// landed.
 	rewritten, ok, err := replaceTaskReplyForProvider(req.HTTPRequest, req.Provider, req.Body, taskCreationPrompt(pending.ToolUse))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err

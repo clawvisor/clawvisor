@@ -63,7 +63,7 @@ func TestTryReleasePendingApprovalParsesLongExplicitID(t *testing.T) {
 	}
 }
 
-func TestRewriteTaskApprovalReplyReplacesUserTaskTextWithoutConsuming(t *testing.T) {
+func TestRewriteTaskApprovalReplyRewritesAndDropsHold(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	held, err := cache.Hold(ctx, PendingLiteApproval{
@@ -98,6 +98,9 @@ func TestRewriteTaskApprovalReplyReplacesUserTaskTextWithoutConsuming(t *testing
 		t.Fatalf("task guidance missing expected content: %s", result.Body)
 	}
 
+	// Hold must be dropped — there's no way back to approving the
+	// original tool, so leaving it in the cache risks an orphan
+	// being resolved later by a bare "approve" on something else.
 	resolved, err := cache.Resolve(ctx, ResolveRequest{
 		UserID:     "user-1",
 		AgentID:    "agent-1",
@@ -107,7 +110,7 @@ func TestRewriteTaskApprovalReplyReplacesUserTaskTextWithoutConsuming(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved == nil || resolved.ID != held.Pending.ID {
-		t.Fatalf("task reply consumed pending approval; resolved=%+v", resolved)
+	if resolved != nil {
+		t.Fatalf("task reply must drop the hold; got resolved=%+v", resolved)
 	}
 }

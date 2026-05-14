@@ -74,11 +74,16 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 	if !t2Result.Rewritten {
 		t.Fatal("T2: expected user 'task' reply to be rewritten")
 	}
+	// T2 contract: typing "task" drops the original tool hold.
+	// There's no way back to approving the original tool; the
+	// harness now shows the task-creation prompt, and leaving the
+	// hold around risks an orphan being resolved later by a bare
+	// "approve" on something else.
 	peekedT2, _ := cache.Peek(ctx, llmproxy.ResolveRequest{
 		UserID: agent.UserID, AgentID: agent.ID, Provider: conversation.ProviderAnthropic, ApprovalID: held.Pending.ID,
 	})
-	if peekedT2 == nil || peekedT2.Stage != llmproxy.StageAwaitingTaskDefinition {
-		t.Fatalf("T2: original hold stage = %v, want awaiting_task_definition", peekedT2)
+	if peekedT2 != nil {
+		t.Fatalf("T2: original hold should be dropped after task reply; got %+v", peekedT2)
 	}
 
 	// ── T3: model emits POST /control/tasks ──────────────────────────
