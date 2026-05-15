@@ -37,12 +37,12 @@ import (
 	"github.com/clawvisor/clawvisor/internal/events"
 	"github.com/clawvisor/clawvisor/internal/groupchat"
 	"github.com/clawvisor/clawvisor/internal/intent"
-	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	intnotify "github.com/clawvisor/clawvisor/internal/notify"
 	pushnotify "github.com/clawvisor/clawvisor/internal/notify/push"
 	telegramnotify "github.com/clawvisor/clawvisor/internal/notify/telegram"
 	intredis "github.com/clawvisor/clawvisor/internal/redis"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	pgstore "github.com/clawvisor/clawvisor/pkg/store/postgres"
 	sqlitestore "github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
@@ -192,7 +192,6 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	for _, action := range []string{"list_files", "download_file", "upload_file"} {
 		goOverrides["microsoft.onedrive:"+action] = onedrive.Execute
 	}
-
 
 	// Build adapter loading source (for startup) and generator factory (for per-request use).
 	var adapterSource yamlloader.UserAdapterSource
@@ -346,6 +345,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var dedupCache handlers.DedupCache
 	var verdictCache intent.VerdictCacher
 	var callerNonceCache llmproxy.CallerNonceCache
+	var liteApprovalCache llmproxy.PendingApprovalCache
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -383,6 +383,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		// (well under a minute in practice) plus held-tool-use release
 		// windows that re-mint a fresh nonce.
 		callerNonceCache = llmproxy.NewRedisCallerNonceCache(client, 5*time.Minute)
+		liteApprovalCache = llmproxy.NewRedisPendingApprovalCache(client, 10*time.Minute)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
@@ -430,6 +431,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		VerdictCache:       verdictCache,
 		ExtractionTracker:  extractionTracker,
 		CallerNonceCache:   callerNonceCache,
+		LiteApprovalCache:  liteApprovalCache,
 		RedisClient:        rdb,
 	}
 

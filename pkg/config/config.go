@@ -119,6 +119,7 @@ type ServerConfig struct {
 	AuthMode    string `yaml:"auth_mode"`  // "magic_link", "password", or "" (auto-detect from IsLocal)
 	LogFormat   string `yaml:"log_format"` // "json", "text", or "" (auto: json in prod, text in dev)
 	LogLevel    string `yaml:"log_level"`  // "debug", "info", "warn", "error" (default: "info")
+	RouteSet    string `yaml:"route_set"`  // "full" (default), "app", or "proxy_lite" for split deployments
 	// TrustedProxies is the list of CIDR ranges whose r.RemoteAddr is treated
 	// as a reverse proxy. When a request arrives from one of these networks,
 	// the right-most non-trusted entry of X-Forwarded-For is used as the
@@ -537,6 +538,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Server.LogLevel = v
 	}
+	if v := os.Getenv("CLAWVISOR_ROUTE_SET"); v != "" {
+		cfg.Server.RouteSet = strings.ToLower(strings.TrimSpace(v))
+	}
 
 	// Shared LLM overrides (inherited by all subsections)
 	if v := os.Getenv("CLAWVISOR_LLM_PROVIDER"); v != "" {
@@ -781,6 +785,27 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("CLAWVISOR_RUNTIME_POLICY_INJECT_STORED_BEARER"); v != "" {
 		cfg.RuntimePolicy.InjectStoredBearer = v == "true" || v == "1"
 	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ENABLED"); v != "" {
+		cfg.ProxyLite.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ANTHROPIC_BASE_URL"); v != "" {
+		cfg.ProxyLite.AnthropicBaseURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_OPENAI_BASE_URL"); v != "" {
+		cfg.ProxyLite.OpenAIBaseURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_SELF_HOSTNAMES"); v != "" {
+		cfg.ProxyLite.SelfHostnames = splitCSV(v)
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ALLOW_PRIVATE_NETWORKS"); v != "" {
+		cfg.ProxyLite.AllowPrivateNetworks = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_TRACE_LOG_PATH"); v != "" {
+		cfg.ProxyLite.TraceLogPath = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_RAW_LOG_PATH"); v != "" {
+		cfg.ProxyLite.RawLogPath = strings.TrimSpace(v)
+	}
 
 	if v := os.Getenv("CLAWVISOR_RELAY_URL"); v != "" {
 		cfg.Relay.URL = v
@@ -857,6 +882,16 @@ func ensureGeminiCache(p **GeminiCacheConfig) *GeminiCacheConfig {
 	return *p
 }
 
+func splitCSV(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // inheritLLMDefaults fills empty fields in sub with the shared LLM-level defaults.
 func inheritLLMDefaults(sub *LLMProviderConfig, shared *LLMConfig) {
 	if sub.Provider == "" {
@@ -930,6 +965,14 @@ func (c *Config) Validate() error {
 	}
 	if c.RuntimePolicy.OneOffTTLSeconds <= 0 {
 		return fmt.Errorf("runtime_policy.one_off_ttl_seconds must be positive (got %d)", c.RuntimePolicy.OneOffTTLSeconds)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Server.RouteSet)) {
+	case "", "full", "app", "proxy_lite":
+	default:
+		return fmt.Errorf("server.route_set must be one of full, app, proxy_lite (got %q)", c.Server.RouteSet)
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Server.RouteSet), "proxy_lite") && !c.ProxyLite.Enabled {
+		return fmt.Errorf("server.route_set=proxy_lite requires proxy_lite.enabled=true")
 	}
 	switch strings.ToLower(strings.TrimSpace(c.RuntimePolicy.AutovaultMode)) {
 	case "", "observe", "auto", "strict":
