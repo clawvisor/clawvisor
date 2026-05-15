@@ -346,6 +346,25 @@ func TestEvaluateAuthorization_ExpectedToolMatchAcceptsCrossHarnessAliases(t *te
 	}
 }
 
+// Regression: OpenClaw exposes its shell surface as `exec`, while the
+// task prompt asks models to declare shell scope as `Bash`. An inline
+// approved task with expected_tools_json[0].tool_name="Bash" must cover
+// a later OpenClaw `exec` call, otherwise the user sees a second
+// no-matching-task-scope approval immediately after approving the task.
+func TestEvaluateAuthorization_ExpectedToolMatchAcceptsOpenClawExecAlias(t *testing.T) {
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("exec", map[string]any{"command": "openclaw cron --help 2>&1 | head -60"}),
+		AgentID:        "agent-1",
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "Bash", "inspect openclaw cron help")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow {
+		t.Fatalf("decision = %+v, want VerdictAllow (Bash should cover OpenClaw exec)", got)
+	}
+}
+
 // Regression: models populate expected_tools_json from documentation
 // and examples; they routinely use lowercase tool names (`bash`) even
 // when the harness reports `Bash`. The task-scope matcher must be
@@ -353,10 +372,10 @@ func TestEvaluateAuthorization_ExpectedToolMatchAcceptsCrossHarnessAliases(t *te
 // harness's capitalized actual tool name.
 func TestEvaluateAuthorization_ExpectedToolMatchIsCaseInsensitive(t *testing.T) {
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
-		ToolUse:        toolUse("Bash", map[string]any{"command": "curl https://api.github.com/user"}),
-		AgentID:        "agent-1",
-		Service:        "github",
-		Action:         "get_user",
+		ToolUse: toolUse("Bash", map[string]any{"command": "curl https://api.github.com/user"}),
+		AgentID: "agent-1",
+		Service: "github",
+		Action:  "get_user",
 		// Task declared lowercase "bash" (what the model wrote).
 		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", "agent-1", "bash", "fetch user")},
 	})
