@@ -127,6 +127,27 @@ func TestRenderTaskApprovalPromptRendersEgress(t *testing.T) {
 	}
 }
 
+func TestRenderTaskApprovalPromptRendersCredentials(t *testing.T) {
+	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
+		Purpose: "Create GitHub release issues",
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Call the GitHub API."},
+		},
+		RequiredCredentials: []runtimetasks.RequiredCredential{
+			{VaultItemID: "vault_github_release_bot", Why: "Create issues in owner/repo."},
+		},
+	}, "")
+	if !strings.Contains(prompt, "Credentials requested") {
+		t.Errorf("expected credential section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "vault_github_release_bot") {
+		t.Errorf("expected credential id in prompt, got %q", prompt)
+	}
+	if strings.Contains(prompt, "{") {
+		t.Errorf("raw JSON leaked into prompt: %q", prompt)
+	}
+}
+
 func TestHumanizeExpiresIn(t *testing.T) {
 	cases := map[int]string{
 		0:    "",

@@ -23,6 +23,9 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
 		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
+		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
+	}
 }
 
 // Regression: a curl invocation that mixes a synthetic control URL with

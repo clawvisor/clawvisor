@@ -23,6 +23,7 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 	// prior turns. controlBaseURL is intentionally ignored here.
 	_ = controlBaseURL
 	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
+	vaultItemsURL := "https://" + ControlSyntheticHost + "/control/vault/items"
 	tasksURLInline := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120&surface=inline"
 	tasksURLDashboard := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120"
 	toolExamples := controlToolExamples(availableTools)
@@ -50,6 +51,7 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 		"What goes in a good task:",
 		"  - `purpose`: a clear, user-visible sentence describing what you're about to do. Phrase it expansively enough to cover the obvious follow-up work — \"create and verify\" rather than just \"create\", \"refactor and test\" rather than just \"refactor\". Verification-by-reading is part of any sensible writing workflow; declare it.",
 		"  - `expected_tools_json`: list the actual tool names you expect to use from this request's available tools (" + toolExamples + "). Be generous — list anything plausible. Missing scope is friction; over-declaring is fine. SCOPE PAIRS: writing implies reading (you will verify the file you just wrote), so when you list write/edit tools also list read tools when available; running a shell that creates state usually means running a shell that inspects it, so a single `" + shellTool + "` entry with a `why` that covers both is correct. Don't split write-then-verify into two tasks.",
+		"  - `required_credentials_json`: when the task needs a vaulted credential, list the exact `vault_item_id` or `vault_item_handle` and a concrete `why`. If the credential list is not already visible in this prompt, GET " + vaultItemsURL + " first. Do not ask the user to paste raw secrets into chat.",
 		"  - `why`: per-tool, one line explaining why that tool is needed for THIS task. For shell/write/edit tools on a writing task, your `why` should explicitly include the verify/inspect/check workflow — e.g. \"Create the target files and run sanity checks (ls, wc, cat) against them.\" The intent verifier compares each individual command against the `why`; a `why` that only mentions writes will refuse the subsequent reads.",
 		"",
 		"When NOT to create a task: single one-shot commands the user obviously wants (a single `ls`, a single `cat`), or follow-up clarifications inside an already-approved task's scope.",
@@ -75,6 +77,7 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 		"4. Task creation does not grant permission until I approve it.",
 		"",
 		"To request permission for a tool, POST a task definition to " + tasksURLInline + " (interactive) or " + tasksURLDashboard + " (headless).",
+		"To discover available credential labels, GET " + vaultItemsURL + ". Credential discovery does not require an approved task.",
 		"Before creating the task, tell me I will need to approve it.",
 		"For schemas and examples, GET " + docsURL + ".",
 		"",
@@ -96,6 +99,7 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"<one-line user-visible goal>\",",
 		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<concrete reason>\"}],",
+		"   \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",

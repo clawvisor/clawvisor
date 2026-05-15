@@ -18,6 +18,7 @@ import (
 // Fields rendered:
 //   - purpose (wrapped at 80 cols)
 //   - expected_tools_json[].tool_name + .why (bullet list)
+//   - required_credentials_json[].vault_item_id / vault_item_handle + .why (bullet list)
 //   - intent_verification_mode (default "strict")
 //   - lifetime humanized ("until session ends" / "always")
 //   - expires_in_seconds humanized ("10 min" / "1 hour")
@@ -73,6 +74,25 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID st
 			b.WriteString("\n  • ")
 			b.WriteString(host)
 			if why := strings.TrimSpace(eg.Why); why != "" {
+				b.WriteString(" — ")
+				b.WriteString(wrapForPrompt(why, 80, "    "))
+			}
+		}
+	}
+
+	if len(req.RequiredCredentials) > 0 {
+		b.WriteString("\n\nCredentials requested")
+		for _, cred := range req.RequiredCredentials {
+			name := strings.TrimSpace(cred.VaultItemID)
+			if name == "" {
+				name = strings.TrimSpace(cred.VaultItemHandle)
+			}
+			if name == "" {
+				continue
+			}
+			b.WriteString("\n  • ")
+			b.WriteString(name)
+			if why := strings.TrimSpace(cred.Why); why != "" {
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "    "))
 			}
