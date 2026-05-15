@@ -109,6 +109,24 @@ func maybeInterceptInlineTaskDefinition(
 		audit("fallthrough", "inline_task_missing_purpose", "task body missing purpose; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
+	env := runtimetasks.Envelope{
+		ExpectedTools:          parsed.ExpectedTools,
+		ExpectedEgress:         parsed.ExpectedEgress,
+		RequiredCredentials:    parsed.RequiredCredentials,
+		IntentVerificationMode: parsed.IntentVerificationMode,
+		ExpectedUse:            parsed.ExpectedUse,
+		SchemaVersion:          parsed.SchemaVersion,
+	}
+	if env.SchemaVersion == 0 {
+		env.SchemaVersion = 2
+	}
+	if env.IntentVerificationMode == "" {
+		env.IntentVerificationMode = "strict"
+	}
+	if issues := runtimepolicy.ValidateTaskEnvelope(env); len(issues) > 0 {
+		audit("fallthrough", "inline_task_invalid_envelope", inlineTaskValidationReason(issues)+"; deferring to dashboard rewrite")
+		return conversation.ToolUseVerdict{}, false
+	}
 
 	now := time.Now().UTC()
 	innerHold, holdErr := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
@@ -133,19 +151,20 @@ func maybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
-	assessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, runtimetasks.Envelope{
-		ExpectedTools:          parsed.ExpectedTools,
-		ExpectedEgress:         parsed.ExpectedEgress,
-		RequiredCredentials:    parsed.RequiredCredentials,
-		IntentVerificationMode: parsed.IntentVerificationMode,
-		ExpectedUse:            parsed.ExpectedUse,
-		SchemaVersion:          parsed.SchemaVersion,
-	})
+	assessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
 	}, true
+}
+
+func inlineTaskValidationReason(issues []runtimepolicy.ValidationIssue) string {
+	var parts []string
+	for _, issue := range issues {
+		parts = append(parts, issue.Field+": "+issue.Message)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // controlTaskBodyFromInput extracts the POST body from the tool_use's
