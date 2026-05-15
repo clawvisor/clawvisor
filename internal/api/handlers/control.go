@@ -57,8 +57,8 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 					"why":       "Describe the exact command pattern or operation you need, e.g. run curl to POST JSON to https://api.example.com/widgets.",
 				}},
 				"required_credentials_json": []map[string]any{{
-					"vault_item_id": "vault_github_release_bot",
-					"why":           "Describe why this task needs this specific vaulted credential.",
+					"vault_item_id": "google.gmail",
+					"why":           "Use the selected Gmail credential to send the requested message.",
 				}},
 				"intent_verification_mode": "strict",
 				"expires_in_seconds":       600,
