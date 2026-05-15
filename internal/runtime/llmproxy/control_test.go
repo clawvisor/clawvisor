@@ -26,6 +26,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
 		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "Task shape without credentials") ||
+		!strings.Contains(notice, "Task shape with credentials") ||
+		!strings.Contains(notice, "OMIT unless credentials are needed") {
+		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
+	}
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
 	}
