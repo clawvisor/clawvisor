@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder, type VaultItem } from '../api/client'
+import { api, type Agent, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder, type VaultItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -713,34 +713,6 @@ function VaultMetric({ label, value }: { label: string; value: string }) {
       <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
       <div className="mt-1 text-sm font-medium text-text-primary">{value}</div>
     </div>
-  )
-}
-
-function CredentialActivitySection({ entries }: { entries: AuditEntry[] }) {
-  return (
-    <AccountSection
-      title="Credential Activity"
-      description="Recent account and credential-related activity touching your connected services."
-    >
-      <div className="space-y-2">
-        {entries.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No recent service activity.
-          </div>
-        )}
-        {entries.map(entry => (
-          <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-text-primary">{entry.summary_text || `${serviceName(entry.service)} ${entry.action}`}</div>
-              <div className="mt-1 text-xs text-text-tertiary">
-                {entry.outcome} · {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
-              </div>
-            </div>
-            {entry.reason && <div className="max-w-xl text-xs text-text-secondary">{entry.reason}</div>}
-          </div>
-        ))}
-      </div>
-    </AccountSection>
   )
 }
 
@@ -1894,12 +1866,6 @@ export default function Services() {
     enabled: secretVaultUI,
     refetchInterval: 30_000,
   })
-  const { data: auditData } = useQuery({
-    queryKey: ['audit', 'accounts'],
-    queryFn: () => api.audit.list({ limit: 25 }),
-    enabled: secretVaultUI,
-  })
-
   // Refresh when the OAuth popup signals completion (for cases where modal isn't open).
   useEffect(() => {
     function handler(e: MessageEvent) {
@@ -1918,9 +1884,6 @@ export default function Services() {
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')
-  const recentServiceActivity = secretVaultUI
-    ? (auditData?.entries ?? []).filter(entry => !entry.service.startsWith('runtime.')).slice(0, 8)
-    : []
   const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
@@ -2026,7 +1989,6 @@ export default function Services() {
               entries={(runtimePlaceholders?.entries ?? []).filter(entry => !entry.task_id)}
             />
           )}
-          {useUnifiedVault && <CredentialActivitySection entries={recentServiceActivity} />}
         </>
       )}
 
