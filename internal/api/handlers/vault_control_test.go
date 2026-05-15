@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -50,10 +49,9 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 		t.Fatalf("ListForAgent status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Items        []string          `json:"items"`
-		Entries      []json.RawMessage `json:"entries"`
-		Instructions string            `json:"instructions"`
-		Total        int               `json:"total"`
+		Items   []string          `json:"items"`
+		Entries []json.RawMessage `json:"entries"`
+		Total   int               `json:"total"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -64,11 +62,12 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 	if len(body.Entries) != 0 {
 		t.Fatalf("control response should not use dashboard entries shape: %+v", body.Entries)
 	}
-	if body.Instructions == "" {
-		t.Fatal("expected usage instructions")
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw response: %v", err)
 	}
-	if !strings.Contains(body.Instructions, "required_credentials_json[].why") {
-		t.Fatalf("expected instructions to mention credential why, got %q", body.Instructions)
+	if _, ok := raw["instructions"]; ok {
+		t.Fatalf("control response should not include instructions: %s", rec.Body.String())
 	}
 }
 
@@ -164,8 +163,8 @@ func TestVaultControlItemDetailReturnsCompactMetadata(t *testing.T) {
 	if body["id"] != "agentphone" || body["kind"] != "secret" {
 		t.Fatalf("unexpected compact detail payload: %+v", body)
 	}
-	if instructions, _ := body["instructions"].(string); !strings.Contains(instructions, "required_credentials_json[].why") {
-		t.Fatalf("expected detail instructions to mention credential why, got %q", instructions)
+	if _, ok := body["instructions"]; ok {
+		t.Fatalf("control detail should not include instructions: %+v", body)
 	}
 	if _, ok := body["secret"]; ok {
 		t.Fatalf("control detail must not expose secret material: %+v", body)
