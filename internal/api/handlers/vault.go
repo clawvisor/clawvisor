@@ -61,6 +61,10 @@ func (h *VaultHandler) ListForAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/control/") {
+		h.writeControlList(w, r, agent.UserID)
+		return
+	}
 	h.writeList(w, r, agent.UserID)
 }
 
@@ -288,6 +292,35 @@ func (h *VaultHandler) writeList(w http.ResponseWriter, r *http.Request, userID 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": items,
 		"total":   len(items),
+	})
+}
+
+type controlVaultItem struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Kind     string `json:"kind"`
+	Provider string `json:"provider,omitempty"`
+}
+
+func (h *VaultHandler) writeControlList(w http.ResponseWriter, r *http.Request, userID string) {
+	items, err := h.listItems(r, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault items")
+		return
+	}
+	out := make([]controlVaultItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, controlVaultItem{
+			ID:       item.ID,
+			Label:    item.Name,
+			Kind:     item.Kind,
+			Provider: item.Provider,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        out,
+		"total":        len(out),
+		"instructions": "Use one of these id values as required_credentials_json[].vault_item_id when creating a task. This response is intentionally compact; do not pipe or shell-filter it.",
 	})
 }
 
