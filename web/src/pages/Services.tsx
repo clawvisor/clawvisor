@@ -76,6 +76,7 @@ function VaultInventorySection({
     }
     return items.map(item => {
       const service = serviceForVaultItem(item, serviceMap)
+      const showBindingChips = item.kind !== 'connected_account' && (item.service_bindings?.length ?? 0) > 0
       return (
         <button
           key={item.id}
@@ -102,7 +103,7 @@ function VaultInventorySection({
               {item.active_placeholder_count} live
             </div>
           </div>
-          {item.service_bindings && item.service_bindings.length > 0 && (
+          {showBindingChips && item.service_bindings && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {item.service_bindings.map(binding => (
                 <span key={`${binding.service_id}:${binding.alias ?? 'default'}`} className="rounded border border-border-subtle px-2 py-0.5 text-xs text-text-tertiary">
