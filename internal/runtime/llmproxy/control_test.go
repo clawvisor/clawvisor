@@ -31,6 +31,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "OMIT unless credentials are needed") {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "Refactor the local configuration loader and run its tests") ||
+		!strings.Contains(notice, "Create a GitHub issue summarizing the failing deployment check") ||
+		strings.Contains(notice, "AgentPhone") {
+		t.Fatalf("notice should use multi-step examples with common services; got:\n%s", notice)
+	}
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
 	}
