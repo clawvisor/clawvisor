@@ -121,6 +121,35 @@ func TestParseBashCurl_DashSNoLongerAmbiguous(t *testing.T) {
 	}
 }
 
+// Regression: Claude Code commonly formats curl across multiple lines
+// with a shell line-continuation before later flags. The parser must
+// treat backslash-newline as whitespace, not as a second positional
+// argument, so task-scoped credential calls can be mediated.
+func TestParseBashCurl_AcceptsLineContinuationBeforeHeader(t *testing.T) {
+	tu := ToolUse{
+		ID:    "toolu_line_continuation",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://api.agentphone.ai/v1/agents \\\n  -H \"Authorization: Bearer autovault_agentphone_0bTLIJkoUqI5-BUxlEx1W-sVyO0ekM3j\""}`),
+	}
+
+	got, ok := DefaultParser{}.Parse(tu)
+	if !ok {
+		t.Fatalf("parser fell through; verdict=%+v", got)
+	}
+	if got.Ambiguous || !got.IsAPICall {
+		t.Fatalf("expected multiline curl to parse as non-ambiguous API call, got %+v", got)
+	}
+	if got.Host != "api.agentphone.ai" {
+		t.Fatalf("host=%q, want api.agentphone.ai", got.Host)
+	}
+	if got.Path != "/v1/agents" {
+		t.Fatalf("path=%q, want /v1/agents", got.Path)
+	}
+	if len(got.Placeholders) != 1 || got.Placeholders[0] != "autovault_agentphone_0bTLIJkoUqI5-BUxlEx1W-sVyO0ekM3j" {
+		t.Fatalf("unexpected placeholders: %+v", got.Placeholders)
+	}
+}
+
 // Regression: a placeholder substring inside a local-only tool's args
 // (Skill, Read, Edit, etc.) must pass through without engaging the
 // LLM validator. Otherwise smoke-test installs without an LLM-backed

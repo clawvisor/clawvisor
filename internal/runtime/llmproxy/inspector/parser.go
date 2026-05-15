@@ -141,10 +141,10 @@ func parseStructuredFetch(t ToolUse) (Verdict, bool) {
 		return Verdict{}, false
 	}
 	var raw struct {
-		URL     string                 `json:"url"`
-		Method  string                 `json:"method,omitempty"`
-		Headers map[string]any `json:"headers,omitempty"`
-		Body    json.RawMessage        `json:"body,omitempty"`
+		URL     string          `json:"url"`
+		Method  string          `json:"method,omitempty"`
+		Headers map[string]any  `json:"headers,omitempty"`
+		Body    json.RawMessage `json:"body,omitempty"`
 	}
 	if err := json.Unmarshal(t.Input, &raw); err != nil {
 		return Verdict{}, false
@@ -224,7 +224,7 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		return Verdict{}, false
 	}
 
-	tokens, ok := simpleShellTokenize(seg.text)
+	tokens, ok := simpleShellTokenize(normalizeShellLineContinuations(seg.text))
 	if !ok || len(tokens) == 0 {
 		return Verdict{
 			IsAPICall: false,
@@ -502,32 +502,32 @@ func isSafeValueCurlFlag(tok string) bool {
 
 // safeBoolCurlFlagsExact lists boolean flags accepted verbatim.
 var safeBoolCurlFlagsExact = map[string]struct{}{
-	"-s":               {},
-	"-S":               {},
-	"--silent":         {},
-	"--show-error":     {},
-	"-f":               {},
-	"--fail":           {},
-	"--fail-with-body": {},
-	"-i":               {},
-	"--include":        {},
-	"--compressed":     {},
-	"-#":               {},
-	"--progress-bar":   {},
-	"-v":               {},
-	"--verbose":        {},
-	"-G":               {},
-	"--get":            {},
-	"-J":               {},
+	"-s":                   {},
+	"-S":                   {},
+	"--silent":             {},
+	"--show-error":         {},
+	"-f":                   {},
+	"--fail":               {},
+	"--fail-with-body":     {},
+	"-i":                   {},
+	"--include":            {},
+	"--compressed":         {},
+	"-#":                   {},
+	"--progress-bar":       {},
+	"-v":                   {},
+	"--verbose":            {},
+	"-G":                   {},
+	"--get":                {},
+	"-J":                   {},
 	"--remote-header-name": {},
-	"-O":               {},
-	"--remote-name":    {},
-	"-N":               {},
-	"--no-buffer":      {},
-	"-4":               {},
-	"-6":               {},
-	"--ipv4":           {},
-	"--ipv6":           {},
+	"-O":                   {},
+	"--remote-name":        {},
+	"-N":                   {},
+	"--no-buffer":          {},
+	"-4":                   {},
+	"-6":                   {},
+	"--ipv4":               {},
+	"--ipv6":               {},
 }
 
 // safeBoolCurlShortFlags is the set of single-character boolean flags
@@ -552,7 +552,7 @@ var safeValueCurlFlagsExact = map[string]struct{}{
 	"--connect-timeout": {},
 	"--retry":           {},
 	"--retry-delay":     {},
-	"--retry-max-time": {},
+	"--retry-max-time":  {},
 	"--max-redirs":      {},
 	"--resolve":         {},
 }
@@ -690,6 +690,20 @@ func hasShellMetacharacter(cmd string) bool {
 		return true
 	}
 	return false
+}
+
+// normalizeShellLineContinuations performs the shell's lexical
+// backslash-newline removal before our narrow tokenizer runs. Models
+// frequently format curl commands this way:
+//
+//	curl https://api.example \
+//	  -H 'Authorization: Bearer autovault_x'
+//
+// Without this normalization the backslash becomes an extra positional
+// token and the parser refuses an otherwise simple curl.
+func normalizeShellLineContinuations(cmd string) string {
+	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
+	return strings.ReplaceAll(cmd, "\\\n", " ")
 }
 
 // simpleShellTokenize is a minimal tokenizer: splits on whitespace,
