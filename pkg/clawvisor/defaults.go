@@ -425,6 +425,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var verdictCache intent.VerdictCacher
 	var callerNonceCache llmproxy.CallerNonceCache
 	var pendingSecretCache llmproxy.PendingSecretDecisionCache
+	var liteApprovalCache llmproxy.PendingApprovalCache
+	var liteOutcomeStore llmproxy.InlineApprovalOutcomeStore
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -464,6 +466,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		// windows that re-mint a fresh nonce.
 		callerNonceCache = llmproxy.NewRedisCallerNonceCache(client, 5*time.Minute)
 		pendingSecretCache = llmproxy.NewRedisPendingSecretDecisionCache(client, 10*time.Minute)
+		liteApprovalCache = llmproxy.NewRedisPendingApprovalCache(client, 10*time.Minute)
+		liteOutcomeStore = llmproxy.NewRedisInlineApprovalOutcomeStore(client, 24*time.Hour)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
@@ -513,6 +517,8 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		ExtractionTracker:  extractionTracker,
 		CallerNonceCache:   callerNonceCache,
 		PendingSecretCache: pendingSecretCache,
+		LiteApprovalCache:  liteApprovalCache,
+		LiteOutcomeStore:   liteOutcomeStore,
 		RedisClient:        rdb,
 	}
 

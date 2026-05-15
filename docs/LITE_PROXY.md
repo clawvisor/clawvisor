@@ -66,6 +66,38 @@ The proxy is gated by `proxy_lite.enabled`. When on, the daemon exposes:
 | `GET /control/tasks/{id}` | Status lookup. |
 | `POST /control/tasks/{id}/expand` | Add scope to an existing task. |
 
+### Split hosted deployments
+
+Hosted environments can run the dashboard/API and lite-proxy as separate
+services from the same binary by setting `server.route_set`:
+
+```yaml
+# Main app: dashboard + user APIs, but no public /v1, /proxy/v1, or /control surface.
+server:
+  route_set: app
+proxy_lite:
+  enabled: true
+
+# Dedicated proxy service: health + /v1, /proxy/v1, and /control only.
+server:
+  route_set: proxy_lite
+proxy_lite:
+  enabled: true
+```
+
+Equivalent environment variables:
+
+```bash
+CLAWVISOR_ROUTE_SET=proxy_lite
+CLAWVISOR_PROXY_LITE_ENABLED=true
+CLAWVISOR_PROXY_LITE_SELF_HOSTNAMES=app.example.com,llm-proxy.example.com
+CLAWVISOR_PROXY_LITE_ALLOW_PRIVATE_NETWORKS=false
+```
+
+For multi-instance proxy deployments, configure `REDIS_URL`. Redis backs both
+resolver caller nonces and inline approval holds, so an `approve` / `deny`
+reply can release a tool call held by another instance.
+
 Restart the daemon after editing config:
 
 ```bash

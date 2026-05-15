@@ -67,9 +67,9 @@ type InlineApprovalOutcomeStore interface {
 }
 
 // MemoryInlineApprovalOutcomeStore is an in-process outcome store with
-// TTL eviction. Outcomes only matter for in-flight conversations, so a
-// process-local store is sufficient — daemon restart resets state,
-// after which there are no live inline approvals to worry about.
+// TTL eviction. It is appropriate for single-process installs. Multi-instance
+// proxy deployments should use RedisInlineApprovalOutcomeStore so later turns
+// can re-inject approval context even when they land on a different replica.
 type MemoryInlineApprovalOutcomeStore struct {
 	ttl time.Duration
 

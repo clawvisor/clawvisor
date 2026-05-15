@@ -340,6 +340,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.PendingSecretCache != nil {
 		apiOpts = append(apiOpts, api.WithPendingSecretDecisionCache(opts.PendingSecretCache))
 	}
+	if opts.LiteApprovalCache != nil {
+		apiOpts = append(apiOpts, api.WithLiteApprovalCache(opts.LiteApprovalCache))
+	}
+	if opts.LiteOutcomeStore != nil {
+		apiOpts = append(apiOpts, api.WithLiteApprovalOutcomeStore(opts.LiteOutcomeStore))
+	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))
 	}

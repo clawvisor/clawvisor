@@ -149,6 +149,8 @@ type ServerOptions struct {
 	ExtractionTracker  handlers.ExtractionTracker
 	CallerNonceCache   llmproxy.CallerNonceCache
 	PendingSecretCache llmproxy.PendingSecretDecisionCache
+	LiteApprovalCache  llmproxy.PendingApprovalCache
+	LiteOutcomeStore   llmproxy.InlineApprovalOutcomeStore
 	RedisClient        *redis.Client
 }
 
