@@ -71,10 +71,7 @@ You'll configure three sections: **Branding**, **Audience**, and **Data Access**
 
 ## 5. Configure Clawvisor
 
-If you ran `make setup` and said **Yes** to Google services, the setup wizard
-already prompted you for these values — you can skip this step.
-
-Otherwise, set the credentials as environment variables before starting the server:
+Set the credentials as environment variables before starting the server:
 
 ```bash
 export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"

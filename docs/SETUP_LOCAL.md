@@ -237,7 +237,7 @@ Clawvisor loads `config.yaml` from the working directory (override with
 | `PORT` | `25297` | Server listen port |
 | `SERVER_HOST` | `127.0.0.1` | Server bind address |
 | `PUBLIC_URL` | — | Base URL for magic links, OAuth callbacks, and Telegram notifications |
-| `SQLITE_PATH` | `~/.clawvisor/clawvisor.db` | Path to the SQLite database file |
+| `SQLITE_PATH` | `./clawvisor.db` | Path to the SQLite database file |
 | `VAULT_BACKEND` | `local` | `local` (AES-256-GCM) or `gcp` (Secret Manager) |
 | `VAULT_KEY` | — | Base64-encoded 32-byte vault master key (alternative to key file) |
 | `VAULT_KEY_FILE` | `./vault.key` | Path to local vault encryption key |

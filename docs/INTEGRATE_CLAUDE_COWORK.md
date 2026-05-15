@@ -85,8 +85,8 @@ talks directly to the local daemon.
 
 If the OAuth flow does not complete:
 - Verify the user has a Clawvisor account (run `make setup` if needed)
-- Check that `base_url` in `config.yaml` matches the URL Claude is
-  connecting to (needed for OAuth redirect validation)
+- Check that `public_url` under `server:` in `config.yaml` matches the URL
+  Claude is connecting to (needed for OAuth redirect validation)
 
 ---
 
