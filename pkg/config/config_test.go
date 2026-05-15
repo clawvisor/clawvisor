@@ -29,6 +29,57 @@ func TestLoadAppliesRuntimeProxyTimingTraceEnv(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesProxyLiteCloudEnv(t *testing.T) {
+	t.Setenv("CLAWVISOR_ROUTE_SET", "proxy_lite")
+	t.Setenv("CLAWVISOR_PROXY_LITE_ENABLED", "true")
+	t.Setenv("CLAWVISOR_PROXY_LITE_ANTHROPIC_BASE_URL", "https://anthropic.internal")
+	t.Setenv("CLAWVISOR_PROXY_LITE_OPENAI_BASE_URL", "https://openai.internal")
+	t.Setenv("CLAWVISOR_PROXY_LITE_SELF_HOSTNAMES", "app.example.com, llm.example.com")
+	t.Setenv("CLAWVISOR_PROXY_LITE_ALLOW_PRIVATE_NETWORKS", "false")
+	t.Setenv("CLAWVISOR_PROXY_LITE_TRACE_LOG_PATH", "/tmp/lite-trace.jsonl")
+	t.Setenv("CLAWVISOR_PROXY_LITE_RAW_LOG_PATH", "/tmp/lite-raw.jsonl")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.RouteSet != "proxy_lite" {
+		t.Fatalf("RouteSet=%q, want proxy_lite", cfg.Server.RouteSet)
+	}
+	if !cfg.ProxyLite.Enabled {
+		t.Fatal("expected proxy lite enabled")
+	}
+	if cfg.ProxyLite.AnthropicBaseURL != "https://anthropic.internal" {
+		t.Fatalf("AnthropicBaseURL=%q", cfg.ProxyLite.AnthropicBaseURL)
+	}
+	if cfg.ProxyLite.OpenAIBaseURL != "https://openai.internal" {
+		t.Fatalf("OpenAIBaseURL=%q", cfg.ProxyLite.OpenAIBaseURL)
+	}
+	if got := strings.Join(cfg.ProxyLite.SelfHostnames, ","); got != "app.example.com,llm.example.com" {
+		t.Fatalf("SelfHostnames=%q", got)
+	}
+	if cfg.ProxyLite.AllowPrivateNetworks {
+		t.Fatal("expected private networks disabled")
+	}
+	if cfg.ProxyLite.TraceLogPath != "/tmp/lite-trace.jsonl" {
+		t.Fatalf("TraceLogPath=%q", cfg.ProxyLite.TraceLogPath)
+	}
+	if cfg.ProxyLite.RawLogPath != "/tmp/lite-raw.jsonl" {
+		t.Fatalf("RawLogPath=%q", cfg.ProxyLite.RawLogPath)
+	}
+}
+
+func TestValidateProxyLiteRouteSetRequiresProxyLite(t *testing.T) {
+	cfg := Default()
+	cfg.Server.RouteSet = "proxy_lite"
+	cfg.ProxyLite.Enabled = false
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "proxy_lite.enabled") {
+		t.Fatalf("expected proxy_lite.enabled validation error, got %v", err)
+	}
+}
+
 func TestValidateRequiresTimingTraceDirWhenEnabled(t *testing.T) {
 	cfg := Default()
 	cfg.RuntimeProxy.TimingTraceEnabled = true

@@ -323,6 +323,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.CallerNonceCache != nil {
 		apiOpts = append(apiOpts, api.WithCallerNonceCache(opts.CallerNonceCache))
 	}
+	if opts.LiteApprovalCache != nil {
+		apiOpts = append(apiOpts, api.WithLiteApprovalCache(opts.LiteApprovalCache))
+	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))
 	}

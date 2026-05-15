@@ -1,0 +1,186 @@
+package llmproxy
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/redis/go-redis/v9"
+)
+
+const redisPendingApprovalPrefix = "clawvisor:lite_pending_approval:"
+
+// RedisPendingApprovalCache stores lite-proxy inline approval holds in Redis
+// so a dedicated or multi-replica proxy deployment can release a hold created
+// by another instance. The list is newest-first and bounded to match the
+// in-memory cache's LIFO behavior.
+type RedisPendingApprovalCache struct {
+	rdb *redis.Client
+	ttl time.Duration
+	max int
+	now func() time.Time
+}
+
+// NewRedisPendingApprovalCache returns a Redis-backed pending approval cache.
+// ttl <= 0 is replaced with 10 minutes.
+func NewRedisPendingApprovalCache(rdb *redis.Client, ttl time.Duration) *RedisPendingApprovalCache {
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	return &RedisPendingApprovalCache{
+		rdb: rdb,
+		ttl: ttl,
+		max: 10,
+		now: time.Now,
+	}
+}
+
+// Hold implements PendingApprovalCache.
+func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLiteApproval) (HoldResult, error) {
+	if c == nil || c.rdb == nil {
+		return HoldResult{Pending: pending}, nil
+	}
+	now := c.now().UTC()
+	if pending.ID == "" {
+		id, err := newLiteApprovalID()
+		if err != nil {
+			return HoldResult{}, err
+		}
+		pending.ID = id
+	}
+	if pending.CreatedAt.IsZero() {
+		pending.CreatedAt = now
+	}
+	if pending.ExpiresAt.IsZero() {
+		pending.ExpiresAt = now.Add(c.ttl)
+	}
+	raw, err := json.Marshal(pending)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	key := redisPendingApprovalKey(pending.UserID, pending.AgentID, pending.Provider)
+	max := c.max
+	if max <= 0 {
+		max = 10
+	}
+	var evicted *PendingLiteApproval
+	if rawEvicted, err := c.rdb.LIndex(ctx, key, int64(max-1)).Bytes(); err == nil {
+		var decoded PendingLiteApproval
+		if json.Unmarshal(rawEvicted, &decoded) == nil {
+			evicted = &decoded
+		}
+	}
+	pipe := c.rdb.TxPipeline()
+	pipe.LPush(ctx, key, raw)
+	pipe.LTrim(ctx, key, 0, int64(max-1))
+	pipe.Expire(ctx, key, c.ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return HoldResult{}, err
+	}
+	return HoldResult{Pending: pending, Evicted: evicted}, nil
+}
+
+// Peek implements PendingApprovalCache.
+func (c *RedisPendingApprovalCache) Peek(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error) {
+	if c == nil || c.rdb == nil {
+		return nil, nil
+	}
+	found, _, err := c.find(ctx, req)
+	return found, err
+}
+
+// Resolve implements PendingApprovalCache.
+func (c *RedisPendingApprovalCache) Resolve(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, error) {
+	if c == nil || c.rdb == nil {
+		return nil, nil
+	}
+	found, raw, err := c.find(ctx, req)
+	if err != nil || found == nil {
+		return found, err
+	}
+	n, err := c.rdb.LRem(ctx, redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider), 1, raw).Result()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	return found, nil
+}
+
+// Drop implements PendingApprovalCache.
+func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest) error {
+	if c == nil || c.rdb == nil {
+		return nil
+	}
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	if req.ApprovalID == "" {
+		return c.rdb.Del(ctx, key).Err()
+	}
+	_, raw, err := c.find(ctx, req)
+	if err != nil || raw == "" {
+		return err
+	}
+	return c.rdb.LRem(ctx, key, 1, raw).Err()
+}
+
+func (c *RedisPendingApprovalCache) find(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, string, error) {
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	rawItems, err := c.rdb.LRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, "", err
+	}
+	now := c.now().UTC()
+	var firstExpired []string
+	var fallback *PendingLiteApproval
+	var fallbackRaw string
+	for _, raw := range rawItems {
+		var pending PendingLiteApproval
+		if err := json.Unmarshal([]byte(raw), &pending); err != nil {
+			firstExpired = append(firstExpired, raw)
+			continue
+		}
+		if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(now) {
+			firstExpired = append(firstExpired, raw)
+			continue
+		}
+		if req.ApprovalID != "" {
+			if pending.ID != req.ApprovalID {
+				continue
+			}
+			if req.Stage != "" && pending.Stage != req.Stage {
+				break
+			}
+			return &pending, raw, c.dropExpired(ctx, key, firstExpired)
+		}
+		if req.Stage != "" && pending.Stage != req.Stage {
+			continue
+		}
+		fallback = &pending
+		fallbackRaw = raw
+		break
+	}
+	return fallback, fallbackRaw, c.dropExpired(ctx, key, firstExpired)
+}
+
+func (c *RedisPendingApprovalCache) dropExpired(ctx context.Context, key string, raws []string) error {
+	if len(raws) == 0 {
+		return nil
+	}
+	pipe := c.rdb.TxPipeline()
+	for _, raw := range raws {
+		pipe.LRem(ctx, key, 0, raw)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func redisPendingApprovalKey(userID, agentID string, provider conversation.Provider) string {
+	sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider)))
+	return redisPendingApprovalPrefix + hex.EncodeToString(sum[:])
+}
+
+var _ PendingApprovalCache = (*RedisPendingApprovalCache)(nil)
