@@ -327,7 +327,7 @@ func TestResolver_AllowsUnknownServiceHostAfterPlaceholderAndTaskValidation(t *t
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
 	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodPost, "/proxy/v1/v1/calls", strings.NewReader(`{"to":"+14159996499"}`))
+	req := httptest.NewRequest(http.MethodPost, "/proxy/v1/v1/calls", strings.NewReader(`{"to":"+15555550123"}`))
 	req.Header.Set("X-Clawvisor-Target-Host", "api.agentphone.ai")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)

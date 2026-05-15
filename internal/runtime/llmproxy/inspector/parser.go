@@ -270,8 +270,19 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
 			}
 			i += 2
+		case isBodyCurlFlag(tok):
+			if i+1 >= len(tokens) {
+				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
+			}
+			if autovault.HeaderMaybeContainsShadow(tokens[i+1]) {
+				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
+			}
+			if method == "GET" {
+				method = "POST"
+			}
+			i += 2
 		case strings.HasPrefix(tok, "-"):
-			// Unknown flag — could be -d/--data with a value or a flag we
+			// Unknown flag — could be an upload/form flag or a flag we
 			// don't safely model. Fall through to validator.
 			return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: unknown curl flag " + tok}, true
 		default:
@@ -472,9 +483,9 @@ func staticWordPartsValue(parts []syntax.WordPart) (string, bool) {
 //
 // Refused-by-omission: anything that changes URL routing (`-x`/`--proxy`),
 // follows redirects (`-L`/`--location`), bypasses TLS (`-k`/`--insecure`),
-// loads alternate cert material, or carries a request body (`-d`,
-// `--data*`, `-T`, `-F`). Those still fall through to ambiguous so the
-// rewriter refuses the call.
+// loads alternate cert material, uploads files (`-T`, `-F`), or sends a
+// credential outside headers. Those still fall through to ambiguous so
+// the rewriter refuses the call.
 func isSafeBoolCurlFlag(tok string) bool {
 	if _, ok := safeBoolCurlFlagsExact[tok]; ok {
 		return true
@@ -497,6 +508,15 @@ func isSafeBoolCurlFlag(tok string) bool {
 // exactly one value but does not affect routing or auth.
 func isSafeValueCurlFlag(tok string) bool {
 	_, ok := safeValueCurlFlagsExact[tok]
+	return ok
+}
+
+// isBodyCurlFlag reports whether tok is a request-body flag whose value
+// does not affect URL routing or credential placement. These are safe
+// to parse when credentials are still carried in -H headers; the body
+// value itself must not contain an autovault placeholder.
+func isBodyCurlFlag(tok string) bool {
+	_, ok := bodyCurlFlagsExact[tok]
 	return ok
 }
 
@@ -555,6 +575,16 @@ var safeValueCurlFlagsExact = map[string]struct{}{
 	"--retry-max-time":  {},
 	"--max-redirs":      {},
 	"--resolve":         {},
+}
+
+var bodyCurlFlagsExact = map[string]struct{}{
+	"-d":               {},
+	"--data":           {},
+	"--data-raw":       {},
+	"--data-ascii":     {},
+	"--data-binary":    {},
+	"--data-urlencode": {},
+	"--json":           {},
 }
 
 // scanHeadersForShadow returns the credential locations and the actual
