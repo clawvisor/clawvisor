@@ -321,7 +321,7 @@ func (h *VaultHandler) writeControlList(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":        ids,
 		"total":        len(ids),
-		"instructions": "Use one of these values as required_credentials_json[].vault_item_id when creating a task. This response is intentionally just IDs; do not pipe or shell-filter it.",
+		"instructions": "Use one of these values as required_credentials_json[].vault_item_id when creating a task, and include required_credentials_json[].why explaining why this credential is needed. This response is intentionally just IDs; do not pipe or shell-filter it.",
 	})
 }
 
@@ -347,7 +347,7 @@ func (h *VaultHandler) writeControlDetail(w http.ResponseWriter, r *http.Request
 			Provider:               item.Provider,
 			ServiceBindings:        item.ServiceBindings,
 			ActivePlaceholderCount: item.ActivePlaceholderCount,
-			Instructions:           "Use this id as required_credentials_json[].vault_item_id when creating a task. Secret values are never returned by this endpoint.",
+			Instructions:           "Use this id as required_credentials_json[].vault_item_id when creating a task, and include required_credentials_json[].why explaining why this credential is needed. Secret values are never returned by this endpoint.",
 		})
 		return
 	}

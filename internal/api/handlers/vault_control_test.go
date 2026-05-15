@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
@@ -65,6 +66,9 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 	}
 	if body.Instructions == "" {
 		t.Fatal("expected usage instructions")
+	}
+	if !strings.Contains(body.Instructions, "required_credentials_json[].why") {
+		t.Fatalf("expected instructions to mention credential why, got %q", body.Instructions)
 	}
 }
 
@@ -159,6 +163,9 @@ func TestVaultControlItemDetailReturnsCompactMetadata(t *testing.T) {
 	}
 	if body["id"] != "agentphone" || body["kind"] != "secret" {
 		t.Fatalf("unexpected compact detail payload: %+v", body)
+	}
+	if instructions, _ := body["instructions"].(string); !strings.Contains(instructions, "required_credentials_json[].why") {
+		t.Fatalf("expected detail instructions to mention credential why, got %q", instructions)
 	}
 	if _, ok := body["secret"]; ok {
 		t.Fatalf("control detail must not expose secret material: %+v", body)
