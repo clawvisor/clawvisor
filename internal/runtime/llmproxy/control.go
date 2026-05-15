@@ -93,7 +93,7 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"4. Task creation does not grant permission until I approve it.",
 		"",
 		"To request permission for a tool, POST a task definition to " + tasksURLInline + " (interactive) or " + tasksURLDashboard + " (headless).",
-		"To discover available credential IDs, GET " + vaultItemsURL + ". Credential discovery does not require an approved task. The response is just IDs; read it directly and do not pipe or shell-filter it.",
+		"To discover available credential IDs, GET " + vaultItemsURL + ". Credential discovery does not require an approved task. The response is just IDs; read it directly and do not pipe or shell-filter it. If you need non-secret metadata for one item, GET " + vaultItemsURL + "/<id>.",
 		"Before creating the task, tell me I will need to approve it.",
 		"For schemas and examples, GET " + docsURL + ".",
 		"",

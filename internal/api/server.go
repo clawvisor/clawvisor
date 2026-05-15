@@ -1011,6 +1011,8 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 		mux.Handle("GET /control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+		mux.Handle("GET /control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
+		mux.Handle("/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 
 		// Resolver — agent harness's outbound HTTPS calls land here so
 		// we can swap autovault placeholders in headers for real vault

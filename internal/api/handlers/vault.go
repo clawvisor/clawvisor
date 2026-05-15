@@ -68,6 +68,19 @@ func (h *VaultHandler) ListForAgent(w http.ResponseWriter, r *http.Request) {
 	h.writeList(w, r, agent.UserID)
 }
 
+func (h *VaultHandler) GetForAgent(w http.ResponseWriter, r *http.Request) {
+	agent := middleware.AgentFromContext(r.Context())
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/control/") {
+		h.writeControlDetail(w, r, agent.UserID)
+		return
+	}
+	writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
+}
+
 func (h *VaultHandler) CreateForUser(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -310,6 +323,45 @@ func (h *VaultHandler) writeControlList(w http.ResponseWriter, r *http.Request, 
 		"total":        len(ids),
 		"instructions": "Use one of these values as required_credentials_json[].vault_item_id when creating a task. This response is intentionally just IDs; do not pipe or shell-filter it.",
 	})
+}
+
+func (h *VaultHandler) writeControlDetail(w http.ResponseWriter, r *http.Request, userID string) {
+	itemID := strings.TrimSpace(r.PathValue("id"))
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id is required")
+		return
+	}
+	items, err := h.listItems(r, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault items")
+		return
+	}
+	for _, item := range items {
+		if item.ID != itemID {
+			continue
+		}
+		writeJSON(w, http.StatusOK, controlVaultItemDetail{
+			ID:                     item.ID,
+			Label:                  item.Name,
+			Kind:                   item.Kind,
+			Provider:               item.Provider,
+			ServiceBindings:        item.ServiceBindings,
+			ActivePlaceholderCount: item.ActivePlaceholderCount,
+			Instructions:           "Use this id as required_credentials_json[].vault_item_id when creating a task. Secret values are never returned by this endpoint.",
+		})
+		return
+	}
+	writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
+}
+
+type controlVaultItemDetail struct {
+	ID                     string                `json:"id"`
+	Label                  string                `json:"label"`
+	Kind                   string                `json:"kind"`
+	Provider               string                `json:"provider,omitempty"`
+	ServiceBindings        []VaultServiceBinding `json:"service_bindings,omitempty"`
+	ActivePlaceholderCount int                   `json:"active_placeholder_count,omitempty"`
+	Instructions           string                `json:"instructions"`
 }
 
 func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, error) {

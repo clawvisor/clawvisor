@@ -117,3 +117,56 @@ func TestVaultAgentItemsKeepsDashboardShape(t *testing.T) {
 		t.Fatalf("agent dashboard response should not use compact control items shape: %+v", body.Items)
 	}
 }
+
+func TestVaultControlItemDetailReturnsCompactMetadata(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "vault-control-detail.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	user, err := st.CreateUser(ctx, "vault-control-detail@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := v.Set(ctx, user.ID, "agentphone", []byte("secret-value")); err != nil {
+		t.Fatalf("Vault.Set: %v", err)
+	}
+
+	h := NewVaultHandler(st, v, adapters.NewRegistry())
+	req := httptest.NewRequest(http.MethodGet, "/control/vault/items/agentphone", nil)
+	req.SetPathValue("id", "agentphone")
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+	rec := httptest.NewRecorder()
+
+	h.GetForAgent(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetForAgent status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["id"] != "agentphone" || body["kind"] != "secret" {
+		t.Fatalf("unexpected compact detail payload: %+v", body)
+	}
+	if _, ok := body["secret"]; ok {
+		t.Fatalf("control detail must not expose secret material: %+v", body)
+	}
+	if _, ok := body["placeholders"]; ok {
+		t.Fatalf("control detail should not return dashboard placeholder history: %+v", body)
+	}
+	if _, ok := body["service_bindings"]; ok {
+		t.Fatalf("empty detail slices should be omitted: %+v", body)
+	}
+}
