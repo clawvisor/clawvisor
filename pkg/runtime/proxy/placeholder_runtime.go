@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -71,10 +74,20 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					if err != nil {
 						return "", err
 					}
-					if meta.AgentID != st.Session.AgentID || meta.UserID != st.Session.UserID {
+					now := time.Now().UTC()
+					if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(req.Context(), hooks.Store, meta, st.Session.UserID, st.Session.AgentID, now); !ok {
 						return "", store.ErrNotFound
 					}
-					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, meta.ServiceID)
+					if err := validateRuntimePlaceholderBoundHost(req, meta.ServiceID); err != nil {
+						return "", err
+					}
+					vaultLookupKey := meta.ServiceID
+					if meta.CredentialGrantID != "" {
+						if auth, authErr := hooks.Store.GetCredentialAuthorization(req.Context(), meta.CredentialGrantID); authErr == nil && strings.TrimSpace(auth.CredentialRef) != "" {
+							vaultLookupKey = strings.TrimSpace(auth.CredentialRef)
+						}
+					}
+					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, vaultLookupKey)
 					if err != nil {
 						return "", err
 					}
@@ -182,6 +195,17 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 		s.recordTimingSpan(req, "placeholder_swap.headers", swapStartedAt)
 		return req, nil
 	})
+}
+
+func validateRuntimePlaceholderBoundHost(req *http.Request, serviceID string) error {
+	hosts := inspector.BoundServiceHosts(serviceID)
+	if len(hosts) == 0 {
+		return nil
+	}
+	if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: requestHost(req)}, hosts); !ok {
+		return fmt.Errorf("target host outside placeholder bound-service: %s", reason)
+	}
+	return nil
 }
 
 type headerCredentialDetection struct {

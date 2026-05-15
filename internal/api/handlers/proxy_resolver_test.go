@@ -292,6 +292,56 @@ func TestResolver_RejectsHostOutsideBoundService(t *testing.T) {
 	}
 }
 
+func TestResolver_AllowsUnknownServiceHostAfterPlaceholderAndTaskValidation(t *testing.T) {
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, user, agent, nonces, _ := newSeededResolver(t)
+	v := h.Vault.(*stubVault)
+	if err := v.Set(context.Background(), user.ID, "agentphone", []byte("real-agentphone-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+
+	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("agentphone"))
+	if err != nil {
+		t.Fatalf("GeneratePlaceholder: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      user.ID,
+		AgentID:     agent.ID,
+		ServiceID:   "agentphone",
+		VaultItemID: "agentphone",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodPost, "/proxy/v1/v1/calls", strings.NewReader(`{"to":"+15555550123"}`))
+	req.Header.Set("X-Clawvisor-Target-Host", "api.agentphone.ai")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for unknown service host, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if seenAuth != "Bearer real-agentphone-token" {
+		t.Fatalf("expected upstream Authorization=Bearer real-agentphone-token, got %q", seenAuth)
+	}
+}
+
 func TestResolver_StripsXClawvisorPrefixOnOutbound(t *testing.T) {
 	var seenHeaders http.Header
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

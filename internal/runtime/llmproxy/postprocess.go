@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -289,6 +290,51 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			return conversation.ToolUseVerdict{
 				Allowed:      true,
 				RewriteInput: rewritten,
+			}
+		} else if controlToolUseMentionsEndpoint(tu, cfg.ControlBaseURL) {
+			reason := "malformed_control_command"
+			if cfg.CallerNonces != nil {
+				nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
+					Host:   ControlSyntheticHost,
+					Method: "POST",
+					Path:   "/control/failure",
+				})
+				if mintErr != nil {
+					audit("block", "caller_nonce_mint_failed", mintErr.Error())
+					return conversation.ToolUseVerdict{
+						Allowed: false,
+						Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
+					}
+				}
+				if rewritten, ok, err := RewriteControlFailureToolUse(tu, cfg.ControlBaseURL, nonce, reason); ok {
+					if err != nil {
+						audit("block", "control_rewriter_error", err.Error())
+						return conversation.ToolUseVerdict{
+							Allowed: false,
+							Reason:  "Clawvisor: control endpoint failure rewrite refused — " + err.Error(),
+						}
+					}
+					audit("rewrite", "clawvisor_control_failure", "malformed control endpoint command")
+					trace(TraceEventControlRewrite,
+						"host", ControlSyntheticHost,
+						"method", "POST",
+						"path", "/control/failure",
+						"failure_reason", reason,
+						"nonce_prefix", nonce[:min(len(nonce), 14)],
+						"rewrite_bytes", len(rewritten),
+					)
+					return conversation.ToolUseVerdict{
+						Allowed:      true,
+						RewriteInput: rewritten,
+					}
+				}
+			} else {
+				audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
+			}
+			audit("block", "control_rewriter_error", "control endpoint command must be a single foreground curl with no pipes, subshells, or extra shell commands")
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
 			}
 		}
 
@@ -710,9 +756,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	// The user just typed "task" at the inline prompt — they are
 	// definitionally at the chat surface. Pass ?surface=inline so the
 	// proxy holds the approve/deny gesture inline rather than routing
-	// to the dashboard's notification queue. wait=true is harmless for
-	// the inline path (the curl never actually runs) but keeps the
-	// shape compatible if the model decides to omit surface=inline.
+	// to the dashboard's notification queue.
 	//
 	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES
 	// accept a cat-heredoc-to-file then curl --data @file pattern, but
@@ -724,7 +768,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	// prompt — naming yield_time_ms tends to make the model set it
 	// to a small default. The proxy clamps the parameter to a safe
 	// minimum as a belt-and-suspenders fallback.
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 // taskToolWhy renders a default `why` for the model when the blocked
@@ -890,9 +934,10 @@ func redactPlaceholderForReason(ph string) string {
 }
 
 // boundaryCheckVerdict validates the inspector's claimed host against
-// the bound-service allowlist of every placeholder it found. Returns
-// (reason, ok). ok=false on any mismatch, ownership failure, or unknown
-// service — fail-closed by construction.
+// the bound-service allowlist of every placeholder it found. Unknown
+// services do not fail the boundary check; they fall through to the
+// task/intent authorization layer, which is the only source of truth for
+// services we have not hardcoded.
 func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.Verdict) (string, bool) {
 	if cfg.Store == nil {
 		return "no store configured for boundary check", false
@@ -911,12 +956,12 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 			}
 			return "store error: " + err.Error(), false
 		}
-		if rec.UserID != cfg.AgentUserID || rec.AgentID != cfg.AgentID {
-			return "placeholder owned by another agent (placeholder=" + redactPlaceholderForReason(ph) + ")", false
+		if reason, ok := ValidateRuntimePlaceholderAccess(req.Context(), cfg.Store, rec, cfg.AgentUserID, cfg.AgentID, time.Now().UTC()); !ok {
+			return reason + " (placeholder=" + redactPlaceholderForReason(ph) + ")", false
 		}
 		hosts := inspector.BoundServiceHosts(rec.ServiceID)
 		if len(hosts) == 0 {
-			return "no bound-service hosts for service " + rec.ServiceID, false
+			return "no hardcoded bound-service hosts for service " + rec.ServiceID + "; deferring to task/intent verification", true
 		}
 		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
 			return reason, false

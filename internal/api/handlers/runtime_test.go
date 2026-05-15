@@ -53,7 +53,9 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h := NewRuntimeHandler(st, v, nil, nil, nil)
+	before := time.Now().UTC()
 	h.CreatePlaceholder(rec, req)
+	after := time.Now().UTC()
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("CreatePlaceholder status=%d body=%s", rec.Code, rec.Body.String())
@@ -66,12 +68,119 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 	if placeholder == "" {
 		t.Fatal("expected placeholder in response")
 	}
+	if resp["expires_at"] == "" {
+		t.Fatalf("expected expires_at in response: %+v", resp)
+	}
 	meta, err := st.GetRuntimePlaceholder(ctx, placeholder)
 	if err != nil {
 		t.Fatalf("GetRuntimePlaceholder: %v", err)
 	}
 	if meta.AgentID != agent.ID || meta.UserID != user.ID || meta.ServiceID != "google.gmail:work" {
 		t.Fatalf("unexpected placeholder metadata: %+v", meta)
+	}
+	if meta.ExpiresAt == nil || meta.ExpiresAt.Before(before.Add(time.Hour-time.Second)) || meta.ExpiresAt.After(after.Add(time.Hour+time.Second)) {
+		t.Fatalf("unexpected placeholder expiration: %+v", meta.ExpiresAt)
+	}
+	auth, err := st.GetCredentialAuthorization(ctx, meta.CredentialGrantID)
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if auth.ExpiresAt == nil || auth.ExpiresAt.Sub(*meta.ExpiresAt) > time.Second || meta.ExpiresAt.Sub(*auth.ExpiresAt) > time.Second {
+		t.Fatalf("credential grant should share placeholder expiration, auth=%+v placeholder=%+v", auth, meta)
+	}
+}
+
+func TestRuntimeHandlerCreateUserPlaceholderFromVaultItem(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-user-placeholder.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+
+	user, err := st.CreateUser(ctx, "runtime-user-placeholder@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := v.Set(ctx, user.ID, "anthropic", []byte(`sk-ant-test-key`)); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"service":     "llm:anthropic:user",
+		"ttl_seconds": 900,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/placeholders/mint", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+
+	before := time.Now().UTC()
+	rec := httptest.NewRecorder()
+	h := NewRuntimeHandler(st, v, nil, nil, nil)
+	h.CreateUserPlaceholder(rec, req)
+	after := time.Now().UTC()
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("CreateUserPlaceholder status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var entry store.RuntimePlaceholder
+	if err := json.Unmarshal(rec.Body.Bytes(), &entry); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if entry.Placeholder == "" {
+		t.Fatal("expected placeholder in response")
+	}
+	if entry.AgentID != "" {
+		t.Fatalf("manual placeholder should be user-wide when agent_id is omitted, got %q", entry.AgentID)
+	}
+	if entry.ServiceID != "llm:anthropic:user" || entry.VaultItemID != "llm:anthropic:user" {
+		t.Fatalf("placeholder should preserve requested vault item id, got %+v", entry)
+	}
+	if entry.CredentialGrantID == "" {
+		t.Fatalf("expected credential grant on manual placeholder: %+v", entry)
+	}
+	if entry.ExpiresAt == nil {
+		t.Fatalf("expected expiration on manual placeholder: %+v", entry)
+	}
+	if entry.ExpiresAt.Before(before.Add(899*time.Second)) || entry.ExpiresAt.After(after.Add(901*time.Second)) {
+		t.Fatalf("unexpected expiration %s", entry.ExpiresAt)
+	}
+	auth, err := st.GetCredentialAuthorization(ctx, entry.CredentialGrantID)
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if auth.AgentID != "" || auth.Scope != "manual" || auth.CredentialRef != "anthropic" || auth.Service != "llm:anthropic:user" {
+		t.Fatalf("unexpected credential grant: %+v", auth)
+	}
+	if auth.ExpiresAt == nil || auth.ExpiresAt.Sub(*entry.ExpiresAt) > time.Second || entry.ExpiresAt.Sub(*auth.ExpiresAt) > time.Second {
+		t.Fatalf("credential grant should share placeholder expiration, auth=%+v placeholder=%+v", auth, entry)
+	}
+
+	defaultTTLBody, _ := json.Marshal(map[string]any{"service": "llm:anthropic:user"})
+	defaultTTLReq := httptest.NewRequest(http.MethodPost, "/api/runtime/placeholders/mint", bytes.NewReader(defaultTTLBody))
+	defaultTTLReq.Header.Set("Content-Type", "application/json")
+	defaultTTLReq = defaultTTLReq.WithContext(context.WithValue(defaultTTLReq.Context(), middleware.UserContextKey, user))
+	defaultBefore := time.Now().UTC()
+	defaultRec := httptest.NewRecorder()
+	h.CreateUserPlaceholder(defaultRec, defaultTTLReq)
+	defaultAfter := time.Now().UTC()
+	if defaultRec.Code != http.StatusCreated {
+		t.Fatalf("CreateUserPlaceholder default TTL status=%d body=%s", defaultRec.Code, defaultRec.Body.String())
+	}
+	var defaultEntry store.RuntimePlaceholder
+	if err := json.Unmarshal(defaultRec.Body.Bytes(), &defaultEntry); err != nil {
+		t.Fatalf("unmarshal default TTL response: %v", err)
+	}
+	if defaultEntry.ExpiresAt == nil {
+		t.Fatalf("expected default expiration on manual placeholder: %+v", defaultEntry)
+	}
+	if defaultEntry.ExpiresAt.Before(defaultBefore.Add(time.Hour-time.Second)) || defaultEntry.ExpiresAt.After(defaultAfter.Add(time.Hour+time.Second)) {
+		t.Fatalf("unexpected default expiration %s", defaultEntry.ExpiresAt)
 	}
 }
 

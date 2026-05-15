@@ -1,12 +1,16 @@
 package llmproxy
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -34,17 +38,23 @@ import (
 // CLAWVISOR_PROXY_LITE_RAW_LOG to a file path. Production should keep
 // this off — bodies contain prompts, tool outputs, and credentials in
 // the model's conversation history. (Autovault placeholders are in
-// there; real bearer tokens are not, since the resolver path replaces
-// them with nonces before they enter conversation state — but the raw
-// log will still contain credential-shaped prompt content, user files,
-// etc.)
+// there. Live autovault placeholders are redacted before writing; real
+// bearer tokens should not enter conversation state because the resolver
+// path replaces them with nonces, but the raw log may still contain
+// credential-shaped prompt content, user files, etc.
 //
 // A nil receiver is a no-op so callers don't need a branch at every
 // site.
 type RawIOLogger struct {
-	mu  sync.Mutex
-	w   io.Writer
-	now func() time.Time
+	mu       sync.Mutex
+	w        io.Writer
+	now      func() time.Time
+	prefixes map[string]rawPromptPrefix
+}
+
+type rawPromptPrefix struct {
+	SHA256 string
+	Bytes  int
 }
 
 // OpenRawIOLogger opens path for append + create with mode 0600 so the
@@ -65,7 +75,7 @@ func OpenRawIOLogger(path string) (*RawIOLogger, error) {
 // NewRawIOLogger wraps an existing io.Writer. Useful in tests where a
 // bytes.Buffer stands in for the file.
 func NewRawIOLogger(w io.Writer) *RawIOLogger {
-	return &RawIOLogger{w: w, now: time.Now}
+	return &RawIOLogger{w: w, now: time.Now, prefixes: map[string]rawPromptPrefix{}}
 }
 
 // RawIOEvent is the payload written per capture point.
@@ -107,6 +117,9 @@ func (l *RawIOLogger) Emit(ev RawIOEvent) {
 	if l == nil || l.w == nil {
 		return
 	}
+	if ev.BodyEncoding == "" {
+		ev.Body = redactRawLogLivePlaceholders(ev.Body)
+	}
 	payload := map[string]any{
 		"timestamp":    l.now().UTC().Format(time.RFC3339Nano),
 		"phase":        ev.Phase,
@@ -124,6 +137,9 @@ func (l *RawIOLogger) Emit(ev RawIOEvent) {
 	if ev.Marker != "" {
 		payload["marker"] = ev.Marker
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.addPromptPrefixFieldsLocked(payload, ev)
 	if ev.BodyEncoding != "" {
 		payload["body_encoding"] = ev.BodyEncoding
 	}
@@ -134,10 +150,93 @@ func (l *RawIOLogger) Emit(ev RawIOEvent) {
 	if err != nil {
 		return
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	_, _ = l.w.Write(line)
 	_, _ = l.w.Write([]byte{'\n'})
+}
+
+func (l *RawIOLogger) addPromptPrefixFieldsLocked(payload map[string]any, ev RawIOEvent) {
+	if ev.Phase != "inbound_request" || ev.Body == "" || ev.BodyEncoding != "" {
+		return
+	}
+	prefix, model, ok := rawPromptPrefixBytes(ev.Provider, []byte(ev.Body))
+	if !ok || len(prefix) == 0 {
+		return
+	}
+	sum := sha256.Sum256(prefix)
+	digest := hex.EncodeToString(sum[:])
+	payload["prompt_prefix_sha256"] = digest
+	payload["prompt_prefix_bytes"] = len(prefix)
+	key := strings.Join([]string{ev.UserID, ev.AgentID, ev.Provider, ev.Method, ev.Path, model}, "\x00")
+	payload["prompt_prefix_cache_key"] = strings.Join([]string{ev.AgentID, ev.Provider, ev.Path, model}, "|")
+	if l.prefixes == nil {
+		l.prefixes = map[string]rawPromptPrefix{}
+	}
+	if prev, ok := l.prefixes[key]; ok {
+		payload["prompt_prefix_stable_with_previous"] = prev.SHA256 == digest && prev.Bytes == len(prefix)
+		if prev.SHA256 != digest {
+			payload["prompt_prefix_previous_sha256"] = prev.SHA256
+			payload["prompt_prefix_previous_bytes"] = prev.Bytes
+		}
+	}
+	l.prefixes[key] = rawPromptPrefix{SHA256: digest, Bytes: len(prefix)}
+}
+
+func rawPromptPrefixBytes(provider string, body []byte) ([]byte, string, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, "", false
+	}
+	model := rawJSONScalarString(raw["model"])
+	var parts [][]byte
+	switch strings.ToLower(provider) {
+	case "anthropic":
+		parts = appendRawPart(parts, "system", raw["system"])
+	case "openai":
+		parts = appendRawPart(parts, "instructions", raw["instructions"])
+		parts = appendOpenAISystemMessages(parts, raw["messages"])
+	default:
+		return nil, model, false
+	}
+	parts = appendRawPart(parts, "tools", raw["tools"])
+	if len(parts) == 0 {
+		return nil, model, false
+	}
+	return bytes.Join(parts, []byte{'\n'}), model, true
+}
+
+func appendOpenAISystemMessages(parts [][]byte, raw json.RawMessage) [][]byte {
+	if len(raw) == 0 || string(raw) == "null" {
+		return parts
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return parts
+	}
+	for _, msg := range messages {
+		role := rawJSONScalarString(msg["role"])
+		if role != "system" && role != "developer" {
+			break
+		}
+		parts = appendRawPart(parts, "message:"+role, msg["content"])
+	}
+	return parts
+}
+
+func appendRawPart(parts [][]byte, label string, raw json.RawMessage) [][]byte {
+	if len(raw) == 0 || string(raw) == "null" {
+		return parts
+	}
+	part := make([]byte, 0, len(label)+1+len(raw))
+	part = append(part, label...)
+	part = append(part, ':')
+	part = append(part, raw...)
+	return append(parts, part)
+}
+
+func rawJSONScalarString(raw json.RawMessage) string {
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return s
 }
 
 // EmitRaw writes an arbitrary JSON object as one line. Used by
@@ -169,9 +268,18 @@ func (l *RawIOLogger) EmitRaw(fields map[string]any) {
 // produce broken JSON.
 func EncodeBody(body []byte) (string, string) {
 	if utf8.Valid(body) {
-		return string(body), ""
+		return redactRawLogLivePlaceholders(string(body)), ""
 	}
 	return base64.StdEncoding.EncodeToString(body), "base64"
+}
+
+var rawLogLivePlaceholderRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(autovault[_:][a-z0-9._:-]+)`)
+
+func redactRawLogLivePlaceholders(s string) string {
+	if s == "" {
+		return s
+	}
+	return rawLogLivePlaceholderRE.ReplaceAllString(s, "${1}<REDACTED:autovault>")
 }
 
 // SafeHeaderSnapshot pulls a small subset of headers worth keeping for

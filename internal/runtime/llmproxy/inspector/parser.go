@@ -141,10 +141,10 @@ func parseStructuredFetch(t ToolUse) (Verdict, bool) {
 		return Verdict{}, false
 	}
 	var raw struct {
-		URL     string                 `json:"url"`
-		Method  string                 `json:"method,omitempty"`
-		Headers map[string]any `json:"headers,omitempty"`
-		Body    json.RawMessage        `json:"body,omitempty"`
+		URL     string          `json:"url"`
+		Method  string          `json:"method,omitempty"`
+		Headers map[string]any  `json:"headers,omitempty"`
+		Body    json.RawMessage `json:"body,omitempty"`
 	}
 	if err := json.Unmarshal(t.Input, &raw); err != nil {
 		return Verdict{}, false
@@ -224,7 +224,7 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 		return Verdict{}, false
 	}
 
-	tokens, ok := simpleShellTokenize(seg.text)
+	tokens, ok := simpleShellTokenize(normalizeShellLineContinuations(seg.text))
 	if !ok || len(tokens) == 0 {
 		return Verdict{
 			IsAPICall: false,
@@ -237,6 +237,9 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 	}
 
 	method := "GET"
+	explicitMethod := false
+	curlGet := false
+	inferredPostFromBody := false
 	headers := map[string]string{}
 	var positionals []string
 	i := 1
@@ -248,6 +251,7 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: -X without value"}, true
 			}
 			method = canonicalMethod(tokens[i+1])
+			explicitMethod = true
 			i += 2
 		case tok == "-H" || tok == "--header":
 			if i+1 >= len(tokens) {
@@ -258,6 +262,12 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				headers[name] = value
 			}
 			i += 2
+		case tok == "-G" || tok == "--get":
+			curlGet = true
+			if inferredPostFromBody && !explicitMethod {
+				method = "GET"
+			}
+			i++
 		case isSafeBoolCurlFlag(tok):
 			// Benign no-value flags (`-s`, `--silent`, `-sS`, `--compressed`, …).
 			// They don't affect routing or auth, so we can safely accept
@@ -270,8 +280,24 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
 			}
 			i += 2
+		case isBodyCurlFlag(tok):
+			if i+1 >= len(tokens) {
+				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
+			}
+			// This only inspects the literal flag value. `@file` and
+			// `@-` bodies are accepted here because Clawvisor only
+			// rewrites header placeholders; if a body source contains a
+			// placeholder it will be sent upstream as an inert literal.
+			if autovault.HeaderMaybeContainsShadow(tokens[i+1]) {
+				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
+			}
+			if method == "GET" && !curlGet {
+				method = "POST"
+				inferredPostFromBody = true
+			}
+			i += 2
 		case strings.HasPrefix(tok, "-"):
-			// Unknown flag — could be -d/--data with a value or a flag we
+			// Unknown flag — could be an upload/form flag or a flag we
 			// don't safely model. Fall through to validator.
 			return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: unknown curl flag " + tok}, true
 		default:
@@ -472,9 +498,9 @@ func staticWordPartsValue(parts []syntax.WordPart) (string, bool) {
 //
 // Refused-by-omission: anything that changes URL routing (`-x`/`--proxy`),
 // follows redirects (`-L`/`--location`), bypasses TLS (`-k`/`--insecure`),
-// loads alternate cert material, or carries a request body (`-d`,
-// `--data*`, `-T`, `-F`). Those still fall through to ambiguous so the
-// rewriter refuses the call.
+// loads alternate cert material, uploads files (`-T`, `-F`), or sends a
+// credential outside headers. Those still fall through to ambiguous so
+// the rewriter refuses the call.
 func isSafeBoolCurlFlag(tok string) bool {
 	if _, ok := safeBoolCurlFlagsExact[tok]; ok {
 		return true
@@ -500,34 +526,43 @@ func isSafeValueCurlFlag(tok string) bool {
 	return ok
 }
 
+// isBodyCurlFlag reports whether tok is a request-body flag whose value
+// does not affect URL routing or credential placement. These are safe
+// to parse when credentials are still carried in -H headers; the body
+// value itself must not contain an autovault placeholder.
+func isBodyCurlFlag(tok string) bool {
+	_, ok := bodyCurlFlagsExact[tok]
+	return ok
+}
+
 // safeBoolCurlFlagsExact lists boolean flags accepted verbatim.
 var safeBoolCurlFlagsExact = map[string]struct{}{
-	"-s":               {},
-	"-S":               {},
-	"--silent":         {},
-	"--show-error":     {},
-	"-f":               {},
-	"--fail":           {},
-	"--fail-with-body": {},
-	"-i":               {},
-	"--include":        {},
-	"--compressed":     {},
-	"-#":               {},
-	"--progress-bar":   {},
-	"-v":               {},
-	"--verbose":        {},
-	"-G":               {},
-	"--get":            {},
-	"-J":               {},
+	"-s":                   {},
+	"-S":                   {},
+	"--silent":             {},
+	"--show-error":         {},
+	"-f":                   {},
+	"--fail":               {},
+	"--fail-with-body":     {},
+	"-i":                   {},
+	"--include":            {},
+	"--compressed":         {},
+	"-#":                   {},
+	"--progress-bar":       {},
+	"-v":                   {},
+	"--verbose":            {},
+	"-G":                   {},
+	"--get":                {},
+	"-J":                   {},
 	"--remote-header-name": {},
-	"-O":               {},
-	"--remote-name":    {},
-	"-N":               {},
-	"--no-buffer":      {},
-	"-4":               {},
-	"-6":               {},
-	"--ipv4":           {},
-	"--ipv6":           {},
+	"-O":                   {},
+	"--remote-name":        {},
+	"-N":                   {},
+	"--no-buffer":          {},
+	"-4":                   {},
+	"-6":                   {},
+	"--ipv4":               {},
+	"--ipv6":               {},
 }
 
 // safeBoolCurlShortFlags is the set of single-character boolean flags
@@ -552,9 +587,19 @@ var safeValueCurlFlagsExact = map[string]struct{}{
 	"--connect-timeout": {},
 	"--retry":           {},
 	"--retry-delay":     {},
-	"--retry-max-time": {},
+	"--retry-max-time":  {},
 	"--max-redirs":      {},
 	"--resolve":         {},
+}
+
+var bodyCurlFlagsExact = map[string]struct{}{
+	"-d":               {},
+	"--data":           {},
+	"--data-raw":       {},
+	"--data-ascii":     {},
+	"--data-binary":    {},
+	"--data-urlencode": {},
+	"--json":           {},
 }
 
 // scanHeadersForShadow returns the credential locations and the actual
@@ -690,6 +735,20 @@ func hasShellMetacharacter(cmd string) bool {
 		return true
 	}
 	return false
+}
+
+// normalizeShellLineContinuations performs the shell's lexical
+// backslash-newline removal before our narrow tokenizer runs. Models
+// frequently format curl commands this way:
+//
+//	curl https://api.example \
+//	  -H 'Authorization: Bearer autovault_x'
+//
+// Without this normalization the backslash becomes an extra positional
+// token and the parser refuses an otherwise simple curl.
+func normalizeShellLineContinuations(cmd string) string {
+	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
+	return strings.ReplaceAll(cmd, "\\\n", " ")
 }
 
 // simpleShellTokenize is a minimal tokenizer: splits on whitespace,

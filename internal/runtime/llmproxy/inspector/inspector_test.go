@@ -181,12 +181,12 @@ func TestHasShellMetacharacter_QuoteAware(t *testing.T) {
 		}
 	}
 	dangerous := []string{
-		`curl https://api.github.com/x ; rm -rf /`,                  // unquoted ;
-		`curl https://api.github.com/x | cat`,                       // unquoted pipe
-		`curl $(whoami).github.com`,                                 // command substitution
-		`curl "https://api.github.com/$(whoami)"`,                   // $ inside double quotes
-		"curl \"https://example.com/`whoami`\"",                     // backtick inside double quotes
-		`curl https://api.github.com/x && rm`,                       // unquoted &&
+		`curl https://api.github.com/x ; rm -rf /`, // unquoted ;
+		`curl https://api.github.com/x | cat`,      // unquoted pipe
+		`curl $(whoami).github.com`,                // command substitution
+		`curl "https://api.github.com/$(whoami)"`,  // $ inside double quotes
+		"curl \"https://example.com/`whoami`\"",    // backtick inside double quotes
+		`curl https://api.github.com/x && rm`,      // unquoted &&
 	}
 	for _, s := range dangerous {
 		if !hasShellMetacharacter(s) {
@@ -276,6 +276,36 @@ func TestRewrite_BashAddsTargetHostHeader(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "Authorization: Bearer autovault_github_abc") {
 		t.Fatalf("Authorization placeholder lost: %q", cmd)
+	}
+}
+
+func TestRewrite_BashPostWithDataHeredocPreservesBody(t *testing.T) {
+	cmd := "curl -sS -X POST https://api.agentphone.ai/v1/calls \\\n  -H 'Authorization: Bearer autovault_agentphone_xxx' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"agentId\":\"agent_123\",\"toNumber\":\"+15555550123\",\"initialGreeting\":\"Hello\"}\nJSON"
+	in := toolUse("Bash", `{"command":`+jsonString(cmd)+`}`)
+	v, ok := DefaultParser{}.Parse(in)
+	if !ok || !v.IsAPICall || v.Ambiguous {
+		t.Fatalf("setup: parser did not classify post body curl as IsAPICall: ok=%v %+v", ok, v)
+	}
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("rewritten output not JSON: %v", err)
+	}
+	rewritten, _ := got["command"].(string)
+	if !strings.Contains(rewritten, "https://proxy.clawvisor.example/proxy/v1/v1/calls") {
+		t.Fatalf("rewritten cmd missing resolver URL: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, "X-Clawvisor-Target-Host: api.agentphone.ai") {
+		t.Fatalf("rewritten cmd missing target-host header: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, "--data @- <<'JSON'") {
+		t.Fatalf("heredoc data flag lost in rewrite: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, `"toNumber":"+15555550123"`) || !strings.Contains(rewritten, "\nJSON") {
+		t.Fatalf("heredoc body lost in rewrite: %q", rewritten)
 	}
 }
 
@@ -667,7 +697,7 @@ func TestBoundaryCheck(t *testing.T) {
 	}
 }
 
-// Security: backtick command substitution (legacy `` `cmd` `` form)
+// Security: backtick command substitution (legacy `cmd` form)
 // parses as CmdSubst under the hood; refuse for the same reason as $().
 func TestDefaultParser_BashBacktickRefused(t *testing.T) {
 	p := DefaultParser{}

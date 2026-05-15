@@ -495,6 +495,7 @@ func (s *Server) routes() http.Handler {
 		gatewayHandler.SetLocalServiceProvider(s.localServiceProvider)
 	}
 	servicesHandler := handlers.NewServicesHandler(s.store, s.vault, s.adapterReg, s.logger, baseURL, s.eventHub)
+	vaultHandler := handlers.NewVaultHandler(s.store, s.vault, s.adapterReg)
 	if s.oauthStateStore != nil {
 		servicesHandler.SetOAuthStateStore(s.oauthStateStore)
 	}
@@ -792,6 +793,12 @@ func (s *Server) routes() http.Handler {
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
+	mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
+	mux.Handle("POST /api/vault/items", user(vaultHandler.CreateForUser))
+	mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
+	mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
+	mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))
+	mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback)    // no auth: browser redirect
@@ -1002,9 +1009,13 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
+		mux.Handle("POST /control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
 		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
 		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
+		mux.Handle("GET /control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+		mux.Handle("GET /control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
+		mux.Handle("/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 
 		// Resolver — agent harness's outbound HTTPS calls land here so
 		// we can swap autovault placeholders in headers for real vault

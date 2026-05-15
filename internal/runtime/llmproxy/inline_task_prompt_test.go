@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
 
 func TestRenderTaskApprovalPromptWellFormed(t *testing.T) {
@@ -124,6 +125,48 @@ func TestRenderTaskApprovalPromptRendersEgress(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "api.github.com") {
 		t.Errorf("expected egress host in prompt, got %q", prompt)
+	}
+}
+
+func TestRenderTaskApprovalPromptRendersCredentials(t *testing.T) {
+	prompt := renderTaskApprovalPrompt(&runtimetasks.TaskCreateRequest{
+		Purpose: "Create GitHub release issues",
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Call the GitHub API."},
+		},
+		RequiredCredentials: []runtimetasks.RequiredCredential{
+			{VaultItemID: "github", Why: "Create issues in owner/repo."},
+		},
+	}, "")
+	if !strings.Contains(prompt, "Credentials requested") {
+		t.Errorf("expected credential section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "github") {
+		t.Errorf("expected credential id in prompt, got %q", prompt)
+	}
+	if strings.Contains(prompt, "{") {
+		t.Errorf("raw JSON leaked into prompt: %q", prompt)
+	}
+}
+
+func TestRenderTaskApprovalPromptRendersRisk(t *testing.T) {
+	prompt := renderTaskApprovalPromptWithRisk(&runtimetasks.TaskCreateRequest{
+		Purpose: "Create GitHub release issues",
+		RequiredCredentials: []runtimetasks.RequiredCredential{
+			{VaultItemID: "github", Why: "Create issues in owner/repo."},
+		},
+	}, "", &taskrisk.RiskAssessment{
+		RiskLevel:   "medium",
+		Explanation: "This task requests credential access.",
+	})
+	if !strings.Contains(prompt, "Risk") {
+		t.Errorf("expected risk section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "medium") {
+		t.Errorf("expected risk level in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "This task requests credential access.") {
+		t.Errorf("expected risk explanation in prompt, got %q", prompt)
 	}
 }
 
