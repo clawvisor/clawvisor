@@ -54,18 +54,14 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"  - Interactive user present: POST " + tasksURLInline,
 		"  - Headless/background run: POST " + tasksURL,
 		"",
-		"Task shape without credentials:",
+		"Required task shape:",
 		"  {\"purpose\":\"<user-visible goal>\",",
 		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"",
-		"Task shape with credentials:",
-		"  {\"purpose\":\"<user-visible credentialed goal>\",",
-		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
-		"   \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}],",
-		"   \"intent_verification_mode\":\"strict\",",
-		"   \"expires_in_seconds\":600}",
+		"If credentials are needed, add:",
+		"  \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
 		"",
 		"Good examples:",
 		"  - No credential: `{\"purpose\":\"Edit and test the local config file\",\"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"Inspect files, edit the config, and run local verification commands.\"}],\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600}`",
@@ -128,7 +124,6 @@ func controlAllowedWithoutTaskLines(availableTools []string) []string {
 	if len(lines) == 1 {
 		lines = append(lines, "  - Single one-shot file reads, directory listings, and searches.")
 	}
-	lines = append(lines, "Create a task before writing files, making network requests, changing state, using credentials, or doing multi-step work.")
 	return lines
 }
 
