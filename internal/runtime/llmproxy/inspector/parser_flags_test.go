@@ -97,6 +97,16 @@ func TestParseBashCurl_AcceptsBodyFlagsWithHeaderCredential(t *testing.T) {
 			cmd:        "curl -sS -X POST https://api.agentphone.ai/v1/calls \\\n  -H 'Authorization: Bearer autovault_agentphone_xxx' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"agentId\":\"agent_123\",\"toNumber\":\"+15555550123\",\"initialGreeting\":\"Hello\"}\nJSON",
 			wantMethod: "POST",
 		},
+		{
+			name:       "get_keeps_data_in_query",
+			cmd:        `curl -G -sS -H 'Authorization: Bearer autovault_github_xxx' --data-urlencode 'q=repo:clawvisor/clawvisor is:pr' https://api.github.com/search/issues`,
+			wantMethod: "GET",
+		},
+		{
+			name:       "get_after_data_still_keeps_get",
+			cmd:        `curl -sS -H 'Authorization: Bearer autovault_github_xxx' --data-urlencode 'q=repo:clawvisor/clawvisor is:pr' --get https://api.github.com/search/issues`,
+			wantMethod: "GET",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
@@ -202,6 +206,65 @@ func TestCreateInlineApprovedTaskReturnsCredentialPlaceholders(t *testing.T) {
 	}
 	if meta.CredentialGrantID != cred.CredentialGrantID {
 		t.Fatalf("placeholder CredentialGrantID=%q, want %q", meta.CredentialGrantID, cred.CredentialGrantID)
+	}
+}
+
+func TestActiveCredentialTaskApprovalRetryMintsMissingPlaceholders(t *testing.T) {
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	v := &stubVault{}
+	if err := v.Set(ctx, user.ID, "agentphone", []byte("real-agentphone-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	h.vault = v
+
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	task := &store.Task{
+		ID:        "task-active-missing-credential",
+		UserID:    user.ID,
+		AgentID:   agent.ID,
+		Purpose:   "Place an outbound call with agentphone",
+		Status:    "active",
+		Lifetime:  "session",
+		ExpiresAt: &expiresAt,
+		RequiredCredentials: json.RawMessage(
+			`[{"vault_item_id":"agentphone","why":"Authenticate requests to the agentphone API"}]`,
+		),
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	if !h.respondActiveCredentialApprovalRetry(ctx, w, user.ID, task) {
+		t.Fatal("expected active credential task retry to be handled")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	placeholders, err := st.ListRuntimePlaceholders(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ListRuntimePlaceholders: %v", err)
+	}
+	if len(placeholders) != 1 {
+		t.Fatalf("expected one recovered placeholder, got %+v", placeholders)
+	}
+	if placeholders[0].TaskID != task.ID || placeholders[0].VaultItemID != "agentphone" {
+		t.Fatalf("unexpected placeholder metadata: %+v", placeholders[0])
+	}
+
+	first := placeholders[0].Placeholder
+	w = httptest.NewRecorder()
+	if !h.respondActiveCredentialApprovalRetry(ctx, w, user.ID, task) {
+		t.Fatal("expected second retry to be handled")
+	}
+	placeholders, err = st.ListRuntimePlaceholders(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ListRuntimePlaceholders: %v", err)
+	}
+	if len(placeholders) != 1 || placeholders[0].Placeholder != first {
+		t.Fatalf("retry should reuse existing placeholder, got %+v", placeholders)
 	}
 }
 

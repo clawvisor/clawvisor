@@ -266,6 +266,9 @@ func (h *VaultHandler) isReservedVaultItemID(ctx context.Context, userID, itemID
 	if _, _, ok := parseAgentScopedLLMKey(itemID); ok {
 		return true
 	}
+	if isUserScopedLLMVaultItemID(itemID) {
+		return true
+	}
 	if llmProviderFromVaultKey(itemID) != "" {
 		return true
 	}
@@ -464,6 +467,11 @@ func llmProviderFromVaultKey(key string) string {
 	default:
 		return ""
 	}
+}
+
+func isUserScopedLLMVaultItemID(key string) bool {
+	parts := strings.Split(key, ":")
+	return len(parts) == 3 && parts[0] == "llm" && parts[2] == "user" && llmProviderFromVaultKey(parts[1]) != ""
 }
 
 func parseAgentScopedLLMKey(key string) (agentID, provider string, ok bool) {

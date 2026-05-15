@@ -221,6 +221,18 @@ func TestVaultItemsCreateSecret(t *testing.T) {
 		"value": "adapter-collision",
 	})
 	mustStatus(t, resp, http.StatusConflict)
+
+	resp = sc.session.do("POST", "/api/vault/items", map[string]any{
+		"id":    "llm:openai:user",
+		"value": "virtual-llm-collision",
+	})
+	mustStatus(t, resp, http.StatusConflict)
+
+	resp = sc.session.do("POST", "/api/vault/items", map[string]any{
+		"id":    "llm:anthropic:user",
+		"value": "virtual-llm-collision",
+	})
+	mustStatus(t, resp, http.StatusConflict)
 }
 
 type sharedVaultMockAdapter struct {

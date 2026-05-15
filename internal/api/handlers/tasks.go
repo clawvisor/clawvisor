@@ -1106,6 +1106,9 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task.Status != "pending_approval" {
+		if h.respondActiveCredentialApprovalRetry(ctx, w, user.ID, task) {
+			return
+		}
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is not pending approval")
 		return
 	}
@@ -1155,6 +1158,12 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
 
+	credentialPlaceholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint task credential placeholders")
+		return
+	}
+
 	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, actions)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve task")
@@ -1164,11 +1173,6 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		// Concurrent approve/deny race or already-resolved task — refuse to
 		// repeat the side effects below (callback, audit).
 		writeError(w, http.StatusConflict, "INVALID_STATE", "task is no longer pending approval")
-		return
-	}
-	credentialPlaceholders, err := h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint task credential placeholders")
 		return
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
@@ -1196,6 +1200,40 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		resp["credential_placeholders"] = credentialPlaceholders
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *TasksHandler) respondActiveCredentialApprovalRetry(ctx context.Context, w http.ResponseWriter, userID string, task *store.Task) bool {
+	if task == nil || task.Status != "active" {
+		return false
+	}
+	requiredCredentials, err := taskRequiredCredentials(task)
+	if err != nil || len(requiredCredentials) == 0 {
+		return false
+	}
+	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_CREDENTIAL_REQUEST", err.Error())
+		return true
+	}
+	credentialPlaceholders, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, taskCredentialExpiry(task))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint task credential placeholders")
+		return true
+	}
+	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
+	h.publishTasksAndQueue(userID)
+
+	resp := map[string]any{
+		"task_id": task.ID,
+		"status":  "active",
+	}
+	if task.ExpiresAt != nil && task.Lifetime != "standing" {
+		resp["expires_at"] = task.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if len(credentialPlaceholders) > 0 {
+		resp["credential_placeholders"] = credentialPlaceholders
+	}
+	writeJSON(w, http.StatusOK, resp)
+	return true
 }
 
 // scopeOverride targets one authorized_action by (service, action) and
@@ -1297,49 +1335,98 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 	for _, cred := range required {
 		vaultItemID := credentialVaultItemID(cred)
 		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
-		auth := &store.CredentialAuthorization{
-			ID:            uuid.New().String(),
-			UserID:        task.UserID,
-			AgentID:       task.AgentID,
-			Scope:         "session",
-			CredentialRef: storageKey,
-			Service:       vaultItemID,
-			Host:          "",
-			HeaderName:    "authorization",
-			Scheme:        "bearer",
-			Status:        "active",
-			MetadataJSON: mustJSON(map[string]any{
-				"source":        "task_required_credentials",
-				"scope":         "task",
-				"task_id":       task.ID,
-				"vault_item_id": vaultItemID,
-				"expected_use":  cred.Why,
-			}),
-			ExpiresAt: &expiresAt,
-		}
-		if err := h.st.CreateCredentialAuthorization(ctx, auth); err != nil {
-			return nil, err
-		}
-		placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(vaultItemID))
+		entry, err := h.mintTaskCredentialPlaceholder(ctx, task, vaultItemID, storageKey, cred.Why, expiresAt)
 		if err != nil {
-			return nil, err
-		}
-		entry := &store.RuntimePlaceholder{
-			Placeholder:       placeholder,
-			UserID:            task.UserID,
-			AgentID:           task.AgentID,
-			ServiceID:         vaultItemID,
-			VaultItemID:       vaultItemID,
-			CredentialGrantID: auth.ID,
-			TaskID:            task.ID,
-			ExpiresAt:         &expiresAt,
-		}
-		if err := h.st.CreateRuntimePlaceholder(ctx, entry); err != nil {
 			return nil, err
 		}
 		out = append(out, entry)
 	}
 	return out, nil
+}
+
+func (h *TasksHandler) ensureTaskCredentialPlaceholders(ctx context.Context, task *store.Task, required []runtimetasks.RequiredCredential, expiresAt time.Time) ([]*store.RuntimePlaceholder, error) {
+	if len(required) == 0 {
+		return nil, nil
+	}
+	existing, err := h.st.ListRuntimePlaceholders(ctx, task.UserID)
+	if err != nil {
+		return nil, err
+	}
+	byVaultItem := make(map[string][]*store.RuntimePlaceholder)
+	for _, entry := range existing {
+		if entry == nil || entry.TaskID != task.ID || entry.AgentID != task.AgentID {
+			continue
+		}
+		byVaultItem[entry.VaultItemID] = append(byVaultItem[entry.VaultItemID], entry)
+	}
+
+	out := make([]*store.RuntimePlaceholder, 0, len(required))
+	for _, cred := range required {
+		vaultItemID := credentialVaultItemID(cred)
+		if entries := byVaultItem[vaultItemID]; len(entries) > 0 {
+			out = append(out, entries[0])
+			byVaultItem[vaultItemID] = entries[1:]
+			continue
+		}
+		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
+		entry, err := h.mintTaskCredentialPlaceholder(ctx, task, vaultItemID, storageKey, cred.Why, expiresAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+func (h *TasksHandler) mintTaskCredentialPlaceholder(ctx context.Context, task *store.Task, vaultItemID, storageKey, expectedUse string, expiresAt time.Time) (*store.RuntimePlaceholder, error) {
+	auth := &store.CredentialAuthorization{
+		ID:            uuid.New().String(),
+		UserID:        task.UserID,
+		AgentID:       task.AgentID,
+		Scope:         "session",
+		CredentialRef: storageKey,
+		Service:       vaultItemID,
+		Host:          "",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON: mustJSON(map[string]any{
+			"source":        "task_required_credentials",
+			"scope":         "task",
+			"task_id":       task.ID,
+			"vault_item_id": vaultItemID,
+			"expected_use":  expectedUse,
+		}),
+		ExpiresAt: &expiresAt,
+	}
+	if err := h.st.CreateCredentialAuthorization(ctx, auth); err != nil {
+		return nil, err
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(vaultItemID))
+	if err != nil {
+		return nil, err
+	}
+	entry := &store.RuntimePlaceholder{
+		Placeholder:       placeholder,
+		UserID:            task.UserID,
+		AgentID:           task.AgentID,
+		ServiceID:         vaultItemID,
+		VaultItemID:       vaultItemID,
+		CredentialGrantID: auth.ID,
+		TaskID:            task.ID,
+		ExpiresAt:         &expiresAt,
+	}
+	if err := h.st.CreateRuntimePlaceholder(ctx, entry); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+func taskCredentialExpiry(task *store.Task) time.Time {
+	if task != nil && task.ExpiresAt != nil {
+		return task.ExpiresAt.UTC()
+	}
+	return time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func credentialVaultItemID(cred runtimetasks.RequiredCredential) string {
@@ -1925,6 +2012,24 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 		return fmt.Errorf("not your task")
 	}
 	if task.Status != "pending_approval" {
+		if task.Status == "active" {
+			requiredCredentials, parseErr := taskRequiredCredentials(task)
+			if parseErr != nil {
+				return fmt.Errorf("could not parse required_credentials_json")
+			}
+			if len(requiredCredentials) > 0 {
+				if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
+					return err
+				}
+				if _, ensureErr := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, taskCredentialExpiry(task)); ensureErr != nil {
+					return ensureErr
+				}
+				h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
+				h.updateNotificationMsg(ctx, "task", taskID, userID, "✅ <b>Approved</b> — task activated.")
+				h.publishTasksAndQueue(userID)
+				return nil
+			}
+		}
 		return fmt.Errorf("task is not pending approval")
 	}
 	requiredCredentials, err := taskRequiredCredentials(task)
@@ -1941,15 +2046,15 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	} else {
 		expiresAt = time.Now().UTC().Add(time.Duration(task.ExpiresInSeconds) * time.Second)
 	}
+	if _, err := h.ensureTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt); err != nil {
+		return err
+	}
 	won, err := h.st.UpdateTaskApprovedFrom(ctx, taskID, "pending_approval", expiresAt, task.AuthorizedActions)
 	if err != nil {
 		return err
 	}
 	if !won {
 		return fmt.Errorf("task is no longer pending approval")
-	}
-	if _, err := h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, expiresAt); err != nil {
-		return err
 	}
 	h.resolveCanonicalTaskApproval(ctx, task, "task_create", taskApprovalResolution(task), "approved")
 

@@ -237,6 +237,9 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 	}
 
 	method := "GET"
+	explicitMethod := false
+	curlGet := false
+	inferredPostFromBody := false
 	headers := map[string]string{}
 	var positionals []string
 	i := 1
@@ -248,6 +251,7 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: -X without value"}, true
 			}
 			method = canonicalMethod(tokens[i+1])
+			explicitMethod = true
 			i += 2
 		case tok == "-H" || tok == "--header":
 			if i+1 >= len(tokens) {
@@ -258,6 +262,12 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 				headers[name] = value
 			}
 			i += 2
+		case tok == "-G" || tok == "--get":
+			curlGet = true
+			if inferredPostFromBody && !explicitMethod {
+				method = "GET"
+			}
+			i++
 		case isSafeBoolCurlFlag(tok):
 			// Benign no-value flags (`-s`, `--silent`, `-sS`, `--compressed`, …).
 			// They don't affect routing or auth, so we can safely accept
@@ -277,8 +287,9 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 			if autovault.HeaderMaybeContainsShadow(tokens[i+1]) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
 			}
-			if method == "GET" {
+			if method == "GET" && !curlGet {
 				method = "POST"
+				inferredPostFromBody = true
 			}
 			i += 2
 		case strings.HasPrefix(tok, "-"):
