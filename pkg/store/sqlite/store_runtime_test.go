@@ -32,6 +32,20 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
+	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder: "autovault_global_runtime_x",
+		UserID:      user.ID,
+		ServiceID:   "github.global",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder(global): %v", err)
+	}
+	globalPlaceholder, err := st.GetRuntimePlaceholder(ctx, "autovault_global_runtime_x")
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder(global): %v", err)
+	}
+	if globalPlaceholder.AgentID != "" {
+		t.Fatalf("global placeholder AgentID=%q, want empty", globalPlaceholder.AgentID)
+	}
 
 	now := time.Now().UTC().Truncate(time.Second)
 	expiresAt := now.Add(30 * time.Minute)

@@ -140,7 +140,7 @@ function VaultInventorySection({
                     <div key={entry.placeholder} className="rounded border border-border-subtle bg-surface-1 px-3 py-2">
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0 text-xs text-text-secondary">
-                          {entry.task_id ? 'Task-scoped' : 'Manual'} · {agentMap.get(entry.agent_id)?.name ?? entry.agent_id}
+                          {entry.task_id ? 'Task-scoped' : 'Manual'} · {entry.agent_id ? (agentMap.get(entry.agent_id)?.name ?? entry.agent_id) : 'All agents'}
                         </div>
                         <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${placeholderStatusClass(entry)}`}>
                           {placeholderStatus(entry)}
@@ -293,7 +293,7 @@ function LegacyShadowTokensSection({
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-text-primary">{serviceName(entry.service_id)}</div>
               <div className="mt-1 text-xs text-text-tertiary">
-                {agentMap.get(entry.agent_id)?.name ?? entry.agent_id} · minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
+                {entry.agent_id ? (agentMap.get(entry.agent_id)?.name ?? entry.agent_id) : 'All agents'} · minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
                 {entry.last_used_at ? ` · last used ${formatDistanceToNow(new Date(entry.last_used_at), { addSuffix: true })}` : ' · not used yet'}
               </div>
               <code className="mt-2 block break-all text-xs text-text-secondary">{entry.placeholder}</code>

@@ -81,3 +81,22 @@ func TestValidateRuntimePlaceholderAccessRejectsExpiredGrant(t *testing.T) {
 		t.Fatalf("expected expired grant rejection, got ok=%v reason=%q", ok, reason)
 	}
 }
+
+func TestValidateRuntimePlaceholderAccessAllowsUnscopedAgent(t *testing.T) {
+	st, user, agent := newTaskscopeStore(t)
+	other, err := st.CreateAgent(context.Background(), user.ID, "other", "other-token")
+	if err != nil {
+		t.Fatalf("CreateAgent(other): %v", err)
+	}
+	placeholder := &store.RuntimePlaceholder{
+		Placeholder: "autovault_shared_x",
+		UserID:      user.ID,
+		ServiceID:   "github.shared",
+	}
+	if reason, ok := ValidateRuntimePlaceholderAccess(context.Background(), st, placeholder, user.ID, other.ID, time.Now().UTC()); !ok {
+		t.Fatalf("expected unscoped placeholder to validate for another agent, got %q", reason)
+	}
+	if reason, ok := ValidateRuntimePlaceholderAccess(context.Background(), st, placeholder, user.ID, agent.ID, time.Now().UTC()); !ok {
+		t.Fatalf("expected unscoped placeholder to validate for original agent, got %q", reason)
+	}
+}

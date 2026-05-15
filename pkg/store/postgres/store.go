@@ -2263,7 +2263,7 @@ func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store
 			task_id, expires_at, revoked_at, last_used_at, use_count
 		)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID,
+	`, placeholder.Placeholder, placeholder.UserID, nullableString(placeholder.AgentID), placeholder.ServiceID,
 		placeholder.VaultItemID, placeholder.CredentialGrantID, placeholder.TaskID,
 		placeholder.ExpiresAt, placeholder.RevokedAt, placeholder.LastUsedAt, placeholder.UseCount)
 	return err
@@ -2335,12 +2335,16 @@ func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string,
 
 func scanRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
 	placeholder := &store.RuntimePlaceholder{}
+	var agentID *string
 	if err := scanner.Scan(
-		&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID,
+		&placeholder.Placeholder, &placeholder.UserID, &agentID, &placeholder.ServiceID,
 		&placeholder.VaultItemID, &placeholder.CredentialGrantID, &placeholder.TaskID, &placeholder.CreatedAt,
 		&placeholder.ExpiresAt, &placeholder.RevokedAt, &placeholder.LastUsedAt, &placeholder.UseCount,
 	); err != nil {
 		return nil, err
+	}
+	if agentID != nil {
+		placeholder.AgentID = *agentID
 	}
 	return placeholder, nil
 }
@@ -2821,6 +2825,13 @@ func rawJSONOrDefaultBytes(msg json.RawMessage, fallback string) []byte {
 		return []byte(fallback)
 	}
 	return []byte(msg)
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // ── MCP Sessions ─────────────────────────────────────────────────────────────

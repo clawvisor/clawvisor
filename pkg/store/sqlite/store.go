@@ -2494,7 +2494,7 @@ func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store
 			task_id, expires_at, revoked_at, last_used_at, use_count
 		)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)
-	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID,
+	`, placeholder.Placeholder, placeholder.UserID, nullableString(placeholder.AgentID), placeholder.ServiceID,
 		placeholder.VaultItemID, placeholder.CredentialGrantID, placeholder.TaskID,
 		formatNullableTime(placeholder.ExpiresAt), formatNullableTime(placeholder.RevokedAt),
 		formatNullableTime(placeholder.LastUsedAt), placeholder.UseCount)
@@ -2570,12 +2570,16 @@ func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) 
 	placeholder := &store.RuntimePlaceholder{}
 	var createdAt string
 	var expiresAt, revokedAt, lastUsedAt *string
+	var agentID sql.NullString
 	if err := scanner.Scan(
-		&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID,
+		&placeholder.Placeholder, &placeholder.UserID, &agentID, &placeholder.ServiceID,
 		&placeholder.VaultItemID, &placeholder.CredentialGrantID, &placeholder.TaskID, &createdAt,
 		&expiresAt, &revokedAt, &lastUsedAt, &placeholder.UseCount,
 	); err != nil {
 		return nil, err
+	}
+	if agentID.Valid {
+		placeholder.AgentID = agentID.String
 	}
 	placeholder.CreatedAt = parseTime(createdAt)
 	if expiresAt != nil {
@@ -3532,6 +3536,13 @@ func formatNullableTime(t *time.Time) any {
 		return nil
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func boolToInt(v bool) int {

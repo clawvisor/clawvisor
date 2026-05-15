@@ -713,7 +713,7 @@ type RuntimePresetDecision struct {
 type RuntimePlaceholder struct {
 	Placeholder       string     `json:"placeholder"`
 	UserID            string     `json:"user_id"`
-	AgentID           string     `json:"agent_id"`
+	AgentID           string     `json:"agent_id,omitempty"`
 	ServiceID         string     `json:"service_id"`
 	VaultItemID       string     `json:"vault_item_id,omitempty"`
 	CredentialGrantID string     `json:"credential_grant_id,omitempty"`

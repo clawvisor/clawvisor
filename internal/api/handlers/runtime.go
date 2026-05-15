@@ -187,25 +187,27 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 	}
 	req.AgentID = strings.TrimSpace(req.AgentID)
 	req.Service = strings.TrimSpace(req.Service)
-	if req.AgentID == "" || req.Service == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "agent_id and service are required")
+	if req.Service == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service is required")
 		return
 	}
-	agents, err := h.st.ListAgents(r.Context(), user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agents")
-		return
-	}
-	var agent *store.Agent
-	for _, candidate := range agents {
-		if candidate.ID == req.AgentID {
-			agent = candidate
-			break
+	var agentID string
+	if req.AgentID != "" {
+		agents, err := h.st.ListAgents(r.Context(), user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load agents")
+			return
 		}
-	}
-	if agent == nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
-		return
+		for _, candidate := range agents {
+			if candidate.ID == req.AgentID {
+				agentID = candidate.ID
+				break
+			}
+		}
+		if agentID == "" {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "agent not found")
+			return
+		}
 	}
 	if _, err := h.vault.Get(r.Context(), user.ID, req.Service); err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
@@ -223,7 +225,7 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 	entry := &store.RuntimePlaceholder{
 		Placeholder: placeholder,
 		UserID:      user.ID,
-		AgentID:     agent.ID,
+		AgentID:     agentID,
 		ServiceID:   req.Service,
 	}
 	if err := h.st.CreateRuntimePlaceholder(r.Context(), entry); err != nil {
