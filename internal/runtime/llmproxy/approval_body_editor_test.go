@@ -55,11 +55,13 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			want:      `"content":"` + replacement + `"`,
 		},
 		{
-			name:     "openai_responses_string_input",
-			provider: conversation.ProviderOpenAI,
-			path:     "/v1/responses",
-			body:     `{"input":"approve"}`,
-			want:     `"input":"` + replacement + `"`,
+			name:      "openai_responses_string_input",
+			provider:  conversation.ProviderOpenAI,
+			path:      "/v1/responses",
+			body:      `{"input":"approve"}`,
+			wantReply: true,
+			wantVerb:  "approve",
+			want:      `"input":"` + replacement + `"`,
 		},
 		{
 			name:     "openai_responses_message_blocks",
@@ -86,7 +88,7 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			if ok != tc.wantReply || verb != tc.wantVerb || approvalID != tc.wantID {
 				t.Fatalf("LatestApprovalReply=(%q,%q,%v), want (%q,%q,%v)", verb, approvalID, ok, tc.wantVerb, tc.wantID, tc.wantReply)
 			}
-			out, ok, err := replaceApprovalReplyForProvider(req, tc.provider, []byte(tc.body), "approve", replacement)
+			out, ok, err := editor.ReplaceLatestUserText("approve", replacement)
 			if err != nil {
 				t.Fatal(err)
 			}

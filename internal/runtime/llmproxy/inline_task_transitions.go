@@ -7,7 +7,7 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest, action approvalReplyAction) (TaskReplyRewriteResult, error) {
+func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest, action approvalReplyAction, editor approvalBodyEditor) (TaskReplyRewriteResult, error) {
 	// Drop the original tool hold. The user typed "task" so the
 	// harness now shows the task-creation prompt instead — there's
 	// no way back to approving the original tool. Leaving the hold
@@ -24,7 +24,7 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
-	rewritten, ok, err := replaceTaskReplyForProvider(req.HTTPRequest, req.Provider, req.Body, taskCreationPrompt(pending.ToolUse))
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", taskCreationPrompt(pending.ToolUse))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}

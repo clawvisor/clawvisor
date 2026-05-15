@@ -114,15 +114,14 @@ Effects:
 
 ## Layer Ownership
 
-- `approval_body_editor.go`: provider request-body parsing and user text
-  replacement.
+- `approval_body_editor.go`: provider request-body parsing, user text
+  replacement, text flattening, and history augmentation shape edits.
 - `approval_reply_resolver.go`: pending-hold routing and action
   classification.
 - `inline_task_transitions.go`: named transition side effects.
-- `inline_task_rewrite.go`: inline approval preprocessing and history
-  augmentation.
+- `inline_task_rewrite.go`: inline approval preprocessing orchestration
+  and provider-independent augmentation context.
 - `task_reply.go`: `task` reply preprocessing.
 - `release.go`: regular tool approval release and fail-closed guard.
 - `inline_approval_outcome.go`: canonical in-memory resolution records
   used by history augmentation and diagnostics.
-

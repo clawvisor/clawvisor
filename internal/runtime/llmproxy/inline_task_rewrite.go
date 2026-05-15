@@ -2,7 +2,6 @@ package llmproxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -82,8 +81,12 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	if req.PendingApproval == nil || req.Agent == nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
-	verb, approvalID := approvalReplyFromBody(req.HTTPRequest, req.Provider, req.Body)
-	if verb != "approve" && verb != "deny" {
+	editor, ok := newApprovalBodyEditor(req.HTTPRequest, req.Provider, req.Body)
+	if !ok {
+		return InlineApprovalRewriteResult{Body: req.Body}, nil
+	}
+	verb, approvalID, ok := editor.LatestApprovalReply()
+	if !ok || (verb != "approve" && verb != "deny") {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
@@ -103,8 +106,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		// approval isn't one). Defer to TryReleasePendingApproval.
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
-	inner := action.Hold
-	if inner == nil {
+	if action.Hold == nil {
 		return InlineApprovalRewriteResult{Body: req.Body}, nil
 	}
 
@@ -117,7 +119,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// fail closed without disturbing the cache so a fixed retry can
 	// drive the flow.
 	out := InlineApprovalRewriteResult{Body: req.Body}
-	_, canRewrite, probeErr := replaceApprovalReplyForProvider(req.HTTPRequest, req.Provider, req.Body, verb, "")
+	_, canRewrite, probeErr := editor.ReplaceLatestUserText(verb, "")
 	if probeErr != nil {
 		return out, probeErr
 	}
@@ -161,7 +163,7 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		}, inlineApprovalOutcomeFromRewrite(req.RequestID, out))
 	}
 
-	rewritten, ok, err := replaceApprovalReplyForProvider(req.HTTPRequest, req.Provider, req.Body, verb, replacement)
+	rewritten, ok, err := editor.ReplaceLatestUserText(verb, replacement)
 	if err != nil {
 		return out, err
 	}
@@ -235,260 +237,11 @@ const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
 // model-confusion vector since real authorization runs against the
 // task store, but consistent with the rest of the approval scoping.
 func AugmentApprovedInlineTasksInHistory(body []byte, provider conversation.Provider, outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
-	switch provider {
-	case conversation.ProviderAnthropic:
-		return augmentAnthropicApprovedInlineTasks(body, outcomes, userID, agentID)
-	case conversation.ProviderOpenAI:
-		// OpenAI Chat / Responses can share the same persistence work
-		// once we have a reproducer there. For now we keep the
-		// rewrite Anthropic-only — Claude Code is the harness this
-		// matters for and it's the one we've observed losing the
-		// context.
-		return body, false, nil
-	default:
-		return body, false, nil
-	}
-}
-
-func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return body, false, err
-	}
-	rawMessages, ok := raw["messages"]
+	editor, ok := newApprovalBodyEditor(nil, provider, body)
 	if !ok {
 		return body, false, nil
 	}
-	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(rawMessages, &messages); err != nil {
-		return body, false, err
-	}
-
-	changed := false
-
-	for i := 1; i < len(messages); i++ {
-		// Current must be user role.
-		var role string
-		if err := json.Unmarshal(messages[i]["role"], &role); err != nil || role != "user" {
-			continue
-		}
-		// Current content must parse to bare "approve" (the harness
-		// records exactly what the user typed — bare "approve" or
-		// "approve cv-xxx").
-		userText := flattenAnthropicTaskReplyText(messages[i]["content"])
-		verb, _ := conversation.ParseApprovalReplyText(userText)
-		if verb != "approve" {
-			continue
-		}
-		// Skip if we've already augmented this turn — the bracketed
-		// context contains a recognizable marker. Idempotency.
-		if strings.Contains(userText, InlineApprovalAugmentationMarker) {
-			continue
-		}
-
-		// Prior message must be assistant whose text starts with the
-		// substituted-prompt marker. That's how we know this approve
-		// was an inline task gesture (vs. a regular tool approval).
-		var priorRole string
-		if err := json.Unmarshal(messages[i-1]["role"], &priorRole); err != nil || priorRole != "assistant" {
-			continue
-		}
-		priorText := flattenAnthropicTaskReplyText(messages[i-1]["content"])
-		if !strings.Contains(priorText, InlineApprovalSubstitutedPromptMarker) {
-			continue
-		}
-
-		// Decide the augmentation text by looking up the per-approval
-		// outcome the rewrite path recorded on the original turn.
-		// Failed approvals must NOT be re-rendered as success on later
-		// turns — that would falsely tell the model the task is active.
-		approvalID := extractApprovalIDFromPrompt(priorText)
-		note, ok := augmentationContextForOutcome(InlineApprovalOutcomeKey{
-			UserID:     userID,
-			AgentID:    agentID,
-			ApprovalID: approvalID,
-		}, outcomes)
-		if !ok {
-			// Unknown outcome: prompt is from before the footer was
-			// added, or the outcome cache evicted/never recorded.
-			// Skip rather than guess.
-			continue
-		}
-
-		// Rewrite this user message's content. Verb is STRIPPED on
-		// both shapes — the bracketed note conveys what the user did
-		// and leaving "approve" on its own line would parse as a
-		// fresh approval to any downstream consumer (release path,
-		// future augmenter pass). See augmentUserContent for details.
-		//
-		//   - Bare string: replaced wholesale with note.
-		//   - Array of blocks: bare-verb lines stripped from every
-		//     text block; note spliced in at the first verb-bearing
-		//     block's position. Non-text blocks and prose pass
-		//     through unchanged.
-		updated, ok := augmentUserContent(messages[i]["content"], verb, note)
-		if !ok {
-			// Shape we don't know how to edit safely. Skip rather
-			// than risk losing image/tool_result blocks.
-			continue
-		}
-		messages[i]["content"] = updated
-		changed = true
-	}
-
-	if !changed {
-		return body, false, nil
-	}
-	updatedMessages, err := json.Marshal(messages)
-	if err != nil {
-		return body, false, err
-	}
-	raw["messages"] = updatedMessages
-	out, err := json.Marshal(raw)
-	if err != nil {
-		return body, false, err
-	}
-	return out, true, nil
-}
-
-// augmentUserContent rewrites a user message's content with the
-// approval augmentation while preserving non-text blocks (images,
-// tool_results) the harness may have included alongside.
-//
-// Both content shapes have the verb STRIPPED — neither string nor
-// array form leaves a bare "approve" line behind. A downstream
-// re-parse (release path, future augmenter pass, defensive scan) must
-// never find a fresh-looking approval gesture in already-augmented
-// content. The bracketed note conveys what happened ("created and
-// approved by the user inline" / "creation was NOT completed").
-//
-//   - Bare string: replaced wholesale with note.
-//   - Array of blocks: every text block whose text parses as a verb
-//     has its bare-verb lines STRIPPED; the note is spliced in at the
-//     first verb-bearing block's position. Non-text blocks and text
-//     blocks that don't carry the verb pass through unchanged.
-//
-// Returns (encoded, true) on success; (_, false) when the content
-// shape isn't one we can edit safely (e.g., an array with no
-// verb-bearing text block).
-func augmentUserContent(content json.RawMessage, verb, note string) (json.RawMessage, bool) {
-	_ = verb // historical signature; verb is no longer prepended
-
-	if len(content) == 0 {
-		encoded, err := json.Marshal(note)
-		return encoded, err == nil
-	}
-	// Bare string content.
-	var s string
-	if err := json.Unmarshal(content, &s); err == nil {
-		encoded, marshalErr := json.Marshal(note)
-		return encoded, marshalErr == nil
-	}
-	// Array-of-blocks content. Multi-block user messages can carry
-	// verb-bearing lines in more than one text block (e.g., an
-	// earlier "deny cv-stale" plus a later bare "approve"). Strip
-	// bare-verb lines from EVERY text block so none of them remains
-	// parseable as a fresh approval; splice the augmentation note in
-	// at the first verb-bearing block's position.
-	var blocks []map[string]json.RawMessage
-	if err := json.Unmarshal(content, &blocks); err != nil {
-		return nil, false
-	}
-	spliceAt := -1
-	for i, blk := range blocks {
-		var t string
-		if err := json.Unmarshal(blk["type"], &t); err != nil {
-			continue
-		}
-		if t != "text" {
-			continue
-		}
-		var text string
-		if err := json.Unmarshal(blk["text"], &text); err != nil {
-			continue
-		}
-		if v, _ := conversation.ParseApprovalReplyText(text); v == "" {
-			continue
-		}
-		if spliceAt < 0 {
-			spliceAt = i
-		}
-		stripped := stripBareApprovalLines(text)
-		encoded, err := json.Marshal(stripped)
-		if err != nil {
-			return nil, false
-		}
-		blocks[i]["text"] = encoded
-	}
-	if spliceAt < 0 {
-		return nil, false
-	}
-	// Splice the note into the first verb-bearing block. If that
-	// block is now empty (its content was only verb lines), the note
-	// becomes its content; otherwise the note is appended to whatever
-	// non-verb prose remained.
-	var spliceText string
-	_ = json.Unmarshal(blocks[spliceAt]["text"], &spliceText)
-	newSpliceText := note
-	if spliceText != "" {
-		newSpliceText = spliceText + "\n\n" + note
-	}
-	encoded, err := json.Marshal(newSpliceText)
-	if err != nil {
-		return nil, false
-	}
-	blocks[spliceAt]["text"] = encoded
-
-	// Drop any text block whose text became empty after stripping.
-	// Anthropic rejects requests containing empty text blocks
-	// (`messages: text content blocks must be non-empty`), and a
-	// multi-block user message with two verb-bearing blocks would
-	// otherwise leave the non-spliced one as {"type":"text","text":""}.
-	// The spliceAt block is not at risk — we just filled it with the
-	// note above.
-	kept := blocks[:0]
-	for _, blk := range blocks {
-		var t string
-		if err := json.Unmarshal(blk["type"], &t); err == nil && t == "text" {
-			var bt string
-			if err := json.Unmarshal(blk["text"], &bt); err == nil && bt == "" {
-				continue
-			}
-		}
-		kept = append(kept, blk)
-	}
-
-	out, err := json.Marshal(kept)
-	if err != nil {
-		return nil, false
-	}
-	return out, true
-}
-
-// stripBareApprovalLines removes lines that match the bare or
-// verb+cv-id approval shape — exactly the lines ParseApprovalReplyText
-// would have flagged. Used to ensure the augmented message doesn't
-// leave a parseable "approve" / "approve cv-xxx" line behind in the
-// content, which a downstream re-parse could interpret as a fresh
-// approval gesture.
-func stripBareApprovalLines(text string) string {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	kept := make([]string, 0, len(lines))
-	for _, line := range lines {
-		probe := strings.TrimSpace(line)
-		if probe == "" {
-			kept = append(kept, line)
-			continue
-		}
-		// Use the same parser that decides whether a line is an
-		// approval — anything it would match, we drop.
-		if verb, _ := conversation.ParseApprovalReplyText(probe); verb != "" {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return strings.TrimSpace(strings.Join(kept, "\n"))
+	return editor.AugmentInlineApprovalHistory(outcomes, userID, agentID)
 }
 
 // augmentationContextForOutcome maps an outcome lookup to the bracketed
