@@ -1307,6 +1307,8 @@ export const api = {
   },
   vault: {
     listItems: () => get<{ entries: VaultItem[]; total: number }>('/api/vault/items'),
+    createItem: (id: string, value: string) =>
+      post<{ id: string; status: string }>('/api/vault/items', { id, value }),
     getItem: (id: string) => get<VaultItem>(`/api/vault/items/${encodeURIComponent(id)}`),
     updateItem: (id: string, value: string) =>
       put<{ id: string; status: string }>(`/api/vault/items/${encodeURIComponent(id)}`, { value }),

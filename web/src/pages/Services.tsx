@@ -51,7 +51,13 @@ function VaultInventorySection({
   services: ServiceInfo[]
   googleOAuthConfigured: boolean
 }) {
+  const qc = useQueryClient()
   const [selectedID, setSelectedID] = useState('')
+  const [addingSecret, setAddingSecret] = useState(false)
+  const [newSecretID, setNewSecretID] = useState('')
+  const [newSecretValue, setNewSecretValue] = useState('')
+  const [newSecretError, setNewSecretError] = useState<string | null>(null)
+  const [savingSecret, setSavingSecret] = useState(false)
   const selected = vaultItems.find(item => item.id === selectedID) ?? vaultItems[0]
   const connectedItems = vaultItems.filter(item => item.kind === 'connected_account')
   const secretItems = vaultItems.filter(item => item.kind !== 'connected_account')
@@ -65,6 +71,26 @@ function VaultInventorySection({
   }, [services])
   const selectedService = selected ? serviceForVaultItem(selected, serviceMap) : undefined
   const selectedPlaceholders = placeholders.filter(entry => selected ? placeholderBelongsToVaultItem(entry, selected) : false)
+
+  async function handleCreateSecret() {
+    const id = newSecretID.trim()
+    const value = newSecretValue.trim()
+    if (!id || !value) return
+    setSavingSecret(true)
+    setNewSecretError(null)
+    try {
+      await api.vault.createItem(id, value)
+      setSelectedID(id)
+      setNewSecretID('')
+      setNewSecretValue('')
+      setAddingSecret(false)
+      qc.invalidateQueries({ queryKey: ['vault-items'] })
+    } catch (e: any) {
+      setNewSecretError(e.message ?? 'Failed to add secret')
+    } finally {
+      setSavingSecret(false)
+    }
+  }
 
   function renderItemGroup(items: VaultItem[], empty: string) {
     if (items.length === 0) {
@@ -136,7 +162,44 @@ function VaultInventorySection({
             {renderItemGroup(connectedItems, 'No connected accounts yet.')}
           </div>
           <div className="space-y-2 pt-3">
-            <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Vault secrets</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Vault secrets</div>
+              <button
+                onClick={() => { setAddingSecret(v => !v); setNewSecretError(null) }}
+                className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+              >
+                Add secret
+              </button>
+            </div>
+            {addingSecret && (
+              <div className="rounded border border-border-subtle bg-surface-0 px-4 py-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]">
+                  <input
+                    value={newSecretID}
+                    onChange={e => setNewSecretID(e.target.value)}
+                    placeholder="name, e.g. stripe.test"
+                    className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                    autoFocus
+                  />
+                  <input
+                    type="password"
+                    value={newSecretValue}
+                    onChange={e => setNewSecretValue(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleCreateSecret()}
+                    placeholder="Secret value"
+                    className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                  />
+                  <button
+                    onClick={handleCreateSecret}
+                    disabled={savingSecret || !newSecretID.trim() || !newSecretValue.trim()}
+                    className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                  >
+                    {savingSecret ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                {newSecretError && <p className="text-xs text-danger">{newSecretError}</p>}
+              </div>
+            )}
             {renderItemGroup(secretItems, 'No manual or captured vault secrets yet.')}
           </div>
         </div>

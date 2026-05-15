@@ -794,6 +794,7 @@ func (s *Server) routes() http.Handler {
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
 	mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
+	mux.Handle("POST /api/vault/items", user(vaultHandler.CreateForUser))
 	mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
 	mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
 	mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))

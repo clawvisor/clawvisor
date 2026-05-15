@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -61,6 +62,54 @@ func (h *VaultHandler) ListForAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeList(w, r, agent.UserID)
+}
+
+func (h *VaultHandler) CreateForUser(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	if h.vault == nil {
+		writeError(w, http.StatusConflict, "VAULT_DISABLED", "vault is not configured")
+		return
+	}
+	var body struct {
+		ID    string `json:"id"`
+		Value string `json:"value"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	itemID := strings.TrimSpace(body.ID)
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id is required")
+		return
+	}
+	if !validManualVaultItemID(itemID) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id may only contain letters, numbers, dots, underscores, dashes, and colons")
+		return
+	}
+	if strings.TrimSpace(body.Value) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item value is required")
+		return
+	}
+	if h.isReservedVaultItemID(r.Context(), user.ID, itemID) {
+		writeError(w, http.StatusConflict, "RESERVED_VAULT_ITEM", "vault item id is reserved for a connected account or provider credential")
+		return
+	}
+	if _, err := h.vault.Get(r.Context(), user.ID, itemID); err == nil {
+		writeError(w, http.StatusConflict, "VAULT_ITEM_EXISTS", "vault item already exists")
+		return
+	} else if err != nil && !errors.Is(err, vault.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not verify vault item")
+		return
+	}
+	if err := h.vault.Set(r.Context(), user.ID, itemID, []byte(body.Value)); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create vault item")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "id": itemID})
 }
 
 func (h *VaultHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +226,40 @@ func (h *VaultHandler) findItem(r *http.Request, userID, itemID string) (VaultIt
 		}
 	}
 	return VaultItem{}, false, nil
+}
+
+func validManualVaultItemID(itemID string) bool {
+	if strings.Contains(itemID, "..") {
+		return false
+	}
+	for _, r := range itemID {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-', r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (h *VaultHandler) isReservedVaultItemID(ctx context.Context, userID, itemID string) bool {
+	if _, _, ok := parseAgentScopedLLMKey(itemID); ok {
+		return true
+	}
+	if llmProviderFromVaultKey(itemID) != "" {
+		return true
+	}
+	if h.adapterReg == nil {
+		return false
+	}
+	serviceID, _ := splitServiceScopedVaultItemID(itemID)
+	if _, ok := h.adapterReg.GetForUser(ctx, serviceID, userID); ok {
+		return true
+	}
+	return false
 }
 
 func (h *VaultHandler) placeholdersForVaultItem(ctx context.Context, userID string, item VaultItem) ([]*store.RuntimePlaceholder, error) {

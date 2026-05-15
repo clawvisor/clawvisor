@@ -190,6 +190,39 @@ func TestVaultItemsUpdateAndDeleteSecret(t *testing.T) {
 	}
 }
 
+func TestVaultItemsCreateSecret(t *testing.T) {
+	env := newTestEnv(t, newMockAdapter("mock.vault", "read"))
+	sc := newScenario(t, env, "vault-secret-create")
+
+	resp := sc.session.do("POST", "/api/vault/items", map[string]any{
+		"id":    "manual.secret",
+		"value": "secret-value",
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	if body["id"] != "manual.secret" {
+		t.Fatalf("unexpected create response: %v", body)
+	}
+	got, err := env.Vault.Get(context.Background(), sc.session.UserID, "manual.secret")
+	if err != nil {
+		t.Fatalf("Vault.Get: %v", err)
+	}
+	if string(got) != "secret-value" {
+		t.Fatalf("unexpected stored secret value %q", string(got))
+	}
+
+	resp = sc.session.do("POST", "/api/vault/items", map[string]any{
+		"id":    "manual.secret",
+		"value": "other-value",
+	})
+	mustStatus(t, resp, http.StatusConflict)
+
+	resp = sc.session.do("POST", "/api/vault/items", map[string]any{
+		"id":    "mock.vault",
+		"value": "adapter-collision",
+	})
+	mustStatus(t, resp, http.StatusConflict)
+}
+
 type sharedVaultMockAdapter struct {
 	*mockAdapter
 	vaultKey string
