@@ -56,4 +56,7 @@ func TestVaultItemsListForUserAndAgent(t *testing.T) {
 	if detail["id"] != "mock.vault" {
 		t.Fatalf("unexpected detail id %v", detail["id"])
 	}
+	if len(arr(t, detail, "placeholders")) != 1 {
+		t.Fatalf("expected detail placeholder history, got %v", detail["placeholders"])
+	}
 }

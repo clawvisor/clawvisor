@@ -468,6 +468,7 @@ export interface VaultItem {
   service_bindings?: VaultServiceBinding[]
   active_placeholder_count: number
   last_used_at?: string
+  placeholders?: RuntimePlaceholder[]
 }
 
 export interface NotificationConfig {

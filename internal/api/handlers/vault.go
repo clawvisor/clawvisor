@@ -31,14 +31,15 @@ type VaultServiceBinding struct {
 }
 
 type VaultItem struct {
-	ID                     string                `json:"id"`
-	Name                   string                `json:"name"`
-	Kind                   string                `json:"kind"`
-	Provider               string                `json:"provider,omitempty"`
-	Status                 string                `json:"status"`
-	ServiceBindings        []VaultServiceBinding `json:"service_bindings,omitempty"`
-	ActivePlaceholderCount int                   `json:"active_placeholder_count"`
-	LastUsedAt             *time.Time            `json:"last_used_at,omitempty"`
+	ID                     string                      `json:"id"`
+	Name                   string                      `json:"name"`
+	Kind                   string                      `json:"kind"`
+	Provider               string                      `json:"provider,omitempty"`
+	Status                 string                      `json:"status"`
+	ServiceBindings        []VaultServiceBinding       `json:"service_bindings,omitempty"`
+	ActivePlaceholderCount int                         `json:"active_placeholder_count"`
+	LastUsedAt             *time.Time                  `json:"last_used_at,omitempty"`
+	Placeholders           []*store.RuntimePlaceholder `json:"placeholders,omitempty"`
 }
 
 func (h *VaultHandler) ListForUser(w http.ResponseWriter, r *http.Request) {
@@ -77,11 +78,34 @@ func (h *VaultHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range items {
 		if item.ID == itemID {
+			placeholders, err := h.placeholdersForVaultItem(r.Context(), user.ID, itemID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault item placeholders")
+				return
+			}
+			item.Placeholders = placeholders
 			writeJSON(w, http.StatusOK, item)
 			return
 		}
 	}
 	writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
+}
+
+func (h *VaultHandler) placeholdersForVaultItem(ctx context.Context, userID, itemID string) ([]*store.RuntimePlaceholder, error) {
+	placeholders, err := h.st.ListRuntimePlaceholders(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var out []*store.RuntimePlaceholder
+	for _, placeholder := range placeholders {
+		if placeholder.VaultItemID == itemID || (placeholder.VaultItemID == "" && placeholder.ServiceID == itemID) {
+			out = append(out, placeholder)
+		}
+	}
+	if out == nil {
+		out = []*store.RuntimePlaceholder{}
+	}
+	return out, nil
 }
 
 func (h *VaultHandler) writeList(w http.ResponseWriter, r *http.Request, userID string) {

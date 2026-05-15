@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder } from '../api/client'
+import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder, type VaultItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -39,62 +39,159 @@ function AccountSection({
 }
 
 function VaultInventorySection({
-  activeServices,
+  vaultItems,
+  placeholders,
+  agents,
   googleOAuthConfigured,
 }: {
-  activeServices: ServiceInfo[]
+  vaultItems: VaultItem[]
+  placeholders: RuntimePlaceholder[]
+  agents: Agent[]
   googleOAuthConfigured: boolean
 }) {
-  const vaulted = activeServices.filter(service => !service.credential_free)
-  const credentialFree = activeServices.filter(service => service.credential_free)
+  const [selectedID, setSelectedID] = useState('')
+  const selected = vaultItems.find(item => item.id === selectedID) ?? vaultItems[0]
+  const activeCount = vaultItems.reduce((sum, item) => sum + item.active_placeholder_count, 0)
+  const taskBoundCount = placeholders.filter(entry => !!entry.task_id && isPlaceholderActive(entry)).length
+  const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
+  const selectedPlaceholders = placeholders.filter(entry => placeholderBelongsToVaultItem(entry, selected?.id ?? ''))
 
   return (
     <AccountSection
       title="Vault"
-      description="Connected credentials live in Clawvisor’s vault. Use this inventory to see what is vaulted, what is credential-free, and whether system OAuth credentials are configured."
+      description="Connected accounts and vaulted secrets share one inventory. Open an item to inspect active placeholders, task bindings, and recent use."
     >
-      <div className="grid gap-3 md:grid-cols-3">
-        <VaultMetric label="Vaulted credentials" value={String(vaulted.length)} />
-        <VaultMetric label="Credential-free" value={String(credentialFree.length)} />
+      <div className="grid gap-3 md:grid-cols-4">
+        <VaultMetric label="Vault items" value={String(vaultItems.length)} />
+        <VaultMetric label="Active placeholders" value={String(activeCount)} />
+        <VaultMetric label="Task-bound" value={String(taskBoundCount)} />
         <VaultMetric label="Google OAuth" value={googleOAuthConfigured ? 'Configured' : 'Missing'} />
       </div>
-      <div className="space-y-2">
-        {activeServices.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No connected services yet.
-          </div>
-        )}
-        {activeServices.map(service => (
-          <div key={`${service.id}:${service.alias ?? 'default'}`} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-text-primary">{serviceName(service.id, service.alias)}</div>
-              <div className="mt-1 text-xs text-text-tertiary">
-                {service.credential_free ? 'Credential-free activation' : 'Vault-backed credential'}
-                {service.activated_at ? ` · connected ${formatDistanceToNow(new Date(service.activated_at), { addSuffix: true })}` : ''}
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+        <div className="space-y-2">
+          {vaultItems.length === 0 && (
+            <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+              No vault items yet.
+            </div>
+          )}
+          {vaultItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setSelectedID(item.id)}
+              className={`w-full rounded border px-4 py-3 text-left transition-colors ${
+                selected?.id === item.id
+                  ? 'border-brand/50 bg-brand/5'
+                  : 'border-border-subtle bg-surface-0 hover:bg-surface-2'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-text-primary">{item.name}</div>
+                  <div className="mt-1 text-xs text-text-tertiary">
+                    {item.kind === 'connected_account' ? 'Connected account' : 'Vault secret'}
+                    {item.provider ? ` · ${item.provider}` : ''}
+                    {item.last_used_at ? ` · used ${formatDistanceToNow(new Date(item.last_used_at), { addSuffix: true })}` : ''}
+                  </div>
+                </div>
+                <div className="shrink-0 rounded bg-surface-2 px-2 py-1 text-xs text-text-secondary">
+                  {item.active_placeholder_count} live
+                </div>
+              </div>
+              {item.service_bindings && item.service_bindings.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {item.service_bindings.map(binding => (
+                    <span key={`${binding.service_id}:${binding.alias ?? 'default'}`} className="rounded border border-border-subtle px-2 py-0.5 text-xs text-text-tertiary">
+                      {binding.name}{binding.alias ? ` · ${binding.alias}` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded border border-border-subtle bg-surface-0 p-4">
+          {!selected && (
+            <div className="text-sm text-text-tertiary">Select a vault item.</div>
+          )}
+          {selected && (
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">{selected.name}</div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {selected.id} · {selected.status}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <VaultMetric label="Live" value={String(selectedPlaceholders.filter(isPlaceholderActive).length)} />
+                <VaultMetric label="Expired" value={String(selectedPlaceholders.filter(isPlaceholderExpired).length)} />
+                <VaultMetric label="Revoked" value={String(selectedPlaceholders.filter(entry => !!entry.revoked_at).length)} />
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wider text-text-tertiary">Placeholders</div>
+                <div className="space-y-2">
+                  {selectedPlaceholders.length === 0 && (
+                    <div className="rounded border border-dashed border-border-default px-3 py-4 text-sm text-text-tertiary">
+                      No placeholders for this vault item yet. Task approvals mint task-scoped placeholders automatically.
+                    </div>
+                  )}
+                  {selectedPlaceholders.slice(0, 8).map(entry => (
+                    <div key={entry.placeholder} className="rounded border border-border-subtle bg-surface-1 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 text-xs text-text-secondary">
+                          {entry.task_id ? 'Task-scoped' : 'Manual'} · {agentMap.get(entry.agent_id)?.name ?? entry.agent_id}
+                        </div>
+                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${placeholderStatusClass(entry)}`}>
+                          {placeholderStatus(entry)}
+                        </span>
+                      </div>
+                      <code className="mt-1 block truncate text-xs text-text-tertiary">{entry.placeholder}</code>
+                      <div className="mt-1 text-xs text-text-tertiary">
+                        Minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
+                        {entry.expires_at ? ` · expires ${formatDistanceToNow(new Date(entry.expires_at), { addSuffix: true })}` : ''}
+                        {entry.use_count ? ` · used ${entry.use_count}x` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded border border-border-subtle bg-surface-1 px-3 py-2 text-xs text-text-tertiary">
+                Manual placeholder minting should start from this detail surface. The current v1 path mints credentials through approved tasks so placeholders inherit the task lifetime.
               </div>
             </div>
-            <div className={`rounded px-2 py-1 text-xs font-medium ${
-              service.credential_free ? 'bg-surface-2 text-text-secondary' : 'bg-success/10 text-success'
-            }`}>
-              {service.credential_free ? 'No secret stored' : 'Stored in vault'}
-            </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
     </AccountSection>
   )
 }
 
-function VaultMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-border-subtle bg-surface-0 p-3">
-      <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
-      <div className="mt-1 text-sm font-medium text-text-primary">{value}</div>
-    </div>
-  )
+function placeholderBelongsToVaultItem(entry: RuntimePlaceholder, vaultItemID: string) {
+  return !!vaultItemID && (entry.vault_item_id === vaultItemID || (!entry.vault_item_id && entry.service_id === vaultItemID))
 }
 
-function ShadowTokensSection({
+function isPlaceholderActive(entry: RuntimePlaceholder) {
+  return !entry.revoked_at && !isPlaceholderExpired(entry)
+}
+
+function isPlaceholderExpired(entry: RuntimePlaceholder) {
+  return !!entry.expires_at && new Date(entry.expires_at).getTime() <= Date.now()
+}
+
+function placeholderStatus(entry: RuntimePlaceholder) {
+  if (entry.revoked_at) return 'Revoked'
+  if (isPlaceholderExpired(entry)) return 'Expired'
+  return 'Live'
+}
+
+function placeholderStatusClass(entry: RuntimePlaceholder) {
+  if (entry.revoked_at) return 'bg-danger/10 text-danger'
+  if (isPlaceholderExpired(entry)) return 'bg-yellow-500/10 text-yellow-700'
+  return 'bg-success/10 text-success'
+}
+
+function LegacyShadowTokensSection({
   agents,
   services,
   entries,
@@ -136,8 +233,8 @@ function ShadowTokensSection({
 
   return (
     <AccountSection
-      title="Shadow Tokens"
-      description="Mint revocable shadow tokens for a specific agent and connected service. Agents can use these placeholders in config or prompts without ever seeing the real credential."
+      title="Legacy Shadow Tokens"
+      description="Compatibility view for existing manual placeholders. New credential access should normally be requested through task approval."
     >
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
         <select
@@ -188,10 +285,10 @@ function ShadowTokensSection({
       <div className="space-y-2">
         {entries.length === 0 && (
           <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No shadow tokens minted yet.
+            No legacy shadow tokens minted yet.
           </div>
         )}
-        {entries.map(entry => (
+        {entries.slice(0, 5).map(entry => (
           <div key={entry.placeholder} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-text-primary">{serviceName(entry.service_id)}</div>
@@ -220,6 +317,15 @@ function ShadowTokensSection({
         ))}
       </div>
     </AccountSection>
+  )
+}
+
+function VaultMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border-subtle bg-surface-0 p-3">
+      <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
+      <div className="mt-1 text-sm font-medium text-text-primary">{value}</div>
+    </div>
   )
 }
 
@@ -1395,6 +1501,12 @@ export default function Services() {
     enabled: secretVaultUI,
     refetchInterval: 30_000,
   })
+  const { data: vaultItems } = useQuery({
+    queryKey: ['vault-items'],
+    queryFn: () => api.vault.listItems(),
+    enabled: secretVaultUI,
+    refetchInterval: 30_000,
+  })
   const { data: auditData } = useQuery({
     queryKey: ['audit', 'accounts'],
     queryFn: () => api.audit.list({ limit: 25 }),
@@ -1511,15 +1623,17 @@ export default function Services() {
         <>
           {secretVaultUI && (
             <VaultInventorySection
-              activeServices={activeServices}
+              vaultItems={vaultItems?.entries ?? []}
+              placeholders={runtimePlaceholders?.entries ?? []}
+              agents={agents}
               googleOAuthConfigured={!!googleOAuth?.configured}
             />
           )}
-          {secretVaultUI && (
-            <ShadowTokensSection
+          {secretVaultUI && (runtimePlaceholders?.entries ?? []).some(entry => !entry.task_id) && (
+            <LegacyShadowTokensSection
               agents={agents}
               services={activeServices}
-              entries={runtimePlaceholders?.entries ?? []}
+              entries={(runtimePlaceholders?.entries ?? []).filter(entry => !entry.task_id)}
             />
           )}
           {secretVaultUI && <CredentialActivitySection entries={recentServiceActivity} />}
