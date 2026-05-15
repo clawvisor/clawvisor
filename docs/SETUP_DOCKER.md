@@ -16,10 +16,12 @@ If they choose the **SQLite single-container** path, run:
 
 ```bash
 make docker-setup   # interactive config wizard (no Go/Node needed)
-make docker         # starts the container, mounts ~/.clawvisor
+make docker         # starts the container in the foreground, mounts ~/.clawvisor
 ```
 
-Then skip to [Step 5](#step-5-extract-the-magic-link) to get the magic link.
+`make docker` runs in the foreground — the magic link is printed directly to
+the terminal. Copy it from there and open it in a browser to sign in. No
+separate log command is needed.
 
 For the Postgres path, continue with the steps below.
 
