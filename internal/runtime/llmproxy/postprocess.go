@@ -291,6 +291,12 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				Allowed:      true,
 				RewriteInput: rewritten,
 			}
+		} else if controlToolUseMentionsEndpoint(tu, cfg.ControlBaseURL) {
+			audit("block", "control_rewriter_error", "control endpoint command must be a single foreground curl with no pipes, subshells, or extra shell commands")
+			return conversation.ToolUseVerdict{
+				Allowed: false,
+				Reason:  "Clawvisor: control endpoint rewrite refused — use a single foreground curl to the control endpoint, with no pipes, subshells, redirects to output files, or extra shell commands",
+			}
 		}
 
 		v = cfg.Inspector.Inspect(req.Context(), inspector.ToolUse{

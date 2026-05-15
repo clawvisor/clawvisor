@@ -590,6 +590,16 @@ func controlCallParts(t conversation.ToolUse, controlBaseURL string) (*url.URL, 
 	return nil, "", nil, false
 }
 
+func controlToolUseMentionsEndpoint(t conversation.ToolUse, controlBaseURL string) bool {
+	if len(t.Input) == 0 {
+		return false
+	}
+	if u, ok := controlURLFromStructuredInput(t.Input); ok && isControlHost(u, controlBaseURL) {
+		return true
+	}
+	return commandInputMentionsControlEndpoint(t.Input, controlBaseURL)
+}
+
 func controlURLFromStructuredInput(in json.RawMessage) (*url.URL, bool) {
 	u, _, _, ok := controlPartsFromStructuredInput(in, "")
 	return u, ok
@@ -619,6 +629,39 @@ func controlPartsFromStructuredInput(in json.RawMessage, controlBaseURL string) 
 func controlURLFromCommandInput(in json.RawMessage) (*url.URL, bool) {
 	u, _, _, ok := controlPartsFromCommandInput(in, "")
 	return u, ok
+}
+
+func commandInputMentionsControlEndpoint(in json.RawMessage, controlBaseURL string) bool {
+	var raw struct {
+		Cmd     string `json:"cmd,omitempty"`
+		Command string `json:"command,omitempty"`
+	}
+	if err := json.Unmarshal(in, &raw); err != nil {
+		return false
+	}
+	cmd := raw.Cmd
+	if strings.TrimSpace(cmd) == "" {
+		cmd = raw.Command
+	}
+	return textMentionsControlEndpoint(cmd, controlBaseURL)
+}
+
+func textMentionsControlEndpoint(text string, controlBaseURL string) bool {
+	if strings.Contains(text, "://"+ControlSyntheticHost+"/control") {
+		return true
+	}
+	base, err := url.Parse(strings.TrimSpace(controlBaseURL))
+	if err != nil || base.Host == "" {
+		return false
+	}
+	prefix := strings.TrimRight(controlBaseURL, "/") + "/control"
+	if strings.Contains(text, prefix) {
+		return true
+	}
+	if base.Scheme != "" && strings.Contains(text, base.Scheme+"://"+base.Host+"/control") {
+		return true
+	}
+	return false
 }
 
 func controlPartsFromCommandInput(in json.RawMessage, controlBaseURL string) (*url.URL, string, []byte, bool) {

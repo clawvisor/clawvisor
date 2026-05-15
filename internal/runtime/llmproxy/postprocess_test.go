@@ -73,12 +73,12 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if got.Rewritten {
@@ -96,14 +96,14 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
-		Audit:       NewAuditEmitter(st, nil, nil),
-		RequestID:   "req-audit",
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+		Audit:        NewAuditEmitter(st, nil, nil),
+		RequestID:    "req-audit",
 	})
 
 	if got.Rewritten {
@@ -148,12 +148,12 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 		ToolRules: []*store.RuntimePolicyRule{{
 			ID:       "deny-webfetch",
 			UserID:   userID,
@@ -460,7 +460,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -516,7 +516,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -630,7 +630,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    inspector.DefaultRewriteOpts(""),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -673,7 +673,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -716,7 +716,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -757,7 +757,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:      insp,
 		RewriteOpts:    opts,
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
 		Store:          st,
 		AgentUserID:    userID,
 		AgentID:        agentID,
@@ -789,6 +789,42 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	}
 }
 
+func TestPostprocess_MalformedSyntheticControlCommandRefusesAsControlError(t *testing.T) {
+	cmd := `curl -sS 'https://clawvisor.local/control/services' | python3 -c 'print("filter")'`
+	input, err := json.Marshal(map[string]any{
+		"command":     cmd,
+		"description": "Find agentphone service definition",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := anthropicJSONWithNamedToolUse("Bash", string(input))
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:      insp,
+		RewriteOpts:    inspector.DefaultRewriteOpts(""),
+		CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
+		Store:          st,
+		AgentUserID:    userID,
+		AgentID:        agentID,
+		ControlBaseURL: "http://localhost:25297",
+	})
+
+	if !got.Rewritten {
+		t.Fatalf("expected malformed control command refusal")
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "control endpoint rewrite refused") {
+		t.Fatalf("expected control-specific refusal, got: %s", out)
+	}
+	if strings.Contains(out, "no matching task scope") {
+		t.Fatalf("malformed control command should not fall through to task-scope refusal: %s", out)
+	}
+}
+
 func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	body := []byte(`{
 		"id":"msg_1",
@@ -809,7 +845,7 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
 		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
-		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
 		AgentID:          agentID,
@@ -853,13 +889,13 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
-		Posture:     runtimedecision.PostureObserve,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+		Posture:      runtimedecision.PostureObserve,
 		ToolRules: []*store.RuntimePolicyRule{{
 			ID:       "deny-webfetch",
 			UserID:   userID,
@@ -891,12 +927,12 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -971,12 +1007,12 @@ data: {"type":"message_stop"}
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -1013,12 +1049,12 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -1058,12 +1094,12 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -1100,14 +1136,14 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
-		Audit:       NewAuditEmitter(st, nil, nil),
-		RequestID:   "req-custom-tool",
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
+		Audit:        NewAuditEmitter(st, nil, nil),
+		RequestID:    "req-custom-tool",
 	})
 
 	if got.Rewritten {
@@ -1167,12 +1203,12 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -1199,12 +1235,12 @@ data: [DONE]
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	if !got.Rewritten {
@@ -1233,12 +1269,12 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
-		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		Inspector:    insp,
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
-		Store:       st,
-		AgentUserID: userID,
-		AgentID:     agentID,
+		Store:        st,
+		AgentUserID:  userID,
+		AgentID:      agentID,
 	})
 
 	// "Block" path of the existing rewriter replaces the content with text.
