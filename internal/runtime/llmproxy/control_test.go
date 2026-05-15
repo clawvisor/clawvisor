@@ -26,6 +26,9 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
 		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
 	}
+	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
+		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "Read files with `read`") {
 		t.Fatalf("notice should disclose allowlisted read-only capabilities using actual tool names; got:\n%s", notice)
 	}

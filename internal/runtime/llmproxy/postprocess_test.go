@@ -591,7 +591,7 @@ func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
 	for _, want := range []string{
 		"Please request a Clawvisor task",
 		"proxy-lite control endpoint",
-		"https://clawvisor.local/control/tasks?wait=true&timeout=120",
+		"https://clawvisor.local/control/tasks?surface=inline",
 		"tell me that I will need to approve it",
 		`"tool_name": "Write"`,
 		"/tmp/report.txt",

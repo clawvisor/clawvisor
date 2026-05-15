@@ -209,8 +209,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	mustContain := []string{
 		"Clawvisor proxy-lite control plane",
 		"https://clawvisor.local/control/skill",
-		"https://clawvisor.local/control/tasks?wait=true",
-		"timeout=120",
+		"https://clawvisor.local/control/tasks?surface=inline",
 		"Before creating the task, tell me I will need to approve it",
 		// Proactive task-creation steer: the model should declare scope
 		// up front, not wait until a tool call gets refused.
@@ -693,8 +692,7 @@ func TestLLMEndpoint_RewritesTaskApprovalReplyBeforeForwarding(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks?wait=true") ||
-		!strings.Contains(string(seenBody), "timeout=120") ||
+	if !strings.Contains(string(seenBody), "https://clawvisor.local/control/tasks?surface=inline") ||
 		!strings.Contains(string(seenBody), "tell me that I will need to approve it") ||
 		!strings.Contains(string(seenBody), "/tmp/greet.sh") ||
 		strings.Contains(string(seenBody), `"content":"task"`) {

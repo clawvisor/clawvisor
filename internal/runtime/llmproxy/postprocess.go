@@ -756,9 +756,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	// The user just typed "task" at the inline prompt — they are
 	// definitionally at the chat surface. Pass ?surface=inline so the
 	// proxy holds the approve/deny gesture inline rather than routing
-	// to the dashboard's notification queue. wait=true is harmless for
-	// the inline path (the curl never actually runs) but keeps the
-	// shape compatible if the model decides to omit surface=inline.
+	// to the dashboard's notification queue.
 	//
 	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES
 	// accept a cat-heredoc-to-file then curl --data @file pattern, but
@@ -770,7 +768,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	// prompt — naming yield_time_ms tends to make the model set it
 	// to a small default. The proxy clamps the parameter to a safe
 	// minimum as a belt-and-suspenders fallback.
-	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
+	return "Please request a Clawvisor task for this work using the proxy-lite control endpoint. Before creating the task, tell me that I will need to approve it. Use a SINGLE FOREGROUND curl — emit it as one synchronous tool_use and wait for the result. Do not background it, do not split it across shells, do not poll a backgrounded session. POST the task definition to `https://clawvisor.local/control/tasks?surface=inline` so I can approve it without leaving the chat. Include the blocked action and any related tools or commands you expect to need.\n\nExample (use this exact shape — one curl, JSON via `--data @-` heredoc, no intermediate file, no trailing `&`, no `nohup`):\n\n```sh\ncurl -sS -X POST 'https://clawvisor.local/control/tasks?surface=inline' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n" + string(raw) + "\nJSON\n```"
 }
 
 // taskToolWhy renders a default `why` for the model when the blocked

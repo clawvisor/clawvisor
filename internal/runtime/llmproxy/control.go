@@ -34,8 +34,8 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 	_ = controlBaseURL
 	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
 	vaultItemsURL := "https://" + ControlSyntheticHost + "/control/vault/items"
-	tasksURLInline := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120&surface=inline"
-	tasksURLDashboard := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120"
+	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks"
+	tasksURLInline := tasksURL + "?surface=inline"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
 	if shellTool == "" {
@@ -92,7 +92,19 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"3. NEVER call `http://localhost:<port>`, `http://127.0.0.1:<port>`, or any other daemon URL directly. Always use the synthetic host `" + ControlSyntheticHost + "`.",
 		"4. Task creation does not grant permission until I approve it.",
 		"",
-		"To request permission for a tool, POST a task definition to " + tasksURLInline + " (interactive) or " + tasksURLDashboard + " (headless).",
+		"To request permission for a tool, POST a task definition to " + tasksURLInline + " (interactive) or " + tasksURL + " (headless).",
+		"",
+		"Required task shape:",
+		"  {\"purpose\":\"<user-visible goal>\",",
+		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
+		"   \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}],",
+		"   \"intent_verification_mode\":\"strict\",",
+		"   \"expires_in_seconds\":600}",
+		"",
+		"Only include `required_credentials_json` when credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
+		"Invalid: `\"required_credentials_json\":[{\"vault_item_id\":\"agentphone\"}]`",
+		"Valid: `\"required_credentials_json\":[{\"vault_item_id\":\"agentphone\",\"why\":\"Authenticate to agentphone to perform the approved task.\"}]`",
+		"",
 		"To discover available credential IDs, GET " + vaultItemsURL + ". Credential discovery does not require an approved task. The response is just IDs; read it directly and do not pipe or shell-filter it. If you need non-secret metadata for one item, GET " + vaultItemsURL + "/<id>.",
 		"Before creating the task, tell me I will need to approve it.",
 		"For schemas and examples, GET " + docsURL + ".",
@@ -102,7 +114,7 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"",
 		"USE ONE CURL — emit a single curl invocation with the JSON body inline. Don't write the JSON to a temp file via cat/echo and then curl --data @file: the proxy can parse that shape but it adds variance for no benefit. The simplest, most reliable shape is `--data @-` with a heredoc.",
 		"",
-		"RUN IT IN THE FOREGROUND — the task-creation curl must block on the user's decision. Do NOT background it (no trailing `&`, no `nohup`, no `disown`, no \"start it then poll a separate shell for output\" pattern). Emit it as a single synchronous tool_use and wait for the result before doing anything else. The proxy makes the curl block for up to two minutes; that wait is the user reading the prompt and replying.",
+		"RUN IT IN THE FOREGROUND — do NOT background it (no trailing `&`, no `nohup`, no `disown`, no \"start it then poll a separate shell for output\" pattern). Emit it as a single synchronous tool_use and wait for the approval result before doing anything else.",
 		"",
 		"✗ WRONG — never emit anything that looks like the post-rewrite form:",
 		"  curl -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' \\",
@@ -113,8 +125,8 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"  curl -sS -X POST '" + tasksURLInline + "' \\",
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
-		"  {\"purpose\":\"<one-line user-visible goal>\",",
-		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<concrete reason>\"}],",
+		"  {\"purpose\":\"<user-visible goal>\",",
+		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
@@ -421,13 +433,12 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	}
 	raw[cmdField] = rewritten
 	// Codex's exec_command backgrounds the call when yield_time_ms
-	// elapses. The default tends to be ~1s, which is way shorter than
-	// the task-creation curl's `wait=true&timeout=120` block window —
-	// without clamping, the agent's task POST gets backgrounded and
-	// the agent proceeds before the user can approve. Mention of
-	// yield_time_ms in the prompt only makes the model cargo-cult a
-	// small value back, so clamp here. Harmless on Bash (Claude Code
-	// has no such parameter).
+	// elapses. The default tends to be ~1s, which is too short for
+	// user-mediated control calls — without clamping, the agent's task
+	// POST gets backgrounded and the agent proceeds before the user can
+	// approve. Mention of yield_time_ms in the prompt only makes the
+	// model cargo-cult a small value back, so clamp here. Harmless on
+	// Bash (Claude Code has no such parameter).
 	clampControlToolUseTimeouts(raw, t.Name)
 	out, err := json.Marshal(raw)
 	return out, true, err
