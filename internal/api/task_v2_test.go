@@ -156,8 +156,44 @@ func TestTaskCreateV2AcceptsVirtualLLMCredentialItem(t *testing.T) {
 		t.Fatalf("expected one minted credential placeholder, got %v", approved["credential_placeholders"])
 	}
 	placeholder := placeholders[0].(map[string]any)
-	if placeholder["vault_item_id"] != virtualID || placeholder["service_id"] != storageKey {
+	if placeholder["vault_item_id"] != virtualID || placeholder["service_id"] != virtualID {
 		t.Fatalf("unexpected placeholder metadata: %v", placeholder)
+	}
+}
+
+func TestTaskCreateV2SharedCredentialItemKeepsServiceScope(t *testing.T) {
+	env := newTestEnv(t,
+		newSharedVaultMockAdapter("mock.mail", "mock.shared", "read"),
+		newSharedVaultMockAdapter("mock.calendar", "mock.shared", "read"),
+	)
+	sc := newScenario(t, env, "task-v2-shared-credential")
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.shared", []byte(`{"type":"api_key","token":"test-token"}`)); err != nil {
+		t.Fatalf("Vault.Set: %v", err)
+	}
+
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "read mail",
+		"expected_tools_json": []map[string]any{{
+			"tool_name": "mock.mail.read",
+			"why":       "Read mail for this task.",
+		}},
+		"required_credentials_json": []map[string]any{{
+			"vault_item_id": "mock.mail",
+			"why":           "Use the mail credential only for mail.",
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	taskID := str(t, body, "task_id")
+
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
+	approved := mustStatus(t, resp, http.StatusOK)
+	placeholders := arr(t, approved, "credential_placeholders")
+	if len(placeholders) != 1 {
+		t.Fatalf("expected one minted credential placeholder, got %v", approved["credential_placeholders"])
+	}
+	placeholder := placeholders[0].(map[string]any)
+	if placeholder["vault_item_id"] != "mock.mail" || placeholder["service_id"] != "mock.mail" {
+		t.Fatalf("shared backing secret should preserve service-scoped placeholder identity: %v", placeholder)
 	}
 }
 

@@ -1278,7 +1278,7 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		if vaultItemID == "" {
 			return fmt.Errorf("required_credentials_json[%d] must include vault_item_id or vault_item_handle", i)
 		}
-		storageKey := vaultStorageKeyForItemID(vaultItemID)
+		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
 		if _, err := h.vault.Get(ctx, task.UserID, storageKey); err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
 				return fmt.Errorf("vault item %q is not available", vaultItemID)
@@ -1296,14 +1296,14 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 	out := make([]*store.RuntimePlaceholder, 0, len(required))
 	for _, cred := range required {
 		vaultItemID := credentialVaultItemID(cred)
-		storageKey := vaultStorageKeyForItemID(vaultItemID)
+		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
 		auth := &store.CredentialAuthorization{
 			ID:            uuid.New().String(),
 			UserID:        task.UserID,
 			AgentID:       task.AgentID,
 			Scope:         "session",
 			CredentialRef: storageKey,
-			Service:       storageKey,
+			Service:       vaultItemID,
 			Host:          "",
 			HeaderName:    "authorization",
 			Scheme:        "bearer",
@@ -1328,7 +1328,7 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 			Placeholder:       placeholder,
 			UserID:            task.UserID,
 			AgentID:           task.AgentID,
-			ServiceID:         storageKey,
+			ServiceID:         vaultItemID,
 			VaultItemID:       vaultItemID,
 			CredentialGrantID: auth.ID,
 			TaskID:            task.ID,
@@ -1347,6 +1347,10 @@ func credentialVaultItemID(cred runtimetasks.RequiredCredential) string {
 		return id
 	}
 	return strings.TrimSpace(cred.VaultItemHandle)
+}
+
+func (h *TasksHandler) vaultStorageKeyForTaskItem(ctx context.Context, userID, vaultItemID string) string {
+	return vaultStorageKeyForItemIDForUser(ctx, h.adapterReg, userID, vaultItemID)
 }
 
 func highestRiskLevel(a, b string) string {

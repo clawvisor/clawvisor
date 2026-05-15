@@ -58,7 +58,11 @@ func validatePlaceholderGrant(ctx context.Context, st store.Store, ph *store.Run
 	if auth.ExpiresAt != nil && !auth.ExpiresAt.After(now) {
 		return "credential grant has expired", false
 	}
-	if ph.VaultItemID != "" && auth.CredentialRef != "" && auth.CredentialRef != ph.VaultItemID && auth.CredentialRef != storageKeyForVaultItemID(ph.VaultItemID) {
+	if ph.VaultItemID != "" && auth.CredentialRef != "" &&
+		auth.CredentialRef != ph.VaultItemID &&
+		auth.CredentialRef != storageKeyForVaultItemID(ph.VaultItemID) &&
+		auth.Service != ph.VaultItemID &&
+		auth.Service != ph.ServiceID {
 		return "credential grant does not match placeholder vault item", false
 	}
 	return "", true

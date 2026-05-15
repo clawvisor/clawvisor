@@ -32,6 +32,7 @@ type VaultServiceBinding struct {
 
 type VaultItem struct {
 	ID                     string                      `json:"id"`
+	StorageKey             string                      `json:"-"`
 	Name                   string                      `json:"name"`
 	Kind                   string                      `json:"kind"`
 	Provider               string                      `json:"provider,omitempty"`
@@ -127,7 +128,7 @@ func (h *VaultHandler) UpdateForUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "CONNECTED_ACCOUNT", "connected accounts must be updated through the service connection")
 		return
 	}
-	if err := h.vault.Set(r.Context(), user.ID, vaultStorageKeyForItemID(item.ID), []byte(body.Value)); err != nil {
+	if err := h.vault.Set(r.Context(), user.ID, vaultItemStorageKey(item), []byte(body.Value)); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update vault item")
 		return
 	}
@@ -158,7 +159,7 @@ func (h *VaultHandler) DeleteForUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "CONNECTED_ACCOUNT", "connected accounts must be disconnected through the service connection")
 		return
 	}
-	if err := h.vault.Delete(r.Context(), user.ID, vaultStorageKeyForItemID(item.ID)); err != nil {
+	if err := h.vault.Delete(r.Context(), user.ID, vaultItemStorageKey(item)); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete vault item")
 		return
 	}
@@ -185,7 +186,7 @@ func (h *VaultHandler) placeholdersForVaultItem(ctx context.Context, userID stri
 	}
 	var out []*store.RuntimePlaceholder
 	for _, placeholder := range placeholders {
-		if placeholderMatchesVaultItem(placeholder, item.ID, item.ServiceBindings) {
+		if placeholderMatchesVaultItem(placeholder, item.ID, vaultItemStorageKey(item), item.ServiceBindings) {
 			out = append(out, placeholder)
 		}
 	}
@@ -239,14 +240,33 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 			continue
 		}
 		if item, ok := llmCredentialVaultItem(key); ok {
-			item.ActivePlaceholderCount, item.LastUsedAt = vaultItemPlaceholderStats(activePlaceholders, item.ID, nil)
+			item.ActivePlaceholderCount, item.LastUsedAt = vaultItemPlaceholderStats(activePlaceholders, item.ID, vaultItemStorageKey(item), nil)
 			items = append(items, item)
 			continue
 		}
 		bindings := h.bindingsForVaultKey(r.Context(), userID, key, metas)
-		activeCount, lastUsed := vaultItemPlaceholderStats(activePlaceholders, key, bindings)
+		if len(bindings) > 0 {
+			for _, binding := range bindings {
+				itemID := connectedVaultItemID(binding)
+				activeCount, lastUsed := vaultItemPlaceholderStats(activePlaceholders, itemID, key, []VaultServiceBinding{binding})
+				items = append(items, VaultItem{
+					ID:                     itemID,
+					StorageKey:             key,
+					Name:                   binding.Name,
+					Kind:                   "connected_account",
+					Provider:               providerFromVaultKey(binding.ServiceID, []VaultServiceBinding{binding}),
+					Status:                 "active",
+					ServiceBindings:        []VaultServiceBinding{binding},
+					ActivePlaceholderCount: activeCount,
+					LastUsedAt:             lastUsed,
+				})
+			}
+			continue
+		}
+		activeCount, lastUsed := vaultItemPlaceholderStats(activePlaceholders, key, key, nil)
 		items = append(items, VaultItem{
 			ID:                     key,
+			StorageKey:             key,
 			Name:                   vaultItemName(key, bindings),
 			Kind:                   vaultItemKind(bindings),
 			Provider:               providerFromVaultKey(key, bindings),
@@ -265,15 +285,23 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 func llmCredentialVaultItem(key string) (VaultItem, bool) {
 	if provider := llmProviderFromVaultKey(key); provider != "" {
 		return VaultItem{
-			ID:       "llm:" + provider + ":user",
-			Name:     display.ServiceName(provider) + " API key",
-			Kind:     "llm_provider_key",
-			Provider: provider,
-			Scope:    "user",
-			Status:   "active",
+			ID:         "llm:" + provider + ":user",
+			StorageKey: provider,
+			Name:       display.ServiceName(provider) + " API key",
+			Kind:       "llm_provider_key",
+			Provider:   provider,
+			Scope:      "user",
+			Status:     "active",
 		}, true
 	}
 	return VaultItem{}, false
+}
+
+func connectedVaultItemID(binding VaultServiceBinding) string {
+	if binding.Alias == "" {
+		return binding.ServiceID
+	}
+	return binding.ServiceID + ":" + binding.Alias
 }
 
 func llmProviderFromVaultKey(key string) string {
@@ -310,11 +338,44 @@ func vaultStorageKeyForItemID(itemID string) string {
 	return itemID
 }
 
-func vaultItemPlaceholderStats(placeholders []*store.RuntimePlaceholder, itemID string, bindings []VaultServiceBinding) (int, *time.Time) {
+func vaultStorageKeyForItemIDForUser(ctx context.Context, reg *adapters.Registry, userID, itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if reg == nil || itemID == "" {
+		return vaultStorageKeyForItemID(itemID)
+	}
+	serviceID, alias := splitServiceScopedVaultItemID(itemID)
+	if serviceID == "" {
+		return vaultStorageKeyForItemID(itemID)
+	}
+	if _, ok := reg.GetForUser(ctx, serviceID, userID); !ok {
+		return vaultStorageKeyForItemID(itemID)
+	}
+	return reg.VaultKeyWithAliasForUser(serviceID, alias, userID)
+}
+
+func splitServiceScopedVaultItemID(itemID string) (serviceID, alias string) {
+	before, after, ok := strings.Cut(itemID, ":")
+	if !ok {
+		return itemID, ""
+	}
+	if before == "" || after == "" {
+		return itemID, ""
+	}
+	return before, after
+}
+
+func vaultItemStorageKey(item VaultItem) string {
+	if item.StorageKey != "" {
+		return item.StorageKey
+	}
+	return vaultStorageKeyForItemID(item.ID)
+}
+
+func vaultItemPlaceholderStats(placeholders []*store.RuntimePlaceholder, itemID, storageKey string, bindings []VaultServiceBinding) (int, *time.Time) {
 	count := 0
 	var lastUsed *time.Time
 	for _, placeholder := range placeholders {
-		if !placeholderMatchesVaultItem(placeholder, itemID, bindings) {
+		if !placeholderMatchesVaultItem(placeholder, itemID, storageKey, bindings) {
 			continue
 		}
 		count++
@@ -326,15 +387,23 @@ func vaultItemPlaceholderStats(placeholders []*store.RuntimePlaceholder, itemID 
 	return count, lastUsed
 }
 
-func placeholderMatchesVaultItem(placeholder *store.RuntimePlaceholder, itemID string, bindings []VaultServiceBinding) bool {
+func placeholderMatchesVaultItem(placeholder *store.RuntimePlaceholder, itemID, storageKey string, bindings []VaultServiceBinding) bool {
 	if placeholder == nil || itemID == "" {
 		return false
 	}
-	storageKey := vaultStorageKeyForItemID(itemID)
-	if placeholder.VaultItemID == itemID || placeholder.VaultItemID == storageKey {
+	if storageKey == "" {
+		storageKey = vaultStorageKeyForItemID(itemID)
+	}
+	if placeholder.VaultItemID == itemID {
 		return true
 	}
-	if placeholder.VaultItemID == "" && placeholder.ServiceID == storageKey {
+	if len(bindings) == 0 && placeholder.VaultItemID == storageKey {
+		return true
+	}
+	if placeholder.VaultItemID == "" && placeholder.ServiceID == itemID {
+		return true
+	}
+	if len(bindings) == 0 && placeholder.VaultItemID == "" && placeholder.ServiceID == storageKey {
 		return true
 	}
 	for _, binding := range bindings {

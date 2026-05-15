@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -102,6 +103,47 @@ func TestVaultItemsCountPlaceholdersForServiceBindingAliases(t *testing.T) {
 	}
 }
 
+func TestVaultItemsSplitSharedSecretServiceBindings(t *testing.T) {
+	env := newTestEnv(t,
+		newSharedVaultMockAdapter("mock.mail", "mock.shared", "read"),
+		newSharedVaultMockAdapter("mock.calendar", "mock.shared", "read"),
+	)
+	sc := newScenario(t, env, "vault-items-shared")
+
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, "mock.shared", []byte(`{"type":"api_key","token":"test-token"}`)); err != nil {
+		t.Fatalf("Vault.Set: %v", err)
+	}
+	if err := env.Store.UpsertServiceMeta(context.Background(), sc.session.UserID, "mock.mail", "default", time.Now().UTC()); err != nil {
+		t.Fatalf("UpsertServiceMeta mail: %v", err)
+	}
+	if err := env.Store.UpsertServiceMeta(context.Background(), sc.session.UserID, "mock.calendar", "default", time.Now().UTC()); err != nil {
+		t.Fatalf("UpsertServiceMeta calendar: %v", err)
+	}
+	if err := env.Store.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder: "cv_mock_mail_placeholder",
+		UserID:      sc.session.UserID,
+		AgentID:     sc.AgentID,
+		ServiceID:   "mock.mail",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	resp := sc.session.do("GET", "/api/vault/items", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	items := arr(t, body, "entries")
+	if len(items) != 2 {
+		t.Fatalf("expected one row per shared-secret service binding, got %v", body["entries"])
+	}
+	counts := map[string]float64{}
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		counts[item["id"].(string)] = item["active_placeholder_count"].(float64)
+	}
+	if counts["mock.mail"] != 1 || counts["mock.calendar"] != 0 {
+		t.Fatalf("shared-secret service rows should have separate placeholder counts, got %v", counts)
+	}
+}
+
 func TestVaultItemsOmitAgentScopedLLMCredentials(t *testing.T) {
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "vault-llm-agent")
@@ -145,5 +187,21 @@ func TestVaultItemsUpdateAndDeleteSecret(t *testing.T) {
 	_, err = env.Vault.Get(context.Background(), sc.session.UserID, "manual.secret")
 	if !errors.Is(err, vault.ErrNotFound) {
 		t.Fatalf("expected deleted vault item, got %v", err)
+	}
+}
+
+type sharedVaultMockAdapter struct {
+	*mockAdapter
+	vaultKey string
+}
+
+func newSharedVaultMockAdapter(serviceID, vaultKey string, actions ...string) *sharedVaultMockAdapter {
+	return &sharedVaultMockAdapter{mockAdapter: newMockAdapter(serviceID, actions...), vaultKey: vaultKey}
+}
+
+func (m *sharedVaultMockAdapter) ServiceMetadata() adapters.ServiceMetadata {
+	return adapters.ServiceMetadata{
+		DisplayName: m.serviceID,
+		VaultKey:    m.vaultKey,
 	}
 }

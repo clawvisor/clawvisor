@@ -429,7 +429,13 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 				msg:    "target host not in placeholder's bound-service allowlist: " + reason,
 			}
 		}
-		raw, err := h.Vault.Get(r.Context(), ph.UserID, ph.ServiceID)
+		vaultLookupKey := ph.ServiceID
+		if ph.CredentialGrantID != "" {
+			if auth, authErr := h.Store.GetCredentialAuthorization(r.Context(), ph.CredentialGrantID); authErr == nil && strings.TrimSpace(auth.CredentialRef) != "" {
+				vaultLookupKey = strings.TrimSpace(auth.CredentialRef)
+			}
+		}
+		raw, err := h.Vault.Get(r.Context(), ph.UserID, vaultLookupKey)
 		if err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
 				return "", &resolverAPIError{

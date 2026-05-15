@@ -15,6 +15,7 @@ import (
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	runtimereview "github.com/clawvisor/clawvisor/pkg/runtime/review"
@@ -36,14 +37,19 @@ type RuntimeHandler struct {
 	manager     RuntimeManager
 	cfg         *config.Config
 	vault       vault.Vault
+	adapterReg  *adapters.Registry
 	reviewCache runtimereview.HeldApprovalCache
 }
 
-func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache runtimereview.HeldApprovalCache) *RuntimeHandler {
+func NewRuntimeHandler(st store.Store, v vault.Vault, manager RuntimeManager, cfg *config.Config, reviewCache runtimereview.HeldApprovalCache, adapterReg ...*adapters.Registry) *RuntimeHandler {
 	if isNilRuntimeManager(manager) {
 		manager = nil
 	}
-	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache}
+	var reg *adapters.Registry
+	if len(adapterReg) > 0 {
+		reg = adapterReg[0]
+	}
+	return &RuntimeHandler{st: st, vault: v, manager: manager, cfg: cfg, reviewCache: reviewCache, adapterReg: reg}
 }
 
 func isNilRuntimeManager(manager RuntimeManager) bool {
@@ -120,7 +126,9 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service is required")
 		return
 	}
-	if _, err := h.vault.Get(r.Context(), agent.UserID, req.Service); err != nil {
+	serviceID := strings.TrimSpace(req.Service)
+	storageKey := vaultStorageKeyForItemIDForUser(r.Context(), h.adapterReg, agent.UserID, serviceID)
+	if _, err := h.vault.Get(r.Context(), agent.UserID, storageKey); err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "SERVICE_NOT_ACTIVATED", "service credential is not activated")
 			return
@@ -128,23 +136,45 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load service credential")
 		return
 	}
-	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(req.Service))
+	auth := &store.CredentialAuthorization{
+		ID:            uuid.New().String(),
+		UserID:        agent.UserID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: storageKey,
+		Service:       serviceID,
+		Host:          "",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON: mustJSON(map[string]any{
+			"source":        "manual_runtime_placeholder",
+			"vault_item_id": serviceID,
+		}),
+	}
+	if err := h.st.CreateCredentialAuthorization(r.Context(), auth); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save credential grant")
+		return
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(serviceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not mint runtime placeholder")
 		return
 	}
 	if err := h.st.CreateRuntimePlaceholder(r.Context(), &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      agent.UserID,
-		AgentID:     agent.ID,
-		ServiceID:   req.Service,
+		Placeholder:       placeholder,
+		UserID:            agent.UserID,
+		AgentID:           agent.ID,
+		ServiceID:         serviceID,
+		VaultItemID:       serviceID,
+		CredentialGrantID: auth.ID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save runtime placeholder")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"placeholder": placeholder,
-		"service":     req.Service,
+		"service":     serviceID,
 	})
 }
 

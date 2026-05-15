@@ -76,7 +76,13 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(req.Context(), hooks.Store, meta, st.Session.UserID, st.Session.AgentID, now); !ok {
 						return "", store.ErrNotFound
 					}
-					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, meta.ServiceID)
+					vaultLookupKey := meta.ServiceID
+					if meta.CredentialGrantID != "" {
+						if auth, authErr := hooks.Store.GetCredentialAuthorization(req.Context(), meta.CredentialGrantID); authErr == nil && strings.TrimSpace(auth.CredentialRef) != "" {
+							vaultLookupKey = strings.TrimSpace(auth.CredentialRef)
+						}
+					}
+					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, vaultLookupKey)
 					if err != nil {
 						return "", err
 					}
