@@ -48,28 +48,45 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	}
 }
 
-func TestControlNoticeCredentialHintsAreBounded(t *testing.T) {
-	notice := ControlNoticeWithCredentialHints("http://localhost:25297", []string{"Bash"}, []CredentialHint{
-		{ID: "github.release", Label: "GitHub release bot"},
-		{ID: "openai.work", Label: "OpenAI work key"},
-	})
-	if !strings.Contains(notice, "`github.release`: GitHub release bot") || !strings.Contains(notice, "`openai.work`: OpenAI work key") {
-		t.Fatalf("notice should include small credential inventories; got:\n%s", notice)
+func TestControlNoticeDoesNotEmbedLiveCredentialInventory(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{"Bash"})
+	if strings.Contains(notice, "github.release") || strings.Contains(notice, "OpenAI work key") {
+		t.Fatalf("notice must stay static and avoid embedding live vault inventory; got:\n%s", notice)
 	}
-	if strings.Contains(strings.ToLower(notice), "secret value") {
-		t.Fatalf("notice must not imply secret material is included; got:\n%s", notice)
+	if !strings.Contains(notice, "GET https://clawvisor.local/control/vault/items") {
+		t.Fatalf("static notice should point to credential discovery endpoint; got:\n%s", notice)
 	}
+}
 
-	var many []CredentialHint
-	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
-		many = append(many, CredentialHint{ID: "vault." + id, Label: "Vault " + id})
+func TestInjectControlNoticeIgnoresHistoricalControlURLs(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-7","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"prior call: https://clawvisor.local/control/vault/items"}]}`)
+	got, injected, err := InjectControlNotice(conversation.ProviderAnthropic, body, "http://localhost:25297", []string{"Bash"})
+	if err != nil {
+		t.Fatalf("inject failed: %v", err)
 	}
-	largeNotice := ControlNoticeWithCredentialHints("http://localhost:25297", []string{"Bash"}, many)
-	if strings.Contains(largeNotice, "`vault.a`") {
-		t.Fatalf("large credential inventories should use discovery endpoint instead of dumping labels; got:\n%s", largeNotice)
+	if !injected {
+		t.Fatalf("expected injection even though message history contains control URL")
 	}
-	if !strings.Contains(largeNotice, "This user has many vault items") || !strings.Contains(largeNotice, "/control/vault/items") {
-		t.Fatalf("large inventory notice should point to credential discovery; got:\n%s", largeNotice)
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("invalid output: %v", err)
+	}
+	if !rawSystemContains(parsed["system"], ControlNoticeSentinel) {
+		t.Fatalf("system prompt missing control notice: %s", got)
+	}
+}
+
+func TestInjectControlNoticeSkipsOnlyWhenSystemAlreadyHasNotice(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-7","system":[{"type":"text","text":"existing"},{"type":"text","text":"Clawvisor proxy-lite control plane."}],"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`)
+	got, injected, err := InjectControlNotice(conversation.ProviderAnthropic, body, "http://localhost:25297", []string{"Bash"})
+	if err != nil {
+		t.Fatalf("inject failed: %v", err)
+	}
+	if injected {
+		t.Fatalf("expected no-op when system already contains control notice")
+	}
+	if string(got) != string(body) {
+		t.Fatalf("no-op should preserve body bytes\nwant: %s\n got: %s", body, got)
 	}
 }
 

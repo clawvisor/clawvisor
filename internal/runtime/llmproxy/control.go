@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -13,19 +12,15 @@ import (
 )
 
 const (
-	ControlSyntheticHost = "clawvisor.local"
+	ControlSyntheticHost  = "clawvisor.local"
+	ControlNoticeSentinel = "Clawvisor proxy-lite control plane."
 )
 
 func ControlNotice(controlBaseURL string, availableTools []string) string {
-	return ControlNoticeWithCredentialHints(controlBaseURL, availableTools, nil)
+	return controlNotice(controlBaseURL, availableTools)
 }
 
-type CredentialHint struct {
-	ID    string
-	Label string
-}
-
-func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []string, credentialHints []CredentialHint) string {
+func controlNotice(controlBaseURL string, availableTools []string) string {
 	// Always advertise the synthetic URL. Clawvisor rewrites it to the
 	// real daemon URL transparently and mints fresh auth on every call.
 	// Models that see (or guess) the daemon URL and call it directly
@@ -42,10 +37,9 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		shellTool = "bash"
 	}
 	allowedLines := controlAllowedWithoutTaskLines(availableTools)
-	credentialLines := controlCredentialHintLines(vaultItemsURL, credentialHints)
 	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellTool, availableTools)
 	return strings.Join([]string{
-		"Clawvisor proxy-lite control plane.",
+		ControlNoticeSentinel,
 		"",
 		"WORKFLOW — start every non-trivial request with a task.",
 		"",
@@ -73,7 +67,10 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"",
 		strings.Join(allowedLines, "\n"),
 		"",
-		strings.Join(credentialLines, "\n"),
+		"CREDENTIAL ACCESS:",
+		"  - If a task needs credentials, GET " + vaultItemsURL + " to list available vault item IDs before creating the task.",
+		"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
+		"  - Do not ask the user to paste raw secrets into chat.",
 		"",
 		"VAULT PLACEHOLDERS — values like `autovault_github_xyz` are NOT raw credentials. Use them directly in headers or curl arguments; Clawvisor substitutes the real secret at proxy time. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
 		"",
@@ -186,56 +183,6 @@ func formatToolList(tools []string) string {
 	return strings.Join(quoted, " / ")
 }
 
-func controlCredentialHintLines(vaultItemsURL string, hints []CredentialHint) []string {
-	hints = compactCredentialHints(hints)
-	if len(hints) == 0 {
-		return []string{
-			"CREDENTIAL ACCESS:",
-			"  - If a task needs credentials, GET " + vaultItemsURL + " to list available vault item IDs before creating the task.",
-			"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
-		}
-	}
-	if len(hints) >= 10 {
-		return []string{
-			"CREDENTIAL ACCESS:",
-			"  - This user has many vault items. GET " + vaultItemsURL + " to list available vault item IDs before creating a credentialed task.",
-			"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
-		}
-	}
-	lines := []string{"CREDENTIAL ACCESS — available vault items you may request in `required_credentials_json`:"}
-	for _, hint := range hints {
-		label := hint.Label
-		if label == "" {
-			label = hint.ID
-		}
-		lines = append(lines, "  - `"+hint.ID+"`: "+label)
-	}
-	lines = append(lines, "Do not ask the user to paste raw secrets into chat.")
-	return lines
-}
-
-func compactCredentialHints(hints []CredentialHint) []CredentialHint {
-	out := make([]CredentialHint, 0, len(hints))
-	seen := map[string]struct{}{}
-	for _, hint := range hints {
-		hint.ID = strings.TrimSpace(hint.ID)
-		hint.Label = strings.TrimSpace(hint.Label)
-		if hint.ID == "" {
-			continue
-		}
-		key := strings.ToLower(hint.ID)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, hint)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Label+out[i].ID) < strings.ToLower(out[j].Label+out[j].ID)
-	})
-	return out
-}
-
 func controlToolExamples(availableTools []string) string {
 	tools := compactToolNames(availableTools)
 	if len(tools) == 0 {
@@ -291,14 +238,10 @@ func compactToolNames(availableTools []string) []string {
 // The synthetic URL is rewritten from model-emitted tool calls before the tool
 // runner sees it, so the prompt stays stable across local and public daemon URLs.
 func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string) ([]byte, bool, error) {
-	return InjectControlNoticeWithCredentialHints(provider, body, controlBaseURL, availableTools, nil)
-}
-
-func InjectControlNoticeWithCredentialHints(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, credentialHints []CredentialHint) ([]byte, bool, error) {
-	if strings.Contains(string(body), "https://"+ControlSyntheticHost+"/control") {
+	if controlNoticeAlreadyPresent(provider, body) {
 		return body, false, nil
 	}
-	notice := ControlNoticeWithCredentialHints(controlBaseURL, availableTools, credentialHints)
+	notice := ControlNotice(controlBaseURL, availableTools)
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return injectAnthropicControlNotice(body, notice)
@@ -307,6 +250,71 @@ func InjectControlNoticeWithCredentialHints(provider conversation.Provider, body
 	default:
 		return body, false, nil
 	}
+}
+
+func controlNoticeAlreadyPresent(provider conversation.Provider, body []byte) bool {
+	switch provider {
+	case conversation.ProviderAnthropic:
+		return anthropicSystemContains(body, ControlNoticeSentinel)
+	case conversation.ProviderOpenAI:
+		return openAISystemContains(body, ControlNoticeSentinel)
+	default:
+		return false
+	}
+}
+
+func anthropicSystemContains(body []byte, needle string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false
+	}
+	return rawSystemContains(raw["system"], needle)
+}
+
+func openAISystemContains(body []byte, needle string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false
+	}
+	if rawSystemContains(raw["instructions"], needle) {
+		return true
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(raw["messages"], &messages); err != nil || len(messages) == 0 {
+		return false
+	}
+	for _, msg := range messages {
+		var role string
+		if err := json.Unmarshal(msg["role"], &role); err != nil {
+			continue
+		}
+		if role != "system" && role != "developer" {
+			return false
+		}
+		if rawSystemContains(msg["content"], needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawSystemContains(raw json.RawMessage, needle string) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.Contains(s, needle)
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		for _, block := range blocks {
+			if text, _ := block["text"].(string); strings.Contains(text, needle) {
+				return true
+			}
+		}
+	}
+	return strings.Contains(string(raw), needle)
 }
 
 func injectAnthropicControlNotice(body []byte, notice string) ([]byte, bool, error) {

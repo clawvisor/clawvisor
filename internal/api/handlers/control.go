@@ -44,7 +44,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"Clawvisor handles the synthetic URL before the shell command runs.",
 			"Before creating a task, tell me that you are requesting a Clawvisor task and that I will need to approve it.",
 			"Creating or expanding a task requests permission. It does not grant permission until I approve it.",
-			"Use /control/vault/items to list available vault item IDs when your task needs a credential and the prompt did not include the item you need. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
+			"Use /control/vault/items to list available vault item IDs when your task needs a credential. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
 			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
 			"When a task needs a credential, include required_credentials_json with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
 		},
