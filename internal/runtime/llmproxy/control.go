@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -16,6 +17,15 @@ const (
 )
 
 func ControlNotice(controlBaseURL string, availableTools []string) string {
+	return ControlNoticeWithCredentialHints(controlBaseURL, availableTools, nil)
+}
+
+type CredentialHint struct {
+	ID    string
+	Label string
+}
+
+func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []string, credentialHints []CredentialHint) string {
 	// Always advertise the synthetic URL. Clawvisor rewrites it to the
 	// real daemon URL transparently and mints fresh auth on every call.
 	// Models that see (or guess) the daemon URL and call it directly
@@ -31,6 +41,8 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 	if shellTool == "" {
 		shellTool = "bash"
 	}
+	allowedLines := controlAllowedWithoutTaskLines(availableTools)
+	credentialLines := controlCredentialHintLines(vaultItemsURL, credentialHints)
 	return strings.Join([]string{
 		"Clawvisor proxy-lite control plane.",
 		"",
@@ -53,6 +65,10 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 		"  - `expected_tools_json`: list the actual tool names you expect to use from this request's available tools (" + toolExamples + "). Be generous — list anything plausible. Missing scope is friction; over-declaring is fine. SCOPE PAIRS: writing implies reading (you will verify the file you just wrote), so when you list write/edit tools also list read tools when available; running a shell that creates state usually means running a shell that inspects it, so a single `" + shellTool + "` entry with a `why` that covers both is correct. Don't split write-then-verify into two tasks.",
 		"  - `required_credentials_json`: when the task needs a vaulted credential, list the exact `vault_item_id` or `vault_item_handle` and a concrete `why`. If the credential list is not already visible in this prompt, GET " + vaultItemsURL + " first. Do not ask the user to paste raw secrets into chat.",
 		"  - `why`: per-tool, one line explaining why that tool is needed for THIS task. For shell/write/edit tools on a writing task, your `why` should explicitly include the verify/inspect/check workflow — e.g. \"Create the target files and run sanity checks (ls, wc, cat) against them.\" The intent verifier compares each individual command against the `why`; a `why` that only mentions writes will refuse the subsequent reads.",
+		"",
+		strings.Join(allowedLines, "\n"),
+		"",
+		strings.Join(credentialLines, "\n"),
 		"",
 		"When NOT to create a task: single one-shot commands the user obviously wants (a single `ls`, a single `cat`), or follow-up clarifications inside an already-approved task's scope.",
 		"",
@@ -110,6 +126,103 @@ func ControlNotice(controlBaseURL string, availableTools []string) string {
 	}, "\n")
 }
 
+func controlAllowedWithoutTaskLines(availableTools []string) []string {
+	tools := compactToolNames(availableTools)
+	readTools := toolsByClass(tools, map[string]struct{}{
+		"read": {}, "view": {}, "open": {},
+	})
+	searchTools := toolsByClass(tools, map[string]struct{}{
+		"grep": {}, "glob": {}, "search": {}, "rg": {},
+	})
+	shellTool := controlShellTool(tools)
+	lines := []string{
+		"ALLOWED WITHOUT A TASK — for single-step, non-destructive inspection:",
+	}
+	if len(readTools) > 0 {
+		lines = append(lines, "  - Read files with "+formatToolList(readTools)+".")
+	}
+	if len(searchTools) > 0 {
+		lines = append(lines, "  - Search or list files with "+formatToolList(searchTools)+".")
+	}
+	if shellTool != "" {
+		lines = append(lines, "  - Run one-shot read-only shell inspection with `"+shellTool+"` when it does not write files, change state, use credentials, or make network calls.")
+	}
+	if len(lines) == 1 {
+		lines = append(lines, "  - Single one-shot file reads, directory listings, and searches.")
+	}
+	lines = append(lines, "Create a task before writing files, making network requests, changing state, using credentials, or doing multi-step work.")
+	return lines
+}
+
+func toolsByClass(tools []string, names map[string]struct{}) []string {
+	var out []string
+	for _, tool := range tools {
+		key := strings.ToLower(strings.TrimSpace(tool))
+		if _, ok := names[key]; ok {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func formatToolList(tools []string) string {
+	quoted := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		quoted = append(quoted, "`"+tool+"`")
+	}
+	return strings.Join(quoted, " / ")
+}
+
+func controlCredentialHintLines(vaultItemsURL string, hints []CredentialHint) []string {
+	hints = compactCredentialHints(hints)
+	if len(hints) == 0 {
+		return []string{
+			"CREDENTIAL ACCESS:",
+			"  - If a task needs credentials, GET " + vaultItemsURL + " to list available vault item IDs and labels before creating the task.",
+			"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
+		}
+	}
+	if len(hints) >= 10 {
+		return []string{
+			"CREDENTIAL ACCESS:",
+			"  - This user has many vault items. GET " + vaultItemsURL + " to list available vault item IDs and labels before creating a credentialed task.",
+			"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
+		}
+	}
+	lines := []string{"CREDENTIAL ACCESS — available vault items you may request in `required_credentials_json`:"}
+	for _, hint := range hints {
+		label := hint.Label
+		if label == "" {
+			label = hint.ID
+		}
+		lines = append(lines, "  - `"+hint.ID+"`: "+label)
+	}
+	lines = append(lines, "Do not ask the user to paste raw secrets into chat.")
+	return lines
+}
+
+func compactCredentialHints(hints []CredentialHint) []CredentialHint {
+	out := make([]CredentialHint, 0, len(hints))
+	seen := map[string]struct{}{}
+	for _, hint := range hints {
+		hint.ID = strings.TrimSpace(hint.ID)
+		hint.Label = strings.TrimSpace(hint.Label)
+		if hint.ID == "" {
+			continue
+		}
+		key := strings.ToLower(hint.ID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, hint)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Label+out[i].ID) < strings.ToLower(out[j].Label+out[j].ID)
+	})
+	return out
+}
+
 func controlToolExamples(availableTools []string) string {
 	tools := compactToolNames(availableTools)
 	if len(tools) == 0 {
@@ -155,10 +268,14 @@ func compactToolNames(availableTools []string) []string {
 // The synthetic URL is rewritten from model-emitted tool calls before the tool
 // runner sees it, so the prompt stays stable across local and public daemon URLs.
 func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string) ([]byte, bool, error) {
+	return InjectControlNoticeWithCredentialHints(provider, body, controlBaseURL, availableTools, nil)
+}
+
+func InjectControlNoticeWithCredentialHints(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, credentialHints []CredentialHint) ([]byte, bool, error) {
 	if strings.Contains(string(body), "https://"+ControlSyntheticHost+"/control") {
 		return body, false, nil
 	}
-	notice := ControlNotice(controlBaseURL, availableTools)
+	notice := ControlNoticeWithCredentialHints(controlBaseURL, availableTools, credentialHints)
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return injectAnthropicControlNotice(body, notice)

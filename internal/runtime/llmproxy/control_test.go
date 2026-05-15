@@ -26,6 +26,37 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
 		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "Read files with `read`") {
+		t.Fatalf("notice should disclose allowlisted read-only capabilities using actual tool names; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Run one-shot read-only shell inspection with `exec`") {
+		t.Fatalf("notice should disclose read-only shell inspection with actual shell tool name; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeCredentialHintsAreBounded(t *testing.T) {
+	notice := ControlNoticeWithCredentialHints("http://localhost:25297", []string{"Bash"}, []CredentialHint{
+		{ID: "github.release", Label: "GitHub release bot"},
+		{ID: "openai.work", Label: "OpenAI work key"},
+	})
+	if !strings.Contains(notice, "`github.release`: GitHub release bot") || !strings.Contains(notice, "`openai.work`: OpenAI work key") {
+		t.Fatalf("notice should include small credential inventories; got:\n%s", notice)
+	}
+	if strings.Contains(strings.ToLower(notice), "secret value") {
+		t.Fatalf("notice must not imply secret material is included; got:\n%s", notice)
+	}
+
+	var many []CredentialHint
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		many = append(many, CredentialHint{ID: "vault." + id, Label: "Vault " + id})
+	}
+	largeNotice := ControlNoticeWithCredentialHints("http://localhost:25297", []string{"Bash"}, many)
+	if strings.Contains(largeNotice, "`vault.a`") {
+		t.Fatalf("large credential inventories should use discovery endpoint instead of dumping labels; got:\n%s", largeNotice)
+	}
+	if !strings.Contains(largeNotice, "This user has many vault items") || !strings.Contains(largeNotice, "/control/vault/items") {
+		t.Fatalf("large inventory notice should point to credential discovery; got:\n%s", largeNotice)
+	}
 }
 
 // Regression: a curl invocation that mixes a synthetic control URL with

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/internal/display"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -381,7 +382,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL, reqSummary.AvailableTools)
+		credentialHints := h.credentialHintsForControlNotice(r.Context(), agent.UserID)
+		injectedBody, injected, injectErr := llmproxy.InjectControlNoticeWithCredentialHints(provider, body, h.ControlBaseURL, reqSummary.AvailableTools, credentialHints)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
@@ -775,6 +777,31 @@ func isVaultMiss(err error) bool {
 	// Forwarder wraps the not-found case in its own error string for user
 	// clarity; match on substring as a last resort.
 	return false
+}
+
+func (h *LLMEndpointHandler) credentialHintsForControlNotice(ctx context.Context, userID string) []llmproxy.CredentialHint {
+	if h.Vault == nil || userID == "" {
+		return nil
+	}
+	keys, err := h.Vault.List(ctx, userID)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.WarnContext(ctx, "lite-proxy vault hint listing failed", "err", err.Error())
+		}
+		return nil
+	}
+	hints := make([]llmproxy.CredentialHint, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		hints = append(hints, llmproxy.CredentialHint{
+			ID:    key,
+			Label: display.ServiceName(key),
+		})
+	}
+	return hints
 }
 
 // writeJSONError produces a uniform JSON error response.
