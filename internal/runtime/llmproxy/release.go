@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -309,7 +310,11 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 		if reason, ok := ValidateRuntimePlaceholderAccess(ctx, req.Store, rec, req.Agent.UserID, req.Agent.ID, time.Now().UTC()); !ok {
 			return reason, false
 		}
-		if ok, reason := inspector.BoundaryCheck(v, inspector.BoundServiceHosts(rec.ServiceID)); !ok {
+		hosts := inspector.BoundServiceHosts(rec.ServiceID)
+		if len(hosts) == 0 {
+			return "no hardcoded bound-service hosts for service " + rec.ServiceID + "; deferring to task/intent verification", true
+		}
+		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
 			return reason, false
 		}
 	}
@@ -317,7 +322,11 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 }
 
 func syntheticReleaseResult(req ReleaseRequest, pending *PendingLiteApproval, allow bool, toolInput map[string]any, decision, outcome, reason string) ReleaseResult {
-	synth, ok := conversation.SyntheticApprovalToolUseResponse(req.HTTPRequest, req.Provider, req.Body, allow, pending.ToolUse.ID, pending.ToolUse.Name, toolInput)
+	denyMessage := conversation.ApprovalDeniedMessage
+	if !allow && outcome == "approval_release_blocked" && strings.TrimSpace(reason) != "" {
+		denyMessage = "Approval could not be released. " + strings.TrimSpace(reason)
+	}
+	synth, ok := conversation.SyntheticApprovalToolUseResponseWithDenyMessage(req.HTTPRequest, req.Provider, req.Body, allow, pending.ToolUse.ID, pending.ToolUse.Name, toolInput, denyMessage)
 	if !ok {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "unsupported approval release provider"}
 	}
