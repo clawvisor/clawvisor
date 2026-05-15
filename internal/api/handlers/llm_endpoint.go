@@ -381,7 +381,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL)
+		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL, reqSummary.AvailableTools)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"

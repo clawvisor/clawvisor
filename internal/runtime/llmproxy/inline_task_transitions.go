@@ -1,0 +1,101 @@
+package llmproxy
+
+import (
+	"context"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/pkg/store"
+)
+
+func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest, action approvalReplyAction, editor approvalBodyEditor) (TaskReplyRewriteResult, error) {
+	// Drop the original tool hold. The user typed "task" so the
+	// harness now shows the task-creation prompt instead — there's
+	// no way back to approving the original tool. Leaving the hold
+	// in the cache was a latent safety issue: if the model didn't
+	// follow through with POST /control/tasks, the orphan hold could
+	// later be resolved as a regular tool approval by a bare approve.
+	//
+	// The inline-task intercept now relies on the query signal
+	// (surface=inline in the URL) rather than a retained
+	// awaiting_task_definition hold. taskCreationPrompt always renders
+	// surface=inline in the example URL, so compliant models still
+	// drive the inline path.
+	pending, err := consumeApprovalActionHold(ctx, req.PendingApproval, req.Agent, req.Provider, action)
+	if err != nil || pending == nil {
+		return TaskReplyRewriteResult{Body: req.Body}, err
+	}
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", taskCreationPrompt(pending.ToolUse))
+	if err != nil || !ok {
+		return TaskReplyRewriteResult{Body: req.Body}, err
+	}
+	return TaskReplyRewriteResult{Body: rewritten, Rewritten: true}, nil
+}
+
+func consumeApprovalActionHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, action approvalReplyAction) (*PendingLiteApproval, error) {
+	if cache == nil || agent == nil || action.Hold == nil {
+		return nil, nil
+	}
+	return cache.Resolve(ctx, ResolveRequest{
+		UserID:     agent.UserID,
+		AgentID:    agent.ID,
+		Provider:   provider,
+		ApprovalID: action.Hold.ID,
+	})
+}
+
+func dropLinkedToolHold(ctx context.Context, cache PendingApprovalCache, agent *store.Agent, provider conversation.Provider, resolved *PendingLiteApproval) {
+	if cache == nil || agent == nil || resolved == nil || resolved.AwaitingTaskFor == "" {
+		return
+	}
+	_ = cache.Drop(ctx, ResolveRequest{
+		UserID:     agent.UserID,
+		AgentID:    agent.ID,
+		Provider:   provider,
+		ApprovalID: resolved.AwaitingTaskFor,
+	})
+}
+
+func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteRequest, resolved *PendingLiteApproval, verb string) (string, InlineApprovalRewriteResult) {
+	out := InlineApprovalRewriteResult{Body: req.Body}
+	if verb == "deny" {
+		out.Decision = "deny"
+		out.Outcome = "inline_task_denied"
+		out.Reason = "user denied inline task"
+		return renderInlineTaskDenyReply(), out
+	}
+
+	switch {
+	case req.Creator == nil:
+		out.Decision = "deny"
+		out.Outcome = "inline_task_creator_missing"
+		out.Reason = "no inline task creator configured"
+		return renderInlineTaskCreatorErrorReply("inline task creation is not available on this daemon"), out
+	case resolved == nil || resolved.TaskDefinition == nil:
+		out.Decision = "deny"
+		out.Outcome = "inline_task_definition_missing"
+		out.Reason = "missing task definition on approval"
+		return renderInlineTaskCreatorErrorReply("missing task definition on approval"), out
+	default:
+		originalToolUseID := resolved.AwaitingTaskFor
+		created, createErr := req.Creator.CreateInlineApprovedTask(ctx, req.Agent, resolved.TaskDefinition, originalToolUseID)
+		if createErr != nil {
+			out.Decision = "deny"
+			out.Outcome = "inline_task_create_failed"
+			out.Reason = "create failed: " + createErr.Error()
+			return renderInlineTaskCreatorErrorReply(createErr.Error()), out
+		}
+
+		out.Decision = "allow"
+		out.Outcome = "inline_task_approved"
+		out.TaskID = created.ID
+		out.ApprovalRecordID = created.ApprovalRecordID
+		if req.Audit != nil {
+			req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, resolved, created)
+		}
+		// Use the SAME text the persistent augmenter produces on
+		// subsequent turns. One canonical rendering avoids showing the
+		// model the same user approve turn with different content across
+		// calls.
+		return inlineApprovedReplyAugmentation(), out
+	}
+}

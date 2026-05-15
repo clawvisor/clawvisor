@@ -5,21 +5,37 @@ import (
 	"time"
 )
 
-// InlineApprovalOutcome records what happened when the proxy attempted
-// to create the inline-approved task. The augmenter looks up an
-// outcome by approval ID parsed from the prior-assistant prompt and
-// injects the matching context onto subsequent turns — claiming
-// "task was created" only when the creation actually succeeded.
+// InlineApprovalOutcome is the canonical in-memory resolution record
+// for one inline task approval. The augmenter uses Succeeded/TaskID/
+// FailureReason to render later conversation history, while audit and
+// diagnostics can correlate the same approval ID to the decision,
+// outcome, request, and approval_records row that the rewrite path
+// produced. Keeping this as one record avoids maintaining a separate
+// "augmenter outcome" fact beside the audit fact.
 type InlineApprovalOutcome struct {
+	// Decision is the audit-level decision: "allow" on successful
+	// task creation, "deny" on denial or failure.
+	Decision string
+	// Outcome is the short audit/event tag, e.g. "inline_task_approved"
+	// or "inline_task_create_failed".
+	Outcome string
 	// Succeeded is true when the task was created and the approval
 	// record was persisted. False on any failure path (validation,
 	// missing creator, store error).
 	Succeeded bool
 	// TaskID is populated on success.
 	TaskID string
+	// ApprovalRecordID is populated on success when the canonical
+	// approval_records row was written.
+	ApprovalRecordID string
 	// FailureReason is populated on failure — short, suitable for
 	// embedding in an LLM-facing context note.
 	FailureReason string
+	// RequestID links this resolution back to the lite-proxy request
+	// that processed the user's approve/deny reply.
+	RequestID string
+	// ResolvedAt is when the proxy resolved the inline approval.
+	ResolvedAt time.Time
 }
 
 // InlineApprovalOutcomeKey scopes an outcome record. The approval ID
