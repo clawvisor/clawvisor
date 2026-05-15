@@ -5,6 +5,24 @@ simplest path if the user already has Docker installed — no Go or Node
 toolchain needed. Follow these instructions step by step. Ask the user for
 clarification when the environment is ambiguous — do not guess silently.
 
+There are two Docker workflows. Ask the user which they prefer:
+
+| Option | Command | When to use |
+|--------|---------|-------------|
+| **SQLite single-container** (simpler) | `make docker-setup && make docker` | Quick local dev — no Postgres, mounts `~/.clawvisor` |
+| **Postgres with env file** (production-like) | Manual steps below | Closer to prod, persistent Postgres volume |
+
+If they choose the **SQLite single-container** path, run:
+
+```bash
+make docker-setup   # interactive config wizard (no Go/Node needed)
+make docker         # starts the container, mounts ~/.clawvisor
+```
+
+Then skip to [Step 5](#step-5-extract-the-magic-link) to get the magic link.
+
+For the Postgres path, continue with the steps below.
+
 ---
 
 ## Goal State

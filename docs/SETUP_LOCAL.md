@@ -86,7 +86,6 @@ cd "$CLAWVISOR_REPO" && make setup
 
 This covers:
 
-- **Database** — defaults to SQLite (press Enter)
 - **Intent verification** — Clawvisor uses a lightweight LLM to verify that
   agent requests match their approved task scope. This is a core safety
   feature. The wizard will ask which model to use and for an API key. Options:
@@ -97,14 +96,17 @@ This covers:
 | Gemini Flash | `openai` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.0-flash` |
 | GPT-4o Mini | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` |
 
-- **Google OAuth** — needed for Gmail, Calendar, Drive, and Contacts. Requires
-  a Google Cloud OAuth 2.0 client ID and secret. Point the user to:
-  https://github.com/clawvisor/clawvisor/blob/main/docs/GOOGLE_OAUTH_SETUP.md
-- **iMessage** — macOS only, reads the local `chat.db`
+- **Relay** — opt-in connection to clawvisor.com for remote approvals and
+  Telegram notifications
+- **Telemetry** — opt-in anonymous usage stats
+- **iMessage** — auto-enabled on macOS, disabled elsewhere (no prompt needed)
 
-The wizard generates `config.yaml` in the repository root and writes
-`~/.clawvisor/tui.yaml` with the server URL so the TUI knows where to
-connect.
+Google OAuth credentials (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) are
+configured separately after setup — see
+[GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md).
+
+The wizard generates `~/.clawvisor/config.yaml` with the server
+configuration (database path, vault key, LLM settings, etc.).
 
 **If the setup wizard cannot run** (e.g. no interactive terminal), skip to the
 alternative in Step 4.
@@ -230,7 +232,8 @@ Clawvisor loads `config.yaml` from the working directory (override with
 | `JWT_SECRET` | auto-generated locally | HMAC signing key for JWTs |
 | `PORT` | `25297` | Server listen port |
 | `SERVER_HOST` | `127.0.0.1` | Server bind address |
-| `PUBLIC_URL` | — | Used in Telegram notification links |
+| `PUBLIC_URL` | — | Base URL for magic links, OAuth callbacks, and Telegram notifications |
+| `SQLITE_PATH` | `~/.clawvisor/clawvisor.db` | Path to the SQLite database file |
 | `VAULT_BACKEND` | `local` | `local` (AES-256-GCM) or `gcp` (Secret Manager) |
 | `VAULT_KEY` | — | Base64-encoded 32-byte vault master key (alternative to key file) |
 | `VAULT_KEY_FILE` | `./vault.key` | Path to local vault encryption key |
