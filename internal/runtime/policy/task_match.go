@@ -102,7 +102,7 @@ func toolNamesMatch(declared, actual string) bool {
 // class by accident.
 func toolClass(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bash", "shell", "exec_command":
+	case "bash", "shell", "exec", "exec_command":
 		return "shell"
 	case "read", "read_file":
 		return "read_file"
