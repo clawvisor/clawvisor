@@ -43,6 +43,7 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 	}
 	allowedLines := controlAllowedWithoutTaskLines(availableTools)
 	credentialLines := controlCredentialHintLines(vaultItemsURL, credentialHints)
+	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellTool, availableTools)
 	return strings.Join([]string{
 		"Clawvisor proxy-lite control plane.",
 		"",
@@ -63,9 +64,7 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"If credentials are needed, add:",
 		"  \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
 		"",
-		"Good examples:",
-		"  - No credential: `{\"purpose\":\"Refactor the local configuration loader and run its tests\",\"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"Inspect relevant files, edit the loader, and run local tests to verify the refactor.\"}],\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600}`",
-		"  - With credential: `{\"purpose\":\"Create a GitHub issue summarizing the failing deployment check\",\"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"Inspect local failure logs and call the GitHub API with curl to create the requested issue.\"}],\"required_credentials_json\":[{\"vault_item_id\":\"github\",\"why\":\"Authenticate to GitHub to create the approved issue.\"}],\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600}`",
+		strings.Join(workedExampleLines, "\n"),
 		"",
 		"Field rules:",
 		"  - `expected_tools_json`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
@@ -98,6 +97,47 @@ func ControlNoticeWithCredentialHints(controlBaseURL string, availableTools []st
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
 	}, "\n")
+}
+
+func controlWorkedExampleLines(tasksURLInline, shellTool string, availableTools []string) []string {
+	readTool := controlToolByName(availableTools, "read")
+	writeTool := controlToolByName(availableTools, "write")
+	localTools := []string{
+		"{\"tool_name\":\"" + shellTool + "\",\"why\":\"Create the target directory and run sanity checks such as ls and wc after files are written.\"}",
+	}
+	if writeTool != "" {
+		localTools = append(localTools, "{\"tool_name\":\""+writeTool+"\",\"why\":\"Write each fake conversation file into the target directory.\"}")
+	}
+	if readTool != "" {
+		localTools = append(localTools, "{\"tool_name\":\""+readTool+"\",\"why\":\"Read back the written files to verify their contents.\"}")
+	}
+	githubTools := []string{}
+	if readTool != "" {
+		githubTools = append(githubTools, "{\"tool_name\":\""+readTool+"\",\"why\":\"Read local deployment check logs to summarize the failure.\"}")
+	}
+	githubTools = append(githubTools, "{\"tool_name\":\""+shellTool+"\",\"why\":\"Call the GitHub API with curl to create the requested issue.\"}")
+	return []string{
+		"Worked example — multi-step local files, no credentials:",
+		"  curl -sS -X POST '" + tasksURLInline + "' \\",
+		"    -H 'Content-Type: application/json' \\",
+		"    --data @- <<'JSON'",
+		"  {\"purpose\":\"Create a temporary conversation fixture directory and verify the written files\",",
+		"   \"expected_tools_json\":[" + strings.Join(localTools, ",") + "],",
+		"   \"intent_verification_mode\":\"strict\",",
+		"   \"expires_in_seconds\":600}",
+		"  JSON",
+		"",
+		"Worked example — credentialed GitHub task:",
+		"  curl -sS -X POST '" + tasksURLInline + "' \\",
+		"    -H 'Content-Type: application/json' \\",
+		"    --data @- <<'JSON'",
+		"  {\"purpose\":\"Create a GitHub issue summarizing the failing deployment check\",",
+		"   \"expected_tools_json\":[" + strings.Join(githubTools, ",") + "],",
+		"   \"required_credentials_json\":[{\"vault_item_id\":\"github\",\"why\":\"Authenticate to GitHub to create the approved issue.\"}],",
+		"   \"intent_verification_mode\":\"strict\",",
+		"   \"expires_in_seconds\":600}",
+		"  JSON",
+	}
 }
 
 func controlAllowedWithoutTaskLines(availableTools []string) []string {
@@ -213,6 +253,16 @@ func controlShellTool(availableTools []string) string {
 	for _, tool := range compactToolNames(availableTools) {
 		switch strings.ToLower(tool) {
 		case "bash", "shell", "exec", "exec_command":
+			return tool
+		}
+	}
+	return ""
+}
+
+func controlToolByName(availableTools []string, name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, tool := range compactToolNames(availableTools) {
+		if strings.ToLower(tool) == name {
 			return tool
 		}
 	}
