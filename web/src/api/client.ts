@@ -447,6 +447,23 @@ export interface RuntimePlaceholder {
   last_used_at?: string
 }
 
+export interface VaultServiceBinding {
+  service_id: string
+  alias?: string
+  name: string
+}
+
+export interface VaultItem {
+  id: string
+  name: string
+  kind: 'connected_account' | 'secret'
+  provider?: string
+  status: string
+  service_bindings?: VaultServiceBinding[]
+  active_placeholder_count: number
+  last_used_at?: string
+}
+
 export interface NotificationConfig {
   id: string
   user_id: string
@@ -1278,6 +1295,11 @@ export const api = {
       get<RuntimeRuleCandidate>(`/api/runtime/events/${eventId}/rule-candidate`, { action }),
     promoteEventToTask: (eventId: string, lifetime: 'session' | 'standing') =>
       post<{ task_id: string }>(`/api/runtime/events/${eventId}/promote-task`, { lifetime }),
+  },
+  vault: {
+    listItems: () => get<{ entries: VaultItem[]; total: number }>('/api/vault/items'),
+    getItem: (id: string) => get<VaultItem>(`/api/vault/items/${encodeURIComponent(id)}`),
+    listAgentItems: () => get<{ entries: VaultItem[]; total: number }>('/api/agent/vault/items'),
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),
