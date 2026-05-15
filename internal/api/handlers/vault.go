@@ -579,9 +579,16 @@ func placeholderMatchesVaultItem(placeholder *store.RuntimePlaceholder, itemID, 
 }
 
 func (h *VaultHandler) bindingsForVaultKey(ctx context.Context, userID, key string, metas []*store.ServiceMeta) []VaultServiceBinding {
+	return vaultBindingsForVaultKey(ctx, h.adapterReg, userID, key, metas)
+}
+
+func vaultBindingsForVaultKey(ctx context.Context, adapterReg *adapters.Registry, userID, key string, metas []*store.ServiceMeta) []VaultServiceBinding {
 	var bindings []VaultServiceBinding
+	if adapterReg == nil {
+		return bindings
+	}
 	for _, meta := range metas {
-		if h.adapterReg.VaultKeyWithAliasForUser(meta.ServiceID, meta.Alias, userID) != key {
+		if adapterReg.VaultKeyWithAliasForUser(meta.ServiceID, meta.Alias, userID) != key {
 			continue
 		}
 		bindings = append(bindings, VaultServiceBinding{
@@ -591,7 +598,7 @@ func (h *VaultHandler) bindingsForVaultKey(ctx context.Context, userID, key stri
 		})
 	}
 	if len(bindings) == 0 {
-		if _, ok := h.adapterReg.GetForUser(ctx, key, userID); ok {
+		if _, ok := adapterReg.GetForUser(ctx, key, userID); ok {
 			bindings = append(bindings, VaultServiceBinding{
 				ServiceID: key,
 				Name:      display.ServiceName(key),

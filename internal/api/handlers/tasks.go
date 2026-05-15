@@ -1317,10 +1317,10 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		if vaultItemID == "" {
 			return fmt.Errorf("required_credentials_json[%d] must include vault_item_id or vault_item_handle", i)
 		}
-		if err := validateTaskCredentialVaultItemScope(task, vaultItemID); err != nil {
+		storageKey, err := h.taskVaultItemStorageKey(ctx, task, vaultItemID)
+		if err != nil {
 			return err
 		}
-		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
 		if _, err := h.vault.Get(ctx, task.UserID, storageKey); err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
 				return fmt.Errorf("vault item %q is not available", vaultItemID)
@@ -1331,14 +1331,71 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 	return nil
 }
 
-func validateTaskCredentialVaultItemScope(task *store.Task, vaultItemID string) error {
+func (h *TasksHandler) taskVaultItemStorageKey(ctx context.Context, task *store.Task, vaultItemID string) (string, error) {
 	if task == nil {
-		return fmt.Errorf("task is required")
+		return "", fmt.Errorf("task is required")
 	}
-	if agentID, _, ok := parseAgentScopedLLMVaultItemID(vaultItemID); ok && agentID != task.AgentID {
-		return fmt.Errorf("vault item %q is scoped to another agent", vaultItemID)
+	vaultItemID = strings.TrimSpace(vaultItemID)
+	if vaultItemID == "" {
+		return "", fmt.Errorf("vault item id is required")
 	}
-	return nil
+
+	if agentID, _, ok := parseAgentScopedLLMVaultItemID(vaultItemID); ok {
+		if agentID != task.AgentID {
+			return "", fmt.Errorf("vault item %q is scoped to another agent", vaultItemID)
+		}
+		return vaultStorageKeyForItemID(vaultItemID), nil
+	}
+	if isUserScopedLLMVaultItemID(vaultItemID) {
+		return vaultStorageKeyForItemID(vaultItemID), nil
+	}
+	if _, _, ok := parseAgentScopedLLMKey(vaultItemID); ok {
+		return "", fmt.Errorf("vault item %q is not available; use a vault item id, not a storage key", vaultItemID)
+	}
+	if llmProviderFromVaultKey(vaultItemID) != "" {
+		return "", fmt.Errorf("vault item %q is not available; use the llm provider vault item id", vaultItemID)
+	}
+
+	if h.vaultStorageKeyIsHiddenBackingKey(ctx, task.UserID, vaultItemID) {
+		return "", fmt.Errorf("vault item %q is not available; request the service-specific vault item id", vaultItemID)
+	}
+
+	if h.adapterReg != nil {
+		serviceID, alias := splitServiceScopedVaultItemID(vaultItemID)
+		if serviceID != "" {
+			if _, ok := h.adapterReg.GetForUser(ctx, serviceID, task.UserID); ok {
+				return h.adapterReg.VaultKeyWithAliasForUser(serviceID, alias, task.UserID), nil
+			}
+		}
+	}
+
+	return vaultItemID, nil
+}
+
+func (h *TasksHandler) vaultStorageKeyIsHiddenBackingKey(ctx context.Context, userID, storageKey string) bool {
+	if storageKey == "" || h.adapterReg == nil {
+		return false
+	}
+	if metas, err := h.st.ListServiceMetas(ctx, userID); err == nil {
+		for _, binding := range vaultBindingsForVaultKey(ctx, h.adapterReg, userID, storageKey, metas) {
+			if connectedVaultItemID(binding) != storageKey {
+				return true
+			}
+		}
+	}
+	for _, adapter := range h.adapterReg.All() {
+		if adapter == nil {
+			continue
+		}
+		serviceID := adapter.ServiceID()
+		if serviceID == "" || serviceID == storageKey {
+			continue
+		}
+		if h.adapterReg.VaultKeyForUser(serviceID, userID) == storageKey {
+			return true
+		}
+	}
+	return false
 }
 
 func parseAgentScopedLLMVaultItemID(itemID string) (agentID, provider string, ok bool) {
@@ -1360,7 +1417,10 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 	out := make([]*store.RuntimePlaceholder, 0, len(required))
 	for _, cred := range required {
 		vaultItemID := credentialVaultItemID(cred)
-		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
+		storageKey, err := h.taskVaultItemStorageKey(ctx, task, vaultItemID)
+		if err != nil {
+			return nil, err
+		}
 		entry, err := h.mintTaskCredentialPlaceholder(ctx, task, vaultItemID, storageKey, cred.Why, expiresAt)
 		if err != nil {
 			return nil, err
@@ -1398,7 +1458,10 @@ func (h *TasksHandler) ensureTaskCredentialPlaceholders(ctx context.Context, tas
 			byVaultItem[vaultItemID] = entries[1:]
 			continue
 		}
-		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
+		storageKey, err := h.taskVaultItemStorageKey(ctx, task, vaultItemID)
+		if err != nil {
+			return nil, err
+		}
 		entry, err := h.mintTaskCredentialPlaceholder(ctx, task, vaultItemID, storageKey, cred.Why, expiresAt)
 		if err != nil {
 			return nil, err
