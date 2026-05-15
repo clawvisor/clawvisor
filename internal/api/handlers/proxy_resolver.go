@@ -381,7 +381,7 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 			return "", err
 		}
-		if ph.UserID != agent.UserID || ph.AgentID != agent.ID {
+		if ph.UserID != agent.UserID || (ph.AgentID != "" && ph.AgentID != agent.ID) {
 			return "", &resolverAPIError{
 				status: http.StatusForbidden,
 				code:   "PLACEHOLDER_OWNERSHIP",
@@ -389,18 +389,20 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 		}
 		now := time.Now().UTC()
-		if ph.RevokedAt != nil {
-			return "", &resolverAPIError{
-				status: http.StatusUnauthorized,
-				code:   "PLACEHOLDER_REVOKED",
-				msg:    "placeholder has been revoked",
+		if reason, ok := llmproxy.ValidateRuntimePlaceholderAccess(r.Context(), h.Store, ph, agent.UserID, agent.ID, now); !ok {
+			code := "PLACEHOLDER_REJECTED"
+			status := http.StatusForbidden
+			if strings.Contains(reason, "revoked") {
+				code = "PLACEHOLDER_REVOKED"
+				status = http.StatusUnauthorized
+			} else if strings.Contains(reason, "expired") {
+				code = "PLACEHOLDER_EXPIRED"
+				status = http.StatusUnauthorized
 			}
-		}
-		if ph.ExpiresAt != nil && !ph.ExpiresAt.After(now) {
 			return "", &resolverAPIError{
-				status: http.StatusUnauthorized,
-				code:   "PLACEHOLDER_EXPIRED",
-				msg:    "placeholder has expired",
+				status: status,
+				code:   code,
+				msg:    reason,
 			}
 		}
 		// Bound-service host check.

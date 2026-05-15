@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -911,8 +912,8 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 			}
 			return "store error: " + err.Error(), false
 		}
-		if rec.UserID != cfg.AgentUserID || rec.AgentID != cfg.AgentID {
-			return "placeholder owned by another agent (placeholder=" + redactPlaceholderForReason(ph) + ")", false
+		if reason, ok := ValidateRuntimePlaceholderAccess(req.Context(), cfg.Store, rec, cfg.AgentUserID, cfg.AgentID, time.Now().UTC()); !ok {
+			return reason + " (placeholder=" + redactPlaceholderForReason(ph) + ")", false
 		}
 		hosts := inspector.BoundServiceHosts(rec.ServiceID)
 		if len(hosts) == 0 {

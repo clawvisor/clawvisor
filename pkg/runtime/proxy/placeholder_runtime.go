@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -71,11 +72,8 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					if err != nil {
 						return "", err
 					}
-					if meta.AgentID != st.Session.AgentID || meta.UserID != st.Session.UserID {
-						return "", store.ErrNotFound
-					}
 					now := time.Now().UTC()
-					if meta.RevokedAt != nil || (meta.ExpiresAt != nil && !meta.ExpiresAt.After(now)) {
+					if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(req.Context(), hooks.Store, meta, st.Session.UserID, st.Session.AgentID, now); !ok {
 						return "", store.ErrNotFound
 					}
 					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, meta.ServiceID)

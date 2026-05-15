@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -296,8 +297,8 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 		if err != nil {
 			return "placeholder lookup failed", false
 		}
-		if rec.UserID != req.Agent.UserID || rec.AgentID != req.Agent.ID {
-			return "placeholder owned by another agent", false
+		if reason, ok := ValidateRuntimePlaceholderAccess(ctx, req.Store, rec, req.Agent.UserID, req.Agent.ID, time.Now().UTC()); !ok {
+			return reason, false
 		}
 		if ok, reason := inspector.BoundaryCheck(v, inspector.BoundServiceHosts(rec.ServiceID)); !ok {
 			return reason, false
