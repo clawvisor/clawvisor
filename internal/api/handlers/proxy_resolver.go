@@ -388,6 +388,21 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 				msg:    "placeholder does not belong to the calling agent",
 			}
 		}
+		now := time.Now().UTC()
+		if ph.RevokedAt != nil {
+			return "", &resolverAPIError{
+				status: http.StatusUnauthorized,
+				code:   "PLACEHOLDER_REVOKED",
+				msg:    "placeholder has been revoked",
+			}
+		}
+		if ph.ExpiresAt != nil && !ph.ExpiresAt.After(now) {
+			return "", &resolverAPIError{
+				status: http.StatusUnauthorized,
+				code:   "PLACEHOLDER_EXPIRED",
+				msg:    "placeholder has expired",
+			}
+		}
 		// Bound-service host check.
 		hosts := inspector.BoundServiceHosts(ph.ServiceID)
 		if len(hosts) == 0 {

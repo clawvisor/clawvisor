@@ -81,8 +81,9 @@ func TestTaskCreateV2RejectsInvalidEnvelope(t *testing.T) {
 }
 
 func TestTaskCreateV2StoresRequiredCredentialsAndRisk(t *testing.T) {
-	env := newTestEnv(t)
+	env := newTestEnv(t, newMockAdapter("mock.release", "write"))
 	sc := newScenario(t, env, "task-v2-credentials")
+	sc.activateService(t, env, "mock.release")
 
 	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
 		"purpose": "create release issues in GitHub",
@@ -94,8 +95,8 @@ func TestTaskCreateV2StoresRequiredCredentialsAndRisk(t *testing.T) {
 		},
 		"required_credentials_json": []map[string]any{
 			{
-				"vault_item_id": "vault_github_release_bot",
-				"why":           "Use the GitHub release bot credential to create issues in owner/repo.",
+				"vault_item_id": "mock.release",
+				"why":           "Use the release credential to create issues in owner/repo.",
 			},
 		},
 	})
@@ -110,6 +111,17 @@ func TestTaskCreateV2StoresRequiredCredentialsAndRisk(t *testing.T) {
 	}
 	if task["risk_level"] != "medium" {
 		t.Fatalf("expected medium risk for credential request, got %v", task["risk_level"])
+	}
+
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
+	approved := mustStatus(t, resp, http.StatusOK)
+	placeholders := arr(t, approved, "credential_placeholders")
+	if len(placeholders) != 1 {
+		t.Fatalf("expected one minted credential placeholder, got %v", approved["credential_placeholders"])
+	}
+	placeholder := placeholders[0].(map[string]any)
+	if placeholder["vault_item_id"] != "mock.release" || placeholder["task_id"] != taskID {
+		t.Fatalf("unexpected placeholder metadata: %v", placeholder)
 	}
 }
 

@@ -96,6 +96,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
 		return nil, errors.New("expires_in_seconds cannot be set on a standing task")
 	}
+	requiredCredentials := req.RequiredCredentials
 
 	now := time.Now().UTC()
 	task := &store.Task{
@@ -137,6 +138,9 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		}
 		task.RequiredCredentials = json.RawMessage(raw)
 	}
+	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
+		return nil, err
+	}
 
 	// Inline-approval rationale captures the gesture so a future audit
 	// can see "the user approved this task at the chat terminal" without
@@ -161,6 +165,15 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 
 	if err := h.st.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
+	}
+	if len(requiredCredentials) > 0 {
+		credentialExpiresAt := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+		if task.ExpiresAt != nil {
+			credentialExpiresAt = *task.ExpiresAt
+		}
+		if _, err := h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt); err != nil {
+			return nil, fmt.Errorf("mint credential placeholders: %w", err)
+		}
 	}
 
 	// Persist the canonical approval record at creation time. Surface

@@ -2258,15 +2258,21 @@ func scanRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*store.Ru
 
 func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
-		VALUES ($1,$2,$3,$4,$5)
-	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, placeholder.LastUsedAt)
+		INSERT INTO runtime_placeholders (
+			placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+			task_id, expires_at, revoked_at, last_used_at, use_count
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID,
+		placeholder.VaultItemID, placeholder.CredentialGrantID, placeholder.TaskID,
+		placeholder.ExpiresAt, placeholder.RevokedAt, placeholder.LastUsedAt, placeholder.UseCount)
 	return err
 }
 
 func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders WHERE placeholder = $1
 	`, placeholder)
 	if err != nil {
@@ -2284,7 +2290,8 @@ func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (
 
 func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -2316,7 +2323,7 @@ func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userI
 }
 
 func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1 WHERE placeholder = $2`, usedAt, placeholder)
+	tag, err := s.pool.Exec(ctx, `UPDATE runtime_placeholders SET last_used_at = $1, use_count = use_count + 1 WHERE placeholder = $2`, usedAt, placeholder)
 	if err != nil {
 		return err
 	}
@@ -2328,7 +2335,11 @@ func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string,
 
 func scanRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
 	placeholder := &store.RuntimePlaceholder{}
-	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &placeholder.CreatedAt, &placeholder.LastUsedAt); err != nil {
+	if err := scanner.Scan(
+		&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID,
+		&placeholder.VaultItemID, &placeholder.CredentialGrantID, &placeholder.TaskID, &placeholder.CreatedAt,
+		&placeholder.ExpiresAt, &placeholder.RevokedAt, &placeholder.LastUsedAt, &placeholder.UseCount,
+	); err != nil {
 		return nil, err
 	}
 	return placeholder, nil

@@ -2489,15 +2489,22 @@ func scanSQLiteRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*st
 
 func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
-		VALUES (?,?,?,?,?)
-	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, formatNullableTime(placeholder.LastUsedAt))
+		INSERT INTO runtime_placeholders (
+			placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+			task_id, expires_at, revoked_at, last_used_at, use_count
+		)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID,
+		placeholder.VaultItemID, placeholder.CredentialGrantID, placeholder.TaskID,
+		formatNullableTime(placeholder.ExpiresAt), formatNullableTime(placeholder.RevokedAt),
+		formatNullableTime(placeholder.LastUsedAt), placeholder.UseCount)
 	return err
 }
 
 func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders WHERE placeholder = ?
 	`, placeholder)
 	if err != nil {
@@ -2515,7 +2522,8 @@ func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (
 
 func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -2547,7 +2555,7 @@ func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userI
 }
 
 func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ? WHERE placeholder = ?`,
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ?, use_count = use_count + 1 WHERE placeholder = ?`,
 		usedAt.UTC().Format(time.RFC3339), placeholder)
 	if err != nil {
 		return err
@@ -2561,11 +2569,23 @@ func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string,
 func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
 	placeholder := &store.RuntimePlaceholder{}
 	var createdAt string
-	var lastUsedAt *string
-	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &createdAt, &lastUsedAt); err != nil {
+	var expiresAt, revokedAt, lastUsedAt *string
+	if err := scanner.Scan(
+		&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID,
+		&placeholder.VaultItemID, &placeholder.CredentialGrantID, &placeholder.TaskID, &createdAt,
+		&expiresAt, &revokedAt, &lastUsedAt, &placeholder.UseCount,
+	); err != nil {
 		return nil, err
 	}
 	placeholder.CreatedAt = parseTime(createdAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		placeholder.ExpiresAt = &t
+	}
+	if revokedAt != nil {
+		t := parseTime(*revokedAt)
+		placeholder.RevokedAt = &t
+	}
 	if lastUsedAt != nil {
 		t := parseTime(*lastUsedAt)
 		placeholder.LastUsedAt = &t

@@ -115,7 +115,11 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 
 	counts := map[string]int{}
 	lastUsed := map[string]*time.Time{}
+	now := time.Now().UTC()
 	for _, placeholder := range placeholders {
+		if placeholder.RevokedAt != nil || (placeholder.ExpiresAt != nil && !placeholder.ExpiresAt.After(now)) {
+			continue
+		}
 		counts[placeholder.ServiceID]++
 		if placeholder.LastUsedAt != nil {
 			if lastUsed[placeholder.ServiceID] == nil || placeholder.LastUsedAt.After(*lastUsed[placeholder.ServiceID]) {

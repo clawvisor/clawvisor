@@ -74,6 +74,10 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					if meta.AgentID != st.Session.AgentID || meta.UserID != st.Session.UserID {
 						return "", store.ErrNotFound
 					}
+					now := time.Now().UTC()
+					if meta.RevokedAt != nil || (meta.ExpiresAt != nil && !meta.ExpiresAt.After(now)) {
+						return "", store.ErrNotFound
+					}
 					credBytes, err := hooks.Vault.Get(req.Context(), meta.UserID, meta.ServiceID)
 					if err != nil {
 						return "", err

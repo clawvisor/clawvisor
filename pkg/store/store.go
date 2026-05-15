@@ -711,12 +711,18 @@ type RuntimePresetDecision struct {
 // RuntimePlaceholder is an agent-scoped placeholder that resolves to an
 // existing vault credential at proxy runtime.
 type RuntimePlaceholder struct {
-	Placeholder string     `json:"placeholder"`
-	UserID      string     `json:"user_id"`
-	AgentID     string     `json:"agent_id"`
-	ServiceID   string     `json:"service_id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	Placeholder       string     `json:"placeholder"`
+	UserID            string     `json:"user_id"`
+	AgentID           string     `json:"agent_id"`
+	ServiceID         string     `json:"service_id"`
+	VaultItemID       string     `json:"vault_item_id,omitempty"`
+	CredentialGrantID string     `json:"credential_grant_id,omitempty"`
+	TaskID            string     `json:"task_id,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
+	UseCount          int        `json:"use_count,omitempty"`
 }
 
 // CredentialAuthorization grants reuse of a previously reviewed outbound

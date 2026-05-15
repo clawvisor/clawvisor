@@ -443,8 +443,14 @@ export interface RuntimePlaceholder {
   user_id: string
   agent_id: string
   service_id: string
+  vault_item_id?: string
+  credential_grant_id?: string
+  task_id?: string
   created_at: string
+  expires_at?: string
+  revoked_at?: string
   last_used_at?: string
+  use_count?: number
 }
 
 export interface VaultServiceBinding {
