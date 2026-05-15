@@ -22,7 +22,7 @@ func (h *LLMControlHandler) Capabilities(w http.ResponseWriter, r *http.Request)
 		"note":         "clawvisor.local is synthetic and is handled inside proxy-lite tool calls. Use direct_url when fetching documentation from a shell.",
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/control/skill", "purpose": "Return schemas and examples for Clawvisor control-plane calls."},
-			{"method": "GET", "path": "/control/vault/items", "purpose": "List available vault item IDs and labels that can be requested in a task."},
+			{"method": "GET", "path": "/control/vault/items", "purpose": "List available vault item IDs that can be requested in a task."},
 			{"method": "POST", "path": "/control/tasks?wait=true&timeout=120", "purpose": "Create a task approval request for future tool use and wait for my decision."},
 			{"method": "GET", "path": "/control/tasks/{id}", "purpose": "Fetch task status."},
 			{"method": "POST", "path": "/control/tasks/{id}/expand", "purpose": "Request additional scope for an existing task."},
@@ -43,7 +43,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"Clawvisor handles the synthetic URL before the shell command runs.",
 			"Before creating a task, tell me that you are requesting a Clawvisor task and that I will need to approve it.",
 			"Creating or expanding a task requests permission. It does not grant permission until I approve it.",
-			"Use /control/vault/items to list available vault item IDs when your task needs a credential and the prompt did not include the item you need. The response is compact; do not pipe or shell-filter it.",
+			"Use /control/vault/items to list available vault item IDs when your task needs a credential and the prompt did not include the item you need. The response is just IDs; do not pipe or shell-filter it.",
 			"Use wait=true when creating a task so the command blocks until I approve or deny it.",
 			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
 			"When a task needs a credential, include required_credentials_json with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",

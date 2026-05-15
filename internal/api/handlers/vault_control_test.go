@@ -49,12 +49,7 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 		t.Fatalf("ListForAgent status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Items []struct {
-			ID       string `json:"id"`
-			Label    string `json:"label"`
-			Kind     string `json:"kind"`
-			Provider string `json:"provider,omitempty"`
-		} `json:"items"`
+		Items        []string          `json:"items"`
 		Entries      []json.RawMessage `json:"entries"`
 		Instructions string            `json:"instructions"`
 		Total        int               `json:"total"`
@@ -62,7 +57,7 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(body.Items) != 1 || body.Items[0].ID != "agentphone" {
+	if len(body.Items) != 1 || body.Items[0] != "agentphone" {
 		t.Fatalf("expected compact item id list, got %+v", body.Items)
 	}
 	if len(body.Entries) != 0 {
