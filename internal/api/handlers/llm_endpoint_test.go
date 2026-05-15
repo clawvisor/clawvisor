@@ -221,9 +221,9 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 		"VAULT PLACEHOLDERS",
 		"autovault_",
 		"NOT raw credentials",
-		// Steer model to Bash+curl (Claude Code's WebFetch can't carry
+		// Steer model to the actual shell tool + curl (Claude Code's WebFetch can't carry
 		// the headers/body the control plane needs).
-		"Bash with curl",
+		"`Bash` with curl",
 		// Don't-leak-the-daemon-URL rule. The notice now phrases this as
 		// "NEVER call http://localhost:<port>" and "Always use the
 		// synthetic host" — match on the stable canonical-URL fragment.
