@@ -284,6 +284,10 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 			if i+1 >= len(tokens) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: " + tok + " without value"}, true
 			}
+			// This only inspects the literal flag value. `@file` and
+			// `@-` bodies are accepted here because Clawvisor only
+			// rewrites header placeholders; if a body source contains a
+			// placeholder it will be sent upstream as an inert literal.
 			if autovault.HeaderMaybeContainsShadow(tokens[i+1]) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
 			}

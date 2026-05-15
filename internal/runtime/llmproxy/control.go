@@ -515,6 +515,18 @@ func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string,
 func sanitizeControlFailureCommand(cmd string) string {
 	cmd = regexp.MustCompile(`cv-nonce-[A-Za-z0-9_-]+`).ReplaceAllString(cmd, "cv-nonce-REDACTED")
 	cmd = regexp.MustCompile(`(?i)(X-Clawvisor-Caller:\s*Bearer\s+)[^'"\s]+`).ReplaceAllString(cmd, "${1}REDACTED")
+	authBearer := regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)[^'"\s]+`)
+	cmd = authBearer.ReplaceAllStringFunc(cmd, func(match string) string {
+		parts := authBearer.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		token := strings.TrimPrefix(match, parts[1])
+		if strings.HasPrefix(strings.ToLower(token), "autovault_") {
+			return match
+		}
+		return parts[1] + "REDACTED"
+	})
 	return cmd
 }
 

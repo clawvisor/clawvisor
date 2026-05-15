@@ -142,6 +142,20 @@ func TestEncodeBody_UTF8PassesThroughBase64ForBinary(t *testing.T) {
 	}
 }
 
+func TestEncodeBody_RedactsLiveAutovaultPlaceholders(t *testing.T) {
+	body := []byte(`{"system":"credential agentphone=autovault_agentphone_live123; use it"}`)
+	got, enc := EncodeBody(body)
+	if enc != "" {
+		t.Fatalf("utf8 body should not be base64 encoded, got %q", enc)
+	}
+	if strings.Contains(got, "autovault_agentphone_live123") {
+		t.Fatalf("live placeholder should be redacted from raw log body: %s", got)
+	}
+	if !strings.Contains(got, "<REDACTED:autovault>") {
+		t.Fatalf("expected autovault redaction marker, got %s", got)
+	}
+}
+
 func TestSafeHeaderSnapshot_KeepsOnlyAllowlist(t *testing.T) {
 	h := http.Header{}
 	h.Set("Content-Type", "application/json")

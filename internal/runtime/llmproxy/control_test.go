@@ -134,3 +134,17 @@ func TestRewriteControlToolUse_EmbedsCallerValueVerbatim(t *testing.T) {
 		t.Errorf("rewritten command must not embed a raw cvis_ token; got %s", rewritten)
 	}
 }
+
+func TestSanitizeControlFailureCommandRedactsRawBearerButKeepsPlaceholder(t *testing.T) {
+	in := `curl -H 'Authorization: Bearer ghp_real_secret' -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale' -H 'Authorization: Bearer autovault_github_xxx' https://clawvisor.local/control/vault/items`
+	got := sanitizeControlFailureCommand(in)
+	if strings.Contains(got, "ghp_real_secret") || strings.Contains(got, "cv-nonce-stale") {
+		t.Fatalf("expected raw tokens to be redacted, got %q", got)
+	}
+	if !strings.Contains(got, "Authorization: Bearer REDACTED") || !strings.Contains(got, "X-Clawvisor-Caller: Bearer REDACTED") {
+		t.Fatalf("expected redaction markers, got %q", got)
+	}
+	if !strings.Contains(got, "Authorization: Bearer autovault_github_xxx") {
+		t.Fatalf("autovault placeholder should remain visible to the model, got %q", got)
+	}
+}

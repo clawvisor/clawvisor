@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -265,6 +266,45 @@ func TestActiveCredentialTaskApprovalRetryMintsMissingPlaceholders(t *testing.T)
 	}
 	if len(placeholders) != 1 || placeholders[0].Placeholder != first {
 		t.Fatalf("retry should reuse existing placeholder, got %+v", placeholders)
+	}
+}
+
+func TestCreateInlineApprovedTaskRollsBackOnCredentialPlaceholderFailure(t *testing.T) {
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	v := &stubVault{}
+	if err := v.Set(ctx, user.ID, "agentphone", []byte("real-agentphone-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	h.vault = v
+	h.st = failingCredentialAuthorizationStore{Store: st, err: errors.New("forced credential authorization failure")}
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose: "Place an outbound call with agentphone",
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Call the agentphone API and verify the response"},
+		},
+		RequiredCredentials: []runtimetasks.RequiredCredential{
+			{VaultItemID: "agentphone", Why: "Authenticate requests to the agentphone API"},
+		},
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+	}
+
+	_, err := h.CreateInlineApprovedTask(ctx, agent, req, "cv-origtoolxxxxxxxxxxxxxxxxxx")
+	if err == nil || !strings.Contains(err.Error(), "mint credential placeholders") {
+		t.Fatalf("expected credential mint failure, got %v", err)
+	}
+	tasks, _, err := st.ListTasks(ctx, user.ID, store.TaskFilter{})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected one rolled-back task, got %+v", tasks)
+	}
+	if tasks[0].Status != "denied" {
+		t.Fatalf("task should be denied after credential mint failure, got %+v", tasks[0])
 	}
 }
 

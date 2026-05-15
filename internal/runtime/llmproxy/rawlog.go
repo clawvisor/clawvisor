@@ -1,6 +1,7 @@
 package llmproxy
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -36,10 +38,10 @@ import (
 // CLAWVISOR_PROXY_LITE_RAW_LOG to a file path. Production should keep
 // this off — bodies contain prompts, tool outputs, and credentials in
 // the model's conversation history. (Autovault placeholders are in
-// there; real bearer tokens are not, since the resolver path replaces
-// them with nonces before they enter conversation state — but the raw
-// log will still contain credential-shaped prompt content, user files,
-// etc.)
+// there. Live autovault placeholders are redacted before writing; real
+// bearer tokens should not enter conversation state because the resolver
+// path replaces them with nonces, but the raw log may still contain
+// credential-shaped prompt content, user files, etc.
 //
 // A nil receiver is a no-op so callers don't need a branch at every
 // site.
@@ -114,6 +116,9 @@ type RawIOEvent struct {
 func (l *RawIOLogger) Emit(ev RawIOEvent) {
 	if l == nil || l.w == nil {
 		return
+	}
+	if ev.BodyEncoding == "" {
+		ev.Body = redactRawLogLivePlaceholders(ev.Body)
 	}
 	payload := map[string]any{
 		"timestamp":    l.now().UTC().Format(time.RFC3339Nano),
@@ -196,7 +201,7 @@ func rawPromptPrefixBytes(provider string, body []byte) ([]byte, string, bool) {
 	if len(parts) == 0 {
 		return nil, model, false
 	}
-	return bytesJoin(parts, []byte{'\n'}), model, true
+	return bytes.Join(parts, []byte{'\n'}), model, true
 }
 
 func appendOpenAISystemMessages(parts [][]byte, raw json.RawMessage) [][]byte {
@@ -234,25 +239,6 @@ func rawJSONScalarString(raw json.RawMessage) string {
 	return s
 }
 
-func bytesJoin(parts [][]byte, sep []byte) []byte {
-	if len(parts) == 0 {
-		return nil
-	}
-	n := 0
-	for _, part := range parts {
-		n += len(part)
-	}
-	n += len(sep) * (len(parts) - 1)
-	out := make([]byte, 0, n)
-	for i, part := range parts {
-		if i > 0 {
-			out = append(out, sep...)
-		}
-		out = append(out, part...)
-	}
-	return out
-}
-
 // EmitRaw writes an arbitrary JSON object as one line. Used by
 // streaming-progress instrumentation that doesn't fit the RawIOEvent
 // schema — these are short, diagnostic-only records, not body
@@ -282,9 +268,18 @@ func (l *RawIOLogger) EmitRaw(fields map[string]any) {
 // produce broken JSON.
 func EncodeBody(body []byte) (string, string) {
 	if utf8.Valid(body) {
-		return string(body), ""
+		return redactRawLogLivePlaceholders(string(body)), ""
 	}
 	return base64.StdEncoding.EncodeToString(body), "base64"
+}
+
+var rawLogLivePlaceholderRE = regexp.MustCompile(`(?i)(^|[^a-z0-9])(autovault[_:][a-z0-9._:-]+)`)
+
+func redactRawLogLivePlaceholders(s string) string {
+	if s == "" {
+		return s
+	}
+	return rawLogLivePlaceholderRE.ReplaceAllString(s, "${1}<REDACTED:autovault>")
 }
 
 // SafeHeaderSnapshot pulls a small subset of headers worth keeping for

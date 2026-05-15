@@ -175,6 +175,12 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		var err error
 		credentialPlaceholders, err = h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt)
 		if err != nil {
+			h.logger.Error("failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
+				"task_id", task.ID, "err", err)
+			if rollbackErr := h.st.UpdateTaskStatus(ctx, task.ID, "denied"); rollbackErr != nil {
+				h.logger.Error("CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
+					"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
+			}
 			return nil, fmt.Errorf("mint credential placeholders: %w", err)
 		}
 	}

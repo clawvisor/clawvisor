@@ -136,6 +136,10 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load service credential")
 		return
 	}
+	expiresAt := time.Now().UTC().Add(time.Duration(h.runtimeSessionTTLSeconds()) * time.Second)
+	if agent.TokenExpiresAt != nil && agent.TokenExpiresAt.Before(expiresAt) {
+		expiresAt = agent.TokenExpiresAt.UTC()
+	}
 	auth := &store.CredentialAuthorization{
 		ID:            uuid.New().String(),
 		UserID:        agent.UserID,
@@ -150,7 +154,9 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 		MetadataJSON: mustJSON(map[string]any{
 			"source":        "manual_runtime_placeholder",
 			"vault_item_id": serviceID,
+			"ttl_seconds":   int(time.Until(expiresAt).Seconds()),
 		}),
+		ExpiresAt: &expiresAt,
 	}
 	if err := h.st.CreateCredentialAuthorization(r.Context(), auth); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save credential grant")
@@ -168,6 +174,7 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 		ServiceID:         serviceID,
 		VaultItemID:       serviceID,
 		CredentialGrantID: auth.ID,
+		ExpiresAt:         &expiresAt,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save runtime placeholder")
 		return
@@ -175,6 +182,7 @@ func (h *RuntimeHandler) CreatePlaceholder(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"placeholder": placeholder,
 		"service":     serviceID,
+		"expires_at":  expiresAt.Format(time.RFC3339),
 	})
 }
 
@@ -896,6 +904,13 @@ func (h *RuntimeHandler) oneOffTTLSeconds() int {
 		return 300
 	}
 	return h.cfg.RuntimePolicy.OneOffTTLSeconds
+}
+
+func (h *RuntimeHandler) runtimeSessionTTLSeconds() int {
+	if h.cfg == nil || h.cfg.RuntimeProxy.SessionTTLSeconds <= 0 {
+		return 3600
+	}
+	return h.cfg.RuntimeProxy.SessionTTLSeconds
 }
 
 func (h *RuntimeHandler) ListLeases(w http.ResponseWriter, r *http.Request) {

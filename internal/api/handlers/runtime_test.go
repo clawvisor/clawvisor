@@ -53,7 +53,9 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h := NewRuntimeHandler(st, v, nil, nil, nil)
+	before := time.Now().UTC()
 	h.CreatePlaceholder(rec, req)
+	after := time.Now().UTC()
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("CreatePlaceholder status=%d body=%s", rec.Code, rec.Body.String())
@@ -66,12 +68,25 @@ func TestRuntimeHandlerCreatePlaceholder(t *testing.T) {
 	if placeholder == "" {
 		t.Fatal("expected placeholder in response")
 	}
+	if resp["expires_at"] == "" {
+		t.Fatalf("expected expires_at in response: %+v", resp)
+	}
 	meta, err := st.GetRuntimePlaceholder(ctx, placeholder)
 	if err != nil {
 		t.Fatalf("GetRuntimePlaceholder: %v", err)
 	}
 	if meta.AgentID != agent.ID || meta.UserID != user.ID || meta.ServiceID != "google.gmail:work" {
 		t.Fatalf("unexpected placeholder metadata: %+v", meta)
+	}
+	if meta.ExpiresAt == nil || meta.ExpiresAt.Before(before.Add(time.Hour-time.Second)) || meta.ExpiresAt.After(after.Add(time.Hour+time.Second)) {
+		t.Fatalf("unexpected placeholder expiration: %+v", meta.ExpiresAt)
+	}
+	auth, err := st.GetCredentialAuthorization(ctx, meta.CredentialGrantID)
+	if err != nil {
+		t.Fatalf("GetCredentialAuthorization: %v", err)
+	}
+	if auth.ExpiresAt == nil || auth.ExpiresAt.Sub(*meta.ExpiresAt) > time.Second || meta.ExpiresAt.Sub(*auth.ExpiresAt) > time.Second {
+		t.Fatalf("credential grant should share placeholder expiration, auth=%+v placeholder=%+v", auth, meta)
 	}
 }
 
