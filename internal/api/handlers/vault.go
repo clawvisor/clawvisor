@@ -35,7 +35,9 @@ type VaultItem struct {
 	Name                   string                      `json:"name"`
 	Kind                   string                      `json:"kind"`
 	Provider               string                      `json:"provider,omitempty"`
+	Scope                  string                      `json:"scope,omitempty"`
 	Status                 string                      `json:"status"`
+	Metadata               map[string]string           `json:"metadata,omitempty"`
 	ServiceBindings        []VaultServiceBinding       `json:"service_bindings,omitempty"`
 	ActivePlaceholderCount int                         `json:"active_placeholder_count"`
 	LastUsedAt             *time.Time                  `json:"last_used_at,omitempty"`
@@ -132,6 +134,14 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 	if err != nil {
 		return nil, err
 	}
+	agents, err := h.st.ListAgents(r.Context(), userID)
+	if err != nil {
+		return nil, err
+	}
+	agentNames := make(map[string]string, len(agents))
+	for _, agent := range agents {
+		agentNames[agent.ID] = agent.Name
+	}
 	placeholders, err := h.st.ListRuntimePlaceholders(r.Context(), userID)
 	if err != nil {
 		return nil, err
@@ -155,6 +165,10 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 
 	items := make([]VaultItem, 0, len(keys))
 	for _, key := range keys {
+		if item, ok := llmCredentialVaultItem(key, agentNames); ok {
+			items = append(items, item)
+			continue
+		}
 		bindings := h.bindingsForVaultKey(r.Context(), userID, key, metas)
 		items = append(items, VaultItem{
 			ID:                     key,
@@ -171,6 +185,77 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 	})
 	return items, nil
+}
+
+func llmCredentialVaultItem(key string, agentNames map[string]string) (VaultItem, bool) {
+	if provider := llmProviderFromVaultKey(key); provider != "" {
+		return VaultItem{
+			ID:       "llm:" + provider + ":user",
+			Name:     display.ServiceName(provider) + " API key",
+			Kind:     "llm_provider_key",
+			Provider: provider,
+			Scope:    "user",
+			Status:   "active",
+		}, true
+	}
+	agentID, provider, ok := parseAgentScopedLLMKey(key)
+	if !ok {
+		return VaultItem{}, false
+	}
+	metadata := map[string]string{
+		"agent_id": agentID,
+	}
+	agentName := agentNames[agentID]
+	if agentName != "" {
+		metadata["agent_name"] = agentName
+	}
+	name := display.ServiceName(provider) + " API key"
+	if agentName != "" {
+		name += " for " + agentName
+	}
+	return VaultItem{
+		ID:       "llm:" + provider + ":agent:" + agentID,
+		Name:     name,
+		Kind:     "llm_provider_key",
+		Provider: provider,
+		Scope:    "agent",
+		Status:   "active",
+		Metadata: metadata,
+	}, true
+}
+
+func llmProviderFromVaultKey(key string) string {
+	switch key {
+	case "anthropic", "openai":
+		return key
+	default:
+		return ""
+	}
+}
+
+func parseAgentScopedLLMKey(key string) (agentID, provider string, ok bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) != 3 || parts[0] != "agent" {
+		return "", "", false
+	}
+	switch parts[2] {
+	case "anthropic", "openai":
+		return parts[1], parts[2], true
+	default:
+		return "", "", false
+	}
+}
+
+func vaultStorageKeyForItemID(itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	parts := strings.Split(itemID, ":")
+	if len(parts) == 3 && parts[0] == "llm" && parts[2] == "user" && llmProviderFromVaultKey(parts[1]) != "" {
+		return parts[1]
+	}
+	if len(parts) == 4 && parts[0] == "llm" && parts[2] == "agent" && llmProviderFromVaultKey(parts[1]) != "" && parts[3] != "" {
+		return "agent:" + parts[3] + ":" + parts[1]
+	}
+	return itemID
 }
 
 func (h *VaultHandler) bindingsForVaultKey(ctx context.Context, userID, key string, metas []*store.ServiceMeta) []VaultServiceBinding {

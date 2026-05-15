@@ -462,9 +462,11 @@ export interface VaultServiceBinding {
 export interface VaultItem {
   id: string
   name: string
-  kind: 'connected_account' | 'secret'
+  kind: 'connected_account' | 'secret' | 'llm_provider_key'
   provider?: string
+  scope?: 'user' | 'agent' | string
   status: string
+  metadata?: Record<string, string>
   service_bindings?: VaultServiceBinding[]
   active_placeholder_count: number
   last_used_at?: string

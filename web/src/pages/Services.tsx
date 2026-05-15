@@ -89,8 +89,9 @@ function VaultInventorySection({
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-text-primary">{item.name}</div>
                   <div className="mt-1 text-xs text-text-tertiary">
-                    {item.kind === 'connected_account' ? 'Connected account' : 'Vault secret'}
+                    {vaultItemKindLabel(item)}
                     {item.provider ? ` · ${item.provider}` : ''}
+                    {item.scope === 'agent' && item.metadata?.agent_name ? ` · ${item.metadata.agent_name}` : ''}
                     {item.last_used_at ? ` · used ${formatDistanceToNow(new Date(item.last_used_at), { addSuffix: true })}` : ''}
                   </div>
                 </div>
@@ -121,7 +122,13 @@ function VaultInventorySection({
                 <div className="text-sm font-semibold text-text-primary">{selected.name}</div>
                 <div className="mt-1 text-xs text-text-tertiary">
                   {selected.id} · {selected.status}
+                  {selected.scope ? ` · ${selected.scope} scoped` : ''}
                 </div>
+                {selected.metadata?.agent_id && (
+                  <div className="mt-2 text-xs text-text-tertiary">
+                    Agent: {selected.metadata.agent_name ?? selected.metadata.agent_id}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <VaultMetric label="Live" value={String(selectedPlaceholders.filter(isPlaceholderActive).length)} />
@@ -165,6 +172,12 @@ function VaultInventorySection({
       </div>
     </AccountSection>
   )
+}
+
+function vaultItemKindLabel(item: VaultItem) {
+  if (item.kind === 'connected_account') return 'Connected account'
+  if (item.kind === 'llm_provider_key') return item.scope === 'agent' ? 'Agent-scoped LLM key' : 'User LLM key'
+  return 'Vault secret'
 }
 
 function placeholderBelongsToVaultItem(entry: RuntimePlaceholder, vaultItemID: string) {

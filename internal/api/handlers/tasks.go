@@ -1278,7 +1278,8 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		if vaultItemID == "" {
 			return fmt.Errorf("required_credentials_json[%d] must include vault_item_id or vault_item_handle", i)
 		}
-		if _, err := h.vault.Get(ctx, task.UserID, vaultItemID); err != nil {
+		storageKey := vaultStorageKeyForItemID(vaultItemID)
+		if _, err := h.vault.Get(ctx, task.UserID, storageKey); err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
 				return fmt.Errorf("vault item %q is not available", vaultItemID)
 			}
@@ -1295,13 +1296,14 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 	out := make([]*store.RuntimePlaceholder, 0, len(required))
 	for _, cred := range required {
 		vaultItemID := credentialVaultItemID(cred)
+		storageKey := vaultStorageKeyForItemID(vaultItemID)
 		auth := &store.CredentialAuthorization{
 			ID:            uuid.New().String(),
 			UserID:        task.UserID,
 			AgentID:       task.AgentID,
 			Scope:         "session",
-			CredentialRef: vaultItemID,
-			Service:       vaultItemID,
+			CredentialRef: storageKey,
+			Service:       storageKey,
 			Host:          "",
 			HeaderName:    "authorization",
 			Scheme:        "bearer",
@@ -1326,7 +1328,7 @@ func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task 
 			Placeholder:       placeholder,
 			UserID:            task.UserID,
 			AgentID:           task.AgentID,
-			ServiceID:         vaultItemID,
+			ServiceID:         storageKey,
 			VaultItemID:       vaultItemID,
 			CredentialGrantID: auth.ID,
 			TaskID:            task.ID,

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -89,13 +88,6 @@ func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Store.UpsertServiceMeta(r.Context(), user.ID, serviceID, "default", time.Now().UTC()); err != nil {
-		// Vault write succeeded; service-meta is for dashboard listing
-		// only. Log + continue.
-		h.Logger.WarnContext(r.Context(), "lite-proxy: service meta upsert failed",
-			"user_id", user.ID, "service_id", serviceID, "err", err.Error())
-	}
-
 	resp := map[string]string{
 		"provider":   provider,
 		"service_id": serviceID,
@@ -157,10 +149,10 @@ func (h *LLMCredentialsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type entry struct {
-		Provider     string `json:"provider"`
-		Stored       bool   `json:"stored"`
-		AgentStored  bool   `json:"agent_stored,omitempty"`
-		AgentID      string `json:"agent_id,omitempty"`
+		Provider    string `json:"provider"`
+		Stored      bool   `json:"stored"`
+		AgentStored bool   `json:"agent_stored,omitempty"`
+		AgentID     string `json:"agent_id,omitempty"`
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	if agentID != "" {

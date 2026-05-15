@@ -60,3 +60,40 @@ func TestVaultItemsListForUserAndAgent(t *testing.T) {
 		t.Fatalf("expected detail placeholder history, got %v", detail["placeholders"])
 	}
 }
+
+func TestVaultItemsRenderAgentScopedLLMCredentialsAsMetadata(t *testing.T) {
+	env := newTestEnv(t)
+	sc := newScenario(t, env, "vault-llm-agent")
+
+	serviceID := "agent:" + sc.AgentID + ":anthropic"
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, serviceID, []byte("sk-ant-test-key")); err != nil {
+		t.Fatalf("Vault.Set: %v", err)
+	}
+	if err := env.Store.UpsertServiceMeta(context.Background(), sc.session.UserID, serviceID, "default", time.Now().UTC()); err != nil {
+		t.Fatalf("UpsertServiceMeta: %v", err)
+	}
+
+	resp := sc.session.do("GET", "/api/vault/items", nil)
+	body := mustStatus(t, resp, http.StatusOK)
+	items := arr(t, body, "entries")
+	if len(items) != 1 {
+		t.Fatalf("expected one vault item, got %v", body["entries"])
+	}
+	item := items[0].(map[string]any)
+	if item["id"] != "llm:anthropic:agent:"+sc.AgentID {
+		t.Fatalf("unexpected virtual vault item id: %v", item["id"])
+	}
+	if item["kind"] != "llm_provider_key" || item["provider"] != "anthropic" || item["scope"] != "agent" {
+		t.Fatalf("unexpected llm vault item: %v", item)
+	}
+	metadata := item["metadata"].(map[string]any)
+	if metadata["agent_id"] != sc.AgentID {
+		t.Fatalf("unexpected llm vault metadata: %v", metadata)
+	}
+	if _, ok := metadata["backing_vault_key"]; ok {
+		t.Fatalf("llm vault metadata should not expose backing vault key: %v", metadata)
+	}
+	if bindings, ok := item["service_bindings"]; ok {
+		t.Fatalf("agent-scoped llm key should not render as adapter service binding, got %v", bindings)
+	}
+}

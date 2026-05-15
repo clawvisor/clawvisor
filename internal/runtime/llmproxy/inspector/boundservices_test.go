@@ -15,9 +15,9 @@ func TestBoundServiceHosts_KnownService(t *testing.T) {
 // credentials don't fail closed at the boundary check.
 func TestBoundServiceHosts_HandlesCapturedPrefix(t *testing.T) {
 	cases := map[string]string{
-		"runtime.captured.github.autovault_github_xyz":  "github",
-		"runtime.captured.stripe.autovault_stripe_abc":  "stripe",
-		"runtime.captured.gmail.autovault_google_42":    "gmail",
+		"runtime.captured.github.autovault_github_xyz": "github",
+		"runtime.captured.stripe.autovault_stripe_abc": "stripe",
+		"runtime.captured.gmail.autovault_google_42":   "gmail",
 	}
 	for prefixed, want := range cases {
 		got := BoundServiceHosts(prefixed)
@@ -39,6 +39,23 @@ func TestBoundServiceHosts_HandlesAccountSuffix(t *testing.T) {
 		"github:work":       "github",
 		"stripe:live":       "stripe",
 		"slack:dev":         "slack",
+	}
+	for scoped, bare := range cases {
+		got := BoundServiceHosts(scoped)
+		expected := BoundServiceHosts(bare)
+		if len(got) == 0 || len(got) != len(expected) {
+			t.Errorf("scoped %q produced %d hosts, want same as bare %q (%d)",
+				scoped, len(got), bare, len(expected))
+		}
+	}
+}
+
+func TestBoundServiceHosts_HandlesLLMScopedKeys(t *testing.T) {
+	cases := map[string]string{
+		"agent:agent-123:anthropic":     "anthropic",
+		"agent:agent-123:openai":        "openai",
+		"llm:anthropic:agent:agent-123": "anthropic",
+		"llm:openai:user":               "openai",
 	}
 	for scoped, bare := range cases {
 		got := BoundServiceHosts(scoped)

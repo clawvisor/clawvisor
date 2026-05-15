@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -121,6 +122,41 @@ func TestTaskCreateV2StoresRequiredCredentialsAndRisk(t *testing.T) {
 	}
 	placeholder := placeholders[0].(map[string]any)
 	if placeholder["vault_item_id"] != "mock.release" || placeholder["task_id"] != taskID {
+		t.Fatalf("unexpected placeholder metadata: %v", placeholder)
+	}
+}
+
+func TestTaskCreateV2AcceptsVirtualLLMCredentialItem(t *testing.T) {
+	env := newTestEnv(t)
+	sc := newScenario(t, env, "task-v2-llm-credential")
+	storageKey := "agent:" + sc.AgentID + ":anthropic"
+	virtualID := "llm:anthropic:agent:" + sc.AgentID
+	if err := env.Vault.Set(context.Background(), sc.session.UserID, storageKey, []byte("sk-ant-test-key")); err != nil {
+		t.Fatalf("Vault.Set: %v", err)
+	}
+
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "call Anthropic with an agent-scoped key",
+		"expected_tools_json": []map[string]any{{
+			"tool_name": "Bash",
+			"why":       "Run a curl request to api.anthropic.com for this task.",
+		}},
+		"required_credentials_json": []map[string]any{{
+			"vault_item_id": virtualID,
+			"why":           "Use this agent-scoped Anthropic key only for the approved request.",
+		}},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	taskID := str(t, body, "task_id")
+
+	resp = sc.session.do("POST", fmt.Sprintf("/api/tasks/%s/approve", taskID), nil)
+	approved := mustStatus(t, resp, http.StatusOK)
+	placeholders := arr(t, approved, "credential_placeholders")
+	if len(placeholders) != 1 {
+		t.Fatalf("expected one minted credential placeholder, got %v", approved["credential_placeholders"])
+	}
+	placeholder := placeholders[0].(map[string]any)
+	if placeholder["vault_item_id"] != virtualID || placeholder["service_id"] != storageKey {
 		t.Fatalf("unexpected placeholder metadata: %v", placeholder)
 	}
 }

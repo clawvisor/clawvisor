@@ -3,6 +3,7 @@ package llmproxy
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -57,10 +58,25 @@ func validatePlaceholderGrant(ctx context.Context, st store.Store, ph *store.Run
 	if auth.ExpiresAt != nil && !auth.ExpiresAt.After(now) {
 		return "credential grant has expired", false
 	}
-	if ph.VaultItemID != "" && auth.CredentialRef != "" && auth.CredentialRef != ph.VaultItemID {
+	if ph.VaultItemID != "" && auth.CredentialRef != "" && auth.CredentialRef != ph.VaultItemID && auth.CredentialRef != storageKeyForVaultItemID(ph.VaultItemID) {
 		return "credential grant does not match placeholder vault item", false
 	}
 	return "", true
+}
+
+func storageKeyForVaultItemID(itemID string) string {
+	parts := strings.Split(strings.TrimSpace(itemID), ":")
+	if len(parts) == 3 && parts[0] == "llm" && parts[2] == "user" && isLLMProvider(parts[1]) {
+		return parts[1]
+	}
+	if len(parts) == 4 && parts[0] == "llm" && parts[2] == "agent" && isLLMProvider(parts[1]) && parts[3] != "" {
+		return "agent:" + parts[3] + ":" + parts[1]
+	}
+	return itemID
+}
+
+func isLLMProvider(provider string) bool {
+	return provider == "anthropic" || provider == "openai"
 }
 
 func validatePlaceholderTask(ctx context.Context, st store.Store, ph *store.RuntimePlaceholder, userID, agentID string, now time.Time) (string, bool) {
