@@ -134,14 +134,6 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 	if err != nil {
 		return nil, err
 	}
-	agents, err := h.st.ListAgents(r.Context(), userID)
-	if err != nil {
-		return nil, err
-	}
-	agentNames := make(map[string]string, len(agents))
-	for _, agent := range agents {
-		agentNames[agent.ID] = agent.Name
-	}
 	placeholders, err := h.st.ListRuntimePlaceholders(r.Context(), userID)
 	if err != nil {
 		return nil, err
@@ -165,7 +157,10 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 
 	items := make([]VaultItem, 0, len(keys))
 	for _, key := range keys {
-		if item, ok := llmCredentialVaultItem(key, agentNames); ok {
+		if _, _, ok := parseAgentScopedLLMKey(key); ok {
+			continue
+		}
+		if item, ok := llmCredentialVaultItem(key); ok {
 			items = append(items, item)
 			continue
 		}
@@ -187,7 +182,7 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 	return items, nil
 }
 
-func llmCredentialVaultItem(key string, agentNames map[string]string) (VaultItem, bool) {
+func llmCredentialVaultItem(key string) (VaultItem, bool) {
 	if provider := llmProviderFromVaultKey(key); provider != "" {
 		return VaultItem{
 			ID:       "llm:" + provider + ":user",
@@ -198,30 +193,7 @@ func llmCredentialVaultItem(key string, agentNames map[string]string) (VaultItem
 			Status:   "active",
 		}, true
 	}
-	agentID, provider, ok := parseAgentScopedLLMKey(key)
-	if !ok {
-		return VaultItem{}, false
-	}
-	metadata := map[string]string{
-		"agent_id": agentID,
-	}
-	agentName := agentNames[agentID]
-	if agentName != "" {
-		metadata["agent_name"] = agentName
-	}
-	name := display.ServiceName(provider) + " API key"
-	if agentName != "" {
-		name += " for " + agentName
-	}
-	return VaultItem{
-		ID:       "llm:" + provider + ":agent:" + agentID,
-		Name:     name,
-		Kind:     "llm_provider_key",
-		Provider: provider,
-		Scope:    "agent",
-		Status:   "active",
-		Metadata: metadata,
-	}, true
+	return VaultItem{}, false
 }
 
 func llmProviderFromVaultKey(key string) string {
