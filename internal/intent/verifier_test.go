@@ -147,6 +147,24 @@ func TestBuildVerificationUserMessage_NoExpectedUse(t *testing.T) {
 	}
 }
 
+func TestBuildVerificationUserMessage_EmptyReasonUsesHarnessSentinel(t *testing.T) {
+	req := VerifyRequest{
+		TaskPurpose: "Inspect repository status",
+		ExpectedUse: "Run read-only git and file inspection commands",
+		Service:     "tool.exec",
+		Action:      "exec",
+		Params:      map[string]any{"command": "git status --short"},
+		Reason:      "",
+	}
+	msg := buildVerificationUserMessage(req)
+	if !contains(msg, "<no per-call rationale: harness tool schema does not collect one>") {
+		t.Fatalf("expected harness sentinel for empty reason, got %s", msg)
+	}
+	if contains(msg, "<reason></reason>") {
+		t.Fatalf("empty reason should not be sent as an empty reason tag: %s", msg)
+	}
+}
+
 func TestCacheHitAndMiss(t *testing.T) {
 	c := newVerdictCache(time.Minute)
 	key := cacheKey("test-key")

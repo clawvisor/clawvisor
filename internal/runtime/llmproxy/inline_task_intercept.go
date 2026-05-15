@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 )
 
@@ -132,10 +133,18 @@ func maybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
+	assessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, runtimetasks.Envelope{
+		ExpectedTools:          parsed.ExpectedTools,
+		ExpectedEgress:         parsed.ExpectedEgress,
+		RequiredCredentials:    parsed.RequiredCredentials,
+		IntentVerificationMode: parsed.IntentVerificationMode,
+		ExpectedUse:            parsed.ExpectedUse,
+		SchemaVersion:          parsed.SchemaVersion,
+	})
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
-		SubstituteWith: renderTaskApprovalPrompt(parsed, innerHold.Pending.ID),
+		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
 	}, true
 }
 
