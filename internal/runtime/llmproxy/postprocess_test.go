@@ -372,6 +372,7 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 		{"task_get", "TaskGet", `{"taskId":"1"}`},
 		{"task_output", "TaskOutput", `{"taskId":"1"}`},
 		{"task_stop", "TaskStop", `{"taskId":"1"}`},
+		{"ask_user_question", "AskUserQuestion", `{"question":"Proceed with this approach?","options":["yes","no"]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
