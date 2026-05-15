@@ -168,7 +168,7 @@ func rewriteBash(t ToolUse, v Verdict, resolver *url.URL, opts RewriteOpts) ([]b
 		return nil, false, nil
 	}
 
-	tokens, ok := simpleShellTokenize(seg.text)
+	tokens, ok := simpleShellTokenize(normalizeShellLineContinuations(seg.text))
 	if !ok || len(tokens) == 0 {
 		return nil, false, nil
 	}
@@ -266,7 +266,7 @@ func joinShellTokens(tokens []string) string {
 }
 
 // quoteShell wraps a string in single quotes, escaping any embedded
-// single quotes via the standard '\'' trick.
+// single quotes by closing, inserting an escaped quote, then reopening.
 //
 // Security: uses an ALLOW-list — only leaves a token unquoted when every
 // character is known-safe (alphanumerics + a small URL-safe set). A
@@ -286,8 +286,8 @@ func quoteShell(s string) string {
 // shellTokenSafe reports whether s contains only characters known to be
 // safe to pass unquoted to /bin/sh-style shells. Conservative on purpose:
 // any character not in the safe set forces quoting. Empty string is NOT
-// safe (an unquoted empty token disappears from the argv) — callers want
-// it quoted as '' to preserve it as a discrete argument.
+// safe (an unquoted empty token disappears from the argv), so callers
+// want it quoted to preserve it as a discrete argument.
 func shellTokenSafe(s string) bool {
 	if s == "" {
 		return false

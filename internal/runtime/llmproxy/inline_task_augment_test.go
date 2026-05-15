@@ -434,7 +434,7 @@ func TestInlineFailedReplyAugmentationContextSanitizesReason(t *testing.T) {
 // Both now reduce to the bracketed context with no verb prefix.
 func TestAugment_OneShotAndPersistentProduceIdenticalText(t *testing.T) {
 	oneShot := inlineApprovedReplyAugmentation()
-	persistent := inlineApprovedReplyAugmentationContext()
+	persistent := inlineApprovedReplyAugmentationContext(nil)
 	if oneShot != persistent {
 		t.Fatalf("one-shot and persistent renderings differ — drift bug.\n  one-shot:\n%s\n  persistent:\n%s", oneShot, persistent)
 	}

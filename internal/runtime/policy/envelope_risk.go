@@ -49,7 +49,7 @@ func AssessTaskEnvelope(purpose string, env runtimetasks.Envelope) *taskrisk.Ris
 		level = maxRiskLevel(level, "high")
 	}
 
-	if len(env.ExpectedTools) == 0 && len(env.ExpectedEgress) == 0 {
+	if len(env.ExpectedTools) == 0 && len(env.ExpectedEgress) == 0 && len(env.RequiredCredentials) == 0 {
 		conflicts = append(conflicts, taskrisk.ConflictDetail{
 			Field:       "action",
 			Description: "task envelope does not declare any expected tools or egress targets",
@@ -58,7 +58,7 @@ func AssessTaskEnvelope(purpose string, env runtimetasks.Envelope) *taskrisk.Ris
 		level = "critical"
 	}
 
-	if len(env.ExpectedTools)+len(env.ExpectedEgress) >= 6 {
+	if len(env.ExpectedTools)+len(env.ExpectedEgress)+len(env.RequiredCredentials) >= 6 {
 		factors = append(factors, "task envelope spans many different runtime operations")
 		level = maxRiskLevel(level, "medium")
 	}
@@ -96,6 +96,23 @@ func AssessTaskEnvelope(purpose string, env runtimetasks.Envelope) *taskrisk.Ris
 			conflicts = append(conflicts, taskrisk.ConflictDetail{
 				Field:       "expected_use",
 				Description: fmt.Sprintf("egress target %q: %s", item.Host, issue),
+				Severity:    "warning",
+			})
+			level = maxRiskLevel(level, "medium")
+		}
+	}
+
+	for _, item := range env.RequiredCredentials {
+		display := item.VaultItemID
+		if display == "" {
+			display = item.VaultItemHandle
+		}
+		factors = append(factors, fmt.Sprintf("task requests credential access to %q", display))
+		level = maxRiskLevel(level, "medium")
+		for _, issue := range whyQualityIssues(item.Why) {
+			conflicts = append(conflicts, taskrisk.ConflictDetail{
+				Field:       "expected_use",
+				Description: fmt.Sprintf("credential %q: %s", display, issue),
 				Severity:    "warning",
 			})
 			level = maxRiskLevel(level, "medium")

@@ -46,3 +46,23 @@ func TestAssessTaskEnvelopeLowRiskReadOnlyScope(t *testing.T) {
 		t.Fatalf("expected low risk, got %q", assessment.RiskLevel)
 	}
 }
+
+func TestAssessTaskEnvelopeRaisesRiskForCredentialAccess(t *testing.T) {
+	assessment := AssessTaskEnvelope("create release issues", runtimetasks.Envelope{
+		ExpectedTools: []runtimetasks.ExpectedTool{{
+			ToolName: "Bash",
+			Why:      "Call the GitHub API to create release issues.",
+		}},
+		RequiredCredentials: []runtimetasks.RequiredCredential{{
+			VaultItemID: "vault_github_release_bot",
+			Why:         "Use the GitHub release bot credential to create issues in owner/repo.",
+		}},
+	})
+
+	if assessment.RiskLevel != "medium" {
+		t.Fatalf("expected medium risk, got %q", assessment.RiskLevel)
+	}
+	if len(assessment.Factors) == 0 || assessment.Factors[0] != `task requests credential access to "vault_github_release_bot"` {
+		t.Fatalf("expected credential risk factor, got %#v", assessment.Factors)
+	}
+}

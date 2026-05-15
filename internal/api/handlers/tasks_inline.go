@@ -62,6 +62,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	env := runtimetasks.Envelope{
 		ExpectedTools:          req.ExpectedTools,
 		ExpectedEgress:         req.ExpectedEgress,
+		RequiredCredentials:    req.RequiredCredentials,
 		IntentVerificationMode: req.IntentVerificationMode,
 		ExpectedUse:            req.ExpectedUse,
 		SchemaVersion:          req.SchemaVersion,
@@ -95,6 +96,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if lifetime == "standing" && req.ExpiresInSeconds > 0 {
 		return nil, errors.New("expires_in_seconds cannot be set on a standing task")
 	}
+	requiredCredentials := req.RequiredCredentials
 
 	now := time.Now().UTC()
 	task := &store.Task{
@@ -129,6 +131,16 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		}
 		task.ExpectedEgress = json.RawMessage(raw)
 	}
+	if len(req.RequiredCredentials) > 0 {
+		raw, err := json.Marshal(req.RequiredCredentials)
+		if err != nil {
+			return nil, fmt.Errorf("encode required_credentials_json: %w", err)
+		}
+		task.RequiredCredentials = json.RawMessage(raw)
+	}
+	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
+		return nil, err
+	}
 
 	// Inline-approval rationale captures the gesture so a future audit
 	// can see "the user approved this task at the chat terminal" without
@@ -153,6 +165,24 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 
 	if err := h.st.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
+	}
+	var credentialPlaceholders []*store.RuntimePlaceholder
+	if len(requiredCredentials) > 0 {
+		credentialExpiresAt := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+		if task.ExpiresAt != nil {
+			credentialExpiresAt = *task.ExpiresAt
+		}
+		var err error
+		credentialPlaceholders, err = h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt)
+		if err != nil {
+			h.logger.Error("failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
+				"task_id", task.ID, "err", err)
+			if rollbackErr := h.st.UpdateTaskStatus(ctx, task.ID, "denied"); rollbackErr != nil {
+				h.logger.Error("CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
+					"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
+			}
+			return nil, fmt.Errorf("mint credential placeholders: %w", err)
+		}
 	}
 
 	// Persist the canonical approval record at creation time. Surface
@@ -203,7 +233,31 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if task.ExpiresAt != nil {
 		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
 	}
+	out.Credentials = inlineCredentialPlaceholders(credentialPlaceholders)
 	return out, nil
+}
+
+func inlineCredentialPlaceholders(placeholders []*store.RuntimePlaceholder) []llmproxy.InlineTaskCredentialPlaceholder {
+	if len(placeholders) == 0 {
+		return nil
+	}
+	out := make([]llmproxy.InlineTaskCredentialPlaceholder, 0, len(placeholders))
+	for _, ph := range placeholders {
+		if ph == nil || strings.TrimSpace(ph.Placeholder) == "" {
+			continue
+		}
+		item := llmproxy.InlineTaskCredentialPlaceholder{
+			VaultItemID:       ph.VaultItemID,
+			ServiceID:         ph.ServiceID,
+			Placeholder:       ph.Placeholder,
+			CredentialGrantID: ph.CredentialGrantID,
+		}
+		if ph.ExpiresAt != nil {
+			item.ExpiresAtRFC3339 = ph.ExpiresAt.Format(time.RFC3339)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // createCanonicalInlineApprovalRecord writes the approval_records row

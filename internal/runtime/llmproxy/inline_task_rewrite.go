@@ -54,6 +54,9 @@ type InlineApprovalRewriteResult struct {
 	Reason string
 	// TaskID is the created task's ID on a successful approve.
 	TaskID string
+	// Credentials are the placeholders minted for task credential
+	// access on a successful approve.
+	Credentials []InlineTaskCredentialPlaceholder
 	// ApprovalRecordID is the canonical approval_records row id
 	// created at the same time as the task. Useful for audit traces.
 	ApprovalRecordID string
@@ -184,6 +187,7 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 		Outcome:          out.Outcome,
 		Succeeded:        out.Decision == "allow",
 		TaskID:           out.TaskID,
+		Credentials:      out.Credentials,
 		ApprovalRecordID: out.ApprovalRecordID,
 		FailureReason:    out.Reason,
 		RequestID:        requestID,
@@ -258,7 +262,7 @@ func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApp
 		return "", false
 	}
 	if outcome.Succeeded {
-		return inlineApprovedReplyAugmentationContext(), true
+		return inlineApprovedReplyAugmentationContext(outcome.Credentials), true
 	}
 	return inlineFailedReplyAugmentationContext(outcome.FailureReason), true
 }
@@ -318,13 +322,38 @@ func sanitizeFailureReasonForBracketEnvelope(reason string) string {
 // conveys what happened ("created and approved by the user inline")
 // without that sharp edge.
 func inlineApprovedReplyAugmentation() string {
-	return inlineApprovedReplyAugmentationContext()
+	return inlineApprovedReplyAugmentationContext(nil)
 }
 
 // inlineApprovedReplyAugmentationContext is the bracketed body shared
 // between the one-shot rewrite and the persistent augmenter.
-func inlineApprovedReplyAugmentationContext() string {
-	return InlineApprovalAugmentationMarker + " was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.]"
+func inlineApprovedReplyAugmentationContext(credentials []InlineTaskCredentialPlaceholder) string {
+	var b strings.Builder
+	b.WriteString(InlineApprovalAugmentationMarker)
+	b.WriteString(" was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.")
+	if len(credentials) > 0 {
+		b.WriteString(" Credential placeholders granted for this task:")
+		for _, cred := range credentials {
+			if strings.TrimSpace(cred.Placeholder) == "" {
+				continue
+			}
+			name := strings.TrimSpace(cred.VaultItemID)
+			if name == "" {
+				name = strings.TrimSpace(cred.ServiceID)
+			}
+			if name == "" {
+				name = "credential"
+			}
+			b.WriteString(" ")
+			b.WriteString(name)
+			b.WriteString("=")
+			b.WriteString(cred.Placeholder)
+			b.WriteString(";")
+		}
+		b.WriteString(" use these exact placeholder values in Authorization headers or curl arguments.")
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 // renderInlineTaskDenyReply is the user-message text the LLM sees

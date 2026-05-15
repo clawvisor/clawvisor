@@ -381,38 +381,56 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 			return "", err
 		}
-		if ph.UserID != agent.UserID || ph.AgentID != agent.ID {
+		if ph.UserID != agent.UserID || (ph.AgentID != "" && ph.AgentID != agent.ID) {
 			return "", &resolverAPIError{
 				status: http.StatusForbidden,
 				code:   "PLACEHOLDER_OWNERSHIP",
 				msg:    "placeholder does not belong to the calling agent",
 			}
 		}
+		now := time.Now().UTC()
+		if reason, ok := llmproxy.ValidateRuntimePlaceholderAccess(r.Context(), h.Store, ph, agent.UserID, agent.ID, now); !ok {
+			code := "PLACEHOLDER_REJECTED"
+			status := http.StatusForbidden
+			if strings.Contains(reason, "revoked") {
+				code = "PLACEHOLDER_REVOKED"
+				status = http.StatusUnauthorized
+			} else if strings.Contains(reason, "expired") {
+				code = "PLACEHOLDER_EXPIRED"
+				status = http.StatusUnauthorized
+			}
+			return "", &resolverAPIError{
+				status: status,
+				code:   code,
+				msg:    reason,
+			}
+		}
 		// Bound-service host check.
 		hosts := inspector.BoundServiceHosts(ph.ServiceID)
-		if len(hosts) == 0 {
-			return "", &resolverAPIError{
-				status: http.StatusForbidden,
-				code:   "BOUND_SERVICE_UNKNOWN",
-				msg:    fmt.Sprintf("no bound-service hosts for service %q", ph.ServiceID),
+		if len(hosts) > 0 {
+			// Strip port for allowlist comparison; preserve the original
+			// host:port for the upstream dial. Allowlist entries are
+			// hostnames (e.g. "api.github.com"), so targetHost like
+			// "api.github.com:443" must compare as "api.github.com".
+			hostOnly := targetHost
+			if h, _, err := net.SplitHostPort(targetHost); err == nil {
+				hostOnly = h
+			}
+			if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
+				return "", &resolverAPIError{
+					status: http.StatusForbidden,
+					code:   "TARGET_HOST_NOT_BOUND",
+					msg:    "target host not in placeholder's bound-service allowlist: " + reason,
+				}
 			}
 		}
-		// Strip port for allowlist comparison; preserve the original
-		// host:port for the upstream dial. Allowlist entries are
-		// hostnames (e.g. "api.github.com"), so targetHost like
-		// "api.github.com:443" must compare as "api.github.com".
-		hostOnly := targetHost
-		if h, _, err := net.SplitHostPort(targetHost); err == nil {
-			hostOnly = h
-		}
-		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
-			return "", &resolverAPIError{
-				status: http.StatusForbidden,
-				code:   "TARGET_HOST_NOT_BOUND",
-				msg:    "target host not in placeholder's bound-service allowlist: " + reason,
+		vaultLookupKey := ph.ServiceID
+		if ph.CredentialGrantID != "" {
+			if auth, authErr := h.Store.GetCredentialAuthorization(r.Context(), ph.CredentialGrantID); authErr == nil && strings.TrimSpace(auth.CredentialRef) != "" {
+				vaultLookupKey = strings.TrimSpace(auth.CredentialRef)
 			}
 		}
-		raw, err := h.Vault.Get(r.Context(), ph.UserID, ph.ServiceID)
+		raw, err := h.Vault.Get(r.Context(), ph.UserID, vaultLookupKey)
 		if err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
 				return "", &resolverAPIError{

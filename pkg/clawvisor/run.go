@@ -156,7 +156,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			if runtimeMgr != nil {
 				runtimeHandlerManager = runtimeMgr
 			}
-			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeHandlerManager, opts.Config, reviewCache)
+			runtimeHandler := handlers.NewRuntimeHandler(deps.Store, deps.Vault, runtimeHandlerManager, opts.Config, reviewCache, deps.AdapterReg)
 			user := middleware.RequireUser(deps.JWTService, deps.Store)
 			agent := middleware.RequireAgent(deps.Store)
 			mux.Handle("POST /api/runtime/sessions", agent(http.HandlerFunc(runtimeHandler.CreateSession)))

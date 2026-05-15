@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
 
 // renderTaskApprovalPrompt builds the inline approve/deny prompt the model
@@ -18,6 +19,8 @@ import (
 // Fields rendered:
 //   - purpose (wrapped at 80 cols)
 //   - expected_tools_json[].tool_name + .why (bullet list)
+//   - required_credentials_json[].vault_item_id / vault_item_handle + .why (bullet list)
+//   - assessed risk level + explanation when available
 //   - intent_verification_mode (default "strict")
 //   - lifetime humanized ("until session ends" / "always")
 //   - expires_in_seconds humanized ("10 min" / "1 hour")
@@ -33,6 +36,10 @@ import (
 // a failed one when both leave only a bare "approve" in conversation
 // history.
 func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID string) string {
+	return renderTaskApprovalPromptWithRisk(req, approvalID, nil)
+}
+
+func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment) string {
 	suffix := approvalIDFooter(approvalID)
 	if req == nil {
 		return "Clawvisor wants to create a task.\n\nReply `approve` to authorize, `deny` to cancel." + suffix
@@ -76,6 +83,35 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID st
 				b.WriteString(" — ")
 				b.WriteString(wrapForPrompt(why, 80, "    "))
 			}
+		}
+	}
+
+	if len(req.RequiredCredentials) > 0 {
+		b.WriteString("\n\nCredentials requested")
+		for _, cred := range req.RequiredCredentials {
+			name := strings.TrimSpace(cred.VaultItemID)
+			if name == "" {
+				name = strings.TrimSpace(cred.VaultItemHandle)
+			}
+			if name == "" {
+				continue
+			}
+			b.WriteString("\n  • ")
+			b.WriteString(name)
+			if why := strings.TrimSpace(cred.Why); why != "" {
+				b.WriteString(" — ")
+				b.WriteString(wrapForPrompt(why, 80, "    "))
+			}
+		}
+	}
+
+	if risk != nil && strings.TrimSpace(risk.RiskLevel) != "" {
+		b.WriteString("\n\nRisk")
+		b.WriteString("\n  ")
+		b.WriteString(strings.TrimSpace(risk.RiskLevel))
+		if explanation := strings.TrimSpace(risk.Explanation); explanation != "" {
+			b.WriteString(" — ")
+			b.WriteString(wrapForPrompt(explanation, 80, "    "))
 		}
 	}
 

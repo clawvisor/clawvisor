@@ -444,10 +444,36 @@ export interface ApprovalRecord {
 export interface RuntimePlaceholder {
   placeholder: string
   user_id: string
-  agent_id: string
+  agent_id?: string
   service_id: string
+  vault_item_id?: string
+  credential_grant_id?: string
+  task_id?: string
   created_at: string
+  expires_at?: string
+  revoked_at?: string
   last_used_at?: string
+  use_count?: number
+}
+
+export interface VaultServiceBinding {
+  service_id: string
+  alias?: string
+  name: string
+}
+
+export interface VaultItem {
+  id: string
+  name: string
+  kind: 'connected_account' | 'secret' | 'llm_provider_key'
+  provider?: string
+  scope?: 'user' | 'agent' | string
+  status: string
+  metadata?: Record<string, string>
+  service_bindings?: VaultServiceBinding[]
+  active_placeholder_count: number
+  last_used_at?: string
+  placeholders?: RuntimePlaceholder[]
 }
 
 export interface NotificationConfig {
@@ -1269,8 +1295,8 @@ export const api = {
     applyStarterProfile: (profileId: string, agentId?: string) =>
       post<{ entries: RuntimePolicyRule[]; total: number }>(`/api/runtime/starter-profiles/${profileId}/apply`, agentId ? { agent_id: agentId } : {}),
     listPlaceholders: () => get<{ entries: RuntimePlaceholder[]; total: number }>('/api/runtime/placeholders'),
-    mintPlaceholder: (agentId: string, service: string) =>
-      post<RuntimePlaceholder>('/api/runtime/placeholders/mint', { agent_id: agentId, service }),
+    mintPlaceholder: (agentId: string | undefined, service: string, ttlSeconds?: number) =>
+      post<RuntimePlaceholder>('/api/runtime/placeholders/mint', { agent_id: agentId, service, ttl_seconds: ttlSeconds }),
     deletePlaceholder: (placeholder: string) =>
       del<{ placeholder: string; status: string }>(`/api/runtime/placeholders/${encodeURIComponent(placeholder)}`),
     getPresetDecision: (commandKey: string, profile: string) =>
@@ -1281,6 +1307,17 @@ export const api = {
       get<RuntimeRuleCandidate>(`/api/runtime/events/${eventId}/rule-candidate`, { action }),
     promoteEventToTask: (eventId: string, lifetime: 'session' | 'standing') =>
       post<{ task_id: string }>(`/api/runtime/events/${eventId}/promote-task`, { lifetime }),
+  },
+  vault: {
+    listItems: () => get<{ entries: VaultItem[]; total: number }>('/api/vault/items'),
+    createItem: (id: string, value: string) =>
+      post<{ id: string; status: string }>('/api/vault/items', { id, value }),
+    getItem: (id: string) => get<VaultItem>(`/api/vault/items/${encodeURIComponent(id)}`),
+    updateItem: (id: string, value: string) =>
+      put<{ id: string; status: string }>(`/api/vault/items/${encodeURIComponent(id)}`, { value }),
+    deleteItem: (id: string) =>
+      del<{ id: string; status: string }>(`/api/vault/items/${encodeURIComponent(id)}`),
+    listAgentItems: () => get<{ entries: VaultItem[]; total: number }>('/api/agent/vault/items'),
   },
   notifications: {
     list: () => get<NotificationConfig[]>('/api/notifications'),

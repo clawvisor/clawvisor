@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -34,13 +36,22 @@ type InlineTaskCreator interface {
 // model needs to see — it isn't a full store.Task because the LLM
 // doesn't care about every column.
 type InlineApprovedTask struct {
-	ID               string `json:"task_id"`
-	Status           string `json:"status"`
-	Purpose          string `json:"purpose,omitempty"`
-	Lifetime         string `json:"lifetime,omitempty"`
-	ApprovalSource   string `json:"approval_source,omitempty"`
-	ApprovalRecordID string `json:"approval_record_id,omitempty"`
-	ExpiresAtRFC3339 string `json:"expires_at,omitempty"`
+	ID               string                            `json:"task_id"`
+	Status           string                            `json:"status"`
+	Purpose          string                            `json:"purpose,omitempty"`
+	Lifetime         string                            `json:"lifetime,omitempty"`
+	ApprovalSource   string                            `json:"approval_source,omitempty"`
+	ApprovalRecordID string                            `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339 string                            `json:"expires_at,omitempty"`
+	Credentials      []InlineTaskCredentialPlaceholder `json:"credential_placeholders,omitempty"`
+}
+
+type InlineTaskCredentialPlaceholder struct {
+	VaultItemID       string `json:"vault_item_id"`
+	ServiceID         string `json:"service_id,omitempty"`
+	Placeholder       string `json:"placeholder"`
+	ExpiresAtRFC3339  string `json:"expires_at,omitempty"`
+	CredentialGrantID string `json:"credential_grant_id,omitempty"`
 }
 
 type ReleaseRequest struct {
@@ -296,10 +307,14 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 		if err != nil {
 			return "placeholder lookup failed", false
 		}
-		if rec.UserID != req.Agent.UserID || rec.AgentID != req.Agent.ID {
-			return "placeholder owned by another agent", false
+		if reason, ok := ValidateRuntimePlaceholderAccess(ctx, req.Store, rec, req.Agent.UserID, req.Agent.ID, time.Now().UTC()); !ok {
+			return reason, false
 		}
-		if ok, reason := inspector.BoundaryCheck(v, inspector.BoundServiceHosts(rec.ServiceID)); !ok {
+		hosts := inspector.BoundServiceHosts(rec.ServiceID)
+		if len(hosts) == 0 {
+			return "no hardcoded bound-service hosts for service " + rec.ServiceID + "; deferring to task/intent verification", true
+		}
+		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
 			return reason, false
 		}
 	}
@@ -307,7 +322,11 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 }
 
 func syntheticReleaseResult(req ReleaseRequest, pending *PendingLiteApproval, allow bool, toolInput map[string]any, decision, outcome, reason string) ReleaseResult {
-	synth, ok := conversation.SyntheticApprovalToolUseResponse(req.HTTPRequest, req.Provider, req.Body, allow, pending.ToolUse.ID, pending.ToolUse.Name, toolInput)
+	denyMessage := conversation.ApprovalDeniedMessage
+	if !allow && outcome == "approval_release_blocked" && strings.TrimSpace(reason) != "" {
+		denyMessage = "Approval could not be released. " + strings.TrimSpace(reason)
+	}
+	synth, ok := conversation.SyntheticApprovalToolUseResponseWithDenyMessage(req.HTTPRequest, req.Provider, req.Body, allow, pending.ToolUse.ID, pending.ToolUse.Name, toolInput, denyMessage)
 	if !ok {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusBadRequest, Decision: "deny", Outcome: "approval_release_unsupported", Reason: "unsupported approval release provider"}
 	}

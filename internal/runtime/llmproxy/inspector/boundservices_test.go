@@ -15,9 +15,9 @@ func TestBoundServiceHosts_KnownService(t *testing.T) {
 // credentials don't fail closed at the boundary check.
 func TestBoundServiceHosts_HandlesCapturedPrefix(t *testing.T) {
 	cases := map[string]string{
-		"runtime.captured.github.autovault_github_xyz":  "github",
-		"runtime.captured.stripe.autovault_stripe_abc":  "stripe",
-		"runtime.captured.gmail.autovault_google_42":    "gmail",
+		"runtime.captured.github.autovault_github_xyz": "github",
+		"runtime.captured.stripe.autovault_stripe_abc": "stripe",
+		"runtime.captured.gmail.autovault_google_42":   "gmail",
 	}
 	for prefixed, want := range cases {
 		got := BoundServiceHosts(prefixed)
@@ -48,6 +48,49 @@ func TestBoundServiceHosts_HandlesAccountSuffix(t *testing.T) {
 				scoped, len(got), bare, len(expected))
 		}
 	}
+}
+
+func TestBoundServiceHosts_HandlesLLMScopedKeys(t *testing.T) {
+	cases := map[string]string{
+		"agent:agent-123:anthropic":     "anthropic",
+		"agent:agent-123:openai":        "openai",
+		"llm:anthropic:agent:agent-123": "anthropic",
+		"llm:openai:user":               "openai",
+	}
+	for scoped, bare := range cases {
+		got := BoundServiceHosts(scoped)
+		expected := BoundServiceHosts(bare)
+		if len(got) == 0 || len(got) != len(expected) {
+			t.Errorf("scoped %q produced %d hosts, want same as bare %q (%d)",
+				scoped, len(got), bare, len(expected))
+		}
+	}
+}
+
+func TestBoundServiceHosts_SplitsGoogleServiceContexts(t *testing.T) {
+	gmail := BoundServiceHosts("google.gmail")
+	calendar := BoundServiceHosts("google.calendar")
+	if !containsHost(gmail, "gmail.googleapis.com") {
+		t.Fatalf("gmail hosts should include gmail API, got %v", gmail)
+	}
+	if containsHost(gmail, "calendar.googleapis.com") {
+		t.Fatalf("gmail hosts should not include calendar API, got %v", gmail)
+	}
+	if !containsHost(calendar, "calendar.googleapis.com") {
+		t.Fatalf("calendar hosts should include calendar API, got %v", calendar)
+	}
+	if containsHost(calendar, "gmail.googleapis.com") {
+		t.Fatalf("calendar hosts should not include gmail API, got %v", calendar)
+	}
+}
+
+func containsHost(hosts []string, want string) bool {
+	for _, host := range hosts {
+		if host == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Compose: captured-secret prefix + account suffix simultaneously.

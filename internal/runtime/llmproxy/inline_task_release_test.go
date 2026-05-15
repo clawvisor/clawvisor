@@ -93,6 +93,12 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 			Lifetime:         "session",
 			ApprovalSource:   "inline_chat",
 			ApprovalRecordID: "appr-uuid-456",
+			Credentials: []InlineTaskCredentialPlaceholder{{
+				VaultItemID:      "agentphone",
+				ServiceID:        "agentphone",
+				Placeholder:      "autovault_agentphone_real123",
+				ExpiresAtRFC3339: "2026-05-15T20:38:00Z",
+			}},
 		},
 	}
 
@@ -117,6 +123,9 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	if out.TaskID != "task-uuid-123" {
 		t.Errorf("TaskID=%q, want task-uuid-123", out.TaskID)
 	}
+	if len(out.Credentials) != 1 || out.Credentials[0].Placeholder != "autovault_agentphone_real123" {
+		t.Fatalf("expected minted credential placeholder in rewrite result, got %+v", out.Credentials)
+	}
 	if !creator.called {
 		t.Fatal("expected creator to be called")
 	}
@@ -132,6 +141,9 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	}
 	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {
 		t.Errorf("rewritten body missing do-not-repost guidance: %s", rewrittenBody)
+	}
+	if !strings.Contains(rewrittenBody, "agentphone=autovault_agentphone_real123") {
+		t.Errorf("rewritten body missing exact credential placeholder: %s", rewrittenBody)
 	}
 	// Both holds gone.
 	for _, id := range []string{outerID, innerID} {

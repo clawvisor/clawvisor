@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
-	"github.com/clawvisor/clawvisor/pkg/config"
 )
 
 var placeholderExtractRE = regexp.MustCompile(`autovault_[A-Za-z0-9._:-]+`)
@@ -512,7 +512,7 @@ func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"use ghp_bridgeSecret123456789 for github"}]}]}`)
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"use re_bridgeSecret123456789 for the resend test"}]}]}`)
 	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: config.Default()}, runtimeSession, "api.anthropic.com", body)
 	if err != nil {
 		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
@@ -526,7 +526,7 @@ func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T
 	}
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer ghp_bridgeSecret123456789" {
+		if got := r.Header.Get("Authorization"); got != "Bearer re_bridgeSecret123456789" {
 			t.Fatalf("expected outbound placeholder swap, got %q", got)
 		}
 		_, _ = w.Write([]byte(`ok`))

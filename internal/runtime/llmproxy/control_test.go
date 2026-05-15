@@ -23,6 +23,71 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
 		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
+		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Required task shape") ||
+		!strings.Contains(notice, "If credentials are needed, add") ||
+		!strings.Contains(notice, "OMIT unless credentials are needed") {
+		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Create a temporary conversation fixture directory and verify the written files") ||
+		!strings.Contains(notice, "Create a GitHub issue summarizing the failing deployment check") ||
+		!strings.Contains(notice, `--data @- <<'JSON'`) ||
+		strings.Contains(notice, "AgentPhone") {
+		t.Fatalf("notice should use worked multi-step curl examples with common services; got:\n%s", notice)
+	}
+	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
+		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "Read files with `read`") {
+		t.Fatalf("notice should disclose allowlisted read-only capabilities using actual tool names; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "Run one-shot read-only shell inspection with `exec`") {
+		t.Fatalf("notice should disclose read-only shell inspection with actual shell tool name; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeDoesNotEmbedLiveCredentialInventory(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{"Bash"})
+	if strings.Contains(notice, "github.release") || strings.Contains(notice, "OpenAI work key") {
+		t.Fatalf("notice must stay static and avoid embedding live vault inventory; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "GET https://clawvisor.local/control/vault/items") {
+		t.Fatalf("static notice should point to credential discovery endpoint; got:\n%s", notice)
+	}
+}
+
+func TestInjectControlNoticeIgnoresHistoricalControlURLs(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-7","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"prior call: https://clawvisor.local/control/vault/items"}]}`)
+	got, injected, err := InjectControlNotice(conversation.ProviderAnthropic, body, "http://localhost:25297", []string{"Bash"})
+	if err != nil {
+		t.Fatalf("inject failed: %v", err)
+	}
+	if !injected {
+		t.Fatalf("expected injection even though message history contains control URL")
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("invalid output: %v", err)
+	}
+	if !rawSystemContains(parsed["system"], ControlNoticeSentinel) {
+		t.Fatalf("system prompt missing control notice: %s", got)
+	}
+}
+
+func TestInjectControlNoticeSkipsOnlyWhenSystemAlreadyHasNotice(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-7","system":[{"type":"text","text":"existing"},{"type":"text","text":"Clawvisor proxy-lite control plane."}],"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`)
+	got, injected, err := InjectControlNotice(conversation.ProviderAnthropic, body, "http://localhost:25297", []string{"Bash"})
+	if err != nil {
+		t.Fatalf("inject failed: %v", err)
+	}
+	if injected {
+		t.Fatalf("expected no-op when system already contains control notice")
+	}
+	if string(got) != string(body) {
+		t.Fatalf("no-op should preserve body bytes\nwant: %s\n got: %s", body, got)
+	}
 }
 
 // Regression: a curl invocation that mixes a synthetic control URL with
@@ -67,5 +132,19 @@ func TestRewriteControlToolUse_EmbedsCallerValueVerbatim(t *testing.T) {
 	}
 	if strings.Contains(string(rewritten), "cvis_") {
 		t.Errorf("rewritten command must not embed a raw cvis_ token; got %s", rewritten)
+	}
+}
+
+func TestSanitizeControlFailureCommandRedactsRawBearerButKeepsPlaceholder(t *testing.T) {
+	in := `curl -H 'Authorization: Bearer ghp_real_secret' -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale' -H 'Authorization: Bearer autovault_github_xxx' https://clawvisor.local/control/vault/items`
+	got := sanitizeControlFailureCommand(in)
+	if strings.Contains(got, "ghp_real_secret") || strings.Contains(got, "cv-nonce-stale") {
+		t.Fatalf("expected raw tokens to be redacted, got %q", got)
+	}
+	if !strings.Contains(got, "Authorization: Bearer REDACTED") || !strings.Contains(got, "X-Clawvisor-Caller: Bearer REDACTED") {
+		t.Fatalf("expected redaction markers, got %q", got)
+	}
+	if !strings.Contains(got, "Authorization: Bearer autovault_github_xxx") {
+		t.Fatalf("autovault placeholder should remain visible to the model, got %q", got)
 	}
 }

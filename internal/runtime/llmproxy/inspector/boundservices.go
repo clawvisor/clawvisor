@@ -25,7 +25,30 @@ func BoundServiceHosts(serviceID string) []string {
 		return []string{"gitlab.com", "*.gitlab.com"}
 	case "slack":
 		return []string{"slack.com", "*.slack.com"}
-	case "gmail", "google", "gdrive", "gcalendar":
+	case "gmail", "google.gmail":
+		return []string{
+			"gmail.googleapis.com",
+			"www.googleapis.com",
+			"oauth2.googleapis.com",
+		}
+	case "gcalendar", "google.calendar":
+		return []string{
+			"www.googleapis.com",
+			"calendar.googleapis.com",
+			"oauth2.googleapis.com",
+		}
+	case "gdrive", "google.drive":
+		return []string{
+			"www.googleapis.com",
+			"oauth2.googleapis.com",
+		}
+	case "google.contacts":
+		return []string{
+			"people.googleapis.com",
+			"www.googleapis.com",
+			"oauth2.googleapis.com",
+		}
+	case "google":
 		return []string{
 			"www.googleapis.com",
 			"gmail.googleapis.com",
@@ -77,6 +100,18 @@ func normalizeBoundServiceID(serviceID string) string {
 			id = remainder[:i]
 		} else {
 			id = remainder
+		}
+	}
+	if strings.HasPrefix(id, "agent:") {
+		parts := strings.Split(id, ":")
+		if len(parts) == 3 && parts[2] != "" {
+			id = parts[2]
+		}
+	}
+	if strings.HasPrefix(id, "llm:") {
+		parts := strings.Split(id, ":")
+		if len(parts) >= 3 && parts[1] != "" {
+			id = parts[1]
 		}
 	}
 	// Account-scoped: `<service>:<account>`. The account portion

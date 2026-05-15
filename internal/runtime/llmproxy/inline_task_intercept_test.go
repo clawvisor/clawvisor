@@ -236,6 +236,73 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	_ = ctx
 }
 
+func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	taskBody := `{"purpose":"Create GitHub release issues","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Call the GitHub API."}],"required_credentials_json":[{"vault_item_id":"github","why":"Create issues in owner/repo."}]}`
+	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+	})
+
+	out := string(got.Body)
+	if !strings.Contains(out, "Credentials requested") || !strings.Contains(out, "github") {
+		t.Fatalf("expected inline prompt to render requested credentials; got %s", out)
+	}
+	if !strings.Contains(out, "Risk") || !strings.Contains(out, "medium") {
+		t.Fatalf("expected inline prompt to render risk level; got %s", out)
+	}
+}
+
+func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	taskBody := `{"purpose":"Call agentphone","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Call the agentphone API."}],"required_credentials_json":[{"vault_item_id":"agentphone"}]}`
+	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+	})
+
+	out := string(got.Body)
+	if strings.Contains(out, "Clawvisor wants to create a task") {
+		t.Fatalf("invalid inline task should not render an approval prompt: %s", out)
+	}
+	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
+		t.Fatalf("invalid inline task should fall through to control rewrite so the tool receives the validation error: %s", out)
+	}
+
+	cache.mu.Lock()
+	holds := len(cache.pending[pendingApprovalKey{
+		userID: userID, agentID: agentID, provider: conversation.ProviderAnthropic,
+	}])
+	cache.mu.Unlock()
+	if holds != 0 {
+		t.Fatalf("invalid inline task should not create an approval hold, got %d", holds)
+	}
+}
+
 func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	// No prior `task` reply AND no surface=inline → fall through to
 	// the regular control-rewrite path (dashboard task creation).

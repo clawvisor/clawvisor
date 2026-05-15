@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
-import { api, type Agent, type AuditEntry, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder } from '../api/client'
+import { api, type Agent, type ServiceInfo, type ServiceActionInfo, type VariableMeta, type LocalService, type RuntimePlaceholder, type VaultItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { serviceName, serviceDescription } from '../lib/services'
 import { useAuth } from '../hooks/useAuth'
@@ -39,50 +39,630 @@ function AccountSection({
 }
 
 function VaultInventorySection({
-  activeServices,
+  vaultItems,
+  placeholders,
+  agents,
+  services,
   googleOAuthConfigured,
 }: {
-  activeServices: ServiceInfo[]
+  vaultItems: VaultItem[]
+  placeholders: RuntimePlaceholder[]
+  agents: Agent[]
+  services: ServiceInfo[]
   googleOAuthConfigured: boolean
 }) {
-  const vaulted = activeServices.filter(service => !service.credential_free)
-  const credentialFree = activeServices.filter(service => service.credential_free)
+  const qc = useQueryClient()
+  const [selectedID, setSelectedID] = useState('')
+  const [addingSecret, setAddingSecret] = useState(false)
+  const [newSecretID, setNewSecretID] = useState('')
+  const [newSecretValue, setNewSecretValue] = useState('')
+  const [newSecretError, setNewSecretError] = useState<string | null>(null)
+  const [savingSecret, setSavingSecret] = useState(false)
+  const selected = vaultItems.find(item => item.id === selectedID) ?? vaultItems[0]
+  const connectedItems = vaultItems.filter(item => item.kind === 'connected_account')
+  const secretItems = vaultItems.filter(item => item.kind !== 'connected_account')
+  const activeCount = vaultItems.reduce((sum, item) => sum + item.active_placeholder_count, 0)
+  const taskBoundCount = placeholders.filter(entry => !!entry.task_id && isPlaceholderActive(entry)).length
+  const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
+  const serviceMap = useMemo(() => {
+    const out = new Map<string, ServiceInfo>()
+    for (const svc of services) out.set(serviceConnectionKey(svc.id, svc.alias), svc)
+    return out
+  }, [services])
+  const selectedService = selected ? serviceForVaultItem(selected, serviceMap) : undefined
+  const selectedPlaceholders = placeholders.filter(entry => selected ? placeholderBelongsToVaultItem(entry, selected) : false)
+
+  async function handleCreateSecret() {
+    const id = newSecretID.trim()
+    const value = newSecretValue.trim()
+    if (!id || !value) return
+    setSavingSecret(true)
+    setNewSecretError(null)
+    try {
+      await api.vault.createItem(id, value)
+      setSelectedID(id)
+      setNewSecretID('')
+      setNewSecretValue('')
+      setAddingSecret(false)
+      qc.invalidateQueries({ queryKey: ['vault-items'] })
+    } catch (e: any) {
+      setNewSecretError(e.message ?? 'Failed to add secret')
+    } finally {
+      setSavingSecret(false)
+    }
+  }
+
+  function renderItemGroup(items: VaultItem[], empty: string) {
+    if (items.length === 0) {
+      return (
+        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-5 text-sm text-text-tertiary">
+          {empty}
+        </div>
+      )
+    }
+    return items.map(item => {
+      const service = serviceForVaultItem(item, serviceMap)
+      const showBindingChips = item.kind !== 'connected_account' && (item.service_bindings?.length ?? 0) > 0
+      return (
+        <button
+          key={item.id}
+          onClick={() => setSelectedID(item.id)}
+          className={`w-full rounded border px-4 py-3 text-left transition-colors ${
+            selected?.id === item.id
+              ? 'border-brand/50 bg-brand/5'
+              : 'border-border-subtle bg-surface-0 hover:bg-surface-2'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {service && <ServiceIconBadge iconSvg={service.icon_svg} iconUrl={service.icon_url} serviceId={service.id} size={28} />}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-text-primary">{service ? serviceName(service.id, service.alias) : item.name}</div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {vaultItemKindLabel(item)}
+                  {item.provider ? ` · ${item.provider}` : ''}
+                  {item.last_used_at ? ` · used ${formatDistanceToNow(new Date(item.last_used_at), { addSuffix: true })}` : ''}
+                </div>
+              </div>
+            </div>
+            <div className="shrink-0 rounded bg-surface-2 px-2 py-1 text-xs text-text-secondary">
+              {item.active_placeholder_count} live
+            </div>
+          </div>
+          {showBindingChips && item.service_bindings && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {item.service_bindings.map(binding => (
+                <span key={`${binding.service_id}:${binding.alias ?? 'default'}`} className="rounded border border-border-subtle px-2 py-0.5 text-xs text-text-tertiary">
+                  {binding.name}{binding.alias ? ` · ${binding.alias}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </button>
+      )
+    })
+  }
 
   return (
     <AccountSection
       title="Vault"
-      description="Connected credentials live in Clawvisor’s vault. Use this inventory to see what is vaulted, what is credential-free, and whether system OAuth credentials are configured."
+      description="Connected accounts and vaulted secrets share one inventory."
     >
-      <div className="grid gap-3 md:grid-cols-3">
-        <VaultMetric label="Vaulted credentials" value={String(vaulted.length)} />
-        <VaultMetric label="Credential-free" value={String(credentialFree.length)} />
+      <div className="grid gap-3 md:grid-cols-4">
+        <VaultMetric label="Vault items" value={String(vaultItems.length)} />
+        <VaultMetric label="Active placeholders" value={String(activeCount)} />
+        <VaultMetric label="Task-bound" value={String(taskBoundCount)} />
         <VaultMetric label="Google OAuth" value={googleOAuthConfigured ? 'Configured' : 'Missing'} />
       </div>
-      <div className="space-y-2">
-        {activeServices.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No connected services yet.
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+        <div className="space-y-2">
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Connected accounts</div>
+            {renderItemGroup(connectedItems, 'No connected accounts yet.')}
           </div>
-        )}
-        {activeServices.map(service => (
-          <div key={`${service.id}:${service.alias ?? 'default'}`} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-text-primary">{serviceName(service.id, service.alias)}</div>
-              <div className="mt-1 text-xs text-text-tertiary">
-                {service.credential_free ? 'Credential-free activation' : 'Vault-backed credential'}
-                {service.activated_at ? ` · connected ${formatDistanceToNow(new Date(service.activated_at), { addSuffix: true })}` : ''}
+          <div className="space-y-2 pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Vault secrets</div>
+              <button
+                onClick={() => { setAddingSecret(v => !v); setNewSecretError(null) }}
+                className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+              >
+                Add secret
+              </button>
+            </div>
+            {addingSecret && (
+              <div className="rounded border border-border-subtle bg-surface-0 px-4 py-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]">
+                  <input
+                    value={newSecretID}
+                    onChange={e => setNewSecretID(e.target.value)}
+                    placeholder="name, e.g. stripe.test"
+                    className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                    autoFocus
+                  />
+                  <input
+                    type="password"
+                    value={newSecretValue}
+                    onChange={e => setNewSecretValue(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleCreateSecret()}
+                    placeholder="Secret value"
+                    className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+                  />
+                  <button
+                    onClick={handleCreateSecret}
+                    disabled={savingSecret || !newSecretID.trim() || !newSecretValue.trim()}
+                    className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+                  >
+                    {savingSecret ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                {newSecretError && <p className="text-xs text-danger">{newSecretError}</p>}
+              </div>
+            )}
+            {renderItemGroup(secretItems, 'No manual or captured vault secrets yet.')}
+          </div>
+        </div>
+
+        <div className="rounded border border-border-subtle bg-surface-0 p-4">
+          {!selected && (
+            <div className="text-sm text-text-tertiary">Select a vault item.</div>
+          )}
+          {selected && (
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">{selected.name}</div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {selected.id} · {selected.status}
+                  {selected.scope ? ` · ${selected.scope} scoped` : ''}
+                </div>
+                {selected.metadata?.agent_id && (
+                  <div className="mt-2 text-xs text-text-tertiary">
+                    Agent: {selected.metadata.agent_name ?? selected.metadata.agent_id}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <VaultMetric label="Live" value={String(selectedPlaceholders.filter(isPlaceholderActive).length)} />
+                <VaultMetric label="Expired" value={String(selectedPlaceholders.filter(isPlaceholderExpired).length)} />
+                <VaultMetric label="Revoked" value={String(selectedPlaceholders.filter(entry => !!entry.revoked_at).length)} />
+              </div>
+              {selectedService ? <VaultServiceActions svc={selectedService} /> : <VaultSecretActions item={selected} />}
+              <VaultPlaceholderMintControls item={selected} agents={agents} />
+              <div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wider text-text-tertiary">Placeholders</div>
+                <div className="space-y-2">
+                  {selectedPlaceholders.length === 0 && (
+                    <div className="rounded border border-dashed border-border-default px-3 py-4 text-sm text-text-tertiary">
+                      No placeholders for this vault item yet. Task approvals mint task-scoped placeholders automatically.
+                    </div>
+                  )}
+                  {selectedPlaceholders.slice(0, 8).map(entry => (
+                    <div key={entry.placeholder} className="rounded border border-border-subtle bg-surface-1 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 text-xs text-text-secondary">
+                          {entry.task_id ? 'Task-scoped' : 'Manual'} · {entry.agent_id ? (agentMap.get(entry.agent_id)?.name ?? entry.agent_id) : 'All agents'}
+                        </div>
+                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs ${placeholderStatusClass(entry)}`}>
+                          {placeholderStatus(entry)}
+                        </span>
+                      </div>
+                      <code className="mt-1 block truncate text-xs text-text-tertiary">{entry.placeholder}</code>
+                      <div className="mt-1 text-xs text-text-tertiary">
+                        Minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
+                        {entry.expires_at ? ` · expires ${formatDistanceToNow(new Date(entry.expires_at), { addSuffix: true })}` : ''}
+                        {entry.use_count ? ` · used ${entry.use_count}x` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-            <div className={`rounded px-2 py-1 text-xs font-medium ${
-              service.credential_free ? 'bg-surface-2 text-text-secondary' : 'bg-success/10 text-success'
-            }`}>
-              {service.credential_free ? 'No secret stored' : 'Stored in vault'}
-            </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
     </AccountSection>
   )
+}
+
+function vaultItemKindLabel(item: VaultItem) {
+  if (item.kind === 'connected_account') return 'Connected account'
+  if (item.kind === 'llm_provider_key') return item.scope === 'agent' ? 'Agent-scoped LLM key' : 'User LLM key'
+  return 'Vault secret'
+}
+
+function serviceConnectionKey(serviceID: string, alias?: string) {
+  return alias && alias !== 'default' ? `${serviceID}:${alias}` : serviceID
+}
+
+function serviceForVaultItem(item: VaultItem, serviceMap: Map<string, ServiceInfo>) {
+  for (const binding of item.service_bindings ?? []) {
+    const svc = serviceMap.get(serviceConnectionKey(binding.service_id, binding.alias))
+    if (svc) return svc
+  }
+  return serviceMap.get(item.id)
+}
+
+function vaultStorageKeyForItemID(itemID: string) {
+  const parts = itemID.trim().split(':')
+  if (parts.length === 3 && parts[0] === 'llm' && parts[2] === 'user' && isLLMProvider(parts[1])) {
+    return parts[1]
+  }
+  if (parts.length === 4 && parts[0] === 'llm' && parts[2] === 'agent' && isLLMProvider(parts[1]) && parts[3]) {
+    return `agent:${parts[3]}:${parts[1]}`
+  }
+  return itemID
+}
+
+function isLLMProvider(provider: string) {
+  return provider === 'anthropic' || provider === 'openai'
+}
+
+function placeholderBelongsToVaultItem(entry: RuntimePlaceholder, item: VaultItem) {
+  const storageKey = vaultStorageKeyForItemID(item.id)
+  if (entry.vault_item_id === item.id || entry.vault_item_id === storageKey) return true
+  if (!entry.vault_item_id && entry.service_id === storageKey) return true
+  for (const binding of item.service_bindings ?? []) {
+    if (entry.service_id === binding.service_id) return true
+    if (binding.alias && entry.service_id === `${binding.service_id}:${binding.alias}`) return true
+  }
+  return false
+}
+
+function VaultServiceActions({ svc }: { svc: ServiceInfo }) {
+  const qc = useQueryClient()
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [showKeyInput, setShowKeyInput] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [deviceCode, setDeviceCode] = useState<{ userCode: string; verificationUri: string } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const alias = svc.alias || undefined
+
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
+
+  function refreshAccountData() {
+    qc.invalidateQueries({ queryKey: ['services'] })
+    qc.invalidateQueries({ queryKey: ['vault-items'] })
+    qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+  }
+
+  async function handleReauth() {
+    setError(null)
+    try {
+      if (svc.pkce_flow) {
+        const resp = await api.services.pkceFlowStart(svc.id, alias)
+        if (resp.authorize_url) openOAuthUrl(resp.authorize_url)
+      } else if (svc.device_flow) {
+        const resp = await api.services.deviceFlowStart(svc.id, alias)
+        setDeviceCode({ userCode: resp.user_code, verificationUri: resp.verification_uri })
+        const popup = window.open(resp.verification_uri, '_blank', 'width=600,height=700')
+        if (!popup) window.open(resp.verification_uri, '_blank')
+        function poll(flowId: string, interval: number) {
+          pollRef.current = setTimeout(async () => {
+            try {
+              const r = await api.services.deviceFlowPoll(svc.id, flowId)
+              if (r.status === 'complete') {
+                setDeviceCode(null)
+                refreshAccountData()
+              } else if (r.status === 'pending' || r.status === 'slow_down') {
+                poll(flowId, r.interval ?? interval)
+              } else {
+                setDeviceCode(null)
+                setError(r.status === 'denied' ? 'Authorization denied.' : 'Authorization expired.')
+              }
+            } catch (e) {
+              console.error('Services: device flow poll failed', e)
+              setDeviceCode(null)
+              setError('Failed to check authorization status')
+            }
+          }, interval * 1000)
+        }
+        poll(resp.flow_id, resp.interval)
+      } else {
+        const resp = await api.services.oauthGetUrl(svc.id, undefined, alias)
+        if (resp.already_authorized) {
+          refreshAccountData()
+          return
+        }
+        if (resp.url) openOAuthUrl(resp.url)
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to start OAuth flow')
+    }
+  }
+
+  async function handleSaveKey() {
+    if (!apiKeyInput.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.services.activateWithKey(svc.id, apiKeyInput.trim(), alias)
+      setApiKeyInput('')
+      setShowKeyInput(false)
+      refreshAccountData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to save API key')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeactivate() {
+    setError(null)
+    try {
+      const { affected_task_count } = await api.services.deactivatePreflight(svc.id, alias)
+      const name = serviceName(svc.id, svc.alias)
+      const taskWarning = affected_task_count > 0
+        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this service.`
+        : ''
+      if (!confirm(`Disconnect ${name}? Your agents will lose access.${taskWarning}`)) return
+      await api.services.deactivate(svc.id, alias)
+      refreshAccountData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to disconnect service')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
+          <button
+            onClick={handleReauth}
+            className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+          >
+            Re-authorize
+          </button>
+        ) : (
+          <button
+            onClick={() => { setShowKeyInput(v => !v); setError(null) }}
+            className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+          >
+            Update token
+          </button>
+        ))}
+        <button
+          onClick={handleDeactivate}
+          className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
+        >
+          Disconnect
+        </button>
+        {svc.activated_at && (
+          <span className="text-xs text-text-tertiary">
+            Connected {formatDistanceToNow(new Date(svc.activated_at), { addSuffix: true })}
+          </span>
+        )}
+      </div>
+
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+
+      {deviceCode && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-xs text-text-secondary">Enter this code on the authorization page:</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="text-sm font-mono font-bold tracking-widest text-text-primary bg-surface-0 px-3 py-1.5 rounded border border-border-default select-all">
+              {deviceCode.userCode}
+            </code>
+            <button
+              onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Copy
+            </button>
+            <button
+              onClick={() => window.open(deviceCode.verificationUri, '_blank')}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Open page
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showKeyInput && (
+        <div className="mt-3 space-y-1.5">
+          {svc.key_display_name && (
+            <label className="block text-xs text-text-secondary">{svc.key_display_name}</label>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKeyInput}
+              onChange={e => setApiKeyInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+              placeholder={svc.key_hint || 'Paste your token…'}
+              className="min-w-0 flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              autoFocus
+            />
+            <button
+              onClick={handleSaveKey}
+              disabled={saving || !apiKeyInput.trim()}
+              className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VaultSecretActions({ item }: { item: VaultItem }) {
+  const qc = useQueryClient()
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function refreshVaultData() {
+    qc.invalidateQueries({ queryKey: ['vault-items'] })
+    qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+  }
+
+  async function handleUpdate() {
+    if (!value.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.vault.updateItem(item.id, value.trim())
+      setValue('')
+      refreshVaultData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to update vault item')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setError(null)
+    if (!confirm(`Delete ${item.name}? Existing placeholders for this item will stop resolving.`)) return
+    try {
+      await api.vault.deleteItem(item.id)
+      refreshVaultData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to delete vault item')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3">
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleUpdate()}
+          placeholder="New value"
+          className="min-w-0 flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+        />
+        <button
+          onClick={handleUpdate}
+          disabled={saving || !value.trim()}
+          className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Update'}
+        </button>
+        <button
+          onClick={handleDelete}
+          className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
+        >
+          Delete
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+function VaultPlaceholderMintControls({ item, agents }: { item: VaultItem; agents: Agent[] }) {
+  const qc = useQueryClient()
+  const [agentID, setAgentID] = useState('')
+  const [ttlMinutes, setTTLMinutes] = useState(60)
+  const [minting, setMinting] = useState(false)
+  const [minted, setMinted] = useState<RuntimePlaceholder | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleMint() {
+    const minutes = Math.max(1, Math.floor(Number.isFinite(ttlMinutes) ? ttlMinutes : 0))
+    const agentLabel = agentID ? (agents.find(agent => agent.id === agentID)?.name ?? agentID) : 'all agents'
+    if (!confirm(`Mint a placeholder for ${item.name} that can be used by ${agentLabel} for ${minutes} minute${minutes === 1 ? '' : 's'}?`)) return
+    setMinting(true)
+    setError(null)
+    setMinted(null)
+    try {
+      const entry = await api.runtime.mintPlaceholder(agentID || undefined, item.id, minutes * 60)
+      setMinted(entry)
+      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+      qc.invalidateQueries({ queryKey: ['vault-items'] })
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to mint placeholder')
+    } finally {
+      setMinting(false)
+    }
+  }
+
+  async function copyPlaceholder() {
+    if (!minted?.placeholder) return
+    try {
+      await navigator.clipboard.writeText(minted.placeholder)
+    } catch {
+      setError('Could not copy placeholder')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3 space-y-3">
+      <div>
+        <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Mint placeholder</div>
+        <p className="mt-1 text-xs text-text-tertiary">
+          Create a temporary autovault reference for this vault item.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_auto]">
+        <select
+          value={agentID}
+          onChange={e => setAgentID(e.target.value)}
+          className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+        >
+          <option value="">All agents</option>
+          {agents.map(agent => (
+            <option key={agent.id} value={agent.id}>{agent.name}</option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={1}
+          value={ttlMinutes}
+          onChange={e => setTTLMinutes(Number(e.target.value))}
+          aria-label="Placeholder lifetime in minutes"
+          className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+        />
+        <button
+          onClick={handleMint}
+          disabled={minting || !Number.isFinite(ttlMinutes) || ttlMinutes < 1}
+          className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {minting ? 'Minting…' : 'Mint'}
+        </button>
+      </div>
+      {minted && (
+        <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <code className="min-w-0 truncate text-xs text-text-secondary">{minted.placeholder}</code>
+            <button
+              onClick={copyPlaceholder}
+              className="shrink-0 text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+function isPlaceholderActive(entry: RuntimePlaceholder) {
+  return !entry.revoked_at && !isPlaceholderExpired(entry)
+}
+
+function isPlaceholderExpired(entry: RuntimePlaceholder) {
+  return !!entry.expires_at && new Date(entry.expires_at).getTime() <= Date.now()
+}
+
+function placeholderStatus(entry: RuntimePlaceholder) {
+  if (entry.revoked_at) return 'Revoked'
+  if (isPlaceholderExpired(entry)) return 'Expired'
+  return 'Live'
+}
+
+function placeholderStatusClass(entry: RuntimePlaceholder) {
+  if (entry.revoked_at) return 'bg-danger/10 text-danger'
+  if (isPlaceholderExpired(entry)) return 'bg-yellow-500/10 text-yellow-700'
+  return 'bg-success/10 text-success'
 }
 
 function VaultMetric({ label, value }: { label: string; value: string }) {
@@ -91,163 +671,6 @@ function VaultMetric({ label, value }: { label: string; value: string }) {
       <div className="text-xs uppercase tracking-wider text-text-tertiary">{label}</div>
       <div className="mt-1 text-sm font-medium text-text-primary">{value}</div>
     </div>
-  )
-}
-
-function ShadowTokensSection({
-  agents,
-  services,
-  entries,
-}: {
-  agents: Agent[]
-  services: ServiceInfo[]
-  entries: RuntimePlaceholder[]
-}) {
-  const qc = useQueryClient()
-  const [agentId, setAgentId] = useState('')
-  const [serviceId, setServiceId] = useState('')
-  const [freshToken, setFreshToken] = useState<string | null>(null)
-  const tokenServices = services.filter(service => service.status === 'activated' && !service.credential_free)
-  const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
-
-  useEffect(() => {
-    if (!agentId && agents.length > 0) setAgentId(agents[0].id)
-  }, [agentId, agents])
-  useEffect(() => {
-    if (!serviceId && tokenServices.length > 0) {
-      const first = tokenServices[0]
-      setServiceId(first.alias ? `${first.id}:${first.alias}` : first.id)
-    }
-  }, [serviceId, tokenServices])
-
-  const mintMut = useMutation({
-    mutationFn: () => api.runtime.mintPlaceholder(agentId, serviceId),
-    onSuccess: (entry) => {
-      setFreshToken(entry.placeholder)
-      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
-    },
-  })
-  const deleteMut = useMutation({
-    mutationFn: (placeholder: string) => api.runtime.deletePlaceholder(placeholder),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
-    },
-  })
-
-  return (
-    <AccountSection
-      title="Shadow Tokens"
-      description="Mint revocable shadow tokens for a specific agent and connected service. Agents can use these placeholders in config or prompts without ever seeing the real credential."
-    >
-      <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-        <select
-          value={agentId}
-          onChange={e => setAgentId(e.target.value)}
-          className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
-        >
-          <option value="">Choose agent</option>
-          {agents.map(agent => (
-            <option key={agent.id} value={agent.id}>{agent.name}</option>
-          ))}
-        </select>
-        <select
-          value={serviceId}
-          onChange={e => setServiceId(e.target.value)}
-          className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
-        >
-          <option value="">Choose connected service</option>
-          {tokenServices.map(service => {
-            const value = service.alias ? `${service.id}:${service.alias}` : service.id
-            return (
-              <option key={value} value={value}>{serviceName(service.id, service.alias)}</option>
-            )
-          })}
-        </select>
-        <button
-          onClick={() => mintMut.mutate()}
-          disabled={mintMut.isPending || !agentId || !serviceId}
-          className="rounded bg-brand px-4 py-2 text-sm font-medium text-surface-0 hover:bg-brand-strong disabled:opacity-50"
-        >
-          {mintMut.isPending ? 'Minting…' : 'Mint token'}
-        </button>
-      </div>
-      {freshToken && (
-        <div className="rounded border border-success/30 bg-success/5 p-4">
-          <div className="text-sm font-medium text-text-primary">New shadow token</div>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="flex-1 break-all rounded border border-success/20 bg-surface-0 px-3 py-2 text-xs text-text-primary">{freshToken}</code>
-            <button
-              onClick={() => navigator.clipboard.writeText(freshToken)}
-              className="rounded border border-success/20 px-3 py-2 text-xs text-success hover:bg-success/10"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        {entries.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No shadow tokens minted yet.
-          </div>
-        )}
-        {entries.map(entry => (
-          <div key={entry.placeholder} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-text-primary">{serviceName(entry.service_id)}</div>
-              <div className="mt-1 text-xs text-text-tertiary">
-                {agentMap.get(entry.agent_id)?.name ?? entry.agent_id} · minted {formatDistanceToNow(new Date(entry.created_at), { addSuffix: true })}
-                {entry.last_used_at ? ` · last used ${formatDistanceToNow(new Date(entry.last_used_at), { addSuffix: true })}` : ' · not used yet'}
-              </div>
-              <code className="mt-2 block break-all text-xs text-text-secondary">{entry.placeholder}</code>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => navigator.clipboard.writeText(entry.placeholder)}
-                className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
-              >
-                Copy
-              </button>
-              <button
-                onClick={() => deleteMut.mutate(entry.placeholder)}
-                disabled={deleteMut.isPending}
-                className="rounded border border-danger/20 px-3 py-1.5 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
-              >
-                Revoke
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </AccountSection>
-  )
-}
-
-function CredentialActivitySection({ entries }: { entries: AuditEntry[] }) {
-  return (
-    <AccountSection
-      title="Credential Activity"
-      description="Recent account and credential-related activity touching your connected services."
-    >
-      <div className="space-y-2">
-        {entries.length === 0 && (
-          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-            No recent service activity.
-          </div>
-        )}
-        {entries.map(entry => (
-          <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-0 px-4 py-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-text-primary">{entry.summary_text || `${serviceName(entry.service)} ${entry.action}`}</div>
-              <div className="mt-1 text-xs text-text-tertiary">
-                {entry.outcome} · {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
-              </div>
-            </div>
-            {entry.reason && <div className="max-w-xl text-xs text-text-secondary">{entry.reason}</div>}
-          </div>
-        ))}
-      </div>
-    </AccountSection>
   )
 }
 
@@ -1395,17 +1818,18 @@ export default function Services() {
     enabled: secretVaultUI,
     refetchInterval: 30_000,
   })
-  const { data: auditData } = useQuery({
-    queryKey: ['audit', 'accounts'],
-    queryFn: () => api.audit.list({ limit: 25 }),
+  const { data: vaultItems, error: vaultItemsError } = useQuery({
+    queryKey: ['vault-items'],
+    queryFn: () => api.vault.listItems(),
     enabled: secretVaultUI,
+    refetchInterval: 30_000,
   })
-
   // Refresh when the OAuth popup signals completion (for cases where modal isn't open).
   useEffect(() => {
     function handler(e: MessageEvent) {
       if (e.data?.type === 'clawvisor_oauth_done') {
         qc.invalidateQueries({ queryKey: ['services'] })
+        qc.invalidateQueries({ queryKey: ['vault-items'] })
       }
     }
     window.addEventListener('message', handler)
@@ -1418,14 +1842,12 @@ export default function Services() {
 
   const allServices = data?.services ?? []
   const activeServices = allServices.filter(s => s.status === 'activated')
-  const recentServiceActivity = secretVaultUI
-    ? (auditData?.entries ?? []).filter(entry => !entry.service.startsWith('runtime.')).slice(0, 8)
-    : []
   const hasGoogleServices = allServices.some(s => s.id.startsWith('google.'))
   const googleOAuthMissing = !features?.multi_tenant && hasGoogleServices && googleOAuth != null && !googleOAuth.configured
 
   const hasMicrosoftServices = allServices.some(s => s.id.startsWith('microsoft.'))
   const microsoftOAuthMissing = !features?.multi_tenant && hasMicrosoftServices && microsoftOAuth != null && !microsoftOAuth.configured
+  const useUnifiedVault = secretVaultUI && !vaultItemsError
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -1509,20 +1931,15 @@ export default function Services() {
 
       {!orgId && !isLoading && !error && (
         <>
-          {secretVaultUI && (
+          {useUnifiedVault && (
             <VaultInventorySection
-              activeServices={activeServices}
+              vaultItems={vaultItems?.entries ?? []}
+              placeholders={runtimePlaceholders?.entries ?? []}
+              agents={agents}
+              services={activeServices}
               googleOAuthConfigured={!!googleOAuth?.configured}
             />
           )}
-          {secretVaultUI && (
-            <ShadowTokensSection
-              agents={agents}
-              services={activeServices}
-              entries={runtimePlaceholders?.entries ?? []}
-            />
-          )}
-          {secretVaultUI && <CredentialActivitySection entries={recentServiceActivity} />}
         </>
       )}
 
@@ -1543,7 +1960,7 @@ export default function Services() {
         </button>
       )}
 
-      {activeServices.length > 0 && (
+      {activeServices.length > 0 && !useUnifiedVault && (
         <div className="bg-surface-1 border border-border-default rounded-lg divide-y divide-border-subtle overflow-hidden">
           {activeServices.map(svc => (
             <ActiveServiceRow key={`${svc.id}:${svc.alias ?? 'default'}`} svc={svc} />

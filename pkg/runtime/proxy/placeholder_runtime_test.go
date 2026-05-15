@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
-	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
-	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
+	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
+	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 )
 
 func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
@@ -111,6 +111,77 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected cross-agent placeholder rejection, got %d", resp.StatusCode)
+	}
+}
+
+func TestRuntimeProxyRejectsPlaceholderOutsideBoundServiceHost(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-placeholder-bound-host.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+
+	userID, agentID := seedRuntimePrincipal(t, st)
+	if err := v.Set(ctx, userID, "github", []byte(`{"token":"ghp_real_secret"}`)); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix("github"))
+	if err != nil {
+		t.Fatalf("GeneratePlaceholder: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      userID,
+		AgentID:     agentID,
+		ServiceID:   "github",
+		VaultItemID: "github",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.RuntimeProxy.DataDir = t.TempDir()
+
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer upstream.Close()
+
+	session := createRuntimeSession(t, st, "session-bound-host", userID, agentID, false)
+	srv, err := NewServer(Config{DataDir: cfg.RuntimeProxy.DataDir, Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.InstallSessionGuard(&Authenticator{Store: st})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Shutdown(ctx) }()
+
+	client := proxyHTTPClient(t, srv)
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
+	req.Header.Set("Proxy-Authorization", "Bearer "+session.secret)
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected bound-host rejection, got %d", resp.StatusCode)
+	}
+	if seenAuth != "" {
+		t.Fatalf("placeholder should not be swapped or forwarded to unrelated host, saw auth %q", seenAuth)
 	}
 }
 

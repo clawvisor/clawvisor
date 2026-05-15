@@ -44,6 +44,14 @@ func AnthropicApprovalReply(body []byte) (verb, id string) {
 }
 
 func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any) (SyntheticApprovalResponse, bool) {
+	return SyntheticApprovalToolUseResponseWithDenyMessage(req, provider, requestBody, allow, toolUseID, toolName, toolInput, ApprovalDeniedMessage)
+}
+
+func SyntheticApprovalToolUseResponseWithDenyMessage(req *http.Request, provider Provider, requestBody []byte, allow bool, toolUseID, toolName string, toolInput map[string]any, denyMessage string) (SyntheticApprovalResponse, bool) {
+	denyMessage = strings.TrimSpace(denyMessage)
+	if denyMessage == "" {
+		denyMessage = ApprovalDeniedMessage
+	}
 	contentType := "application/json"
 	var body []byte
 	switch provider {
@@ -58,9 +66,9 @@ func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requ
 			}
 		} else if stream {
 			contentType = "text/event-stream"
-			body = SynthAnthropicTextSSE("", "", "assistant", ApprovalDeniedMessage)
+			body = SynthAnthropicTextSSE("", "", "assistant", denyMessage)
 		} else {
-			body = SynthAnthropicTextJSON("", "", "assistant", ApprovalDeniedMessage)
+			body = SynthAnthropicTextJSON("", "", "assistant", denyMessage)
 		}
 	case ProviderOpenAI:
 		stream := OpenAIRequestWantsStream(requestBody)
@@ -74,9 +82,9 @@ func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requ
 				}
 			} else if stream {
 				contentType = "text/event-stream"
-				body = SynthOpenAIChatTextSSE(ApprovalDeniedMessage)
+				body = SynthOpenAIChatTextSSE(denyMessage)
 			} else {
-				body = SynthOpenAIChatTextJSON(ApprovalDeniedMessage)
+				body = SynthOpenAIChatTextJSON(denyMessage)
 			}
 		} else if allow {
 			if stream {
@@ -87,9 +95,9 @@ func SyntheticApprovalToolUseResponse(req *http.Request, provider Provider, requ
 			}
 		} else if stream {
 			contentType = "text/event-stream"
-			body = SynthOpenAIResponsesTextSSE(ApprovalDeniedMessage)
+			body = SynthOpenAIResponsesTextSSE(denyMessage)
 		} else {
-			body = SynthOpenAIResponsesTextJSON(ApprovalDeniedMessage)
+			body = SynthOpenAIResponsesTextJSON(denyMessage)
 		}
 	default:
 		return SyntheticApprovalResponse{}, false

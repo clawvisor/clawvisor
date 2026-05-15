@@ -41,6 +41,85 @@ func TestRawIOLogger_EmitsJSONLineWithBody(t *testing.T) {
 	}
 }
 
+func TestRawIOLogger_AnnotatesStablePromptPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewRawIOLogger(&buf)
+	common := RawIOEvent{
+		Phase:    "inbound_request",
+		UserID:   "u",
+		AgentID:  "a",
+		Provider: "anthropic",
+		Method:   "POST",
+		Path:     "/v1/messages",
+	}
+	firstBody := `{"model":"claude-opus-4-7","system":[{"type":"text","text":"static control notice"}],"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"first"}]}`
+	secondBody := `{"model":"claude-opus-4-7","system":[{"type":"text","text":"static control notice"}],"tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"second"}]}`
+	common.RequestID = "req-1"
+	common.Body = firstBody
+	common.BodyBytes = len(firstBody)
+	l.Emit(common)
+	common.RequestID = "req-2"
+	common.Body = secondBody
+	common.BodyBytes = len(secondBody)
+	l.Emit(common)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected two log lines, got %d: %s", len(lines), buf.String())
+	}
+	var first, second map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("first line invalid JSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("second line invalid JSON: %v", err)
+	}
+	if first["prompt_prefix_sha256"] == "" || second["prompt_prefix_sha256"] == "" {
+		t.Fatalf("expected prompt prefix hashes: first=%v second=%v", first, second)
+	}
+	if first["prompt_prefix_sha256"] != second["prompt_prefix_sha256"] {
+		t.Fatalf("same system/tools prefix should hash identically: first=%v second=%v", first["prompt_prefix_sha256"], second["prompt_prefix_sha256"])
+	}
+	if second["prompt_prefix_stable_with_previous"] != true {
+		t.Fatalf("second request should be marked stable with previous prefix: %v", second)
+	}
+}
+
+func TestRawIOLogger_FlagsPromptPrefixChange(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewRawIOLogger(&buf)
+	common := RawIOEvent{
+		Phase:    "inbound_request",
+		UserID:   "u",
+		AgentID:  "a",
+		Provider: "anthropic",
+		Method:   "POST",
+		Path:     "/v1/messages",
+	}
+	firstBody := `{"model":"claude-opus-4-7","system":"static notice","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"first"}]}`
+	secondBody := `{"model":"claude-opus-4-7","system":"changed notice","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"second"}]}`
+	common.RequestID = "req-1"
+	common.Body = firstBody
+	common.BodyBytes = len(firstBody)
+	l.Emit(common)
+	common.RequestID = "req-2"
+	common.Body = secondBody
+	common.BodyBytes = len(secondBody)
+	l.Emit(common)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	var second map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("second line invalid JSON: %v", err)
+	}
+	if second["prompt_prefix_stable_with_previous"] != false {
+		t.Fatalf("second request should be marked unstable after prefix change: %v", second)
+	}
+	if second["prompt_prefix_previous_sha256"] == "" {
+		t.Fatalf("changed prefix should include previous hash: %v", second)
+	}
+}
+
 func TestRawIOLogger_NilReceiverIsNoop(t *testing.T) {
 	var l *RawIOLogger
 	// Must not panic.
@@ -60,6 +139,20 @@ func TestEncodeBody_UTF8PassesThroughBase64ForBinary(t *testing.T) {
 	}
 	if got == "" {
 		t.Errorf("base64 body empty")
+	}
+}
+
+func TestEncodeBody_RedactsLiveAutovaultPlaceholders(t *testing.T) {
+	body := []byte(`{"system":"credential agentphone=autovault_agentphone_live123; use it"}`)
+	got, enc := EncodeBody(body)
+	if enc != "" {
+		t.Fatalf("utf8 body should not be base64 encoded, got %q", enc)
+	}
+	if strings.Contains(got, "autovault_agentphone_live123") {
+		t.Fatalf("live placeholder should be redacted from raw log body: %s", got)
+	}
+	if !strings.Contains(got, "<REDACTED:autovault>") {
+		t.Fatalf("expected autovault redaction marker, got %s", got)
 	}
 }
 

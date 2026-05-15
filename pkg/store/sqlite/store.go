@@ -1216,6 +1216,7 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	}
 	expectedToolsJSON := rawJSONOrDefault(task.ExpectedTools, "[]")
 	expectedEgressJSON := rawJSONOrDefault(task.ExpectedEgress, "[]")
+	requiredCredentialsJSON := rawJSONOrDefault(task.RequiredCredentials, "[]")
 	var pendingActionJSON *string
 	if task.PendingAction != nil {
 		b, err := json.Marshal(task.PendingAction)
@@ -1240,13 +1241,13 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
 			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
-			expected_egress_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			expected_egress_json, required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
 		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
 		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale, expectedToolsJSON,
-		expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
+		expectedEgressJSON, requiredCredentialsJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
 		task.ChainExtractionMode)
 	return err
 }
@@ -1255,20 +1256,20 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
-	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 	var chainExtractionMode *string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-		&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+		&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 		&chainExtractionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1312,6 +1313,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if expectedEgressStr != "" {
 		t.ExpectedEgress = json.RawMessage(expectedEgressStr)
 	}
+	if requiredCredentialsStr != "" {
+		t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
+	}
 	if chainExtractionMode != nil {
 		t.ChainExtractionMode = *chainExtractionMode
 	}
@@ -1342,7 +1346,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -1361,13 +1365,13 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
 			return nil, 0, err
 		}
@@ -1409,6 +1413,9 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		}
 		if expectedEgressStr != "" {
 			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
+		if requiredCredentialsStr != "" {
+			t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -1585,7 +1592,7 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -1599,13 +1606,13 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
 			return nil, err
 		}
@@ -1647,6 +1654,9 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		}
 		if expectedEgressStr != "" {
 			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
+		if requiredCredentialsStr != "" {
+			t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -2522,15 +2532,22 @@ func scanSQLiteRuntimeSession(scanner interface{ Scan(dest ...any) error }) (*st
 
 func (s *Store) CreateRuntimePlaceholder(ctx context.Context, placeholder *store.RuntimePlaceholder) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO runtime_placeholders (placeholder, user_id, agent_id, service_id, last_used_at)
-		VALUES (?,?,?,?,?)
-	`, placeholder.Placeholder, placeholder.UserID, placeholder.AgentID, placeholder.ServiceID, formatNullableTime(placeholder.LastUsedAt))
+		INSERT INTO runtime_placeholders (
+			placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+			task_id, expires_at, revoked_at, last_used_at, use_count
+		)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	`, placeholder.Placeholder, placeholder.UserID, nullableString(placeholder.AgentID), placeholder.ServiceID,
+		placeholder.VaultItemID, placeholder.CredentialGrantID, placeholder.TaskID,
+		formatNullableTime(placeholder.ExpiresAt), formatNullableTime(placeholder.RevokedAt),
+		formatNullableTime(placeholder.LastUsedAt), placeholder.UseCount)
 	return err
 }
 
 func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (*store.RuntimePlaceholder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders WHERE placeholder = ?
 	`, placeholder)
 	if err != nil {
@@ -2548,7 +2565,8 @@ func (s *Store) GetRuntimePlaceholder(ctx context.Context, placeholder string) (
 
 func (s *Store) ListRuntimePlaceholders(ctx context.Context, userID string) ([]*store.RuntimePlaceholder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT placeholder, user_id, agent_id, service_id, created_at, last_used_at
+		SELECT placeholder, user_id, agent_id, service_id, vault_item_id, credential_grant_id,
+		       task_id, created_at, expires_at, revoked_at, last_used_at, use_count
 		FROM runtime_placeholders
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -2580,7 +2598,7 @@ func (s *Store) DeleteRuntimePlaceholder(ctx context.Context, placeholder, userI
 }
 
 func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string, usedAt time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ? WHERE placeholder = ?`,
+	res, err := s.db.ExecContext(ctx, `UPDATE runtime_placeholders SET last_used_at = ?, use_count = use_count + 1 WHERE placeholder = ?`,
 		usedAt.UTC().Format(time.RFC3339), placeholder)
 	if err != nil {
 		return err
@@ -2594,11 +2612,27 @@ func (s *Store) TouchRuntimePlaceholder(ctx context.Context, placeholder string,
 func scanSQLiteRuntimePlaceholder(scanner interface{ Scan(dest ...any) error }) (*store.RuntimePlaceholder, error) {
 	placeholder := &store.RuntimePlaceholder{}
 	var createdAt string
-	var lastUsedAt *string
-	if err := scanner.Scan(&placeholder.Placeholder, &placeholder.UserID, &placeholder.AgentID, &placeholder.ServiceID, &createdAt, &lastUsedAt); err != nil {
+	var expiresAt, revokedAt, lastUsedAt *string
+	var agentID sql.NullString
+	if err := scanner.Scan(
+		&placeholder.Placeholder, &placeholder.UserID, &agentID, &placeholder.ServiceID,
+		&placeholder.VaultItemID, &placeholder.CredentialGrantID, &placeholder.TaskID, &createdAt,
+		&expiresAt, &revokedAt, &lastUsedAt, &placeholder.UseCount,
+	); err != nil {
 		return nil, err
 	}
+	if agentID.Valid {
+		placeholder.AgentID = agentID.String
+	}
 	placeholder.CreatedAt = parseTime(createdAt)
+	if expiresAt != nil {
+		t := parseTime(*expiresAt)
+		placeholder.ExpiresAt = &t
+	}
+	if revokedAt != nil {
+		t := parseTime(*revokedAt)
+		placeholder.RevokedAt = &t
+	}
 	if lastUsedAt != nil {
 		t := parseTime(*lastUsedAt)
 		placeholder.LastUsedAt = &t
@@ -2615,7 +2649,7 @@ func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.C
 			id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
 			header_name, scheme, status, metadata_json, expires_at, used_at, last_matched_at
 		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
+	`, auth.ID, auth.ApprovalID, auth.UserID, nullableString(auth.AgentID), auth.SessionID, auth.Scope, auth.CredentialRef,
 		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefault(auth.MetadataJSON, "{}"),
 		formatNullableTime(auth.ExpiresAt), formatNullableTime(auth.UsedAt), formatNullableTime(auth.LastMatchedAt))
 	if err != nil && isDuplicate(err) {
@@ -2719,13 +2753,17 @@ func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, matc
 func scanSQLiteCredentialAuthorization(scanner interface{ Scan(dest ...any) error }) (*store.CredentialAuthorization, error) {
 	auth := &store.CredentialAuthorization{}
 	var metadataJSON, createdAt string
+	var agentID *string
 	var expiresAt, usedAt, lastMatchedAt *string
 	if err := scanner.Scan(
-		&auth.ID, &auth.ApprovalID, &auth.UserID, &auth.AgentID, &auth.SessionID, &auth.Scope,
+		&auth.ID, &auth.ApprovalID, &auth.UserID, &agentID, &auth.SessionID, &auth.Scope,
 		&auth.CredentialRef, &auth.Service, &auth.Host, &auth.HeaderName, &auth.Scheme, &auth.Status,
 		&metadataJSON, &createdAt, &expiresAt, &usedAt, &lastMatchedAt,
 	); err != nil {
 		return nil, err
+	}
+	if agentID != nil {
+		auth.AgentID = *agentID
 	}
 	auth.MetadataJSON = json.RawMessage(metadataJSON)
 	auth.CreatedAt = parseTime(createdAt)
@@ -3545,6 +3583,13 @@ func formatNullableTime(t *time.Time) any {
 		return nil
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func boolToInt(v bool) int {

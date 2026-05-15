@@ -105,5 +105,27 @@ func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 		}
 	}
 
+	issues = append(issues, ValidateRequiredCredentials(env.RequiredCredentials)...)
+
+	return issues
+}
+
+func ValidateRequiredCredentials(required []runtimetasks.RequiredCredential) []ValidationIssue {
+	var issues []ValidationIssue
+	for i, item := range required {
+		fieldPrefix := fmt.Sprintf("required_credentials_json[%d]", i)
+		if strings.TrimSpace(item.VaultItemID) == "" && strings.TrimSpace(item.VaultItemHandle) == "" {
+			issues = append(issues, ValidationIssue{
+				Field:   fieldPrefix + ".vault_item_id",
+				Message: "vault_item_id or vault_item_handle is required",
+			})
+		}
+		if strings.TrimSpace(item.Why) == "" {
+			issues = append(issues, ValidationIssue{
+				Field:   fieldPrefix + ".why",
+				Message: "why is required",
+			})
+		}
+	}
 	return issues
 }
