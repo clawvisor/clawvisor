@@ -80,6 +80,39 @@ func TestTaskCreateV2RejectsInvalidEnvelope(t *testing.T) {
 	}
 }
 
+func TestTaskCreateV2StoresRequiredCredentialsAndRisk(t *testing.T) {
+	env := newTestEnv(t)
+	sc := newScenario(t, env, "task-v2-credentials")
+
+	resp := env.do("POST", "/api/tasks", sc.AgentToken, map[string]any{
+		"purpose": "create release issues in GitHub",
+		"expected_tools_json": []map[string]any{
+			{
+				"tool_name": "Bash",
+				"why":       "Call the GitHub API to create release issues.",
+			},
+		},
+		"required_credentials_json": []map[string]any{
+			{
+				"vault_item_id": "vault_github_release_bot",
+				"why":           "Use the GitHub release bot credential to create issues in owner/repo.",
+			},
+		},
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	taskID := str(t, body, "task_id")
+
+	resp = env.do("GET", fmt.Sprintf("/api/tasks/%s", taskID), sc.AgentToken, nil)
+	task := mustStatus(t, resp, http.StatusOK)
+	required := arr(t, task, "required_credentials_json")
+	if len(required) != 1 {
+		t.Fatalf("expected one required credential, got %v", task["required_credentials_json"])
+	}
+	if task["risk_level"] != "medium" {
+		t.Fatalf("expected medium risk for credential request, got %v", task["risk_level"])
+	}
+}
+
 func TestTaskCreateRejectsPlannedCallsWithoutAuthorizedActions(t *testing.T) {
 	env := newTestEnv(t)
 	sc := newScenario(t, env, "task-v2-planned")

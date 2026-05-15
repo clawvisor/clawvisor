@@ -566,6 +566,7 @@ type Task struct {
 	PlannedCalls           []PlannedCall   `json:"planned_calls,omitempty"`
 	ExpectedTools          json.RawMessage `json:"expected_tools_json,omitempty"`
 	ExpectedEgress         json.RawMessage `json:"expected_egress_json,omitempty"`
+	RequiredCredentials    json.RawMessage `json:"required_credentials_json,omitempty"`
 	IntentVerificationMode string          `json:"intent_verification_mode,omitempty"`
 	// ChainExtractionMode overrides the system default for async chain-context
 	// extraction. "" (unset) defers to the system default; "full" runs the

@@ -47,6 +47,7 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 		PlannedCalls:           []store.PlannedCall{{Service: "google.gmail", Action: "list_messages", Reason: "list inbox"}},
 		ExpectedTools:          []byte(`[{"tool_name":"fetch_messages","why":"triage inbox"}]`),
 		ExpectedEgress:         []byte(`[{"host":"api.example.com","why":"load ticket data"}]`),
+		RequiredCredentials:    []byte(`[{"vault_item_id":"vault_google_support","why":"read support inbox credentials"}]`),
 		IntentVerificationMode: "strict",
 		ExpectedUse:            "Support inbox triage",
 		SchemaVersion:          2,
@@ -74,6 +75,9 @@ func TestRuntimeUnificationRoundTrip(t *testing.T) {
 	}
 	if string(gotTask.ExpectedEgress) != `[{"host":"api.example.com","why":"load ticket data"}]` {
 		t.Fatalf("ExpectedEgress=%s", string(gotTask.ExpectedEgress))
+	}
+	if string(gotTask.RequiredCredentials) != `[{"vault_item_id":"vault_google_support","why":"read support inbox credentials"}]` {
+		t.Fatalf("RequiredCredentials=%s", string(gotTask.RequiredCredentials))
 	}
 	if gotTask.IntentVerificationMode != "strict" {
 		t.Fatalf("IntentVerificationMode=%q", gotTask.IntentVerificationMode)

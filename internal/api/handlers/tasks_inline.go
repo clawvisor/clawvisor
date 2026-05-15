@@ -62,6 +62,7 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	env := runtimetasks.Envelope{
 		ExpectedTools:          req.ExpectedTools,
 		ExpectedEgress:         req.ExpectedEgress,
+		RequiredCredentials:    req.RequiredCredentials,
 		IntentVerificationMode: req.IntentVerificationMode,
 		ExpectedUse:            req.ExpectedUse,
 		SchemaVersion:          req.SchemaVersion,
@@ -128,6 +129,13 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 			return nil, fmt.Errorf("encode expected_egress_json: %w", err)
 		}
 		task.ExpectedEgress = json.RawMessage(raw)
+	}
+	if len(req.RequiredCredentials) > 0 {
+		raw, err := json.Marshal(req.RequiredCredentials)
+		if err != nil {
+			return nil, fmt.Errorf("encode required_credentials_json: %w", err)
+		}
+		task.RequiredCredentials = json.RawMessage(raw)
 	}
 
 	// Inline-approval rationale captures the gesture so a future audit

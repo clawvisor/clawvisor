@@ -1173,6 +1173,7 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 	}
 	expectedToolsJSON := rawJSONOrDefault(task.ExpectedTools, "[]")
 	expectedEgressJSON := rawJSONOrDefault(task.ExpectedEgress, "[]")
+	requiredCredentialsJSON := rawJSONOrDefault(task.RequiredCredentials, "[]")
 	var pendingActionJSON *string
 	if task.PendingAction != nil {
 		b, err := json.Marshal(task.PendingAction)
@@ -1197,13 +1198,13 @@ func (s *Store) CreateTask(ctx context.Context, task *store.Task) error {
 		INSERT INTO tasks (id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 			expires_in_seconds, approved_at, expires_at, pending_action, pending_reason, lifetime,
 			risk_level, risk_details, approval_source, approval_rationale, expected_tools_json,
-			expected_egress_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			expected_egress_json, required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`, task.ID, task.UserID, task.AgentID, task.Purpose, task.Status,
 		string(actionsJSON), string(plannedCallsJSON), task.CallbackURL, task.ExpiresInSeconds,
 		approvedAt, expiresAt, pendingActionJSON, task.PendingReason, task.Lifetime,
 		task.RiskLevel, riskDetails, task.ApprovalSource, approvalRationale, expectedToolsJSON,
-		expectedEgressJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
+		expectedEgressJSON, requiredCredentialsJSON, task.IntentVerificationMode, task.ExpectedUse, task.SchemaVersion,
 		task.ChainExtractionMode)
 	return err
 }
@@ -1212,20 +1213,20 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	t := &store.Task{}
 	var actionsStr, plannedCallsStr, createdAt string
 	var approvedAt, expiresAt, pendingActionStr *string
-	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+	var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 	var chainExtractionMode *string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, agent_id, purpose, status, authorized_actions, planned_calls, callback_url,
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE id = ?
 	`, id).Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 		&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 		&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 		&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-		&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+		&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 		&chainExtractionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -1269,6 +1270,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (*store.Task, error) {
 	if expectedEgressStr != "" {
 		t.ExpectedEgress = json.RawMessage(expectedEgressStr)
 	}
+	if requiredCredentialsStr != "" {
+		t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
+	}
 	if chainExtractionMode != nil {
 		t.ChainExtractionMode = *chainExtractionMode
 	}
@@ -1299,7 +1303,7 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks ` + where + ` ORDER BY created_at DESC`
 
 	if filter.Limit > 0 {
@@ -1318,13 +1322,13 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		t := &store.Task{}
 		var actionsStr, plannedCallsStr, createdAt string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
 			return nil, 0, err
 		}
@@ -1366,6 +1370,9 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		}
 		if expectedEgressStr != "" {
 			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
+		if requiredCredentialsStr != "" {
+			t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
 		}
 		tasks = append(tasks, t)
 	}
@@ -1542,7 +1549,7 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		       created_at, approved_at, expires_at, expires_in_seconds, request_count,
 		       pending_action, pending_reason, lifetime, risk_level, risk_details,
 		       approval_source, approval_rationale, expected_tools_json, expected_egress_json,
-		       intent_verification_mode, expected_use, schema_version, chain_extraction_mode
+		       required_credentials_json, intent_verification_mode, expected_use, schema_version, chain_extraction_mode
 		FROM tasks WHERE status = 'active' AND lifetime = 'session' AND expires_at < datetime('now')
 	`)
 	if err != nil {
@@ -1556,13 +1563,13 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		var actionsStr, createdAt string
 		var plannedCallsStr *string
 		var approvedAt, expiresAt, pendingActionStr *string
-		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr string
+		var riskDetailsStr, approvalRationaleStr, expectedToolsStr, expectedEgressStr, requiredCredentialsStr string
 		var chainExtractionMode *string
 		if err := rows.Scan(&t.ID, &t.UserID, &t.AgentID, &t.Purpose, &t.Status, &actionsStr,
 			&plannedCallsStr, &t.CallbackURL, &createdAt, &approvedAt, &expiresAt, &t.ExpiresInSeconds,
 			&t.RequestCount, &pendingActionStr, &t.PendingReason, &t.Lifetime,
 			&t.RiskLevel, &riskDetailsStr, &t.ApprovalSource, &approvalRationaleStr,
-			&expectedToolsStr, &expectedEgressStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
+			&expectedToolsStr, &expectedEgressStr, &requiredCredentialsStr, &t.IntentVerificationMode, &t.ExpectedUse, &t.SchemaVersion,
 			&chainExtractionMode); err != nil {
 			return nil, err
 		}
@@ -1604,6 +1611,9 @@ func (s *Store) ListExpiredTasks(ctx context.Context) ([]*store.Task, error) {
 		}
 		if expectedEgressStr != "" {
 			t.ExpectedEgress = json.RawMessage(expectedEgressStr)
+		}
+		if requiredCredentialsStr != "" {
+			t.RequiredCredentials = json.RawMessage(requiredCredentialsStr)
 		}
 		tasks = append(tasks, t)
 	}

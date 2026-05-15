@@ -127,18 +127,19 @@ func (h *TasksHandler) SetGroupApproval(buf groupchat.Buffer, health *llm.Health
 // ── Create ────────────────────────────────────────────────────────────────────
 
 type createTaskRequest struct {
-	Purpose                string                        `json:"purpose"`
-	AuthorizedActions      []store.TaskAction            `json:"authorized_actions"`
-	PlannedCalls           []store.PlannedCall           `json:"planned_calls,omitempty"`
-	ExpectedTools          []runtimetasks.ExpectedTool   `json:"expected_tools_json,omitempty"`
-	ExpectedEgress         []runtimetasks.ExpectedEgress `json:"expected_egress_json,omitempty"`
-	IntentVerificationMode string                        `json:"intent_verification_mode,omitempty"`
-	ChainExtractionMode    string                        `json:"chain_extraction_mode,omitempty"` // "" | "full" | "builtins_only"
-	ExpectedUse            string                        `json:"expected_use,omitempty"`
-	SchemaVersion          int                           `json:"schema_version,omitempty"`
-	ExpiresInSeconds       int                           `json:"expires_in_seconds"`
-	CallbackURL            string                        `json:"callback_url"`
-	Lifetime               string                        `json:"lifetime"` // "session" (default) or "standing"
+	Purpose                string                            `json:"purpose"`
+	AuthorizedActions      []store.TaskAction                `json:"authorized_actions"`
+	PlannedCalls           []store.PlannedCall               `json:"planned_calls,omitempty"`
+	ExpectedTools          []runtimetasks.ExpectedTool       `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []runtimetasks.ExpectedEgress     `json:"expected_egress_json,omitempty"`
+	RequiredCredentials    []runtimetasks.RequiredCredential `json:"required_credentials_json,omitempty"`
+	IntentVerificationMode string                            `json:"intent_verification_mode,omitempty"`
+	ChainExtractionMode    string                            `json:"chain_extraction_mode,omitempty"` // "" | "full" | "builtins_only"
+	ExpectedUse            string                            `json:"expected_use,omitempty"`
+	SchemaVersion          int                               `json:"schema_version,omitempty"`
+	ExpiresInSeconds       int                               `json:"expires_in_seconds"`
+	CallbackURL            string                            `json:"callback_url"`
+	Lifetime               string                            `json:"lifetime"` // "session" (default) or "standing"
 }
 
 // Create declares a new task scope.
@@ -161,6 +162,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Collect all missing top-level required fields at once so the caller
 	// can fix everything in a single round-trip.
 	hasRuntimeEnvelope := len(req.ExpectedTools) > 0 || len(req.ExpectedEgress) > 0
+	hasCredentialRequests := len(req.RequiredCredentials) > 0
+	hasV2Fields := hasRuntimeEnvelope || hasCredentialRequests
 	var missingFields []string
 	if req.Purpose == "" {
 		missingFields = append(missingFields, "purpose")
@@ -224,7 +227,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	schemaVersion := req.SchemaVersion
 	if schemaVersion == 0 {
-		if hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "" {
+		if hasV2Fields || req.IntentVerificationMode != "" || req.ExpectedUse != "" {
 			schemaVersion = 2
 		} else {
 			schemaVersion = 1
@@ -239,11 +242,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if schemaVersion == 1 && (hasRuntimeEnvelope || req.IntentVerificationMode != "" || req.ExpectedUse != "") {
+	if schemaVersion == 1 && (hasV2Fields || req.IntentVerificationMode != "" || req.ExpectedUse != "") {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error: "schema_version=1 cannot be used with v2 task envelope fields",
 			Code:  "INVALID_REQUEST",
-			Hint:  "Use schema_version 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use.",
+			Hint:  "Use schema_version 2 when sending expected_tools_json, expected_egress_json, required_credentials_json, intent_verification_mode, or expected_use.",
 		})
 		return
 	}
@@ -251,11 +254,12 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	env := runtimetasks.Envelope{
 		ExpectedTools:          req.ExpectedTools,
 		ExpectedEgress:         req.ExpectedEgress,
+		RequiredCredentials:    req.RequiredCredentials,
 		IntentVerificationMode: req.IntentVerificationMode,
 		ExpectedUse:            req.ExpectedUse,
 		SchemaVersion:          schemaVersion,
 	}
-	if hasRuntimeEnvelope && env.IntentVerificationMode == "" {
+	if hasV2Fields && env.IntentVerificationMode == "" {
 		env.IntentVerificationMode = "strict"
 	}
 	if hasRuntimeEnvelope {
@@ -271,6 +275,23 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 				Code:          "INVALID_REQUEST",
 				MissingFields: fields,
 				Hint:          "Task envelope v2 items must declare specific tools or egress targets with valid shapes and human-readable why fields.",
+			})
+			return
+		}
+	}
+	if hasCredentialRequests && !hasRuntimeEnvelope {
+		if issues := runtimepolicy.ValidateRequiredCredentials(req.RequiredCredentials); len(issues) > 0 {
+			var messages []string
+			var fields []string
+			for _, issue := range issues {
+				messages = append(messages, issue.Field+": "+issue.Message)
+				fields = append(fields, issue.Field)
+			}
+			writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
+				Error:         strings.Join(messages, "; "),
+				Code:          "INVALID_REQUEST",
+				MissingFields: fields,
+				Hint:          "Credential requests must name a concrete vault item and explain why the task needs it.",
 			})
 			return
 		}
@@ -467,6 +488,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(req.PlannedCalls) > 0 ||
 		len(req.ExpectedTools) > 0 ||
 		len(req.ExpectedEgress) > 0 ||
+		len(req.RequiredCredentials) > 0 ||
 		env.IntentVerificationMode != "" ||
 		req.ExpectedUse != "" ||
 		schemaVersion != 1 {
@@ -474,6 +496,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			req.PlannedCalls,
 			req.ExpectedTools,
 			req.ExpectedEgress,
+			req.RequiredCredentials,
 			env.IntentVerificationMode,
 			req.ExpectedUse,
 			schemaVersion,
@@ -530,6 +553,14 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		task.ExpectedEgress = json.RawMessage(b)
 	}
+	if len(req.RequiredCredentials) > 0 {
+		b, err := json.Marshal(req.RequiredCredentials)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode required_credentials_json")
+			return
+		}
+		task.RequiredCredentials = json.RawMessage(b)
+	}
 
 	// Run risk assessment (non-blocking — errors are logged, not propagated).
 	if h.assessor != nil {
@@ -546,7 +577,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			}
 			assessment = legacyAssessment
 		}
-		if hasRuntimeEnvelope {
+		if hasV2Fields {
 			envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
 			assessment = mergeRiskAssessments(assessment, envelopeAssessment)
 		}
@@ -554,7 +585,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			task.RiskLevel = assessment.RiskLevel
 			task.RiskDetails = taskrisk.MarshalAssessment(assessment)
 		}
-	} else if hasRuntimeEnvelope {
+	} else if hasV2Fields {
 		assessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
 		task.RiskLevel = assessment.RiskLevel
 		task.RiskDetails = taskrisk.MarshalAssessment(assessment)

@@ -25,9 +25,16 @@ type ExpectedEgress struct {
 	CredentialAlias string         `json:"credential_alias,omitempty"`
 }
 
+type RequiredCredential struct {
+	VaultItemID     string `json:"vault_item_id,omitempty"`
+	VaultItemHandle string `json:"vault_item_handle,omitempty"`
+	Why             string `json:"why"`
+}
+
 type Envelope struct {
 	ExpectedTools          []ExpectedTool
 	ExpectedEgress         []ExpectedEgress
+	RequiredCredentials    []RequiredCredential
 	IntentVerificationMode string
 	ExpectedUse            string
 	SchemaVersion          int
@@ -44,17 +51,18 @@ type Envelope struct {
 // outside internal/api/handlers to avoid an import cycle between the
 // llm-proxy and the handlers package.
 type TaskCreateRequest struct {
-	Purpose                string           `json:"purpose"`
-	AuthorizedActions      []map[string]any `json:"authorized_actions,omitempty"`
-	PlannedCalls           []map[string]any `json:"planned_calls,omitempty"`
-	ExpectedTools          []ExpectedTool   `json:"expected_tools_json,omitempty"`
-	ExpectedEgress         []ExpectedEgress `json:"expected_egress_json,omitempty"`
-	IntentVerificationMode string           `json:"intent_verification_mode,omitempty"`
-	ExpectedUse            string           `json:"expected_use,omitempty"`
-	SchemaVersion          int              `json:"schema_version,omitempty"`
-	ExpiresInSeconds       int              `json:"expires_in_seconds,omitempty"`
-	CallbackURL            string           `json:"callback_url,omitempty"`
-	Lifetime               string           `json:"lifetime,omitempty"`
+	Purpose                string               `json:"purpose"`
+	AuthorizedActions      []map[string]any     `json:"authorized_actions,omitempty"`
+	PlannedCalls           []map[string]any     `json:"planned_calls,omitempty"`
+	ExpectedTools          []ExpectedTool       `json:"expected_tools_json,omitempty"`
+	ExpectedEgress         []ExpectedEgress     `json:"expected_egress_json,omitempty"`
+	RequiredCredentials    []RequiredCredential `json:"required_credentials_json,omitempty"`
+	IntentVerificationMode string               `json:"intent_verification_mode,omitempty"`
+	ExpectedUse            string               `json:"expected_use,omitempty"`
+	SchemaVersion          int                  `json:"schema_version,omitempty"`
+	ExpiresInSeconds       int                  `json:"expires_in_seconds,omitempty"`
+	CallbackURL            string               `json:"callback_url,omitempty"`
+	Lifetime               string               `json:"lifetime,omitempty"`
 }
 
 func EnvelopeFromTask(task *store.Task) (Envelope, error) {
@@ -73,6 +81,11 @@ func EnvelopeFromTask(task *store.Task) (Envelope, error) {
 	}
 	if len(task.ExpectedEgress) > 0 {
 		if err := json.Unmarshal(task.ExpectedEgress, &env.ExpectedEgress); err != nil {
+			return Envelope{}, err
+		}
+	}
+	if len(task.RequiredCredentials) > 0 {
+		if err := json.Unmarshal(task.RequiredCredentials, &env.RequiredCredentials); err != nil {
 			return Envelope{}, err
 		}
 	}
