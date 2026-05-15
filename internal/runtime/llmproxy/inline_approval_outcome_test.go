@@ -15,10 +15,21 @@ import (
 func TestMemoryInlineApprovalOutcomeStore_RecordAndLookup(t *testing.T) {
 	s := NewMemoryInlineApprovalOutcomeStore(time.Minute)
 	key := InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-1"}
-	s.Record(key, InlineApprovalOutcome{Succeeded: true, TaskID: "task-1"})
+	s.Record(key, InlineApprovalOutcome{
+		Decision:         "allow",
+		Outcome:          "inline_task_approved",
+		Succeeded:        true,
+		TaskID:           "task-1",
+		ApprovalRecordID: "approval-record-1",
+		RequestID:        "req-1",
+		ResolvedAt:       time.Now().UTC(),
+	})
 	out, ok := s.Lookup(key)
 	if !ok || !out.Succeeded || out.TaskID != "task-1" {
 		t.Fatalf("lookup = (%+v, %v)", out, ok)
+	}
+	if out.Decision != "allow" || out.Outcome != "inline_task_approved" || out.ApprovalRecordID != "approval-record-1" || out.RequestID != "req-1" || out.ResolvedAt.IsZero() {
+		t.Fatalf("lookup missing resolution metadata: %+v", out)
 	}
 	if _, ok := s.Lookup(InlineApprovalOutcomeKey{}); ok {
 		t.Fatal("empty key should miss")
@@ -92,6 +103,7 @@ func TestRewriteInlineTaskApprovalReply_RecordsSuccessOutcome(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		RequestID:       "req-success",
 		PendingApproval: cache,
 		Creator:         stubInlineTaskCreator{taskID: "task-created"},
 		Outcomes:        outcomes,
@@ -108,6 +120,9 @@ func TestRewriteInlineTaskApprovalReply_RecordsSuccessOutcome(t *testing.T) {
 	}
 	if !recorded.Succeeded || recorded.TaskID != "task-created" {
 		t.Fatalf("recorded outcome = %+v", recorded)
+	}
+	if recorded.Decision != "allow" || recorded.Outcome != "inline_task_approved" || recorded.ApprovalRecordID != "ar-task-created" || recorded.RequestID != "req-success" || recorded.ResolvedAt.IsZero() {
+		t.Fatalf("recorded resolution metadata = %+v", recorded)
 	}
 }
 
@@ -135,6 +150,7 @@ func TestRewriteInlineTaskApprovalReply_RecordsFailureOutcome(t *testing.T) {
 		Provider:        conversation.ProviderAnthropic,
 		Body:            []byte(`{"messages":[{"role":"user","content":"approve"}]}`),
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
+		RequestID:       "req-failure",
 		PendingApproval: cache,
 		Creator:         stubInlineTaskCreator{err: "boom"},
 		Outcomes:        outcomes,
@@ -154,6 +170,9 @@ func TestRewriteInlineTaskApprovalReply_RecordsFailureOutcome(t *testing.T) {
 	}
 	if !strings.Contains(recorded.FailureReason, "boom") {
 		t.Fatalf("FailureReason should preserve the creator's error: %q", recorded.FailureReason)
+	}
+	if recorded.Decision != "deny" || recorded.Outcome != "inline_task_create_failed" || recorded.RequestID != "req-failure" || recorded.ResolvedAt.IsZero() {
+		t.Fatalf("recorded resolution metadata = %+v", recorded)
 	}
 }
 

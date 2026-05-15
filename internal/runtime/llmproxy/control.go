@@ -15,7 +15,7 @@ const (
 	ControlSyntheticHost = "clawvisor.local"
 )
 
-func ControlNotice(controlBaseURL string) string {
+func ControlNotice(controlBaseURL string, availableTools []string) string {
 	// Always advertise the synthetic URL. Clawvisor rewrites it to the
 	// real daemon URL transparently and mints fresh auth on every call.
 	// Models that see (or guess) the daemon URL and call it directly
@@ -25,6 +25,11 @@ func ControlNotice(controlBaseURL string) string {
 	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
 	tasksURLInline := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120&surface=inline"
 	tasksURLDashboard := "https://" + ControlSyntheticHost + "/control/tasks?wait=true&timeout=120"
+	toolExamples := controlToolExamples(availableTools)
+	shellTool := controlShellTool(availableTools)
+	if shellTool == "" {
+		shellTool = "bash"
+	}
 	return strings.Join([]string{
 		"Clawvisor proxy-lite control plane.",
 		"",
@@ -44,8 +49,8 @@ func ControlNotice(controlBaseURL string) string {
 		"",
 		"What goes in a good task:",
 		"  - `purpose`: a clear, user-visible sentence describing what you're about to do. Phrase it expansively enough to cover the obvious follow-up work — \"create and verify\" rather than just \"create\", \"refactor and test\" rather than just \"refactor\". Verification-by-reading is part of any sensible writing workflow; declare it.",
-		"  - `expected_tools_json`: list every tool family you expect to use (Bash, Read, Write, Edit, WebFetch, etc.). Be generous — list anything plausible. Missing scope is friction; over-declaring is fine. SCOPE PAIRS: writing implies reading (you will verify the file you just wrote), so when you list Write or Edit also list Read; running a shell that creates state usually means running a shell that inspects it, so a single Bash entry with a `why` that covers both is correct. Don't split write-then-verify into two tasks.",
-		"  - `why`: per-tool, one line explaining why that tool is needed for THIS task. For Bash/Write/Edit on a writing task, your `why` should explicitly include the verify/inspect/check workflow — e.g. \"Create the target files and run sanity checks (ls, wc, cat) against them.\" The intent verifier compares each individual command against the `why`; a `why` that only mentions writes will refuse the subsequent reads.",
+		"  - `expected_tools_json`: list the actual tool names you expect to use from this request's available tools (" + toolExamples + "). Be generous — list anything plausible. Missing scope is friction; over-declaring is fine. SCOPE PAIRS: writing implies reading (you will verify the file you just wrote), so when you list write/edit tools also list read tools when available; running a shell that creates state usually means running a shell that inspects it, so a single `" + shellTool + "` entry with a `why` that covers both is correct. Don't split write-then-verify into two tasks.",
+		"  - `why`: per-tool, one line explaining why that tool is needed for THIS task. For shell/write/edit tools on a writing task, your `why` should explicitly include the verify/inspect/check workflow — e.g. \"Create the target files and run sanity checks (ls, wc, cat) against them.\" The intent verifier compares each individual command against the `why`; a `why` that only mentions writes will refuse the subsequent reads.",
 		"",
 		"When NOT to create a task: single one-shot commands the user obviously wants (a single `ls`, a single `cat`), or follow-up clarifications inside an already-approved task's scope.",
 		"",
@@ -73,7 +78,7 @@ func ControlNotice(controlBaseURL string) string {
 		"Before creating the task, tell me I will need to approve it.",
 		"For schemas and examples, GET " + docsURL + ".",
 		"",
-		"Use Bash with curl for control-plane calls (not WebFetch/http_request — those tools",
+		"Use `" + shellTool + "` with curl for control-plane calls (not WebFetch/http_request — those tools",
 		"do not support the headers and JSON body that task creation requires).",
 		"",
 		"USE ONE CURL — emit a single curl invocation with the JSON body inline. Don't write the JSON to a temp file via cat/echo and then curl --data @file: the proxy can parse that shape but it adds variance for no benefit. The simplest, most reliable shape is `--data @-` with a heredoc.",
@@ -90,7 +95,7 @@ func ControlNotice(controlBaseURL string) string {
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"<one-line user-visible goal>\",",
-		"   \"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"<concrete reason>\"}],",
+		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<concrete reason>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
@@ -101,14 +106,55 @@ func ControlNotice(controlBaseURL string) string {
 	}, "\n")
 }
 
+func controlToolExamples(availableTools []string) string {
+	tools := compactToolNames(availableTools)
+	if len(tools) == 0 {
+		return "Bash, Read, Write, Edit, WebFetch, etc."
+	}
+	const max = 8
+	if len(tools) > max {
+		tools = tools[:max]
+		return strings.Join(tools, ", ") + ", etc."
+	}
+	return strings.Join(tools, ", ")
+}
+
+func controlShellTool(availableTools []string) string {
+	for _, tool := range compactToolNames(availableTools) {
+		switch strings.ToLower(tool) {
+		case "bash", "shell", "exec", "exec_command":
+			return tool
+		}
+	}
+	return ""
+}
+
+func compactToolNames(availableTools []string) []string {
+	out := make([]string, 0, len(availableTools))
+	seen := make(map[string]struct{}, len(availableTools))
+	for _, tool := range availableTools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		key := strings.ToLower(tool)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tool)
+	}
+	return out
+}
+
 // InjectControlNotice adds a compact control-plane hint to the request context.
 // The synthetic URL is rewritten from model-emitted tool calls before the tool
 // runner sees it, so the prompt stays stable across local and public daemon URLs.
-func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string) ([]byte, bool, error) {
+func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string) ([]byte, bool, error) {
 	if strings.Contains(string(body), "https://"+ControlSyntheticHost+"/control") {
 		return body, false, nil
 	}
-	notice := ControlNotice(controlBaseURL)
+	notice := ControlNotice(controlBaseURL, availableTools)
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return injectAnthropicControlNotice(body, notice)
@@ -863,6 +909,7 @@ func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg
 //   - the parser separately requires the path to be statically
 //     expandable, so `$HOME`/`$(…)`/`${…}` are already rejected
 //     upstream.
+//
 // Filename body allows alnum/underscore/hyphen segments separated by
 // single dots, ending with a literal `.json`. This rules out
 // `/tmp/foo..bar.json`, `/tmp/...json`, etc. — paths that aren't

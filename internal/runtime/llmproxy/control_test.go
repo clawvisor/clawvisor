@@ -8,6 +8,23 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 )
 
+func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{"read", "edit", "write", "exec", "process"})
+
+	if !strings.Contains(notice, "Use `exec` with curl") {
+		t.Fatalf("notice should steer OpenClaw to its actual shell tool; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"tool_name":"exec"`) {
+		t.Fatalf("notice example should declare exec in expected_tools_json; got:\n%s", notice)
+	}
+	if strings.Contains(notice, "Use Bash with curl") || strings.Contains(notice, `"tool_name":"bash"`) {
+		t.Fatalf("notice should not hardcode Bash when exec is available; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
+		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
+	}
+}
+
 // Regression: a curl invocation that mixes a synthetic control URL with
 // any other outbound URL must be refused. Otherwise the rewriter would
 // quietly rewrite only the control URL, and the model could run a

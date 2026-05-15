@@ -105,6 +105,9 @@ var localOnlyTools = map[string]struct{}{
 	"TaskGet":    {},
 	"TaskOutput": {},
 	"TaskStop":   {},
+	// Harness-internal user clarification prompt. It does not reach
+	// outside the harness and should not require an approved task scope.
+	"AskUserQuestion": {},
 }
 
 func isLocalOnlyTool(name string) bool {
