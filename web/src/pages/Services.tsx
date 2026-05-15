@@ -228,6 +228,7 @@ function VaultInventorySection({
                 <VaultMetric label="Revoked" value={String(selectedPlaceholders.filter(entry => !!entry.revoked_at).length)} />
               </div>
               {selectedService ? <VaultServiceActions svc={selectedService} /> : <VaultSecretActions item={selected} />}
+              <VaultPlaceholderMintControls item={selected} agents={agents} />
               <div>
                 <div className="mb-2 text-xs font-medium uppercase tracking-wider text-text-tertiary">Placeholders</div>
                 <div className="space-y-2">
@@ -255,9 +256,6 @@ function VaultInventorySection({
                     </div>
                   ))}
                 </div>
-              </div>
-              <div className="rounded border border-border-subtle bg-surface-1 px-3 py-2 text-xs text-text-tertiary">
-                Manual placeholder minting should start from this detail surface. The current v1 path mints credentials through approved tasks so placeholders inherit the task lifetime.
               </div>
             </div>
           )}
@@ -554,6 +552,95 @@ function VaultSecretActions({ item }: { item: VaultItem }) {
         </button>
       </div>
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+function VaultPlaceholderMintControls({ item, agents }: { item: VaultItem; agents: Agent[] }) {
+  const qc = useQueryClient()
+  const [agentID, setAgentID] = useState('')
+  const [ttlMinutes, setTTLMinutes] = useState(60)
+  const [minting, setMinting] = useState(false)
+  const [minted, setMinted] = useState<RuntimePlaceholder | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleMint() {
+    const minutes = Math.max(1, Math.floor(Number.isFinite(ttlMinutes) ? ttlMinutes : 0))
+    const agentLabel = agentID ? (agents.find(agent => agent.id === agentID)?.name ?? agentID) : 'all agents'
+    if (!confirm(`Mint a placeholder for ${item.name} that can be used by ${agentLabel} for ${minutes} minute${minutes === 1 ? '' : 's'}?`)) return
+    setMinting(true)
+    setError(null)
+    setMinted(null)
+    try {
+      const entry = await api.runtime.mintPlaceholder(agentID || undefined, item.id, minutes * 60)
+      setMinted(entry)
+      qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+      qc.invalidateQueries({ queryKey: ['vault-items'] })
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to mint placeholder')
+    } finally {
+      setMinting(false)
+    }
+  }
+
+  async function copyPlaceholder() {
+    if (!minted?.placeholder) return
+    try {
+      await navigator.clipboard.writeText(minted.placeholder)
+    } catch {
+      setError('Could not copy placeholder')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3 space-y-3">
+      <div>
+        <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Mint placeholder</div>
+        <p className="mt-1 text-xs text-text-tertiary">
+          Create a temporary autovault reference for this vault item.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px_auto]">
+        <select
+          value={agentID}
+          onChange={e => setAgentID(e.target.value)}
+          className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+        >
+          <option value="">All agents</option>
+          {agents.map(agent => (
+            <option key={agent.id} value={agent.id}>{agent.name}</option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={1}
+          value={ttlMinutes}
+          onChange={e => setTTLMinutes(Number(e.target.value))}
+          aria-label="Placeholder lifetime in minutes"
+          className="min-w-0 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand"
+        />
+        <button
+          onClick={handleMint}
+          disabled={minting || !Number.isFinite(ttlMinutes) || ttlMinutes < 1}
+          className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {minting ? 'Minting…' : 'Mint'}
+        </button>
+      </div>
+      {minted && (
+        <div className="rounded border border-border-subtle bg-surface-0 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <code className="min-w-0 truncate text-xs text-text-secondary">{minted.placeholder}</code>
+            <button
+              onClick={copyPlaceholder}
+              className="shrink-0 text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

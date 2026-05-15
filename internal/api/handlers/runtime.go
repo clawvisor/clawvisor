@@ -209,8 +209,9 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		AgentID string `json:"agent_id"`
-		Service string `json:"service"`
+		AgentID    string `json:"agent_id"`
+		Service    string `json:"service"`
+		TTLSeconds int    `json:"ttl_seconds,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -219,6 +220,17 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 	req.Service = strings.TrimSpace(req.Service)
 	if req.Service == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "service is required")
+		return
+	}
+	ttl := time.Duration(req.TTLSeconds) * time.Second
+	if req.TTLSeconds == 0 {
+		ttl = time.Hour
+	} else if req.TTLSeconds < 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be positive")
+		return
+	}
+	if ttl <= 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be positive")
 		return
 	}
 	var agentID string
@@ -239,12 +251,36 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	if _, err := h.vault.Get(r.Context(), user.ID, req.Service); err != nil {
+	storageKey := vaultStorageKeyForItemIDForUser(r.Context(), h.adapterReg, user.ID, req.Service)
+	if _, err := h.vault.Get(r.Context(), user.ID, storageKey); err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "SERVICE_NOT_ACTIVATED", "service credential is not activated")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not load service credential")
+		return
+	}
+	expiresAt := time.Now().UTC().Add(ttl)
+	auth := &store.CredentialAuthorization{
+		ID:            uuid.New().String(),
+		UserID:        user.ID,
+		AgentID:       agentID,
+		Scope:         "manual",
+		CredentialRef: storageKey,
+		Service:       req.Service,
+		Host:          "",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON: mustJSON(map[string]any{
+			"source":        "manual_runtime_placeholder",
+			"vault_item_id": req.Service,
+			"ttl_seconds":   int(ttl.Seconds()),
+		}),
+		ExpiresAt: &expiresAt,
+	}
+	if err := h.st.CreateCredentialAuthorization(r.Context(), auth); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save credential grant")
 		return
 	}
 	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(req.Service))
@@ -253,10 +289,13 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 		return
 	}
 	entry := &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      user.ID,
-		AgentID:     agentID,
-		ServiceID:   req.Service,
+		Placeholder:       placeholder,
+		UserID:            user.ID,
+		AgentID:           agentID,
+		ServiceID:         req.Service,
+		VaultItemID:       req.Service,
+		CredentialGrantID: auth.ID,
+		ExpiresAt:         &expiresAt,
 	}
 	if err := h.st.CreateRuntimePlaceholder(r.Context(), entry); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save runtime placeholder")

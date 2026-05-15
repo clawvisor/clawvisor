@@ -2358,7 +2358,7 @@ func (s *Store) CreateCredentialAuthorization(ctx context.Context, auth *store.C
 			id, approval_id, user_id, agent_id, session_id, scope, credential_ref, service, host,
 			header_name, scheme, status, metadata_json, expires_at, used_at, last_matched_at
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-	`, auth.ID, auth.ApprovalID, auth.UserID, auth.AgentID, auth.SessionID, auth.Scope, auth.CredentialRef,
+	`, auth.ID, auth.ApprovalID, auth.UserID, nullableString(auth.AgentID), auth.SessionID, auth.Scope, auth.CredentialRef,
 		auth.Service, auth.Host, auth.HeaderName, auth.Scheme, auth.Status, rawJSONOrDefaultBytes(auth.MetadataJSON, "{}"),
 		auth.ExpiresAt, auth.UsedAt, auth.LastMatchedAt)
 	if err != nil && isDuplicate(err) {
@@ -2461,12 +2461,16 @@ func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, matc
 func scanCredentialAuthorization(scanner interface{ Scan(dest ...any) error }) (*store.CredentialAuthorization, error) {
 	auth := &store.CredentialAuthorization{}
 	var metadataJSON []byte
+	var agentID *string
 	if err := scanner.Scan(
-		&auth.ID, &auth.ApprovalID, &auth.UserID, &auth.AgentID, &auth.SessionID, &auth.Scope,
+		&auth.ID, &auth.ApprovalID, &auth.UserID, &agentID, &auth.SessionID, &auth.Scope,
 		&auth.CredentialRef, &auth.Service, &auth.Host, &auth.HeaderName, &auth.Scheme, &auth.Status,
 		&metadataJSON, &auth.CreatedAt, &auth.ExpiresAt, &auth.UsedAt, &auth.LastMatchedAt,
 	); err != nil {
 		return nil, err
+	}
+	if agentID != nil {
+		auth.AgentID = *agentID
 	}
 	auth.MetadataJSON = json.RawMessage(metadataJSON)
 	return auth, nil

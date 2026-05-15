@@ -1292,8 +1292,8 @@ export const api = {
     applyStarterProfile: (profileId: string, agentId?: string) =>
       post<{ entries: RuntimePolicyRule[]; total: number }>(`/api/runtime/starter-profiles/${profileId}/apply`, agentId ? { agent_id: agentId } : {}),
     listPlaceholders: () => get<{ entries: RuntimePlaceholder[]; total: number }>('/api/runtime/placeholders'),
-    mintPlaceholder: (agentId: string | undefined, service: string) =>
-      post<RuntimePlaceholder>('/api/runtime/placeholders/mint', { agent_id: agentId, service }),
+    mintPlaceholder: (agentId: string | undefined, service: string, ttlSeconds?: number) =>
+      post<RuntimePlaceholder>('/api/runtime/placeholders/mint', { agent_id: agentId, service, ttl_seconds: ttlSeconds }),
     deletePlaceholder: (placeholder: string) =>
       del<{ placeholder: string; status: string }>(`/api/runtime/placeholders/${encodeURIComponent(placeholder)}`),
     getPresetDecision: (commandKey: string, profile: string) =>
