@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -74,5 +75,27 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 				"reason":       "Explain why the existing task scope is insufficient.",
 			},
 		},
+	})
+}
+
+func (h *LLMControlHandler) Failure(w http.ResponseWriter, r *http.Request) {
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	if reason == "" {
+		reason = "malformed_control_command"
+	}
+	var body struct {
+		OriginalTool    string `json:"original_tool,omitempty"`
+		OriginalCommand string `json:"original_command,omitempty"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"error":            "control_command_rejected",
+		"reason":           reason,
+		"message":          "Clawvisor control-plane calls must be a single foreground curl to the synthetic control URL, with no pipes, subshells, redirects to output files, or extra shell commands.",
+		"original_tool":    body.OriginalTool,
+		"original_command": body.OriginalCommand,
+		"next_step":        "Retry the control-plane request as one plain curl. For credential discovery, run: curl -sS 'https://clawvisor.local/control/vault/items'",
 	})
 }

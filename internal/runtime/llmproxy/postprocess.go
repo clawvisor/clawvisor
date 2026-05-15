@@ -292,6 +292,45 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				RewriteInput: rewritten,
 			}
 		} else if controlToolUseMentionsEndpoint(tu, cfg.ControlBaseURL) {
+			reason := "malformed_control_command"
+			if cfg.CallerNonces != nil {
+				nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
+					Host:   ControlSyntheticHost,
+					Method: "POST",
+					Path:   "/control/failure",
+				})
+				if mintErr != nil {
+					audit("block", "caller_nonce_mint_failed", mintErr.Error())
+					return conversation.ToolUseVerdict{
+						Allowed: false,
+						Reason:  "Clawvisor: caller nonce mint failed — " + mintErr.Error(),
+					}
+				}
+				if rewritten, ok, err := RewriteControlFailureToolUse(tu, cfg.ControlBaseURL, nonce, reason); ok {
+					if err != nil {
+						audit("block", "control_rewriter_error", err.Error())
+						return conversation.ToolUseVerdict{
+							Allowed: false,
+							Reason:  "Clawvisor: control endpoint failure rewrite refused — " + err.Error(),
+						}
+					}
+					audit("rewrite", "clawvisor_control_failure", "malformed control endpoint command")
+					trace(TraceEventControlRewrite,
+						"host", ControlSyntheticHost,
+						"method", "POST",
+						"path", "/control/failure",
+						"failure_reason", reason,
+						"nonce_prefix", nonce[:min(len(nonce), 14)],
+						"rewrite_bytes", len(rewritten),
+					)
+					return conversation.ToolUseVerdict{
+						Allowed:      true,
+						RewriteInput: rewritten,
+					}
+				}
+			} else {
+				audit("block", "caller_nonce_unavailable", "caller nonce cache not configured")
+			}
 			audit("block", "control_rewriter_error", "control endpoint command must be a single foreground curl with no pipes, subshells, or extra shell commands")
 			return conversation.ToolUseVerdict{
 				Allowed: false,

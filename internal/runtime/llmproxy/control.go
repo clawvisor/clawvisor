@@ -433,6 +433,71 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	return out, true, err
 }
 
+func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string, reason string) ([]byte, bool, error) {
+	if strings.TrimSpace(controlBaseURL) == "" {
+		return nil, false, nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(t.Input, &raw); err != nil {
+		return nil, false, nil
+	}
+	cmdField := "cmd"
+	original, ok := raw["cmd"].(string)
+	if !ok {
+		cmdField = "command"
+		original, ok = raw["command"].(string)
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	u, err := url.Parse(strings.TrimRight(controlBaseURL, "/") + "/control/failure")
+	if err != nil {
+		return nil, false, err
+	}
+	q := u.Query()
+	if strings.TrimSpace(reason) == "" {
+		reason = "malformed_control_command"
+	}
+	q.Set("reason", reason)
+	u.RawQuery = q.Encode()
+	body, err := json.Marshal(map[string]string{
+		"original_tool":    t.Name,
+		"original_command": sanitizeControlFailureCommand(original),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	raw[cmdField] = strings.Join([]string{
+		"curl",
+		"-sS",
+		"-X", "POST",
+		"-H", shellQuote("Content-Type: application/json"),
+		"-H", shellQuote("X-Clawvisor-Target-Host: " + ControlSyntheticHost),
+		"-H", shellQuote("X-Clawvisor-Caller: Bearer " + callerToken),
+		"--data", shellQuote(string(body)),
+		shellQuote(u.String()),
+	}, " ")
+	clampControlToolUseTimeouts(raw, t.Name)
+	out, err := json.Marshal(raw)
+	return out, true, err
+}
+
+func sanitizeControlFailureCommand(cmd string) string {
+	cmd = regexp.MustCompile(`cv-nonce-[A-Za-z0-9_-]+`).ReplaceAllString(cmd, "cv-nonce-REDACTED")
+	cmd = regexp.MustCompile(`(?i)(X-Clawvisor-Caller:\s*Bearer\s+)[^'"\s]+`).ReplaceAllString(cmd, "${1}REDACTED")
+	return cmd
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.Contains(s, "'") {
+		return "'" + s + "'"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // controlToolUseMinYieldMs is the floor we clamp Codex's
 // exec_command yield_time_ms to when the call is a /control/* curl.
 // The curl's max block is wait timeout (120s) plus network slop; 180s

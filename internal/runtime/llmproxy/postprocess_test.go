@@ -789,8 +789,8 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	}
 }
 
-func TestPostprocess_MalformedSyntheticControlCommandRefusesAsControlError(t *testing.T) {
-	cmd := `curl -sS 'https://clawvisor.local/control/services' | python3 -c 'print("filter")'`
+func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *testing.T) {
+	cmd := `curl -sS -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale123' 'https://clawvisor.local/control/services' | python3 -c 'print("filter")'`
 	input, err := json.Marshal(map[string]any{
 		"command":     cmd,
 		"description": "Find agentphone service definition",
@@ -814,14 +814,23 @@ func TestPostprocess_MalformedSyntheticControlCommandRefusesAsControlError(t *te
 	})
 
 	if !got.Rewritten {
-		t.Fatalf("expected malformed control command refusal")
+		t.Fatalf("expected malformed control command failure rewrite")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "control endpoint rewrite refused") {
-		t.Fatalf("expected control-specific refusal, got: %s", out)
+	if !strings.Contains(out, "/control/failure") {
+		t.Fatalf("expected control failure endpoint rewrite, got: %s", out)
+	}
+	if !strings.Contains(out, "original_command") || !strings.Contains(out, "python3") {
+		t.Fatalf("expected rewritten failure call to include original command context, got: %s", out)
+	}
+	if strings.Contains(out, "cv-nonce-stale123") || !strings.Contains(out, "Bearer REDACTED") {
+		t.Fatalf("expected stale nonce in original command to be redacted, got: %s", out)
 	}
 	if strings.Contains(out, "no matching task scope") {
 		t.Fatalf("malformed control command should not fall through to task-scope refusal: %s", out)
+	}
+	if strings.Contains(out, "control endpoint rewrite refused") {
+		t.Fatalf("malformed control command should return tool output instead of an assistant refusal: %s", out)
 	}
 }
 
