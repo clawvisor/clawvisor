@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
@@ -146,6 +147,61 @@ func TestCreateInlineApprovedTaskStandingLifetime(t *testing.T) {
 	}
 	if rec.Resolution != "allow_always" {
 		t.Errorf("rec.Resolution=%q, want allow_always for standing", rec.Resolution)
+	}
+}
+
+func TestCreateInlineApprovedTaskReturnsCredentialPlaceholders(t *testing.T) {
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	v := &stubVault{}
+	if err := v.Set(ctx, user.ID, "agentphone", []byte("real-agentphone-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	h.vault = v
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose: "Place an outbound call with agentphone",
+		ExpectedTools: []runtimetasks.ExpectedTool{
+			{ToolName: "Bash", Why: "Call the agentphone API and verify the response"},
+		},
+		RequiredCredentials: []runtimetasks.RequiredCredential{
+			{VaultItemID: "agentphone", Why: "Authenticate requests to the agentphone API"},
+		},
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+	}
+
+	out, err := h.CreateInlineApprovedTask(ctx, agent, req, "cv-origtoolxxxxxxxxxxxxxxxxxx")
+	if err != nil {
+		t.Fatalf("CreateInlineApprovedTask: %v", err)
+	}
+	if len(out.Credentials) != 1 {
+		t.Fatalf("expected one credential placeholder, got %+v", out.Credentials)
+	}
+	cred := out.Credentials[0]
+	if cred.VaultItemID != "agentphone" || cred.ServiceID != "agentphone" {
+		t.Fatalf("unexpected credential metadata: %+v", cred)
+	}
+	if !strings.HasPrefix(cred.Placeholder, "autovault_agentphone_") {
+		t.Fatalf("placeholder %q missing agentphone prefix", cred.Placeholder)
+	}
+	if cred.ExpiresAtRFC3339 == "" {
+		t.Fatal("expected credential placeholder expiry")
+	}
+	if cred.CredentialGrantID == "" {
+		t.Fatal("expected credential grant id")
+	}
+
+	meta, err := st.GetRuntimePlaceholder(ctx, cred.Placeholder)
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder: %v", err)
+	}
+	if meta.TaskID != out.ID {
+		t.Fatalf("placeholder TaskID=%q, want %q", meta.TaskID, out.ID)
+	}
+	if meta.CredentialGrantID != cred.CredentialGrantID {
+		t.Fatalf("placeholder CredentialGrantID=%q, want %q", meta.CredentialGrantID, cred.CredentialGrantID)
 	}
 }
 

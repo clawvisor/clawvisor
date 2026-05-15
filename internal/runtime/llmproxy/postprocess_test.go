@@ -20,6 +20,10 @@ import (
 // owned by `userID/agentID`. Tests that rely on the boundary check pass
 // the placeholder string into their tool_use input.
 func seedPostprocessStore(t *testing.T, placeholder string) (store.Store, string, string) {
+	return seedPostprocessStoreWithService(t, placeholder, "github")
+}
+
+func seedPostprocessStoreWithService(t *testing.T, placeholder, serviceID string) (store.Store, string, string) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "post.db"))
@@ -41,7 +45,8 @@ func seedPostprocessStore(t *testing.T, placeholder string) (store.Store, string
 		Placeholder: placeholder,
 		UserID:      user.ID,
 		AgentID:     agent.ID,
-		ServiceID:   "github",
+		ServiceID:   serviceID,
+		VaultItemID: serviceID,
 	}); err != nil {
 		t.Fatalf("CreateRuntimePlaceholder: %v", err)
 	}
@@ -171,6 +176,29 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 	if !strings.Contains(string(got.Body), "web fetch blocked") {
 		t.Fatalf("refusal missing rule reason: %s", got.Body)
+	}
+}
+
+func TestBoundaryCheckVerdictUnknownServiceDefersToIntentVerification(t *testing.T) {
+	placeholder := "autovault_agentphone_xxx"
+	st, userID, agentID := seedPostprocessStoreWithService(t, placeholder, "agentphone")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+
+	reason, ok := boundaryCheckVerdict(req, PostprocessConfig{
+		Store:       st,
+		AgentUserID: userID,
+		AgentID:     agentID,
+	}, inspector.Verdict{
+		IsAPICall:    true,
+		Host:         "api.agentphone.ai",
+		Placeholders: []string{placeholder},
+	})
+
+	if !ok {
+		t.Fatalf("expected unknown service to defer to task/intent verification, got reason %q", reason)
+	}
+	if !strings.Contains(reason, "deferring to task/intent verification") {
+		t.Fatalf("expected deferral reason, got %q", reason)
 	}
 }
 

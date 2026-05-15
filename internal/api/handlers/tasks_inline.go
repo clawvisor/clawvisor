@@ -166,12 +166,15 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if err := h.st.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
 	}
+	var credentialPlaceholders []*store.RuntimePlaceholder
 	if len(requiredCredentials) > 0 {
 		credentialExpiresAt := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 		if task.ExpiresAt != nil {
 			credentialExpiresAt = *task.ExpiresAt
 		}
-		if _, err := h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt); err != nil {
+		var err error
+		credentialPlaceholders, err = h.mintTaskCredentialPlaceholders(ctx, task, requiredCredentials, credentialExpiresAt)
+		if err != nil {
 			return nil, fmt.Errorf("mint credential placeholders: %w", err)
 		}
 	}
@@ -224,7 +227,31 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if task.ExpiresAt != nil {
 		out.ExpiresAtRFC3339 = task.ExpiresAt.Format(time.RFC3339)
 	}
+	out.Credentials = inlineCredentialPlaceholders(credentialPlaceholders)
 	return out, nil
+}
+
+func inlineCredentialPlaceholders(placeholders []*store.RuntimePlaceholder) []llmproxy.InlineTaskCredentialPlaceholder {
+	if len(placeholders) == 0 {
+		return nil
+	}
+	out := make([]llmproxy.InlineTaskCredentialPlaceholder, 0, len(placeholders))
+	for _, ph := range placeholders {
+		if ph == nil || strings.TrimSpace(ph.Placeholder) == "" {
+			continue
+		}
+		item := llmproxy.InlineTaskCredentialPlaceholder{
+			VaultItemID:       ph.VaultItemID,
+			ServiceID:         ph.ServiceID,
+			Placeholder:       ph.Placeholder,
+			CredentialGrantID: ph.CredentialGrantID,
+		}
+		if ph.ExpiresAt != nil {
+			item.ExpiresAtRFC3339 = ph.ExpiresAt.Format(time.RFC3339)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // createCanonicalInlineApprovalRecord writes the approval_records row

@@ -35,13 +35,22 @@ type InlineTaskCreator interface {
 // model needs to see — it isn't a full store.Task because the LLM
 // doesn't care about every column.
 type InlineApprovedTask struct {
-	ID               string `json:"task_id"`
-	Status           string `json:"status"`
-	Purpose          string `json:"purpose,omitempty"`
-	Lifetime         string `json:"lifetime,omitempty"`
-	ApprovalSource   string `json:"approval_source,omitempty"`
-	ApprovalRecordID string `json:"approval_record_id,omitempty"`
-	ExpiresAtRFC3339 string `json:"expires_at,omitempty"`
+	ID               string                            `json:"task_id"`
+	Status           string                            `json:"status"`
+	Purpose          string                            `json:"purpose,omitempty"`
+	Lifetime         string                            `json:"lifetime,omitempty"`
+	ApprovalSource   string                            `json:"approval_source,omitempty"`
+	ApprovalRecordID string                            `json:"approval_record_id,omitempty"`
+	ExpiresAtRFC3339 string                            `json:"expires_at,omitempty"`
+	Credentials      []InlineTaskCredentialPlaceholder `json:"credential_placeholders,omitempty"`
+}
+
+type InlineTaskCredentialPlaceholder struct {
+	VaultItemID       string `json:"vault_item_id"`
+	ServiceID         string `json:"service_id,omitempty"`
+	Placeholder       string `json:"placeholder"`
+	ExpiresAtRFC3339  string `json:"expires_at,omitempty"`
+	CredentialGrantID string `json:"credential_grant_id,omitempty"`
 }
 
 type ReleaseRequest struct {

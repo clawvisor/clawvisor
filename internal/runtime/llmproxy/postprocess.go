@@ -934,9 +934,10 @@ func redactPlaceholderForReason(ph string) string {
 }
 
 // boundaryCheckVerdict validates the inspector's claimed host against
-// the bound-service allowlist of every placeholder it found. Returns
-// (reason, ok). ok=false on any mismatch, ownership failure, or unknown
-// service — fail-closed by construction.
+// the bound-service allowlist of every placeholder it found. Unknown
+// services do not fail the boundary check; they fall through to the
+// task/intent authorization layer, which is the only source of truth for
+// services we have not hardcoded.
 func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.Verdict) (string, bool) {
 	if cfg.Store == nil {
 		return "no store configured for boundary check", false
@@ -960,7 +961,7 @@ func boundaryCheckVerdict(req *http.Request, cfg PostprocessConfig, v inspector.
 		}
 		hosts := inspector.BoundServiceHosts(rec.ServiceID)
 		if len(hosts) == 0 {
-			return "no bound-service hosts for service " + rec.ServiceID, false
+			return "no hardcoded bound-service hosts for service " + rec.ServiceID + "; deferring to task/intent verification", true
 		}
 		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
 			return reason, false

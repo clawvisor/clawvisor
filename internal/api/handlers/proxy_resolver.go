@@ -407,26 +407,21 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 		}
 		// Bound-service host check.
 		hosts := inspector.BoundServiceHosts(ph.ServiceID)
-		if len(hosts) == 0 {
-			return "", &resolverAPIError{
-				status: http.StatusForbidden,
-				code:   "BOUND_SERVICE_UNKNOWN",
-				msg:    fmt.Sprintf("no bound-service hosts for service %q", ph.ServiceID),
+		if len(hosts) > 0 {
+			// Strip port for allowlist comparison; preserve the original
+			// host:port for the upstream dial. Allowlist entries are
+			// hostnames (e.g. "api.github.com"), so targetHost like
+			// "api.github.com:443" must compare as "api.github.com".
+			hostOnly := targetHost
+			if h, _, err := net.SplitHostPort(targetHost); err == nil {
+				hostOnly = h
 			}
-		}
-		// Strip port for allowlist comparison; preserve the original
-		// host:port for the upstream dial. Allowlist entries are
-		// hostnames (e.g. "api.github.com"), so targetHost like
-		// "api.github.com:443" must compare as "api.github.com".
-		hostOnly := targetHost
-		if h, _, err := net.SplitHostPort(targetHost); err == nil {
-			hostOnly = h
-		}
-		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
-			return "", &resolverAPIError{
-				status: http.StatusForbidden,
-				code:   "TARGET_HOST_NOT_BOUND",
-				msg:    "target host not in placeholder's bound-service allowlist: " + reason,
+			if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
+				return "", &resolverAPIError{
+					status: http.StatusForbidden,
+					code:   "TARGET_HOST_NOT_BOUND",
+					msg:    "target host not in placeholder's bound-service allowlist: " + reason,
+				}
 			}
 		}
 		vaultLookupKey := ph.ServiceID
