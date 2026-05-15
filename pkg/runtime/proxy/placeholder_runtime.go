@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -75,6 +77,9 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					now := time.Now().UTC()
 					if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(req.Context(), hooks.Store, meta, st.Session.UserID, st.Session.AgentID, now); !ok {
 						return "", store.ErrNotFound
+					}
+					if err := validateRuntimePlaceholderBoundHost(req, meta.ServiceID); err != nil {
+						return "", err
 					}
 					vaultLookupKey := meta.ServiceID
 					if meta.CredentialGrantID != "" {
@@ -190,6 +195,17 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 		s.recordTimingSpan(req, "placeholder_swap.headers", swapStartedAt)
 		return req, nil
 	})
+}
+
+func validateRuntimePlaceholderBoundHost(req *http.Request, serviceID string) error {
+	hosts := inspector.BoundServiceHosts(serviceID)
+	if len(hosts) == 0 {
+		return nil
+	}
+	if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: requestHost(req)}, hosts); !ok {
+		return fmt.Errorf("target host outside placeholder bound-service: %s", reason)
+	}
+	return nil
 }
 
 type headerCredentialDetection struct {

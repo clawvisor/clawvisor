@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -266,6 +267,95 @@ func TestActiveCredentialTaskApprovalRetryMintsMissingPlaceholders(t *testing.T)
 	}
 	if len(placeholders) != 1 || placeholders[0].Placeholder != first {
 		t.Fatalf("retry should reuse existing placeholder, got %+v", placeholders)
+	}
+}
+
+func TestActiveCredentialTaskApprovalRetryReplacesExpiredPlaceholder(t *testing.T) {
+	h, st, user, agent := newInlineTasksHandlerForTest(t)
+	ctx := context.Background()
+
+	v := &stubVault{}
+	if err := v.Set(ctx, user.ID, "agentphone", []byte("real-agentphone-token")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	h.vault = v
+
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	task := &store.Task{
+		ID:        "task-active-expired-credential",
+		UserID:    user.ID,
+		AgentID:   agent.ID,
+		Purpose:   "Place an outbound call with agentphone",
+		Status:    "active",
+		Lifetime:  "session",
+		ExpiresAt: &expiresAt,
+		RequiredCredentials: json.RawMessage(
+			`[{"vault_item_id":"agentphone","why":"Authenticate requests to the agentphone API"}]`,
+		),
+	}
+	if err := st.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	expiredAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	expiredGrant := &store.CredentialAuthorization{
+		ID:            "expired-agentphone-grant",
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: "agentphone",
+		Service:       "agentphone",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		ExpiresAt:     &expiredAt,
+	}
+	if err := st.CreateCredentialAuthorization(ctx, expiredGrant); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+	const expiredPlaceholder = "autovault_agentphone_expired"
+	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder:       expiredPlaceholder,
+		UserID:            user.ID,
+		AgentID:           agent.ID,
+		ServiceID:         "agentphone",
+		VaultItemID:       "agentphone",
+		CredentialGrantID: expiredGrant.ID,
+		TaskID:            task.ID,
+		ExpiresAt:         &expiredAt,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	if !h.respondActiveCredentialApprovalRetry(ctx, w, user.ID, task) {
+		t.Fatal("expected active credential task retry to be handled")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	placeholders, err := st.ListRuntimePlaceholders(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ListRuntimePlaceholders: %v", err)
+	}
+	valid := 0
+	var validPlaceholder string
+	now := time.Now().UTC()
+	for _, placeholder := range placeholders {
+		if placeholder.TaskID != task.ID || placeholder.VaultItemID != "agentphone" {
+			continue
+		}
+		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, placeholder, user.ID, agent.ID, now); ok {
+			valid++
+			validPlaceholder = placeholder.Placeholder
+		}
+	}
+	if valid != 1 {
+		t.Fatalf("expected exactly one valid replacement placeholder, got valid=%d all=%+v", valid, placeholders)
+	}
+	if validPlaceholder == expiredPlaceholder {
+		t.Fatalf("retry reused expired placeholder %q", validPlaceholder)
 	}
 }
 

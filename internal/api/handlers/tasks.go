@@ -22,6 +22,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/intent"
 	"github.com/clawvisor/clawvisor/internal/llm"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
@@ -1316,6 +1317,9 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		if vaultItemID == "" {
 			return fmt.Errorf("required_credentials_json[%d] must include vault_item_id or vault_item_handle", i)
 		}
+		if err := validateTaskCredentialVaultItemScope(task, vaultItemID); err != nil {
+			return err
+		}
 		storageKey := h.vaultStorageKeyForTaskItem(ctx, task.UserID, vaultItemID)
 		if _, err := h.vault.Get(ctx, task.UserID, storageKey); err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
@@ -1325,6 +1329,28 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		}
 	}
 	return nil
+}
+
+func validateTaskCredentialVaultItemScope(task *store.Task, vaultItemID string) error {
+	if task == nil {
+		return fmt.Errorf("task is required")
+	}
+	if agentID, _, ok := parseAgentScopedLLMVaultItemID(vaultItemID); ok && agentID != task.AgentID {
+		return fmt.Errorf("vault item %q is scoped to another agent", vaultItemID)
+	}
+	return nil
+}
+
+func parseAgentScopedLLMVaultItemID(itemID string) (agentID, provider string, ok bool) {
+	parts := strings.Split(strings.TrimSpace(itemID), ":")
+	if len(parts) != 4 || parts[0] != "llm" || parts[2] != "agent" || parts[3] == "" {
+		return "", "", false
+	}
+	provider = llmProviderFromVaultKey(parts[1])
+	if provider == "" {
+		return "", "", false
+	}
+	return parts[3], provider, true
 }
 
 func (h *TasksHandler) mintTaskCredentialPlaceholders(ctx context.Context, task *store.Task, required []runtimetasks.RequiredCredential, expiresAt time.Time) ([]*store.RuntimePlaceholder, error) {
@@ -1353,8 +1379,12 @@ func (h *TasksHandler) ensureTaskCredentialPlaceholders(ctx context.Context, tas
 		return nil, err
 	}
 	byVaultItem := make(map[string][]*store.RuntimePlaceholder)
+	now := time.Now().UTC()
 	for _, entry := range existing {
 		if entry == nil || entry.TaskID != task.ID || entry.AgentID != task.AgentID {
+			continue
+		}
+		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, h.st, entry, task.UserID, task.AgentID, now); !ok {
 			continue
 		}
 		byVaultItem[entry.VaultItemID] = append(byVaultItem[entry.VaultItemID], entry)
