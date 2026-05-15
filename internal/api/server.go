@@ -795,6 +795,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/services", user(servicesHandler.List))
 	mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
 	mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
+	mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
+	mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))
 	mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat

@@ -1308,6 +1308,10 @@ export const api = {
   vault: {
     listItems: () => get<{ entries: VaultItem[]; total: number }>('/api/vault/items'),
     getItem: (id: string) => get<VaultItem>(`/api/vault/items/${encodeURIComponent(id)}`),
+    updateItem: (id: string, value: string) =>
+      put<{ id: string; status: string }>(`/api/vault/items/${encodeURIComponent(id)}`, { value }),
+    deleteItem: (id: string) =>
+      del<{ id: string; status: string }>(`/api/vault/items/${encodeURIComponent(id)}`),
     listAgentItems: () => get<{ entries: VaultItem[]; total: number }>('/api/agent/vault/items'),
   },
   notifications: {

@@ -80,7 +80,7 @@ func (h *VaultHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range items {
 		if item.ID == itemID {
-			placeholders, err := h.placeholdersForVaultItem(r.Context(), user.ID, itemID)
+			placeholders, err := h.placeholdersForVaultItem(r.Context(), user.ID, item)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault item placeholders")
 				return
@@ -93,14 +93,99 @@ func (h *VaultHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
 }
 
-func (h *VaultHandler) placeholdersForVaultItem(ctx context.Context, userID, itemID string) ([]*store.RuntimePlaceholder, error) {
+func (h *VaultHandler) UpdateForUser(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	itemID := strings.TrimSpace(r.PathValue("id"))
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id is required")
+		return
+	}
+	var body struct {
+		Value string `json:"value"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Value) == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item value is required")
+		return
+	}
+	item, ok, err := h.findItem(r, user.ID, itemID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault items")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
+		return
+	}
+	if item.Kind == "connected_account" {
+		writeError(w, http.StatusConflict, "CONNECTED_ACCOUNT", "connected accounts must be updated through the service connection")
+		return
+	}
+	if err := h.vault.Set(r.Context(), user.ID, vaultStorageKeyForItemID(item.ID), []byte(body.Value)); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update vault item")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "id": item.ID})
+}
+
+func (h *VaultHandler) DeleteForUser(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	itemID := strings.TrimSpace(r.PathValue("id"))
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "vault item id is required")
+		return
+	}
+	item, ok, err := h.findItem(r, user.ID, itemID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list vault items")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "vault item not found")
+		return
+	}
+	if item.Kind == "connected_account" {
+		writeError(w, http.StatusConflict, "CONNECTED_ACCOUNT", "connected accounts must be disconnected through the service connection")
+		return
+	}
+	if err := h.vault.Delete(r.Context(), user.ID, vaultStorageKeyForItemID(item.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not delete vault item")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": item.ID})
+}
+
+func (h *VaultHandler) findItem(r *http.Request, userID, itemID string) (VaultItem, bool, error) {
+	items, err := h.listItems(r, userID)
+	if err != nil {
+		return VaultItem{}, false, err
+	}
+	for _, item := range items {
+		if item.ID == itemID {
+			return item, true, nil
+		}
+	}
+	return VaultItem{}, false, nil
+}
+
+func (h *VaultHandler) placeholdersForVaultItem(ctx context.Context, userID string, item VaultItem) ([]*store.RuntimePlaceholder, error) {
 	placeholders, err := h.st.ListRuntimePlaceholders(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	var out []*store.RuntimePlaceholder
 	for _, placeholder := range placeholders {
-		if placeholder.VaultItemID == itemID || (placeholder.VaultItemID == "" && placeholder.ServiceID == itemID) {
+		if placeholderMatchesVaultItem(placeholder, item.ID, item.ServiceBindings) {
 			out = append(out, placeholder)
 		}
 	}
@@ -139,20 +224,13 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 		return nil, err
 	}
 
-	counts := map[string]int{}
-	lastUsed := map[string]*time.Time{}
+	activePlaceholders := make([]*store.RuntimePlaceholder, 0, len(placeholders))
 	now := time.Now().UTC()
 	for _, placeholder := range placeholders {
 		if placeholder.RevokedAt != nil || (placeholder.ExpiresAt != nil && !placeholder.ExpiresAt.After(now)) {
 			continue
 		}
-		counts[placeholder.ServiceID]++
-		if placeholder.LastUsedAt != nil {
-			if lastUsed[placeholder.ServiceID] == nil || placeholder.LastUsedAt.After(*lastUsed[placeholder.ServiceID]) {
-				ts := *placeholder.LastUsedAt
-				lastUsed[placeholder.ServiceID] = &ts
-			}
-		}
+		activePlaceholders = append(activePlaceholders, placeholder)
 	}
 
 	items := make([]VaultItem, 0, len(keys))
@@ -161,10 +239,12 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 			continue
 		}
 		if item, ok := llmCredentialVaultItem(key); ok {
+			item.ActivePlaceholderCount, item.LastUsedAt = vaultItemPlaceholderStats(activePlaceholders, item.ID, nil)
 			items = append(items, item)
 			continue
 		}
 		bindings := h.bindingsForVaultKey(r.Context(), userID, key, metas)
+		activeCount, lastUsed := vaultItemPlaceholderStats(activePlaceholders, key, bindings)
 		items = append(items, VaultItem{
 			ID:                     key,
 			Name:                   vaultItemName(key, bindings),
@@ -172,8 +252,8 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 			Provider:               providerFromVaultKey(key, bindings),
 			Status:                 "active",
 			ServiceBindings:        bindings,
-			ActivePlaceholderCount: counts[key],
-			LastUsedAt:             lastUsed[key],
+			ActivePlaceholderCount: activeCount,
+			LastUsedAt:             lastUsed,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -228,6 +308,44 @@ func vaultStorageKeyForItemID(itemID string) string {
 		return "agent:" + parts[3] + ":" + parts[1]
 	}
 	return itemID
+}
+
+func vaultItemPlaceholderStats(placeholders []*store.RuntimePlaceholder, itemID string, bindings []VaultServiceBinding) (int, *time.Time) {
+	count := 0
+	var lastUsed *time.Time
+	for _, placeholder := range placeholders {
+		if !placeholderMatchesVaultItem(placeholder, itemID, bindings) {
+			continue
+		}
+		count++
+		if placeholder.LastUsedAt != nil && (lastUsed == nil || placeholder.LastUsedAt.After(*lastUsed)) {
+			ts := *placeholder.LastUsedAt
+			lastUsed = &ts
+		}
+	}
+	return count, lastUsed
+}
+
+func placeholderMatchesVaultItem(placeholder *store.RuntimePlaceholder, itemID string, bindings []VaultServiceBinding) bool {
+	if placeholder == nil || itemID == "" {
+		return false
+	}
+	storageKey := vaultStorageKeyForItemID(itemID)
+	if placeholder.VaultItemID == itemID || placeholder.VaultItemID == storageKey {
+		return true
+	}
+	if placeholder.VaultItemID == "" && placeholder.ServiceID == storageKey {
+		return true
+	}
+	for _, binding := range bindings {
+		if placeholder.ServiceID == binding.ServiceID {
+			return true
+		}
+		if binding.Alias != "" && placeholder.ServiceID == binding.ServiceID+":"+binding.Alias {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *VaultHandler) bindingsForVaultKey(ctx context.Context, userID, key string, metas []*store.ServiceMeta) []VaultServiceBinding {

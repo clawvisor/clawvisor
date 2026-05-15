@@ -42,24 +42,84 @@ function VaultInventorySection({
   vaultItems,
   placeholders,
   agents,
+  services,
   googleOAuthConfigured,
 }: {
   vaultItems: VaultItem[]
   placeholders: RuntimePlaceholder[]
   agents: Agent[]
+  services: ServiceInfo[]
   googleOAuthConfigured: boolean
 }) {
   const [selectedID, setSelectedID] = useState('')
   const selected = vaultItems.find(item => item.id === selectedID) ?? vaultItems[0]
+  const connectedItems = vaultItems.filter(item => item.kind === 'connected_account')
+  const secretItems = vaultItems.filter(item => item.kind !== 'connected_account')
   const activeCount = vaultItems.reduce((sum, item) => sum + item.active_placeholder_count, 0)
   const taskBoundCount = placeholders.filter(entry => !!entry.task_id && isPlaceholderActive(entry)).length
   const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
-  const selectedPlaceholders = placeholders.filter(entry => placeholderBelongsToVaultItem(entry, selected?.id ?? ''))
+  const serviceMap = useMemo(() => {
+    const out = new Map<string, ServiceInfo>()
+    for (const svc of services) out.set(serviceConnectionKey(svc.id, svc.alias), svc)
+    return out
+  }, [services])
+  const selectedService = selected ? serviceForVaultItem(selected, serviceMap) : undefined
+  const selectedPlaceholders = placeholders.filter(entry => selected ? placeholderBelongsToVaultItem(entry, selected) : false)
+
+  function renderItemGroup(items: VaultItem[], empty: string) {
+    if (items.length === 0) {
+      return (
+        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-5 text-sm text-text-tertiary">
+          {empty}
+        </div>
+      )
+    }
+    return items.map(item => {
+      const service = serviceForVaultItem(item, serviceMap)
+      return (
+        <button
+          key={item.id}
+          onClick={() => setSelectedID(item.id)}
+          className={`w-full rounded border px-4 py-3 text-left transition-colors ${
+            selected?.id === item.id
+              ? 'border-brand/50 bg-brand/5'
+              : 'border-border-subtle bg-surface-0 hover:bg-surface-2'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {service && <ServiceIconBadge iconSvg={service.icon_svg} iconUrl={service.icon_url} serviceId={service.id} size={28} />}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-text-primary">{service ? serviceName(service.id, service.alias) : item.name}</div>
+                <div className="mt-1 text-xs text-text-tertiary">
+                  {vaultItemKindLabel(item)}
+                  {item.provider ? ` · ${item.provider}` : ''}
+                  {item.last_used_at ? ` · used ${formatDistanceToNow(new Date(item.last_used_at), { addSuffix: true })}` : ''}
+                </div>
+              </div>
+            </div>
+            <div className="shrink-0 rounded bg-surface-2 px-2 py-1 text-xs text-text-secondary">
+              {item.active_placeholder_count} live
+            </div>
+          </div>
+          {item.service_bindings && item.service_bindings.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {item.service_bindings.map(binding => (
+                <span key={`${binding.service_id}:${binding.alias ?? 'default'}`} className="rounded border border-border-subtle px-2 py-0.5 text-xs text-text-tertiary">
+                  {binding.name}{binding.alias ? ` · ${binding.alias}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </button>
+      )
+    })
+  }
 
   return (
     <AccountSection
       title="Vault"
-      description="Connected accounts and vaulted secrets share one inventory. Open an item to inspect active placeholders, task bindings, and recent use."
+      description="Connected accounts and vaulted secrets share one inventory."
     >
       <div className="grid gap-3 md:grid-cols-4">
         <VaultMetric label="Vault items" value={String(vaultItems.length)} />
@@ -70,46 +130,14 @@ function VaultInventorySection({
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
         <div className="space-y-2">
-          {vaultItems.length === 0 && (
-            <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-              No vault items yet.
-            </div>
-          )}
-          {vaultItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setSelectedID(item.id)}
-              className={`w-full rounded border px-4 py-3 text-left transition-colors ${
-                selected?.id === item.id
-                  ? 'border-brand/50 bg-brand/5'
-                  : 'border-border-subtle bg-surface-0 hover:bg-surface-2'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-text-primary">{item.name}</div>
-                  <div className="mt-1 text-xs text-text-tertiary">
-                    {vaultItemKindLabel(item)}
-                    {item.provider ? ` · ${item.provider}` : ''}
-                    {item.scope === 'agent' && item.metadata?.agent_name ? ` · ${item.metadata.agent_name}` : ''}
-                    {item.last_used_at ? ` · used ${formatDistanceToNow(new Date(item.last_used_at), { addSuffix: true })}` : ''}
-                  </div>
-                </div>
-                <div className="shrink-0 rounded bg-surface-2 px-2 py-1 text-xs text-text-secondary">
-                  {item.active_placeholder_count} live
-                </div>
-              </div>
-              {item.service_bindings && item.service_bindings.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {item.service_bindings.map(binding => (
-                    <span key={`${binding.service_id}:${binding.alias ?? 'default'}`} className="rounded border border-border-subtle px-2 py-0.5 text-xs text-text-tertiary">
-                      {binding.name}{binding.alias ? ` · ${binding.alias}` : ''}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </button>
-          ))}
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Connected accounts</div>
+            {renderItemGroup(connectedItems, 'No connected accounts yet.')}
+          </div>
+          <div className="space-y-2 pt-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Vault secrets</div>
+            {renderItemGroup(secretItems, 'No manual or captured vault secrets yet.')}
+          </div>
         </div>
 
         <div className="rounded border border-border-subtle bg-surface-0 p-4">
@@ -135,6 +163,7 @@ function VaultInventorySection({
                 <VaultMetric label="Expired" value={String(selectedPlaceholders.filter(isPlaceholderExpired).length)} />
                 <VaultMetric label="Revoked" value={String(selectedPlaceholders.filter(entry => !!entry.revoked_at).length)} />
               </div>
+              {selectedService ? <VaultServiceActions svc={selectedService} /> : <VaultSecretActions item={selected} />}
               <div>
                 <div className="mb-2 text-xs font-medium uppercase tracking-wider text-text-tertiary">Placeholders</div>
                 <div className="space-y-2">
@@ -180,8 +209,289 @@ function vaultItemKindLabel(item: VaultItem) {
   return 'Vault secret'
 }
 
-function placeholderBelongsToVaultItem(entry: RuntimePlaceholder, vaultItemID: string) {
-  return !!vaultItemID && (entry.vault_item_id === vaultItemID || (!entry.vault_item_id && entry.service_id === vaultItemID))
+function serviceConnectionKey(serviceID: string, alias?: string) {
+  return alias && alias !== 'default' ? `${serviceID}:${alias}` : serviceID
+}
+
+function serviceForVaultItem(item: VaultItem, serviceMap: Map<string, ServiceInfo>) {
+  for (const binding of item.service_bindings ?? []) {
+    const svc = serviceMap.get(serviceConnectionKey(binding.service_id, binding.alias))
+    if (svc) return svc
+  }
+  return serviceMap.get(item.id)
+}
+
+function vaultStorageKeyForItemID(itemID: string) {
+  const parts = itemID.trim().split(':')
+  if (parts.length === 3 && parts[0] === 'llm' && parts[2] === 'user' && isLLMProvider(parts[1])) {
+    return parts[1]
+  }
+  if (parts.length === 4 && parts[0] === 'llm' && parts[2] === 'agent' && isLLMProvider(parts[1]) && parts[3]) {
+    return `agent:${parts[3]}:${parts[1]}`
+  }
+  return itemID
+}
+
+function isLLMProvider(provider: string) {
+  return provider === 'anthropic' || provider === 'openai'
+}
+
+function placeholderBelongsToVaultItem(entry: RuntimePlaceholder, item: VaultItem) {
+  const storageKey = vaultStorageKeyForItemID(item.id)
+  if (entry.vault_item_id === item.id || entry.vault_item_id === storageKey) return true
+  if (!entry.vault_item_id && entry.service_id === storageKey) return true
+  for (const binding of item.service_bindings ?? []) {
+    if (entry.service_id === binding.service_id) return true
+    if (binding.alias && entry.service_id === `${binding.service_id}:${binding.alias}`) return true
+  }
+  return false
+}
+
+function VaultServiceActions({ svc }: { svc: ServiceInfo }) {
+  const qc = useQueryClient()
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [showKeyInput, setShowKeyInput] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [deviceCode, setDeviceCode] = useState<{ userCode: string; verificationUri: string } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const alias = svc.alias || undefined
+
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
+
+  function refreshAccountData() {
+    qc.invalidateQueries({ queryKey: ['services'] })
+    qc.invalidateQueries({ queryKey: ['vault-items'] })
+    qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+  }
+
+  async function handleReauth() {
+    setError(null)
+    try {
+      if (svc.pkce_flow) {
+        const resp = await api.services.pkceFlowStart(svc.id, alias)
+        if (resp.authorize_url) openOAuthUrl(resp.authorize_url)
+      } else if (svc.device_flow) {
+        const resp = await api.services.deviceFlowStart(svc.id, alias)
+        setDeviceCode({ userCode: resp.user_code, verificationUri: resp.verification_uri })
+        const popup = window.open(resp.verification_uri, '_blank', 'width=600,height=700')
+        if (!popup) window.open(resp.verification_uri, '_blank')
+        function poll(flowId: string, interval: number) {
+          pollRef.current = setTimeout(async () => {
+            try {
+              const r = await api.services.deviceFlowPoll(svc.id, flowId)
+              if (r.status === 'complete') {
+                setDeviceCode(null)
+                refreshAccountData()
+              } else if (r.status === 'pending' || r.status === 'slow_down') {
+                poll(flowId, r.interval ?? interval)
+              } else {
+                setDeviceCode(null)
+                setError(r.status === 'denied' ? 'Authorization denied.' : 'Authorization expired.')
+              }
+            } catch (e) {
+              console.error('Services: device flow poll failed', e)
+              setDeviceCode(null)
+              setError('Failed to check authorization status')
+            }
+          }, interval * 1000)
+        }
+        poll(resp.flow_id, resp.interval)
+      } else {
+        const resp = await api.services.oauthGetUrl(svc.id, undefined, alias)
+        if (resp.already_authorized) {
+          refreshAccountData()
+          return
+        }
+        if (resp.url) openOAuthUrl(resp.url)
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to start OAuth flow')
+    }
+  }
+
+  async function handleSaveKey() {
+    if (!apiKeyInput.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.services.activateWithKey(svc.id, apiKeyInput.trim(), alias)
+      setApiKeyInput('')
+      setShowKeyInput(false)
+      refreshAccountData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to save API key')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeactivate() {
+    setError(null)
+    try {
+      const { affected_task_count } = await api.services.deactivatePreflight(svc.id, alias)
+      const name = serviceName(svc.id, svc.alias)
+      const taskWarning = affected_task_count > 0
+        ? `\n\nThis will revoke ${affected_task_count} active task${affected_task_count === 1 ? '' : 's'} that use${affected_task_count === 1 ? 's' : ''} this service.`
+        : ''
+      if (!confirm(`Disconnect ${name}? Your agents will lose access.${taskWarning}`)) return
+      await api.services.deactivate(svc.id, alias)
+      refreshAccountData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to disconnect service')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {!svc.credential_free && (svc.oauth || svc.pkce_flow || svc.device_flow ? (
+          <button
+            onClick={handleReauth}
+            className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+          >
+            Re-authorize
+          </button>
+        ) : (
+          <button
+            onClick={() => { setShowKeyInput(v => !v); setError(null) }}
+            className="text-xs px-2.5 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+          >
+            Update token
+          </button>
+        ))}
+        <button
+          onClick={handleDeactivate}
+          className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
+        >
+          Disconnect
+        </button>
+        {svc.activated_at && (
+          <span className="text-xs text-text-tertiary">
+            Connected {formatDistanceToNow(new Date(svc.activated_at), { addSuffix: true })}
+          </span>
+        )}
+      </div>
+
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+
+      {deviceCode && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-xs text-text-secondary">Enter this code on the authorization page:</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="text-sm font-mono font-bold tracking-widest text-text-primary bg-surface-0 px-3 py-1.5 rounded border border-border-default select-all">
+              {deviceCode.userCode}
+            </code>
+            <button
+              onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Copy
+            </button>
+            <button
+              onClick={() => window.open(deviceCode.verificationUri, '_blank')}
+              className="text-xs px-2 py-1 rounded border border-border-strong text-text-primary hover:bg-surface-2"
+            >
+              Open page
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showKeyInput && (
+        <div className="mt-3 space-y-1.5">
+          {svc.key_display_name && (
+            <label className="block text-xs text-text-secondary">{svc.key_display_name}</label>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKeyInput}
+              onChange={e => setApiKeyInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+              placeholder={svc.key_hint || 'Paste your token…'}
+              className="min-w-0 flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+              autoFocus
+            />
+            <button
+              onClick={handleSaveKey}
+              disabled={saving || !apiKeyInput.trim()}
+              className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VaultSecretActions({ item }: { item: VaultItem }) {
+  const qc = useQueryClient()
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function refreshVaultData() {
+    qc.invalidateQueries({ queryKey: ['vault-items'] })
+    qc.invalidateQueries({ queryKey: ['runtime-placeholders'] })
+  }
+
+  async function handleUpdate() {
+    if (!value.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.vault.updateItem(item.id, value.trim())
+      setValue('')
+      refreshVaultData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to update vault item')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setError(null)
+    if (!confirm(`Delete ${item.name}? Existing placeholders for this item will stop resolving.`)) return
+    try {
+      await api.vault.deleteItem(item.id)
+      refreshVaultData()
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to delete vault item')
+    }
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-1 px-3 py-3">
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleUpdate()}
+          placeholder="New value"
+          className="min-w-0 flex-1 text-xs px-2 py-1.5 border border-border-default bg-surface-0 text-text-primary rounded focus:outline-none focus:ring-1 focus:ring-brand/30 focus:border-brand placeholder:text-text-tertiary"
+        />
+        <button
+          onClick={handleUpdate}
+          disabled={saving || !value.trim()}
+          className="text-xs px-3 py-1.5 rounded bg-brand text-surface-0 hover:bg-brand-strong disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Update'}
+        </button>
+        <button
+          onClick={handleDelete}
+          className="text-xs px-2.5 py-1 rounded text-danger border border-danger/20 hover:bg-danger/10"
+        >
+          Delete
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+    </div>
+  )
 }
 
 function isPlaceholderActive(entry: RuntimePlaceholder) {
@@ -1514,7 +1824,7 @@ export default function Services() {
     enabled: secretVaultUI,
     refetchInterval: 30_000,
   })
-  const { data: vaultItems } = useQuery({
+  const { data: vaultItems, error: vaultItemsError } = useQuery({
     queryKey: ['vault-items'],
     queryFn: () => api.vault.listItems(),
     enabled: secretVaultUI,
@@ -1531,6 +1841,7 @@ export default function Services() {
     function handler(e: MessageEvent) {
       if (e.data?.type === 'clawvisor_oauth_done') {
         qc.invalidateQueries({ queryKey: ['services'] })
+        qc.invalidateQueries({ queryKey: ['vault-items'] })
       }
     }
     window.addEventListener('message', handler)
@@ -1551,6 +1862,7 @@ export default function Services() {
 
   const hasMicrosoftServices = allServices.some(s => s.id.startsWith('microsoft.'))
   const microsoftOAuthMissing = !features?.multi_tenant && hasMicrosoftServices && microsoftOAuth != null && !microsoftOAuth.configured
+  const useUnifiedVault = secretVaultUI && !vaultItemsError
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -1634,22 +1946,23 @@ export default function Services() {
 
       {!orgId && !isLoading && !error && (
         <>
-          {secretVaultUI && (
+          {useUnifiedVault && (
             <VaultInventorySection
               vaultItems={vaultItems?.entries ?? []}
               placeholders={runtimePlaceholders?.entries ?? []}
               agents={agents}
+              services={activeServices}
               googleOAuthConfigured={!!googleOAuth?.configured}
             />
           )}
-          {secretVaultUI && (runtimePlaceholders?.entries ?? []).some(entry => !entry.task_id) && (
+          {useUnifiedVault && (runtimePlaceholders?.entries ?? []).some(entry => !entry.task_id) && (
             <LegacyShadowTokensSection
               agents={agents}
               services={activeServices}
               entries={(runtimePlaceholders?.entries ?? []).filter(entry => !entry.task_id)}
             />
           )}
-          {secretVaultUI && <CredentialActivitySection entries={recentServiceActivity} />}
+          {useUnifiedVault && <CredentialActivitySection entries={recentServiceActivity} />}
         </>
       )}
 
@@ -1670,7 +1983,7 @@ export default function Services() {
         </button>
       )}
 
-      {activeServices.length > 0 && (
+      {activeServices.length > 0 && !useUnifiedVault && (
         <div className="bg-surface-1 border border-border-default rounded-lg divide-y divide-border-subtle overflow-hidden">
           {activeServices.map(svc => (
             <ActiveServiceRow key={`${svc.id}:${svc.alias ?? 'default'}`} svc={svc} />
