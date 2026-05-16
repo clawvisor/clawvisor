@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	"github.com/spf13/cobra"
 )
 
@@ -385,6 +385,7 @@ func init() {
 		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")
 		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
-	agentCmd.AddCommand(agentRuntimeEnvCmd)
-	agentCmd.AddCommand(agentRuntimeRunCmd)
+	// The full CONNECT/TLS runtime proxy is intentionally not exposed on the
+	// public CLI. Proxy-lite is the default command-line path (`agent run`,
+	// `agent claude`, `agent codex`) and does not require MITM proxy setup.
 }

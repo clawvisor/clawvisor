@@ -59,6 +59,25 @@ var agentLiteRunCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
+var agentRunCmd = &cobra.Command{
+	Use:   "run -- <command> [args...]",
+	Short: "Run an agent harness through proxy-lite",
+	Long:  "Infer the harness from the command name, inject proxy-lite LLM endpoint environment variables, and run Claude Code or Codex. Use --provider when the command name is a wrapper script.",
+	Args:  cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		provider, commandArgs, err := liteProxyRunPlan(args, liteRunProvider)
+		if err != nil {
+			return err
+		}
+		opts, err := liteProxyOptionsFromFlags(provider)
+		if err != nil {
+			return err
+		}
+		return runLiteProxyCommand(opts, commandArgs)
+	},
+	SilenceUsage: true,
+}
+
 func newLiteProxyHarnessCmd(provider string) *cobra.Command {
 	return &cobra.Command{
 		Use:   provider + " -- [args...]",
@@ -255,12 +274,14 @@ func addLiteProxyFlags(cmd *cobra.Command) {
 func init() {
 	agentClaudeCmd := newLiteProxyHarnessCmd(liteProxyProviderClaude)
 	agentCodexCmd := newLiteProxyHarnessCmd(liteProxyProviderCodex)
-	for _, subcmd := range []*cobra.Command{agentLiteEnvCmd, agentLiteRunCmd, agentClaudeCmd, agentCodexCmd} {
+	for _, subcmd := range []*cobra.Command{agentLiteEnvCmd, agentLiteRunCmd, agentRunCmd, agentClaudeCmd, agentCodexCmd} {
 		addLiteProxyFlags(subcmd)
 	}
 	agentLiteRunCmd.Flags().StringVar(&liteRunProvider, "provider", "", "Proxy-lite provider when it cannot be inferred from the command name (claude or codex)")
+	agentRunCmd.Flags().StringVar(&liteRunProvider, "provider", "", "Proxy-lite provider when it cannot be inferred from the command name (claude or codex)")
 	agentCmd.AddCommand(agentLiteEnvCmd)
 	agentCmd.AddCommand(agentLiteRunCmd)
+	agentCmd.AddCommand(agentRunCmd)
 	agentCmd.AddCommand(agentClaudeCmd)
 	agentCmd.AddCommand(agentCodexCmd)
 }
