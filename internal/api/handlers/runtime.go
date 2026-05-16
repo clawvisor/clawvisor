@@ -411,6 +411,7 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled":                  h.cfg != nil && h.cfg.RuntimeProxy.Enabled,
 		"proxy_lite_enabled":       h.cfg != nil && h.cfg.ProxyLite.Enabled,
+		"passthrough":              h.activePassthroughForUser(r.Context(), user.ID, "", time.Now().UTC()),
 		"proxy_url":                proxyURL,
 		"observation_mode_default": h.cfg != nil && h.cfg.RuntimePolicy.ObservationModeDefault,
 		"inline_approval_enabled":  h.cfg != nil && h.cfg.RuntimePolicy.InlineApprovalEnabled,

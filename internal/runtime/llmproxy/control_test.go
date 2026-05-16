@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
 func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
@@ -31,6 +32,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "OMIT unless credentials are needed") {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "If you already have an `autovault_...` placeholder") ||
+		!strings.Contains(notice, "omit `required_credentials_json`") ||
+		!strings.Contains(notice, "Use GET https://clawvisor.local/control/vault/items only when you need Clawvisor to mint a new placeholder") {
+		t.Fatalf("notice should not steer agents to rediscover already-issued placeholders; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "Create a temporary conversation fixture directory and verify the written files") ||
 		!strings.Contains(notice, "Create a GitHub issue summarizing the failing deployment check") ||
 		!strings.Contains(notice, `--data @- <<'JSON'`) ||
@@ -55,6 +61,20 @@ func TestControlNoticeDoesNotEmbedLiveCredentialInventory(t *testing.T) {
 	}
 	if !strings.Contains(notice, "GET https://clawvisor.local/control/vault/items") {
 		t.Fatalf("static notice should point to credential discovery endpoint; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeDisclosesActivePolicyAllowlist(t *testing.T) {
+	notice := ControlNoticeWithPolicy("http://localhost:25297", []string{"Bash", "Read", "Write"}, []*store.RuntimePolicyRule{
+		{Kind: "tool", Action: "allow", ToolName: "Read", Enabled: true},
+		{Kind: "tool", Action: "review", ToolName: "Write", Enabled: true},
+		{Kind: "tool", Action: "allow", ToolName: "MissingTool", Enabled: true},
+	})
+	if !strings.Contains(notice, "Active policy allowlists `Read`") {
+		t.Fatalf("notice should disclose active policy allowlisted actual tools; got:\n%s", notice)
+	}
+	if strings.Contains(notice, "Active policy allowlists `Write`") || strings.Contains(notice, "MissingTool") {
+		t.Fatalf("notice should not disclose reviewed or unavailable tools as allowlisted; got:\n%s", notice)
 	}
 }
 

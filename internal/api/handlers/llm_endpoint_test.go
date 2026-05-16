@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -8,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/internal/auth"
+	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -22,7 +25,19 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
+var litePlaceholderExtractRE = regexp.MustCompile(`autovault_[A-Za-z0-9._:-]+`)
+
 type stubVault struct{ data map[string][]byte }
+
+type fakeSecretAdjudicator struct {
+	calls   int
+	verdict runtimeautovault.SecretAdjudicationVerdict
+}
+
+func (f *fakeSecretAdjudicator) AdjudicateSecret(ctx context.Context, req runtimeautovault.SecretAdjudicationRequest) (runtimeautovault.SecretAdjudicationResult, error) {
+	f.calls++
+	return runtimeautovault.SecretAdjudicationResult{Verdict: f.verdict}, nil
+}
 
 func (s *stubVault) Set(ctx context.Context, userID, serviceID string, c []byte) error {
 	if s.data == nil {
@@ -38,7 +53,16 @@ func (s *stubVault) Get(ctx context.Context, userID, serviceID string) ([]byte, 
 	return nil, vault.ErrNotFound
 }
 func (s *stubVault) Delete(ctx context.Context, userID, serviceID string) error { return nil }
-func (s *stubVault) List(ctx context.Context, userID string) ([]string, error)  { return nil, nil }
+func (s *stubVault) List(ctx context.Context, userID string) ([]string, error) {
+	var out []string
+	prefix := userID + "/"
+	for key := range s.data {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, strings.TrimPrefix(key, prefix))
+		}
+	}
+	return out, nil
+}
 
 func TestLiteProxyRequestDebugSummaryExtractsAvailableTools(t *testing.T) {
 	anthropic := liteProxyRequestDebugSummary(conversation.ProviderAnthropic, []byte(`{
@@ -242,6 +266,572 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	// regression bug if it does.
 	if strings.Contains(string(seenBody), "http://localhost:25297/control/skill") {
 		t.Fatalf("control notice must not advertise the daemon URL: %s", seenBody)
+	}
+}
+
+func TestLLMEndpoint_ControlNoticeUsesActiveToolPolicy(t *testing.T) {
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.ControlBaseURL = "http://localhost:25297"
+	agent, err := st.GetAgentByToken(context.Background(), auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(context.Background(), &store.RuntimePolicyRule{
+		ID:       "allow-read-policy",
+		UserID:   agent.UserID,
+		AgentID:  &agent.ID,
+		Kind:     "tool",
+		Action:   "allow",
+		ToolName: "Read",
+		Reason:   "read-only inspection",
+		Source:   "test",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","tools":[{"name":"Bash"},{"name":"Read"}],"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(seenBody), "Active policy allowlists `Read`") {
+		t.Fatalf("control notice should disclose active allow policy: %s", seenBody)
+	}
+}
+
+func TestLLMEndpoint_BreakGlassPassthroughSkipsControlAndInspection(t *testing.T) {
+	ctx := context.Background()
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"msg_1","type":"message","role":"assistant",
+			"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"mkdir /tmp/needs-task"}}],
+			"stop_reason":"tool_use"
+		}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.ControlBaseURL = "http://localhost:25297"
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	agent, err := st.GetAgentByToken(ctx, auth.HashToken(rawToken))
+	if err != nil {
+		t.Fatalf("GetAgentByToken: %v", err)
+	}
+	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:      "break-glass",
+		UserID:  agent.UserID,
+		AgentID: &agent.ID,
+		Kind:    runtimePassthroughKind,
+		Action:  "allow",
+		Path:    expires,
+		Reason:  "temporary test bypass",
+		Source:  "break_glass",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	body := []byte(`{"model":"claude-sonnet-4","tools":[{"name":"Bash"}],"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if string(seenBody) != string(body) {
+		t.Fatalf("passthrough should not inject control notice or sanitize request:\n%s", seenBody)
+	}
+	out := rec.Body.String()
+	if strings.Contains(out, "Reply `approve`") {
+		t.Fatalf("passthrough should not inspect/block tool use: %s", out)
+	}
+	if !strings.Contains(out, "mkdir /tmp/needs-task") {
+		t.Fatalf("passthrough should return upstream body unchanged: %s", out)
+	}
+}
+
+func TestLLMEndpoint_InboundSecretDiscardRedactsBeforeForwarding(t *testing.T) {
+	upstreamHits := 0
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "ghp_1234567890abcdefABCDEF1234567890abcdef"
+	firstBody := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"my github token is ` + rawSecret + `"}]}`)
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(firstBody)))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 prompt, got %d (%s)", firstRec.Code, firstRec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("upstream should not be called until user decides, hits=%d", upstreamHits)
+	}
+	if !strings.Contains(firstRec.Body.String(), "Clawvisor detected a possible raw secret") ||
+		!strings.Contains(firstRec.Body.String(), "vault github") ||
+		strings.Contains(firstRec.Body.String(), rawSecret) {
+		t.Fatalf("secret prompt missing expected safe guidance: %s", firstRec.Body.String())
+	}
+
+	decision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"discard"}]}`))
+	decision.Header.Set("Authorization", "Bearer "+rawToken)
+	decisionRec := httptest.NewRecorder()
+	mux.ServeHTTP(decisionRec, decision)
+
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after discard, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("discard should release the redacted original request once, hits=%d", upstreamHits)
+	}
+	if strings.Contains(string(seenBody), rawSecret) {
+		t.Fatalf("discard should redact raw secret before forwarding: %s", seenBody)
+	}
+	if !strings.Contains(string(seenBody), "[redacted secret:github]") {
+		t.Fatalf("discard forwarded body missing redaction marker: %s", seenBody)
+	}
+}
+
+func TestLLMEndpoint_InboundSecretAllowOnceForwardsOriginal(t *testing.T) {
+	upstreamHits := 0
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "sk-ant-test01-abcdefghijklmnopqrstuvwxyz123456"
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"temporary key `+rawSecret+`"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK || upstreamHits != 0 {
+		t.Fatalf("expected held secret prompt before upstream, code=%d hits=%d body=%s", firstRec.Code, upstreamHits, firstRec.Body.String())
+	}
+
+	decision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"allow once"}]}`))
+	decision.Header.Set("Authorization", "Bearer "+rawToken)
+	decisionRec := httptest.NewRecorder()
+	mux.ServeHTTP(decisionRec, decision)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after allow once, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if upstreamHits != 1 || !strings.Contains(string(seenBody), rawSecret) {
+		t.Fatalf("allow once should forward original body once, hits=%d body=%s", upstreamHits, seenBody)
+	}
+}
+
+func TestLLMEndpoint_InboundSecretVaultStoresAndInjectsSessionPlaceholder(t *testing.T) {
+	var seenBody []byte
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	v := h.Vault.(*stubVault)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "xoxb-" + "123456789012-abcdefghijklmnopqrstuvwx"
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"slack bot token: `+rawSecret+`"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected secret prompt, got %d (%s)", firstRec.Code, firstRec.Body.String())
+	}
+
+	decision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"vault slack_ci"}]}`))
+	decision.Header.Set("Authorization", "Bearer "+rawToken)
+	decisionRec := httptest.NewRecorder()
+	mux.ServeHTTP(decisionRec, decision)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after vault, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	if string(v.data[user.ID+"/slack_ci"]) != rawSecret {
+		t.Fatalf("vaulted secret mismatch: %q", string(v.data[user.ID+"/slack_ci"]))
+	}
+	if strings.Contains(string(seenBody), rawSecret) || strings.Contains(string(seenBody), "[redacted secret:slack]") {
+		t.Fatalf("vault decision should forward placeholder body, not raw/redacted body: %s", seenBody)
+	}
+	placeholder := string(litePlaceholderExtractRE.Find(seenBody))
+	if !strings.HasPrefix(placeholder, "autovault_slack_ci_") {
+		t.Fatalf("expected injected slack_ci placeholder, got body: %s", seenBody)
+	}
+	meta, err := st.GetRuntimePlaceholder(context.Background(), placeholder)
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder: %v", err)
+	}
+	if meta.AgentID == "" || meta.UserID != user.ID || meta.VaultItemID != "slack_ci" || meta.CredentialGrantID == "" || meta.ExpiresAt == nil {
+		t.Fatalf("unexpected placeholder metadata: %+v", meta)
+	}
+
+	againBody := `{"model":"claude-sonnet-4","messages":[{"role":"user","content":"slack bot token: ` + rawSecret + `"},{"role":"assistant","content":[{"type":"text","text":"Clawvisor detected a possible raw secret.\n\n[clawvisor:secret=cv-secret-test]"}]},{"role":"user","content":"vault slack_ci"},{"role":"user","content":"continue"}]}`
+	again := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(againBody))
+	again.Header.Set("Authorization", "Bearer "+rawToken)
+	againRec := httptest.NewRecorder()
+	mux.ServeHTTP(againRec, again)
+	if againRec.Code != http.StatusOK || upstreamHits != 2 {
+		t.Fatalf("remembered vault rewrite should forward without a new prompt, code=%d hits=%d body=%s", againRec.Code, upstreamHits, againRec.Body.String())
+	}
+	if strings.Contains(string(seenBody), rawSecret) || strings.Contains(string(seenBody), "Clawvisor detected a possible raw secret") || strings.Contains(string(seenBody), "vault slack_ci") {
+		t.Fatalf("future request should replay placeholder and strip decision history: %s", seenBody)
+	}
+	if got := string(litePlaceholderExtractRE.Find(seenBody)); got != placeholder {
+		t.Fatalf("future request should reuse stable placeholder %q, got %q in body %s", placeholder, got, seenBody)
+	}
+}
+
+func TestLLMEndpoint_OpenAIRawLogShapedSecretReplayDoesNotReprompt(t *testing.T) {
+	var seenBodies [][]byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		seenBodies = append(seenBodies, append([]byte{}, body...))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_123","object":"response","status":"completed","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	h.Forwarder.Upstream.OpenAIBaseURL = upstream.URL
+	var traceBuf bytes.Buffer
+	var rawBuf bytes.Buffer
+	h.TraceLogger = llmproxy.NewTraceLogger(&traceBuf)
+	h.RawIOLogger = llmproxy.NewRawIOLogger(&rawBuf)
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/responses", mw(http.HandlerFunc(h.Responses)))
+	send := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+rawToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rawSecret := "re_TestSecret1234567890abcdef"
+	initialBody := `{"model":"gpt-5.4","input":[{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials_json when credentials are needed. Avoid re_escalated false positives."}]},{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? ` + rawSecret + `"}]}]}`
+	firstRec := send(initialBody)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected first request to return secret prompt, got %d (%s)", firstRec.Code, firstRec.Body.String())
+	}
+	if len(seenBodies) != 0 {
+		t.Fatalf("upstream should not be called before secret decision; hits=%d", len(seenBodies))
+	}
+	if !strings.Contains(firstRec.Body.String(), "Clawvisor detected a possible raw secret") ||
+		strings.Contains(firstRec.Body.String(), rawSecret) {
+		t.Fatalf("secret prompt should be safe and actionable: %s", firstRec.Body.String())
+	}
+
+	decisionRec := send(`{"model":"gpt-5.4","input":[{"role":"user","content":[{"type":"input_text","text":"vault resend"}]}]}`)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected vault decision to continue upstream, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if len(seenBodies) != 1 {
+		t.Fatalf("vault decision should release exactly one upstream request, hits=%d", len(seenBodies))
+	}
+	firstUpstreamBody := string(seenBodies[0])
+	if strings.Contains(firstUpstreamBody, rawSecret) || strings.Contains(firstUpstreamBody, "[redacted secret:resend]") {
+		t.Fatalf("vault decision should forward placeholder body, got %s", firstUpstreamBody)
+	}
+	placeholder := string(litePlaceholderExtractRE.Find(seenBodies[0]))
+	if !strings.HasPrefix(placeholder, "autovault_resend_") {
+		t.Fatalf("expected resend placeholder, got body %s", firstUpstreamBody)
+	}
+
+	replayBody := `{
+		"model":"gpt-5.4",
+		"input":[
+			{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials_json when credentials are needed. Avoid re_escalated false positives."}]},
+			{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? ` + rawSecret + `"}]},
+			{"role":"assistant","content":[{"type":"output_text","text":"Clawvisor detected a possible raw secret in the last message.\n\nSuggested vault name: ` + "`resend`" + `\nDetection source: known_prefix\n\n[clawvisor:secret=cv-secret-rawlog]"}]},
+			{"role":"user","content":[{"type":"input_text","text":"vault resend"}]},
+			{"type":"reasoning","encrypted_content":"gAAAAABqB_oQgOwwZsHeemMYYHSD2KDO7xl0IKQOO98CftH_7M2_6u6SKV-dpP_hDa4ZUO30XhkkTwLty6XCqGWynQC-FpNFjS-jsk6l4TICoQXKSXeYTZc65omy_WTL0NY3o-CXB8ecXjSTXNdmDj_UzGVDzdu9HmONpearZT9uwMSNmPe65LeKYuPkFEyPr5ljgoYtN-Ll7RgakIFcChplw0VbmjtDMEbXY1QBEuaaBzszHHKrvVtlZiG5MtYeyw855r0ysuRq6KkV9wV9BQ7enyCIaENzQKPKt0gGGEIJBZVM6thKfeZI6kf6fQFG3b4cYxEi-MDfyKAc7E22UbVB2VytqNIGSZ7CFLU0DEzWVoN-7pyMMxOKmYTJ5ijDI1JiC3NQc3FmtjGCYIX-FaOJlPVq7bKY05zeDBsJ1YkJJ86GSJBdzodIWj1vof6ADYuMmYwSc4sBY84n7457NIxi8WePSrJqaE3u8YwVGxdFS8lZpMkOQHnqMiwCIBXKEkYtG04JvKK3QOdlurLcphJz1bWZJSuBLhrTZizpiktp06BCp78A8NGRKUdugR4Yz4yfrqdcmOD-QLtAfd-FZy1fcih1ankNfvwcQTBoTUpSH0SvYZH7kKfGmSBs0JU5ddMz092--MbnubhenCr5u6IVuj3vi9hXMJE15K8EFjVXMefcQfzHux9kq00e6Zdg56Yl_eb5sSRALw3VB62V_9qcPWJCCNdRVhxo4rlM8S0i8tK8o-UcO6Sn3LJ4n_yfuqORjbMEh2RMNv9iPVkqAuxEoLvXDlkofEHoboVTWil6kfQR8v_mUxCVOP3k5i4bozmO59wgxW6m0U87WVIN4MNI5rSRg4E2aJ-O0ur32bkcFDyyk3_U5WQss87OJWpxNOBqAGpB3utZpjIUOm1-0uDJeQrKZXXiQp30H6z6Qo7fzIIv2z43Qmh5geXFW6iBePfu5SCQBAtuHA3dGzlC9vKnk4RWGzXlXgdKxhbINBU1IA07qFlqP0nh3tc4JAnyvgKtv2d66f_A1F1d98pLbDo2DdawtwmEG6EyXq5ZCWkvLXc_VMdldilyBw6LWs_rJTuyTV1bcYUm5EMuuIysDHfMiq95VuEmcB54CmamFrp3hUJfQrvEMFP54Z1krefRMBq5RYnHqiNP-n8Dw8KCIhf99gWTYVs8mZdJkGOB_4ZPEjuGRp6qwXgF-aYqFC2CrCDXcGnR5g5WolIm1B92SnNhfwDh4iC-3RQZJ8vrfEZv6fql5z1G5vMEiH6_IoUZVhwgkCxM9QV5SmhZR3bU3jHSPXOpU2KFg0lMHEbeF0MKca4K-weonVyygS7xc65xfu1odB5P9GrsSB1yQ7FWE6kKUfAE1Ddx849UOq5hxnbbX7XoWmOjhfryaAMlBdBTrWgcqO_X8RNGlDWt4xcXr3su78O0SWGiI5SP__r2ESiVhnC6RnenYSr1U-0GGfLgA0EOLcU1Bcg1-GjI-iN6C_sPwtIh9bIjZd-RWLG_IwrLHLIQwf8ndQw0BqVvwkBEYFZJlCpkMOgbrcz2Y3Sp-6nedbZ4KvtNrfOJ33zknN51Z6QPsnZckFLxYAQ9X-Hw86ykmtWQpWseSMJ0CjmoN5pnCVfe9Am8gCP-vToFHbjrl85W4O70_jbYr0UnPoeGYFckxRS6yz13hmWgi3Rkz5K_4APXI6xOU24koLWNqj-GSRPZi-pXJC6pnBDHtmJuRe6e02AqOWT9LejtiLvP1UUKK7bAWYQjhVuK4wsYeXbU4JqRdd1n-u4="},
+			{"role":"assistant","content":[{"type":"output_text","text":"I will call the Resend API using the provided vault placeholder."}]},
+			{"role":"user","content":[{"type":"input_text","text":"Tool output mentioned re_commits and re_escalated; continue."}]}
+		]
+	}`
+	replayRec := send(replayBody)
+	if replayRec.Code != http.StatusOK {
+		t.Fatalf("expected replay to continue upstream, got %d (%s)", replayRec.Code, replayRec.Body.String())
+	}
+	if len(seenBodies) != 2 {
+		t.Fatalf("replay should call upstream exactly once without a second hold, hits=%d body=%s", len(seenBodies), replayRec.Body.String())
+	}
+	replayUpstreamBody := string(seenBodies[1])
+	for _, forbidden := range []string{rawSecret, "Clawvisor detected a possible raw secret", "vault resend", "[clawvisor:secret="} {
+		if strings.Contains(replayUpstreamBody, forbidden) {
+			t.Fatalf("replay upstream body should not contain %q: %s", forbidden, replayUpstreamBody)
+		}
+	}
+	if got := string(litePlaceholderExtractRE.Find(seenBodies[1])); got != placeholder {
+		t.Fatalf("replay should reuse stable placeholder %q, got %q in body %s", placeholder, got, replayUpstreamBody)
+	}
+	if strings.Contains(replayRec.Body.String(), "Clawvisor detected a possible raw secret") {
+		t.Fatalf("replay should not re-prompt for secret decision: %s", replayRec.Body.String())
+	}
+
+	trace := traceBuf.String()
+	for _, expected := range []string{"\"stage\":\"hold_created\"", "\"stage\":\"decision_vaulted_finding\"", "\"stage\":\"history_stripped\"", "\"stage\":\"rewrite_scan_done\""} {
+		if !strings.Contains(trace, expected) {
+			t.Fatalf("trace missing %s:\n%s", expected, trace)
+		}
+	}
+	rawLog := rawBuf.String()
+	if !strings.Contains(rawLog, `"phase":"proxy_received_request"`) {
+		t.Fatalf("raw log should include exact proxy-received request phase:\n%s", rawLog)
+	}
+	if !strings.Contains(rawLog, `"phase":"inbound_secret_hold"`) {
+		t.Fatalf("raw log should include redacted pre-hold phase:\n%s", rawLog)
+	}
+	if !strings.Contains(rawLog, rawSecret) {
+		t.Fatalf("proxy_received_request raw log should include exact received body for debugging:\n%s", rawLog)
+	}
+	for _, line := range strings.Split(rawLog, "\n") {
+		if !strings.Contains(line, rawSecret) {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("raw log line containing secret must be parseable JSON: %v\n%s", err, line)
+		}
+		if ev["phase"] != "proxy_received_request" {
+			t.Fatalf("raw secret should only appear in exact received request capture, phase=%v line=%s", ev["phase"], line)
+		}
+	}
+}
+
+func TestLLMEndpoint_InboundSecretVaultReusesExistingVaultItem(t *testing.T) {
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	user, _ := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	v := h.Vault.(*stubVault)
+	rawSecret := "ghp_existingvaultedsecret1234567890abcdef"
+	if err := v.Set(context.Background(), user.ID, "github:existing", []byte(rawSecret)); err != nil {
+		t.Fatalf("seed existing vault secret: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"github token again: `+rawSecret+`"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected secret prompt, got %d (%s)", firstRec.Code, firstRec.Body.String())
+	}
+	if !strings.Contains(firstRec.Body.String(), "already exists in the vault as `github:existing`") {
+		t.Fatalf("prompt should identify existing vault item: %s", firstRec.Body.String())
+	}
+
+	decision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"vault github:new"}]}`))
+	decision.Header.Set("Authorization", "Bearer "+rawToken)
+	decisionRec := httptest.NewRecorder()
+	mux.ServeHTTP(decisionRec, decision)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after vault, got %d (%s)", decisionRec.Code, decisionRec.Body.String())
+	}
+	if _, exists := v.data[user.ID+"/github:new"]; exists {
+		t.Fatalf("vaulting an already-vaulted raw secret should reuse existing item, not create github:new")
+	}
+	if string(v.data[user.ID+"/github:existing"]) != rawSecret {
+		t.Fatalf("existing vault item changed unexpectedly")
+	}
+	if strings.Contains(string(seenBody), rawSecret) || strings.Contains(string(seenBody), "[redacted secret:github]") {
+		t.Fatalf("existing-vault decision should forward placeholder body: %s", seenBody)
+	}
+	placeholder := string(litePlaceholderExtractRE.Find(seenBody))
+	if !strings.HasPrefix(placeholder, "autovault_github_existing_") {
+		t.Fatalf("expected placeholder for existing vault item, got body: %s", seenBody)
+	}
+}
+
+func TestLLMEndpoint_InboundSecretNotSecretSuppressesFutureHolds(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	value := "ghp_notreallyasecretbutlookslong1234567890"
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"literal fixture value `+value+`"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK || upstreamHits != 0 {
+		t.Fatalf("expected initial hold, code=%d hits=%d body=%s", firstRec.Code, upstreamHits, firstRec.Body.String())
+	}
+
+	decision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"not secret"}]}`))
+	decision.Header.Set("Authorization", "Bearer "+rawToken)
+	decisionRec := httptest.NewRecorder()
+	mux.ServeHTTP(decisionRec, decision)
+	if decisionRec.Code != http.StatusOK || upstreamHits != 1 {
+		t.Fatalf("not secret should release original once, code=%d hits=%d body=%s", decisionRec.Code, upstreamHits, decisionRec.Body.String())
+	}
+
+	again := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"literal fixture value `+value+`"}]}`))
+	again.Header.Set("Authorization", "Bearer "+rawToken)
+	againRec := httptest.NewRecorder()
+	mux.ServeHTTP(againRec, again)
+	if againRec.Code != http.StatusOK || upstreamHits != 2 {
+		t.Fatalf("suppressed value should not hold again, code=%d hits=%d body=%s", againRec.Code, upstreamHits, againRec.Body.String())
+	}
+}
+
+func TestLLMEndpoint_InboundSecretAdjudicatorNegativeDoesNotHold(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	adjudicator := &fakeSecretAdjudicator{verdict: runtimeautovault.SecretAdjudicationVerdict{
+		Credential: false,
+		Service:    "",
+		Confidence: 0.91,
+	}}
+	h.SecretAdjudicator = adjudicator
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	value := "ci_9zQ8xW7eR6tY5uI4oP3aS2dF1gH0jK"
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"please remember `+value+` for the fixture"}]}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected upstream response, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("negative adjudication should not hold request, hits=%d", upstreamHits)
+	}
+	if adjudicator.calls != 1 {
+		t.Fatalf("expected one adjudicator call, got %d", adjudicator.calls)
+	}
+	if strings.Contains(rec.Body.String(), "Clawvisor detected a possible raw secret") {
+		t.Fatalf("negative adjudication should not prompt user: %s", rec.Body.String())
+	}
+}
+
+func TestLLMEndpoint_InboundSecretAdjudicatorPositiveHolds(t *testing.T) {
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	adjudicator := &fakeSecretAdjudicator{verdict: runtimeautovault.SecretAdjudicationVerdict{
+		Credential: true,
+		Service:    "github",
+		Confidence: 0.82,
+	}}
+	h.SecretAdjudicator = adjudicator
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	value := "ci_8yW7vR6tQ5pM4nB3cX2zL1kJ0hG9fD"
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"please remember `+value+` for the fixture"}]}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected prompt response, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("positive adjudication should hold request before upstream, hits=%d", upstreamHits)
+	}
+	if adjudicator.calls != 1 {
+		t.Fatalf("expected one adjudicator call, got %d", adjudicator.calls)
+	}
+	if !strings.Contains(rec.Body.String(), "Detection source: heuristic_adjudicated") ||
+		!strings.Contains(rec.Body.String(), "vault github") ||
+		strings.Contains(rec.Body.String(), value) {
+		t.Fatalf("positive adjudication should prompt safely with inferred service: %s", rec.Body.String())
 	}
 }
 

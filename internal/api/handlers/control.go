@@ -44,9 +44,10 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"Clawvisor handles the synthetic URL before the shell command runs.",
 			"Before creating a task, tell me that you are requesting a Clawvisor task and that I will need to approve it.",
 			"Creating or expanding a task requests permission. It does not grant permission until I approve it.",
-			"Use /control/vault/items to list available vault item IDs when your task needs a credential. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
+			"If you already have an autovault_... placeholder, do not call /control/vault/items just to identify it. Create the task for the intended API call, omit required_credentials_json, and use the placeholder directly after approval.",
+			"Use /control/vault/items only when you need Clawvisor to mint a new placeholder from an available vault item. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
 			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
-			"When a task needs a credential, include required_credentials_json with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
+			"When a task needs a new credential placeholder, include required_credentials_json with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
 		},
 		"create_task": map[string]any{
 			"method": "POST",
@@ -96,7 +97,7 @@ func (h *LLMControlHandler) Failure(w http.ResponseWriter, r *http.Request) {
 		"message":          "Clawvisor control-plane calls must be a single foreground curl to the synthetic control URL, with no pipes, subshells, redirects to output files, or extra shell commands.",
 		"original_tool":    body.OriginalTool,
 		"original_command": body.OriginalCommand,
-		"next_step":        "Retry the control-plane request as one plain curl. For credential discovery, run: curl -sS 'https://clawvisor.local/control/vault/items'",
+		"next_step":        "Retry the control-plane request as one plain curl. For credential discovery, run: curl -sS 'https://clawvisor.local/control/vault/items'. If you already have an autovault_ placeholder, create the task instead of rediscovering vault items.",
 	})
 }
 
@@ -113,6 +114,6 @@ func (h *LLMControlHandler) NotFound(w http.ResponseWriter, r *http.Request) {
 			"GET /control/tasks/{id}",
 			"POST /control/tasks/{id}/expand",
 		},
-		"hint": "For credentials, /control/vault/items returns the complete list of vault item IDs. Fetch /control/vault/items/{id} only when you need compact non-secret metadata for one item.",
+		"hint": "For new placeholders, /control/vault/items returns the complete list of vault item IDs. If you already have an autovault_ placeholder, create the task and use that placeholder after approval.",
 	})
 }

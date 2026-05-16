@@ -648,6 +648,7 @@ export interface ActivityBucket {
 export interface RuntimeStatus {
   enabled: boolean
   proxy_lite_enabled?: boolean
+  passthrough?: RuntimePassthroughState
   proxy_url: string
   observation_mode_default: boolean
   inline_approval_enabled: boolean
@@ -657,6 +658,14 @@ export interface RuntimeStatus {
   inject_stored_bearer?: boolean
   ca_cert_pem: string
   starter_profiles?: StarterProfile[]
+}
+
+export interface RuntimePassthroughState {
+  enabled: boolean
+  rule_id?: string
+  agent_id?: string
+  expires_at?: string
+  reason?: string
 }
 
 export interface RuntimeSession {
@@ -697,7 +706,7 @@ export interface RuntimePolicyRule {
   id: string
   user_id: string
   agent_id?: string
-  kind: 'egress' | 'tool' | 'service'
+  kind: 'egress' | 'tool' | 'service' | 'passthrough' | 'secret_suppression'
   action: 'allow' | 'deny' | 'review'
   service?: string
   service_action?: string
@@ -1263,6 +1272,10 @@ export const api = {
   },
   runtime: {
     status: () => get<RuntimeStatus>('/api/runtime/status'),
+    enablePassthrough: (body: { agent_id?: string; ttl_seconds?: number; indefinite?: boolean; reason?: string; confirmation_text?: string }) =>
+      post<RuntimePassthroughState>('/api/runtime/passthrough', body),
+    disablePassthrough: (ruleId?: string) =>
+      del<{ status: string }>(ruleId ? `/api/runtime/passthrough/${encodeURIComponent(ruleId)}` : '/api/runtime/passthrough'),
     listApprovals: () => get<{ entries: ApprovalRecord[]; total: number }>('/api/runtime/approvals'),
     resolveApproval: (approvalId: string, resolution: 'allow_once' | 'allow_session' | 'allow_always' | 'deny') =>
       post<{ approval_id: string; status: string; resolution: string; task_id?: string }>(

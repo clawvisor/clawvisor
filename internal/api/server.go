@@ -29,6 +29,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/notify/push"
 	"github.com/clawvisor/clawvisor/internal/ratelimit"
 	"github.com/clawvisor/clawvisor/internal/relay"
+	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
@@ -890,6 +891,7 @@ func (s *Server) routes() http.Handler {
 		var validator inspector.Validator = inspector.AmbiguousValidator{}
 		if s.cfg.LLM.Verification.Enabled {
 			validator = inspector.NewLLMClientValidator(s.llmHealth.VerificationConfig, s.logger)
+			llmHandler.SecretAdjudicator = runtimeautovault.NewLLMSecretAdjudicator(s.llmHealth.VerificationConfig, s.logger)
 		}
 		llmHandler.Inspector = inspector.NewInspector(inspector.DefaultParser{}, validator)
 		// Optional decision-trace log. Strictly observational; off

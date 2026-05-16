@@ -15,3 +15,12 @@ func TestDetectCandidatesKeepsTokenLikePrefixedValues(t *testing.T) {
 		t.Fatal("expected token-like mixed-case candidate to remain detectable")
 	}
 }
+
+func TestDetectCandidatesDoesNotSplitUUIDsIntoSecretLikeFragments(t *testing.T) {
+	candidates := DetectCandidates("email id 775b2d9f-dedc-4e83-994f-94d3b5809eaa")
+	for _, candidate := range candidates {
+		if candidate.Value == "dedc-4e83-994f-94d3b5809eaa" {
+			t.Fatalf("uuid fragment should not be emitted as a candidate: %+v", candidates)
+		}
+	}
+}

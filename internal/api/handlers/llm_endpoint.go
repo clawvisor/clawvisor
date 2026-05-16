@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
@@ -73,6 +76,16 @@ type LLMEndpointHandler struct {
 	// approve/deny replies per user/agent/provider.
 	PendingApprovals llmproxy.PendingApprovalCache
 
+	// PendingSecrets buffers inbound requests that appear to contain raw
+	// secrets until the user decides whether to vault, discard, allow
+	// once, or mark them as non-secrets.
+	PendingSecrets llmproxy.PendingSecretDecisionCache
+
+	// SecretAdjudicator classifies ambiguous inbound candidates before
+	// proxy-lite interrupts the user. Deterministic findings do not need
+	// adjudication.
+	SecretAdjudicator runtimeautovault.SecretAdjudicator
+
 	// InlineTaskCreator is the handlers-side helper invoked when an
 	// inline task gesture's second "approve" lands. Optional — when nil,
 	// inline task approval falls back to a deny response (the model
@@ -132,6 +145,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		Parsers:                conversation.DefaultRegistry(),
 		Logger:                 logger,
 		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
+		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
@@ -238,6 +252,15 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		"query":    r.URL.RawQuery,
 		"route":    actionForRoute(r.URL.Path),
 	}
+	passthrough := h.activeLitePassthrough(r.Context(), agent)
+	if passthrough.Enabled {
+		auditParams["passthrough"] = true
+		auditParams["passthrough_rule_id"] = passthrough.RuleID
+		auditParams["passthrough_reason"] = passthrough.Reason
+		if passthrough.ExpiresAt != nil {
+			auditParams["passthrough_expires_at"] = passthrough.ExpiresAt.Format(time.RFC3339Nano)
+		}
+	}
 
 	// Read the inbound body in full. v1 doesn't stream the request side
 	// (Anthropic/OpenAI don't either; bodies are bounded by tokens-of-context).
@@ -249,6 +272,23 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditReason = err.Error()
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
+	}
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "proxy_received_request",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Headers:      llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(body),
+			Marker:       "before_preprocess",
+		})
 	}
 
 	// Validate that the body parses for the selected provider. Surfaces
@@ -275,6 +315,61 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditReason = err.Error()
 		writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
 		return
+	}
+	if passthrough.Enabled {
+		auditParams["request_body_bytes"] = len(body)
+		h.Logger.InfoContext(r.Context(), "lite-proxy passthrough mode active",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"rule_id", passthrough.RuleID,
+			"expires_at", passthrough.ExpiresAt,
+		)
+		h.forwardLitePassthrough(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason, auditParams)
+		return
+	}
+	if decisionBody, decision, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+		if len(decisionBody) == 0 {
+			return
+		}
+		body = decisionBody
+		if _, err := parser.ParseRequest(body); err != nil {
+			auditStatus = http.StatusBadRequest
+			auditDecide = "deny"
+			auditOutcome = "malformed_request"
+			auditReason = err.Error()
+			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+			return
+		}
+		auditParams["secret_decision"] = string(decision)
+	} else {
+		if stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
+			Provider: provider,
+			Body:     body,
+		}); err != nil {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "history_strip_error", map[string]any{
+				"provider": string(provider),
+				"body_sha": liteSecretBodySHA(body),
+				"err":      err.Error(),
+			})
+			h.Logger.WarnContext(r.Context(), "lite-proxy secret decision history strip failed",
+				"agent_id", agent.ID, "err", err.Error())
+		} else if stripped.Modified {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "history_stripped", map[string]any{
+				"provider":        string(provider),
+				"body_sha_before": liteSecretBodySHA(body),
+				"body_sha_after":  liteSecretBodySHA(stripped.Body),
+				"body_bytes":      len(stripped.Body),
+			})
+			body = stripped.Body
+			auditParams["secret_decision_history_stripped"] = true
+		}
+		if rewritten, modified := h.applyRememberedSecretRewrites(r.Context(), agent, provider, requestID, body); modified {
+			body = rewritten
+			auditParams["secret_rewrites_applied"] = true
+		}
+		if h.maybeHoldInboundSecret(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason) {
+			return
+		}
 	}
 	// Strip the rewriter's transport details from the assistant
 	// tool_use history BEFORE the model sees this request. Without
@@ -381,7 +476,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		injectedBody, injected, injectErr := llmproxy.InjectControlNotice(provider, body, h.ControlBaseURL, reqSummary.AvailableTools)
+		_, noticeToolRules, _ := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		injectedBody, injected, injectErr := llmproxy.InjectControlNoticeWithPolicy(provider, body, h.ControlBaseURL, reqSummary.AvailableTools, noticeToolRules)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
 			auditDecide = "deny"
@@ -878,6 +974,751 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 		egressRules = nil
 	}
 	return candidateTasks, toolRules, egressRules
+}
+
+func (h *LLMEndpointHandler) activeLitePassthrough(ctx context.Context, agent *store.Agent) runtimePassthroughState {
+	if h == nil || h.Store == nil || agent == nil {
+		return runtimePassthroughState{}
+	}
+	rules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		Kind: runtimePassthroughKind,
+	})
+	if err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy passthrough load failed",
+			"agent_id", agent.ID, "err", err.Error())
+		return runtimePassthroughState{}
+	}
+	return activePassthroughFromRules(rules, agent.ID, time.Now().UTC())
+}
+
+func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string, auditParams map[string]any) {
+	upstreamURL := ""
+	if h.Forwarder != nil {
+		if u, urlErr := h.Forwarder.Upstream.URL(provider, r.URL.Path); urlErr == nil {
+			u.RawQuery = r.URL.RawQuery
+			upstreamURL = u.String()
+		}
+	}
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(body)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "inbound_request",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Headers:      llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(body),
+			Marker:       "break_glass_passthrough",
+		})
+	}
+	forwardStart := time.Now()
+	resp, err := h.Forwarder.Forward(r.Context(), agent.UserID, agent.ID, provider, r, body)
+	if err != nil {
+		clientCancelled := r.Context().Err() != nil
+		h.Logger.WarnContext(context.Background(), "lite-proxy passthrough forward failed",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"provider", string(provider),
+			"err", err.Error(),
+			"client_cancelled", clientCancelled,
+			"forward_elapsed_ms", time.Since(forwardStart).Milliseconds(),
+		)
+		if isVaultMiss(err) {
+			*auditStatus = http.StatusUnauthorized
+			*auditDecide = "deny"
+			*auditOutcome = "upstream_key_missing"
+			writeJSONError(w, http.StatusUnauthorized, "UPSTREAM_KEY_MISSING", "no upstream API key configured in vault for this provider")
+			return
+		}
+		*auditStatus = http.StatusBadGateway
+		*auditDecide = "deny"
+		if clientCancelled {
+			*auditOutcome = "client_cancelled_pre_response"
+		} else {
+			*auditOutcome = "upstream_error"
+		}
+		*auditReason = err.Error()
+		writeJSONError(w, http.StatusBadGateway, "UPSTREAM_ERROR", "upstream request failed")
+		return
+	}
+	defer resp.Body.Close()
+	*auditStatus = resp.StatusCode
+	*auditOutcome = outcomeFromStatus(resp.StatusCode)
+	upstreamHeadersMs := time.Since(forwardStart).Milliseconds()
+	if auditParams != nil {
+		auditParams["ttfb_headers_ms"] = upstreamHeadersMs
+	}
+	h.Logger.InfoContext(context.Background(), "lite-proxy passthrough upstream headers received",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"upstream_url", upstreamURL,
+		"status", resp.StatusCode,
+		"ttfb_headers_ms", upstreamHeadersMs,
+	)
+	for name, values := range resp.Header {
+		switch http.CanonicalHeaderKey(name) {
+		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+			"Te", "Trailer", "Transfer-Encoding", "Upgrade":
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(name, v)
+		}
+	}
+	if h.RawIOLogger != nil {
+		full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
+		if readErr != nil {
+			*auditStatus = http.StatusBadGateway
+			*auditDecide = "deny"
+			*auditOutcome = "upstream_read_error"
+			*auditReason = readErr.Error()
+			clearMirroredUpstreamHeaders(w.Header())
+			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
+			return
+		}
+		bodyStr, bodyEnc := llmproxy.EncodeBody(full)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "harness_response",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Status:       resp.StatusCode,
+			ContentType:  resp.Header.Get("Content-Type"),
+			Headers:      llmproxy.SafeHeaderSnapshot(w.Header()),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(full),
+			Marker:       "break_glass_passthrough",
+		})
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(full)
+		return
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, bool) {
+	if h == nil || h.PendingSecrets == nil || agent == nil {
+		return nil, "", false
+	}
+	reply := llmproxy.SecretDecisionReplyFromBody(provider, body)
+	if reply.Action == llmproxy.SecretDecisionNone {
+		return nil, "", false
+	}
+	pending, err := h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	if err != nil || pending == nil {
+		return nil, "", false
+	}
+	if auditParams != nil {
+		auditParams["secret_decision_id"] = pending.ID
+		auditParams["secret_findings"] = len(pending.Findings)
+	}
+	h.emitLiteSecretPipelineTrace(requestID, agent, "decision_received", map[string]any{
+		"provider":           string(provider),
+		"decision":           string(reply.Action),
+		"decision_id":        pending.ID,
+		"pending_findings":   len(pending.Findings),
+		"findings":           liteSecretFindingTraceSummaries(pending.Findings),
+		"original_body_sha":  liteSecretBodySHA(pending.OriginalBody),
+		"redacted_body_sha":  liteSecretBodySHA(pending.RedactedBody),
+		"decision_body_sha":  liteSecretBodySHA(body),
+		"decision_body_size": len(body),
+	})
+	switch reply.Action {
+	case llmproxy.SecretDecisionAllowOnce:
+		*auditStatus = 0
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(pending.OriginalBody),
+			"body_bytes": len(pending.OriginalBody),
+		})
+		return pending.OriginalBody, reply.Action, true
+	case llmproxy.SecretDecisionNotSecret:
+		h.rememberNotSecretFindings(r.Context(), agent, pending.Findings)
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":                string(provider),
+			"decision":                string(reply.Action),
+			"suppressed_fingerprints": liteSecretFindingFingerprintPrefixes(pending.Findings),
+			"body_sha":                liteSecretBodySHA(pending.OriginalBody),
+			"body_bytes":              len(pending.OriginalBody),
+		})
+		return pending.OriginalBody, reply.Action, true
+	case llmproxy.SecretDecisionDiscard:
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(pending.RedactedBody),
+			"body_bytes": len(pending.RedactedBody),
+		})
+		return pending.RedactedBody, reply.Action, true
+	case llmproxy.SecretDecisionVault:
+		name := strings.TrimSpace(reply.VaultName)
+		if name == "" && len(pending.Findings) > 0 {
+			name = pending.Findings[0].SuggestedName
+		}
+		if name == "" {
+			name = "secret"
+		}
+		resumeBody := append([]byte{}, pending.OriginalBody...)
+		for i, finding := range pending.Findings {
+			vaultName := name
+			if len(pending.Findings) > 1 {
+				vaultName = fmt.Sprintf("%s_%d", name, i+1)
+			}
+			placeholder, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
+			if err != nil {
+				*auditStatus = http.StatusInternalServerError
+				*auditDecide = "deny"
+				*auditOutcome = "secret_vault_failed"
+				*auditReason = err.Error()
+				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
+				return nil, reply.Action, true
+			}
+			h.rememberVaultedSecretRewrite(r.Context(), agent, vaultName, finding, placeholder, pending.OriginalBody)
+			h.emitLiteSecretPipelineTrace(requestID, agent, "decision_vaulted_finding", map[string]any{
+				"provider":           string(provider),
+				"decision_id":        pending.ID,
+				"vault_item_id":      vaultName,
+				"finding":            liteSecretFindingTraceSummary(finding),
+				"placeholder_prefix": liteSecretPlaceholderPrefix(placeholder),
+			})
+			resumeBody = bytes.ReplaceAll(resumeBody, []byte(finding.Value), []byte(placeholder))
+		}
+		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
+			"provider":   string(provider),
+			"decision":   string(reply.Action),
+			"body_sha":   liteSecretBodySHA(resumeBody),
+			"body_bytes": len(resumeBody),
+		})
+		return resumeBody, reply.Action, true
+	default:
+		return nil, "", false
+	}
+}
+
+func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.Context, agent *store.Agent, vaultName string, finding llmproxy.InboundSecretFinding) (string, error) {
+	if h == nil || h.Store == nil || h.Vault == nil || agent == nil {
+		return "", fmt.Errorf("secret vault path is not configured")
+	}
+	vaultItemID := strings.TrimSpace(finding.ExistingVaultItemID)
+	if vaultItemID == "" {
+		vaultItemID = strings.TrimSpace(vaultName)
+	}
+	if vaultItemID == "" {
+		vaultItemID = "secret"
+	}
+	if finding.ExistingVaultItemID == "" {
+		if err := h.Vault.Set(ctx, agent.UserID, vaultItemID, []byte(finding.Value)); err != nil {
+			return "", err
+		}
+	}
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	if agent.TokenExpiresAt != nil && agent.TokenExpiresAt.Before(expiresAt) {
+		expiresAt = agent.TokenExpiresAt.UTC()
+	}
+	auth := &store.CredentialAuthorization{
+		ID:            uuid.NewString(),
+		UserID:        agent.UserID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: vaultItemID,
+		Service:       vaultItemID,
+		Host:          "",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON: mustJSON(map[string]any{
+			"source":        "lite_proxy_secret_detection",
+			"vault_item_id": vaultItemID,
+			"decision":      "vault",
+		}),
+		ExpiresAt: &expiresAt,
+	}
+	if err := h.Store.CreateCredentialAuthorization(ctx, auth); err != nil {
+		return "", err
+	}
+	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(vaultItemID))
+	if err != nil {
+		return "", err
+	}
+	if err := h.Store.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder:       placeholder,
+		UserID:            agent.UserID,
+		AgentID:           agent.ID,
+		ServiceID:         vaultItemID,
+		VaultItemID:       vaultItemID,
+		CredentialGrantID: auth.ID,
+		ExpiresAt:         &expiresAt,
+	}); err != nil {
+		return "", err
+	}
+	return placeholder, nil
+}
+
+type liteSecretVaultRewrite struct {
+	Placeholder string
+}
+
+func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, agent *store.Agent, provider conversation.Provider, requestID string, body []byte) ([]byte, bool) {
+	if h == nil || h.Store == nil || agent == nil || len(body) == 0 {
+		return body, false
+	}
+	rewrites := h.loadActiveSecretRewrites(ctx, agent)
+	if len(rewrites) == 0 {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_skipped", map[string]any{
+			"provider": string(provider),
+			"reason":   "no_active_rewrites",
+			"body_sha": liteSecretBodySHA(body),
+		})
+		return body, false
+	}
+	scan, found, err := llmproxy.ScanInboundSecretsWithOptions(ctx, llmproxy.InboundSecretScanOptions{
+		Provider: provider,
+		Host:     string(provider),
+		Body:     body,
+	})
+	if err != nil {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_error", map[string]any{
+			"provider":      string(provider),
+			"active_rules":  len(rewrites),
+			"body_sha":      liteSecretBodySHA(body),
+			"error_message": err.Error(),
+		})
+		return body, false
+	}
+	if !found {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_no_findings", map[string]any{
+			"provider":     string(provider),
+			"active_rules": len(rewrites),
+			"body_sha":     liteSecretBodySHA(body),
+		})
+		return body, false
+	}
+	out := append([]byte{}, body...)
+	modified := false
+	matched := 0
+	for _, finding := range scan.Findings {
+		rewrite, ok := rewrites[finding.Fingerprint]
+		if !ok || rewrite.Placeholder == "" || finding.Value == "" {
+			continue
+		}
+		matched++
+		next := bytes.ReplaceAll(out, []byte(finding.Value), []byte(rewrite.Placeholder))
+		if !bytes.Equal(next, out) {
+			out = next
+			modified = true
+		}
+	}
+	h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_done", map[string]any{
+		"provider":        string(provider),
+		"active_rules":    len(rewrites),
+		"findings":        liteSecretFindingTraceSummaries(scan.Findings),
+		"findings_count":  len(scan.Findings),
+		"matched_count":   matched,
+		"modified":        modified,
+		"body_sha_before": liteSecretBodySHA(body),
+		"body_sha_after":  liteSecretBodySHA(out),
+	})
+	return out, modified
+}
+
+func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent *store.Agent) map[string]liteSecretVaultRewrite {
+	out := map[string]liteSecretVaultRewrite{}
+	if h == nil || h.Store == nil || agent == nil {
+		return out
+	}
+	enabled := true
+	rules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: agent.ID,
+		Kind:    "secret_rewrite",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		return out
+	}
+	now := time.Now().UTC()
+	for _, rule := range rules {
+		if rule == nil || rule.Action != "replace" || strings.TrimSpace(rule.Host) == "" || strings.TrimSpace(rule.Path) == "" {
+			continue
+		}
+		placeholder, err := h.Store.GetRuntimePlaceholder(ctx, strings.TrimSpace(rule.Path))
+		if err != nil {
+			continue
+		}
+		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, h.Store, placeholder, agent.UserID, agent.ID, now); !ok {
+			continue
+		}
+		out[strings.TrimSpace(rule.Host)] = liteSecretVaultRewrite{
+			Placeholder: strings.TrimSpace(rule.Path),
+		}
+	}
+	return out
+}
+
+func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+	if h == nil || h.PendingSecrets == nil || agent == nil {
+		return false
+	}
+	suppressed := h.secretSuppressionFingerprints(r.Context(), agent)
+	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_start", map[string]any{
+		"provider":         string(provider),
+		"body_sha":         liteSecretBodySHA(body),
+		"body_bytes":       len(body),
+		"suppressed_count": len(suppressed),
+	})
+	scan, found, err := llmproxy.ScanInboundSecretsWithOptions(r.Context(), llmproxy.InboundSecretScanOptions{
+		Provider:    provider,
+		Host:        string(provider),
+		Body:        body,
+		Suppressed:  suppressed,
+		Adjudicator: h.SecretAdjudicator,
+	})
+	if err != nil {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_error", map[string]any{
+			"provider":      string(provider),
+			"body_sha":      liteSecretBodySHA(body),
+			"error_message": err.Error(),
+		})
+		h.Logger.WarnContext(r.Context(), "lite-proxy inbound secret scan failed",
+			"request_id", requestID,
+			"agent_id", agent.ID,
+			"err", err.Error())
+		return false
+	}
+	if !found {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_no_findings", map[string]any{
+			"provider": string(provider),
+			"body_sha": liteSecretBodySHA(body),
+		})
+		return false
+	}
+	scan.Findings = h.annotateExistingVaultSecrets(r.Context(), agent.UserID, scan.Findings)
+	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_findings", map[string]any{
+		"provider":          string(provider),
+		"findings_count":    len(scan.Findings),
+		"findings":          liteSecretFindingTraceSummaries(scan.Findings),
+		"body_sha_before":   liteSecretBodySHA(body),
+		"redacted_body_sha": liteSecretBodySHA(scan.RedactedBody),
+	})
+	held, err := h.PendingSecrets.HoldSecret(r.Context(), llmproxy.PendingSecretDecision{
+		UserID:       agent.UserID,
+		AgentID:      agent.ID,
+		Provider:     provider,
+		OriginalBody: append([]byte{}, body...),
+		RedactedBody: append([]byte{}, scan.RedactedBody...),
+		Findings:     scan.Findings,
+	})
+	if err != nil {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "hold_failed", map[string]any{
+			"provider":      string(provider),
+			"body_sha":      liteSecretBodySHA(body),
+			"error_message": err.Error(),
+		})
+		*auditStatus = http.StatusInternalServerError
+		*auditDecide = "deny"
+		*auditOutcome = "secret_hold_failed"
+		*auditReason = err.Error()
+		writeJSONError(w, http.StatusInternalServerError, "SECRET_HOLD_FAILED", "could not hold detected secret")
+		return true
+	}
+	if auditParams != nil {
+		auditParams["secret_decision_id"] = held.ID
+		auditParams["secret_findings"] = len(scan.Findings)
+		auditParams["secret_suggested_name"] = scan.Findings[0].SuggestedName
+		auditParams["secret_sources"] = liteSecretFindingSources(scan.Findings)
+	}
+	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_created", map[string]any{
+		"provider":          string(provider),
+		"decision_id":       held.ID,
+		"findings_count":    len(scan.Findings),
+		"findings":          liteSecretFindingTraceSummaries(scan.Findings),
+		"redacted_body_sha": liteSecretBodySHA(scan.RedactedBody),
+		"expires_at":        held.ExpiresAt.Format(time.RFC3339Nano),
+	})
+	if h.RawIOLogger != nil {
+		bodyStr, bodyEnc := llmproxy.EncodeBody(scan.RedactedBody)
+		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
+			Phase:        "inbound_secret_hold",
+			RequestID:    requestID,
+			UserID:       agent.UserID,
+			AgentID:      agent.ID,
+			Provider:     string(provider),
+			Method:       r.Method,
+			Path:         r.URL.RequestURI(),
+			Headers:      llmproxy.SafeHeaderSnapshot(r.Header),
+			Body:         bodyStr,
+			BodyEncoding: bodyEnc,
+			BodyBytes:    len(scan.RedactedBody),
+			Marker:       "redacted_pre_hold",
+		})
+	}
+	*auditStatus = http.StatusOK
+	*auditDecide = "block"
+	*auditOutcome = "secret_detected"
+	*auditReason = "raw secret detected in inbound LLM request"
+	prompt := renderInboundSecretPrompt(held)
+	bodyBytes, contentType := syntheticLiteTextResponse(r, provider, body, prompt)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(bodyBytes)
+	return true
+}
+
+func (h *LLMEndpointHandler) annotateExistingVaultSecrets(ctx context.Context, userID string, findings []llmproxy.InboundSecretFinding) []llmproxy.InboundSecretFinding {
+	if h == nil || h.Vault == nil || len(findings) == 0 {
+		return findings
+	}
+	keys, err := h.Vault.List(ctx, userID)
+	if err != nil || len(keys) == 0 {
+		return findings
+	}
+	byValue := make(map[string]string, len(findings))
+	for _, key := range keys {
+		raw, err := h.Vault.Get(ctx, userID, key)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		if _, exists := byValue[string(raw)]; !exists {
+			byValue[string(raw)] = key
+		}
+	}
+	out := append([]llmproxy.InboundSecretFinding(nil), findings...)
+	for i := range out {
+		if existing := byValue[out[i].Value]; existing != "" {
+			out[i].ExistingVaultItemID = existing
+			if out[i].SuggestedName == "" || out[i].SuggestedName == "secret" {
+				out[i].SuggestedName = existing
+			}
+		}
+	}
+	return out
+}
+
+func (h *LLMEndpointHandler) secretSuppressionFingerprints(ctx context.Context, agent *store.Agent) map[string]struct{} {
+	out := map[string]struct{}{}
+	if h == nil || h.Store == nil || agent == nil {
+		return out
+	}
+	enabled := true
+	rules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: agent.ID,
+		Kind:    "secret_suppression",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		return out
+	}
+	for _, rule := range rules {
+		if rule == nil || rule.Action != "allow" || strings.TrimSpace(rule.Host) == "" {
+			continue
+		}
+		out[strings.TrimSpace(rule.Host)] = struct{}{}
+	}
+	return out
+}
+
+func (h *LLMEndpointHandler) rememberNotSecretFindings(ctx context.Context, agent *store.Agent, findings []llmproxy.InboundSecretFinding) {
+	if h == nil || h.Store == nil || agent == nil {
+		return
+	}
+	for _, finding := range findings {
+		if strings.TrimSpace(finding.Fingerprint) == "" {
+			continue
+		}
+		rule := &store.RuntimePolicyRule{
+			ID:       uuid.NewString(),
+			UserID:   agent.UserID,
+			AgentID:  &agent.ID,
+			Kind:     "secret_suppression",
+			Action:   "allow",
+			Host:     finding.Fingerprint,
+			Reason:   "user marked detected value as not a secret",
+			Source:   "secret_detection",
+			Enabled:  true,
+			ToolName: finding.SuggestedName,
+		}
+		if err := h.Store.CreateRuntimePolicyRule(ctx, rule); err != nil && !errors.Is(err, store.ErrConflict) {
+			h.Logger.WarnContext(ctx, "lite-proxy secret suppression save failed",
+				"agent_id", agent.ID, "fingerprint", finding.Fingerprint, "err", err.Error())
+		}
+	}
+}
+
+func (h *LLMEndpointHandler) rememberVaultedSecretRewrite(ctx context.Context, agent *store.Agent, vaultItemID string, finding llmproxy.InboundSecretFinding, placeholder string, originalBody []byte) {
+	if h == nil || h.Store == nil || agent == nil {
+		return
+	}
+	if strings.TrimSpace(finding.Fingerprint) == "" || strings.TrimSpace(placeholder) == "" {
+		return
+	}
+	if finding.ExistingVaultItemID != "" {
+		vaultItemID = finding.ExistingVaultItemID
+	}
+	rule := &store.RuntimePolicyRule{
+		ID:       uuid.NewString(),
+		UserID:   agent.UserID,
+		AgentID:  &agent.ID,
+		Kind:     "secret_rewrite",
+		Action:   "replace",
+		Service:  strings.TrimSpace(vaultItemID),
+		Host:     finding.Fingerprint,
+		Path:     placeholder,
+		Reason:   "user vaulted detected secret; replay stable placeholder in later transcript history",
+		Source:   "secret_detection",
+		Enabled:  true,
+		ToolName: finding.SuggestedName,
+	}
+	if err := h.Store.CreateRuntimePolicyRule(ctx, rule); err != nil && !errors.Is(err, store.ErrConflict) {
+		h.Logger.WarnContext(ctx, "lite-proxy secret rewrite save failed",
+			"agent_id", agent.ID, "fingerprint", finding.Fingerprint, "err", err.Error())
+	}
+}
+
+func (h *LLMEndpointHandler) emitLiteSecretPipelineTrace(requestID string, agent *store.Agent, stage string, fields map[string]any) {
+	if h == nil || h.TraceLogger == nil {
+		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["event"] = llmproxy.TraceEventSecretPipeline
+	fields["stage"] = stage
+	if requestID != "" {
+		fields["request_id"] = requestID
+	}
+	if agent != nil {
+		fields["agent_id"] = agent.ID
+		fields["user_id"] = agent.UserID
+	}
+	h.TraceLogger.Emit(fields)
+}
+
+func liteSecretBodySHA(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("%x", sum[:])[:16]
+}
+
+func liteSecretFindingTraceSummaries(findings []llmproxy.InboundSecretFinding) []map[string]any {
+	out := make([]map[string]any, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, liteSecretFindingTraceSummary(finding))
+	}
+	return out
+}
+
+func liteSecretFindingTraceSummary(finding llmproxy.InboundSecretFinding) map[string]any {
+	out := map[string]any{
+		"fingerprint_prefix": liteSecretFingerprintPrefix(finding.Fingerprint),
+		"source":             finding.Source,
+		"service":            finding.Service,
+		"suggested_name":     finding.SuggestedName,
+	}
+	if finding.ExistingVaultItemID != "" {
+		out["existing_vault_item_id"] = finding.ExistingVaultItemID
+	}
+	if finding.Entropy > 0 {
+		out["entropy"] = finding.Entropy
+	}
+	return out
+}
+
+func liteSecretFindingFingerprintPrefixes(findings []llmproxy.InboundSecretFinding) []string {
+	out := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		if prefix := liteSecretFingerprintPrefix(finding.Fingerprint); prefix != "" {
+			out = append(out, prefix)
+		}
+	}
+	return out
+}
+
+func liteSecretFindingSources(findings []llmproxy.InboundSecretFinding) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, finding := range findings {
+		source := strings.TrimSpace(finding.Source)
+		if source == "" {
+			continue
+		}
+		if _, ok := seen[source]; ok {
+			continue
+		}
+		seen[source] = struct{}{}
+		out = append(out, source)
+	}
+	return out
+}
+
+func liteSecretFingerprintPrefix(fingerprint string) string {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if len(fingerprint) <= 12 {
+		return fingerprint
+	}
+	return fingerprint[:12]
+}
+
+func liteSecretPlaceholderPrefix(placeholder string) string {
+	placeholder = strings.TrimSpace(placeholder)
+	if placeholder == "" {
+		return ""
+	}
+	if len(placeholder) <= 24 {
+		return placeholder[:min(8, len(placeholder))] + "..."
+	}
+	return placeholder[:24] + "..."
+}
+
+func renderInboundSecretPrompt(pending llmproxy.PendingSecretDecision) string {
+	name := "secret"
+	source := "heuristic"
+	if len(pending.Findings) > 0 {
+		name = pending.Findings[0].SuggestedName
+		source = pending.Findings[0].Source
+	}
+	if len(pending.Findings) > 0 && pending.Findings[0].ExistingVaultItemID != "" {
+		return fmt.Sprintf(llmproxy.SecretDecisionPromptMarker+" in the last message.\n\nThis value already exists in the vault as `%s`, so choosing vault will reuse that entry instead of creating a duplicate.\nDetection source: %s\n\nReply `vault %s` to continue with a redacted message, `discard` to continue with it redacted without changing the vault, `allow once` to send it this time without vaulting, or `not secret` to remember that this value is not a secret.\n\n%s%s]", pending.Findings[0].ExistingVaultItemID, source, pending.Findings[0].ExistingVaultItemID, llmproxy.SecretDecisionIDMarker, pending.ID)
+	}
+	return fmt.Sprintf(llmproxy.SecretDecisionPromptMarker+" in the last message.\n\nSuggested vault name: `%s`\nDetection source: %s\n\nReply `vault %s` to save it and continue with a redacted message, `discard` to continue with it redacted, `allow once` to send it this time without vaulting, or `not secret` to remember that this value is not a secret.\n\n%s%s]", name, source, name, llmproxy.SecretDecisionIDMarker, pending.ID)
+}
+
+func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, requestBody []byte, text string) ([]byte, string) {
+	stream := liteProxyRequestDebugSummary(provider, requestBody).Stream
+	switch provider {
+	case conversation.ProviderAnthropic:
+		if stream {
+			return conversation.SynthAnthropicTextSSE("", "", "assistant", text), "text/event-stream"
+		}
+		return conversation.SynthAnthropicTextJSON("", "", "assistant", text), "application/json"
+	case conversation.ProviderOpenAI:
+		if conversation.IsOpenAIChatCompletionsEndpoint(r) {
+			if stream {
+				return conversation.SynthOpenAIChatTextSSE(text), "text/event-stream"
+			}
+			return conversation.SynthOpenAIChatTextJSON(text), "application/json"
+		}
+		if stream {
+			return conversation.SynthOpenAIResponsesTextSSE(text), "text/event-stream"
+		}
+		return conversation.SynthOpenAIResponsesTextJSON(text), "application/json"
+	default:
+		raw, _ := json.Marshal(map[string]string{"message": text})
+		return raw, "application/json"
+	}
 }
 
 func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
