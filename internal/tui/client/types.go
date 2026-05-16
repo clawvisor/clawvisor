@@ -63,6 +63,13 @@ type AgentRuntimeSettings struct {
 	UpdatedAt              time.Time `json:"updated_at"`
 }
 
+type LLMCredentialSetResponse struct {
+	Provider  string `json:"provider"`
+	ServiceID string `json:"service_id"`
+	Status    string `json:"status"`
+	AgentID   string `json:"agent_id,omitempty"`
+}
+
 type RuntimePolicyRule struct {
 	ID            string         `json:"id"`
 	UserID        string         `json:"user_id"`

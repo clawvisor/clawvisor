@@ -385,6 +385,7 @@ func init() {
 		subcmd.Flags().StringVar(&runtimeProfileOverride, "runtime-profile", "", "Explicit starter profile hint for this launch (e.g. claude_code or codex)")
 		subcmd.MarkFlagsMutuallyExclusive("agent", "agent-token")
 	}
-	agentCmd.AddCommand(agentRuntimeEnvCmd)
-	agentCmd.AddCommand(agentRuntimeRunCmd)
+	// The full CONNECT/TLS runtime proxy is intentionally not exposed on the
+	// public CLI. Proxy-lite is the default command-line path (`agent run`,
+	// `agent claude`, `agent codex`) and does not require MITM proxy setup.
 }

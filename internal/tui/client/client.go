@@ -130,6 +130,20 @@ func (c *Client) UpdateAgentRuntimeSettings(agentID string, settings AgentRuntim
 	return &resp, nil
 }
 
+func (c *Client) SetLLMCredential(provider, apiKey, agentID string) (*LLMCredentialSetResponse, error) {
+	path := "/api/runtime/llm-credentials/" + url.PathEscape(provider)
+	if strings.TrimSpace(agentID) != "" {
+		params := url.Values{}
+		params.Set("agent_id", agentID)
+		path += "?" + params.Encode()
+	}
+	var resp LLMCredentialSetResponse
+	if err := c.doJSONWithRetry("PUT", c.baseURL+path, map[string]string{"api_key": apiKey}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) GetRuntimePresetDecision(commandKey, profile string) (*RuntimePresetDecision, error) {
 	params := url.Values{}
 	params.Set("command_key", commandKey)

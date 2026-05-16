@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/clawvisor/clawvisor/internal/daemon"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
@@ -41,6 +44,9 @@ type resolvedAgentCredentials struct {
 }
 
 var agentRegisterJSON bool
+var agentRegisterProvider string
+var agentRegisterAPIKey string
+var agentRegisterSkipLLMKey bool
 
 var agentRegisterCmd = &cobra.Command{
 	Use:   "register <name>",
@@ -95,6 +101,11 @@ var agentRegisterCmd = &cobra.Command{
 			return fmt.Errorf("rotated token for agent %q but could not save local registry: %w\nrecovery:\n  server_url=%s\n  agent_token=%s", name, err, cl.BaseURL(), agent.Token)
 		}
 
+		llmSetup, err := maybeConfigureRegisteredAgentLLM(cmd, cl, entry)
+		if err != nil {
+			return err
+		}
+
 		if agentRegisterJSON {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -103,6 +114,7 @@ var agentRegisterCmd = &cobra.Command{
 
 		fmt.Printf("Registered agent %q for future `--agent` use.\n", name)
 		fmt.Printf("Stored token for %s at %s\n", cl.BaseURL(), path)
+		printAgentRegisterNextSteps(os.Stdout, entry, llmSetup)
 		return nil
 	},
 	SilenceUsage: true,
@@ -172,6 +184,174 @@ func saveAgentRegistry(path string, registry *agentRegistry) error {
 	return nil
 }
 
+type agentRegisterLLMSetup struct {
+	Provider string
+	Stored   bool
+	Skipped  bool
+}
+
+func maybeConfigureRegisteredAgentLLM(cmd *cobra.Command, cl *client.Client, entry registeredAgent) (*agentRegisterLLMSetup, error) {
+	if agentRegisterSkipLLMKey {
+		return &agentRegisterLLMSetup{Skipped: true}, nil
+	}
+
+	provider, err := normalizeAgentRegisterLLMProvider(agentRegisterProvider)
+	if err != nil {
+		return nil, err
+	}
+	apiKey := strings.TrimSpace(agentRegisterAPIKey)
+	interactive := !agentRegisterJSON && cmd != nil && cmd.InOrStdin() != nil && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+
+	if provider == "" && apiKey != "" {
+		return nil, fmt.Errorf("--api-key requires --provider")
+	}
+
+	if provider == "" {
+		if !interactive {
+			return &agentRegisterLLMSetup{Skipped: true}, nil
+		}
+		provider = "anthropic"
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Which upstream LLM provider should proxy-lite use for this agent?").
+					Options(
+						huh.NewOption("Anthropic (Claude Code)", "anthropic"),
+						huh.NewOption("OpenAI (Codex)", "openai"),
+						huh.NewOption("Skip for now", "skip"),
+					).
+					Value(&provider),
+			),
+		).Run(); err != nil {
+			return nil, err
+		}
+		if provider == "skip" {
+			return &agentRegisterLLMSetup{Skipped: true}, nil
+		}
+	}
+
+	if apiKey == "" {
+		if !interactive {
+			return nil, fmt.Errorf("--provider requires --api-key when stdin/stdout are not interactive")
+		}
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title(agentRegisterAPIKeyPromptTitle(provider)).
+					EchoMode(huh.EchoModePassword).
+					Value(&apiKey),
+			),
+		).Run(); err != nil {
+			return nil, err
+		}
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return nil, fmt.Errorf("API key is required")
+		}
+	}
+
+	if _, err := cl.SetLLMCredential(provider, apiKey, entry.AgentID); err != nil {
+		return nil, fmt.Errorf("storing %s upstream API key for agent %q: %w", provider, entry.Alias, err)
+	}
+	return &agentRegisterLLMSetup{Provider: provider, Stored: true}, nil
+}
+
+func normalizeAgentRegisterLLMProvider(provider string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "":
+		return "", nil
+	case "anthropic", "claude", "claude-code":
+		return "anthropic", nil
+	case "openai", "codex":
+		return "openai", nil
+	default:
+		return "", fmt.Errorf("unsupported provider %q: expected anthropic or openai", provider)
+	}
+}
+
+func agentRegisterAPIKeyPromptTitle(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "Anthropic API key"
+	case "openai":
+		return "OpenAI API key"
+	default:
+		return "Upstream API key"
+	}
+}
+
+func agentRegisterHarnessForProvider(provider string) string {
+	switch provider {
+	case "anthropic":
+		return liteProxyProviderClaude
+	case "openai":
+		return liteProxyProviderCodex
+	default:
+		return ""
+	}
+}
+
+func printAgentRegisterNextSteps(out io.Writer, entry registeredAgent, setup *agentRegisterLLMSetup) {
+	if out == nil {
+		return
+	}
+	alias := entry.Alias
+	if alias == "" {
+		alias = entry.AgentName
+	}
+	if alias == "" {
+		return
+	}
+	fmt.Fprintln(out)
+	if setup != nil && setup.Stored {
+		fmt.Fprintf(out, "Stored %s upstream API key for this agent.\n", setup.Provider)
+	}
+	aliasArg := shellQuoteIfNeeded(alias)
+	if harness := ""; setup != nil {
+		harness = agentRegisterHarnessForProvider(setup.Provider)
+		if harness != "" {
+			fmt.Fprintln(out, "Connect through proxy-lite:")
+			fmt.Fprintf(out, "  clawvisor agent %s --agent %s -- %s\n", harness, aliasArg, sampleLiteProxyPrompt(harness))
+			fmt.Fprintf(out, "  clawvisor agent lite-env %s --agent %s\n", harness, aliasArg)
+			return
+		}
+	}
+	fmt.Fprintln(out, "Connect through proxy-lite after storing an upstream key:")
+	fmt.Fprintf(out, "  clawvisor agent register %s --provider anthropic --api-key \"$ANTHROPIC_API_KEY\"\n", aliasArg)
+	fmt.Fprintf(out, "  clawvisor agent register %s --provider openai --api-key \"$OPENAI_API_KEY\"\n", aliasArg)
+	fmt.Fprintf(out, "  clawvisor agent claude --agent %s -- --print \"what is 2+2\"\n", aliasArg)
+	fmt.Fprintf(out, "  clawvisor agent codex --agent %s -- exec \"say hi\"\n", aliasArg)
+	fmt.Fprintf(out, "  clawvisor agent lite-env claude --agent %s\n", aliasArg)
+}
+
+func shellQuoteIfNeeded(value string) string {
+	if value == "" {
+		return shellQuote(value)
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-', r == '/', r == ':':
+		default:
+			return shellQuote(value)
+		}
+	}
+	return value
+}
+
+func sampleLiteProxyPrompt(harness string) string {
+	switch harness {
+	case liteProxyProviderClaude:
+		return "--print \"what is 2+2\""
+	case liteProxyProviderCodex:
+		return "exec \"say hi\""
+	default:
+		return "\"say hi\""
+	}
+}
+
 func resolveAgentCredentials(agentName, agentToken, baseURL string) (*resolvedAgentCredentials, error) {
 	name := strings.TrimSpace(agentName)
 	token := strings.TrimSpace(agentToken)
@@ -235,5 +415,8 @@ func resolveAgentCredentials(agentName, agentToken, baseURL string) (*resolvedAg
 
 func init() {
 	agentRegisterCmd.Flags().BoolVar(&agentRegisterJSON, "json", false, "Output the registered agent record in JSON format")
+	agentRegisterCmd.Flags().StringVar(&agentRegisterProvider, "provider", "", "Upstream LLM provider to store for proxy-lite (anthropic or openai)")
+	agentRegisterCmd.Flags().StringVar(&agentRegisterAPIKey, "api-key", "", "Upstream provider API key to store for this agent (prefer the interactive prompt when possible)")
+	agentRegisterCmd.Flags().BoolVar(&agentRegisterSkipLLMKey, "skip-llm-key", false, "Do not prompt for or store an upstream provider API key")
 	agentCmd.AddCommand(agentRegisterCmd)
 }

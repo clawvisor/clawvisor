@@ -1,9 +1,11 @@
 package clawvisorcli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -230,5 +232,69 @@ func TestAgentRegistryPathUsesHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected registry dir to be created lazily, stat err=%v", err)
+	}
+}
+
+func TestNormalizeAgentRegisterLLMProvider(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{"anthropic", "anthropic", false},
+		{"Claude", "anthropic", false},
+		{"claude-code", "anthropic", false},
+		{"openai", "openai", false},
+		{"Codex", "openai", false},
+		{"gemini", "", true},
+	}
+	for _, tt := range tests {
+		got, err := normalizeAgentRegisterLLMProvider(tt.in)
+		if tt.wantErr {
+			if err == nil {
+				t.Fatalf("normalizeAgentRegisterLLMProvider(%q): expected error", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("normalizeAgentRegisterLLMProvider(%q): %v", tt.in, err)
+		}
+		if got != tt.want {
+			t.Fatalf("normalizeAgentRegisterLLMProvider(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestPrintAgentRegisterNextStepsForStoredProvider(t *testing.T) {
+	var out bytes.Buffer
+	printAgentRegisterNextSteps(&out, registeredAgent{Alias: "dev"}, &agentRegisterLLMSetup{
+		Provider: "openai",
+		Stored:   true,
+	})
+	got := out.String()
+	for _, want := range []string{
+		"Stored openai upstream API key for this agent.",
+		"clawvisor agent codex --agent dev -- exec \"say hi\"",
+		"clawvisor agent lite-env codex --agent dev",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("next steps missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPrintAgentRegisterNextStepsWhenCredentialSkipped(t *testing.T) {
+	var out bytes.Buffer
+	printAgentRegisterNextSteps(&out, registeredAgent{Alias: "dev"}, &agentRegisterLLMSetup{Skipped: true})
+	got := out.String()
+	for _, want := range []string{
+		"Connect through proxy-lite after storing an upstream key:",
+		"clawvisor agent claude --agent dev -- --print \"what is 2+2\"",
+		"clawvisor agent codex --agent dev -- exec \"say hi\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("next steps missing %q:\n%s", want, got)
+		}
 	}
 }
