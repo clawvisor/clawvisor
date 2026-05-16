@@ -18,12 +18,14 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
 	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
+	"github.com/clawvisor/clawvisor/pkg/adapters"
 )
 
 const serviceID = "google.gmail"
+
+const gmailModifyScope = "https://www.googleapis.com/auth/gmail.modify"
 
 // gmailScopes is the full set of scopes Gmail can use. The YAML definition is
 // the source of truth for OAuth URL generation and action gating; this list
@@ -31,8 +33,7 @@ const serviceID = "google.gmail"
 var gmailScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.send",
-	"https://www.googleapis.com/auth/gmail.compose",
-	"https://www.googleapis.com/auth/gmail.modify",
+	gmailModifyScope,
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
 }
@@ -106,12 +107,12 @@ func (a *GmailAdapter) Execute(ctx context.Context, req adapters.Request) (*adap
 	case "send_message":
 		return a.sendMessage(ctx, client, req.Params)
 	case "create_draft":
-		if err := a.requireComposeScope(req.Credential); err != nil {
+		if err := a.requireModifyScope(req.Credential, "create_draft", "draft permissions"); err != nil {
 			return nil, err
 		}
 		return a.createDraft(ctx, client, req.Params)
 	case "archive_message":
-		if err := a.requireModifyScope(req.Credential); err != nil {
+		if err := a.requireModifyScope(req.Credential, "archive_message", "label-modification permissions"); err != nil {
 			return nil, err
 		}
 		return a.archiveMessage(ctx, client, req.Params)
@@ -161,9 +162,11 @@ func (a *GmailAdapter) listMessages(ctx context.Context, client *http.Client, pa
 	}
 
 	var listResp struct {
-		Messages           []struct{ ID string `json:"id"` } `json:"messages"`
-		NextPageToken      string                             `json:"nextPageToken"`
-		ResultSizeEstimate int                                `json:"resultSizeEstimate"`
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+		NextPageToken      string `json:"nextPageToken"`
+		ResultSizeEstimate int    `json:"resultSizeEstimate"`
 	}
 	if err := gmailGET(ctx, client, u, &listResp); err != nil {
 		return nil, fmt.Errorf("gmail list_messages: %w", err)
@@ -508,30 +511,16 @@ func (a *GmailAdapter) sendMessage(ctx context.Context, client *http.Client, par
 	return &adapters.Result{Summary: summary, Data: result}, nil
 }
 
-// requireComposeScope checks whether the stored credential includes the
-// gmail.compose scope. Legacy tokens that only have gmail.send will fail
-// with a descriptive error prompting the user to reconnect.
-func (a *GmailAdapter) requireComposeScope(credBytes []byte) error {
-	cred, err := credential.Parse(credBytes)
-	if err != nil {
-		return fmt.Errorf("gmail create_draft: %w", err)
-	}
-	if !credential.HasAllScopes(cred.Scopes, []string{"https://www.googleapis.com/auth/gmail.compose"}) {
-		return fmt.Errorf("gmail create_draft: the gmail.compose scope is required — please reconnect your Google account to grant draft permissions")
-	}
-	return nil
-}
-
 // requireModifyScope checks whether the stored credential includes the
 // gmail.modify scope. Legacy tokens lacking it will fail with a descriptive
 // error prompting the user to reconnect.
-func (a *GmailAdapter) requireModifyScope(credBytes []byte) error {
+func (a *GmailAdapter) requireModifyScope(credBytes []byte, action, permissionDescription string) error {
 	cred, err := credential.Parse(credBytes)
 	if err != nil {
-		return fmt.Errorf("gmail archive_message: %w", err)
+		return fmt.Errorf("gmail %s: %w", action, err)
 	}
-	if !credential.HasAllScopes(cred.Scopes, []string{"https://www.googleapis.com/auth/gmail.modify"}) {
-		return fmt.Errorf("gmail archive_message: the gmail.modify scope is required — please reconnect your Google account to grant label-modification permissions")
+	if !credential.HasAllScopes(cred.Scopes, []string{gmailModifyScope}) {
+		return fmt.Errorf("gmail %s: the gmail.modify scope is required — please reconnect your Google account to grant %s", action, permissionDescription)
 	}
 	return nil
 }
@@ -1201,4 +1190,3 @@ func paramInt(params map[string]any, key string) (int, bool) {
 	}
 	return 0, false
 }
-

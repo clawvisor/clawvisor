@@ -14,15 +14,9 @@ auth:
     scopes:
       - "https://www.googleapis.com/auth/gmail.readonly"
       - "https://www.googleapis.com/auth/gmail.send"
+      - "https://www.googleapis.com/auth/gmail.modify"
       - "https://www.googleapis.com/auth/userinfo.email"
       - "https://www.googleapis.com/auth/userinfo.profile"
-    conditional_scopes:
-      - scope: "https://www.googleapis.com/auth/gmail.compose"
-        env_gate: "GMAIL_DRAFTS_ENABLED"
-        default: true
-      - scope: "https://www.googleapis.com/auth/gmail.modify"
-        env_gate: "GMAIL_ARCHIVE_ENABLED"
-        default: true
     endpoint: google
     vault_key: google
     scope_merge: true
@@ -84,7 +78,7 @@ actions:
   create_draft:
     display_name: "Create draft"
     risk: { category: write, sensitivity: low, description: "Create an email draft (not sent)" }
-    scopes: ["https://www.googleapis.com/auth/gmail.compose"]
+    scopes: ["https://www.googleapis.com/auth/gmail.modify"]
     override: go
     params:
       to: { type: string }

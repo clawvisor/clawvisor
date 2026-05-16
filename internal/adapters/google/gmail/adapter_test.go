@@ -8,15 +8,66 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"golang.org/x/oauth2"
+
+	"github.com/clawvisor/clawvisor/internal/adapters/google/credential"
 )
 
-func b64(s string) string { return base64.URLEncoding.EncodeToString([]byte(s)) }
+func b64(s string) string    { return base64.URLEncoding.EncodeToString([]byte(s)) }
 func rawB64(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func testGoogleCredential(t *testing.T, scopes ...string) []byte {
+	t.Helper()
+	cred, err := credential.FromToken(&oauth2.Token{AccessToken: "access-token"}, scopes, true)
+	if err != nil {
+		t.Fatalf("credential.FromToken: %v", err)
+	}
+	return cred
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRequiredScopesUseModifyForDrafts(t *testing.T) {
+	adapter := New(nil)
+	scopes := adapter.RequiredScopes()
+
+	if !containsString(scopes, gmailModifyScope) {
+		t.Fatalf("RequiredScopes() missing gmail.modify: %v", scopes)
+	}
+	if containsString(scopes, "https://www.googleapis.com/auth/gmail.compose") {
+		t.Fatalf("RequiredScopes() should not request gmail.compose: %v", scopes)
+	}
+}
+
+func TestRequireModifyScopeForDrafts(t *testing.T) {
+	adapter := New(nil)
+
+	if err := adapter.requireModifyScope(testGoogleCredential(t, gmailModifyScope), "create_draft", "draft permissions"); err != nil {
+		t.Fatalf("requireModifyScope with gmail.modify: %v", err)
+	}
+
+	err := adapter.requireModifyScope(testGoogleCredential(t, "https://www.googleapis.com/auth/gmail.compose"), "create_draft", "draft permissions")
+	if err == nil {
+		t.Fatal("expected error when gmail.modify is missing")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "gmail create_draft") || !strings.Contains(msg, "gmail.modify") || !strings.Contains(msg, "draft permissions") {
+		t.Fatalf("error = %q, want create_draft gmail.modify draft permission guidance", msg)
+	}
 }
 
 func TestExtractBodyFromParts_DirectPlainText(t *testing.T) {
