@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestBuildLiteProxyEnvClaude(t *testing.T) {
@@ -169,4 +171,36 @@ func TestPrepareLiteProxyCommandArgsLeavesNonCodexWrapperAlone(t *testing.T) {
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("command args = %#v, want %#v", got, want)
 	}
+}
+
+func TestAgentCommandTreeDefaultsToLiteAndHidesFullProxyCommands(t *testing.T) {
+	agent := childCommand(rootCmd, "agent")
+	if agent == nil {
+		t.Fatal("agent command not registered")
+	}
+	run := childCommand(agent, "run")
+	if run == nil {
+		t.Fatal("agent run command not registered")
+	}
+	if !strings.Contains(run.Short, "proxy-lite") {
+		t.Fatalf("agent run short = %q, want proxy-lite command", run.Short)
+	}
+
+	for _, name := range []string{"runtime-env", "docker-env", "docker-run", "docker-compose"} {
+		if childCommand(agent, name) != nil {
+			t.Fatalf("agent %s should not be registered on the public CLI", name)
+		}
+	}
+	if childCommand(rootCmd, "proxy") != nil {
+		t.Fatal("root proxy command should not be registered on the public CLI")
+	}
+}
+
+func childCommand(parent *cobra.Command, name string) *cobra.Command {
+	for _, cmd := range parent.Commands() {
+		if cmd.Name() == name {
+			return cmd
+		}
+	}
+	return nil
 }

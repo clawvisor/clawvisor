@@ -778,7 +778,7 @@ func init() {
 	agentDockerComposeCmd.Flags().StringArrayVar(&dockerComposePublishPorts, "publish-port", nil,
 		"Port to publish on the holder (compose `ports:` syntax, e.g. \"18789:18789\" or \"0.0.0.0:18790:18790/tcp\"). Repeatable. Required when the user service in the base compose file declares `ports:`, since `network_mode: service:…` forbids it. Only meaningful with --isolation=container.")
 
-	agentCmd.AddCommand(agentDockerEnvCmd)
-	agentCmd.AddCommand(agentDockerRunCmd)
-	agentCmd.AddCommand(agentDockerComposeCmd)
+	// Docker wiring depends on the full CONNECT/TLS runtime proxy, which is no
+	// longer exposed on the public CLI. Keep the implementation available for
+	// internal tests and future migration, but do not register the commands.
 }

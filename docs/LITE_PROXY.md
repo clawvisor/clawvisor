@@ -78,16 +78,25 @@ The simplest connection is via the bundled wrappers:
 
 ```bash
 # One-time: register the agent. Pick a memorable alias.
-clawvisor agent register --name dev
+clawvisor agent register dev
+```
 
+In an interactive terminal, registration also asks whether this agent should
+forward to Anthropic or OpenAI, then stores that upstream API key in the
+agent-scoped vault entry used by proxy-lite. For automation, pass
+`--provider anthropic --api-key "$ANTHROPIC_API_KEY"` or
+`--provider openai --api-key "$OPENAI_API_KEY"`; use `--skip-llm-key` to only
+register the agent token.
+
+```bash
 # Run Claude Code through the lite-proxy:
 clawvisor agent claude --agent dev -- --print "what is 2+2"
 
 # Run Codex through the lite-proxy:
 clawvisor agent codex --agent dev -- exec "say hi"
 
-# Auto-detect harness from the command:
-clawvisor agent lite-run --agent dev -- claude --print "ping"
+# Auto-detect harness from the command. This is the default `agent run` path.
+clawvisor agent run --agent dev -- claude --print "ping"
 ```
 
 The wrappers inject the right environment variables for each harness:

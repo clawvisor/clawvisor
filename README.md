@@ -460,21 +460,21 @@ When paired with a mobile device, the daemon connects to `relay.clawvisor.com` v
 
 Clawvisor exposes an MCP (Model Context Protocol) server at `/mcp` with OAuth 2.1 for integration with Claude Desktop and other MCP clients. Tools available via MCP: `fetch_catalog`, `create_task`, `get_task`, `complete_task`, `expand_task`, `gateway_request`. See [docs/INTEGRATE_CLAUDE_COWORK.md](docs/INTEGRATE_CLAUDE_COWORK.md) for setup.
 
-## Runtime Proxy (preview)
+## Proxy-Lite Runtime (preview)
 
-The runtime proxy is a TLS-terminating egress proxy that runs inside the Clawvisor daemon. While the gateway describes what an agent intends to do, the runtime proxy sees what it actually sends on the wire — so Clawvisor can observe model API calls, intercept tool-use, hold inline approvals, and attribute every request to a runtime session.
+Proxy-lite runs inside the Clawvisor daemon and presents Anthropic/OpenAI-compatible LLM endpoints to command-line agents. It can observe model API calls, intercept tool-use, hold inline approvals, and attribute requests to a registered agent without requiring a CONNECT/TLS MITM proxy.
 
 > [!WARNING]
-> **The runtime proxy is in active development.** Behavior, flags, and the API surface may change in any release while it remains pre-1.0. Treat it as preview-quality and pin to a specific Clawvisor version in production.
+> **Proxy-lite is in active development.** Behavior, flags, and the API surface may change in any release while it remains pre-1.0. Treat it as preview-quality and pin to a specific Clawvisor version in production.
 
-It ships off by default. To enable, set `runtime_proxy.enabled: true` in `config.yaml` (or `CLAWVISOR_RUNTIME_PROXY_ENABLED=true`), restart the daemon, and run an agent through it:
+Register an agent, store its upstream Anthropic or OpenAI key, and run a command through proxy-lite:
 
 ```bash
 clawvisor agent register my-agent
 clawvisor agent run --agent my-agent -- claude
 ```
 
-For configuration, Dockerized agents, container isolation, starter profiles, and observe-vs-enforce mode, see [docs/RUNTIME_PROXY.md](docs/RUNTIME_PROXY.md).
+For provider-specific wrappers and raw environment exports, see [docs/LITE_PROXY.md](docs/LITE_PROXY.md).
 
 ## Architecture
 

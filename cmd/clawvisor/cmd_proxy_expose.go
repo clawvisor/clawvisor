@@ -327,5 +327,6 @@ func init() {
 
 	proxyExposeCmd.AddCommand(proxyExposeStopCmd)
 	proxyCmd.AddCommand(proxyExposeCmd)
-	rootCmd.AddCommand(proxyCmd)
+	// Full runtime-proxy exposure is intentionally not registered on the
+	// public CLI while proxy-lite is the default command-line integration.
 }
