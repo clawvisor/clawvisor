@@ -214,7 +214,8 @@ Remind the user to:
 - Open the magic link to access the dashboard
 - Connect services under the **Services** tab:
   - Google (Gmail, Calendar, Drive, Contacts) — one OAuth connection covers
-    all four. Requires Google OAuth credentials from `make setup`.
+    all four. Requires Google OAuth credentials set via env vars — see
+    [GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md).
   - GitHub, Slack, Notion, Linear, Stripe, Twilio — activate with API
     keys/tokens
   - iMessage — always available on macOS without activation

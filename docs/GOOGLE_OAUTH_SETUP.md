@@ -78,18 +78,9 @@ export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 export GOOGLE_CLIENT_SECRET="your-client-secret"
 ```
 
-Or add them to your `config.yaml`:
-
-```yaml
-services:
-  google:
-    client_id: "your-client-id.apps.googleusercontent.com"
-    client_secret: "your-client-secret"
-```
-
 ## 6. Connect your account
 
-1. Start Clawvisor: `make run`
+1. Start Clawvisor: `CONFIG_FILE="$HOME/.clawvisor/config.yaml" make run`
 2. Open the dashboard and go to **Services**
 3. Click **Connect** next to Google
 4. You'll be redirected to Google's consent screen — authorize with your account
