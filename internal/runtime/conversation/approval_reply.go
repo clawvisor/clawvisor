@@ -6,7 +6,7 @@ import (
 )
 
 var approvalReplyRE = regexp.MustCompile(`(?i)\b(approve|deny)\s+(cv-[a-z0-9]{12})\b`)
-var bareApprovalRE = regexp.MustCompile(`(?i)^\s*(approve|deny)\s*$`)
+var bareApprovalRE = regexp.MustCompile(`(?i)^\s*(approve|yes|deny|no|ok|cancel)\s*$`)
 
 // ParseApprovalReplyText extracts the most recent approval reply from a block
 // of user-visible text. It scans non-empty lines from bottom to top and
@@ -24,7 +24,14 @@ func ParseApprovalReplyText(text string) (verb, id string) {
 			return strings.ToLower(match[1]), strings.ToLower(match[2])
 		}
 		if match := bareApprovalRE.FindStringSubmatch(line); match != nil {
-			return strings.ToLower(match[1]), ""
+			v:=strings.ToLower(match[1])
+			switch v{
+			case "yes","ok":
+				v="approve"
+			case "no","cancel":
+				v="deny"
+			}
+			return v, ""
 		}
 	}
 	return "", ""
