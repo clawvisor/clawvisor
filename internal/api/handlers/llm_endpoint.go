@@ -475,6 +475,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams["inline_task_history_augmented"] = true
 	}
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
+	h.ensureDefaultToolRules(r.Context(), agent, reqSummary.AvailableTools)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
 		_, noticeToolRules, _ := h.loadLiteProxyDecisionInputs(r.Context(), agent)
 		injectedBody, injected, injectErr := llmproxy.InjectControlNoticeWithPolicy(provider, body, h.ControlBaseURL, reqSummary.AvailableTools, noticeToolRules)
@@ -974,6 +975,78 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 		egressRules = nil
 	}
 	return candidateTasks, toolRules, egressRules
+}
+
+func (h *LLMEndpointHandler) ensureDefaultToolRules(ctx context.Context, agent *store.Agent, availableTools []string) {
+	if h == nil || h.Store == nil {
+		return
+	}
+	if err := ensureDefaultToolRules(ctx, h.Store, agent, availableTools); err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy default tool rule sync failed",
+			"agent_id", agent.ID, "err", err.Error())
+	}
+}
+
+func ensureDefaultToolRules(ctx context.Context, st store.Store, agent *store.Agent, availableTools []string) error {
+	if st == nil || agent == nil || len(availableTools) == 0 {
+		return nil
+	}
+	existing, err := st.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
+		AgentID: agent.ID,
+		Kind:    "tool",
+		Limit:   1000,
+	})
+	if err != nil {
+		return err
+	}
+	hasSimpleRule := map[string]bool{}
+	for _, rule := range existing {
+		if rule == nil || strings.TrimSpace(rule.ToolName) == "" || !isSimpleToolControlRule(rule) {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(rule.ToolName))
+		if rule.AgentID != nil && *rule.AgentID == agent.ID {
+			hasSimpleRule[key] = true
+			continue
+		}
+		if rule.AgentID == nil && rule.Source == "system" && rule.Action == "allow" && inspector.IsDefaultAllowedTool(rule.ToolName) {
+			if err := st.DeleteRuntimePolicyRule(ctx, rule.ID, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+			continue
+		}
+		if rule.AgentID == nil {
+			hasSimpleRule[key] = true
+		}
+	}
+	for _, toolName := range availableTools {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" || !inspector.IsDefaultAllowedTool(toolName) {
+			continue
+		}
+		key := strings.ToLower(toolName)
+		if hasSimpleRule[key] {
+			continue
+		}
+		agentID := agent.ID
+		rule := &store.RuntimePolicyRule{
+			ID:         uuid.NewSHA1(uuid.NameSpaceURL, []byte("lite-proxy-default-tool:"+agent.UserID+":"+agent.ID+":"+key)).String(),
+			UserID:     agent.UserID,
+			AgentID:    &agentID,
+			Kind:       "tool",
+			Action:     "allow",
+			ToolName:   toolName,
+			InputShape: json.RawMessage(`{}`),
+			Reason:     "Default allow for tool " + toolName,
+			Source:     "system",
+			Enabled:    true,
+		}
+		if err := st.CreateRuntimePolicyRule(ctx, rule); err != nil && !errors.Is(err, store.ErrConflict) {
+			return err
+		}
+		hasSimpleRule[key] = true
+	}
+	return nil
 }
 
 func (h *LLMEndpointHandler) activeLitePassthrough(ctx context.Context, agent *store.Agent) runtimePassthroughState {

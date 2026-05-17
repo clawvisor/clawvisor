@@ -536,6 +536,67 @@ func TestLLMEndpoint_InboundSecretVaultStoresAndInjectsSessionPlaceholder(t *tes
 	}
 }
 
+func TestLLMEndpoint_InboundSecretVaultFailureKeepsDecisionRetryable(t *testing.T) {
+	var seenBody []byte
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "xoxb-" + "987654321098-zyxwvutsrqponmlkjihgfedc"
+	first := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"slack bot token: `+rawSecret+`"}]}`))
+	first.Header.Set("Authorization", "Bearer "+rawToken)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, first)
+	if firstRec.Code != http.StatusOK || upstreamHits != 0 {
+		t.Fatalf("expected held secret prompt before upstream, code=%d hits=%d body=%s", firstRec.Code, upstreamHits, firstRec.Body.String())
+	}
+
+	// Break the vault decision path after the hold exists. A recoverable
+	// storage/placeholder failure must not consume the pending original
+	// request; the user should be able to retry the same `vault ...`
+	// decision once the dependency is healthy again.
+	h.Store = nil
+	failingDecision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"vault slack_retry"}]}`))
+	failingDecision.Header.Set("Authorization", "Bearer "+rawToken)
+	failingRec := httptest.NewRecorder()
+	mux.ServeHTTP(failingRec, failingDecision)
+	if failingRec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected first vault decision to fail, got %d (%s)", failingRec.Code, failingRec.Body.String())
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("failed vault decision must not forward upstream, hits=%d body=%s", upstreamHits, seenBody)
+	}
+
+	h.Store = st
+	retryDecision := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"vault slack_retry"}]}`))
+	retryDecision.Header.Set("Authorization", "Bearer "+rawToken)
+	retryRec := httptest.NewRecorder()
+	mux.ServeHTTP(retryRec, retryDecision)
+	if retryRec.Code != http.StatusOK {
+		t.Fatalf("expected retry vault decision to continue upstream, got %d (%s)", retryRec.Code, retryRec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("retry should release exactly one upstream request, hits=%d", upstreamHits)
+	}
+	if strings.Contains(string(seenBody), rawSecret) || strings.Contains(string(seenBody), "vault slack_retry") {
+		t.Fatalf("retry should forward the original request with placeholder, not raw secret or decision text: %s", seenBody)
+	}
+	placeholder := string(litePlaceholderExtractRE.Find(seenBody))
+	if !strings.HasPrefix(placeholder, "autovault_slack_retry_") {
+		t.Fatalf("retry should inject slack_retry placeholder, got body: %s", seenBody)
+	}
+}
+
 func TestLLMEndpoint_OpenAIRawLogShapedSecretReplayDoesNotReprompt(t *testing.T) {
 	var seenBodies [][]byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

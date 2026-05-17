@@ -308,6 +308,11 @@ function AgentDetailView({
     enabled: liveSessionsUI,
     refetchInterval: 15_000,
   })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: () => api.runtime.status(),
+    enabled: runtimePolicyUI,
+  })
   const { data: recentActivity } = useQuery({
     queryKey: ['audit', 'agent', agent.id],
     queryFn: () => api.audit.list({ agent_id: agent.id, limit: 8 }),
@@ -384,7 +389,7 @@ function AgentDetailView({
         </Link>
       </div>
 
-      {runtimePolicyUI && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
+      {runtimePolicyUI && runtimeStatus?.enabled && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
 
       <AgentLiteProxyPanel agentId={agent.id} />
       <AgentLLMCredentialsPanel agentId={agent.id} />

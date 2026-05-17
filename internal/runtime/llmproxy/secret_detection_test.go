@@ -628,3 +628,45 @@ func TestScanInboundSecrets_RawLogShapedVaultReplayDoesNotReprompt(t *testing.T)
 		t.Fatalf("remembered vault replay should not produce fresh secret findings: %+v", scan.Findings)
 	}
 }
+
+func TestMemoryPendingSecretDecisionCachePreservesMultiplePendingForSameScope(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryPendingSecretDecisionCache(0)
+
+	first, err := cache.HoldSecret(ctx, PendingSecretDecision{
+		UserID:       "user-1",
+		AgentID:      "agent-1",
+		Provider:     conversation.ProviderAnthropic,
+		OriginalBody: []byte(`{"first":true}`),
+	})
+	if err != nil {
+		t.Fatalf("HoldSecret(first): %v", err)
+	}
+	second, err := cache.HoldSecret(ctx, PendingSecretDecision{
+		UserID:       "user-1",
+		AgentID:      "agent-1",
+		Provider:     conversation.ProviderAnthropic,
+		OriginalBody: []byte(`{"second":true}`),
+	})
+	if err != nil {
+		t.Fatalf("HoldSecret(second): %v", err)
+	}
+	if first.ID == "" || second.ID == "" || first.ID == second.ID {
+		t.Fatalf("expected distinct generated decision IDs, first=%q second=%q", first.ID, second.ID)
+	}
+
+	resolvedA, err := cache.ResolveSecret(ctx, "user-1", "agent-1", conversation.ProviderAnthropic)
+	if err != nil {
+		t.Fatalf("ResolveSecret(first resolution): %v", err)
+	}
+	resolvedB, err := cache.ResolveSecret(ctx, "user-1", "agent-1", conversation.ProviderAnthropic)
+	if err != nil {
+		t.Fatalf("ResolveSecret(second resolution): %v", err)
+	}
+	if resolvedA == nil || resolvedB == nil {
+		t.Fatalf("multiple pending decisions for the same scope must both remain resolvable; got first=%+v second=%+v", resolvedA, resolvedB)
+	}
+	if resolvedA.ID == resolvedB.ID {
+		t.Fatalf("expected two different decisions to resolve, got %+v and %+v", resolvedA, resolvedB)
+	}
+}

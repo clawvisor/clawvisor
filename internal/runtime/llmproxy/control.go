@@ -146,30 +146,14 @@ func controlWorkedExampleLines(tasksURLInline, shellTool string, availableTools 
 func controlAllowedWithoutTaskLines(availableTools []string, toolRules []*store.RuntimePolicyRule) []string {
 	tools := compactToolNames(availableTools)
 	policyAllowed := policyAllowedToolNames(tools, toolRules)
-	readTools := toolsByClass(tools, map[string]struct{}{
-		"read": {}, "view": {}, "open": {},
-	})
-	searchTools := toolsByClass(tools, map[string]struct{}{
-		"grep": {}, "glob": {}, "search": {}, "rg": {},
-	})
-	shellTool := controlShellTool(tools)
 	lines := []string{
 		"ALLOWED WITHOUT A TASK — for single-step, non-destructive inspection:",
 	}
 	if len(policyAllowed) > 0 {
 		lines = append(lines, "  - Active policy allowlists "+formatToolList(policyAllowed)+".")
 	}
-	if len(readTools) > 0 {
-		lines = append(lines, "  - Read files with "+formatToolList(readTools)+".")
-	}
-	if len(searchTools) > 0 {
-		lines = append(lines, "  - Search or list files with "+formatToolList(searchTools)+".")
-	}
-	if shellTool != "" {
-		lines = append(lines, "  - Run one-shot read-only shell inspection with `"+shellTool+"` when it does not write files, change state, use credentials, or make network calls.")
-	}
 	if len(lines) == 1 {
-		lines = append(lines, "  - Single one-shot file reads, directory listings, and searches.")
+		lines = append(lines, "  - None yet. Use the dashboard Tool Controls to always allow specific tools.")
 	}
 	return lines
 }
@@ -195,17 +179,6 @@ func policyAllowedToolNames(availableTools []string, toolRules []*store.RuntimeP
 					out = append(out, actual)
 				}
 			}
-		}
-	}
-	return out
-}
-
-func toolsByClass(tools []string, names map[string]struct{}) []string {
-	var out []string
-	for _, tool := range tools {
-		key := strings.ToLower(strings.TrimSpace(tool))
-		if _, ok := names[key]; ok {
-			out = append(out, tool)
 		}
 	}
 	return out

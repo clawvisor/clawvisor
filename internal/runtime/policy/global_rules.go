@@ -106,9 +106,9 @@ func bestMatchingRuntimePolicyRule(rules []*store.RuntimePolicyRule, agentID str
 		if rule.AgentID != nil && *rule.AgentID == agentID {
 			scopeRank = 1
 		}
-		if actionRank > bestActionRank ||
-			(actionRank == bestActionRank && scopeRank > bestScopeRank) ||
-			(actionRank == bestActionRank && scopeRank == bestScopeRank && score > bestScore) {
+		if scopeRank > bestScopeRank ||
+			(scopeRank == bestScopeRank && actionRank > bestActionRank) ||
+			(scopeRank == bestScopeRank && actionRank == bestActionRank && score > bestScore) {
 			best = rule
 			bestActionRank = actionRank
 			bestScopeRank = scopeRank

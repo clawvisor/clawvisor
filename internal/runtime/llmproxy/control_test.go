@@ -46,11 +46,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "Read files with `read`") {
-		t.Fatalf("notice should disclose allowlisted read-only capabilities using actual tool names; got:\n%s", notice)
+	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "None yet. Use the dashboard Tool Controls") {
+		t.Fatalf("notice should only disclose persisted allowlisted tools; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "Run one-shot read-only shell inspection with `exec`") {
-		t.Fatalf("notice should disclose read-only shell inspection with actual shell tool name; got:\n%s", notice)
+	if strings.Contains(notice, "Read files with `read`") || strings.Contains(notice, "Run one-shot read-only shell inspection") {
+		t.Fatalf("notice should not hardcode read-only allowances outside policy; got:\n%s", notice)
 	}
 }
 

@@ -202,11 +202,7 @@ func TestBoundaryCheckVerdictUnknownServiceDefersToIntentVerification(t *testing
 	}
 }
 
-// Regression: pure read-only bash commands (pwd, ls, cat, grep | wc)
-// should pass through the decision-gate without requiring a task
-// scope. The AST classifier is the source of truth — single-statement,
-// read-allowlist binaries, no write redirects, no command substitution.
-func TestPostprocess_ReadOnlyBashBypassesTaskScope(t *testing.T) {
+func TestPostprocess_ReadOnlyBashRequiresPolicyOrTaskScope(t *testing.T) {
 	cases := []struct {
 		name string
 		cmd  string
@@ -242,18 +238,8 @@ func TestPostprocess_ReadOnlyBashBypassesTaskScope(t *testing.T) {
 				Posture:          runtimedecision.PostureEnforce,
 			})
 
-			if got.Rewritten {
-				t.Fatalf("read-only bash %q should pass through; got rewrite body=%s", tc.cmd, got.Body)
-			}
-			rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
-			if err != nil {
-				t.Fatalf("ListAuditEntries: %v", err)
-			}
-			if len(rows) != 1 {
-				t.Fatalf("expected 1 audit row, got %d", len(rows))
-			}
-			if rows[0].Outcome != "readonly_shell_pass_through" {
-				t.Errorf("expected outcome=readonly_shell_pass_through, got %q", rows[0].Outcome)
+			if !got.Rewritten {
+				t.Fatalf("read-only bash %q should require a policy rule or task scope", tc.cmd)
 			}
 		})
 	}
@@ -376,31 +362,15 @@ func jsonString(s string) string {
 	return string(b)
 }
 
-// Regression: local-only tools (Read, Edit, Glob, Skill, TodoWrite, …)
-// never make outbound HTTP calls. Requiring an approved task scope to
-// invoke them would force a user to approve every Read / Skill — high
-// friction, zero security benefit (no credential could be transmitted).
-// The postprocess decision-gate must short-circuit the
-// SourceTaskScopeMissing path for these tools.
-func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
+func TestPostprocess_ReadOnlyToolPolicyAllowlistBypassesTaskScope(t *testing.T) {
 	cases := []struct {
 		name string
 		tool string
 		args string
 	}{
-		{"skill_dispatch", "Skill", `{"skill":"clawvisor","args":"do the thing"}`},
 		{"read_file", "Read", `{"file_path":"/tmp/foo.txt"}`},
-		{"todo_write", "TodoWrite", `{"todos":[{"content":"item","activeForm":"item"}]}`},
 		{"glob", "Glob", `{"pattern":"**/*.go"}`},
-		// Claude Code's in-conversation Task family — harness-internal
-		// TODO list / subagent management. No outbound HTTP.
-		{"task_create", "TaskCreate", `{"subject":"plan a thing","description":"do steps"}`},
-		{"task_update", "TaskUpdate", `{"taskId":"1","status":"completed"}`},
-		{"task_list", "TaskList", `{}`},
-		{"task_get", "TaskGet", `{"taskId":"1"}`},
-		{"task_output", "TaskOutput", `{"taskId":"1"}`},
-		{"task_stop", "TaskStop", `{"taskId":"1"}`},
-		{"ask_user_question", "AskUserQuestion", `{"question":"Proceed with this approach?","options":["yes","no"]}`},
+		{"codex_read_file", "read_file", `{"path":"/tmp/foo.txt"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -410,23 +380,32 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 			st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
-				Inspector:        insp,
-				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
-				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
-				Store:            st,
-				AgentUserID:      userID,
-				AgentID:          agentID,
-				Audit:            NewAuditEmitter(st, nil, nil),
-				RequestID:        "req-local-" + tc.name,
-				CandidateTasks:   []*store.Task{}, // no task scope set
-				ToolRules:        []*store.RuntimePolicyRule{},
+				Inspector:      insp,
+				RewriteOpts:    inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
+				Store:          st,
+				AgentUserID:    userID,
+				AgentID:        agentID,
+				Audit:          NewAuditEmitter(st, nil, nil),
+				RequestID:      "req-local-" + tc.name,
+				CandidateTasks: []*store.Task{}, // no task scope set
+				ToolRules: []*store.RuntimePolicyRule{{
+					ID:         "allow-" + tc.name,
+					UserID:     userID,
+					AgentID:    &agentID,
+					Kind:       "tool",
+					Action:     "allow",
+					ToolName:   tc.tool,
+					InputShape: json.RawMessage(`{}`),
+					Enabled:    true,
+				}},
 				EgressRules:      []*store.RuntimePolicyRule{},
 				PendingApprovals: NewMemoryPendingApprovalCache(time.Minute),
 				Posture:          runtimedecision.PostureEnforce,
 			})
 
 			if got.Rewritten {
-				t.Fatalf("local-only tool %q should pass through, got rewrite body=%s", tc.tool, got.Body)
+				t.Fatalf("allowlisted read-only tool %q should pass through, got rewrite body=%s", tc.tool, got.Body)
 			}
 			rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
 			if err != nil {
@@ -435,8 +414,8 @@ func TestPostprocess_LocalOnlyToolsBypassTaskScope(t *testing.T) {
 			if len(rows) != 1 {
 				t.Fatalf("expected 1 audit row, got %d", len(rows))
 			}
-			if rows[0].Outcome != "local_only_pass_through" {
-				t.Errorf("expected outcome=local_only_pass_through, got %q", rows[0].Outcome)
+			if rows[0].Outcome != "rule_allow" {
+				t.Errorf("expected policy allow outcome, got %q", rows[0].Outcome)
 			}
 		})
 	}

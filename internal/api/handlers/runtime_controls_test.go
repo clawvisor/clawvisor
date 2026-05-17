@@ -125,6 +125,56 @@ func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
 	}
 }
 
+func TestRuntimeStatusShowsAgentScopedPassthrough(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-passthrough-status.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-passthrough-status@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "runtime-agent", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:      "agent-scoped-passthrough",
+		UserID:  user.ID,
+		AgentID: &agent.ID,
+		Kind:    runtimePassthroughKind,
+		Action:  "allow",
+		Path:    expires,
+		Reason:  "agent scoped bypass",
+		Source:  "break_glass",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.Status(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("Status status=%d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Passthrough runtimePassthroughState `json:"passthrough"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !payload.Passthrough.Enabled || payload.Passthrough.RuleID != "agent-scoped-passthrough" || payload.Passthrough.AgentID != agent.ID {
+		t.Fatalf("status should surface active agent-scoped passthrough for selected agent, got %+v", payload.Passthrough)
+	}
+}
+
 func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls.db"))
@@ -194,6 +244,15 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	if listed.Total != 3 {
 		t.Fatalf("expected 3 discovered tools, got %+v", listed)
 	}
+	seenReadDefault := false
+	for _, entry := range listed.Entries {
+		if entry.ToolName == "Read" && entry.Action == "allow" && entry.Scope == "agent" {
+			seenReadDefault = true
+		}
+	}
+	if !seenReadDefault {
+		t.Fatalf("discovered default tools should be seeded as agent-scoped always-allow policies, got %+v", listed.Entries)
+	}
 
 	upsertReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
 		"agent_id":"`+agent.ID+`",
@@ -210,7 +269,16 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRuntimePolicyRules: %v", err)
 	}
-	if len(rules) != 1 || rules[0].ToolName != "Bash" || rules[0].Action != "review" {
+	bashRuleCount := func(action string) int {
+		count := 0
+		for _, rule := range rules {
+			if rule.ToolName == "Bash" && rule.Action == action && rule.AgentID != nil && *rule.AgentID == agent.ID {
+				count++
+			}
+		}
+		return count
+	}
+	if bashRuleCount("review") != 1 {
 		t.Fatalf("expected one Bash review rule, got %+v", rules)
 	}
 
@@ -229,8 +297,336 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRuntimePolicyRules after allow: %v", err)
 	}
-	if len(rules) != 0 {
-		t.Fatalf("allow should remove broad tool-control rule, got %+v", rules)
+	if bashRuleCount("allow") != 1 {
+		t.Fatalf("allow should persist an always-allow tool-control rule, got %+v", rules)
+	}
+
+	unsetReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"action":"unset"
+	}`)))
+	unsetReq = unsetReq.WithContext(context.WithValue(unsetReq.Context(), middleware.UserContextKey, user))
+	unsetRes := httptest.NewRecorder()
+	h.UpsertToolControl(unsetRes, unsetReq)
+	if unsetRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl unset status=%d body=%s", unsetRes.Code, unsetRes.Body.String())
+	}
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after unset: %v", err)
+	}
+	if bashRuleCount("review") != 1 {
+		t.Fatalf("unset should leave an agent-scoped task-scope fallback marker, got %+v", rules)
+	}
+}
+
+func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-default-readonly-tools.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-default-readonly@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "codex", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	h := NewLLMEndpointHandler(st, nil, nil)
+	h.ensureDefaultToolRules(ctx, agent, []string{"Read", "read_file", "Bash", "Write"})
+	enabled := true
+	rules, err := st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool", Enabled: &enabled})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules: %v", err)
+	}
+	allowed := map[string]bool{}
+	for _, rule := range rules {
+		allowed[rule.ToolName] = rule.Action == "allow"
+		if (rule.ToolName == "Read" || rule.ToolName == "read_file") && (rule.AgentID == nil || *rule.AgentID != agent.ID) {
+			t.Fatalf("default tool rule should be agent-scoped, got %+v", rule)
+		}
+	}
+	if !allowed["Read"] || !allowed["read_file"] {
+		t.Fatalf("expected discovered default tools to be seeded as always allow, got %+v", rules)
+	}
+	if allowed["Bash"] || allowed["Write"] {
+		t.Fatalf("non-default tools should not be seeded as always allow, got %+v", rules)
+	}
+
+	unsetReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Read",
+		"action":"unset"
+	}`)))
+	unsetReq = unsetReq.WithContext(context.WithValue(unsetReq.Context(), middleware.UserContextKey, user))
+	unsetRes := httptest.NewRecorder()
+	NewRuntimeHandler(st, nil, nil, config.Default(), nil).UpsertToolControl(unsetRes, unsetReq)
+	if unsetRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl unset status=%d body=%s", unsetRes.Code, unsetRes.Body.String())
+	}
+	h.ensureDefaultToolRules(ctx, agent, []string{"Read"})
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool", Enabled: &enabled})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after unset: %v", err)
+	}
+	agentReadAllow := 0
+	agentReadReview := 0
+	for _, rule := range rules {
+		if rule.ToolName != "Read" {
+			continue
+		}
+		if rule.AgentID != nil && *rule.AgentID == agent.ID && rule.Action == "allow" {
+			agentReadAllow++
+		}
+		if rule.AgentID != nil && *rule.AgentID == agent.ID && rule.Action == "review" {
+			agentReadReview++
+		}
+	}
+	if agentReadAllow != 0 || agentReadReview != 1 {
+		t.Fatalf("unset should replace the agent default with one agent task-scope marker, got %+v", rules)
+	}
+}
+
+func TestDefaultToolRulesMigratesStaleGlobalSystemDefaultsToAgent(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-default-readonly-migrate.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-default-readonly-migrate@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "dev-test", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "stale-global-read",
+		UserID:     user.ID,
+		Kind:       "tool",
+		Action:     "allow",
+		ToolName:   "Read",
+		InputShape: json.RawMessage(`{}`),
+		Reason:     "old global default allow",
+		Source:     "system",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	NewLLMEndpointHandler(st, nil, nil).ensureDefaultToolRules(ctx, agent, []string{"Read"})
+	rules, err := st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected stale global rule to be replaced with one agent-scoped rule, got %+v", rules)
+	}
+	agentRead := 0
+	for _, rule := range rules {
+		if rule.ToolName == "Read" && rule.AgentID != nil && *rule.AgentID == agent.ID && rule.Action == "allow" {
+			agentRead++
+		}
+	}
+	if agentRead != 1 {
+		t.Fatalf("expected stale global default to become an agent allow, got %+v", rules)
+	}
+}
+
+func TestToolControlsListPreservesAgentScopedDefaultToolRules(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls-migrate-default.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-migrate@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "dev-test", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	agentID := agent.ID
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "stale-agent-read-list",
+		UserID:     user.ID,
+		AgentID:    &agentID,
+		Kind:       "tool",
+		Action:     "allow",
+		ToolName:   "Read",
+		InputShape: json.RawMessage(`{}`),
+		Reason:     "old default allow",
+		Source:     "system",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.ListToolControls(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", res.Code, res.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	if len(listed.Entries) != 1 || listed.Entries[0].ToolName != "Read" || listed.Entries[0].Scope != "agent" {
+		t.Fatalf("agent default should render as an agent policy, got %+v", listed)
+	}
+}
+
+func TestToolControlsListSeedsClaudeDefaultToolsFromDiscovery(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls-claude-readonly.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-claude-readonly@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "test-3", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.LogAudit(ctx, &store.AuditEntry{
+		ID:        "audit-claude-tools-request",
+		UserID:    user.ID,
+		AgentID:   &agent.ID,
+		RequestID: "req-claude-tools",
+		Timestamp: time.Now().UTC(),
+		Service:   "anthropic",
+		Action:    "lite_proxy.messages.create",
+		ParamsSafe: json.RawMessage(`{
+			"event":"lite_proxy.endpoint_call",
+			"available_tools":[
+				"Agent","AskUserQuestion","Bash","CronCreate","CronDelete","CronList",
+				"Edit","EnterPlanMode","EnterWorktree","ExitPlanMode","ExitWorktree",
+				"LSP","Monitor","NotebookEdit","PushNotification","Read","RemoteTrigger",
+				"ScheduleWakeup","Skill","TaskCreate","TaskGet","TaskList","TaskOutput",
+				"TaskStop","TaskUpdate","WebFetch","WebSearch","Write"
+			]
+		}`),
+		Decision: "allow",
+		Outcome:  "success",
+	}); err != nil {
+		t.Fatalf("LogAudit(endpoint): %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.ListToolControls(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", res.Code, res.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	byTool := map[string]runtimeToolControlResponse{}
+	for _, entry := range listed.Entries {
+		byTool[entry.ToolName] = entry
+	}
+	for _, toolName := range []string{
+		"Agent", "AskUserQuestion", "CronCreate", "CronDelete", "CronList",
+		"EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree",
+		"LSP", "Monitor", "PushNotification", "Read", "RemoteTrigger",
+		"ScheduleWakeup", "Skill", "TaskCreate", "TaskGet", "TaskList",
+		"TaskOutput", "TaskStop", "TaskUpdate",
+	} {
+		entry, ok := byTool[toolName]
+		if !ok {
+			t.Fatalf("expected discovered tool %q in response, got %+v", toolName, listed.Entries)
+		}
+		if entry.Action != "allow" || entry.Scope != "agent" {
+			t.Fatalf("expected %s to be seeded as agent-scoped always-allow, got %+v", toolName, entry)
+		}
+	}
+	for _, toolName := range []string{"Bash", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Write"} {
+		entry, ok := byTool[toolName]
+		if !ok {
+			t.Fatalf("expected discovered tool %q in response, got %+v", toolName, listed.Entries)
+		}
+		if entry.Action != "unset" || entry.Scope != "unset" {
+			t.Fatalf("expected %s to remain unset, got %+v", toolName, entry)
+		}
+	}
+}
+
+func TestRuntimeHandlerToolControlsScopesGlobalAdvancedRules(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls-global-advanced.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-global@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "codex", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "global-bash-advanced",
+		UserID:     user.ID,
+		Kind:       "tool",
+		Action:     "deny",
+		ToolName:   "Bash",
+		InputRegex: "rm -rf",
+		Reason:     "global Bash guard",
+		Source:     "user",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.ListToolControls(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", res.Code, res.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	if len(listed.Entries) != 1 {
+		t.Fatalf("expected one Bash control, got %+v", listed)
+	}
+	got := listed.Entries[0]
+	if got.ToolName != "Bash" || got.Scope != "global" || got.AdvancedRuleCount != 1 {
+		t.Fatalf("global advanced rule should be surfaced as global, got %+v", got)
 	}
 }
 

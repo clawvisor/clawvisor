@@ -381,14 +381,6 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					"reason", dec.Reason,
 					"task_id", taskIDFromDecision(dec),
 				)
-				// Local-only tools (Read, Edit, Glob, Skill, …) never make
-				// outbound HTTP calls. Requiring an active task to cover
-				// every one is useless friction — but a task that DID
-				// declare expected_tools or a deny rule that targets the
-				// tool must still apply. So we run the evaluator
-				// normally and only override the "no matching task scope"
-				// review verdict to allow for local-only tools.
-				localOnly := inspector.IsLocalOnlyTool(tu.Name)
 				switch dec.Kind {
 				case runtimedecision.VerdictAllow:
 					audit("allow", string(dec.Source), dec.Reason)
@@ -397,11 +389,6 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{Allowed: false, Reason: "Clawvisor: " + dec.Reason}
 				case runtimedecision.VerdictNeedsApproval:
-					if localOnly && dec.Source == runtimedecision.SourceTaskScopeMissing {
-						audit("allow", "local_only_pass_through", "local-only tool ("+tu.Name+")")
-						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "local_only_pass_through", "reason", "local-only tool ("+tu.Name+")")
-						return conversation.ToolUseVerdict{Allowed: true}
-					}
 					// Codex's write_stdin with empty chars is the
 					// harness polling a background shell for output —
 					// equivalent to Claude Code's BashOutput. No
@@ -410,20 +397,6 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						audit("allow", "shell_poll_pass_through", "background-shell poll ("+tu.Name+")")
 						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "shell_poll_pass_through", "reason", "background-shell poll")
 						return conversation.ToolUseVerdict{Allowed: true}
-					}
-					// Read-only bash commands (pwd, ls, cat, grep |
-					// wc, …) classified as side-effect-free by the
-					// AST classifier run without task scope. Writes,
-					// network, mutating flags (sed -i, find -exec)
-					// still fall through to the approval prompt.
-					if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellTool(tu.Name) {
-						if cmd := shellCommandFromInput(tu.Input); cmd != "" {
-							if readOK, _ := inspector.IsReadOnlyBashCommand(cmd); readOK {
-								audit("allow", "readonly_shell_pass_through", "read-only bash command")
-								trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "readonly_shell_pass_through", "reason", "read-only bash command", "cmd_preview", truncateForTrace(cmd, 200))
-								return conversation.ToolUseVerdict{Allowed: true}
-							}
-						}
 					}
 					substitute := approvalPrompt(tu, dec.Reason)
 					if cfg.PendingApprovals != nil {

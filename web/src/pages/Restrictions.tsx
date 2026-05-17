@@ -374,12 +374,13 @@ export default function Policy() {
     onSuccess: refreshRuntime,
   })
   const updateToolControlMut = useMutation({
-    mutationFn: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) => api.runtime.updateToolControl(control),
+    mutationFn: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny' }) => api.runtime.updateToolControl(control),
     onSuccess: refreshRuntime,
   })
 
-  const startCreateRule = (kind: 'egress' | 'tool') => {
-    setEditingRule(kind === 'egress' ? emptyEgressRule() : emptyToolRule())
+  const startCreateRule = (kind: 'egress' | 'tool', patch: Partial<RuleDraft> = {}) => {
+    const base = kind === 'egress' ? emptyEgressRule() : emptyToolRule()
+    setEditingRule({ ...base, ...patch })
   }
 
   useEffect(() => {
@@ -475,6 +476,7 @@ export default function Policy() {
             <ProxyLiteToolControlsPanel
               agentId={agentFilter}
               controls={toolControls?.entries ?? []}
+              agents={agentMap}
               busy={updateToolControlMut.isPending}
               onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
               onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
@@ -515,6 +517,7 @@ export default function Policy() {
           agents={agentMap}
           egressRules={egressRules?.entries ?? []}
           toolRules={toolRules?.entries ?? []}
+          agentFilter={agentFilter}
           onNewRule={startCreateRule}
           onEditRule={setEditingRule}
           onToggleRule={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
@@ -577,6 +580,7 @@ function ProxyLitePolicyTabs({
 function ProxyLiteToolControlsPanel({
   agentId,
   controls,
+  agents,
   busy,
   onChange,
   onAdvanced,
@@ -586,14 +590,21 @@ function ProxyLiteToolControlsPanel({
 }: {
   agentId: string
   controls: RuntimeToolControl[]
+  agents: Map<string, Agent>
   busy: boolean
-  onChange: (toolName: string, action: 'allow' | 'review' | 'deny') => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
   onAdvanced: (toolName: string) => void
   onEditAdvanced: (rule: RuntimePolicyRule) => void
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   const needsAgent = agentId === 'all'
+  const globalControls = controls.filter(control =>
+    control.scope === 'global' || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
+  )
+  const agentControls = controls.filter(control =>
+    control.scope !== 'global' || (control.advanced_rules ?? []).some(rule => !!rule.agent_id),
+  )
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -618,53 +629,176 @@ function ProxyLiteToolControlsPanel({
       )}
 
       {!needsAgent && controls.length > 0 && (
-        <div className="divide-y divide-border-subtle rounded border border-border-subtle bg-surface-0">
-          {controls.map(control => {
-            const advancedRules = control.advanced_rules ?? []
-            return (
-              <div key={control.tool_name} className="p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
-                      {advancedRules.length > 0 && (
-                        <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
-                          {advancedRules.length} advanced
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-text-tertiary">
-                      {control.last_seen_at ? `Last seen ${new Date(control.last_seen_at).toLocaleString()}` : 'Not seen yet'}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
-                    <button
-                      onClick={() => onAdvanced(control.tool_name)}
-                      className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
-                    >
-                      Advanced
-                    </button>
-                  </div>
-                </div>
+        <div className="space-y-5">
+          <ToolControlListSection
+            title="Global Tool Policies"
+            subtitle="Apply to every agent."
+            sectionScope="global"
+            controls={globalControls}
+            agents={agents}
+            busy={busy}
+            onChange={onChange}
+            onAdvanced={onAdvanced}
+            onEditAdvanced={onEditAdvanced}
+            onToggleAdvanced={onToggleAdvanced}
+            onDeleteAdvanced={onDeleteAdvanced}
+          />
+          <ToolControlListSection
+            title="Agent Tool Policies"
+            subtitle="Selected-agent overrides and tools that are governed by task scopes."
+            sectionScope="agent"
+            controls={agentControls}
+            agents={agents}
+            busy={busy}
+            onChange={onChange}
+            onAdvanced={onAdvanced}
+            onEditAdvanced={onEditAdvanced}
+            onToggleAdvanced={onToggleAdvanced}
+            onDeleteAdvanced={onDeleteAdvanced}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
 
-                {advancedRules.length > 0 && (
-                  <div className="mt-3 space-y-2 border-l border-border-subtle pl-3">
-                    {advancedRules.map(rule => (
-                      <AdvancedToolRuleRow
-                        key={rule.id}
-                        rule={rule}
-                        busy={busy}
-                        onEdit={onEditAdvanced}
-                        onToggle={onToggleAdvanced}
-                        onDelete={onDeleteAdvanced}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+function ToolControlListSection({
+  title,
+  subtitle,
+  sectionScope,
+  controls,
+  agents,
+  busy,
+  onChange,
+  onAdvanced,
+  onEditAdvanced,
+  onToggleAdvanced,
+  onDeleteAdvanced,
+}: {
+  title: string
+  subtitle: string
+  sectionScope: 'global' | 'agent'
+  controls: RuntimeToolControl[]
+  agents: Map<string, Agent>
+  busy: boolean
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
+  onAdvanced: (toolName: string) => void
+  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  onToggleAdvanced: (rule: RuntimePolicyRule) => void
+  onDeleteAdvanced: (rule: RuntimePolicyRule) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+        <p className="mt-1 text-xs text-text-tertiary">{subtitle}</p>
+      </div>
+      {controls.length === 0 ? (
+        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+          No policies yet.
+        </div>
+      ) : (
+        <div className="divide-y divide-border-subtle rounded border border-border-subtle bg-surface-0">
+          {controls.map(control => (
+            <ToolControlRow
+              key={control.tool_name}
+              control={control}
+              sectionScope={sectionScope}
+              agents={agents}
+              busy={busy}
+              onChange={onChange}
+              onAdvanced={onAdvanced}
+              onEditAdvanced={onEditAdvanced}
+              onToggleAdvanced={onToggleAdvanced}
+              onDeleteAdvanced={onDeleteAdvanced}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolControlRow({
+  control,
+  sectionScope,
+  agents,
+  busy,
+  onChange,
+  onAdvanced,
+  onEditAdvanced,
+  onToggleAdvanced,
+  onDeleteAdvanced,
+}: {
+  control: RuntimeToolControl
+  sectionScope: 'global' | 'agent'
+  agents: Map<string, Agent>
+  busy: boolean
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
+  onAdvanced: (toolName: string) => void
+  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  onToggleAdvanced: (rule: RuntimePolicyRule) => void
+  onDeleteAdvanced: (rule: RuntimePolicyRule) => void
+}) {
+  const advancedRules = (control.advanced_rules ?? []).filter(rule =>
+    sectionScope === 'global' ? !rule.agent_id : !!rule.agent_id,
+  )
+  const showSimpleControl = sectionScope === 'global'
+    ? control.scope === 'global'
+    : control.scope !== 'global'
+  if (!showSimpleControl && advancedRules.length === 0) return null
+  const scopeLabel = showSimpleControl
+    ? control.scope === 'global'
+      ? 'Global policy'
+      : control.scope === 'agent'
+        ? 'Agent policy'
+        : 'Task scopes'
+    : sectionScope === 'global'
+      ? 'Global policy'
+      : 'Agent policy'
+  return (
+    <div className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-text-primary">{control.tool_name}</span>
+            <span className="text-xs text-text-tertiary">{scopeLabel}</span>
+            {advancedRules.length > 0 && (
+              <span className="rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">
+                {advancedRules.length} advanced
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-xs text-text-tertiary">
+            {control.last_seen_at ? `Last seen ${new Date(control.last_seen_at).toLocaleString()}` : 'Not seen yet'}
+          </div>
+        </div>
+        {showSimpleControl && (
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
+            <button
+              onClick={() => onAdvanced(control.tool_name)}
+              className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
+            >
+              Advanced
+            </button>
+          </div>
+        )}
+      </div>
+
+      {advancedRules.length > 0 && (
+        <div className="mt-3 space-y-2 border-l border-border-subtle pl-3">
+          {advancedRules.map(rule => (
+            <AdvancedToolRuleRow
+              key={rule.id}
+              rule={rule}
+              busy={busy}
+              agentName={rule.agent_id ? agents.get(rule.agent_id)?.name : undefined}
+              onEdit={onEditAdvanced}
+              onToggle={onToggleAdvanced}
+              onDelete={onDeleteAdvanced}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -674,17 +808,18 @@ function ProxyLiteToolControlsPanel({
 function AdvancedToolRuleRow({
   rule,
   busy,
+  agentName,
   onEdit,
   onToggle,
   onDelete,
 }: {
   rule: RuntimePolicyRule
   busy: boolean
+  agentName?: string
   onEdit: (rule: RuntimePolicyRule) => void
   onToggle: (rule: RuntimePolicyRule) => void
   onDelete: (rule: RuntimePolicyRule) => void
 }) {
-  const actionLabel = rule.action === 'review' ? 'ask' : rule.action
   return (
     <div className="rounded border border-border-subtle bg-surface-1 px-3 py-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -697,13 +832,16 @@ function AdvancedToolRuleRow({
                   ? 'bg-danger/15 text-danger'
                   : 'bg-warning/15 text-warning'
             }`}>
-              {actionLabel}
+              {toolPolicyActionLabel(rule.action)}
             </span>
             {!rule.enabled && (
               <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-text-tertiary">disabled</span>
             )}
             <span className="text-xs text-text-secondary">
               {rule.input_regex ? `when input matches ${rule.input_regex}` : 'custom input shape'}
+            </span>
+            <span className="text-xs text-text-tertiary">
+              {agentName ?? 'All agents'}
             </span>
           </div>
           {rule.reason && <div className="mt-1 text-xs text-text-tertiary">{rule.reason}</div>}
@@ -724,24 +862,38 @@ function AdvancedToolRuleRow({
   )
 }
 
+function toolPolicyActionLabel(action: RuntimePolicyRule['action'] | RuntimeToolControl['action']): string {
+  switch (action) {
+    case 'allow':
+      return 'always allow'
+    case 'deny':
+      return 'always deny'
+    case 'unset':
+      return 'unset'
+    default:
+      return 'review'
+  }
+}
+
 function SegmentedToolAction({
   value,
   disabled,
   onChange,
 }: {
-  value: 'allow' | 'review' | 'deny'
+  value: 'unset' | 'allow' | 'review' | 'deny'
   disabled?: boolean
-  onChange: (action: 'allow' | 'review' | 'deny') => void
+  onChange: (action: 'unset' | 'allow' | 'deny') => void
 }) {
-  const options: Array<{ value: 'allow' | 'review' | 'deny'; label: string }> = [
-    { value: 'allow', label: 'Allow' },
-    { value: 'review', label: 'Ask' },
-    { value: 'deny', label: 'Block' },
+  const normalizedValue: 'unset' | 'allow' | 'deny' = value === 'allow' || value === 'deny' ? value : 'unset'
+  const options: Array<{ value: 'unset' | 'allow' | 'deny'; label: string }> = [
+    { value: 'unset', label: 'Unset' },
+    { value: 'allow', label: 'Always allow' },
+    { value: 'deny', label: 'Always deny' },
   ]
   return (
     <div className="inline-flex rounded-md border border-border-default bg-surface-1 p-1">
       {options.map(option => {
-        const active = value === option.value
+        const active = normalizedValue === option.value
         return (
           <button
             key={option.value}
@@ -756,7 +908,7 @@ function SegmentedToolAction({
                   ? 'bg-success/15 text-success'
                   : option.value === 'deny'
                     ? 'bg-danger/15 text-danger'
-                    : 'bg-warning/15 text-warning'
+                    : 'bg-surface-2 text-text-secondary'
                 : 'text-text-tertiary hover:text-text-primary'
             }`}
           >
@@ -848,6 +1000,156 @@ function AccountControlsPanel({
   )
 }
 
+function ScopedRuntimeToolRules({
+  globalRules,
+  agentRules,
+  agents,
+  agentTitle,
+  onNewGlobal,
+  onNewAgent,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  globalRules: RuntimePolicyRule[]
+  agentRules: RuntimePolicyRule[]
+  agents: Map<string, Agent>
+  agentTitle: string
+  onNewGlobal: () => void
+  onNewAgent: () => void
+  onEdit: (rule: RuleDraft) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  return (
+    <div className="space-y-5">
+      <RuntimeToolRuleList
+        title="Global Tool Policies"
+        subtitle="Apply to every agent."
+        rules={globalRules}
+        agents={agents}
+        onNew={onNewGlobal}
+        onEdit={onEdit}
+        onToggle={onToggle}
+        onDelete={onDelete}
+      />
+      <RuntimeToolRuleList
+        title={agentTitle}
+        subtitle="Agent-specific policies and overrides."
+        rules={agentRules}
+        agents={agents}
+        onNew={onNewAgent}
+        onEdit={onEdit}
+        onToggle={onToggle}
+        onDelete={onDelete}
+      />
+    </div>
+  )
+}
+
+function RuntimeToolRuleList({
+  title,
+  subtitle,
+  rules,
+  agents,
+  onNew,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  title: string
+  subtitle: string
+  rules: RuntimePolicyRule[]
+  agents: Map<string, Agent>
+  onNew: () => void
+  onEdit: (rule: RuleDraft) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+          <p className="text-sm text-text-tertiary mt-1">{subtitle}</p>
+        </div>
+        <button onClick={onNew} className="rounded border border-brand/30 px-4 py-2 text-sm font-medium text-brand hover:bg-brand/10">
+          Add rule
+        </button>
+      </div>
+      <div className="space-y-3">
+        {rules.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No policies yet.
+          </div>
+        )}
+        {rules.map(rule => (
+          <RuntimeToolRuleRow
+            key={rule.id}
+            rule={rule}
+            agents={agents}
+            onEdit={onEdit}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RuntimeToolRuleRow({
+  rule,
+  agents,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  rule: RuntimePolicyRule
+  agents: Map<string, Agent>
+  onEdit: (rule: RuleDraft) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  return (
+    <div className="rounded border border-border-subtle bg-surface-0 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded px-2 py-0.5 text-xs font-mono ${
+              rule.action === 'allow' ? 'bg-success/15 text-success' :
+              rule.action === 'deny' ? 'bg-danger/15 text-danger' :
+              'bg-warning/15 text-warning'
+            }`}>
+              {toolPolicyActionLabel(rule.action)}
+            </span>
+            <span className="text-sm font-medium text-text-primary">{rule.tool_name}</span>
+            <span className="text-xs text-text-tertiary">
+              {rule.agent_id ? (agents.get(rule.agent_id)?.name ?? 'Agent scoped') : 'All agents'}
+            </span>
+          </div>
+          <div className="mt-1 text-xs text-text-tertiary">
+            source: {rule.source} {rule.last_matched_at ? `· last matched ${new Date(rule.last_matched_at).toLocaleString()}` : ''}
+          </div>
+          {rule.input_regex && <div className="mt-1 text-xs text-text-tertiary">input matches {rule.input_regex}</div>}
+          {rule.reason && <div className="mt-2 text-sm text-text-secondary">{rule.reason}</div>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => onToggle(rule)} className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2">
+            {rule.enabled ? 'Disable' : 'Enable'}
+          </button>
+          <button onClick={() => onEdit({ ...rule, scope: rule.agent_id ? 'agent' : 'global' })} className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2">
+            Edit
+          </button>
+          <button onClick={() => onDelete(rule)} className="rounded border border-danger/20 px-3 py-1.5 text-xs text-danger hover:bg-danger/10">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PolicyRulesPanel({
   orgId,
   rulesTab,
@@ -866,6 +1168,7 @@ function PolicyRulesPanel({
   agents,
   egressRules,
   toolRules,
+  agentFilter,
   onNewRule,
   onEditRule,
   onToggleRule,
@@ -888,7 +1191,8 @@ function PolicyRulesPanel({
   agents: Map<string, Agent>
   egressRules: RuntimePolicyRule[]
   toolRules: RuntimePolicyRule[]
-  onNewRule: (kind: 'egress' | 'tool') => void
+  agentFilter: string
+  onNewRule: (kind: 'egress' | 'tool', patch?: Partial<RuleDraft>) => void
   onEditRule: (rule: RuleDraft) => void
   onToggleRule: (rule: RuntimePolicyRule) => void
   onDeleteRule: (rule: RuntimePolicyRule) => void
@@ -964,12 +1268,13 @@ function PolicyRulesPanel({
       )}
 
       {rulesTab === 'tool' && !orgId && (
-        <RuleSection
-          title="Runtime Tool Rules"
-          subtitle="Allow, review, or deny repeated tool-use patterns before they turn into unnecessary approval churn."
-          rules={toolRules}
+        <ScopedRuntimeToolRules
+          globalRules={toolRules.filter(rule => !rule.agent_id)}
+          agentRules={toolRules.filter(rule => rule.agent_id)}
           agents={agents}
-          onNew={() => onNewRule('tool')}
+          agentTitle={agentFilter !== 'all' ? `${agents.get(agentFilter)?.name ?? 'Selected agent'} Tool Policies` : 'Agent Tool Policies'}
+          onNewGlobal={() => onNewRule('tool', { scope: 'global', agent_id: undefined })}
+          onNewAgent={() => onNewRule('tool', { scope: 'agent', agent_id: agentFilter === 'all' ? undefined : agentFilter })}
           onEdit={onEditRule}
           onToggle={onToggleRule}
           onDelete={onDeleteRule}

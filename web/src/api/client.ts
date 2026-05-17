@@ -730,9 +730,10 @@ export interface RuntimePolicyRule {
 export interface RuntimeToolControl {
   agent_id: string
   tool_name: string
-  action: 'allow' | 'review' | 'deny'
+  action: 'unset' | 'allow' | 'review' | 'deny'
   rule_id?: string
   source: 'default' | 'request' | 'observed' | 'rule'
+  scope?: 'unset' | 'global' | 'agent'
   last_seen_at?: string
   advanced_rule_count: number
   advanced_rules?: RuntimePolicyRule[]
@@ -1297,7 +1298,7 @@ export const api = {
       }),
     listToolControls: (agentId: string) =>
       get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
-    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) =>
+    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny' }) =>
       put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),
