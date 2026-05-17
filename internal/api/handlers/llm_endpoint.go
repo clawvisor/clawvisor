@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
@@ -131,6 +132,9 @@ type LLMEndpointHandler struct {
 	// inspection. Default 32 MiB. Exceeding this returns 502
 	// UPSTREAM_TOO_LARGE.
 	MaxResponseBytes int64
+
+	defaultToolRulesMu   sync.Mutex
+	defaultToolRulesSeen map[string]map[string]struct{}
 }
 
 // NewLLMEndpointHandler builds the handler with sensible defaults.
@@ -150,8 +154,9 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
-		CallerNonces:    llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
-		MaxRequestBytes: 4 << 20,
+		CallerNonces:         llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
+		MaxRequestBytes:      4 << 20,
+		defaultToolRulesSeen: map[string]map[string]struct{}{},
 	}
 }
 
@@ -907,6 +912,40 @@ func readResponseLimited(r io.Reader, max int64) ([]byte, error) {
 	return readLimited(r, max)
 }
 
+type limitedCaptureWriter struct {
+	max int64
+	buf bytes.Buffer
+}
+
+func newLimitedCaptureWriter(max int64) *limitedCaptureWriter {
+	if max <= 0 {
+		max = 32 << 20
+	}
+	return &limitedCaptureWriter{max: max}
+}
+
+func (w *limitedCaptureWriter) Write(p []byte) (int, error) {
+	if w == nil {
+		return len(p), nil
+	}
+	remaining := w.max - int64(w.buf.Len())
+	if remaining > 0 {
+		if int64(len(p)) < remaining {
+			_, _ = w.buf.Write(p)
+		} else {
+			_, _ = w.buf.Write(p[:remaining])
+		}
+	}
+	return len(p), nil
+}
+
+func (w *limitedCaptureWriter) Bytes() []byte {
+	if w == nil {
+		return nil
+	}
+	return w.buf.Bytes()
+}
+
 // actionForRoute maps a request path to an audit-log action label.
 func actionForRoute(path string) string {
 	switch path {
@@ -978,12 +1017,67 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 }
 
 func (h *LLMEndpointHandler) ensureDefaultToolRules(ctx context.Context, agent *store.Agent, availableTools []string) {
-	if h == nil || h.Store == nil {
+	if h == nil || h.Store == nil || agent == nil {
 		return
 	}
-	if err := ensureDefaultToolRules(ctx, h.Store, agent, availableTools); err != nil {
+	toSync := h.unseededDefaultTools(agent.ID, availableTools)
+	if len(toSync) == 0 {
+		return
+	}
+	if err := ensureDefaultToolRules(ctx, h.Store, agent, toSync); err != nil {
 		h.Logger.WarnContext(ctx, "lite-proxy default tool rule sync failed",
 			"agent_id", agent.ID, "err", err.Error())
+		return
+	}
+	h.markDefaultToolsSeeded(agent.ID, toSync)
+}
+
+func (h *LLMEndpointHandler) unseededDefaultTools(agentID string, availableTools []string) []string {
+	h.defaultToolRulesMu.Lock()
+	defer h.defaultToolRulesMu.Unlock()
+	if h.defaultToolRulesSeen == nil {
+		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
+	}
+	seen := h.defaultToolRulesSeen[agentID]
+	out := make([]string, 0, len(availableTools))
+	queued := map[string]struct{}{}
+	for _, toolName := range availableTools {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" || !inspector.IsDefaultAllowedTool(toolName) {
+			continue
+		}
+		key := strings.ToLower(toolName)
+		if _, ok := queued[key]; ok {
+			continue
+		}
+		if seen != nil {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+		}
+		queued[key] = struct{}{}
+		out = append(out, toolName)
+	}
+	return out
+}
+
+func (h *LLMEndpointHandler) markDefaultToolsSeeded(agentID string, toolNames []string) {
+	h.defaultToolRulesMu.Lock()
+	defer h.defaultToolRulesMu.Unlock()
+	if h.defaultToolRulesSeen == nil {
+		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
+	}
+	seen := h.defaultToolRulesSeen[agentID]
+	if seen == nil {
+		seen = map[string]struct{}{}
+		h.defaultToolRulesSeen[agentID] = seen
+	}
+	for _, toolName := range toolNames {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" || !inspector.IsDefaultAllowedTool(toolName) {
+			continue
+		}
+		seen[strings.ToLower(toolName)] = struct{}{}
 	}
 }
 
@@ -1145,16 +1239,14 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 		}
 	}
 	if h.RawIOLogger != nil {
-		full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
-		if readErr != nil {
-			*auditStatus = http.StatusBadGateway
-			*auditDecide = "deny"
+		capture := newLimitedCaptureWriter(h.MaxResponseBytes)
+		w.WriteHeader(resp.StatusCode)
+		_, copyErr := io.Copy(io.MultiWriter(w, capture), resp.Body)
+		if copyErr != nil {
 			*auditOutcome = "upstream_read_error"
-			*auditReason = readErr.Error()
-			clearMirroredUpstreamHeaders(w.Header())
-			writeJSONError(w, http.StatusBadGateway, "UPSTREAM_READ_ERROR", "upstream read failed")
-			return
+			*auditReason = copyErr.Error()
 		}
+		full := capture.Bytes()
 		bodyStr, bodyEnc := llmproxy.EncodeBody(full)
 		h.RawIOLogger.Emit(llmproxy.RawIOEvent{
 			Phase:        "harness_response",
@@ -1172,8 +1264,6 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 			BodyBytes:    len(full),
 			Marker:       "break_glass_passthrough",
 		})
-		w.WriteHeader(resp.StatusCode)
-		_, _ = w.Write(full)
 		return
 	}
 	w.WriteHeader(resp.StatusCode)
@@ -1188,7 +1278,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 	if reply.Action == llmproxy.SecretDecisionNone {
 		return nil, "", false
 	}
-	pending, err := h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	pending, err := h.PendingSecrets.PeekSecret(r.Context(), agent.UserID, agent.ID, provider)
 	if err != nil || pending == nil {
 		return nil, "", false
 	}
@@ -1209,6 +1299,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 	})
 	switch reply.Action {
 	case llmproxy.SecretDecisionAllowOnce:
+		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		*auditStatus = 0
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
@@ -1219,6 +1310,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 		return pending.OriginalBody, reply.Action, true
 	case llmproxy.SecretDecisionNotSecret:
 		h.rememberNotSecretFindings(r.Context(), agent, pending.Findings)
+		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":                string(provider),
 			"decision":                string(reply.Action),
@@ -1228,6 +1320,7 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 		})
 		return pending.OriginalBody, reply.Action, true
 	case llmproxy.SecretDecisionDiscard:
+		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
 			"decision":   string(reply.Action),
@@ -1243,14 +1336,15 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 		if name == "" {
 			name = "secret"
 		}
-		resumeBody := append([]byte{}, pending.OriginalBody...)
+		vaulted := make([]liteSecretVaultedFinding, 0, len(pending.Findings))
 		for i, finding := range pending.Findings {
 			vaultName := name
 			if len(pending.Findings) > 1 {
 				vaultName = fmt.Sprintf("%s_%d", name, i+1)
 			}
-			placeholder, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
+			placeholder, authID, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
 			if err != nil {
+				h.rollbackPartialSecretVaults(r.Context(), agent, vaulted)
 				*auditStatus = http.StatusInternalServerError
 				*auditDecide = "deny"
 				*auditOutcome = "secret_vault_failed"
@@ -1258,16 +1352,27 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
 				return nil, reply.Action, true
 			}
-			h.rememberVaultedSecretRewrite(r.Context(), agent, vaultName, finding, placeholder, pending.OriginalBody)
+			vaulted = append(vaulted, liteSecretVaultedFinding{
+				vaultName:       vaultName,
+				resolvedVaultID: resolvedSecretVaultItemID(vaultName, finding),
+				finding:         finding,
+				placeholder:     placeholder,
+				authID:          authID,
+			})
+		}
+		resumeBody := append([]byte{}, pending.OriginalBody...)
+		for _, item := range vaulted {
+			h.rememberVaultedSecretRewrite(r.Context(), agent, item.vaultName, item.finding, item.placeholder, pending.OriginalBody)
 			h.emitLiteSecretPipelineTrace(requestID, agent, "decision_vaulted_finding", map[string]any{
 				"provider":           string(provider),
 				"decision_id":        pending.ID,
-				"vault_item_id":      vaultName,
-				"finding":            liteSecretFindingTraceSummary(finding),
-				"placeholder_prefix": liteSecretPlaceholderPrefix(placeholder),
+				"vault_item_id":      item.resolvedVaultID,
+				"finding":            liteSecretFindingTraceSummary(item.finding),
+				"placeholder_prefix": liteSecretPlaceholderPrefix(item.placeholder),
 			})
-			resumeBody = bytes.ReplaceAll(resumeBody, []byte(finding.Value), []byte(placeholder))
+			resumeBody = bytes.ReplaceAll(resumeBody, []byte(item.finding.Value), []byte(item.placeholder))
 		}
+		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
 			"decision":   string(reply.Action),
@@ -1280,9 +1385,9 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 	}
 }
 
-func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.Context, agent *store.Agent, vaultName string, finding llmproxy.InboundSecretFinding) (string, error) {
+func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.Context, agent *store.Agent, vaultName string, finding llmproxy.InboundSecretFinding) (string, string, error) {
 	if h == nil || h.Store == nil || h.Vault == nil || agent == nil {
-		return "", fmt.Errorf("secret vault path is not configured")
+		return "", "", fmt.Errorf("secret vault path is not configured")
 	}
 	vaultItemID := strings.TrimSpace(finding.ExistingVaultItemID)
 	if vaultItemID == "" {
@@ -1293,7 +1398,7 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 	}
 	if finding.ExistingVaultItemID == "" {
 		if err := h.Vault.Set(ctx, agent.UserID, vaultItemID, []byte(finding.Value)); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	expiresAt := time.Now().UTC().Add(24 * time.Hour)
@@ -1319,11 +1424,11 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 		ExpiresAt: &expiresAt,
 	}
 	if err := h.Store.CreateCredentialAuthorization(ctx, auth); err != nil {
-		return "", err
+		return "", "", err
 	}
 	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(vaultItemID))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := h.Store.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
 		Placeholder:       placeholder,
@@ -1334,13 +1439,62 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 		CredentialGrantID: auth.ID,
 		ExpiresAt:         &expiresAt,
 	}); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return placeholder, nil
+	return placeholder, auth.ID, nil
 }
 
 type liteSecretVaultRewrite struct {
 	Placeholder string
+}
+
+type liteSecretVaultedFinding struct {
+	vaultName       string
+	resolvedVaultID string
+	finding         llmproxy.InboundSecretFinding
+	placeholder     string
+	authID          string
+}
+
+type credentialAuthorizationDeleter interface {
+	DeleteCredentialAuthorization(ctx context.Context, id, userID string) error
+}
+
+func resolvedSecretVaultItemID(vaultName string, finding llmproxy.InboundSecretFinding) string {
+	if strings.TrimSpace(finding.ExistingVaultItemID) != "" {
+		return strings.TrimSpace(finding.ExistingVaultItemID)
+	}
+	vaultName = strings.TrimSpace(vaultName)
+	if vaultName == "" {
+		return "secret"
+	}
+	return vaultName
+}
+
+func (h *LLMEndpointHandler) rollbackPartialSecretVaults(ctx context.Context, agent *store.Agent, vaulted []liteSecretVaultedFinding) {
+	if h == nil || agent == nil {
+		return
+	}
+	for _, item := range vaulted {
+		if h.Store != nil && strings.TrimSpace(item.placeholder) != "" {
+			if err := h.Store.DeleteRuntimePlaceholder(ctx, item.placeholder, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				h.Logger.WarnContext(ctx, "lite-proxy partial secret placeholder rollback failed",
+					"agent_id", agent.ID, "placeholder_prefix", liteSecretPlaceholderPrefix(item.placeholder), "err", err.Error())
+			}
+		}
+		if deleter, ok := h.Store.(credentialAuthorizationDeleter); ok && strings.TrimSpace(item.authID) != "" {
+			if err := deleter.DeleteCredentialAuthorization(ctx, item.authID, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				h.Logger.WarnContext(ctx, "lite-proxy partial secret credential authorization rollback failed",
+					"agent_id", agent.ID, "auth_id", item.authID, "err", err.Error())
+			}
+		}
+		if h.Vault != nil && strings.TrimSpace(item.finding.ExistingVaultItemID) == "" && strings.TrimSpace(item.resolvedVaultID) != "" {
+			if err := h.Vault.Delete(ctx, agent.UserID, item.resolvedVaultID); err != nil && !errors.Is(err, vault.ErrNotFound) {
+				h.Logger.WarnContext(ctx, "lite-proxy partial secret vault rollback failed",
+					"agent_id", agent.ID, "vault_item_id", item.resolvedVaultID, "err", err.Error())
+			}
+		}
+	}
 }
 
 func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, agent *store.Agent, provider conversation.Provider, requestID string, body []byte) ([]byte, bool) {

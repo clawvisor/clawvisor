@@ -318,13 +318,13 @@ export default function Policy() {
     refetchInterval: 15_000,
   })
   const { data: egressRules } = useQuery({
-    queryKey: ['runtime-rules', 'egress', agentFilter],
-    queryFn: () => api.runtime.listRules({ kind: 'egress', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    queryKey: ['runtime-rules', 'egress'],
+    queryFn: () => api.runtime.listRules({ kind: 'egress' }),
     enabled: runtimePolicyUI,
   })
   const { data: toolRules } = useQuery({
-    queryKey: ['runtime-rules', 'tool', agentFilter],
-    queryFn: () => api.runtime.listRules({ kind: 'tool', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    queryKey: ['runtime-rules', 'tool'],
+    queryFn: () => api.runtime.listRules({ kind: 'tool' }),
     enabled: runtimePolicyUI,
   })
   const { data: toolControls } = useQuery({
@@ -374,7 +374,7 @@ export default function Policy() {
     onSuccess: refreshRuntime,
   })
   const updateToolControlMut = useMutation({
-    mutationFn: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny' }) => api.runtime.updateToolControl(control),
+    mutationFn: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent' }) => api.runtime.updateToolControl(control),
     onSuccess: refreshRuntime,
   })
 
@@ -408,21 +408,6 @@ export default function Policy() {
               : 'Configure service restrictions for your connected adapters and integrations.'}
           </p>
         </div>
-        {!orgId && (runtimePolicyUI || servicePresetsUI) && (
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-text-tertiary">Scope</label>
-            <select
-              value={agentFilter}
-              onChange={e => setAgentFilter(e.target.value)}
-              className="rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-            >
-              <option value="all">All agents</option>
-              {agents.map(agent => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
 
       {runtimePolicyUI && status && !proxyLiteOnly && (
@@ -436,7 +421,7 @@ export default function Policy() {
         <StarterProfilesPanel
           profiles={starterProfiles?.entries ?? []}
           agents={agents}
-          agentFilter={agentFilter}
+          agentFilter="all"
           onApplied={refreshRuntime}
         />
       )}
@@ -444,7 +429,7 @@ export default function Policy() {
       {servicePresetsUI && !proxyLiteOnly && (
         <ServicePresetsPanel
           agents={agents}
-          agentFilter={agentFilter}
+          agentFilter="all"
           onApplied={refreshRuntime}
         />
       )}
@@ -475,11 +460,13 @@ export default function Policy() {
           tools={
             <ProxyLiteToolControlsPanel
               agentId={agentFilter}
+              agentList={agents}
+              onAgentChange={setAgentFilter}
               controls={toolControls?.entries ?? []}
               agents={agentMap}
               busy={updateToolControlMut.isPending}
-              onChange={(toolName, action) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action })}
-              onAdvanced={(toolName) => setEditingRule({ ...emptyToolRule(), agent_id: agentFilter, tool_name: toolName })}
+              onChange={(toolName, action, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action, scope })}
+              onAdvanced={(toolName, scope) => setEditingRule({ ...emptyToolRule(), scope, agent_id: scope === 'agent' ? agentFilter : undefined, tool_name: toolName })}
               onEditAdvanced={(rule) => setEditingRule({ ...rule, scope: rule.agent_id ? 'agent' : 'global' })}
               onToggleAdvanced={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
               onDeleteAdvanced={(rule) => deleteRuleMut.mutate(rule.id)}
@@ -515,9 +502,9 @@ export default function Policy() {
           showAll={showAll}
           onToggleShowAll={() => setShowAll(s => !s)}
           agents={agentMap}
+          agentList={agents}
           egressRules={egressRules?.entries ?? []}
           toolRules={toolRules?.entries ?? []}
-          agentFilter={agentFilter}
           onNewRule={startCreateRule}
           onEditRule={setEditingRule}
           onToggleRule={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
@@ -579,6 +566,8 @@ function ProxyLitePolicyTabs({
 
 function ProxyLiteToolControlsPanel({
   agentId,
+  agentList,
+  onAgentChange,
   controls,
   agents,
   busy,
@@ -589,21 +578,34 @@ function ProxyLiteToolControlsPanel({
   onDeleteAdvanced,
 }: {
   agentId: string
+  agentList: Agent[]
+  onAgentChange: (agentId: string) => void
   controls: RuntimeToolControl[]
   agents: Map<string, Agent>
   busy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
-  onAdvanced: (toolName: string) => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
   onEditAdvanced: (rule: RuntimePolicyRule) => void
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   const needsAgent = agentId === 'all'
   const globalControls = controls.filter(control =>
-    control.scope === 'global' || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
+    !!control.global_rule_id || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
   )
-  const agentControls = controls.filter(control =>
-    control.scope !== 'global' || (control.advanced_rules ?? []).some(rule => !!rule.agent_id),
+  const agentSelector = (
+    <div className="flex items-center gap-2">
+      <label className="text-xs text-text-tertiary">Agent</label>
+      <select
+        value={agentId}
+        onChange={e => onAgentChange(e.target.value)}
+        className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+      >
+        {agentList.map(agent => (
+          <option key={agent.id} value={agent.id}>{agent.name}</option>
+        ))}
+      </select>
+    </div>
   )
   return (
     <div className="space-y-4">
@@ -617,14 +619,32 @@ function ProxyLiteToolControlsPanel({
       </div>
 
       {needsAgent && (
-        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-          Select an agent to configure its tool controls.
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Agent Tool Policies</h3>
+              <p className="mt-1 text-xs text-text-tertiary">Selected-agent overrides and tools that are governed by task scopes.</p>
+            </div>
+            {agentList.length > 0 && agentSelector}
+          </div>
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            {agentList.length > 0 ? 'Select an agent to configure its tool controls.' : 'No agents yet.'}
+          </div>
         </div>
       )}
 
       {!needsAgent && controls.length === 0 && (
-        <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
-          No tools discovered yet. Run the harness once and this list will populate from its request.
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Agent Tool Policies</h3>
+              <p className="mt-1 text-xs text-text-tertiary">Selected-agent overrides and tools that are governed by task scopes.</p>
+            </div>
+            {agentSelector}
+          </div>
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            No tools discovered yet. Run the harness once and this list will populate from its request.
+          </div>
         </div>
       )}
 
@@ -647,7 +667,8 @@ function ProxyLiteToolControlsPanel({
             title="Agent Tool Policies"
             subtitle="Selected-agent overrides and tools that are governed by task scopes."
             sectionScope="agent"
-            controls={agentControls}
+            headerControl={agentSelector}
+            controls={controls}
             agents={agents}
             busy={busy}
             onChange={onChange}
@@ -666,6 +687,7 @@ function ToolControlListSection({
   title,
   subtitle,
   sectionScope,
+  headerControl,
   controls,
   agents,
   busy,
@@ -678,20 +700,24 @@ function ToolControlListSection({
   title: string
   subtitle: string
   sectionScope: 'global' | 'agent'
+  headerControl?: ReactNode
   controls: RuntimeToolControl[]
   agents: Map<string, Agent>
   busy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
-  onAdvanced: (toolName: string) => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
   onEditAdvanced: (rule: RuntimePolicyRule) => void
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
-        <p className="mt-1 text-xs text-text-tertiary">{subtitle}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+          <p className="mt-1 text-xs text-text-tertiary">{subtitle}</p>
+        </div>
+        {headerControl}
       </div>
       {controls.length === 0 ? (
         <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
@@ -734,8 +760,8 @@ function ToolControlRow({
   sectionScope: 'global' | 'agent'
   agents: Map<string, Agent>
   busy: boolean
-  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny') => void
-  onAdvanced: (toolName: string) => void
+  onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
   onEditAdvanced: (rule: RuntimePolicyRule) => void
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
@@ -743,19 +769,12 @@ function ToolControlRow({
   const advancedRules = (control.advanced_rules ?? []).filter(rule =>
     sectionScope === 'global' ? !rule.agent_id : !!rule.agent_id,
   )
-  const showSimpleControl = sectionScope === 'global'
-    ? control.scope === 'global'
-    : control.scope !== 'global'
+  const action = sectionScope === 'global' ? control.global_action : control.agent_action
+  const showSimpleControl = sectionScope === 'agent' || !!control.global_rule_id || advancedRules.length > 0
   if (!showSimpleControl && advancedRules.length === 0) return null
-  const scopeLabel = showSimpleControl
-    ? control.scope === 'global'
-      ? 'Global policy'
-      : control.scope === 'agent'
-        ? 'Agent policy'
-        : 'Task scopes'
-    : sectionScope === 'global'
-      ? 'Global policy'
-      : 'Agent policy'
+  const scopeLabel = sectionScope === 'global'
+    ? control.global_rule_id ? 'Global policy' : 'No global policy'
+    : control.agent_rule_id && action !== 'unset' ? 'Agent policy' : 'Task scopes'
   return (
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -775,9 +794,9 @@ function ToolControlRow({
         </div>
         {showSimpleControl && (
           <div className="flex flex-wrap items-center gap-2">
-            <SegmentedToolAction value={control.action} disabled={busy} onChange={action => onChange(control.tool_name, action)} />
+            <SegmentedToolAction value={action} disabled={busy} onChange={nextAction => onChange(control.tool_name, nextAction, sectionScope)} />
             <button
-              onClick={() => onAdvanced(control.tool_name)}
+              onClick={() => onAdvanced(control.tool_name, sectionScope)}
               className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
             >
               Advanced
@@ -1004,7 +1023,7 @@ function ScopedRuntimeToolRules({
   globalRules,
   agentRules,
   agents,
-  agentTitle,
+  agentList,
   onNewGlobal,
   onNewAgent,
   onEdit,
@@ -1014,9 +1033,9 @@ function ScopedRuntimeToolRules({
   globalRules: RuntimePolicyRule[]
   agentRules: RuntimePolicyRule[]
   agents: Map<string, Agent>
-  agentTitle: string
+  agentList: Agent[]
   onNewGlobal: () => void
-  onNewAgent: () => void
+  onNewAgent: (agentId: string) => void
   onEdit: (rule: RuleDraft) => void
   onToggle: (rule: RuntimePolicyRule) => void
   onDelete: (rule: RuntimePolicyRule) => void
@@ -1033,11 +1052,10 @@ function ScopedRuntimeToolRules({
         onToggle={onToggle}
         onDelete={onDelete}
       />
-      <RuntimeToolRuleList
-        title={agentTitle}
-        subtitle="Agent-specific policies and overrides."
+      <AgentToolRuleGroups
         rules={agentRules}
         agents={agents}
+        agentList={agentList}
         onNew={onNewAgent}
         onEdit={onEdit}
         onToggle={onToggle}
@@ -1073,7 +1091,10 @@ function RuntimeToolRuleList({
           <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
           <p className="text-sm text-text-tertiary mt-1">{subtitle}</p>
         </div>
-        <button onClick={onNew} className="rounded border border-brand/30 px-4 py-2 text-sm font-medium text-brand hover:bg-brand/10">
+        <button
+          onClick={onNew}
+          className="rounded border border-brand/30 px-4 py-2 text-sm font-medium text-brand hover:bg-brand/10"
+        >
           Add rule
         </button>
       </div>
@@ -1094,6 +1115,197 @@ function RuntimeToolRuleList({
           />
         ))}
       </div>
+    </div>
+  )
+}
+
+function AgentToolRuleGroups({
+  rules,
+  agents,
+  agentList,
+  onNew,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  rules: RuntimePolicyRule[]
+  agents: Map<string, Agent>
+  agentList: Agent[]
+  onNew: (agentId: string) => void
+  onEdit: (rule: RuleDraft) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  const [agentFilter, setAgentFilter] = useState('all')
+  const rulesByAgent = useMemo(() => {
+    const grouped = new Map<string, RuntimePolicyRule[]>()
+    for (const rule of rules) {
+      if (!rule.agent_id) continue
+      const group = grouped.get(rule.agent_id) ?? []
+      group.push(rule)
+      grouped.set(rule.agent_id, group)
+    }
+    return grouped
+  }, [rules])
+
+  const sortedAgents = useMemo(
+    () => [...agentList].sort((a, b) => a.name.localeCompare(b.name)),
+    [agentList],
+  )
+  const unknownAgentIds = useMemo(
+    () => [...rulesByAgent.keys()].filter(agentId => !agents.has(agentId)).sort(),
+    [agents, rulesByAgent],
+  )
+  const visibleAgents = useMemo(
+    () => agentFilter === 'all' ? sortedAgents : sortedAgents.filter(agent => agent.id === agentFilter),
+    [agentFilter, sortedAgents],
+  )
+  const visibleUnknownAgentIds = useMemo(
+    () => agentFilter === 'all' ? unknownAgentIds : unknownAgentIds.filter(agentId => agentId === agentFilter),
+    [agentFilter, unknownAgentIds],
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">Agent Tool Policies</h3>
+          <p className="text-sm text-text-tertiary mt-1">Agent-specific policies and overrides.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-text-tertiary">Agent</label>
+          <select
+            value={agentFilter}
+            onChange={e => setAgentFilter(e.target.value)}
+            className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+          >
+            <option value="all">All agents</option>
+            {sortedAgents.map(agent => (
+              <option key={agent.id} value={agent.id}>{agent.name}</option>
+            ))}
+            {unknownAgentIds.map(agentId => (
+              <option key={agentId} value={agentId}>Unknown agent ({agentId})</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {visibleAgents.length === 0 && visibleUnknownAgentIds.length === 0 && (
+          <div className="rounded border border-dashed border-border-default bg-surface-0 px-4 py-6 text-sm text-text-tertiary">
+            {agentFilter === 'all' ? 'No agents yet.' : 'No policies for this agent yet.'}
+          </div>
+        )}
+        {visibleAgents.map(agent => (
+          <AgentToolRuleGroup
+            key={agent.id}
+            agentId={agent.id}
+            title={agent.name}
+            subtitle={agent.id}
+            rules={rulesByAgent.get(agent.id) ?? []}
+            agents={agents}
+            onNew={onNew}
+            onEdit={onEdit}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+        ))}
+        {visibleUnknownAgentIds.map(agentId => (
+          <AgentToolRuleGroup
+            key={agentId}
+            agentId={agentId}
+            title="Unknown agent"
+            subtitle={agentId}
+            rules={rulesByAgent.get(agentId) ?? []}
+            agents={agents}
+            onNew={onNew}
+            onEdit={onEdit}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AgentToolRuleGroup({
+  agentId,
+  title,
+  subtitle,
+  rules,
+  agents,
+  onNew,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  agentId: string
+  title: string
+  subtitle: string
+  rules: RuntimePolicyRule[]
+  agents: Map<string, Agent>
+  onNew: (agentId: string) => void
+  onEdit: (rule: RuleDraft) => void
+  onToggle: (rule: RuntimePolicyRule) => void
+  onDelete: (rule: RuntimePolicyRule) => void
+}) {
+  const [open, setOpen] = useState(rules.length > 0)
+
+  useEffect(() => {
+    if (rules.length > 0) setOpen(true)
+  }, [rules.length])
+
+  return (
+    <div className="rounded border border-border-subtle bg-surface-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(value => !value)}
+          className="min-w-0 flex-1 text-left"
+        >
+          <h4 className="truncate text-sm font-medium text-text-primary">{title}</h4>
+          <p className="truncate text-xs text-text-tertiary">{subtitle}</p>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full bg-surface-1 px-2 py-0.5 text-xs text-text-tertiary">
+            {rules.length} {rules.length === 1 ? 'policy' : 'policies'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setOpen(value => !value)}
+            className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
+          >
+            {open ? 'Hide' : 'Show'}
+          </button>
+          <button
+            onClick={() => onNew(agentId)}
+            className="rounded border border-brand/30 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10"
+          >
+            Add rule
+          </button>
+        </div>
+      </div>
+      {open && (
+        <div className="space-y-3 border-t border-border-subtle p-4">
+          {rules.length === 0 && (
+            <div className="rounded border border-dashed border-border-default px-4 py-5 text-sm text-text-tertiary">
+              No policies yet.
+            </div>
+          )}
+          {rules.map(rule => (
+            <RuntimeToolRuleRow
+              key={rule.id}
+              rule={rule}
+              agents={agents}
+              onEdit={onEdit}
+              onToggle={onToggle}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1166,9 +1378,9 @@ function PolicyRulesPanel({
   showAll,
   onToggleShowAll,
   agents,
+  agentList,
   egressRules,
   toolRules,
-  agentFilter,
   onNewRule,
   onEditRule,
   onToggleRule,
@@ -1189,9 +1401,9 @@ function PolicyRulesPanel({
   showAll: boolean
   onToggleShowAll: () => void
   agents: Map<string, Agent>
+  agentList: Agent[]
   egressRules: RuntimePolicyRule[]
   toolRules: RuntimePolicyRule[]
-  agentFilter: string
   onNewRule: (kind: 'egress' | 'tool', patch?: Partial<RuleDraft>) => void
   onEditRule: (rule: RuleDraft) => void
   onToggleRule: (rule: RuntimePolicyRule) => void
@@ -1272,9 +1484,9 @@ function PolicyRulesPanel({
           globalRules={toolRules.filter(rule => !rule.agent_id)}
           agentRules={toolRules.filter(rule => rule.agent_id)}
           agents={agents}
-          agentTitle={agentFilter !== 'all' ? `${agents.get(agentFilter)?.name ?? 'Selected agent'} Tool Policies` : 'Agent Tool Policies'}
+          agentList={agentList}
           onNewGlobal={() => onNewRule('tool', { scope: 'global', agent_id: undefined })}
-          onNewAgent={() => onNewRule('tool', { scope: 'agent', agent_id: agentFilter === 'all' ? undefined : agentFilter })}
+          onNewAgent={(agentId) => onNewRule('tool', { scope: 'agent', agent_id: agentId })}
           onEdit={onEditRule}
           onToggle={onToggleRule}
           onDelete={onDeleteRule}

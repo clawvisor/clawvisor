@@ -85,6 +85,7 @@ func MatchRuntimePolicyTool(rules []*store.RuntimePolicyRule, agentID, toolName 
 func bestMatchingRuntimePolicyRule(rules []*store.RuntimePolicyRule, agentID string, match func(rule *store.RuntimePolicyRule) (bool, int, error)) (*store.RuntimePolicyRule, error) {
 	var best *store.RuntimePolicyRule
 	bestActionRank := -1
+	bestSystemRank := -1
 	bestScopeRank := -1
 	bestScore := -1
 	for _, rule := range rules {
@@ -106,11 +107,17 @@ func bestMatchingRuntimePolicyRule(rules []*store.RuntimePolicyRule, agentID str
 		if rule.AgentID != nil && *rule.AgentID == agentID {
 			scopeRank = 1
 		}
-		if scopeRank > bestScopeRank ||
-			(scopeRank == bestScopeRank && actionRank > bestActionRank) ||
-			(scopeRank == bestScopeRank && actionRank == bestActionRank && score > bestScore) {
+		systemRank := 1
+		if strings.EqualFold(strings.TrimSpace(rule.Source), "system") {
+			systemRank = 0
+		}
+		if systemRank > bestSystemRank ||
+			(systemRank == bestSystemRank && scopeRank > bestScopeRank) ||
+			(systemRank == bestSystemRank && scopeRank == bestScopeRank && actionRank > bestActionRank) ||
+			(systemRank == bestSystemRank && scopeRank == bestScopeRank && actionRank == bestActionRank && score > bestScore) {
 			best = rule
 			bestActionRank = actionRank
+			bestSystemRank = systemRank
 			bestScopeRank = scopeRank
 			bestScore = score
 		}

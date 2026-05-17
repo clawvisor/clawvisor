@@ -730,10 +730,16 @@ export interface RuntimePolicyRule {
 export interface RuntimeToolControl {
   agent_id: string
   tool_name: string
+  // Agent-scoped UI "unset" is persisted by the backend as a review fallback
+  // rule so task scopes still govern the tool without an explicit allow/deny.
   action: 'unset' | 'allow' | 'review' | 'deny'
   rule_id?: string
   source: 'default' | 'request' | 'observed' | 'rule'
   scope?: 'unset' | 'global' | 'agent'
+  global_action: 'unset' | 'allow' | 'review' | 'deny'
+  global_rule_id?: string
+  agent_action: 'unset' | 'allow' | 'review' | 'deny'
+  agent_rule_id?: string
   last_seen_at?: string
   advanced_rule_count: number
   advanced_rules?: RuntimePolicyRule[]
@@ -1298,7 +1304,7 @@ export const api = {
       }),
     listToolControls: (agentId: string) =>
       get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
-    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny' }) =>
+    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny'; scope?: 'global' | 'agent' }) =>
       put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),

@@ -20,6 +20,10 @@ type runtimeToolControlResponse struct {
 	RuleID            string                     `json:"rule_id,omitempty"`
 	Source            string                     `json:"source"`
 	Scope             string                     `json:"scope,omitempty"`
+	GlobalAction      string                     `json:"global_action"`
+	GlobalRuleID      string                     `json:"global_rule_id,omitempty"`
+	AgentAction       string                     `json:"agent_action"`
+	AgentRuleID       string                     `json:"agent_rule_id,omitempty"`
 	LastSeenAt        *time.Time                 `json:"last_seen_at,omitempty"`
 	AdvancedRuleCount int                        `json:"advanced_rule_count"`
 	AdvancedRules     []*store.RuntimePolicyRule `json:"advanced_rules"`
@@ -51,12 +55,14 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		ctrl := controls[name]
 		if ctrl == nil {
 			ctrl = &runtimeToolControlResponse{
-				AgentID:    agentID,
-				ToolName:   name,
-				Action:     "unset",
-				Source:     "default",
-				Scope:      "unset",
-				LastSeenAt: nil,
+				AgentID:      agentID,
+				ToolName:     name,
+				Action:       "unset",
+				Source:       "default",
+				Scope:        "unset",
+				GlobalAction: "unset",
+				AgentAction:  "unset",
+				LastSeenAt:   nil,
 			}
 			controls[name] = ctrl
 		}
@@ -132,28 +138,28 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 			if !rule.Enabled {
 				continue
 			}
-			// Rules arrive in `created_at DESC` order. The newest rule
-			// for this tool should win. Track whether the recorded
-			// match is already agent-scoped so a later (older) rule
-			// — agent-scoped or not — never overrides it. A global
-			// rule may still be upgraded to a later-seen agent-scoped
-			// rule, since per-agent intent beats per-user defaults.
-			if ctrl.RuleID == "" {
-				ctrl.Action = normalizeToolControlAction(rule.Action)
-				ctrl.RuleID = rule.ID
-				ctrl.Source = "rule"
-				if rule.AgentID != nil {
+			action := toolControlActionForRule(rule)
+			if rule.AgentID != nil {
+				if ctrl.AgentRuleID == "" {
+					ctrl.AgentAction = action
+					ctrl.AgentRuleID = rule.ID
+				}
+				if !agentScopedTools[rule.ToolName] {
+					ctrl.Action = action
+					ctrl.RuleID = rule.ID
+					ctrl.Source = "rule"
 					ctrl.Scope = "agent"
 					agentScopedTools[rule.ToolName] = true
-				} else {
+				}
+			} else if ctrl.GlobalRuleID == "" {
+				ctrl.GlobalAction = action
+				ctrl.GlobalRuleID = rule.ID
+				if !agentScopedTools[rule.ToolName] {
+					ctrl.Action = action
+					ctrl.RuleID = rule.ID
+					ctrl.Source = "rule"
 					ctrl.Scope = "global"
 				}
-			} else if rule.AgentID != nil && !agentScopedTools[rule.ToolName] {
-				ctrl.Action = normalizeToolControlAction(rule.Action)
-				ctrl.RuleID = rule.ID
-				ctrl.Source = "rule"
-				ctrl.Scope = "agent"
-				agentScopedTools[rule.ToolName] = true
 			}
 			continue
 		}
@@ -189,6 +195,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		AgentID  string `json:"agent_id"`
 		ToolName string `json:"tool_name"`
 		Action   string `json:"action"`
+		Scope    string `json:"scope"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -196,6 +203,10 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 	agentID := strings.TrimSpace(body.AgentID)
 	toolName := strings.TrimSpace(body.ToolName)
 	action := normalizeToolControlAction(body.Action)
+	scope := strings.ToLower(strings.TrimSpace(body.Scope))
+	if scope == "" {
+		scope = "agent"
+	}
 	if agentID == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "agent_id is required")
 		return
@@ -208,13 +219,23 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "action must be unset, allow, review, or deny")
 		return
 	}
+	if scope != "agent" && scope != "global" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "scope must be agent or global")
+		return
+	}
 	if _, err := loadUserAgent(r.Context(), h.st, user.ID, agentID); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "agent_id must belong to the current user")
 		return
 	}
 
+	ruleAgentID := &agentID
+	ruleFilterAgentID := agentID
+	if scope == "global" {
+		ruleAgentID = nil
+		ruleFilterAgentID = ""
+	}
 	rules, err := h.st.ListRuntimePolicyRules(r.Context(), user.ID, store.RuntimePolicyRuleFilter{
-		AgentID: agentID,
+		AgentID: ruleFilterAgentID,
 		Kind:    "tool",
 		Limit:   500,
 	})
@@ -223,7 +244,13 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, rule := range rules {
-		if rule == nil || rule.AgentID == nil || *rule.AgentID != agentID || rule.ToolName != toolName || !isSimpleToolControlRule(rule) {
+		if rule == nil || rule.ToolName != toolName || !isSimpleToolControlRule(rule) {
+			continue
+		}
+		if scope == "agent" && (rule.AgentID == nil || *rule.AgentID != agentID) {
+			continue
+		}
+		if scope == "global" && rule.AgentID != nil {
 			continue
 		}
 		if err := h.st.DeleteRuntimePolicyRule(r.Context(), rule.ID, user.ID); err != nil && err != store.ErrNotFound {
@@ -233,10 +260,22 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 	}
 
 	if action == "unset" {
+		if scope == "global" {
+			writeJSON(w, http.StatusOK, runtimeToolControlResponse{
+				AgentID:      agentID,
+				ToolName:     toolName,
+				Action:       "unset",
+				Source:       "default",
+				Scope:        "unset",
+				GlobalAction: "unset",
+				AgentAction:  "unset",
+			})
+			return
+		}
 		rule := &store.RuntimePolicyRule{
 			ID:         uuid.NewString(),
 			UserID:     user.ID,
-			AgentID:    &agentID,
+			AgentID:    ruleAgentID,
 			Kind:       "tool",
 			Action:     "review",
 			ToolName:   toolName,
@@ -250,11 +289,14 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeJSON(w, http.StatusOK, runtimeToolControlResponse{
-			AgentID:  agentID,
-			ToolName: toolName,
-			Action:   "unset",
-			Source:   "default",
-			Scope:    "unset",
+			AgentID:      agentID,
+			ToolName:     toolName,
+			Action:       "unset",
+			Source:       "default",
+			Scope:        "unset",
+			GlobalAction: "unset",
+			AgentAction:  "unset",
+			AgentRuleID:  rule.ID,
 		})
 		return
 	}
@@ -262,7 +304,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 	rule := &store.RuntimePolicyRule{
 		ID:         uuid.NewString(),
 		UserID:     user.ID,
-		AgentID:    &agentID,
+		AgentID:    ruleAgentID,
 		Kind:       "tool",
 		Action:     action,
 		ToolName:   toolName,
@@ -275,13 +317,24 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create tool rule")
 		return
 	}
-	writeJSON(w, http.StatusOK, runtimeToolControlResponse{
-		AgentID:  agentID,
-		ToolName: toolName,
-		Action:   action,
-		RuleID:   rule.ID,
-		Source:   "rule",
-	})
+	resp := runtimeToolControlResponse{
+		AgentID:      agentID,
+		ToolName:     toolName,
+		Action:       action,
+		RuleID:       rule.ID,
+		Source:       "rule",
+		Scope:        scope,
+		GlobalAction: "unset",
+		AgentAction:  "unset",
+	}
+	if scope == "global" {
+		resp.GlobalAction = action
+		resp.GlobalRuleID = rule.ID
+	} else {
+		resp.AgentAction = action
+		resp.AgentRuleID = rule.ID
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func readStringSlice(value any) []string {
@@ -322,6 +375,14 @@ func normalizeToolControlAction(action string) string {
 	default:
 		return ""
 	}
+}
+
+func toolControlActionForRule(rule *store.RuntimePolicyRule) string {
+	action := normalizeToolControlAction(rule.Action)
+	if action == "review" && rule.Source == "user" && strings.HasPrefix(strings.TrimSpace(rule.Reason), "Use task scopes for ") {
+		return "unset"
+	}
+	return action
 }
 
 func isSimpleToolControlRule(rule *store.RuntimePolicyRule) bool {

@@ -2678,6 +2678,18 @@ func (s *Store) GetCredentialAuthorization(ctx context.Context, id string) (*sto
 	return scanSQLiteCredentialAuthorization(rows)
 }
 
+func (s *Store) DeleteCredentialAuthorization(ctx context.Context, id, userID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM credential_authorizations WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, match store.CredentialAuthorizationMatch, now time.Time) (*store.CredentialAuthorization, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

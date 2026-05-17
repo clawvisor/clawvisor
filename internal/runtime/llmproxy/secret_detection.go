@@ -76,12 +76,13 @@ type PendingSecretDecisionCache interface {
 	HoldSecret(ctx context.Context, pending PendingSecretDecision) (PendingSecretDecision, error)
 	PeekSecret(ctx context.Context, userID, agentID string, provider conversation.Provider) (*PendingSecretDecision, error)
 	ResolveSecret(ctx context.Context, userID, agentID string, provider conversation.Provider) (*PendingSecretDecision, error)
+	ResolveSecretID(ctx context.Context, userID, agentID string, provider conversation.Provider, id string) (*PendingSecretDecision, error)
 }
 
 type MemoryPendingSecretDecisionCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
-	pending map[pendingSecretKey]PendingSecretDecision
+	pending map[pendingSecretKey][]PendingSecretDecision
 	now     func() time.Time
 }
 
@@ -99,7 +100,7 @@ func NewMemoryPendingSecretDecisionCache(ttl time.Duration) *MemoryPendingSecret
 	}
 	return &MemoryPendingSecretDecisionCache{
 		ttl:     ttl,
-		pending: map[pendingSecretKey]PendingSecretDecision{},
+		pending: map[pendingSecretKey][]PendingSecretDecision{},
 		now:     time.Now,
 	}
 }
@@ -111,7 +112,7 @@ func (c *MemoryPendingSecretDecisionCache) HoldSecret(_ context.Context, pending
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.pending == nil {
-		c.pending = map[pendingSecretKey]PendingSecretDecision{}
+		c.pending = map[pendingSecretKey][]PendingSecretDecision{}
 	}
 	now := c.now().UTC()
 	if pending.ID == "" {
@@ -128,7 +129,8 @@ func (c *MemoryPendingSecretDecisionCache) HoldSecret(_ context.Context, pending
 		pending.ExpiresAt = now.Add(c.ttl)
 	}
 	c.pruneLocked(now)
-	c.pending[pending.key()] = pending
+	key := pending.key()
+	c.pending[key] = append(c.pending[key], pending)
 	return pending, nil
 }
 
@@ -140,11 +142,11 @@ func (c *MemoryPendingSecretDecisionCache) PeekSecret(_ context.Context, userID,
 	defer c.mu.Unlock()
 	now := c.now().UTC()
 	c.pruneLocked(now)
-	pending, ok := c.pending[pendingSecretKey{userID: userID, agentID: agentID, provider: provider}]
-	if !ok {
+	entries := c.pending[pendingSecretKey{userID: userID, agentID: agentID, provider: provider}]
+	if len(entries) == 0 {
 		return nil, nil
 	}
-	cp := pending
+	cp := entries[len(entries)-1]
 	return &cp, nil
 }
 
@@ -157,18 +159,59 @@ func (c *MemoryPendingSecretDecisionCache) ResolveSecret(_ context.Context, user
 	now := c.now().UTC()
 	c.pruneLocked(now)
 	key := pendingSecretKey{userID: userID, agentID: agentID, provider: provider}
-	pending, ok := c.pending[key]
-	if !ok {
+	entries := c.pending[key]
+	if len(entries) == 0 {
 		return nil, nil
 	}
-	delete(c.pending, key)
+	pending := entries[len(entries)-1]
+	entries = entries[:len(entries)-1]
+	if len(entries) == 0 {
+		delete(c.pending, key)
+	} else {
+		c.pending[key] = entries
+	}
 	return &pending, nil
 }
 
-func (c *MemoryPendingSecretDecisionCache) pruneLocked(now time.Time) {
-	for key, pending := range c.pending {
-		if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(now) {
+func (c *MemoryPendingSecretDecisionCache) ResolveSecretID(_ context.Context, userID, agentID string, provider conversation.Provider, id string) (*PendingSecretDecision, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now().UTC()
+	c.pruneLocked(now)
+	key := pendingSecretKey{userID: userID, agentID: agentID, provider: provider}
+	entries := c.pending[key]
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].ID != id {
+			continue
+		}
+		pending := entries[i]
+		entries = append(entries[:i], entries[i+1:]...)
+		if len(entries) == 0 {
 			delete(c.pending, key)
+		} else {
+			c.pending[key] = entries
+		}
+		return &pending, nil
+	}
+	return nil, nil
+}
+
+func (c *MemoryPendingSecretDecisionCache) pruneLocked(now time.Time) {
+	for key, entries := range c.pending {
+		kept := entries[:0]
+		for _, pending := range entries {
+			if !pending.ExpiresAt.IsZero() && !pending.ExpiresAt.After(now) {
+				continue
+			}
+			kept = append(kept, pending)
+		}
+		if len(kept) == 0 {
+			delete(c.pending, key)
+		} else {
+			c.pending[key] = kept
 		}
 	}
 }
@@ -318,7 +361,10 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 		case runtimeautovault.HighContextSecretField(fieldName), runtimeautovault.SecretContextHint(value, candidate.Value):
 			value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, runtimeautovault.GuessService(fieldName, value), "heuristic_swap", candidate.Entropy, opts.Suppressed, findings))
 		default:
-			verdict, ok := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
+			verdict, ok, failed := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
+			if failed {
+				continue
+			}
 			if ok {
 				if !verdict.Credential || verdict.Confidence < 0.6 {
 					continue
@@ -368,9 +414,9 @@ func stripSecretRedactionMarkers(value string) string {
 	return secretRedactionMarkerRE.ReplaceAllString(value, "")
 }
 
-func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions, fieldName, content string, candidate runtimeautovault.Candidate) (runtimeautovault.SecretAdjudicationVerdict, bool) {
+func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions, fieldName, content string, candidate runtimeautovault.Candidate) (runtimeautovault.SecretAdjudicationVerdict, bool, bool) {
 	if opts.Adjudicator == nil {
-		return runtimeautovault.SecretAdjudicationVerdict{}, false
+		return runtimeautovault.SecretAdjudicationVerdict{}, false, false
 	}
 	host := opts.Host
 	if host == "" {
@@ -383,9 +429,9 @@ func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions,
 		Candidate: candidate,
 	})
 	if err != nil {
-		return runtimeautovault.SecretAdjudicationVerdict{}, false
+		return runtimeautovault.SecretAdjudicationVerdict{}, false, true
 	}
-	return result.Verdict, true
+	return result.Verdict, true, false
 }
 
 func redactFoundSecret(raw, service, source string, entropy float64, suppressed map[string]struct{}, findings map[string]InboundSecretFinding) string {
@@ -470,14 +516,6 @@ func LatestUserText(provider conversation.Provider, body []byte) string {
 			Input    json.RawMessage  `json:"input"`
 		}
 		if err := json.Unmarshal(body, &parsed); err == nil {
-			for i := len(parsed.Messages) - 1; i >= 0; i-- {
-				role, _ := parsed.Messages[i]["role"].(string)
-				if role != "user" {
-					continue
-				}
-				raw, _ := json.Marshal(parsed.Messages[i]["content"])
-				return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
-			}
 			var input string
 			if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &input) == nil {
 				return strings.TrimSpace(input)
@@ -492,6 +530,14 @@ func LatestUserText(provider conversation.Provider, body []byte) string {
 					raw, _ := json.Marshal(items[i]["content"])
 					return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
 				}
+			}
+			for i := len(parsed.Messages) - 1; i >= 0; i-- {
+				role, _ := parsed.Messages[i]["role"].(string)
+				if role != "user" {
+					continue
+				}
+				raw, _ := json.Marshal(parsed.Messages[i]["content"])
+				return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
 			}
 		}
 	}

@@ -630,6 +630,80 @@ func TestRuntimeHandlerToolControlsScopesGlobalAdvancedRules(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandlerToolControlsExposeGlobalAndAgentSimplePolicies(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls-global-agent-simple.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-simple-scopes@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "codex", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	agentID := agent.ID
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "global-bash-deny",
+		UserID:     user.ID,
+		Kind:       "tool",
+		Action:     "deny",
+		ToolName:   "Bash",
+		InputShape: json.RawMessage(`{}`),
+		Reason:     "global Bash default",
+		Source:     "user",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule global: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "agent-bash-allow",
+		UserID:     user.ID,
+		AgentID:    &agentID,
+		Kind:       "tool",
+		Action:     "allow",
+		ToolName:   "Bash",
+		InputShape: json.RawMessage(`{}`),
+		Reason:     "agent Bash override",
+		Source:     "user",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule agent: %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.ListToolControls(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", res.Code, res.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	if len(listed.Entries) != 1 {
+		t.Fatalf("expected one Bash control, got %+v", listed.Entries)
+	}
+	got := listed.Entries[0]
+	if got.ToolName != "Bash" || got.Action != "allow" || got.Scope != "agent" {
+		t.Fatalf("effective control should remain agent-scoped allow, got %+v", got)
+	}
+	if got.GlobalAction != "deny" || got.GlobalRuleID != "global-bash-deny" {
+		t.Fatalf("global simple policy should be exposed separately, got %+v", got)
+	}
+	if got.AgentAction != "allow" || got.AgentRuleID != "agent-bash-allow" {
+		t.Fatalf("agent simple policy should be exposed separately, got %+v", got)
+	}
+}
+
 func TestRuntimeHandlerPromoteEventToTask(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-event-promote.db"))

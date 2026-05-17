@@ -3,7 +3,9 @@ package autovault
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -255,7 +257,37 @@ func NormalizeSecretService(value string) string {
 }
 
 func RedactedCandidateContext(content, candidate string) string {
-	return strings.ReplaceAll(content, candidate, "<TOKEN_CANDIDATE_1>")
+	replacements := map[string]string{}
+	if candidate != "" {
+		replacements[candidate] = "<TOKEN_CANDIDATE_1>"
+	}
+	next := 2
+	for _, peer := range DetectCandidates(content) {
+		value := strings.TrimSpace(peer.Value)
+		if value == "" {
+			continue
+		}
+		if _, ok := replacements[value]; ok {
+			continue
+		}
+		replacements[value] = fmt.Sprintf("<TOKEN_CANDIDATE_%d>", next)
+		next++
+	}
+	out := content
+	values := make([]string, 0, len(replacements))
+	for value := range replacements {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if len(values[i]) == len(values[j]) {
+			return values[i] < values[j]
+		}
+		return len(values[i]) > len(values[j])
+	})
+	for _, value := range values {
+		out = strings.ReplaceAll(out, value, replacements[value])
+	}
+	return out
 }
 
 func AdjudicationCacheKey(host, fieldName, charset, contextWindow string) string {

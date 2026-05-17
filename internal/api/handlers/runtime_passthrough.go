@@ -127,7 +127,10 @@ func (h *RuntimeHandler) DisablePassthrough(w http.ResponseWriter, r *http.Reque
 	}
 	for _, rule := range rules {
 		if rule != nil && rule.Source == "break_glass" {
-			_ = h.st.DeleteRuntimePolicyRule(r.Context(), rule.ID, user.ID)
+			if err := h.st.DeleteRuntimePolicyRule(r.Context(), rule.ID, user.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not disable passthrough")
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "disabled"})
