@@ -8,12 +8,14 @@ func TestParseApprovalReplyText(t *testing.T) {
 		wantVerb string
 		wantID   string
 	}{
+		{"yes", "approve", ""},
+		{"y", "approve", ""},
+		{"no", "deny", ""},
+		{"n", "deny", ""},
 		{"approve", "approve", ""},
 		{"deny", "deny", ""},
-		{"yes", "approve", ""},
-		{"no", "deny", ""},
-		{"ok", "approve", ""},
-		{"cancel", "deny", ""},
+		{"ok", "", ""},
+		{"cancel", "", ""},
 		{"approve cv-abc123def456", "approve", "cv-abc123def456"},
 		{"deny cv-abc123def456", "deny", "cv-abc123def456"},
 		{"", "", ""},
