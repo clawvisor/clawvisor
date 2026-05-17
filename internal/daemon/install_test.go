@@ -153,6 +153,8 @@ func TestWriteDaemonConfig(t *testing.T) {
 	configPath := filepath.Join(dir, "config.yaml")
 
 	cfg := &daemonConfig{
+		host:                "127.0.0.1",
+		port:                25297,
 		llmProvider:         "anthropic",
 		llmEndpoint:         "https://api.anthropic.com/v1",
 		llmModel:            "claude-haiku-4-5-20251001",
@@ -177,7 +179,7 @@ func TestWriteDaemonConfig(t *testing.T) {
 		desc   string
 	}{
 		{"port: 25297", "server port"},
-		{"host: \"127.0.0.1\"", "server host"},
+		{"host: 127.0.0.1", "server host"},
 		{"driver: \"sqlite\"", "database driver"},
 		{"backend: \"local\"", "vault backend"},
 		{"provider: anthropic", "llm provider"},
@@ -207,6 +209,8 @@ func TestWriteDaemonConfigSpecialChars(t *testing.T) {
 	configPath := filepath.Join(dir, "config.yaml")
 
 	cfg := &daemonConfig{
+		host:        "127.0.0.1",
+		port:        25297,
 		llmProvider: "openai",
 		llmEndpoint: "https://api.openai.com/v1",
 		llmModel:    "gpt-4o-mini",
@@ -234,6 +238,37 @@ func TestWriteDaemonConfigSpecialChars(t *testing.T) {
 	// (writeDaemonConfig uses yamlQuote, so this should always work.)
 	if strings.Count(content, "api_key:") != 1 {
 		t.Error("expected exactly one api_key entry")
+	}
+}
+
+func TestWriteDaemonConfigCustomHostPort(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	cfg := &daemonConfig{
+		host:             "0.0.0.0",
+		port:             31337,
+		llmProvider:      "openai",
+		llmEndpoint:      "https://api.openai.com/v1",
+		llmModel:         "gpt-4o-mini",
+		llmAPIKey:        "sk-test-key",
+		telemetryEnabled: true,
+	}
+
+	if err := writeDaemonConfig(cfg, dir, "jwt-secret", configPath); err != nil {
+		t.Fatalf("writeDaemonConfig: %v", err)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "port: 31337") {
+		t.Fatalf("config missing custom port: %s", content)
+	}
+	if !strings.Contains(content, "host: 0.0.0.0") {
+		t.Fatalf("config missing custom host: %s", content)
 	}
 }
 
