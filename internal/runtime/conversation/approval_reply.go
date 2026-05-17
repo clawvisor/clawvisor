@@ -24,12 +24,12 @@ func ParseApprovalReplyText(text string) (verb, id string) {
 			return strings.ToLower(match[1]), strings.ToLower(match[2])
 		}
 		if match := bareApprovalRE.FindStringSubmatch(line); match != nil {
-			v:=strings.ToLower(match[1])
-			switch v{
-			case "yes","ok":
-				v="approve"
-			case "no","cancel":
-				v="deny"
+			v := strings.ToLower(match[1])
+			switch v {
+			case "yes", "ok":
+				v = "approve"
+			case "no", "cancel":
+				v = "deny"
 			}
 			return v, ""
 		}
