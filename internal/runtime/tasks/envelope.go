@@ -54,9 +54,9 @@ type TaskCreateRequest struct {
 	Purpose                string               `json:"purpose"`
 	AuthorizedActions      []map[string]any     `json:"authorized_actions,omitempty"`
 	PlannedCalls           []map[string]any     `json:"planned_calls,omitempty"`
-	ExpectedTools          []ExpectedTool       `json:"expected_tools_json,omitempty"`
-	ExpectedEgress         []ExpectedEgress     `json:"expected_egress_json,omitempty"`
-	RequiredCredentials    []RequiredCredential `json:"required_credentials_json,omitempty"`
+	ExpectedTools          []ExpectedTool       `json:"expected_tools,omitempty"`
+	ExpectedEgress         []ExpectedEgress     `json:"expected_egress,omitempty"`
+	RequiredCredentials    []RequiredCredential `json:"required_credentials,omitempty"`
 	IntentVerificationMode string               `json:"intent_verification_mode,omitempty"`
 	ExpectedUse            string               `json:"expected_use,omitempty"`
 	SchemaVersion          int                  `json:"schema_version,omitempty"`

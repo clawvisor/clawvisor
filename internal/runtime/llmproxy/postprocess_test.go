@@ -602,7 +602,7 @@ func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
 		"tell me that I will need to approve it",
 		`"tool_name": "Write"`,
 		"/tmp/report.txt",
-		"expected_tools_json",
+		"expected_tools",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("approval prompt missing %q:\n%s", want, got)
@@ -629,7 +629,7 @@ func TestParseControlToolUseRejectsNonSimpleShell(t *testing.T) {
 }
 
 func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -X POST https://clawvisor.local/control/tasks -H 'Content-Type: application/json' -d '{\"purpose\":\"test\",\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"test\"}]}'"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -670,7 +670,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools_json\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/control/tasks"}`)
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/control/tasks"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -713,7 +713,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools_json\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/control/tasks\"}")
+	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/control/tasks\"}")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -749,7 +749,7 @@ func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing
 }
 
 func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T) {
-	cmd := "curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools_json\":[{\"tool_name\":\"Bash\",\"why\":\"Search with find /tmp -iname 'hello'; content can mention $HOME\"}]}\nJSON"
+	cmd := "curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \\\n  -H 'Content-Type: application/json' \\\n  --data @- <<'JSON'\n{\"purpose\":\"test\",\"expected_tools\":[{\"tool_name\":\"Bash\",\"why\":\"Search with find /tmp -iname 'hello'; content can mention $HOME\"}]}\nJSON"
 	input, err := json.Marshal(map[string]any{"command": cmd})
 	if err != nil {
 		t.Fatal(err)

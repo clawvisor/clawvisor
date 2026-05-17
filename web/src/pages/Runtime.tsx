@@ -54,32 +54,39 @@ export default function Runtime() {
     queryKey: ['runtime-status'],
     queryFn: () => api.runtime.status(),
   })
+  const fullProxyActive = !!status?.enabled
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
+    enabled: fullProxyActive,
     refetchInterval: 15_000,
   })
   const { data: approvals } = useQuery({
     queryKey: ['runtime-approvals'],
     queryFn: () => api.runtime.listApprovals(),
+    enabled: fullProxyActive,
     refetchInterval: 10_000,
   })
   const { data: events } = useQuery({
     queryKey: ['runtime-events'],
     queryFn: () => api.runtime.listEvents(),
+    enabled: fullProxyActive,
     refetchInterval: 10_000,
   })
   const { data: egressRules } = useQuery({
     queryKey: ['runtime-rules', 'egress', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'egress', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    enabled: fullProxyActive,
   })
   const { data: toolRules } = useQuery({
     queryKey: ['runtime-rules', 'tool', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'tool', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    enabled: fullProxyActive,
   })
   const { data: starterProfiles } = useQuery({
     queryKey: ['runtime-starter-profiles'],
     queryFn: () => api.runtime.listStarterProfiles(),
+    enabled: fullProxyActive,
   })
 
   const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
@@ -158,7 +165,7 @@ export default function Runtime() {
         </div>
       </div>
 
-      {status && (
+      {status && fullProxyActive && (
         <RuntimeStatusPanel
           status={status}
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
@@ -170,14 +177,16 @@ export default function Runtime() {
         />
       )}
 
-      <StarterProfilesPanel
-        profiles={starterProfiles?.entries ?? []}
-        agents={agents}
-        agentFilter={agentFilter}
-        onApplied={refreshRuntime}
-      />
+      {fullProxyActive && (
+        <StarterProfilesPanel
+          profiles={starterProfiles?.entries ?? []}
+          agents={agents}
+          agentFilter={agentFilter}
+          onApplied={refreshRuntime}
+        />
+      )}
 
-      {editingRule && (
+      {fullProxyActive && editingRule && (
         <RuleEditorCard
           key={editingRule.id ?? `${editingRule.kind}-${editingRule.action}-${editingRule.host ?? editingRule.tool_name ?? 'new'}`}
           agents={agents}
@@ -191,45 +200,49 @@ export default function Runtime() {
         />
       )}
 
-      <RuleSection
-        title="Global Egress Rules"
-        subtitle="Fast-path controls for background and harness HTTP noise."
-        rules={egressRules?.entries ?? []}
-        agents={agentMap}
-        onNew={() => startCreateRule('egress')}
-        onEdit={setEditingRule}
-        onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-        onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-      />
+      {fullProxyActive && (
+        <>
+          <RuleSection
+            title="Global Egress Rules"
+            subtitle="Fast-path controls for background and harness HTTP noise."
+            rules={egressRules?.entries ?? []}
+            agents={agentMap}
+            onNew={() => startCreateRule('egress')}
+            onEdit={setEditingRule}
+            onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+            onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
+          />
 
-      <RuleSection
-        title="Global Tool Rules"
-        subtitle="Allow, review, or deny repeated tool-use patterns before they hit task friction."
-        rules={toolRules?.entries ?? []}
-        agents={agentMap}
-        onNew={() => startCreateRule('tool')}
-        onEdit={setEditingRule}
-        onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-        onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-      />
+          <RuleSection
+            title="Global Tool Rules"
+            subtitle="Allow, review, or deny repeated tool-use patterns before they hit task friction."
+            rules={toolRules?.entries ?? []}
+            agents={agentMap}
+            onNew={() => startCreateRule('tool')}
+            onEdit={setEditingRule}
+            onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+            onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
+          />
 
-      <RuntimeApprovalsPanel approvals={liveApprovals} onResolved={refreshRuntime} />
+          <RuntimeApprovalsPanel approvals={liveApprovals} onResolved={refreshRuntime} />
 
-      <RuntimeSessionsPanel sessions={sessions?.entries ?? []} agents={agentMap} onUpdated={refreshRuntime} />
+          <RuntimeSessionsPanel sessions={sessions?.entries ?? []} agents={agentMap} onUpdated={refreshRuntime} />
 
-      <RuntimeEventsPanel
-        events={events?.entries ?? []}
-        agents={agentMap}
-        onResolved={refreshRuntime}
-        onEditRule={async (event, action) => {
-          const candidate = await api.runtime.getRuleCandidate(event.id, action)
-          setEditingRule({
-            ...candidate.rule,
-            scope: candidate.scope_default,
-          })
-        }}
-        onPromoteTask={(eventId, lifetime) => promoteTaskMut.mutate({ eventId, lifetime })}
-      />
+          <RuntimeEventsPanel
+            events={events?.entries ?? []}
+            agents={agentMap}
+            onResolved={refreshRuntime}
+            onEditRule={async (event, action) => {
+              const candidate = await api.runtime.getRuleCandidate(event.id, action)
+              setEditingRule({
+                ...candidate.rule,
+                scope: candidate.scope_default,
+              })
+            }}
+            onPromoteTask={(eventId, lifetime) => promoteTaskMut.mutate({ eventId, lifetime })}
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -565,6 +578,7 @@ export function RuleEditorCard({
   busy,
   allowedKinds = ['egress', 'tool'],
   defaultAgentId,
+  agentScopeLabel = 'One agent',
   toolNameOptions = [],
   onCancel,
   onSave,
@@ -574,6 +588,7 @@ export function RuleEditorCard({
   busy: boolean
   allowedKinds?: Array<'egress' | 'tool'>
   defaultAgentId?: string
+  agentScopeLabel?: string
   toolNameOptions?: string[]
   onCancel: () => void
   onSave: (draft: RuleDraft) => void
@@ -650,7 +665,7 @@ export function RuleEditorCard({
           <legend className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Applies to</legend>
           <RadioGroup
             options={[
-              { value: 'agent', label: 'One agent' },
+              { value: 'agent', label: agentScopeLabel },
               { value: 'global', label: 'All agents' },
             ]}
             value={local.scope ?? 'agent'}

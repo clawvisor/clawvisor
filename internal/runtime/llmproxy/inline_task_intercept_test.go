@@ -16,7 +16,7 @@ import (
 
 // inlineTaskBody is a typical task body the model would POST after the
 // user types "task" on an inline approval prompt.
-const inlineTaskBody = `{"purpose":"Build a landing page at /tmp/landing","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Create directory"},{"tool_name":"Write","why":"Create HTML files"}]}`
+const inlineTaskBody = `{"purpose":"Build a landing page at /tmp/landing","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Create directory"},{"tool_name":"Write","why":"Create HTML files"}]}`
 
 func anthropicBashControlTasksPost(body string) []byte {
 	cmd := `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' -H 'Content-Type: application/json' --data '` + body + `'`
@@ -240,7 +240,7 @@ func TestPostprocess_InlineTaskPromptRendersCredentialsAndRisk(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
-	taskBody := `{"purpose":"Create GitHub release issues","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Call the GitHub API."}],"required_credentials_json":[{"vault_item_id":"github","why":"Create issues in owner/repo."}]}`
+	taskBody := `{"purpose":"Create GitHub release issues","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the GitHub API."}],"required_credentials":[{"vault_item_id":"github","why":"Create issues in owner/repo."}]}`
 	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
@@ -269,7 +269,7 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
-	taskBody := `{"purpose":"Call agentphone","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Call the agentphone API."}],"required_credentials_json":[{"vault_item_id":"agentphone"}]}`
+	taskBody := `{"purpose":"Call agentphone","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Call the agentphone API."}],"required_credentials":[{"vault_item_id":"agentphone"}]}`
 	body := anthropicBashControlTasksPostWithQuery(taskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})

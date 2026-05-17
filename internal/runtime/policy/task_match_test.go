@@ -174,7 +174,7 @@ func TestToolNamesMatch(t *testing.T) {
 		{"CustomTool", "CustomTool", true},
 		{"customtool", "CustomTool", true},
 		{"CustomTool", "OtherTool", false},
-		// Canonical class names declared in expected_tools_json must
+		// Canonical class names declared in expected_tools must
 		// also map to their class — otherwise the alias relation is
 		// asymmetric (Bash→exec_command works, but edit_file→Edit
 		// doesn't).

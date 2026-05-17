@@ -26,7 +26,7 @@ func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 				RequiredCredentials []struct {
 					VaultItemID string `json:"vault_item_id"`
 					Why         string `json:"why"`
-				} `json:"required_credentials_json"`
+				} `json:"required_credentials"`
 			} `json:"body"`
 		} `json:"create_task"`
 		Rules []string `json:"rules"`

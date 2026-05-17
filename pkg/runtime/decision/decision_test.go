@@ -301,7 +301,7 @@ func TestEvaluateAuthorization_ToolTaskIntentLenientFlag(t *testing.T) {
 // Regression: when the lite-proxy's catalog resolves a credentialed
 // call to (service, action) but no task declared `authorized_actions`
 // for it, the evaluator should still try matching against the task's
-// `expected_tools_json` before defaulting to approval-required. The
+// `expected_tools` before defaulting to approval-required. The
 // lite-proxy's taskCreationPrompt steers the model to declare scope
 // via expected_tools, so a previously-approved task that covers
 // (Bash, "curl api.github.com/user") must allow the credentialed call
@@ -329,7 +329,7 @@ func TestEvaluateAuthorization_ServiceActionFallsBackToExpectedTool(t *testing.T
 }
 
 // Regression: a task created in a Claude Code session declares Bash
-// in expected_tools_json; the same task should cover the equivalent
+// in expected_tools; the same task should cover the equivalent
 // work when the user is in a Codex session that emits `exec_command`.
 // Cross-harness tool aliases must resolve through the toolClass map.
 func TestEvaluateAuthorization_ExpectedToolMatchAcceptsCrossHarnessAliases(t *testing.T) {
@@ -348,7 +348,7 @@ func TestEvaluateAuthorization_ExpectedToolMatchAcceptsCrossHarnessAliases(t *te
 
 // Regression: OpenClaw exposes its shell surface as `exec`, while the
 // task prompt asks models to declare shell scope as `Bash`. An inline
-// approved task with expected_tools_json[0].tool_name="Bash" must cover
+// approved task with expected_tools[0].tool_name="Bash" must cover
 // a later OpenClaw `exec` call, otherwise the user sees a second
 // no-matching-task-scope approval immediately after approving the task.
 func TestEvaluateAuthorization_ExpectedToolMatchAcceptsOpenClawExecAlias(t *testing.T) {
@@ -365,7 +365,7 @@ func TestEvaluateAuthorization_ExpectedToolMatchAcceptsOpenClawExecAlias(t *test
 	}
 }
 
-// Regression: models populate expected_tools_json from documentation
+// Regression: models populate expected_tools from documentation
 // and examples; they routinely use lowercase tool names (`bash`) even
 // when the harness reports `Bash`. The task-scope matcher must be
 // case-insensitive so the model-emitted lowercase form covers the

@@ -571,9 +571,9 @@ type Task struct {
 	Lifetime               string          `json:"lifetime"` // session | standing
 	AuthorizedActions      []TaskAction    `json:"authorized_actions"`
 	PlannedCalls           []PlannedCall   `json:"planned_calls,omitempty"`
-	ExpectedTools          json.RawMessage `json:"expected_tools_json,omitempty"`
-	ExpectedEgress         json.RawMessage `json:"expected_egress_json,omitempty"`
-	RequiredCredentials    json.RawMessage `json:"required_credentials_json,omitempty"`
+	ExpectedTools          json.RawMessage `json:"expected_tools,omitempty"`
+	ExpectedEgress         json.RawMessage `json:"expected_egress,omitempty"`
+	RequiredCredentials    json.RawMessage `json:"required_credentials,omitempty"`
 	IntentVerificationMode string          `json:"intent_verification_mode,omitempty"`
 	// ChainExtractionMode overrides the system default for async chain-context
 	// extraction. "" (unset) defers to the system default; "full" runs the

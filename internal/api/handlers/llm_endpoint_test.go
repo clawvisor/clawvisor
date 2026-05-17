@@ -627,7 +627,7 @@ func TestLLMEndpoint_OpenAIRawLogShapedSecretReplayDoesNotReprompt(t *testing.T)
 	}
 
 	rawSecret := "re_TestSecret1234567890abcdef"
-	initialBody := `{"model":"gpt-5.4","input":[{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials_json when credentials are needed. Avoid re_escalated false positives."}]},{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? ` + rawSecret + `"}]}]}`
+	initialBody := `{"model":"gpt-5.4","input":[{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials when credentials are needed. Avoid re_escalated false positives."}]},{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? ` + rawSecret + `"}]}]}`
 	firstRec := send(initialBody)
 	if firstRec.Code != http.StatusOK {
 		t.Fatalf("expected first request to return secret prompt, got %d (%s)", firstRec.Code, firstRec.Body.String())
@@ -659,7 +659,7 @@ func TestLLMEndpoint_OpenAIRawLogShapedSecretReplayDoesNotReprompt(t *testing.T)
 	replayBody := `{
 		"model":"gpt-5.4",
 		"input":[
-			{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials_json when credentials are needed. Avoid re_escalated false positives."}]},
+			{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials when credentials are needed. Avoid re_escalated false positives."}]},
 			{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? ` + rawSecret + `"}]},
 			{"role":"assistant","content":[{"type":"output_text","text":"Clawvisor detected a possible raw secret in the last message.\n\nSuggested vault name: ` + "`resend`" + `\nDetection source: known_prefix\n\n[clawvisor:secret=cv-secret-rawlog]"}]},
 			{"role":"user","content":[{"type":"input_text","text":"vault resend"}]},

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Agent, type Restriction, type OrgRestriction, type RuntimePolicyRule, type RuntimeToolControl, type ServiceInfo } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { serviceName, actionName } from '../lib/services'
@@ -281,10 +281,12 @@ export default function Policy() {
   const { currentOrg, features } = useAuth()
   const orgId = currentOrg?.id
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const linkedAgentId = searchParams.get('agent_id') ?? ''
   const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
   const servicePresetsUI = !orgId && !!features?.service_presets
   const [showAll, setShowAll] = useState(false)
-  const [agentFilter, setAgentFilter] = useState<string>('all')
+  const [agentFilter, setAgentFilter] = useState<string>(() => linkedAgentId || 'all')
   const [editingRule, setEditingRule] = useState<RuleDraft | null>(null)
   const [rulesTab, setRulesTab] = useState<'service' | 'egress' | 'tool'>('service')
   const [proxyLiteTab, setProxyLiteTab] = useState<'tools' | 'accounts'>('tools')
@@ -311,21 +313,22 @@ export default function Policy() {
     enabled: runtimePolicyUI,
   })
   const proxyLiteOnly = runtimePolicyUI && !!status?.proxy_lite_enabled && !status.enabled
+  const fullProxyActive = runtimePolicyUI && !!status?.enabled
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: runtimePolicyUI && !proxyLiteOnly,
+    enabled: fullProxyActive,
     refetchInterval: 15_000,
   })
   const { data: egressRules } = useQuery({
     queryKey: ['runtime-rules', 'egress'],
     queryFn: () => api.runtime.listRules({ kind: 'egress' }),
-    enabled: runtimePolicyUI,
+    enabled: fullProxyActive,
   })
   const { data: toolRules } = useQuery({
     queryKey: ['runtime-rules', 'tool'],
     queryFn: () => api.runtime.listRules({ kind: 'tool' }),
-    enabled: runtimePolicyUI,
+    enabled: fullProxyActive,
   })
   const { data: toolControls } = useQuery({
     queryKey: ['runtime-tool-controls', agentFilter],
@@ -335,7 +338,7 @@ export default function Policy() {
   const { data: starterProfiles } = useQuery({
     queryKey: ['runtime-starter-profiles'],
     queryFn: () => api.runtime.listStarterProfiles(),
-    enabled: runtimePolicyUI && !proxyLiteOnly,
+    enabled: fullProxyActive,
   })
   const isLoading = servicesLoading || restrictionsLoading
   const allServices = servicesData?.services ?? []
@@ -344,6 +347,16 @@ export default function Policy() {
 
   const activated = allServices.filter(s => s.status === 'activated')
   const unactivated = allServices.filter(s => s.status !== 'activated')
+
+  const setPolicyAgentFilter = useCallback((nextAgentId: string) => {
+    setAgentFilter(nextAgentId)
+    setSearchParams(current => {
+      const next = new URLSearchParams(current)
+      if (nextAgentId && nextAgentId !== 'all') next.set('agent_id', nextAgentId)
+      else next.delete('agent_id')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
 
   const refreshRuntime = () => {
     qc.invalidateQueries({ queryKey: ['runtime-rules'] })
@@ -390,10 +403,23 @@ export default function Policy() {
   }, [runtimePolicyUI, rulesTab])
 
   useEffect(() => {
-    if (proxyLiteOnly && agentFilter === 'all' && agents.length > 0) {
-      setAgentFilter(agents[0].id)
+    if (linkedAgentId && linkedAgentId !== agentFilter) {
+      setAgentFilter(linkedAgentId)
     }
-  }, [proxyLiteOnly, agentFilter, agents])
+  }, [agentFilter, linkedAgentId])
+
+  useEffect(() => {
+    if (linkedAgentId && fullProxyActive && rulesTab === 'service') {
+      setRulesTab('tool')
+    }
+  }, [fullProxyActive, linkedAgentId, rulesTab])
+
+  useEffect(() => {
+    if (!proxyLiteOnly || agents.length === 0) return
+    if (agentFilter !== 'all' && agents.some(agent => agent.id === agentFilter)) return
+    const linkedAgent = linkedAgentId && agents.some(agent => agent.id === linkedAgentId) ? linkedAgentId : ''
+    setPolicyAgentFilter(linkedAgent || agents[0].id)
+  }, [agentFilter, agents, linkedAgentId, proxyLiteOnly, setPolicyAgentFilter])
 
   return (
     <div className="p-4 sm:p-8 space-y-8">
@@ -410,14 +436,14 @@ export default function Policy() {
         </div>
       </div>
 
-      {runtimePolicyUI && status && !proxyLiteOnly && (
+      {fullProxyActive && status && (
         <RuntimeStatusPanel
           status={status}
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
         />
       )}
 
-      {runtimePolicyUI && !proxyLiteOnly && (
+      {fullProxyActive && (
         <StarterProfilesPanel
           profiles={starterProfiles?.entries ?? []}
           agents={agents}
@@ -426,7 +452,7 @@ export default function Policy() {
         />
       )}
 
-      {servicePresetsUI && !proxyLiteOnly && (
+      {servicePresetsUI && fullProxyActive && (
         <ServicePresetsPanel
           agents={agents}
           agentFilter="all"
@@ -434,7 +460,7 @@ export default function Policy() {
         />
       )}
 
-      {runtimePolicyUI && editingRule && (
+      {(fullProxyActive || proxyLiteOnly) && editingRule && (
         <RuleEditorCard
           key={editingRule.id ?? `${editingRule.kind}-${editingRule.action}-${editingRule.host ?? editingRule.tool_name ?? 'new'}`}
           agents={agents}
@@ -461,13 +487,16 @@ export default function Policy() {
             <ProxyLiteToolControlsPanel
               agentId={agentFilter}
               agentList={agents}
-              onAgentChange={setAgentFilter}
+              onAgentChange={setPolicyAgentFilter}
               controls={toolControls?.entries ?? []}
               agents={agentMap}
               busy={updateToolControlMut.isPending}
               onChange={(toolName, action, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action, scope })}
-              onAdvanced={(toolName, scope) => setEditingRule({ ...emptyToolRule(), scope, agent_id: scope === 'agent' ? agentFilter : undefined, tool_name: toolName })}
-              onEditAdvanced={(rule) => setEditingRule({ ...rule, scope: rule.agent_id ? 'agent' : 'global' })}
+              ruleBusy={createRuleMut.isPending || updateRuleMut.isPending}
+              onSaveRule={async (draft) => {
+                if (draft.id) await updateRuleMut.mutateAsync(draft)
+                else await createRuleMut.mutateAsync(draft)
+              }}
               onToggleAdvanced={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
               onDeleteAdvanced={(rule) => deleteRuleMut.mutate(rule.id)}
             />
@@ -493,7 +522,7 @@ export default function Policy() {
           serviceRuleCount={allRestrictions.length}
           egressRuleCount={egressRules?.entries?.length ?? 0}
           toolRuleCount={toolRules?.entries?.length ?? 0}
-          runtimePolicyUI={runtimePolicyUI}
+          runtimePolicyUI={fullProxyActive}
           isLoading={isLoading}
           allServices={allServices}
           activated={activated}
@@ -503,6 +532,8 @@ export default function Policy() {
           onToggleShowAll={() => setShowAll(s => !s)}
           agents={agentMap}
           agentList={agents}
+          linkedAgentId={linkedAgentId}
+          onAgentFilterChange={setPolicyAgentFilter}
           egressRules={egressRules?.entries ?? []}
           toolRules={toolRules?.entries ?? []}
           onNewRule={startCreateRule}
@@ -572,8 +603,8 @@ function ProxyLiteToolControlsPanel({
   agents,
   busy,
   onChange,
-  onAdvanced,
-  onEditAdvanced,
+  ruleBusy,
+  onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
 }: {
@@ -584,8 +615,8 @@ function ProxyLiteToolControlsPanel({
   agents: Map<string, Agent>
   busy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
-  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
-  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  ruleBusy: boolean
+  onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
@@ -656,10 +687,12 @@ function ProxyLiteToolControlsPanel({
             sectionScope="global"
             controls={globalControls}
             agents={agents}
+            agentList={agentList}
+            agentId={agentId}
             busy={busy}
+            ruleBusy={ruleBusy}
             onChange={onChange}
-            onAdvanced={onAdvanced}
-            onEditAdvanced={onEditAdvanced}
+            onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
           />
@@ -670,10 +703,12 @@ function ProxyLiteToolControlsPanel({
             headerControl={agentSelector}
             controls={controls}
             agents={agents}
+            agentList={agentList}
+            agentId={agentId}
             busy={busy}
+            ruleBusy={ruleBusy}
             onChange={onChange}
-            onAdvanced={onAdvanced}
-            onEditAdvanced={onEditAdvanced}
+            onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
           />
@@ -690,10 +725,12 @@ function ToolControlListSection({
   headerControl,
   controls,
   agents,
+  agentList,
+  agentId,
   busy,
+  ruleBusy,
   onChange,
-  onAdvanced,
-  onEditAdvanced,
+  onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
 }: {
@@ -703,10 +740,12 @@ function ToolControlListSection({
   headerControl?: ReactNode
   controls: RuntimeToolControl[]
   agents: Map<string, Agent>
+  agentList: Agent[]
+  agentId: string
   busy: boolean
+  ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
-  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
-  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
@@ -731,10 +770,12 @@ function ToolControlListSection({
               control={control}
               sectionScope={sectionScope}
               agents={agents}
+              agentList={agentList}
+              agentId={agentId}
               busy={busy}
+              ruleBusy={ruleBusy}
               onChange={onChange}
-              onAdvanced={onAdvanced}
-              onEditAdvanced={onEditAdvanced}
+              onSaveRule={onSaveRule}
               onToggleAdvanced={onToggleAdvanced}
               onDeleteAdvanced={onDeleteAdvanced}
             />
@@ -749,23 +790,28 @@ function ToolControlRow({
   control,
   sectionScope,
   agents,
+  agentList,
+  agentId,
   busy,
+  ruleBusy,
   onChange,
-  onAdvanced,
-  onEditAdvanced,
+  onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
 }: {
   control: RuntimeToolControl
   sectionScope: 'global' | 'agent'
   agents: Map<string, Agent>
+  agentList: Agent[]
+  agentId: string
   busy: boolean
+  ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
-  onAdvanced: (toolName: string, scope: 'global' | 'agent') => void
-  onEditAdvanced: (rule: RuntimePolicyRule) => void
+  onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
+  const [inlineDraft, setInlineDraft] = useState<RuleDraft | null>(null)
   const advancedRules = (control.advanced_rules ?? []).filter(rule =>
     sectionScope === 'global' ? !rule.agent_id : !!rule.agent_id,
   )
@@ -796,10 +842,10 @@ function ToolControlRow({
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedToolAction value={action} disabled={busy} onChange={nextAction => onChange(control.tool_name, nextAction, sectionScope)} />
             <button
-              onClick={() => onAdvanced(control.tool_name, sectionScope)}
+              onClick={() => setInlineDraft({ ...emptyToolRule(), scope: sectionScope, agent_id: sectionScope === 'agent' ? agentId : undefined, tool_name: control.tool_name })}
               className="rounded border border-border-default px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-2"
             >
-              Advanced
+              Create rule
             </button>
           </div>
         )}
@@ -813,11 +859,31 @@ function ToolControlRow({
               rule={rule}
               busy={busy}
               agentName={rule.agent_id ? agents.get(rule.agent_id)?.name : undefined}
-              onEdit={onEditAdvanced}
+              onEdit={(nextRule) => setInlineDraft({ ...nextRule, scope: nextRule.agent_id ? 'agent' : 'global' })}
               onToggle={onToggleAdvanced}
               onDelete={onDeleteAdvanced}
             />
           ))}
+        </div>
+      )}
+
+      {inlineDraft && (
+        <div className="mt-4">
+          <RuleEditorCard
+            key={inlineDraft.id ?? `${sectionScope}-${control.tool_name}`}
+            agents={agentList}
+            draft={inlineDraft}
+            busy={ruleBusy}
+            allowedKinds={['tool']}
+            defaultAgentId={sectionScope === 'agent' ? agentId : undefined}
+            agentScopeLabel={sectionScope === 'agent' ? 'This agent' : undefined}
+            toolNameOptions={[control.tool_name]}
+            onCancel={() => setInlineDraft(null)}
+            onSave={async (draft) => {
+              await onSaveRule(draft)
+              setInlineDraft(null)
+            }}
+          />
         </div>
       )}
     </div>
@@ -1024,6 +1090,8 @@ function ScopedRuntimeToolRules({
   agentRules,
   agents,
   agentList,
+  linkedAgentId,
+  onAgentFilterChange,
   onNewGlobal,
   onNewAgent,
   onEdit,
@@ -1034,6 +1102,8 @@ function ScopedRuntimeToolRules({
   agentRules: RuntimePolicyRule[]
   agents: Map<string, Agent>
   agentList: Agent[]
+  linkedAgentId: string
+  onAgentFilterChange: (agentId: string) => void
   onNewGlobal: () => void
   onNewAgent: (agentId: string) => void
   onEdit: (rule: RuleDraft) => void
@@ -1056,6 +1126,8 @@ function ScopedRuntimeToolRules({
         rules={agentRules}
         agents={agents}
         agentList={agentList}
+        linkedAgentId={linkedAgentId}
+        onAgentFilterChange={onAgentFilterChange}
         onNew={onNewAgent}
         onEdit={onEdit}
         onToggle={onToggle}
@@ -1123,6 +1195,8 @@ function AgentToolRuleGroups({
   rules,
   agents,
   agentList,
+  linkedAgentId,
+  onAgentFilterChange,
   onNew,
   onEdit,
   onToggle,
@@ -1131,12 +1205,14 @@ function AgentToolRuleGroups({
   rules: RuntimePolicyRule[]
   agents: Map<string, Agent>
   agentList: Agent[]
+  linkedAgentId: string
+  onAgentFilterChange: (agentId: string) => void
   onNew: (agentId: string) => void
   onEdit: (rule: RuleDraft) => void
   onToggle: (rule: RuntimePolicyRule) => void
   onDelete: (rule: RuntimePolicyRule) => void
 }) {
-  const [agentFilter, setAgentFilter] = useState('all')
+  const [agentFilter, setAgentFilter] = useState(linkedAgentId || 'all')
   const rulesByAgent = useMemo(() => {
     const grouped = new Map<string, RuntimePolicyRule[]>()
     for (const rule of rules) {
@@ -1165,6 +1241,17 @@ function AgentToolRuleGroups({
     [agentFilter, unknownAgentIds],
   )
 
+  useEffect(() => {
+    if (linkedAgentId && linkedAgentId !== agentFilter) {
+      setAgentFilter(linkedAgentId)
+    }
+  }, [agentFilter, linkedAgentId])
+
+  const handleAgentFilterChange = (nextAgentId: string) => {
+    setAgentFilter(nextAgentId)
+    onAgentFilterChange(nextAgentId)
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1176,7 +1263,7 @@ function AgentToolRuleGroups({
           <label className="text-xs text-text-tertiary">Agent</label>
           <select
             value={agentFilter}
-            onChange={e => setAgentFilter(e.target.value)}
+            onChange={e => handleAgentFilterChange(e.target.value)}
             className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
           >
             <option value="all">All agents</option>
@@ -1379,6 +1466,8 @@ function PolicyRulesPanel({
   onToggleShowAll,
   agents,
   agentList,
+  linkedAgentId,
+  onAgentFilterChange,
   egressRules,
   toolRules,
   onNewRule,
@@ -1402,6 +1491,8 @@ function PolicyRulesPanel({
   onToggleShowAll: () => void
   agents: Map<string, Agent>
   agentList: Agent[]
+  linkedAgentId: string
+  onAgentFilterChange: (agentId: string) => void
   egressRules: RuntimePolicyRule[]
   toolRules: RuntimePolicyRule[]
   onNewRule: (kind: 'egress' | 'tool', patch?: Partial<RuleDraft>) => void
@@ -1485,6 +1576,8 @@ function PolicyRulesPanel({
           agentRules={toolRules.filter(rule => rule.agent_id)}
           agents={agents}
           agentList={agentList}
+          linkedAgentId={linkedAgentId}
+          onAgentFilterChange={onAgentFilterChange}
           onNewGlobal={() => onNewRule('tool', { scope: 'global', agent_id: undefined })}
           onNewAgent={(agentId) => onNewRule('tool', { scope: 'agent', agent_id: agentId })}
           onEdit={onEditRule}

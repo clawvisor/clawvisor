@@ -132,9 +132,9 @@ type createTaskRequest struct {
 	Purpose                string                            `json:"purpose"`
 	AuthorizedActions      []store.TaskAction                `json:"authorized_actions"`
 	PlannedCalls           []store.PlannedCall               `json:"planned_calls,omitempty"`
-	ExpectedTools          []runtimetasks.ExpectedTool       `json:"expected_tools_json,omitempty"`
-	ExpectedEgress         []runtimetasks.ExpectedEgress     `json:"expected_egress_json,omitempty"`
-	RequiredCredentials    []runtimetasks.RequiredCredential `json:"required_credentials_json,omitempty"`
+	ExpectedTools          []runtimetasks.ExpectedTool       `json:"expected_tools,omitempty"`
+	ExpectedEgress         []runtimetasks.ExpectedEgress     `json:"expected_egress,omitempty"`
+	RequiredCredentials    []runtimetasks.RequiredCredential `json:"required_credentials,omitempty"`
 	IntentVerificationMode string                            `json:"intent_verification_mode,omitempty"`
 	ChainExtractionMode    string                            `json:"chain_extraction_mode,omitempty"` // "" | "full" | "builtins_only"
 	ExpectedUse            string                            `json:"expected_use,omitempty"`
@@ -171,13 +171,13 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		missingFields = append(missingFields, "purpose")
 	}
 	if len(req.AuthorizedActions) == 0 && !hasRuntimeEnvelope {
-		missingFields = append(missingFields, "authorized_actions", "expected_tools_json", "expected_egress_json")
+		missingFields = append(missingFields, "authorized_actions", "expected_tools", "expected_egress")
 	}
 	if len(missingFields) > 0 {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error:         "missing required fields: " + strings.Join(missingFields, ", "),
 			Code:          "INVALID_REQUEST",
-			Hint:          "A task requires a purpose describing what the agent will do and at least one scope representation: authorized_actions, expected_tools_json, or expected_egress_json.",
+			Hint:          "A task requires a purpose describing what the agent will do and at least one scope representation: authorized_actions, expected_tools, or expected_egress.",
 			MissingFields: missingFields,
 			Example: map[string]any{
 				"purpose": "Read and summarize recent emails",
@@ -248,7 +248,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeDetailedError(w, http.StatusBadRequest, apiErrorDetail{
 			Error: "schema_version=1 cannot be used with v2 task envelope fields",
 			Code:  "INVALID_REQUEST",
-			Hint:  "Use schema_version 2 when sending expected_tools_json, expected_egress_json, required_credentials_json, intent_verification_mode, or expected_use.",
+			Hint:  "Use schema_version 2 when sending expected_tools, expected_egress, required_credentials, intent_verification_mode, or expected_use.",
 		})
 		return
 	}
@@ -480,7 +480,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Content-based dedup: if an identical task creation request was recently made
 	// by the same agent, return the existing task instead of creating a duplicate.
 	//
-	// v2 envelope fields (planned_calls, expected_tools_json, expected_egress_json,
+	// v2 envelope fields (planned_calls, expected_tools, expected_egress,
 	// intent_verification_mode, expected_use, schema_version) only participate in
 	// the hash when any are non-empty. v1-only requests therefore produce the
 	// same fingerprint they did pre-#310, preserving the existing dedup window.
@@ -542,7 +542,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(req.ExpectedTools) > 0 {
 		b, err := json.Marshal(req.ExpectedTools)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_tools_json")
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_tools")
 			return
 		}
 		task.ExpectedTools = json.RawMessage(b)
@@ -550,7 +550,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(req.ExpectedEgress) > 0 {
 		b, err := json.Marshal(req.ExpectedEgress)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_egress_json")
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode expected_egress")
 			return
 		}
 		task.ExpectedEgress = json.RawMessage(b)
@@ -558,7 +558,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if len(req.RequiredCredentials) > 0 {
 		b, err := json.Marshal(req.RequiredCredentials)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode required_credentials_json")
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not encode required_credentials")
 			return
 		}
 		task.RequiredCredentials = json.RawMessage(b)
@@ -1143,7 +1143,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	actions := applyScopeOverrides(task.AuthorizedActions, overrides)
 	requiredCredentials, err := taskRequiredCredentials(task)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not parse required_credentials_json")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "could not parse required_credentials")
 		return
 	}
 	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
@@ -1316,7 +1316,7 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 	for i, cred := range required {
 		vaultItemID := credentialVaultItemID(cred)
 		if vaultItemID == "" {
-			return fmt.Errorf("required_credentials_json[%d] must include vault_item_id or vault_item_handle", i)
+			return fmt.Errorf("required_credentials[%d] must include vault_item_id or vault_item_handle", i)
 		}
 		storageKey, err := h.taskVaultItemStorageKey(ctx, task, vaultItemID)
 		if err != nil {
@@ -2109,7 +2109,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 		if task.Status == "active" {
 			requiredCredentials, parseErr := taskRequiredCredentials(task)
 			if parseErr != nil {
-				return fmt.Errorf("could not parse required_credentials_json")
+				return fmt.Errorf("could not parse required_credentials")
 			}
 			if len(requiredCredentials) > 0 {
 				if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
@@ -2128,7 +2128,7 @@ func (h *TasksHandler) ApproveByTaskID(ctx context.Context, taskID, userID strin
 	}
 	requiredCredentials, err := taskRequiredCredentials(task)
 	if err != nil {
-		return fmt.Errorf("could not parse required_credentials_json")
+		return fmt.Errorf("could not parse required_credentials")
 	}
 	if err := h.validateTaskRequiredCredentials(ctx, task, requiredCredentials); err != nil {
 		return err

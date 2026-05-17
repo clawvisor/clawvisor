@@ -18,8 +18,8 @@ import (
 //
 // Fields rendered:
 //   - purpose (wrapped at 80 cols)
-//   - expected_tools_json[].tool_name + .why (bullet list)
-//   - required_credentials_json[].vault_item_id / vault_item_handle + .why (bullet list)
+//   - expected_tools[].tool_name + .why (bullet list)
+//   - required_credentials[].vault_item_id / vault_item_handle + .why (bullet list)
 //   - assessed risk level + explanation when available
 //   - intent_verification_mode (default "strict")
 //   - lifetime humanized ("until session ends" / "always")

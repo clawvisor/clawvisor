@@ -16,7 +16,7 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		t.Fatalf("notice should steer OpenClaw to its actual shell tool; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, `"tool_name":"exec"`) {
-		t.Fatalf("notice example should declare exec in expected_tools_json; got:\n%s", notice)
+		t.Fatalf("notice example should declare exec in expected_tools; got:\n%s", notice)
 	}
 	if strings.Contains(notice, "Use Bash with curl") || strings.Contains(notice, `"tool_name":"bash"`) {
 		t.Fatalf("notice should not hardcode Bash when exec is available; got:\n%s", notice)
@@ -24,7 +24,7 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
 		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials_json") {
+	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials") {
 		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "Required task shape") ||
@@ -33,7 +33,7 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "If you already have an `autovault_...` placeholder") ||
-		!strings.Contains(notice, "omit `required_credentials_json`") ||
+		!strings.Contains(notice, "omit `required_credentials`") ||
 		!strings.Contains(notice, "Use GET https://clawvisor.local/control/vault/items only when you need Clawvisor to mint a new placeholder") {
 		t.Fatalf("notice should not steer agents to rediscover already-issued placeholders; got:\n%s", notice)
 	}

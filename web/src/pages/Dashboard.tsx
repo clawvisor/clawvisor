@@ -62,6 +62,18 @@ export default function Dashboard() {
     queryFn: () => api.queue.list(),
     refetchInterval: 30_000,
   })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: async () => {
+      try {
+        return await api.runtime.status()
+      } catch {
+        return null
+      }
+    },
+    refetchInterval: 30_000,
+    enabled: runtimeActivityUI,
+  })
   const { data: runtimeApprovalData } = useQuery({
     queryKey: ['runtime-approvals'],
     queryFn: async () => {
@@ -72,9 +84,9 @@ export default function Dashboard() {
       }
     },
     refetchInterval: 30_000,
-    enabled: runtimeActivityUI,
+    enabled: !!runtimeStatus?.enabled,
   })
-  const queueCount = (queueData?.total ?? 0) + (runtimeActivityUI ? (runtimeApprovalData?.total ?? 0) : 0)
+  const queueCount = (queueData?.total ?? 0) + (runtimeStatus?.enabled ? (runtimeApprovalData?.total ?? 0) : 0)
 
   // Check for version updates (infrequently)
   const { data: versionData } = useQuery({

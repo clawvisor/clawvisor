@@ -31,7 +31,7 @@ func toolDefs() []Tool {
 		},
 		{
 			Name:        "create_task",
-			Description: "Create a new task for scoped authorization. Use wait=true (recommended) to block until the user approves or denies. Must include at least one of: authorized_actions, expected_tools_json, or expected_egress_json.",
+			Description: "Create a new task for scoped authorization. Use wait=true (recommended) to block until the user approves or denies. Must include at least one of: authorized_actions, expected_tools, or expected_egress.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -50,7 +50,7 @@ func toolDefs() []Tool {
 						},
 						"description": "Actions this task is authorized to perform"
 					},
-					"expected_tools_json": {
+					"expected_tools": {
 						"type": "array",
 						"items": {
 							"type": "object",
@@ -64,7 +64,7 @@ func toolDefs() []Tool {
 						},
 						"description": "Canonical v2 runtime tool expectations. Use this for proxy/runtime-backed tasks."
 					},
-					"expected_egress_json": {
+					"expected_egress": {
 						"type": "array",
 						"items": {
 							"type": "object",
@@ -99,7 +99,7 @@ func toolDefs() []Tool {
 					"intent_verification_mode": {"type": "string", "enum": ["strict", "lenient", "off"], "description": "Runtime intent verification strictness for v2 envelopes. Defaults to strict."},
 					"chain_extraction_mode": {"type": "string", "enum": ["full", "builtins_only"], "description": "Async chain-context extraction mode for this task. \"full\" runs the LLM Phase-2 extraction pass; \"builtins_only\" skips it and relies only on the synchronous builtin regex patterns. Omit to defer to the system default."},
 					"expected_use": {"type": "string", "description": "Top-level intended use summary for runtime-backed tasks"},
-					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools_json, expected_egress_json, intent_verification_mode, or expected_use."},
+					"schema_version": {"type": "integer", "enum": [1, 2], "description": "Task schema version. Use 2 when sending expected_tools, expected_egress, intent_verification_mode, or expected_use."},
 					"expires_in_seconds": {"type": "integer", "description": "Session task expiry in seconds (default 1800)"},
 					"lifetime": {"type": "string", "enum": ["session", "standing"], "description": "Task lifetime: session (expires) or standing (no expiry)"},
 					"wait": {"type": "boolean", "description": "Block until the task is approved or denied (default true)"},

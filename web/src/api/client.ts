@@ -553,8 +553,8 @@ export interface Task {
   status: 'pending_approval' | 'pending_scope_expansion' | 'active' | 'completed' | 'expired' | 'denied' | 'revoked'
   authorized_actions: TaskAction[]
   planned_calls?: PlannedCall[]
-  expected_tools_json?: ExpectedTool[]
-  expected_egress_json?: ExpectedEgress[]
+  expected_tools?: ExpectedTool[]
+  expected_egress?: ExpectedEgress[]
   intent_verification_mode?: 'strict' | 'lenient' | 'off'
   expected_use?: string
   schema_version?: number

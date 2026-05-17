@@ -69,7 +69,7 @@ func TestScanInboundSecrets_StillDetectsKnownPrefixInUserContent(t *testing.T) {
 func TestScanInboundSecrets_KnownPrefixRequiresTokenBoundary(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.4",
-		"input":[{"role":"user","content":[{"type":"input_text","text":"ignore identifiers required_credentials_json re_escalated _re_hidden xre_embedded but catch re_1234567890abcdefABCDEF"}]}]
+		"input":[{"role":"user","content":[{"type":"input_text","text":"ignore identifiers required_credentials re_escalated _re_hidden xre_embedded but catch re_1234567890abcdefABCDEF"}]}]
 	}`)
 
 	scan, found, err := ScanInboundSecretsWithOptions(context.Background(), InboundSecretScanOptions{
@@ -86,7 +86,7 @@ func TestScanInboundSecrets_KnownPrefixRequiresTokenBoundary(t *testing.T) {
 		t.Fatalf("unexpected finding: %+v", scan.Findings[0])
 	}
 	redacted := string(scan.RedactedBody)
-	for _, kept := range []string{"required_credentials_json", "re_escalated", "_re_hidden", "xre_embedded"} {
+	for _, kept := range []string{"required_credentials", "re_escalated", "_re_hidden", "xre_embedded"} {
 		if !strings.Contains(redacted, kept) {
 			t.Fatalf("expected %q preserved in %s", kept, redacted)
 		}
@@ -124,7 +124,7 @@ func TestScanInboundSecrets_KnownPrefixMatrix(t *testing.T) {
 func TestScanInboundSecrets_PrefixLikeIdentifiersDoNotTrigger(t *testing.T) {
 	cases := []string{
 		"pre_loading",
-		"required_credentials_json",
+		"required_credentials",
 		"github_patent_pending",
 		"ghp_loading_state",
 		"xoxb_pending_review",
@@ -590,7 +590,7 @@ func TestScanInboundSecrets_RawLogShapedVaultReplayDoesNotReprompt(t *testing.T)
 	body := []byte(`{
 		"model":"gpt-5.4",
 		"input":[
-			{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials_json when credentials are needed. Avoid re_escalated false positives."}]},
+			{"role":"developer","content":[{"type":"input_text","text":"Use required_credentials when credentials are needed. Avoid re_escalated false positives."}]},
 			{"role":"user","content":[{"type":"input_text","text":"Can you use this API key to check the emails in resend? autovault_resend_stable"}]},
 			{"role":"assistant","content":[{"type":"output_text","text":"Clawvisor detected a possible raw secret in the last message.\n\nSuggested vault name: ` + "`resend`" + `\nDetection source: password_reveal\n\n[clawvisor:secret=cv-secret-rawlog]"}]},
 			{"role":"user","content":[{"type":"input_text","text":"vault resend"}]},

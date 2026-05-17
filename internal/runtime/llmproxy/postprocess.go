@@ -715,7 +715,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	}
 	payload := map[string]any{
 		"purpose": "Describe the user-visible task you are trying to complete, including why this tool access is needed.",
-		"expected_tools_json": []map[string]any{{
+		"expected_tools": []map[string]any{{
 			"tool_name": toolName,
 			"why":       taskToolWhy(tu),
 		}},

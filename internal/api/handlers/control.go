@@ -44,21 +44,21 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"Clawvisor handles the synthetic URL before the shell command runs.",
 			"Before creating a task, tell me that you are requesting a Clawvisor task and that I will need to approve it.",
 			"Creating or expanding a task requests permission. It does not grant permission until I approve it.",
-			"If you already have an autovault_... placeholder, do not call /control/vault/items just to identify it. Create the task for the intended API call, omit required_credentials_json, and use the placeholder directly after approval.",
+			"If you already have an autovault_... placeholder, do not call /control/vault/items just to identify it. Create the task for the intended API call, omit required_credentials, and use the placeholder directly after approval.",
 			"Use /control/vault/items only when you need Clawvisor to mint a new placeholder from an available vault item. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
-			"Prefer expected_tools_json for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
-			"When a task needs a new credential placeholder, include required_credentials_json with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
+			"Prefer expected_tools for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
+			"When a task needs a new credential placeholder, include required_credentials with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
 		},
 		"create_task": map[string]any{
 			"method": "POST",
 			"path":   "/control/tasks",
 			"body": map[string]any{
 				"purpose": "Briefly explain the user-visible work you need permission to do.",
-				"expected_tools_json": []map[string]any{{
+				"expected_tools": []map[string]any{{
 					"tool_name": "bash",
 					"why":       "Describe the exact command pattern or operation you need, e.g. run curl to POST JSON to https://api.example.com/widgets.",
 				}},
-				"required_credentials_json": []map[string]any{{
+				"required_credentials": []map[string]any{{
 					"vault_item_id": "google.gmail",
 					"why":           "Use the selected Gmail credential to send the requested message.",
 				}},

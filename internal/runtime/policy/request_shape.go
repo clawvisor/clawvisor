@@ -19,7 +19,7 @@ func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 
 	if len(env.ExpectedTools) == 0 && len(env.ExpectedEgress) == 0 {
 		issues = append(issues, ValidationIssue{
-			Field:   "expected_tools_json",
+			Field:   "expected_tools",
 			Message: "at least one expected tool or expected egress item is required for a v2 task envelope",
 		})
 	}
@@ -35,7 +35,7 @@ func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 	}
 
 	for i, item := range env.ExpectedTools {
-		fieldPrefix := fmt.Sprintf("expected_tools_json[%d]", i)
+		fieldPrefix := fmt.Sprintf("expected_tools[%d]", i)
 		if strings.TrimSpace(item.ToolName) == "" {
 			issues = append(issues, ValidationIssue{
 				Field:   fieldPrefix + ".tool_name",
@@ -59,7 +59,7 @@ func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 	}
 
 	for i, item := range env.ExpectedEgress {
-		fieldPrefix := fmt.Sprintf("expected_egress_json[%d]", i)
+		fieldPrefix := fmt.Sprintf("expected_egress[%d]", i)
 		if strings.TrimSpace(item.Host) == "" {
 			issues = append(issues, ValidationIssue{
 				Field:   fieldPrefix + ".host",
@@ -113,7 +113,7 @@ func ValidateTaskEnvelope(env runtimetasks.Envelope) []ValidationIssue {
 func ValidateRequiredCredentials(required []runtimetasks.RequiredCredential) []ValidationIssue {
 	var issues []ValidationIssue
 	for i, item := range required {
-		fieldPrefix := fmt.Sprintf("required_credentials_json[%d]", i)
+		fieldPrefix := fmt.Sprintf("required_credentials[%d]", i)
 		if strings.TrimSpace(item.VaultItemID) == "" && strings.TrimSpace(item.VaultItemHandle) == "" {
 			issues = append(issues, ValidationIssue{
 				Field:   fieldPrefix + ".vault_item_id",
