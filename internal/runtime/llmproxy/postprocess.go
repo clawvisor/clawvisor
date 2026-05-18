@@ -704,7 +704,7 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 		b.WriteString("\nInput: ")
 		b.WriteString(preview)
 	}
-	b.WriteString("\n\nReply `(y)es` to run this tool call, `(n)o` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
+	b.WriteString("\n\nReply `yes` or `y` to run this tool call, `no` or `n` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
 	return b.String()
 }
 
