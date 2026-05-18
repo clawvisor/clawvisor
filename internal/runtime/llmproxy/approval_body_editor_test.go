@@ -27,7 +27,7 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			name:      "anthropic_string_content",
 			provider:  conversation.ProviderAnthropic,
 			path:      "/v1/messages",
-			body:      `{"messages":[{"role":"user","content":"approve"}]}`,
+			body:      `{"messages":[{"role":"user","content":"yes"}]}`,
 			wantReply: true,
 			wantVerb:  "approve",
 			want:      `"content":"` + replacement + `"`,

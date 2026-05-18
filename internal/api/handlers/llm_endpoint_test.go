@@ -398,7 +398,7 @@ func TestLLMEndpoint_BreakGlassPassthroughSkipsControlAndInspection(t *testing.T
 		t.Fatalf("passthrough should not inject control notice or sanitize request:\n%s", seenBody)
 	}
 	out := rec.Body.String()
-	if strings.Contains(out, "Reply `approve`") {
+	if strings.Contains(out, "Reply `(y)es`") {
 		t.Fatalf("passthrough should not inspect/block tool use: %s", out)
 	}
 	if !strings.Contains(out, "mkdir /tmp/needs-task") {
@@ -1534,7 +1534,7 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 	if firstRec.Code != http.StatusOK {
 		t.Fatalf("first response status = %d (%s)", firstRec.Code, firstRec.Body.String())
 	}
-	if !strings.Contains(firstRec.Body.String(), "Reply `approve`") {
+	if !strings.Contains(firstRec.Body.String(), "Reply `(y)es`") {
 		t.Fatalf("first response missing approval prompt: %s", firstRec.Body.String())
 	}
 	if upstreamHits != 1 {
@@ -1648,7 +1648,7 @@ func TestLLMEndpoint_RequiresApprovalForOpenAIToolUseWithoutScope(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Reply `approve`") {
+	if !strings.Contains(rec.Body.String(), "Reply `(y)es`") {
 		t.Fatalf("expected approval prompt, got %s", rec.Body.String())
 	}
 

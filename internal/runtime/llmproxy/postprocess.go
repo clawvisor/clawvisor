@@ -230,8 +230,8 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// through the inline approval path instead of letting it
 			// proxy through to the dashboard. The model never sees the
 			// real /control/tasks handler — its tool_use_result is
-			// replaced with a rendered approve/deny prompt; the user's
-			// next "approve" creates the task pre-approved and the
+			// replaced with a rendered yes/no prompt; the user's next
+			// "yes" creates the task pre-approved and the
 			// follow-up turn auto-releases the original tool call.
 			if inlineVerdict, inlineHandled := maybeInterceptInlineTaskDefinition(
 				req, cfg, audit, trace, rewriter.Name(), tu, call,
@@ -704,7 +704,7 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 		b.WriteString("\nInput: ")
 		b.WriteString(preview)
 	}
-	b.WriteString("\n\nReply `approve` to run this tool call, `deny` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
+	b.WriteString("\n\nReply `(y)es` to run this tool call, `(n)o` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
 	return b.String()
 }
 
@@ -728,7 +728,7 @@ func taskCreationPrompt(tu conversation.ToolUse) string {
 	}
 	// The user just typed "task" at the inline prompt — they are
 	// definitionally at the chat surface. Pass ?surface=inline so the
-	// proxy holds the approve/deny gesture inline rather than routing
+	// proxy holds the yes/no gesture inline rather than routing
 	// to the dashboard's notification queue.
 	//
 	// Use the single-curl `--data @- <<JSON` shape. The proxy DOES

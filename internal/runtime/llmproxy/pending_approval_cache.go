@@ -31,7 +31,7 @@ import (
 type PendingApprovalStage string
 
 const (
-	// StageTool — the original tool_use hold awaiting approve/deny/task.
+	// StageTool — the original tool_use hold awaiting yes/no/task.
 	StageTool PendingApprovalStage = ""
 	// StageAwaitingTaskDefinition — user typed "task". The same hold's
 	// ToolUse field still points at the ORIGINAL tool. We're waiting for
@@ -41,7 +41,7 @@ const (
 	// StageAwaitingTaskApproval — model has emitted the task definition.
 	// The hold's ToolUse is the task-creation POST itself; AwaitingTaskFor
 	// links back to the original tool hold. We're waiting for the user
-	// to approve/deny.
+	// to yes/no.
 	StageAwaitingTaskApproval PendingApprovalStage = "awaiting_task_approval"
 )
 
