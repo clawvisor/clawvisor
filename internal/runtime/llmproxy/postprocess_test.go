@@ -484,7 +484,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 		t.Fatalf("missing task/rule scope should rewrite to an approval prompt")
 	}
 	text := anthropicResponseText(t, got.Body)
-	if !strings.Contains(text, "Reply `approve`") ||
+	if !strings.Contains(text, "Reply `(y)es`") ||
 		!strings.Contains(text, "`task`") ||
 		!strings.Contains(text, "no matching task scope") {
 		t.Fatalf("approval prompt missing expected text: %s", got.Body)
@@ -539,7 +539,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 		t.Fatalf("intent refusal should rewrite to an approval prompt")
 	}
 	text := anthropicResponseText(t, got.Body)
-	if !strings.Contains(text, "Reply `approve`") ||
+	if !strings.Contains(text, "Reply `(y)es`") ||
 		!strings.Contains(text, "/tmp/goodbye.py") ||
 		!strings.Contains(text, "do not match the task purpose") {
 		t.Fatalf("intent refusal prompt missing expected text: %s", got.Body)
@@ -576,7 +576,7 @@ func TestApprovalPromptMentionsTaskReply(t *testing.T) {
 	}, "no matching task scope")
 
 	for _, want := range []string{
-		"Reply `approve`",
+		"Reply `(y)es`",
 		"`task`",
 		"task definition for approval",
 	} {

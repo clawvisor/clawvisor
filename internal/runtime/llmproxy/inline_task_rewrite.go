@@ -63,7 +63,7 @@ type InlineApprovalRewriteResult struct {
 }
 
 // RewriteInlineTaskApprovalReply consumes an awaiting_task_approval
-// hold when the user's most recent message is "approve" or "deny",
+// hold when the user's most recent message is yes/no,
 // creates the task (on approve), drops the linked outer tool hold,
 // and rewrites the user message to include task-creation context.
 //

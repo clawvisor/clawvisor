@@ -26,18 +26,18 @@ func anthropicTextBody(messages ...map[string]string) []byte {
 // promptWithFooter builds an inline-prompt assistant message with the
 // approval-id footer the augmenter parses to look up the outcome.
 func promptWithFooter(approvalID, purposeLine string) string {
-	body := "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  " + purposeLine + "\n\nReply approve to authorize, deny to cancel."
+	body := "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  " + purposeLine + "\n\nReply (y)es to authorize, (n)o to cancel."
 	return body + "\n\n" + InlineApprovalIDMarker + approvalID + "]"
 }
 
-func TestAugment_InjectsContextOnBareApproveAfterSubstitutedPrompt(t *testing.T) {
+func TestAugment_InjectsContextOnBareYesAfterSubstitutedPrompt(t *testing.T) {
 	outcomes := NewMemoryInlineApprovalOutcomeStore(time.Minute)
 	outcomes.Record(InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-approve-1"}, InlineApprovalOutcome{Succeeded: true, TaskID: "task-abc"})
 
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "Can you create a series of fake LLM conversations in /tmp/x?"},
 		map[string]string{"role": "assistant", "content": promptWithFooter("cv-approve-1", "Create /tmp/x ...")},
-		map[string]string{"role": "user", "content": "approve"},
+		map[string]string{"role": "user", "content": "yes"},
 		map[string]string{"role": "assistant", "content": "Running mkdir..."},
 		map[string]string{"role": "user", "content": "mkdir output"},
 	)
@@ -46,7 +46,7 @@ func TestAugment_InjectsContextOnBareApproveAfterSubstitutedPrompt(t *testing.T)
 		t.Fatal(err)
 	}
 	if !rewritten {
-		t.Fatal("expected augmentation to fire on bare approve after substituted prompt")
+		t.Fatal("expected augmentation to fire on bare yes after substituted prompt")
 	}
 	s := string(out)
 	if !strings.Contains(s, InlineApprovalAugmentationMarker) {
@@ -89,7 +89,7 @@ func TestAugment_IdempotentOnSecondPass(t *testing.T) {
 func TestAugment_NoopOnRegularToolApprove(t *testing.T) {
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "Do something"},
-		map[string]string{"role": "assistant", "content": "Clawvisor paused this tool call for approval.\n\nTool: Bash\nInput: ls\n\nReply approve to run, deny to block, or task to ..."},
+		map[string]string{"role": "assistant", "content": "Clawvisor paused this tool call for approval.\n\nTool: Bash\nInput: ls\n\nReply (y)es to run, (n)o to block, or task to ..."},
 		map[string]string{"role": "user", "content": "approve"},
 	)
 	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute), "user-1", "agent-1")

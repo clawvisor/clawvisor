@@ -7,7 +7,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
 
-// renderTaskApprovalPrompt builds the inline approve/deny prompt the model
+// renderTaskApprovalPrompt builds the inline yes/no prompt the model
 // substitutes in place of the synthetic task_use_result for a model-emitted
 // POST /control/tasks when the user is mid-flight on an inline task gesture
 // (StageAwaitingTaskApproval).
@@ -42,11 +42,11 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID st
 func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment) string {
 	suffix := approvalIDFooter(approvalID)
 	if req == nil {
-		return "Clawvisor wants to create a task.\n\nReply `approve` to authorize, `deny` to cancel." + suffix
+		return "Clawvisor wants to create a task.\n\nReply `(y)es` to authorize, `(n)o` to cancel." + suffix
 	}
 	purpose := strings.TrimSpace(req.Purpose)
 	if purpose == "" {
-		return "Clawvisor wants to create a task: unnamed.\n\nReply `approve` to authorize, `deny` to cancel." + suffix
+		return "Clawvisor wants to create a task: unnamed.\n\nReply `(y)es` to authorize, `(n)o` to cancel." + suffix
 	}
 
 	var b strings.Builder
@@ -134,7 +134,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	}
 
 	b.WriteString("\n\nApproving will create this task and run the original tool call.\n")
-	b.WriteString("Reply `approve` to authorize, `deny` to cancel.")
+	b.WriteString("Reply `(y)es` to authorize, `(n)o` to cancel.")
 	b.WriteString(suffix)
 	return b.String()
 }

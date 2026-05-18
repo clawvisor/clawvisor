@@ -117,7 +117,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 		t.Fatal("postprocess did not register an inner hold")
 	}
 
-	// User types approve.
+	// User types yes.
 	creator := &capturingInlineCreator{
 		resp: &InlineApprovedTask{
 			ID:               "task-uuid-final",
@@ -128,7 +128,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 			ApprovalRecordID: "appr-final",
 		},
 	}
-	approveBody := []byte(`{"messages":[{"role":"user","content":"approve ` + innerID + `"}]}`)
+	approveBody := []byte(`{"messages":[{"role":"user","content":"yes ` + innerID + `"}]}`)
 	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,
@@ -359,7 +359,7 @@ func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 	creator := &capturingInlineCreator{
 		resp: &InlineApprovedTask{ID: "task-q", Status: "active", ApprovalSource: "inline_chat", Lifetime: "session", ApprovalRecordID: "appr-q"},
 	}
-	approveBody := []byte(`{"messages":[{"role":"user","content":"approve ` + inner.Pending.ID + `"}]}`)
+	approveBody := []byte(`{"messages":[{"role":"user","content":"yes ` + inner.Pending.ID + `"}]}`)
 	rewrite, err := RewriteInlineTaskApprovalReply(ctx, InlineApprovalRewriteRequest{
 		HTTPRequest:     httptest.NewRequest("POST", "/v1/messages", nil),
 		Provider:        conversation.ProviderAnthropic,

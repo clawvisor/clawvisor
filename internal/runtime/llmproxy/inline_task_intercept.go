@@ -11,7 +11,7 @@ import (
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 )
 
-// inlineTaskApprovalTTL is how long the user has to type approve/deny
+// inlineTaskApprovalTTL is how long the user has to type yes/no
 // after the model has emitted the task definition. Bounded so the second
 // gesture sits within the same approval cache window as the first; if
 // the user walks away mid-flight both holds expire together and the
@@ -42,8 +42,8 @@ const InlineSurfaceQueryValue = "inline"
 // in production traffic for the intercept to observe.)
 //
 // When the query signal fires, the model never actually POSTs the
-// task — the tool_use_result is replaced with a rendered approve/deny
-// prompt, and the user's next "approve" creates the task pre-approved.
+// task — the tool_use_result is replaced with a rendered yes/no
+// prompt, and the user's next "yes" creates the task pre-approved.
 //
 // Returns (_, false) when the signal is absent, the body fails to
 // parse, or the path isn't POST /control/tasks — callers should
@@ -145,7 +145,7 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	audit("block", "inline_task_pending_approval", "awaiting user approve/deny on inline task definition (query)")
+	audit("block", "inline_task_pending_approval", "awaiting user yes/no on inline task definition (query)")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
 		"purpose", parsed.Purpose,
