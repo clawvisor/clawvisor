@@ -54,9 +54,9 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	hasRuntimeEnvelope := len(req.ExpectedTools) > 0 || len(req.ExpectedEgress) > 0
 	if !hasRuntimeEnvelope {
 		// Inline-approved tasks are exclusively driven by the lite-proxy's
-		// model prompt which uses expected_tools_json. Reject empty
+		// model prompt which uses expected_tools. Reject empty
 		// envelopes rather than silently accepting a scopeless task.
-		return nil, errors.New("inline task must declare expected_tools_json or expected_egress_json")
+		return nil, errors.New("inline task must declare expected_tools or expected_egress")
 	}
 
 	env := runtimetasks.Envelope{
@@ -120,21 +120,21 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	if len(req.ExpectedTools) > 0 {
 		raw, err := json.Marshal(req.ExpectedTools)
 		if err != nil {
-			return nil, fmt.Errorf("encode expected_tools_json: %w", err)
+			return nil, fmt.Errorf("encode expected_tools: %w", err)
 		}
 		task.ExpectedTools = json.RawMessage(raw)
 	}
 	if len(req.ExpectedEgress) > 0 {
 		raw, err := json.Marshal(req.ExpectedEgress)
 		if err != nil {
-			return nil, fmt.Errorf("encode expected_egress_json: %w", err)
+			return nil, fmt.Errorf("encode expected_egress: %w", err)
 		}
 		task.ExpectedEgress = json.RawMessage(raw)
 	}
 	if len(req.RequiredCredentials) > 0 {
 		raw, err := json.Marshal(req.RequiredCredentials)
 		if err != nil {
-			return nil, fmt.Errorf("encode required_credentials_json: %w", err)
+			return nil, fmt.Errorf("encode required_credentials: %w", err)
 		}
 		task.RequiredCredentials = json.RawMessage(raw)
 	}

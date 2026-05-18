@@ -32,16 +32,22 @@ export default function Agents() {
     queryFn: () => api.connections.list(),
     enabled: !orgId,
   })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: () => api.runtime.status(),
+    enabled: runtimePolicyUI || liveSessionsUI,
+  })
+  const fullRuntimeSessionsUI = liveSessionsUI && !!runtimeStatus?.enabled
   const { data: runtimeSessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
-    enabled: liveSessionsUI,
+    enabled: fullRuntimeSessionsUI,
     refetchInterval: 15_000,
   })
   const { data: runtimeApprovals } = useQuery({
     queryKey: ['runtime-approvals'],
     queryFn: () => api.runtime.listApprovals(),
-    enabled: liveSessionsUI,
+    enabled: fullRuntimeSessionsUI,
     refetchInterval: 10_000,
   })
 
@@ -106,7 +112,7 @@ export default function Agents() {
         orgId={orgId}
         sessions={sessionsByAgent.get(selectedAgent.id) ?? []}
         approvals={approvalsByAgent.get(selectedAgent.id) ?? []}
-        liveSessionsUI={liveSessionsUI}
+        liveSessionsUI={fullRuntimeSessionsUI}
         runtimePolicyUI={runtimePolicyUI}
         onDeleted={() => {
           qc.invalidateQueries({ queryKey: ['agents'] })
@@ -222,8 +228,8 @@ export default function Agents() {
         <div className="space-y-2">
           {agents?.map(agent => {
             const hasActiveTasks = agent.active_task_count > 0
-            const liveSessions = liveSessionsUI ? (sessionsByAgent.get(agent.id) ?? []) : []
-            const pendingApprovals = liveSessionsUI ? (approvalsByAgent.get(agent.id) ?? []) : []
+            const liveSessions = fullRuntimeSessionsUI ? (sessionsByAgent.get(agent.id) ?? []) : []
+            const pendingApprovals = fullRuntimeSessionsUI ? (approvalsByAgent.get(agent.id) ?? []) : []
             return (
               <div
                 key={agent.id}
@@ -252,12 +258,12 @@ export default function Agents() {
                         {agent.active_task_count} active {agent.active_task_count === 1 ? 'task' : 'tasks'}
                       </span>
                     )}
-                    {liveSessionsUI && liveSessions.length > 0 && (
+                    {fullRuntimeSessionsUI && liveSessions.length > 0 && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                         {liveSessions.length} live session{liveSessions.length === 1 ? '' : 's'}
                       </span>
                     )}
-                    {liveSessionsUI && pendingApprovals.length > 0 && (
+                    {fullRuntimeSessionsUI && pendingApprovals.length > 0 && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">
                         {pendingApprovals.length} pending approval{pendingApprovals.length === 1 ? '' : 's'}
                       </span>
@@ -308,6 +314,11 @@ function AgentDetailView({
     enabled: liveSessionsUI,
     refetchInterval: 15_000,
   })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: () => api.runtime.status(),
+    enabled: runtimePolicyUI || liveSessionsUI,
+  })
   const { data: recentActivity } = useQuery({
     queryKey: ['audit', 'agent', agent.id],
     queryFn: () => api.audit.list({ agent_id: agent.id, limit: 8 }),
@@ -329,6 +340,7 @@ function AgentDetailView({
     onSuccess: onDeleted,
   })
   const agentMap = useMemo(() => new Map([[agent.id, agent]]), [agent])
+  const fullRuntimeActive = !!runtimeStatus?.enabled
   const recentSessions = useMemo(() => {
     return (allRuntimeSessions?.entries ?? [])
       .filter(session => session.agent_id === agent.id)
@@ -369,9 +381,9 @@ function AgentDetailView({
         </div>
       </div>
 
-      <div className={`grid gap-3 ${liveSessionsUI ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
-        {liveSessionsUI && <AgentMetric label="Live sessions" value={String(sessions.length)} />}
-        {liveSessionsUI && <AgentMetric label="Pending approvals" value={String(approvals.length)} />}
+      <div className={`grid gap-3 ${fullRuntimeActive && liveSessionsUI ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
+        {fullRuntimeActive && liveSessionsUI && <AgentMetric label="Live sessions" value={String(sessions.length)} />}
+        {fullRuntimeActive && liveSessionsUI && <AgentMetric label="Pending approvals" value={String(approvals.length)} />}
         <AgentMetric label="Active tasks" value={String(agent.active_task_count)} />
       </div>
 
@@ -379,12 +391,12 @@ function AgentDetailView({
         <Link to={`/dashboard/activity?agent_id=${encodeURIComponent(agent.id)}`} className="rounded border border-border-default px-4 py-2 text-sm text-text-secondary hover:bg-surface-2">
           Open Activity for Agent
         </Link>
-        <Link to="/dashboard/policy" className="rounded border border-border-default px-4 py-2 text-sm text-text-secondary hover:bg-surface-2">
+        <Link to={`/dashboard/policy?agent_id=${encodeURIComponent(agent.id)}`} className="rounded border border-border-default px-4 py-2 text-sm text-text-secondary hover:bg-surface-2">
           Open Policy
         </Link>
       </div>
 
-      {runtimePolicyUI && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
+      {runtimePolicyUI && runtimeStatus?.enabled && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
 
       <AgentLiteProxyPanel agentId={agent.id} />
       <AgentLLMCredentialsPanel agentId={agent.id} />
@@ -397,11 +409,11 @@ function AgentDetailView({
         />
       )}
 
-      {liveSessionsUI && (
+      {fullRuntimeActive && liveSessionsUI && (
         <RecentSessionsPanel sessions={recentSessions} />
       )}
 
-      {liveSessionsUI && (
+      {fullRuntimeActive && liveSessionsUI && (
         <RuntimeSessionsPanel
           sessions={sessions}
           agents={agentMap}
@@ -412,7 +424,7 @@ function AgentDetailView({
         />
       )}
 
-      {liveSessionsUI && (
+      {fullRuntimeActive && liveSessionsUI && (
         <RuntimeApprovalsPanel
           approvals={approvals}
           onResolved={() => {

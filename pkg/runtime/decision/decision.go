@@ -173,7 +173,7 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		}
 		// Catalog resolved a (service, action) but no task declared
 		// `authorized_actions` for it. Before falling through to
-		// approval-required, give expected_tools_json a chance to
+		// approval-required, give expected_tools a chance to
 		// match — the lite-proxy's taskCreationPrompt tells the model
 		// to declare scope by tool_name, so a task created via that
 		// path will only have expected_tools populated.

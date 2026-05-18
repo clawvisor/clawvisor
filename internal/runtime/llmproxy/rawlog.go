@@ -20,19 +20,22 @@ import (
 // RawIOLogger captures full raw HTTP bodies on both legs of every
 // LLM call through the lite-proxy. Three capture phases:
 //
-//   - "inbound_request"   — the body the harness sent us (post any
-//     preprocess rewrites we apply: task-prompt rewrite, inline
-//     approval rewrite, control-notice injection). This is what the
-//     upstream LLM provider sees.
+//   - "proxy_received_request" — the body the harness sent us before
+//     preprocess rewrites. This is an exact request-side capture after
+//     HTTP read/decode but before Clawvisor mutates the conversation.
+//   - "inbound_request"   — the body we send upstream after preprocess
+//     rewrites (task-prompt rewrite, inline approval rewrite, control
+//     notice injection, stable secret replay). This is what the upstream
+//     LLM provider sees.
 //   - "upstream_response" — the body the LLM provider sent back to us
 //     (post-decompression, since we force `Accept-Encoding: identity`).
 //   - "harness_response"  — the body we send back to the harness after
 //     postprocess (tool_use rewrites, substitutions, intercepts).
 //
 // Together these cover everything that enters or leaves the LLM, plus
-// what the harness sees. Diagnosing model loops requires knowing what
-// the model actually receives — guessing at conversation state from
-// summaries has limits.
+// what the harness sees. Diagnosing model loops requires knowing both
+// what the proxy received and what the model actually receives —
+// guessing at conversation state from summaries has limits.
 //
 // Disabled by default. Operators enable by setting
 // CLAWVISOR_PROXY_LITE_RAW_LOG to a file path. Production should keep
@@ -69,6 +72,10 @@ func OpenRawIOLogger(path string) (*RawIOLogger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lite-proxy: open raw-io log %q: %w", path, err)
 	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lite-proxy: chmod raw-io log %q: %w", path, err)
+	}
 	return NewRawIOLogger(f), nil
 }
 
@@ -80,8 +87,9 @@ func NewRawIOLogger(w io.Writer) *RawIOLogger {
 
 // RawIOEvent is the payload written per capture point.
 type RawIOEvent struct {
-	// Phase is one of "inbound_request" / "upstream_response" /
-	// "harness_response". Filter on this to slice the log.
+	// Phase is one of "proxy_received_request" / "inbound_request" /
+	// "upstream_response" / "harness_response". Filter on this to slice
+	// the log.
 	Phase string
 	// RequestID correlates the three phases for one LLM call.
 	RequestID string

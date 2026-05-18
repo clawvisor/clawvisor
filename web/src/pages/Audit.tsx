@@ -716,11 +716,24 @@ export default function Activity() {
     queryFn: () => orgId ? api.orgs.agents(orgId) : api.agents.list(),
     staleTime: 60_000,
   })
+  const { data: runtimeStatus } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: async () => {
+      try {
+        return await api.runtime.status()
+      } catch {
+        return null
+      }
+    },
+    enabled: runtimeActivityUI,
+    staleTime: 30_000,
+  })
+  const fullRuntimeActive = !!runtimeStatus?.enabled
   const { data: mutedHosts } = useQuery({
     queryKey: ['activity-mutes'],
     queryFn: () => api.audit.listMutes(),
     staleTime: 30_000,
-    enabled: runtimeActivityUI,
+    enabled: fullRuntimeActive,
   })
 
   const agentMap = useMemo(() => new Map(agents.map((agent: Agent) => [agent.id, agent.name])), [agents])
@@ -907,7 +920,7 @@ export default function Activity() {
         />
       </div>
 
-      {runtimeActivityUI && (mutedHosts?.entries?.length ?? 0) > 0 && (
+      {fullRuntimeActive && (mutedHosts?.entries?.length ?? 0) > 0 && (
         <div className="rounded-md border border-border-default bg-surface-1 p-4 space-y-3">
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Muted activity hosts</h2>
@@ -964,7 +977,7 @@ export default function Activity() {
                   mode={mode}
                   agentName={entry.agent_id ? agentMap.get(entry.agent_id) : undefined}
                   canCreateRule={runtimePolicyUI || !entry.service.startsWith('runtime.')}
-                  canMute={runtimeActivityUI}
+                  canMute={fullRuntimeActive}
                   onCreateRule={handleOpenCreateRule}
                   onMute={setMuteModalEntry}
                 />

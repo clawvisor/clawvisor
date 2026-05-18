@@ -8,6 +8,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -17,10 +18,14 @@ const (
 )
 
 func ControlNotice(controlBaseURL string, availableTools []string) string {
-	return controlNotice(controlBaseURL, availableTools)
+	return controlNotice(controlBaseURL, availableTools, nil)
 }
 
-func controlNotice(controlBaseURL string, availableTools []string) string {
+func ControlNoticeWithPolicy(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) string {
+	return controlNotice(controlBaseURL, availableTools, toolRules)
+}
+
+func controlNotice(controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) string {
 	// Always advertise the synthetic URL. Clawvisor rewrites it to the
 	// real daemon URL transparently and mints fresh auth on every call.
 	// Models that see (or guess) the daemon URL and call it directly
@@ -36,7 +41,7 @@ func controlNotice(controlBaseURL string, availableTools []string) string {
 	if shellTool == "" {
 		shellTool = "bash"
 	}
-	allowedLines := controlAllowedWithoutTaskLines(availableTools)
+	allowedLines := controlAllowedWithoutTaskLines(availableTools, toolRules)
 	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellTool, availableTools)
 	return strings.Join([]string{
 		ControlNoticeSentinel,
@@ -51,28 +56,30 @@ func controlNotice(controlBaseURL string, availableTools []string) string {
 		"",
 		"Required task shape:",
 		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
+		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"",
 		"If credentials are needed, add:",
-		"  \"required_credentials_json\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
+		"  \"required_credentials\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
 		"",
 		strings.Join(workedExampleLines, "\n"),
 		"",
 		"Field rules:",
-		"  - `expected_tools_json`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
-		"  - `required_credentials_json`: OMIT unless credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
-		"  - Invalid credential request: `\"required_credentials_json\":[{\"vault_item_id\":\"github\"}]`",
+		"  - `expected_tools`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
+		"  - `required_credentials`: OMIT unless credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
+		"  - Invalid credential request: `\"required_credentials\":[{\"vault_item_id\":\"github\"}]`",
+		"  - `lifetime`: omit or set `\"session\"` for a temporary task with `expires_in_seconds`; set `\"standing\"` only when the user asked for persistent permission. Standing tasks do not expire, so NEVER include `expires_in_seconds` with `\"lifetime\":\"standing\"`.",
 		"",
 		strings.Join(allowedLines, "\n"),
 		"",
 		"CREDENTIAL ACCESS:",
-		"  - If a task needs credentials, GET " + vaultItemsURL + " to list available vault item IDs before creating the task.",
-		"  - Then declare the selected item in `required_credentials_json` with a concrete `why`.",
+		"  - If you already have an `autovault_...` placeholder, do NOT call " + vaultItemsURL + " just to identify it. Create the task for the intended API call, omit `required_credentials`, and use the placeholder directly after approval.",
+		"  - Use GET " + vaultItemsURL + " only when you need Clawvisor to mint a new placeholder from an available vault item.",
+		"  - If you need a new placeholder, declare the selected vault item in `required_credentials` with a concrete `why`.",
 		"  - Do not ask the user to paste raw secrets into chat.",
 		"",
-		"VAULT PLACEHOLDERS — values like `autovault_github_xyz` are NOT raw credentials. Use them directly in headers or curl arguments; Clawvisor substitutes the real secret at proxy time. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
+		"VAULT PLACEHOLDERS — values like `autovault_github_xyz` are NOT raw credentials and are already usable placeholders. Use them directly in headers or curl arguments after the task is approved; Clawvisor substitutes the real secret at proxy time. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
 		"",
 		"Control-plane rules:",
 		"  - Before creating the task, tell me I will need to approve it.",
@@ -89,7 +96,7 @@ func controlNotice(controlBaseURL string, availableTools []string) string {
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools_json\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
+		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
@@ -119,7 +126,7 @@ func controlWorkedExampleLines(tasksURLInline, shellTool string, availableTools 
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"Create a temporary conversation fixture directory and verify the written files\",",
-		"   \"expected_tools_json\":[" + strings.Join(localTools, ",") + "],",
+		"   \"expected_tools\":[" + strings.Join(localTools, ",") + "],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
@@ -129,47 +136,50 @@ func controlWorkedExampleLines(tasksURLInline, shellTool string, availableTools 
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"Create a GitHub issue summarizing the failing deployment check\",",
-		"   \"expected_tools_json\":[" + strings.Join(githubTools, ",") + "],",
-		"   \"required_credentials_json\":[{\"vault_item_id\":\"github\",\"why\":\"Authenticate to GitHub to create the approved issue.\"}],",
+		"   \"expected_tools\":[" + strings.Join(githubTools, ",") + "],",
+		"   \"required_credentials\":[{\"vault_item_id\":\"github\",\"why\":\"Authenticate to GitHub to create the approved issue.\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
 	}
 }
 
-func controlAllowedWithoutTaskLines(availableTools []string) []string {
+func controlAllowedWithoutTaskLines(availableTools []string, toolRules []*store.RuntimePolicyRule) []string {
 	tools := compactToolNames(availableTools)
-	readTools := toolsByClass(tools, map[string]struct{}{
-		"read": {}, "view": {}, "open": {},
-	})
-	searchTools := toolsByClass(tools, map[string]struct{}{
-		"grep": {}, "glob": {}, "search": {}, "rg": {},
-	})
-	shellTool := controlShellTool(tools)
+	policyAllowed := policyAllowedToolNames(tools, toolRules)
 	lines := []string{
 		"ALLOWED WITHOUT A TASK — for single-step, non-destructive inspection:",
 	}
-	if len(readTools) > 0 {
-		lines = append(lines, "  - Read files with "+formatToolList(readTools)+".")
-	}
-	if len(searchTools) > 0 {
-		lines = append(lines, "  - Search or list files with "+formatToolList(searchTools)+".")
-	}
-	if shellTool != "" {
-		lines = append(lines, "  - Run one-shot read-only shell inspection with `"+shellTool+"` when it does not write files, change state, use credentials, or make network calls.")
+	if len(policyAllowed) > 0 {
+		lines = append(lines, "  - Active policy allowlists "+formatToolList(policyAllowed)+".")
 	}
 	if len(lines) == 1 {
-		lines = append(lines, "  - Single one-shot file reads, directory listings, and searches.")
+		lines = append(lines, "  - None yet. Use the dashboard Tool Controls to always allow specific tools.")
 	}
 	return lines
 }
 
-func toolsByClass(tools []string, names map[string]struct{}) []string {
+func policyAllowedToolNames(availableTools []string, toolRules []*store.RuntimePolicyRule) []string {
+	if len(availableTools) == 0 || len(toolRules) == 0 {
+		return nil
+	}
+	byLower := map[string]string{}
+	for _, tool := range compactToolNames(availableTools) {
+		byLower[strings.ToLower(tool)] = tool
+	}
+	seen := map[string]struct{}{}
 	var out []string
-	for _, tool := range tools {
-		key := strings.ToLower(strings.TrimSpace(tool))
-		if _, ok := names[key]; ok {
-			out = append(out, tool)
+	for _, rule := range toolRules {
+		if rule == nil || !rule.Enabled || rule.Kind != "tool" || rule.Action != "allow" {
+			continue
+		}
+		if name := strings.TrimSpace(rule.ToolName); name != "" {
+			if actual, ok := byLower[strings.ToLower(name)]; ok {
+				if _, exists := seen[strings.ToLower(actual)]; !exists {
+					seen[strings.ToLower(actual)] = struct{}{}
+					out = append(out, actual)
+				}
+			}
 		}
 	}
 	return out
@@ -238,10 +248,14 @@ func compactToolNames(availableTools []string) []string {
 // The synthetic URL is rewritten from model-emitted tool calls before the tool
 // runner sees it, so the prompt stays stable across local and public daemon URLs.
 func InjectControlNotice(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string) ([]byte, bool, error) {
+	return InjectControlNoticeWithPolicy(provider, body, controlBaseURL, availableTools, nil)
+}
+
+func InjectControlNoticeWithPolicy(provider conversation.Provider, body []byte, controlBaseURL string, availableTools []string, toolRules []*store.RuntimePolicyRule) ([]byte, bool, error) {
 	if controlNoticeAlreadyPresent(provider, body) {
 		return body, false, nil
 	}
-	notice := ControlNotice(controlBaseURL, availableTools)
+	notice := ControlNoticeWithPolicy(controlBaseURL, availableTools, toolRules)
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return injectAnthropicControlNotice(body, notice)

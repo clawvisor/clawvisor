@@ -69,7 +69,7 @@ func TestValidateTaskEnvelopeRejectsCredentialWithoutVaultItem(t *testing.T) {
 	if len(issues) != 1 {
 		t.Fatalf("expected one issue, got %#v", issues)
 	}
-	if issues[0].Field != "required_credentials_json[0].vault_item_id" {
+	if issues[0].Field != "required_credentials[0].vault_item_id" {
 		t.Fatalf("unexpected field %q", issues[0].Field)
 	}
 }

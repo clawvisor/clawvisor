@@ -78,8 +78,8 @@ export default function TaskCard({
   const [scopeOverrides, setScopeOverrides] = useState<Record<string, ScopeOverride>>({})
   const authorizedActions = Array.isArray(task.authorized_actions) ? task.authorized_actions : []
   const plannedCalls = Array.isArray(task.planned_calls) ? task.planned_calls : []
-  const expectedTools = Array.isArray(task.expected_tools_json) ? task.expected_tools_json : []
-  const expectedEgress = Array.isArray(task.expected_egress_json) ? task.expected_egress_json : []
+  const expectedTools = Array.isArray(task.expected_tools) ? task.expected_tools : []
+  const expectedEgress = Array.isArray(task.expected_egress) ? task.expected_egress : []
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['tasks'] })

@@ -29,6 +29,8 @@ type SanitizeInboundResult struct {
 	Modified bool
 }
 
+const ClawvisorManagedMarker = "[clawvisor-managed]"
+
 // SanitizeInboundHistory walks an inbound /v1/messages or
 // /v1/chat/completions request body and reverts proxy-rewritten
 // transport details inside assistant tool_use blocks back to the
@@ -410,7 +412,7 @@ func sanitizeBashCommand(cmd string, req SanitizeInboundRequest) (string, bool) 
 
 	// Drop any cv-nonce-… leftovers (e.g. a model that pasted the
 	// nonce into a description or body field).
-	cmd = reNonceLeftover.ReplaceAllString(cmd, "[clawvisor-managed]")
+	cmd = reNonceLeftover.ReplaceAllString(cmd, ClawvisorManagedMarker)
 
 	// Collapse double-spaces left over from header removal.
 	cmd = collapseSpaces(cmd)
@@ -440,7 +442,7 @@ func revertResolverURLs(cmd, resolverBase, targetHost string) string {
 			pathEnd++
 		}
 		path := cmd[end:pathEnd]
-		replacement := "https://[clawvisor-managed]" + path
+		replacement := "https://" + ClawvisorManagedMarker + path
 		if targetHost != "" {
 			// Drop leading "/" so url.Parse doesn't choke.
 			if u := buildSyntheticURL(targetHost, path); u != "" {

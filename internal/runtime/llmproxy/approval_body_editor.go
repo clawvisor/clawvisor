@@ -412,7 +412,7 @@ func flattenOpenAITaskReplyContent(raw json.RawMessage) string {
 	var parts []string
 	for _, b := range blocks {
 		switch b.Type {
-		case "text", "input_text":
+		case "text", "input_text", "output_text":
 			if b.Text != "" {
 				parts = append(parts, b.Text)
 			}

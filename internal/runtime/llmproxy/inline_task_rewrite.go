@@ -208,6 +208,11 @@ const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task 
 // retries / multi-step preprocess pipelines.
 const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
 
+const (
+	InlineTaskDenyMarker         = "[Clawvisor: the user denied the task-creation request."
+	InlineTaskCreatorErrorMarker = "[Clawvisor: inline task creation failed"
+)
+
 // AugmentApprovedInlineTasksInHistory walks the conversation history
 // and re-injects the "[Clawvisor: ... task approved inline ...]"
 // context onto every user "approve" turn that follows the substituted
@@ -361,7 +366,7 @@ func inlineApprovedReplyAugmentationContext(credentials []InlineTaskCredentialPl
 // retry the task-creation request. No leading verb — see the
 // inlineApprovedReplyAugmentation comment for why.
 func renderInlineTaskDenyReply() string {
-	return "[Clawvisor: the user denied the task-creation request. Do not retry. Acknowledge the denial; stop unless the user issues a new request.]"
+	return InlineTaskDenyMarker + " Do not retry. Acknowledge the denial; stop unless the user issues a new request.]"
 }
 
 // renderInlineTaskCreatorErrorReply is used when the user approved
@@ -369,5 +374,5 @@ func renderInlineTaskDenyReply() string {
 // missing creator wiring). The LLM should treat this as a denial and
 // surface the failure to the user.
 func renderInlineTaskCreatorErrorReply(msg string) string {
-	return fmt.Sprintf("[Clawvisor: inline task creation failed — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
+	return fmt.Sprintf(InlineTaskCreatorErrorMarker+" — %s. Acknowledge the failure to the user; do not retry without changes.]", msg)
 }

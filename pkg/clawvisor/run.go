@@ -167,6 +167,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/sessions", user(http.HandlerFunc(runtimeHandler.ListSessions)))
 			mux.Handle("POST /api/runtime/sessions/{id}/revoke", user(http.HandlerFunc(runtimeHandler.RevokeSession)))
 			mux.Handle("GET /api/runtime/status", user(http.HandlerFunc(runtimeHandler.Status)))
+			mux.Handle("GET /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.GetPassthrough)))
+			mux.Handle("POST /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.EnablePassthrough)))
+			mux.Handle("DELETE /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
+			mux.Handle("DELETE /api/runtime/passthrough/{id}", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
 			mux.Handle("GET /api/runtime/approvals", user(http.HandlerFunc(runtimeHandler.ListApprovals)))
 			mux.Handle("POST /api/runtime/approvals/{id}/resolve", user(http.HandlerFunc(runtimeHandler.ResolveApproval)))
 			mux.Handle("GET /api/runtime/events", user(http.HandlerFunc(runtimeHandler.ListEvents)))
@@ -322,6 +326,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	}
 	if opts.CallerNonceCache != nil {
 		apiOpts = append(apiOpts, api.WithCallerNonceCache(opts.CallerNonceCache))
+	}
+	if opts.PendingSecretCache != nil {
+		apiOpts = append(apiOpts, api.WithPendingSecretDecisionCache(opts.PendingSecretCache))
 	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))

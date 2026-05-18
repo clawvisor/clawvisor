@@ -20,7 +20,7 @@ import (
 // tool-approval prompt instead of either the dashboard task flow or
 // the inline approval flow.
 const multiStmtCatCurlCmd = `cat <<'EOF' >/tmp/clawvisor-task.json
-{"purpose":"Build a landing page","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools_json":[{"tool_name":"Bash","why":"Create dir"}]}
+{"purpose":"Build a landing page","intent_verification_mode":"strict","expires_in_seconds":600,"expected_tools":[{"tool_name":"Bash","why":"Create dir"}]}
 EOF
 curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' -H 'Content-Type: application/json' --data @/tmp/clawvisor-task.json`
 
@@ -35,7 +35,7 @@ curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' -
 // parse with `invalid character '@'`. This is the regression test for
 // that production bug.
 const singleStmtCurlStdinHeredoc = `curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120&surface=inline' -H 'Content-Type: application/json' --data @- <<'JSON'
-{"purpose":"Build a landing page","expected_tools_json":[{"tool_name":"bash","why":"x"}]}
+{"purpose":"Build a landing page","expected_tools":[{"tool_name":"bash","why":"x"}]}
 JSON`
 
 func TestParseControlCmd_ResolvesDataAtDashFromStdinHeredoc(t *testing.T) {
