@@ -17,8 +17,8 @@ import (
 //
 //   - `Authorization: Bearer <token>` — OpenAI SDK convention.
 //   - `x-api-key: <token>` — Anthropic SDK convention.
-//   - `X-Clawvisor-Agent-Token: <token>` — Claude Code passthrough auth,
-//     where Authorization must remain the user's Claude subscription OAuth token.
+//   - `X-Clawvisor-Agent-Token: <token>` — passthrough auth for clients where
+//     Authorization must remain the user's upstream subscription/OAuth token.
 //
 // Suitable for the LLM endpoint where the agent token rides on the SDK's
 // natural auth header. For the resolver path, use RequireAgentLLMNonce
@@ -208,7 +208,7 @@ func appendAgentLLMTokenCandidate(out []agentLLMTokenCandidate, token, source st
 	return append(out, agentLLMTokenCandidate{Token: token, Source: source})
 }
 
-// clawvisorAgentTokenHeader extracts out-of-band agent auth for Claude Code
+// clawvisorAgentTokenHeader extracts out-of-band agent auth for upstream
 // passthrough mode. Accepts either bare `cvis_...` or `Bearer cvis_...`.
 func clawvisorAgentTokenHeader(r *http.Request) string {
 	v := strings.TrimSpace(r.Header.Get(AgentTokenHeader))

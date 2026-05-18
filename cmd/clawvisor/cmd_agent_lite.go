@@ -210,7 +210,6 @@ func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
 	case liteProxyProviderCodex:
 		env = append(env,
 			"OPENAI_BASE_URL="+liteProxyOpenAIBaseURL(baseURL),
-			"OPENAI_API_KEY="+agentToken,
 		)
 	}
 	return env, nil
@@ -261,7 +260,9 @@ func prepareLiteProxyCommandArgs(opts *liteProxyOptions, commandArgs []string) [
 		"-c", "model_provider=clawvisor",
 		"-c", `model_providers.clawvisor.name="clawvisor"`,
 		"-c", fmt.Sprintf(`model_providers.clawvisor.base_url=%q`, liteProxyOpenAIBaseURL(opts.BaseURL)),
-		"-c", `model_providers.clawvisor.env_key="CLAWVISOR_AGENT_TOKEN"`,
+		"-c", `model_providers.clawvisor.wire_api="responses"`,
+		"-c", `model_providers.clawvisor.requires_openai_auth=true`,
+		"-c", `model_providers.clawvisor.env_http_headers={"X-Clawvisor-Agent-Token"="CLAWVISOR_AGENT_TOKEN"}`,
 	}
 	return append(injected, commandArgs[1:]...)
 }

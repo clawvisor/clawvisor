@@ -29,8 +29,8 @@ import (
 // LLMEndpointHandler is the lite-proxy LLM termination point. It accepts
 // Anthropic-/OpenAI-shaped requests authenticated by the agent's existing
 // `cvis_…` token (carried in Authorization, x-api-key, or
-// X-Clawvisor-Agent-Token for Claude Code subscription passthrough), fetches
-// or preserves upstream auth, and proxies the response back. v1 is pure passthrough —
+// X-Clawvisor-Agent-Token for upstream-auth passthrough), fetches or preserves
+// upstream auth, and proxies the response back. v1 is pure passthrough —
 // inspector and rewriter layer in via the response-body wrap path in
 // subsequent files.
 type LLMEndpointHandler struct {
