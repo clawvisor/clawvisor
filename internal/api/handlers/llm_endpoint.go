@@ -28,9 +28,9 @@ import (
 
 // LLMEndpointHandler is the lite-proxy LLM termination point. It accepts
 // Anthropic-/OpenAI-shaped requests authenticated by the agent's existing
-// `cvis_…` token (carried in either Authorization or x-api-key), fetches
-// the real upstream API key from the vault under (user_id, "anthropic" |
-// "openai"), and proxies the response back. v1 is pure passthrough —
+// `cvis_…` token (carried in Authorization, x-api-key, or
+// X-Clawvisor-Agent-Token for upstream-auth passthrough), fetches or preserves
+// upstream auth, and proxies the response back. v1 is pure passthrough —
 // inspector and rewriter layer in via the response-body wrap path in
 // subsequent files.
 type LLMEndpointHandler struct {
@@ -509,17 +509,27 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Skip the regular release path when the inline rewrite already
-	// consumed its hold. The rewritten user message still starts with
-	// the literal "approve" verb (the rewrite preserves it so the LLM
-	// can see the user's actual reply); without this guard the release
-	// path would re-parse that verb, LIFO-Peek the cache, and resolve
-	// some UNRELATED hold (e.g., a parallel tool-stage approval the
-	// model emitted alongside the inline-task POST in the same turn).
-	// A single user "approve" would then approve two distinct holds.
+	// consumed its hold. Without this guard, a future change that
+	// leaves any parseable approval text in the rewritten body could
+	// let the release path resolve an unrelated hold (e.g., a parallel
+	// tool-stage approval emitted alongside the inline-task POST in
+	// the same turn). A single user "approve" must only resolve one
+	// hold.
 	if !inlineApprovalConsumed {
 		if handled := h.maybeHandleLiteApprovalRelease(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 			return
 		}
+	}
+	if stripped, stripErr := llmproxy.StripSyntheticApprovalHistory(llmproxy.SyntheticApprovalHistoryStripRequest{
+		Provider: provider,
+		Body:     body,
+	}); stripErr != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy synthetic approval history strip failed",
+			"request_id", requestID, "agent_id", agent.ID, "err", stripErr.Error())
+	} else if stripped.Modified {
+		body = stripped.Body
+		auditParams["synthetic_approval_history_stripped"] = true
+		reqSummary = liteProxyRequestDebugSummary(provider, body)
 	}
 
 	upstreamURL := ""
@@ -2362,7 +2372,16 @@ func agentLogID(a *store.Agent) string {
 func liteProxyAuthMode(r *http.Request) string {
 	hasBearer := strings.TrimSpace(r.Header.Get("Authorization")) != ""
 	hasAPIKey := strings.TrimSpace(r.Header.Get("x-api-key")) != ""
+	hasClawvisorAgentToken := strings.TrimSpace(r.Header.Get(middleware.AgentTokenHeader)) != ""
 	switch {
+	case hasClawvisorAgentToken && hasBearer && hasAPIKey:
+		return "clawvisor-agent-token+authorization+x-api-key"
+	case hasClawvisorAgentToken && hasBearer:
+		return "clawvisor-agent-token+authorization"
+	case hasClawvisorAgentToken && hasAPIKey:
+		return "clawvisor-agent-token+x-api-key"
+	case hasClawvisorAgentToken:
+		return "clawvisor-agent-token"
 	case hasBearer && hasAPIKey:
 		return "authorization+x-api-key"
 	case hasBearer:
@@ -2413,10 +2432,13 @@ func clearMirroredUpstreamHeaders(h http.Header) {
 }
 
 // inboundAgentToken extracts the cvis_… token from the inbound request's
-// Authorization or x-api-key header (the SDK's natural caller-auth slot
-// at the LLM endpoint). Used as a fallback to source the caller token
-// for the rewriter when no dedicated middleware ran.
+// Clawvisor agent header, Authorization, or x-api-key header. Used as a
+// fallback to source the caller token for the rewriter when no dedicated
+// middleware ran.
 func inboundAgentToken(r *http.Request) string {
+	if h := clawvisorAgentTokenHeader(r); strings.HasPrefix(h, "cvis_") {
+		return h
+	}
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		token := strings.TrimSpace(h[len("Bearer "):])
 		if strings.HasPrefix(token, "cvis_") {
@@ -2427,4 +2449,16 @@ func inboundAgentToken(r *http.Request) string {
 		return h
 	}
 	return ""
+}
+
+func clawvisorAgentTokenHeader(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get(middleware.AgentTokenHeader))
+	if v == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if strings.HasPrefix(v, prefix) {
+		return strings.TrimSpace(v[len(prefix):])
+	}
+	return v
 }

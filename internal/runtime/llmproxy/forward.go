@@ -1,8 +1,9 @@
 // Package llmproxy implements the lite-proxy LLM endpoint pipeline: it
 // terminates Anthropic/OpenAI-compatible requests authenticated by the
-// agent's existing token, swaps in the real upstream API key from the
-// vault, and streams the response back. Tool-use inspection and resolver
-// are layered on top of this in sibling files.
+// agent's existing token, swaps in the real upstream API key from the vault
+// or preserves upstream OAuth in passthrough mode, and streams the response
+// back. Tool-use inspection and resolver are layered on top of this in sibling
+// files.
 package llmproxy
 
 import (
@@ -112,11 +113,10 @@ func NewForwarder(v vault.Vault) *Forwarder {
 	}
 }
 
-// Forward fetches the upstream API key for (userID, agentID, provider),
-// builds an upstream request mirroring the inbound one, injects the
-// upstream auth header per-provider, and dispatches via Client. The
-// returned *http.Response is the raw upstream response; the caller
-// streams its body to the harness.
+// Forward builds an upstream request mirroring the inbound one, injects the
+// upstream auth header per-provider or preserves upstream OAuth in passthrough
+// mode, and dispatches via Client. The returned *http.Response is the raw
+// upstream response; the caller streams its body to the harness.
 //
 // Vault key resolution order:
 //  1. agent-scoped: vault.Get(userID, "agent:<agentID>:<provider>")
@@ -142,13 +142,6 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	}
 	upstreamURL.RawQuery = inbound.URL.RawQuery
 
-	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
-	if err != nil {
-		return nil, err
-	}
-	defer zeroBytes(keyBytes)
-	_ = serviceID // serviceID is recorded by the handler for audit; future hook
-
 	req, err := http.NewRequestWithContext(ctx, inbound.Method, upstreamURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("llmproxy: build upstream request: %w", err)
@@ -161,6 +154,26 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	// rewrites by making the body unparseable. Cost: marginally larger
 	// SSE payload from upstream.
 	req.Header.Set("Accept-Encoding", "identity")
+
+	if PassthroughUpstreamAuth(ctx) {
+		if auth := passthroughBearerAuthorization(inbound); auth != "" {
+			if provider == conversation.ProviderOpenAI {
+				injectPassthroughOpenAIAuth(req, auth)
+				return f.Client.Do(req)
+			}
+			if provider == conversation.ProviderAnthropic {
+				injectPassthroughAnthropicAuth(req, auth)
+				return f.Client.Do(req)
+			}
+		}
+	}
+
+	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroBytes(keyBytes)
+	_ = serviceID // serviceID is recorded by the handler for audit; future hook
 
 	if err := injectUpstreamAuth(req, provider, keyBytes); err != nil {
 		return nil, err
@@ -220,10 +233,39 @@ func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key [
 	return nil
 }
 
+func passthroughBearerAuthorization(inbound *http.Request) string {
+	if inbound == nil {
+		return ""
+	}
+	auth := strings.TrimSpace(inbound.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return ""
+	}
+	token := strings.TrimSpace(auth[len(prefix):])
+	if token == "" || strings.HasPrefix(token, "cvis_") {
+		return ""
+	}
+	return prefix + token
+}
+
+func injectPassthroughOpenAIAuth(req *http.Request, authorization string) {
+	req.Header.Set("Authorization", authorization)
+	req.Header.Del("x-api-key")
+}
+
+func injectPassthroughAnthropicAuth(req *http.Request, authorization string) {
+	req.Header.Set("Authorization", authorization)
+	req.Header.Del("x-api-key")
+	if req.Header.Get("anthropic-version") == "" {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+}
+
 // forwardSkipHeaders are stripped from the inbound request when copying
 // to the upstream. Most are hop-by-hop or specific to the lite-proxy edge
-// (the agent's own bearer/x-api-key carries cvis_… and would 401 upstream;
-// the upstream gets its own per-provider header set in injectUpstreamAuth).
+// (the agent's own bearer/x-api-key may carry cvis_… and would 401 upstream;
+// upstream auth is restored explicitly after this copy step).
 //
 // All `X-Clawvisor-*` headers are also stripped via prefix match in
 // copyForwardableHeaders — they're for the proxy's edge, not the upstream.

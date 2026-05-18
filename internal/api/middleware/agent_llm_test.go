@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -79,6 +80,34 @@ func TestRequireAgentLLM_AcceptsXAPIKey(t *testing.T) {
 	}
 	if seenAgent == nil || seenAgent.ID != agent.ID {
 		t.Fatalf("expected agent in context")
+	}
+}
+
+func TestRequireAgentLLM_AcceptsClawvisorAgentTokenHeaderForPassthrough(t *testing.T) {
+	st, agent, raw := newSeededAgent(t)
+
+	var seenAgent *store.Agent
+	var passthrough bool
+	handler := RequireAgentLLM(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAgent = AgentFromContext(r.Context())
+		passthrough = llmproxy.PassthroughUpstreamAuth(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set(AgentTokenHeader, raw)
+	req.Header.Set("Authorization", "Bearer claude-oauth-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with %s auth, got %d (%s)", AgentTokenHeader, rec.Code, rec.Body.String())
+	}
+	if seenAgent == nil || seenAgent.ID != agent.ID {
+		t.Fatalf("expected agent in context")
+	}
+	if !passthrough {
+		t.Fatalf("expected passthrough upstream auth context")
 	}
 }
 
