@@ -23,7 +23,7 @@ jobs:
 
   build-binaries:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: always() && needs.release-please.outputs.release_created == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
 
   publish-skill:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: always() && needs.release-please.outputs.release_created == 'true'
     uses: ./.github/workflows/publish-skill.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
