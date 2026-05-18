@@ -221,7 +221,7 @@ Tool: Bash
 Reason: no matching task scope
 Input: mkdir -p /tmp/landing
 
-Reply (y)es to run this tool call, (n)o to block it,
+Reply yes or y to run this tool call, no or n to block it,
 or task to instruct the agent to include this in a task definition for approval.
 ```
 

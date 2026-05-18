@@ -26,7 +26,7 @@ func anthropicTextBody(messages ...map[string]string) []byte {
 // promptWithFooter builds an inline-prompt assistant message with the
 // approval-id footer the augmenter parses to look up the outcome.
 func promptWithFooter(approvalID, purposeLine string) string {
-	body := "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  " + purposeLine + "\n\nReply (y)es to authorize, (n)o to cancel."
+	body := "Clawvisor wants to create a task to cover this work:\n\nPurpose\n  " + purposeLine + "\n\nReply yes or y to authorize, no or n to cancel."
 	return body + "\n\n" + InlineApprovalIDMarker + approvalID + "]"
 }
 
@@ -89,7 +89,7 @@ func TestAugment_IdempotentOnSecondPass(t *testing.T) {
 func TestAugment_NoopOnRegularToolApprove(t *testing.T) {
 	body := anthropicTextBody(
 		map[string]string{"role": "user", "content": "Do something"},
-		map[string]string{"role": "assistant", "content": "Clawvisor paused this tool call for approval.\n\nTool: Bash\nInput: ls\n\nReply (y)es to run, (n)o to block, or task to ..."},
+		map[string]string{"role": "assistant", "content": "Clawvisor paused this tool call for approval.\n\nTool: Bash\nInput: ls\n\nReply yes or y to run, no or n to block, or task to ..."},
 		map[string]string{"role": "user", "content": "approve"},
 	)
 	_, ok, err := AugmentApprovedInlineTasksInHistory(body, conversation.ProviderAnthropic, NewMemoryInlineApprovalOutcomeStore(time.Minute), "user-1", "agent-1")

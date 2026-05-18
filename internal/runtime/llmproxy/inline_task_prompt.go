@@ -42,11 +42,11 @@ func renderTaskApprovalPrompt(req *runtimetasks.TaskCreateRequest, approvalID st
 func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, approvalID string, risk *taskrisk.RiskAssessment) string {
 	suffix := approvalIDFooter(approvalID)
 	if req == nil {
-		return "Clawvisor wants to create a task.\n\nReply `(y)es` to authorize, `(n)o` to cancel." + suffix
+		return "Clawvisor wants to create a task.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
 	}
 	purpose := strings.TrimSpace(req.Purpose)
 	if purpose == "" {
-		return "Clawvisor wants to create a task: unnamed.\n\nReply `(y)es` to authorize, `(n)o` to cancel." + suffix
+		return "Clawvisor wants to create a task: unnamed.\n\nReply `yes` or `y` to authorize, `no` or `n` to cancel." + suffix
 	}
 
 	var b strings.Builder
@@ -134,7 +134,7 @@ func renderTaskApprovalPromptWithRisk(req *runtimetasks.TaskCreateRequest, appro
 	}
 
 	b.WriteString("\n\nApproving will create this task and run the original tool call.\n")
-	b.WriteString("Reply `(y)es` to authorize, `(n)o` to cancel.")
+	b.WriteString("Reply `yes` or `y` to authorize, `no` or `n` to cancel.")
 	b.WriteString(suffix)
 	return b.String()
 }
