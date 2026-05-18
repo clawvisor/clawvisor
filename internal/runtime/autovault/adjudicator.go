@@ -85,7 +85,13 @@ func (a *LLMSecretAdjudicator) AdjudicateSecret(ctx context.Context, req SecretA
 }
 
 func SecretAdjudicatorConfigured(cfg config.VerificationConfig) bool {
-	return cfg.Enabled && cfg.Endpoint != "" && cfg.Model != ""
+	if !cfg.Enabled || cfg.Model == "" {
+		return false
+	}
+	if cfg.Endpoint != "" {
+		return true
+	}
+	return cfg.Provider == "gemini" && cfg.Project != ""
 }
 
 func SecretAdjudicationTimeout(cfg config.VerificationConfig) time.Duration {
