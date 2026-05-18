@@ -2,14 +2,14 @@
 
 Serves:
   GET /repos/<owner>/<repo>/releases/latest  ->  JSON with tag_name
-  GET /<owner>/<repo>/releases/download/<tag>/<asset>  ->  binary
+  GET /<owner>/<repo>/releases/download/<tag>/<asset>  ->  raw binary
   GET /install.sh  ->  the install script
 
 Usage:
   python3 mock_github_server.py <port> <binary_path> <install_script_path>
 
-The server reads the release asset on startup from the binary at <binary_path>,
-using the naming convention expected by install.sh.
+The server exposes the binary using the same raw asset naming convention as
+the real GitHub releases: clawvisor-server-<os>-<arch>.
 """
 
 import hashlib
@@ -55,19 +55,18 @@ def main():
     os_name, arch = detect_platform()
     asset_name = f"clawvisor-server-{os_name}-{arch}"
 
-    print(f"Preparing asset: {asset_name}", flush=True)
     with open(binary_path, "rb") as f:
-        asset_data = f.read()
+        binary_data = f.read()
     with open(install_script_path, "rb") as f:
         install_script_data = f.read()
 
-    # Compute the checksums.txt contents served alongside the asset. Format
+    # Compute the checksums.txt contents served alongside the binary. Format
     # matches `sha256sum`/`shasum -a 256` ("<hash>  <filename>"), which is what
     # install.sh parses.
-    asset_sha256 = hashlib.sha256(asset_data).hexdigest()
-    checksums_data = f"{asset_sha256}  {asset_name}\n".encode()
+    binary_sha256 = hashlib.sha256(binary_data).hexdigest()
+    checksums_data = f"{binary_sha256}  {asset_name}\n".encode()
 
-    print(f"Asset ready: {len(asset_data)} bytes", flush=True)
+    print(f"Binary ready: {asset_name} ({len(binary_data)} bytes)", flush=True)
 
     release_json = json.dumps({
         "tag_name": VERSION,
@@ -85,7 +84,7 @@ def main():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.end_headers()
-                self.wfile.write(asset_data)
+                self.wfile.write(binary_data)
             elif self.path == f"/{REPO}/releases/download/{VERSION}/checksums.txt":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")

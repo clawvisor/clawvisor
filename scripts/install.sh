@@ -1,161 +1,182 @@
 #!/bin/sh
+# Clawvisor daemon installer
+# Usage: curl -fsSL https://clawvisor.com/install.sh | sh
 set -eu
 
-# Clawvisor daemon installer — curl-pipe-sh friendly.
-# Must be POSIX sh compatible (dash, ash, etc.) since `curl | sh` ignores shebangs.
-# Usage: curl -fsSL https://clawvisor.com/install.sh | sh
-
-INSTALL_DIR="${CLAWVISOR_INSTALL_DIR:-$HOME/.clawvisor/bin}"
-DATA_DIR="${CLAWVISOR_DATA_DIR:-$HOME/.clawvisor}"
 REPO="${CLAWVISOR_REPO:-clawvisor/clawvisor}"
+INSTALL_DIR="${CLAWVISOR_INSTALL_DIR:-$HOME/.clawvisor/bin}"
 BINARY="clawvisor-server"
 API_BASE="${CLAWVISOR_API_BASE:-https://api.github.com}"
 DOWNLOAD_BASE="${CLAWVISOR_DOWNLOAD_BASE:-https://github.com}"
 
-# Detect OS and architecture.
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+# -- Helpers ----------------------------------------------------------------
+
+info()  { printf '  %s\n' "$@"; }
+error() { printf '  Error: %s\n' "$@" >&2; exit 1; }
+
+# Use curl or wget, whichever is available.
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$1"
+  else
+    error "curl or wget is required"
+  fi
+}
+
+# Download a URL to a file.
+download() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$1" -O "$2"
+  else
+    error "curl or wget is required"
+  fi
+}
+
+# -- Detect platform --------------------------------------------------------
+
+OS="$(uname -s)"
+case "$OS" in
+  Darwin) OS="darwin" ;;
+  Linux)  OS="linux"  ;;
+  *)      OS="unsupported" ;;
+esac
+
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64)  ARCH="amd64" ;;
-  aarch64|arm64) ARCH="arm64" ;;
-  *)
-    echo "Error: unsupported architecture $ARCH" >&2
-    exit 1
-    ;;
+  arm64|aarch64) ARCH="arm64" ;;
+  x86_64)        ARCH="amd64" ;;
+  *)             ARCH="unsupported" ;;
 esac
 
-case "$OS" in
-  darwin|linux) ;;
-  *)
-    echo "Error: unsupported OS $OS" >&2
-    exit 1
-    ;;
-esac
-
-echo "  Installing Clawvisor daemon ($OS/$ARCH)..."
-
-# Fetch latest release tag.
-LATEST="$(curl -fsSL "${API_BASE}/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
-if [ -z "$LATEST" ]; then
-  echo "Error: could not determine latest release" >&2
+if [ "$OS" = "unsupported" ] || [ "$ARCH" = "unsupported" ]; then
+  RAW_OS="$(uname -s)"
+  RAW_ARCH="$(uname -m)"
+  printf '\n'
+  info "Unsupported platform: ${RAW_OS}/${RAW_ARCH}"
+  info "Pre-built binaries are available for macOS and Linux (arm64, amd64)."
+  info ""
+  info "To install from source (requires Go 1.25+ and Node.js 18+):"
+  info "  git clone https://github.com/${REPO}.git"
+  info "  cd clawvisor && make build"
+  info "  ./bin/clawvisor-server install"
+  printf '\n'
   exit 1
 fi
-echo "  Version: $LATEST"
+
+info "Installing Clawvisor ($OS/$ARCH)..."
+
+# -- Resolve version --------------------------------------------------------
+
+if [ -n "${VERSION:-}" ]; then
+  # Allow both "0.6.0" and "v0.6.0"
+  case "$VERSION" in
+    v*) TAG="$VERSION" ;;
+    *)  TAG="v$VERSION" ;;
+  esac
+  info "Version: $TAG (from \$VERSION)"
+else
+  TAG="$(fetch "${API_BASE}/repos/${REPO}/releases/latest" \
+    | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
+  if [ -z "$TAG" ]; then
+    error "could not determine latest release"
+  fi
+  info "Version: $TAG (latest)"
+fi
+
+# -- Download binary + checksums --------------------------------------------
 
 ASSET="${BINARY}-${OS}-${ARCH}"
-URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/${ASSET}"
-CHECKSUMS_URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/checksums.txt"
+BASE_URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${TAG}"
 
-# Download and extract.
-mkdir -p "$INSTALL_DIR"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL "$URL" -o "$TMP/$ASSET"
+info "Downloading ${ASSET}..."
+download "${BASE_URL}/${ASSET}" "${TMP}/${ASSET}"
+download "${BASE_URL}/checksums.txt" "${TMP}/checksums.txt"
 
-# Verify checksum. Aborts if the release lacks checksums.txt, if no entry
-# matches our asset, or if the computed hash differs — guards against
-# tampered downloads and mirror/CDN corruption.
-curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt"
+# -- Verify checksum --------------------------------------------------------
+
+EXPECTED="$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "${TMP}/checksums.txt")"
+if [ -z "$EXPECTED" ]; then
+  error "no checksum found for ${ASSET} in checksums.txt"
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
-  SHA_CMD="sha256sum"
+  ACTUAL="$(sha256sum "${TMP}/${ASSET}" | awk '{print $1}')"
 elif command -v shasum >/dev/null 2>&1; then
-  SHA_CMD="shasum -a 256"
+  ACTUAL="$(shasum -a 256 "${TMP}/${ASSET}" | awk '{print $1}')"
 else
-  echo "Error: no sha256sum or shasum available for checksum verification" >&2
-  exit 1
+  error "sha256sum or shasum is required for checksum verification"
 fi
 
-# checksums.txt format is "<hash> [* ]<filename>"; awk extracts the hash for
-# the matching asset (stripping a leading "*" that sha256sum adds in binary
-# mode on some systems).
-EXPECTED="$(awk -v a="$ASSET" '{n=$2; sub(/^\*/,"",n); if (n==a) print $1}' "$TMP/checksums.txt")"
-if [ -z "$EXPECTED" ]; then
-  echo "Error: no checksum entry for $ASSET in checksums.txt" >&2
-  exit 1
-fi
-ACTUAL="$($SHA_CMD "$TMP/$ASSET" | awk '{print $1}')"
 if [ "$EXPECTED" != "$ACTUAL" ]; then
-  echo "Error: checksum mismatch for $ASSET" >&2
-  echo "  expected: $EXPECTED" >&2
-  echo "  actual:   $ACTUAL" >&2
-  exit 1
+  error "checksum mismatch: expected ${EXPECTED}, got ${ACTUAL}"
 fi
+info "Checksum verified."
 
-mv "$TMP/$ASSET" "$INSTALL_DIR/$BINARY"
-chmod +x "$INSTALL_DIR/$BINARY"
+# -- Install binary ---------------------------------------------------------
 
-# Ensure data directory exists.
-mkdir -p "$DATA_DIR/logs"
+mkdir -p "$INSTALL_DIR"
+mv "${TMP}/${ASSET}" "${INSTALL_DIR}/${BINARY}"
+chmod +x "${INSTALL_DIR}/${BINARY}"
+info "Installed to ${INSTALL_DIR}/${BINARY}"
 
-echo "  Installed to $INSTALL_DIR/$BINARY"
+# -- Add to PATH ------------------------------------------------------------
 
-# Try to symlink into an existing user-writable PATH directory so the binary
-# is available immediately — no terminal restart needed.
-link_into_path() {
-  for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
-    # Must already be on PATH, exist, and be writable.
-    case ":$PATH:" in
-      *":$dir:"*) ;;
-      *) continue ;;
-    esac
-    if [ -d "$dir" ] && [ -w "$dir" ]; then
-      ln -sf "$INSTALL_DIR/$BINARY" "$dir/$BINARY"
-      echo "  Symlinked $dir/$BINARY → $INSTALL_DIR/$BINARY"
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Add to PATH if not already present.
 add_to_path() {
-  local rc_file="$1"
-  local export_line="export PATH=\"$INSTALL_DIR:\$PATH\""
-  if [ -f "$rc_file" ] && grep -qF "$INSTALL_DIR" "$rc_file"; then
+  rc_file="$1"
+  export_line="export PATH=\"\$HOME/.clawvisor/bin:\$PATH\""
+  if [ -f "$rc_file" ] && grep -qF ".clawvisor/bin" "$rc_file"; then
     return 0
   fi
-  echo "" >> "$rc_file"
-  echo "# Added by Clawvisor installer" >> "$rc_file"
-  echo "$export_line" >> "$rc_file"
-  echo "  Added $INSTALL_DIR to PATH in $rc_file"
+  printf '\n# Added by Clawvisor installer\n%s\n' "$export_line" >> "$rc_file"
+  info "Added ~/.clawvisor/bin to PATH in $rc_file"
 }
 
-if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-  if ! link_into_path; then
-    # No writable PATH dir found — fall back to editing shell rc.
-    SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
-    case "$SHELL_NAME" in
-      zsh)  add_to_path "$HOME/.zshrc" ;;
-      bash)
-        if [ -f "$HOME/.bash_profile" ]; then
-          add_to_path "$HOME/.bash_profile"
-        else
-          add_to_path "$HOME/.bashrc"
-        fi
-        ;;
-      *)
-        echo ""
-        echo "  Could not auto-configure PATH for $SHELL_NAME."
-        echo "  Add this to your shell config:"
-        echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
-        echo ""
-        ;;
-    esac
-  fi
+if ! echo "$PATH" | grep -q "\.clawvisor/bin"; then
+  SHELL_NAME="$(basename "${SHELL:-/bin/sh}")"
+  case "$SHELL_NAME" in
+    zsh)  add_to_path "$HOME/.zshrc" ;;
+    bash)
+      if [ -f "$HOME/.bash_profile" ]; then
+        add_to_path "$HOME/.bash_profile"
+      else
+        add_to_path "$HOME/.bashrc"
+      fi
+      ;;
+    fish) add_to_path "$HOME/.config/fish/config.fish" ;;
+    *)
+      info ""
+      info "Could not auto-configure PATH for $SHELL_NAME."
+      info "Add this to your shell config:"
+      info "  export PATH=\"\$HOME/.clawvisor/bin:\$PATH\""
+      ;;
+  esac
   export PATH="$INSTALL_DIR:$PATH"
 fi
 
-echo ""
-echo "  Starting Clawvisor daemon for first-run setup..."
-echo ""
+# -- Launch setup -----------------------------------------------------------
 
-# Allow tests to stop here without exec'ing into the daemon.
+printf '\n'
 if [ "${CLAWVISOR_SKIP_START:-}" = "1" ]; then
-  echo "  Skipping daemon start (CLAWVISOR_SKIP_START=1)."
-  exit 0
+  info "Installation complete!"
+  printf '\n'
+elif [ -t 0 ]; then
+  info "Starting daemon installer..."
+  printf '\n'
+  exec "$INSTALL_DIR/$BINARY" install
+else
+  info "Installation complete!"
+  info ""
+  info "To finish setup, restart your shell and run:"
+  info "  clawvisor-server install"
+  info ""
+  info "Or run it now with:"
+  info "  ~/.clawvisor/bin/clawvisor-server install"
+  printf '\n'
 fi
-
-# Start the daemon in the foreground for first-run.
-exec "$INSTALL_DIR/$BINARY" start

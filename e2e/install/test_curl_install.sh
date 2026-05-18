@@ -2,7 +2,7 @@
 # E2E test: curl -fsSL https://clawvisor.com/install.sh | sh
 #
 # Runs inside a fresh Docker container with no prior state. A mock HTTP server
-# stands in for GitHub, serving the install script and a binary of the binary.
+# stands in for GitHub, serving the install script and release binary asset.
 # After install.sh downloads and sets up the binary, we run it through the full
 # setup wizard and verify the daemon starts.
 set -euo pipefail
@@ -85,8 +85,8 @@ echo "── 3. curl | sh"
 
 # This is the exact command a user runs, with two substitutions:
 #   - URLs point at the mock server instead of GitHub
-#   - CLAWVISOR_SKIP_START=1 so install.sh exits after installing the binary
-#     (the next section runs the binary through the full wizard separately)
+#   - CLAWVISOR_SKIP_START=1 so the test stays explicit about running setup
+#     in the next section.
 curl -fsSL "http://127.0.0.1:${MOCK_PORT}/install.sh" | \
   CLAWVISOR_API_BASE="http://127.0.0.1:${MOCK_PORT}" \
   CLAWVISOR_DOWNLOAD_BASE="http://127.0.0.1:${MOCK_PORT}" \
@@ -112,7 +112,6 @@ else
 fi
 
 assert_dir_exists "$HOME/.clawvisor" "data dir"
-assert_dir_exists "$HOME/.clawvisor/logs" "logs dir"
 
 assert_file_contains "$HOME/.bashrc" ".clawvisor/bin" "PATH in .bashrc"
 assert_file_contains "$HOME/.bashrc" "# Added by Clawvisor installer" "PATH comment"
@@ -143,7 +142,7 @@ wait "$MOCK_PID" 2>/dev/null || true
 echo ""
 echo "── 5. Full wizard + daemon (installed binary)"
 
-# This is what install.sh would have done next: exec clawvisor-server start.
+# This drives the same first-run setup the user would run after curl-pipe-sh.
 # The wizard generates config, keys, starts the server — the whole nine yards.
 DAEMON_LOG="$HOME/.daemon-output.log"
 "$INSTALLED_BIN" start --foreground >"$DAEMON_LOG" 2>&1 &
