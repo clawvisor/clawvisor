@@ -33,6 +33,6 @@ The highest-risk areas are authorization, task scope evaluation, credential/vaul
 
 When making changes, evaluate whether this `AGENTS.md` file should be updated to reflect new architecture, workflows, commands, conventions, risk areas, or repo structure. Update it in the same change when the guidance future agents need would otherwise become stale or incomplete.
 
-## Pull Requests
+## Commits and Pull Requests
 
-All pull requests should follow Conventional Commits semantics. Use a conventional type and optional scope in the PR title, such as `feat(scope): summary`, `fix(scope): summary`, or `chore: summary`.
+All commit messages and pull request titles should follow Conventional Commits semantics. Use a conventional type and optional scope, such as `feat(scope): summary`, `fix(scope): summary`, or `chore: summary`.
