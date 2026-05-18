@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.7](https://github.com/clawvisor/clawvisor/compare/v0.9.6...v0.9.7) (2026-05-18)
+
+
+### Bug Fixes
+
+* align install e2e mock with release assets ([#400](https://github.com/clawvisor/clawvisor/issues/400)) ([7896263](https://github.com/clawvisor/clawvisor/commit/7896263b89672be5fd7ec976156bc1a4d5cd35f8))
+* **conversation:** accept yes/y/no/n as approval aliases ([#392](https://github.com/clawvisor/clawvisor/issues/392)) ([55660dc](https://github.com/clawvisor/clawvisor/commit/55660dc75c495aaa1e7a523a686955a9bf2d72a7))
+* **intent:** enhance tag stripping to handle case variations ([#377](https://github.com/clawvisor/clawvisor/issues/377)) ([7001419](https://github.com/clawvisor/clawvisor/commit/7001419b98a2d32006a315c7f1537479b03239b3))
+* **intent:** strip role tags from all agent-supplied fields ([#375](https://github.com/clawvisor/clawvisor/issues/375)) ([d3fd175](https://github.com/clawvisor/clawvisor/commit/d3fd1750dfbd26a161c024752201e334a5b88418))
+* **server:** use PublicURL for magic link when set ([#380](https://github.com/clawvisor/clawvisor/issues/380)) ([9d728dd](https://github.com/clawvisor/clawvisor/commit/9d728dd3a668867ab32fca7f25444c988f08506c))
+* **tui:** auto-detect local server from .local-session ([#383](https://github.com/clawvisor/clawvisor/issues/383)) ([2b67845](https://github.com/clawvisor/clawvisor/commit/2b678458d7ca2bdbcf4e02334a9f9df717f58eca))
+
 ## [0.9.6](https://github.com/clawvisor/clawvisor/compare/v0.9.5...v0.9.6) (2026-05-12)
 
 
