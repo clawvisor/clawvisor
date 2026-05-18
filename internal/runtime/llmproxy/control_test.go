@@ -21,7 +21,7 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if strings.Contains(notice, "Use Bash with curl") || strings.Contains(notice, `"tool_name":"bash"`) {
 		t.Fatalf("notice should not hardcode Bash when exec is available; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
+	if !strings.Contains(notice, "available tools (exec, write, edit, read, process)") {
 		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
 	}
 	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials") {
@@ -56,6 +56,57 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	}
 	if strings.Contains(notice, "Read files with `read`") || strings.Contains(notice, "Run one-shot read-only shell inspection") {
 		t.Fatalf("notice should not hardcode read-only allowances outside policy; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeUsesCodexStyleToolNames(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{
+		"browser_back",
+		"browser_click",
+		"browser_console",
+		"browser_get_images",
+		"browser_navigate",
+		"browser_press",
+		"browser_scroll",
+		"browser_snapshot",
+		"terminal",
+		"read_file",
+		"write_file",
+	})
+
+	if !strings.Contains(notice, "Use `terminal` with curl") {
+		t.Fatalf("notice should steer control calls through terminal; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"tool_name":"terminal"`) {
+		t.Fatalf("notice examples should declare terminal, not bash; got:\n%s", notice)
+	}
+	if strings.Contains(notice, `"tool_name":"bash"`) || strings.Contains(notice, "Use `bash` with curl") {
+		t.Fatalf("notice should not fall back to bash when terminal is available; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"tool_name":"write_file"`) ||
+		!strings.Contains(notice, `"tool_name":"read_file"`) {
+		t.Fatalf("worked examples should include available file tools; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "available tools (terminal, write_file, read_file") {
+		t.Fatalf("available-tool examples should prioritize task-relevant tools; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeDescribesUnknownShellToolInsteadOfInventingBash(t *testing.T) {
+	notice := ControlNotice("http://localhost:25297", []string{"process", "read_file", "write_file"})
+
+	if strings.Contains(notice, `"tool_name":"bash"`) || strings.Contains(notice, "Use `bash` with curl") {
+		t.Fatalf("notice should not invent bash when no recognized shell tool is available; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"tool_name":"<actual available shell/command-execution tool>"`) {
+		t.Fatalf("notice should describe the shell tool placeholder explicitly; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, "do not invent `bash` unless it is listed in the request tools") {
+		t.Fatalf("notice should tell the model not to invent unavailable shell tools; got:\n%s", notice)
+	}
+	if !strings.Contains(notice, `"tool_name":"write_file"`) ||
+		!strings.Contains(notice, `"tool_name":"read_file"`) {
+		t.Fatalf("notice should still include recognized non-shell tools in worked examples; got:\n%s", notice)
 	}
 }
 
