@@ -349,6 +349,12 @@ func TestScanInboundSecrets_AdjudicatorControlsAmbiguousCandidates(t *testing.T)
 			if found != tc.want {
 				t.Fatalf("found=%v, want %v, findings=%+v", found, tc.want, scan.Findings)
 			}
+			if len(scan.Adjudications) != 1 || scan.Adjudications[0].Outcome != "verdict" {
+				t.Fatalf("expected adjudicator verdict trace, got %+v", scan.Adjudications)
+			}
+			if scan.Adjudications[0].Credential != tc.verdict.Credential || scan.Adjudications[0].Confidence != tc.verdict.Confidence {
+				t.Fatalf("unexpected adjudicator trace: %+v", scan.Adjudications[0])
+			}
 			if found {
 				if len(scan.Findings) != 1 || scan.Findings[0].Source != "heuristic_adjudicated" || scan.Findings[0].Service != "custom_service" {
 					t.Fatalf("unexpected adjudicated finding: %+v", scan.Findings)
@@ -400,6 +406,35 @@ func TestScanInboundSecrets_AdjudicatorErrorFallsBackToHeuristic(t *testing.T) {
 	}
 	if scan.Findings[0].Source != "heuristic_observe" {
 		t.Fatalf("unexpected fallback finding: %+v", scan.Findings[0])
+	}
+	if len(scan.Adjudications) != 1 {
+		t.Fatalf("expected adjudicator error trace, got %+v", scan.Adjudications)
+	}
+	trace := scan.Adjudications[0]
+	if trace.Outcome != "error" || trace.ErrorKind != "error" || trace.ErrorMessage != "verification unavailable" {
+		t.Fatalf("unexpected adjudicator error trace: %+v", trace)
+	}
+	if trace.Fingerprint != scan.Findings[0].Fingerprint || trace.FieldName != "text" {
+		t.Fatalf("adjudicator trace should identify the same candidate without exposing it: trace=%+v finding=%+v", trace, scan.Findings[0])
+	}
+}
+
+func TestInboundSecretAdjudicationErrorKind(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{err: runtimeautovault.ErrSecretAdjudicatorDisabled, want: "disabled"},
+		{err: context.DeadlineExceeded, want: "timeout"},
+		{err: errors.New("llm: gemini auth: missing credentials"), want: "auth"},
+		{err: errors.New("llm: gemini model status 429: rate limited"), want: "upstream_status"},
+		{err: errors.New("no JSON object found in adjudicator response"), want: "parse"},
+		{err: errors.New("llm: no candidates in gemini response"), want: "response_decode"},
+	}
+	for _, tc := range cases {
+		if got := inboundSecretAdjudicationErrorKind(tc.err); got != tc.want {
+			t.Fatalf("inboundSecretAdjudicationErrorKind(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
 
