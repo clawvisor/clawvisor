@@ -207,6 +207,8 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 		AgentID:          agentID,
 		ControlBaseURL:   "http://localhost:25297",
 		PendingApprovals: cache,
+		Audit:            NewAuditEmitter(st, nil, nil),
+		RequestID:        "req-inline-task-pending",
 	})
 
 	out := string(got.Body)
@@ -215,6 +217,20 @@ func TestPostprocess_InlineTaskInterceptedWithSurfaceInlineQueryParam(t *testing
 	}
 	if strings.Contains(out, "X-Clawvisor-Caller") {
 		t.Fatalf("surface=inline should NOT rewrite the curl through to the daemon; got %s", out)
+	}
+	rows, _, err := st.ListAuditEntries(req.Context(), userID, store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Action != "lite_proxy.tool_use.approve" || row.Decision != "approve" || row.Outcome != "pending" {
+		t.Fatalf("expected pending approval audit row, got action=%q decision=%q outcome=%q", row.Action, row.Decision, row.Outcome)
+	}
+	if row.ToolUseID == nil || *row.ToolUseID != "toolu_1" {
+		t.Fatalf("tool_use_id=%v, want toolu_1", row.ToolUseID)
 	}
 
 	// One inner hold should now exist, with AwaitingTaskFor="" (no

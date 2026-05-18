@@ -95,6 +95,44 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 	}
 }
 
+func TestForward_AnthropicPassthroughAuthPreservesOAuthAuthorization(t *testing.T) {
+	v := &stubVault{}
+
+	var seenAuth, seenAPIKey, seenVersion string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		seenAPIKey = r.Header.Get("x-api-key")
+		seenVersion = r.Header.Get("anthropic-version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1"}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{AnthropicBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(`{"model":"claude"}`)))
+	inbound.Header.Set("Authorization", "Bearer claude-oauth-token")
+	inbound.Header.Set("x-api-key", "cvis_agent_token")
+
+	ctx := WithPassthroughUpstreamAuth(context.Background())
+	resp, err := f.Forward(ctx, "user1", "", conversation.ProviderAnthropic, inbound, []byte(`{"model":"claude"}`))
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if seenAuth != "Bearer claude-oauth-token" {
+		t.Fatalf("expected upstream OAuth Authorization to pass through, got %q", seenAuth)
+	}
+	if seenAPIKey != "" {
+		t.Fatalf("expected upstream x-api-key stripped in passthrough mode, got %q", seenAPIKey)
+	}
+	if seenVersion == "" {
+		t.Errorf("expected default anthropic-version header")
+	}
+}
+
 func TestForward_OpenAIInjectsKey(t *testing.T) {
 	v := &stubVault{}
 	v.Set(context.Background(), "user1", "openai", []byte("sk-real-openai-key"))
@@ -119,6 +157,41 @@ func TestForward_OpenAIInjectsKey(t *testing.T) {
 
 	if seenAuth != "Bearer sk-real-openai-key" {
 		t.Errorf("expected Bearer sk-real-openai-key, got %q", seenAuth)
+	}
+}
+
+func TestForward_OpenAIPassthroughAuthPreservesOAuthAuthorization(t *testing.T) {
+	v := &stubVault{}
+
+	var seenAuth, seenAccountID string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		seenAccountID = r.Header.Get("ChatGPT-Account-Id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(v)
+	f.Upstream = UpstreamSelector{OpenAIBaseURL: upstream.URL}
+
+	inbound := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}"))
+	inbound.Header.Set("Authorization", "Bearer codex-oauth-token")
+	inbound.Header.Set("ChatGPT-Account-Id", "acct_123")
+	inbound.Header.Set("X-Clawvisor-Agent-Token", "cvis_agent_token")
+
+	ctx := WithPassthroughUpstreamAuth(context.Background())
+	resp, err := f.Forward(ctx, "user1", "", conversation.ProviderOpenAI, inbound, []byte("{}"))
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if seenAuth != "Bearer codex-oauth-token" {
+		t.Fatalf("expected upstream OAuth Authorization to pass through, got %q", seenAuth)
+	}
+	if seenAccountID != "acct_123" {
+		t.Fatalf("expected ChatGPT-Account-Id to pass through when present, got %q", seenAccountID)
 	}
 }
 

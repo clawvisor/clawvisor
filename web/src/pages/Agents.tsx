@@ -1380,11 +1380,13 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
   // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
   // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/v1`
   // because the client appends just the action path (`/chat/completions`).
-  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_API_KEY=cvis_<this-agent-token> claude`
-  const codex = `codex exec \\
+  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: cvis_<this-agent-token>' ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= claude`
+  const codex = `CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token> codex exec \\
   -c model_provider=clawvisor \\
   -c 'model_providers.clawvisor.base_url="${baseURL}/v1"' \\
-  -c 'model_providers.clawvisor.env_key="CLAWVISOR_AGENT_TOKEN"' \\
+  -c 'model_providers.clawvisor.wire_api="responses"' \\
+  -c 'model_providers.clawvisor.requires_openai_auth=true' \\
+  -c 'model_providers.clawvisor.env_http_headers={"X-Clawvisor-Agent-Token"="CLAWVISOR_AGENT_TOKEN"}' \\
   -c 'model="gpt-4o-mini"'`
   const openaiSDK = `from openai import OpenAI
 client = OpenAI(
@@ -1406,7 +1408,7 @@ client = anthropic.Anthropic(
         <div>
           <div className="text-sm font-medium text-text-primary">Lite-proxy connection</div>
           <div className="text-xs text-text-tertiary">
-            Point an agent harness at this daemon's LLM endpoint. We'll swap your <code className="font-mono text-[11px]">cvis_…</code> token for the real upstream key on each call.
+            Point an agent harness at this daemon's LLM endpoint. Clawvisor authenticates the agent and either preserves upstream auth or swaps in a vaulted provider key.
           </div>
         </div>
         <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Show'}</span>

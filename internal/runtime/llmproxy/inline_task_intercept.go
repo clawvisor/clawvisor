@@ -145,7 +145,7 @@ func maybeInterceptInlineTaskDefinition(
 		return conversation.ToolUseVerdict{}, false
 	}
 
-	audit("block", "inline_task_pending_approval", "awaiting user yes/no on inline task definition (query)")
+	audit("approve", "pending", "inline_task_pending_approval: awaiting user yes/no on inline task definition (query)")
 	trace("inline_task.held",
 		"approval_id", innerHold.Pending.ID,
 		"purpose", parsed.Purpose,
