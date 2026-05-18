@@ -119,7 +119,7 @@ func Install(opts InstallOptions) error {
 	// go run builds a temporary binary that won't exist after the process
 	// exits, so installing it as a service would always fail to launch.
 	if isGoRunBinary(binary) {
-		return fmt.Errorf("cannot install a service from `go run` — build a binary first:\n  go build -o clawvisor ./cmd/clawvisor && ./clawvisor install")
+		return fmt.Errorf("cannot install a service from `go run` — build a binary first:\n  go build -o clawvisor-server ./cmd/clawvisor-server && ./clawvisor-server install")
 	}
 
 	home, err := os.UserHomeDir()
@@ -144,7 +144,7 @@ func Install(opts InstallOptions) error {
 			return err
 		}
 	default:
-		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor start`")
+		return fmt.Errorf("auto-install is supported on macOS and Linux; start the daemon manually with `clawvisor-server start`")
 	}
 
 	// Step 3: Set up local auth (creates admin user, writes .local-session).
@@ -160,11 +160,11 @@ func Install(opts InstallOptions) error {
 
 	// Step 4: Start the daemon. This may fail in environments without a
 	// service manager (e.g. Docker) — that's OK, the user can start it
-	// manually with `clawvisor start --foreground`.
+	// manually with `clawvisor-server start --foreground`.
 	daemonRunning := false
 	if err := Start(); err != nil {
 		fmt.Println(dim.Padding(0, 2).Render("  Could not start daemon via service manager: " + err.Error()))
-		fmt.Println(dim.Padding(0, 2).Render("  Start manually with: clawvisor start --foreground"))
+		fmt.Println(dim.Padding(0, 2).Render("  Start manually with: clawvisor-server start --foreground"))
 	} else {
 		// Wait for the daemon to be healthy before running interactive steps.
 		serverURL, _, _ := readLocalSession(dataDir)
@@ -173,7 +173,7 @@ func Install(opts InstallOptions) error {
 		}
 		fmt.Println(dim.Padding(0, 2).Render("  Waiting for daemon..."))
 		if err := waitForServer(serverURL); err != nil {
-			fmt.Println(dim.Padding(0, 2).Render("  Daemon not ready yet. You can connect services later with: clawvisor services"))
+			fmt.Println(dim.Padding(0, 2).Render("  Daemon not ready yet. You can connect services later with: clawvisor-server services"))
 		} else {
 			daemonRunning = true
 			fmt.Println()
@@ -186,20 +186,20 @@ func Install(opts InstallOptions) error {
 		fmt.Println()
 		fmt.Println(green.Padding(0, 2).Render("✓ Install complete"))
 		fmt.Println(dim.Padding(0, 2).Render("  Once the daemon is running, use:"))
-		fmt.Println(dim.Padding(0, 2).Render("    clawvisor services    — connect services"))
-		fmt.Println(dim.Padding(0, 2).Render("    clawvisor connect-agent — connect agents"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor-server services    — connect services"))
+		fmt.Println(dim.Padding(0, 2).Render("    clawvisor-server connect-agent — connect agents"))
 		fmt.Println()
 		return nil
 	}
 
 	// Step 4: Connect services (interactive).
 	if err := Services(); err != nil && err != huh.ErrUserAborted {
-		fmt.Println(dim.Padding(0, 2).Render("  Service setup skipped. Run `clawvisor services` later."))
+		fmt.Println(dim.Padding(0, 2).Render("  Service setup skipped. Run `clawvisor-server services` later."))
 	}
 
 	// Step 5: Connect agents (auto-detect + walk through).
 	if err := ConnectAgent(); err != nil && err != huh.ErrUserAborted {
-		fmt.Println(dim.Padding(0, 2).Render("  Agent setup skipped. Run `clawvisor connect-agent` later."))
+		fmt.Println(dim.Padding(0, 2).Render("  Agent setup skipped. Run `clawvisor-server connect-agent` later."))
 	}
 
 	// Step 6: Optional pairing.
@@ -306,7 +306,7 @@ func installSystemd(home string, data installData) error {
 // now, and either opens it or prints the command to do so later.
 func promptDashboardOpen(dataDir string) {
 	if nonInteractive() {
-		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor-server dashboard` to open the dashboard."))
 		return
 	}
 
@@ -322,12 +322,12 @@ func promptDashboardOpen(dataDir string) {
 	).Run()
 	if err != nil {
 		// User aborted or input error — just print the hint.
-		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor-server dashboard` to open the dashboard."))
 		return
 	}
 
 	if !openNow {
-		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to open the dashboard."))
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor-server dashboard` to open the dashboard."))
 		return
 	}
 
@@ -338,13 +338,13 @@ func promptDashboardOpen(dataDir string) {
 		serverURL = "http://127.0.0.1:25297"
 	}
 	if err := waitForServer(serverURL); err != nil {
-		fmt.Println(dim.Padding(0, 2).Render("Daemon hasn't started yet. Run `clawvisor dashboard` once it's ready."))
+		fmt.Println(dim.Padding(0, 2).Render("Daemon hasn't started yet. Run `clawvisor-server dashboard` once it's ready."))
 		return
 	}
 
 	if err := Dashboard(false); err != nil {
 		fmt.Println(dim.Padding(0, 2).Render("Could not open dashboard: " + err.Error()))
-		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor dashboard` to try again."))
+		fmt.Println(dim.Padding(0, 2).Render("Run `clawvisor-server dashboard` to try again."))
 	}
 }
 
@@ -392,7 +392,7 @@ func Start() error {
 	case "darwin":
 		plistPath := filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 		if _, err := os.Stat(plistPath); os.IsNotExist(err) {
-			return fmt.Errorf("daemon not installed; run `clawvisor install` first")
+			return fmt.Errorf("daemon not installed; run `clawvisor-server install` first")
 		}
 
 		// Update the plist binary path to the current executable so that
@@ -415,7 +415,7 @@ func Start() error {
 		}
 		fmt.Println("  Daemon started.")
 	default:
-		return fmt.Errorf("use `clawvisor start` to start the daemon on this platform")
+		return fmt.Errorf("use `clawvisor-server start` to start the daemon on this platform")
 	}
 	return nil
 }

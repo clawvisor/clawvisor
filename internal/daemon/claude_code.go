@@ -35,7 +35,7 @@ gateway with task-scoped authorization and human approval.
 curl -sf http://localhost:25297/ready 2>/dev/null && echo "RUNNING" || echo "NOT RUNNING"
 ` + "```" + `
 
-If NOT RUNNING, tell the user to start it with ` + "`clawvisor start`" + ` and wait
+If NOT RUNNING, tell the user to start it with ` + "`clawvisor-server start`" + ` and wait
 for them to confirm before continuing.
 
 ### 2. Connect as an agent
@@ -443,7 +443,7 @@ func offerClaudeDesktopSetup() {
 func printClaudeCodeManualInstructions() {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Code later, run:"))
-	fmt.Println(green.Padding(0, 2).Render("    clawvisor connect-agent claude-code"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor-server connect-agent claude-code"))
 	fmt.Println()
 }
 
@@ -452,7 +452,7 @@ func printClaudeCodeManualInstructions() {
 func printClaudeDesktopManualInstructions() {
 	fmt.Println()
 	fmt.Println(dim.Padding(0, 2).Render("  To set up Claude Desktop later, run:"))
-	fmt.Println(green.Padding(0, 2).Render("    clawvisor connect-agent claude-desktop"))
+	fmt.Println(green.Padding(0, 2).Render("    clawvisor-server connect-agent claude-desktop"))
 	fmt.Println()
 }
 

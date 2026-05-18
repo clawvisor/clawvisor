@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"bufio"
@@ -23,10 +23,10 @@ type runtimeControlsClient interface {
 }
 
 var (
-	newRuntimeControlsClient = func() (runtimeControlsClient, error) { return daemon.NewAPIClient() }
-	runtimeControlsStdin     io.Reader                               = os.Stdin
-	runtimeControlsStderr    io.Writer                               = os.Stderr
-	runtimeControlsTTYCheck                                          = func() bool { return isInteractiveTTY(os.Stdin) }
+	newRuntimeControlsClient           = func() (runtimeControlsClient, error) { return daemon.NewAPIClient() }
+	runtimeControlsStdin     io.Reader = os.Stdin
+	runtimeControlsStderr    io.Writer = os.Stderr
+	runtimeControlsTTYCheck            = func() bool { return isInteractiveTTY(os.Stdin) }
 )
 
 func maybeOfferStarterProfile(creds *resolvedAgentCredentials, launchedArgs []string) error {

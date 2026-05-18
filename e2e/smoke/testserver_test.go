@@ -397,7 +397,7 @@ func resolveOrBuildBinary(t *testing.T) string {
 		t.Fatalf("project root: %v", err)
 	}
 	binPath := filepath.Join(projectRoot, "bin", "clawvisor-e2e")
-	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/clawvisor")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/clawvisor-server")
 	buildCmd.Dir = projectRoot
 	buildCmd.Stdout = os.Stderr
 	buildCmd.Stderr = os.Stderr

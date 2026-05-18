@@ -113,7 +113,7 @@ func SetupLocalAuth(opts *clawvisor.ServerOptions, logger *slog.Logger) (*LocalA
 }
 
 // Run starts the Clawvisor API server. This is the main entrypoint called
-// from cmd/clawvisor/cmd_server.go.
+// from internal/clawvisorcli/cmd_server.go.
 func Run(logger *slog.Logger, ropts RunOptions) error {
 	opts, err := clawvisor.DefaultOptions(logger, ropts.ConfigPath)
 	if err != nil {

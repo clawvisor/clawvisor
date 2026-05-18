@@ -32,16 +32,24 @@ mkdir -p dist
 # itself changes; clawvisor releases reuse the pinned helper and don't rebuild
 # or re-upload helper tarballs.
 
-LDFLAGS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
+LDVARS="-s -w -X ${MODULE}.Version=${VERSION} -X ${MODULE}.SkillPublishedAt=${BUILD_DATE}"
+SERVER_LDFLAGS="${LDVARS} -X ${MODULE}.AssetBase=clawvisor-server"
+LEGACY_LDFLAGS="${LDVARS} -X ${MODULE}.AssetBase=clawvisor"
+LOCAL_LDFLAGS="${LDVARS} -X ${MODULE}.AssetBase=clawvisor-local"
 
 for PLATFORM in $PLATFORMS; do
   GOOS="${PLATFORM%/*}"
   GOARCH="${PLATFORM#*/}"
-  OUTPUT="dist/clawvisor-${GOOS}-${GOARCH}"
+  OUTPUT="dist/clawvisor-server-${GOOS}-${GOARCH}"
 
   echo "Building ${OUTPUT}..."
   CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor
+    go build -ldflags="$SERVER_LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-server
+
+  LEGACY_OUTPUT="dist/clawvisor-${GOOS}-${GOARCH}"
+  echo "Building ${LEGACY_OUTPUT}..."
+  CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+    go build -ldflags="$LEGACY_LDFLAGS" -o "$LEGACY_OUTPUT" ./cmd/clawvisor
 done
 
 # Build clawvisor-local for all platforms. This is a standalone binary with no
@@ -58,10 +66,10 @@ for PLATFORM in $PLATFORMS; do
       exit 1
     fi
     CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" \
-      go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+      go build -ldflags="$LOCAL_LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
   else
     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-      go build -ldflags="$LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
+      go build -ldflags="$LOCAL_LDFLAGS" -o "$OUTPUT" ./cmd/clawvisor-local
   fi
 done
 

@@ -45,7 +45,7 @@ func (h *PairingHandler) GenerateCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.daemonID == "" {
-		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor setup")
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor-server setup")
 		return
 	}
 

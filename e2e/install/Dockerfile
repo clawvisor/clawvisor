@@ -23,8 +23,8 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/web/dist web/dist
 RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=0.0.0-e2e" \
-    -o /clawvisor ./cmd/clawvisor
+    -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=0.0.0-e2e -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor-server" \
+    -o /clawvisor-server ./cmd/clawvisor-server
 
 # ── Stage 2: fresh machine ───────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -56,7 +56,7 @@ RUN npm init -y --silent >/dev/null 2>&1 \
 
 # Stash the binary where test scripts can find it. NOT on PATH and NOT in
 # ~/.clawvisor — the test decides how the binary reaches the user.
-COPY --chown=testuser:testuser --from=builder /clawvisor /home/testuser/.e2e-bin/clawvisor
+COPY --chown=testuser:testuser --from=builder /clawvisor-server /home/testuser/.e2e-bin/clawvisor-server
 
 # Copy test scripts and supporting files.
 COPY --chown=testuser:testuser e2e/install/test_clawvisor_install.sh /home/testuser/test_clawvisor_install.sh

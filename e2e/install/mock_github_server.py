@@ -2,25 +2,22 @@
 
 Serves:
   GET /repos/<owner>/<repo>/releases/latest  ->  JSON with tag_name
-  GET /<owner>/<repo>/releases/download/<tag>/<asset>  ->  tarball
+  GET /<owner>/<repo>/releases/download/<tag>/<asset>  ->  binary
   GET /install.sh  ->  the install script
 
 Usage:
   python3 mock_github_server.py <port> <binary_path> <install_script_path>
 
-The server creates the tarball on startup from the binary at <binary_path>,
+The server reads the release asset on startup from the binary at <binary_path>,
 using the naming convention expected by install.sh.
 """
 
-import gzip
 import hashlib
 import http.server
 import json
 import os
 import platform
 import sys
-import tarfile
-import tempfile
 import traceback
 
 VERSION = "v0.0.0-e2e"
@@ -37,15 +34,6 @@ def detect_platform():
     else:
         arch = machine
     return os_name, arch
-
-
-def create_tarball(binary_path, asset_name, tmp_dir):
-    """Create a gzip tarball with minimal compression for speed."""
-    tarball_path = os.path.join(tmp_dir, asset_name)
-    with gzip.open(tarball_path, "wb", compresslevel=1) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
-            tar.add(binary_path, arcname="clawvisor")
-    return tarball_path
 
 
 def main():
@@ -65,26 +53,21 @@ def main():
             sys.exit(1)
 
     os_name, arch = detect_platform()
-    version_bare = VERSION.lstrip("v")
-    asset_name = f"clawvisor_{version_bare}_{os_name}_{arch}.tar.gz"
+    asset_name = f"clawvisor-server-{os_name}-{arch}"
 
-    # Create tarball upfront (can take a few seconds for large binaries).
-    print(f"Preparing tarball: {asset_name}", flush=True)
-    tmp_dir = tempfile.mkdtemp()
-    tarball_path = create_tarball(binary_path, asset_name, tmp_dir)
-
-    with open(tarball_path, "rb") as f:
-        tarball_data = f.read()
+    print(f"Preparing asset: {asset_name}", flush=True)
+    with open(binary_path, "rb") as f:
+        asset_data = f.read()
     with open(install_script_path, "rb") as f:
         install_script_data = f.read()
 
-    # Compute the checksums.txt contents served alongside the tarball. Format
+    # Compute the checksums.txt contents served alongside the asset. Format
     # matches `sha256sum`/`shasum -a 256` ("<hash>  <filename>"), which is what
     # install.sh parses.
-    tarball_sha256 = hashlib.sha256(tarball_data).hexdigest()
-    checksums_data = f"{tarball_sha256}  {asset_name}\n".encode()
+    asset_sha256 = hashlib.sha256(asset_data).hexdigest()
+    checksums_data = f"{asset_sha256}  {asset_name}\n".encode()
 
-    print(f"Tarball ready: {len(tarball_data)} bytes", flush=True)
+    print(f"Asset ready: {len(asset_data)} bytes", flush=True)
 
     release_json = json.dumps({
         "tag_name": VERSION,
@@ -102,7 +85,7 @@ def main():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.end_headers()
-                self.wfile.write(tarball_data)
+                self.wfile.write(asset_data)
             elif self.path == f"/{REPO}/releases/download/{VERSION}/checksums.txt":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")

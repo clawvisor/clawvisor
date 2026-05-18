@@ -13,11 +13,11 @@ func TestIsGoRunBinary(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"/home/user/.clawvisor/bin/clawvisor", false},
-		{"/usr/local/bin/clawvisor", false},
-		{"/tmp/go-build123456/exe/clawvisor", true},
+		{"/home/user/.clawvisor/bin/clawvisor-server", false},
+		{"/usr/local/bin/clawvisor-server", false},
+		{"/tmp/go-build123456/exe/clawvisor-server", true},
 		{"/home/user/go/cache/go-build/abc/exe/main", true},
-		{"/var/folders/xx/go-build789/b001/exe/clawvisor", true},
+		{"/var/folders/xx/go-build789/b001/exe/clawvisor-server", true},
 	}
 	for _, tt := range tests {
 		if got := isGoRunBinary(tt.path); got != tt.want {
@@ -33,7 +33,7 @@ func TestInstallLaunchd(t *testing.T) {
 
 	home := t.TempDir()
 	data := installData{
-		Binary:  "/usr/local/bin/clawvisor",
+		Binary:  "/usr/local/bin/clawvisor-server",
 		LogDir:  filepath.Join(home, ".clawvisor", "logs"),
 		DataDir: filepath.Join(home, ".clawvisor"),
 	}
@@ -74,7 +74,7 @@ func TestInstallLaunchd(t *testing.T) {
 func TestInstallSystemd(t *testing.T) {
 	home := t.TempDir()
 	data := installData{
-		Binary:  "/usr/local/bin/clawvisor",
+		Binary:  "/usr/local/bin/clawvisor-server",
 		LogDir:  filepath.Join(home, ".clawvisor", "logs"),
 		DataDir: filepath.Join(home, ".clawvisor"),
 	}
@@ -95,7 +95,7 @@ func TestInstallSystemd(t *testing.T) {
 		substr string
 		desc   string
 	}{
-		{"ExecStart=/usr/local/bin/clawvisor start --foreground", "exec start"},
+		{"ExecStart=/usr/local/bin/clawvisor-server start --foreground", "exec start"},
 		{"Restart=always", "restart policy"},
 		{"RestartSec=5", "restart delay"},
 		{"CONFIG_FILE=" + data.DataDir + "/config.yaml", "config file env"},

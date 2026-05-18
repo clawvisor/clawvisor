@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"encoding/json"
@@ -39,7 +39,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	serverURL, token := resolveAuth()
 
 	if serverURL == "" {
-		return fmt.Errorf("no server URL configured. Run 'clawvisor setup' or pass --url")
+		return fmt.Errorf("no server URL configured. Run 'clawvisor-server setup' or pass --url")
 	}
 
 	c := client.New(serverURL, token)
@@ -129,7 +129,7 @@ type localSessionFile struct {
 	MagicToken string `json:"magic_token"`
 }
 
-// readLocalSession reads the local session file written by `clawvisor server`.
+// readLocalSession reads the local session file written by `clawvisor-server server`.
 func readLocalSession() (*localSessionFile, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

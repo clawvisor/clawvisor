@@ -143,7 +143,7 @@ func EmitComposeIsolationOverride(w io.Writer, plan ComposeIsolationPlan) error 
 			proxyExpose.Host, apiExpose.Host)
 	}
 
-	fmt.Fprintf(w, "# clawvisor agent docker-compose --isolation=container override for service=%q\n", plan.UserService)
+	fmt.Fprintf(w, "# clawvisor-server agent docker-compose --isolation=container override for service=%q\n", plan.UserService)
 	fmt.Fprintln(w, "#")
 	fmt.Fprintln(w, "# This override adds a privileged netns-holder sidecar that installs an")
 	fmt.Fprintln(w, "# iptables-locked egress policy: the user service can only reach the two")

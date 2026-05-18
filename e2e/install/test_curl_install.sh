@@ -2,7 +2,7 @@
 # E2E test: curl -fsSL https://clawvisor.com/install.sh | sh
 #
 # Runs inside a fresh Docker container with no prior state. A mock HTTP server
-# stands in for GitHub, serving the install script and a tarball of the binary.
+# stands in for GitHub, serving the install script and a binary of the binary.
 # After install.sh downloads and sets up the binary, we run it through the full
 # setup wizard and verify the daemon starts.
 set -euo pipefail
@@ -19,7 +19,7 @@ export CLAWVISOR_CHAIN_CONTEXT=true
 export CLAWVISOR_RELAY_URL=wss://localhost:9998
 
 MOCK_PORT=18493
-E2E_BINARY="$HOME/.e2e-bin/clawvisor"
+E2E_BINARY="$HOME/.e2e-bin/clawvisor-server"
 
 echo ""
 echo "═══ E2E: curl | sh install (fresh machine) ═══"
@@ -34,11 +34,11 @@ else
   fail "~/.clawvisor already exists"
 fi
 
-# clawvisor is NOT on PATH — this is a totally fresh machine.
-if ! command -v clawvisor &>/dev/null; then
-  pass "clawvisor not on PATH (fresh machine)"
+# clawvisor-server is NOT on PATH — this is a totally fresh machine.
+if ! command -v clawvisor-server &>/dev/null; then
+  pass "clawvisor-server not on PATH (fresh machine)"
 else
-  fail "clawvisor already on PATH"
+  fail "clawvisor-server already on PATH"
 fi
 
 if [ ! -f "$HOME/.bashrc" ]; then
@@ -100,7 +100,7 @@ else
   fail "curl | sh failed"
 fi
 
-INSTALLED_BIN="$HOME/.clawvisor/bin/clawvisor"
+INSTALLED_BIN="$HOME/.clawvisor/bin/clawvisor-server"
 
 assert_file_exists "$INSTALLED_BIN" "binary installed"
 assert_file_executable "$INSTALLED_BIN" "binary executable"
@@ -143,7 +143,7 @@ wait "$MOCK_PID" 2>/dev/null || true
 echo ""
 echo "── 5. Full wizard + daemon (installed binary)"
 
-# This is what install.sh would have done next: exec clawvisor start.
+# This is what install.sh would have done next: exec clawvisor-server start.
 # The wizard generates config, keys, starts the server — the whole nine yards.
 DAEMON_LOG="$HOME/.daemon-output.log"
 "$INSTALLED_BIN" start --foreground >"$DAEMON_LOG" 2>&1 &

@@ -16,7 +16,7 @@ const continueOption = "__continue__"
 func runServiceSetup(apiClient *client.Client, dataDir string) error {
 	if nonInteractive() {
 		fmt.Println(dim.Padding(0, 2).Render("  Skipping interactive service setup (non-interactive mode)."))
-		fmt.Println(dim.Padding(0, 2).Render("  Connect services later with: clawvisor setup"))
+		fmt.Println(dim.Padding(0, 2).Render("  Connect services later with: clawvisor-server setup"))
 		return nil
 	}
 
@@ -523,6 +523,7 @@ func collectAndStoreMicrosoftCreds(apiClient *client.Client, serviceName string)
 	fmt.Printf("  %s Microsoft OAuth credentials saved.\n\n", green.Render("✓"))
 	return nil
 }
+
 // manageConnectedService shows options for an already-connected service:
 // add another account, disconnect, or go back.
 func manageConnectedService(apiClient *client.Client, svc client.ServiceInfo, dataDir string) error {

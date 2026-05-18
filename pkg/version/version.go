@@ -14,6 +14,10 @@ import (
 // Example: go build -ldflags="-X github.com/clawvisor/clawvisor/pkg/version.Version=0.3.0"
 var Version = "dev"
 
+// AssetBase is set at build time via -ldflags. It is the release asset prefix
+// used by self-update, independent of the installed executable name.
+var AssetBase = ""
+
 // SkillPublishedAt is set at build time via -ldflags. It records the date (YYYY-MM-DD)
 // the release was built so the skill can display when it was last updated.
 var SkillPublishedAt = "dev"
@@ -102,7 +106,7 @@ func Check() *Info {
 
 	info := &Info{
 		Current:    Version,
-		UpgradeCmd: "go install github.com/clawvisor/clawvisor/cmd/clawvisor@latest",
+		UpgradeCmd: "go install github.com/clawvisor/clawvisor/cmd/clawvisor-server@latest",
 		AutoUpdate: autoUpdateFlag,
 	}
 

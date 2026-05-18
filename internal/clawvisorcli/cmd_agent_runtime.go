@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"errors"
@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	"github.com/clawvisor/clawvisor/internal/tui/client"
+	runtimeproxy "github.com/clawvisor/clawvisor/pkg/runtime/proxy"
 	"github.com/spf13/cobra"
 )
 
@@ -376,7 +376,7 @@ func shellQuote(value string) string {
 
 func init() {
 	for _, subcmd := range []*cobra.Command{agentRuntimeEnvCmd, agentRuntimeRunCmd} {
-		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor agent register`)")
+		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor-server agent register`)")
 		subcmd.Flags().StringVar(&runtimeAgentToken, "agent-token", "", "Agent bearer token (defaults to CLAWVISOR_AGENT_TOKEN)")
 		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL (overrides the registered agent URL, otherwise defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
 		subcmd.Flags().StringVar(&runtimeMode, "mode", "proxy", "Runtime session mode")

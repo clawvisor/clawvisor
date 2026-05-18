@@ -37,15 +37,15 @@ is running and the user has dashboard access.
 The fastest way to connect an agent is:
 
 ```bash
-clawvisor connect-agent
+clawvisor-server connect-agent
 ```
 
 This auto-detects installed agents and walks through connecting them. You can
 also target a specific agent directly:
 
 ```bash
-clawvisor connect-agent claude-code      # install skill + env vars for Claude Code
-clawvisor connect-agent claude-desktop   # configure MCP for Claude Desktop
+clawvisor-server connect-agent claude-code      # install skill + env vars for Claude Code
+clawvisor-server connect-agent claude-desktop   # configure MCP for Claude Desktop
 ```
 
 For manual setup or other agents, ask the user: **"Which agent are you connecting to Clawvisor?"**

@@ -8,7 +8,7 @@ set -eu
 INSTALL_DIR="${CLAWVISOR_INSTALL_DIR:-$HOME/.clawvisor/bin}"
 DATA_DIR="${CLAWVISOR_DATA_DIR:-$HOME/.clawvisor}"
 REPO="${CLAWVISOR_REPO:-clawvisor/clawvisor}"
-BINARY="clawvisor"
+BINARY="clawvisor-server"
 API_BASE="${CLAWVISOR_API_BASE:-https://api.github.com}"
 DOWNLOAD_BASE="${CLAWVISOR_DOWNLOAD_BASE:-https://github.com}"
 
@@ -42,7 +42,7 @@ if [ -z "$LATEST" ]; then
 fi
 echo "  Version: $LATEST"
 
-ASSET="${BINARY}_${LATEST#v}_${OS}_${ARCH}.tar.gz"
+ASSET="${BINARY}-${OS}-${ARCH}"
 URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/${ASSET}"
 CHECKSUMS_URL="${DOWNLOAD_BASE}/${REPO}/releases/download/${LATEST}/checksums.txt"
 
@@ -83,8 +83,7 @@ if [ "$EXPECTED" != "$ACTUAL" ]; then
   exit 1
 fi
 
-tar -xzf "$TMP/$ASSET" -C "$TMP"
-mv "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
+mv "$TMP/$ASSET" "$INSTALL_DIR/$BINARY"
 chmod +x "$INSTALL_DIR/$BINARY"
 
 # Ensure data directory exists.

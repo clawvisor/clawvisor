@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# E2E test: clawvisor install on a totally fresh machine.
+# E2E test: clawvisor-server install on a totally fresh machine.
 #
 # Runs inside a fresh Docker container with no prior state. The binary is
 # placed on PATH to simulate a user who already has it (e.g. via a package
-# manager or manual download), then `clawvisor install` drives the full
+# manager or manual download), then `clawvisor-server install` drives the full
 # setup wizard and service installation.
 set -euo pipefail
 source "$HOME/assertions.sh"
@@ -24,7 +24,7 @@ DATA_DIR="$HOME/.clawvisor"
 export PATH="$HOME/.e2e-bin:$PATH"
 
 echo ""
-echo "═══ E2E: clawvisor install (fresh machine) ═══"
+echo "═══ E2E: clawvisor-server install (fresh machine) ═══"
 echo ""
 
 # ── 1. Pre-flight: truly nothing exists ──────────────────────────────────────
@@ -42,17 +42,17 @@ else
   fail "systemd unit already exists"
 fi
 
-clawvisor --help >/dev/null 2>&1
+clawvisor-server --help >/dev/null 2>&1
 pass "binary runs"
 
-# ── 2. clawvisor install — full wizard + service install ─────────────────────
+# ── 2. clawvisor-server install — full wizard + service install ─────────────────────
 echo ""
-echo "── 2. clawvisor install"
+echo "── 2. clawvisor-server install"
 
 # The wizard runs the full setup: generates config, keys, JWT secret, starts
 # a temporary server, creates admin user, writes .local-session, then writes
 # the systemd unit. systemctl will fail in Docker (no init) — that's expected.
-INSTALL_OUTPUT=$(clawvisor install 2>&1 || true)
+INSTALL_OUTPUT=$(clawvisor-server install 2>&1 || true)
 echo "$INSTALL_OUTPUT"
 
 # ── 3. Setup wizard artifacts ────────────────────────────────────────────────
@@ -102,7 +102,7 @@ echo ""
 echo "── 5. Health check"
 
 DAEMON_LOG="$HOME/.daemon-output.log"
-clawvisor start --foreground >"$DAEMON_LOG" 2>&1 &
+clawvisor-server start --foreground >"$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 HEALTHY=false
@@ -149,7 +149,7 @@ pass "daemon stopped"
 echo ""
 echo "── 6. Uninstall"
 
-clawvisor uninstall 2>/dev/null || true
+clawvisor-server uninstall 2>/dev/null || true
 
 if [ ! -f "$UNIT_FILE" ]; then
   pass "unit removed"

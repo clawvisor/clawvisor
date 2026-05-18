@@ -24,7 +24,7 @@ func Pair() error {
 	// Authenticate with the running daemon.
 	serverURL, _, err := readLocalSession(dataDir)
 	if err != nil {
-		return fmt.Errorf("could not read local session — is the daemon running?\n  Start it with: clawvisor start")
+		return fmt.Errorf("could not read local session — is the daemon running?\n  Start it with: clawvisor-server start")
 	}
 
 	// Mint a fresh magic token via the localhost-only endpoint so we always
@@ -46,7 +46,7 @@ func Pair() error {
 		return fmt.Errorf("could not read relay config: %w", err)
 	}
 	if daemonID == "" {
-		return fmt.Errorf("no daemon_id configured — relay registration may have failed during setup.\nRe-run `clawvisor setup` once the relay is reachable")
+		return fmt.Errorf("no daemon_id configured — relay registration may have failed during setup.\nRe-run `clawvisor-server setup` once the relay is reachable")
 	}
 
 	// Start pairing session.
@@ -105,7 +105,7 @@ func Pair() error {
 		select {
 		case <-ticker.C:
 			if time.Now().After(deadline) {
-				return fmt.Errorf("pairing timed out — try again with: clawvisor pair")
+				return fmt.Errorf("pairing timed out — try again with: clawvisor-server pair")
 			}
 			devices, err := apiClient.ListDevices()
 			if err != nil {

@@ -179,7 +179,7 @@ func PrintStatus(s *Status) {
 		}
 		cliVersion := version.GetCurrent()
 		if s.DaemonVersion != "" && cliVersion != "" && s.DaemonVersion != cliVersion {
-			fmt.Printf("  Warning: daemon is running %s but this CLI is %s — consider running 'clawvisor restart'\n", s.DaemonVersion, cliVersion)
+			fmt.Printf("  Warning: daemon is running %s but this CLI is %s — consider running 'clawvisor-server restart'\n", s.DaemonVersion, cliVersion)
 		}
 	} else {
 		fmt.Println("  Daemon is not running.")

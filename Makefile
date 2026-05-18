@@ -1,14 +1,21 @@
-.PHONY: build build-staging build-local install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
+.PHONY: build build-legacy build-staging build-local build-server build-standalone-server install install-local test run run-sqlite run-staging migrate lint clean setup tui eval-intent release test-e2e-install test-e2e test-e2e-ci
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 ENVIRONMENT ?= production
 BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
-LDFLAGS := -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT) -X github.com/clawvisor/clawvisor/pkg/version.SkillPublishedAt=$(BUILD_DATE)"
+LDVARS := -s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=$(VERSION) -X github.com/clawvisor/clawvisor/pkg/version.Environment=$(ENVIRONMENT) -X github.com/clawvisor/clawvisor/pkg/version.SkillPublishedAt=$(BUILD_DATE)
+LDFLAGS := -ldflags="$(LDVARS)"
+SERVER_LDFLAGS := -ldflags="$(LDVARS) -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor-server"
+LEGACY_LDFLAGS := -ldflags="$(LDVARS) -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor"
+LOCAL_LDFLAGS := -ldflags="$(LDVARS) -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor-local"
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 
 build: web/dist
-	go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
+	go build $(SERVER_LDFLAGS) -o bin/clawvisor-server ./cmd/clawvisor-server
+
+build-legacy: web/dist
+	go build $(LEGACY_LDFLAGS) -o bin/clawvisor ./cmd/clawvisor
 
 IMESSAGE_HELPER_APP := Clawvisor iMessage Helper.app
 
@@ -19,7 +26,7 @@ build-imessage-helper:
 	cp cmd/imessage-helper/Info.plist "bin/$(IMESSAGE_HELPER_APP)/Contents/Info.plist"
 
 build-local:
-	go build $(LDFLAGS) -o bin/clawvisor-local ./cmd/clawvisor-local
+	go build $(LOCAL_LDFLAGS) -o bin/clawvisor-local ./cmd/clawvisor-local
 
 install-local: build-local
 	mkdir -p $(HOME)/.clawvisor/bin
@@ -30,8 +37,10 @@ install-local: build-local
 build-staging: web/dist
 	$(MAKE) build ENVIRONMENT=staging
 
-build-server: web/dist
-	go build $(LDFLAGS) -o bin/clawvisor-server ./cmd/server
+build-server: build
+
+build-standalone-server: web/dist
+	go build $(LDFLAGS) -o bin/clawvisor-api-server ./cmd/server
 
 web/dist: $(shell find web/src -type f)
 	cd web && npm install && npm run build
@@ -39,9 +48,9 @@ web/dist: $(shell find web/src -type f)
 
 install: build
 	mkdir -p $(HOME)/.clawvisor/bin $(HOME)/.clawvisor/logs
-	cp bin/clawvisor $(HOME)/.clawvisor/bin/clawvisor
-	[ "$$(uname)" = "Darwin" ] && codesign -s - $(HOME)/.clawvisor/bin/clawvisor 2>/dev/null || true
-	$(HOME)/.clawvisor/bin/clawvisor install
+	cp bin/clawvisor-server $(HOME)/.clawvisor/bin/clawvisor-server
+	[ "$$(uname)" = "Darwin" ] && codesign -s - $(HOME)/.clawvisor/bin/clawvisor-server 2>/dev/null || true
+	$(HOME)/.clawvisor/bin/clawvisor-server install
 	@echo ""
 	@echo 'Add to your PATH: export PATH="$$HOME/.clawvisor/bin:$$PATH"'
 
@@ -75,10 +84,10 @@ eval-intent:
 	go test -v -run TestEvalIntentVerification -count=1 -timeout=300s ./internal/intent/
 
 test-e2e: build
-	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor go test -v -count=1 -timeout=120s ./e2e/smoke/
+	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor-server go test -v -count=1 -timeout=120s ./e2e/smoke/
 
 test-e2e-ci: build
-	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor go test -v -count=1 -timeout=120s -run '^TestCI' ./e2e/smoke/
+	CLAWVISOR_BIN=$(CURDIR)/bin/clawvisor-server go test -v -count=1 -timeout=120s -run '^TestCI' ./e2e/smoke/
 
 test-e2e-install: web/dist
 	docker build -f e2e/install/Dockerfile -t clawvisor-e2e-install .
@@ -90,17 +99,17 @@ test-e2e-install: web/dist
 # Run locally (rebuilds frontend if web/src changed, then builds + runs)
 # Use OPEN=1 to auto-open the magic link in a browser: make run OPEN=1
 run: web/dist
-	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server $(if $(OPEN),--open,)
+	@go build $(SERVER_LDFLAGS) -o bin/clawvisor-server ./cmd/clawvisor-server && bin/clawvisor-server server $(if $(OPEN),--open,)
 
 run-staging: web/dist
 	@$(MAKE) run ENVIRONMENT=staging
 
 run-sqlite:
-	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor server
+	@go build $(SERVER_LDFLAGS) -o bin/clawvisor-server ./cmd/clawvisor-server && bin/clawvisor-server server
 
 # Launch TUI dashboard
 tui:
-	@go build $(LDFLAGS) -o bin/clawvisor ./cmd/clawvisor && bin/clawvisor tui
+	@go build $(SERVER_LDFLAGS) -o bin/clawvisor-server ./cmd/clawvisor-server && bin/clawvisor-server tui
 
 # ── Docker / Cloud ─────────────────────────────────────────────────────────────
 
@@ -108,7 +117,7 @@ tui:
 # Usage: make docker-exec CMD="version"
 docker-exec:
 	@mkdir -p $(HOME)/.clawvisor
-	docker compose -f deploy/docker-compose.local.yml run --rm -it --build --entrypoint /clawvisor app $(CMD)
+	docker compose -f deploy/docker-compose.local.yml run --rm -it --build --entrypoint /clawvisor-server app $(CMD)
 
 # First-time setup via Docker (no local Go/Node needed)
 docker-setup:
@@ -152,7 +161,7 @@ lint:
 	go vet ./...
 
 setup: build
-	@bin/clawvisor setup
+	@bin/clawvisor-server setup
 
 release: web/dist
 	scripts/build-release.sh v$(VERSION)

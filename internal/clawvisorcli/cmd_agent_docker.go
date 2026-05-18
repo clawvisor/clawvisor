@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"context"
@@ -96,7 +96,7 @@ runtime proxy using a long-lived agent token.
 
 Example:
 
-  clawvisor agent docker-run --agent-token "$CLAWVISOR_AGENT_TOKEN" -- \
+  clawvisor-server agent docker-run --agent-token "$CLAWVISOR_AGENT_TOKEN" -- \
     docker run --rm -it my-agent-image agent serve
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -697,7 +697,7 @@ func needsShellQuote(s string) bool {
 }
 
 func emitDockerComposeOverride(w io.Writer, opts dockerComposeOverrideOptions) {
-	fmt.Fprintf(w, "# clawvisor agent docker-compose override for service=%q\n", opts.Service)
+	fmt.Fprintf(w, "# clawvisor-server agent docker-compose override for service=%q\n", opts.Service)
 	fmt.Fprintln(w, "#")
 	fmt.Fprintln(w, "# This override uses durable agent-token proxy auth. The container will")
 	fmt.Fprintln(w, "# route egress through Clawvisor without requiring a pre-minted runtime")
@@ -755,7 +755,7 @@ func yamlQuote(s string) string {
 
 func init() {
 	for _, subcmd := range []*cobra.Command{agentDockerEnvCmd, agentDockerRunCmd, agentDockerComposeCmd} {
-		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor agent register`)")
+		subcmd.Flags().StringVar(&runtimeAgentName, "agent", "", "Registered agent name (see `clawvisor-server agent register`)")
 		subcmd.Flags().StringVar(&runtimeAgentToken, "agent-token", "", "Agent bearer token (defaults to CLAWVISOR_AGENT_TOKEN)")
 		subcmd.Flags().StringVar(&runtimeServerURL, "url", "", "Clawvisor server URL the agent should use (overrides the registered agent URL, otherwise defaults to CLAWVISOR_URL or http://127.0.0.1:25297)")
 		subcmd.Flags().StringVar(&dockerContainerURL, "container-url", "", "Clawvisor server URL as seen from inside the container (defaults to a container-safe rewrite of --url)")

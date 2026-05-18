@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"bytes"
@@ -10,16 +10,16 @@ import (
 )
 
 type fakeRuntimeControlsClient struct {
-	decision             *client.RuntimePresetDecision
-	settings             *client.AgentRuntimeSettings
-	appliedProfiles      []string
-	updatedSettings      []client.AgentRuntimeSettings
-	upsertedDecisions    []client.RuntimePresetDecision
-	getPresetCalls       int
-	getSettingsCalls     int
-	applyErr             error
-	updateSettingsErr    error
-	upsertDecisionErr    error
+	decision          *client.RuntimePresetDecision
+	settings          *client.AgentRuntimeSettings
+	appliedProfiles   []string
+	updatedSettings   []client.AgentRuntimeSettings
+	upsertedDecisions []client.RuntimePresetDecision
+	getPresetCalls    int
+	getSettingsCalls  int
+	applyErr          error
+	updateSettingsErr error
+	upsertDecisionErr error
 }
 
 func (f *fakeRuntimeControlsClient) GetRuntimePresetDecision(commandKey, profile string) (*client.RuntimePresetDecision, error) {
@@ -166,18 +166,18 @@ func TestObserveModeNotice(t *testing.T) {
 
 func TestMaybeOfferStarterProfile(t *testing.T) {
 	tests := []struct {
-		name                    string
-		decision                *client.RuntimePresetDecision
-		settings                *client.AgentRuntimeSettings
-		input                   string
-		wantApply               bool
-		wantStarterProfile      string
-		wantPresetDecisions     []string
-		wantPrompt              bool
-		wantAppliedMessage      bool
+		name                string
+		decision            *client.RuntimePresetDecision
+		settings            *client.AgentRuntimeSettings
+		input               string
+		wantApply           bool
+		wantStarterProfile  string
+		wantPresetDecisions []string
+		wantPrompt          bool
+		wantAppliedMessage  bool
 	}{
 		{
-			name:     "prompts again for fresh agent after prior applied decision",
+			name: "prompts again for fresh agent after prior applied decision",
 			decision: &client.RuntimePresetDecision{
 				Decision: "applied",
 			},

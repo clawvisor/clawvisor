@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"fmt"
@@ -50,7 +50,7 @@ var autoUpdateStatusCmd = &cobra.Command{
 			fmt.Printf("  Auto-update: enabled (check interval: %s)\n", interval)
 		} else {
 			fmt.Println("  Auto-update: disabled")
-			fmt.Println("  Run `clawvisor auto-update enable` to opt in.")
+			fmt.Println("  Run `clawvisor-server auto-update enable` to opt in.")
 		}
 		return nil
 	},

@@ -20,7 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/forwarder"
 )
 
-// Mode identifies an isolation mode for `clawvisor agent docker-run`.
+// Mode identifies an isolation mode for `clawvisor-server agent docker-run`.
 type Mode string
 
 const (

@@ -85,6 +85,10 @@ func Apply(targetVersion string) (oldVersion, newVersion string, err error) {
 }
 
 func currentAssetBaseName() (string, error) {
+	if AssetBase != "" {
+		return AssetBase, nil
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err

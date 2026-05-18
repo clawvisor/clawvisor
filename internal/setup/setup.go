@@ -31,14 +31,14 @@ var (
 )
 
 type config struct {
-	envMode   string
-	dbDriver  string
-	dbURL     string
-	jwtSecret string
-	vault     string
+	envMode    string
+	dbDriver   string
+	dbURL      string
+	jwtSecret  string
+	vault      string
 	gcpProject string
-	host      string
-	port      string
+	host       string
+	port       string
 
 	googleEnabled bool
 	googleID      string
@@ -106,7 +106,7 @@ func RunWithOptions(opts RunOptions) error {
 		}
 	}
 
-	// Write TUI config so `clawvisor tui` knows the server URL.
+	// Write TUI config so `clawvisor-server tui` knows the server URL.
 	if err := writeTUIConfig(cfg); err != nil {
 		// Non-fatal — just warn.
 		fmt.Printf("  Warning: could not write TUI config: %v\n", err)
@@ -752,7 +752,7 @@ func printNextSteps(cfg *config) {
      export VAULT_KEY="$(openssl rand -base64 32)"
 
   3. Run the server:
-     ./bin/clawvisor server
+     ./bin/clawvisor-server server
 
   4. For Cloud Run deployment:
      make deploy`)

@@ -14,12 +14,12 @@ RUN go mod download
 COPY . .
 COPY --from=web-builder /web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION}" -o clawvisor ./cmd/clawvisor
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION} -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor-server" -o clawvisor-server ./cmd/clawvisor-server
 
 # Stage 3: Runtime (minimal distroless image)
 FROM gcr.io/distroless/static-debian12
-COPY --from=go-builder /app/clawvisor /clawvisor
+COPY --from=go-builder /app/clawvisor-server /clawvisor-server
 COPY --from=web-builder /web/dist /web/dist
 EXPOSE 25297
 USER nonroot
-ENTRYPOINT ["/clawvisor", "server"]
+ENTRYPOINT ["/clawvisor-server", "server"]

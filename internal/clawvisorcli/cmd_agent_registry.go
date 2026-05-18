@@ -1,4 +1,4 @@
-package main
+package clawvisorcli
 
 import (
 	"encoding/json"
@@ -189,13 +189,13 @@ func resolveAgentCredentials(agentName, agentToken, baseURL string) (*resolvedAg
 		registry, err := loadAgentRegistry(path)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("registered agent %q not found: run `clawvisor agent register %s`", name, name)
+				return nil, fmt.Errorf("registered agent %q not found: run `clawvisor-server agent register %s`", name, name)
 			}
 			return nil, err
 		}
 		entry, ok := registry.Agents[name]
 		if !ok || strings.TrimSpace(entry.Token) == "" {
-			return nil, fmt.Errorf("registered agent %q not found: run `clawvisor agent register %s`", name, name)
+			return nil, fmt.Errorf("registered agent %q not found: run `clawvisor-server agent register %s`", name, name)
 		}
 		if resolvedURL == "" {
 			resolvedURL = strings.TrimSpace(entry.ServerURL)

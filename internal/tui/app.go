@@ -225,7 +225,7 @@ func (a *App) View() string {
 
 	// Main content area.
 	contentWidth := a.width - sidebarWidth - 1 // 1 for border
-	contentHeight := a.height - 2               // status bar
+	contentHeight := a.height - 2              // status bar
 
 	mainContent := ""
 	if s, ok := a.screens[a.active]; ok {
@@ -364,7 +364,7 @@ func (a *App) renderStatusBar(hints []string) string {
 	}
 
 	if a.updateAvail && a.latestVersion != "" {
-		content = StyleGreen.Render("Update available ("+a.latestVersion+") — run `clawvisor update` to get the latest version") + sep + content
+		content = StyleGreen.Render("Update available ("+a.latestVersion+") — run `clawvisor-server update` to get the latest version") + sep + content
 	}
 
 	if a.status != "" {

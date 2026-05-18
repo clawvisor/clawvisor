@@ -54,14 +54,14 @@ Once setup completes, the daemon opens the web dashboard in your browser automat
 With Clawvisor running (hosted or self-hosted), connect your agent:
 
 ```bash
-clawvisor connect-agent
+clawvisor-server connect-agent
 ```
 
 This auto-detects installed agents (Claude Code, Claude Desktop) and walks you through connecting them. You can also target a specific agent directly:
 
 ```bash
-clawvisor connect-agent claude-code      # install skill + env vars for Claude Code
-clawvisor connect-agent claude-desktop   # configure MCP for Claude Desktop
+clawvisor-server connect-agent claude-code      # install skill + env vars for Claude Code
+clawvisor-server connect-agent claude-desktop   # configure MCP for Claude Desktop
 ```
 
 For manual setup or other agents, see the integration guides: [Claude Code](docs/INTEGRATE_CLAUDE_CODE.md) · [Claude Desktop (MCP)](docs/INTEGRATE_CLAUDE_COWORK.md) · [OpenClaw](docs/INTEGRATE_OPENCLAW.md) · [Any HTTP agent](docs/INTEGRATE_GENERIC.md)
@@ -109,65 +109,65 @@ For the complete agent API protocol, see [`skills/clawvisor/SKILL.md`](skills/cl
 
 ## CLI Reference
 
-The `clawvisor` CLI is the primary interface for managing Clawvisor. Run `clawvisor install` on a fresh machine for a guided walkthrough that runs `setup`, `services`, `connect-agent`, and `dashboard` in sequence.
+The `clawvisor-server` CLI is the primary interface for managing Clawvisor. Run `clawvisor-server install` on a fresh machine for a guided walkthrough that runs `setup`, `services`, `connect-agent`, and `dashboard` in sequence.
 
 ### Setup & installation
 
 | Command | Description |
 |---|---|
-| `clawvisor install` | Guided first-run: configure, install as system service, start, connect services and agents, and open the dashboard. Use `--pair` to also pair a mobile device. |
-| `clawvisor setup` | Interactive configuration wizard — LLM provider, relay, telemetry. Run this to reconfigure an existing install. |
-| `clawvisor update` | Update to the latest release (or `--version <tag>` for a specific version). |
-| `clawvisor uninstall` | Remove the system service. |
+| `clawvisor-server install` | Guided first-run: configure, install as system service, start, connect services and agents, and open the dashboard. Use `--pair` to also pair a mobile device. |
+| `clawvisor-server setup` | Interactive configuration wizard — LLM provider, relay, telemetry. Run this to reconfigure an existing install. |
+| `clawvisor-server update` | Update to the latest release (or `--version <tag>` for a specific version). |
+| `clawvisor-server uninstall` | Remove the system service. |
 
 ### Daemon lifecycle
 
 | Command | Description |
 |---|---|
-| `clawvisor start` | Start the daemon as a background service. Use `--foreground` to run in the foreground. |
-| `clawvisor stop` | Stop the running daemon. |
-| `clawvisor restart` | Restart the daemon. |
-| `clawvisor status` | Show whether the daemon is running. |
+| `clawvisor-server start` | Start the daemon as a background service. Use `--foreground` to run in the foreground. |
+| `clawvisor-server stop` | Stop the running daemon. |
+| `clawvisor-server restart` | Restart the daemon. |
+| `clawvisor-server status` | Show whether the daemon is running. |
 
 ### Services
 
 | Command | Description |
 |---|---|
-| `clawvisor services` | Interactive picker to connect downstream services (Gmail, GitHub, Slack, etc.). |
-| `clawvisor services list` | List available and connected services. Use `--json` for machine-readable output. |
-| `clawvisor services add [service]` | Connect a service by ID or name. Omit the argument for an interactive picker. |
-| `clawvisor services remove <service>` | Disconnect a service. |
+| `clawvisor-server services` | Interactive picker to connect downstream services (Gmail, GitHub, Slack, etc.). |
+| `clawvisor-server services list` | List available and connected services. Use `--json` for machine-readable output. |
+| `clawvisor-server services add [service]` | Connect a service by ID or name. Omit the argument for an interactive picker. |
+| `clawvisor-server services remove <service>` | Disconnect a service. |
 
 ### Agent connection
 
 | Command | Description |
 |---|---|
-| `clawvisor connect-agent` | Auto-detect installed agents and walk through connecting them. |
-| `clawvisor connect-agent claude-code` | Install the `/clawvisor-setup` slash command and optionally add auto-approve rules. |
-| `clawvisor connect-agent claude-desktop` | Configure the MCP connection for Claude Desktop. |
+| `clawvisor-server connect-agent` | Auto-detect installed agents and walk through connecting them. |
+| `clawvisor-server connect-agent claude-code` | Install the `/clawvisor-setup` slash command and optionally add auto-approve rules. |
+| `clawvisor-server connect-agent claude-desktop` | Configure the MCP connection for Claude Desktop. |
 
 ### Agent management
 
 | Command | Description |
 |---|---|
-| `clawvisor agent create <name>` | Create an agent and print its bearer token. Use `--with-callback-secret` to generate a callback signing secret, `--replace` to overwrite an existing agent. |
-| `clawvisor agent list` | List all agents. |
-| `clawvisor agent delete <name-or-id>` | Delete an agent. |
+| `clawvisor-server agent create <name>` | Create an agent and print its bearer token. Use `--with-callback-secret` to generate a callback signing secret, `--replace` to overwrite an existing agent. |
+| `clawvisor-server agent list` | List all agents. |
+| `clawvisor-server agent delete <name-or-id>` | Delete an agent. |
 
 ### Dashboard & UI
 
 | Command | Description |
 |---|---|
-| `clawvisor dashboard` | Open the web dashboard in your browser. Use `--no-open` to print the URL only. |
-| `clawvisor tui` | Launch the terminal dashboard. Supports `--url` and `--token` overrides. |
-| `clawvisor pair` | Pair a mobile device via QR code. |
+| `clawvisor-server dashboard` | Open the web dashboard in your browser. Use `--no-open` to print the URL only. |
+| `clawvisor-server tui` | Launch the terminal dashboard. Supports `--url` and `--token` overrides. |
+| `clawvisor-server pair` | Pair a mobile device via QR code. |
 
 ### Other
 
 | Command | Description |
 |---|---|
-| `clawvisor server` | Start the API server directly (used internally by `start`). Use `--open` to open the magic link on startup. |
-| `clawvisor healthcheck` | Check if the server is ready — queries `/ready` on localhost. Used by Docker HEALTHCHECK. |
+| `clawvisor-server server` | Start the API server directly (used internally by `start`). Use `--open` to open the magic link on startup. |
+| `clawvisor-server healthcheck` | Check if the server is ready — queries `/ready` on localhost. Used by Docker HEALTHCHECK. |
 
 ### Configuration
 
@@ -419,23 +419,23 @@ The web UI provides:
 
 ## TUI
 
-The terminal dashboard (`clawvisor tui`) provides the same approval and monitoring capabilities without leaving the terminal.
+The terminal dashboard (`clawvisor-server tui`) provides the same approval and monitoring capabilities without leaving the terminal.
 
 ```bash
 # After setup + server are running:
 make tui
 
 # Or directly:
-clawvisor tui
+clawvisor-server tui
 
 # With explicit connection details:
-clawvisor tui --url http://localhost:25297 --token <refresh_token>
+clawvisor-server tui --url http://localhost:25297 --token <refresh_token>
 ```
 
 Authentication is automatic in local mode. The flow:
 
-1. `clawvisor server` writes `~/.clawvisor/.local-session` with a one-time magic token
-2. `clawvisor tui` reads this file, exchanges the token via `POST /api/auth/magic`, and saves the resulting refresh token to `~/.clawvisor/config.yaml`
+1. `clawvisor-server server` writes `~/.clawvisor/.local-session` with a one-time magic token
+2. `clawvisor-server tui` reads this file, exchanges the token via `POST /api/auth/magic`, and saves the resulting refresh token to `~/.clawvisor/config.yaml`
 3. Subsequent launches use the saved refresh token directly
 
 For password-mode servers, the TUI prompts for email and password on first launch.
@@ -445,7 +445,7 @@ You can also set credentials via environment variables:
 ```bash
 export CLAWVISOR_URL=http://localhost:25297
 export CLAWVISOR_TOKEN=<refresh_token>
-clawvisor tui
+clawvisor-server tui
 ```
 
 ## Daemon Mode
@@ -470,8 +470,8 @@ The runtime proxy is a TLS-terminating egress proxy that runs inside the Clawvis
 It ships off by default. To enable, set `runtime_proxy.enabled: true` in `config.yaml` (or `CLAWVISOR_RUNTIME_PROXY_ENABLED=true`), restart the daemon, and run an agent through it:
 
 ```bash
-clawvisor agent register my-agent
-clawvisor agent run --agent my-agent -- claude
+clawvisor-server agent register my-agent
+clawvisor-server agent run --agent my-agent -- claude
 ```
 
 For configuration, Dockerized agents, container isolation, starter profiles, and observe-vs-enforce mode, see [docs/RUNTIME_PROXY.md](docs/RUNTIME_PROXY.md).
@@ -494,10 +494,12 @@ For configuration, Dockerized agents, container isolation, starter profiles, and
 ### Directory layout
 
 ```
-cmd/clawvisor/main.go       — unified CLI (start, stop, status, setup, connect-agent, services, pair, dashboard, server, tui, agent, update, install, healthcheck)
+cmd/clawvisor-server/main.go       — server CLI entry point
+cmd/clawvisor/main.go              — legacy compatibility CLI entry point
 cmd/cvis-e2e/               — E2E encryption test utility
 cmd/server/                 — standalone server entry point
 internal/
+  clawvisorcli/             — shared server CLI commands (start, setup, agent, update, install, healthcheck)
   adapters/                 — service adapters (google/, github/, apple/, slack/, notion/, linear/, stripe/, twilio/)
   api/                      — HTTP server, middleware, handlers
   auth/                     — JWT, passwords, magic link tokens

@@ -39,13 +39,13 @@ Store the URL as `$CLAWVISOR_URL` (default `http://localhost:25297`).
 ## Step 2: Create an agent
 
 ```bash
-clawvisor agent create openclaw --with-callback-secret --replace --json
+clawvisor-server agent create openclaw --with-callback-secret --replace --json
 ```
 
 If running in Docker instead:
 
 ```bash
-docker exec <APP_CONTAINER> /clawvisor agent create openclaw \
+docker exec <APP_CONTAINER> /clawvisor-server agent create openclaw \
   --with-callback-secret --replace --json
 ```
 

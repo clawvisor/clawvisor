@@ -4,7 +4,7 @@
 // imessage-helper binary. The helper is a separate, stable binary that holds
 // Full Disk Access — because macOS ties FDA to the specific binary, keeping
 // the helper separate means users don't need to re-grant FDA on every
-// clawvisor update.
+// clawvisor-server update.
 //
 // The helper is installed on demand the first time the adapter is activated.
 // It exposes a protocol version that the adapter checks — the helper binary
@@ -533,4 +533,3 @@ func (a *IMessageAdapter) execHelper(ctx context.Context, reqBody []byte) ([]byt
 
 	return os.ReadFile(stdoutFile.Name())
 }
-

@@ -48,13 +48,13 @@ Check if the user already has a token. If they provide one, skip to Step 3.
 Otherwise, create one:
 
 ```bash
-clawvisor agent create claude-code --replace --json
+clawvisor-server agent create claude-code --replace --json
 ```
 
 If running in Docker instead:
 
 ```bash
-docker exec clawvisor /clawvisor agent create claude-code --replace --json
+docker exec clawvisor /clawvisor-server agent create claude-code --replace --json
 ```
 
 Save the `token` value from the JSON output — it is shown only once.
@@ -64,13 +64,13 @@ Save the `token` value from the JSON output — it is shown only once.
 ## Step 3: Install the skill globally
 
 The skill is installed globally to `~/.claude/skills/clawvisor/SKILL.md` during
-`clawvisor setup` (or `clawvisor connect-agent`). Verify it's present:
+`clawvisor-server setup` (or `clawvisor-server connect-agent`). Verify it's present:
 
 ```bash
 ls ~/.claude/skills/clawvisor/SKILL.md
 ```
 
-If missing, re-run `clawvisor connect-agent claude-code` to install it
+If missing, re-run `clawvisor-server connect-agent claude-code` to install it
 automatically.
 
 The YAML frontmatter must be preserved — Claude Code uses it to recognize the

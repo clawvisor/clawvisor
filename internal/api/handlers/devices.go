@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	pairingExpiry     = 5 * time.Minute
+	pairingExpiry      = 5 * time.Minute
 	maxPairingAttempts = 3
 )
 
@@ -120,7 +120,7 @@ func (h *DevicesHandler) PairInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.daemonID == "" {
-		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor setup")
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "relay is not configured — run clawvisor-server setup")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -306,8 +306,8 @@ func (h *DevicesHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Action      string `json:"action"`       // "approve" or "deny"
-		TargetID    string `json:"target_id"`     // request/task/connection ID
-		RequestType string `json:"request_type"`  // "approval", "task", "scope_expansion", "connection"
+		TargetID    string `json:"target_id"`    // request/task/connection ID
+		RequestType string `json:"request_type"` // "approval", "task", "scope_expansion", "connection"
 	}
 	if !decodeJSON(w, r, &body) {
 		return

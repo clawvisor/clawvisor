@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rebuild the clawvisor binary from source and restart the daemon.
+# Rebuild the clawvisor-server binary from source and restart the daemon.
 # Run from the repo root: ./scripts/upgrade.sh
 #
 # By default, discovers the installed binary path from the launchd plist
@@ -29,14 +29,14 @@ resolve_binary() {
             ;;
         Linux)
             if [[ -f "$SYSTEMD_UNIT" ]]; then
-                # ExecStart=/path/to/clawvisor start
+                # ExecStart=/path/to/clawvisor-server start
                 grep -oP '^ExecStart=\K\S+' "$SYSTEMD_UNIT" 2>/dev/null && return
             fi
             ;;
     esac
 
     echo >&2 "Could not determine installed binary path."
-    echo >&2 "Set CLAWVISOR_BIN or run 'clawvisor install' first."
+    echo >&2 "Set CLAWVISOR_BIN or run 'clawvisor-server install' first."
     exit 1
 }
 
@@ -64,10 +64,10 @@ fi
 
 ENVIRONMENT="${CLAWVISOR_ENV:-production}"
 VERSION="$(cd "$REPO_ROOT" && git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)"
-LDFLAGS="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION} -X github.com/clawvisor/clawvisor/pkg/version.Environment=${ENVIRONMENT}"
+LDFLAGS="-s -w -X github.com/clawvisor/clawvisor/pkg/version.Version=${VERSION} -X github.com/clawvisor/clawvisor/pkg/version.Environment=${ENVIRONMENT} -X github.com/clawvisor/clawvisor/pkg/version.AssetBase=clawvisor-server"
 
 echo "  Building backend from $REPO_ROOT (env=$ENVIRONMENT) ..."
-(cd "$REPO_ROOT" && go build -ldflags="$LDFLAGS" -o "$BIN" ./cmd/clawvisor/)
+(cd "$REPO_ROOT" && go build -ldflags="$LDFLAGS" -o "$BIN" ./cmd/clawvisor-server/)
 echo "  Built $(${BIN} --version 2>/dev/null || echo 'ok')"
 
 echo "  Restarting daemon..."

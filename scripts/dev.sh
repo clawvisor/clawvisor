@@ -60,8 +60,8 @@ mkdir -p "$REPO_ROOT/bin/.air"
 PID_FILE="$HOME/.clawvisor/.daemon.pid"
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "  Stopping installed daemon (PID $(cat "$PID_FILE"))..."
-    if command -v clawvisor >/dev/null 2>&1; then
-        clawvisor stop >/dev/null 2>&1 || true
+    if command -v clawvisor-server >/dev/null 2>&1; then
+        clawvisor-server stop >/dev/null 2>&1 || true
     else
         kill -TERM "$(cat "$PID_FILE")" 2>/dev/null || true
     fi
@@ -87,7 +87,7 @@ cleanup() {
         kill -TERM "$BACKEND_PID" 2>/dev/null || true
     fi
     wait 2>/dev/null || true
-    echo "  Stopped. Run 'clawvisor start' to resume the installed daemon."
+    echo "  Stopped. Run 'clawvisor-server start' to resume the installed daemon."
 }
 trap cleanup EXIT INT TERM
 

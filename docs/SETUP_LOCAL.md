@@ -48,7 +48,7 @@ If not installed, instruct the user:
 Check if the current working directory is the Clawvisor repository:
 
 ```bash
-ls Makefile cmd/clawvisor/main.go 2>/dev/null
+ls Makefile cmd/clawvisor-server/main.go 2>/dev/null
 ```
 
 If both exist, use the current directory as `$CLAWVISOR_REPO`.
@@ -62,7 +62,7 @@ ls -d ~/code/clawvisor 2>/dev/null \
 ```
 
 Also check for alternate naming (`clawvisor-public`, `clawvisor-oss`). The key
-indicator is a directory containing `Makefile` and `cmd/clawvisor/main.go`.
+indicator is a directory containing `Makefile` and `cmd/clawvisor-server/main.go`.
 
 If not found, ask the user where the repository is checked out — or offer to
 clone it:
@@ -139,7 +139,7 @@ If the user skipped `make setup`, build and run with env vars:
 
 ```bash
 cd "$CLAWVISOR_REPO" && make build
-DATABASE_DRIVER=sqlite JWT_SECRET=dev-secret ./bin/clawvisor server
+DATABASE_DRIVER=sqlite JWT_SECRET=dev-secret ./bin/clawvisor-server server
 ```
 
 Or without building:
