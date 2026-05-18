@@ -1005,6 +1005,64 @@ func (h *TasksHandler) waitForTaskResolution(ctx context.Context, taskID, userID
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
+// ListForAgent returns tasks owned by the authenticated agent.
+//
+// GET /control/tasks?status=active
+// Auth: proxy-lite caller nonce
+func (h *TasksHandler) ListForAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agent := middleware.AgentFromContext(ctx)
+	if agent == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	filter := store.TaskFilter{
+		AgentID: agent.ID,
+		Status:  "active",
+		Limit:   20,
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("status")); v != "" {
+		filter.Status = v
+	}
+	if r.URL.Query().Get("active_only") == "true" {
+		filter.Status = ""
+		filter.ActiveOnly = true
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			filter.Limit = n
+			if filter.Limit > maxListLimit {
+				filter.Limit = maxListLimit
+			}
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			filter.Offset = n
+		}
+	}
+
+	tasks, total, err := h.st.ListTasks(ctx, agent.UserID, filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list tasks")
+		return
+	}
+	if tasks == nil {
+		tasks = []*store.Task{}
+	}
+	for _, t := range tasks {
+		if sanitizeTaskForResponse(t) {
+			_ = h.st.UpdateTaskStatus(ctx, t.ID, "expired")
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total": total,
+		"tasks": tasks,
+	})
+}
+
 // List returns pending and active tasks for the authenticated user.
 //
 // GET /api/tasks

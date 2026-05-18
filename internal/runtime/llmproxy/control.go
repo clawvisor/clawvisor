@@ -32,7 +32,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	// bypass the rewrite path and end up reusing one-shot nonces from
 	// prior turns. controlBaseURL is intentionally ignored here.
 	_ = controlBaseURL
-	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
+	helpURL := "https://" + ControlSyntheticHost + "/control/help"
 	vaultItemsURL := "https://" + ControlSyntheticHost + "/control/vault/items"
 	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks"
 	tasksURLInline := tasksURL + "?surface=inline"
@@ -42,13 +42,13 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		shellTool = "bash"
 	}
 	allowedLines := controlAllowedWithoutTaskLines(availableTools, toolRules)
-	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellTool, availableTools)
 	return strings.Join([]string{
 		ControlNoticeSentinel,
 		"",
-		"WORKFLOW — start every non-trivial request with a task.",
+		"Clawvisor gates agent tool work with task-scoped approval, credential vaulting, and runtime policy.",
 		"",
-		"Create a task before multi-step work, writing files, making network calls, changing state, or using credentials. Don't wait for a tool call to be refused before creating a task.",
+		"WORKFLOW — start every non-trivial request with a task.",
+		"Create a task before multi-step work, writing files, making network calls, changing state, or using credentials. Don't wait for a tool call to be refused.",
 		"",
 		"Task endpoint:",
 		"  - Interactive user present: POST " + tasksURLInline,
@@ -63,12 +63,9 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"If credentials are needed, add:",
 		"  \"required_credentials\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
 		"",
-		strings.Join(workedExampleLines, "\n"),
-		"",
 		"Field rules:",
 		"  - `expected_tools`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
 		"  - `required_credentials`: OMIT unless credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
-		"  - Invalid credential request: `\"required_credentials\":[{\"vault_item_id\":\"github\"}]`",
 		"  - `lifetime`: omit or set `\"session\"` for a temporary task with `expires_in_seconds`; set `\"standing\"` only when the user asked for persistent permission. Standing tasks do not expire, so NEVER include `expires_in_seconds` with `\"lifetime\":\"standing\"`.",
 		"",
 		strings.Join(allowedLines, "\n"),
@@ -76,7 +73,6 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"CREDENTIAL ACCESS:",
 		"  - If you already have an `autovault_...` placeholder, do NOT call " + vaultItemsURL + " just to identify it. Create the task for the intended API call, omit `required_credentials`, and use the placeholder directly after approval.",
 		"  - Use GET " + vaultItemsURL + " only when you need Clawvisor to mint a new placeholder from an available vault item.",
-		"  - If you need a new placeholder, declare the selected vault item in `required_credentials` with a concrete `why`.",
 		"  - Do not ask the user to paste raw secrets into chat.",
 		"",
 		"VAULT PLACEHOLDERS — values like `autovault_github_xyz` are NOT raw credentials and are already usable placeholders. Use them directly in headers or curl arguments after the task is approved; Clawvisor substitutes the real secret at proxy time. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
@@ -89,7 +85,8 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"  - NEVER write `cv-nonce-...`, `X-Clawvisor-Caller`, `X-Clawvisor-Target-Host`, or any `X-Clawvisor-*` header. Clawvisor injects those.",
 		"  - NEVER call `http://localhost:<port>` or `http://127.0.0.1:<port>` directly. Use `https://" + ControlSyntheticHost + "`.",
 		"  - Do NOT prefix tool calls with `CLAWVISOR_TASK_ID=<id>`.",
-		"For schemas and examples, GET " + docsURL + ".",
+		"",
+		"Help router: GET " + helpURL + ". Topics: tasks, credentials, tools, legacy-adapters, errors, bug-reporting.",
 		"",
 		"Canonical task curl:",
 		"  curl -sS -X POST '" + tasksURLInline + "' \\",

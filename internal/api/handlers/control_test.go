@@ -58,6 +58,52 @@ func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 	}
 }
 
+func TestControlHelpRouterListsFocusedTopics(t *testing.T) {
+	h := NewLLMControlHandler("http://localhost:25297")
+	req := httptest.NewRequest(http.MethodGet, "/control/help", nil)
+	res := httptest.NewRecorder()
+
+	h.Help(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("Help status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, want := range []string{
+		"/control/help/tasks",
+		"/control/help/credentials",
+		"/control/help/tools",
+		"/control/help/legacy-adapters",
+		"/control/help/errors",
+		"/control/help/bug-reporting",
+		"/control/tasks?status=active",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("help router missing %q in %s", want, body)
+		}
+	}
+}
+
+func TestControlHelpTopicsAreFocused(t *testing.T) {
+	h := NewLLMControlHandler("http://localhost:25297")
+	req := httptest.NewRequest(http.MethodGet, "/control/help/bug-reporting", nil)
+	req.SetPathValue("topic", "bug-reporting")
+	res := httptest.NewRecorder()
+
+	h.HelpTopic(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("HelpTopic status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, "clawvisor-bug-reporting") || !strings.Contains(body, "request_id") {
+		t.Fatalf("bug reporting topic should contain reporting guidance: %s", body)
+	}
+	if strings.Contains(body, "create_task") || strings.Contains(body, "expected_tools") {
+		t.Fatalf("bug reporting topic should not replicate task docs: %s", body)
+	}
+}
+
 func TestControlFailureIncludesOriginalCommandContext(t *testing.T) {
 	h := NewLLMControlHandler("http://localhost:25297")
 	body := bytes.NewBufferString(`{"original_tool":"Bash","original_command":"curl -sS 'https://clawvisor.local/control/vault/items' | python3 -c 'print(1)'"}`)

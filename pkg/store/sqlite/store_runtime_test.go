@@ -1005,3 +1005,43 @@ func TestTask_StatusCASBlocksConcurrentResolution(t *testing.T) {
 		t.Fatalf("expected status=active after losing CAS, got %q", got.Status)
 	}
 }
+
+func TestListTasksFiltersByAgentID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := New(ctx, filepath.Join(t.TempDir(), "clawvisor.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := NewStore(db)
+	user, err := st.CreateUser(ctx, "task-agent-filter@example.com", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agentOne, err := st.CreateAgent(ctx, user.ID, "agent-one", "token-hash-one")
+	if err != nil {
+		t.Fatalf("CreateAgent one: %v", err)
+	}
+	agentTwo, err := st.CreateAgent(ctx, user.ID, "agent-two", "token-hash-two")
+	if err != nil {
+		t.Fatalf("CreateAgent two: %v", err)
+	}
+	for _, task := range []*store.Task{
+		{ID: "task-agent-one-active", UserID: user.ID, AgentID: agentOne.ID, Purpose: "one", Status: "active", Lifetime: "session", ExpiresInSeconds: 60},
+		{ID: "task-agent-two-active", UserID: user.ID, AgentID: agentTwo.ID, Purpose: "two", Status: "active", Lifetime: "session", ExpiresInSeconds: 60},
+		{ID: "task-agent-one-denied", UserID: user.ID, AgentID: agentOne.ID, Purpose: "denied", Status: "denied", Lifetime: "session", ExpiresInSeconds: 60},
+	} {
+		if err := st.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask %s: %v", task.ID, err)
+		}
+	}
+
+	tasks, total, err := st.ListTasks(ctx, user.ID, store.TaskFilter{AgentID: agentOne.ID, Status: "active"})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if total != 1 || len(tasks) != 1 || tasks[0].ID != "task-agent-one-active" {
+		t.Fatalf("expected only agent one's active task, total=%d tasks=%+v", total, tasks)
+	}
+}

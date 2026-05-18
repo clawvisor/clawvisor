@@ -42,11 +42,10 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "Use GET https://clawvisor.local/control/vault/items only when you need Clawvisor to mint a new placeholder") {
 		t.Fatalf("notice should not steer agents to rediscover already-issued placeholders; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "Create a temporary conversation fixture directory and verify the written files") ||
-		!strings.Contains(notice, "Create a GitHub issue summarizing the failing deployment check") ||
-		!strings.Contains(notice, `--data @- <<'JSON'`) ||
-		strings.Contains(notice, "AgentPhone") {
-		t.Fatalf("notice should use worked multi-step curl examples with common services; got:\n%s", notice)
+	if !strings.Contains(notice, "Help router: GET https://clawvisor.local/control/help") ||
+		!strings.Contains(notice, "Topics: tasks, credentials, tools, legacy-adapters, errors, bug-reporting") ||
+		!strings.Contains(notice, `--data @- <<'JSON'`) {
+		t.Fatalf("notice should point to routed help and keep the canonical curl shape; got:\n%s", notice)
 	}
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)

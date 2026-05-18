@@ -17,18 +17,18 @@ import (
 // Full state-machine test for inline task approval. Walks the four
 // transitions described in the plan:
 //
-//   T1. Postprocess on a tool that needs approval pre-stages the
-//       PendingLiteApproval at Stage=tool (we skip this step in the
-//       fixture — it's covered by TestPostprocess_BashWithoutTaskScope*
-//       — and start from a primed StageTool hold).
-//   T2. User types "task" → RewriteTaskApprovalReply transitions the
-//       hold to Stage=awaiting_task_definition.
-//   T3. Model emits POST /control/tasks → postprocess intercept fires,
-//       holds a new Stage=awaiting_task_approval entry, substitutes
-//       the rendered approval prompt for the user.
-//   T4. User types "approve" → TryReleasePendingApproval cascades:
-//       creates the task pre-approved, drops the original tool hold,
-//       emits a synthetic assistant response carrying the task body.
+//	T1. Postprocess on a tool that needs approval pre-stages the
+//	    PendingLiteApproval at Stage=tool (we skip this step in the
+//	    fixture — it's covered by TestPostprocess_BashWithoutTaskScope*
+//	    — and start from a primed StageTool hold).
+//	T2. User types "task" → RewriteTaskApprovalReply transitions the
+//	    hold to Stage=awaiting_task_definition.
+//	T3. Model emits POST /control/tasks → postprocess intercept fires,
+//	    holds a new Stage=awaiting_task_approval entry, substitutes
+//	    the rendered approval prompt for the user.
+//	T4. User types "approve" → TryReleasePendingApproval cascades:
+//	    creates the task pre-approved, drops the original tool hold,
+//	    emits a synthetic assistant response carrying the task body.
 //
 // The test confirms that at the end:
 //   - There's a real store.Task with status=active + source=inline_chat.
@@ -218,7 +218,6 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 	}
 }
 
-
 // extractField pulls a value out of the synthetic release response.
 // The task payload is now JSON-encoded inside a cat heredoc inside a
 // JSON-encoded tool_use command field, so the field appears as
@@ -365,19 +364,12 @@ func TestInlineTaskRepeatTaskReplyOnInnerHoldDoesNothing(t *testing.T) {
 	}
 }
 
-// listTasksForAgent returns every task the agent owns, via the generic
-// ListTasks filter (TaskFilter has no AgentID field, so we post-filter).
+// listTasksForAgent returns every task the agent owns.
 func listTasksForAgent(t *testing.T, st store.Store, agent *store.Agent) []*store.Task {
 	t.Helper()
-	all, _, err := st.ListTasks(context.Background(), agent.UserID, store.TaskFilter{})
+	all, _, err := st.ListTasks(context.Background(), agent.UserID, store.TaskFilter{AgentID: agent.ID})
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	out := all[:0]
-	for _, task := range all {
-		if task.AgentID == agent.ID {
-			out = append(out, task)
-		}
-	}
-	return out
+	return all
 }

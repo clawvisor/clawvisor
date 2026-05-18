@@ -1144,6 +1144,11 @@ func (s *Store) ListTasks(ctx context.Context, userID string, filter store.TaskF
 		// Exclude session tasks that have expired but haven't been swept yet.
 		where += " AND NOT (status = 'active' AND lifetime = 'session' AND expires_at IS NOT NULL AND expires_at < NOW())"
 	}
+	if filter.AgentID != "" {
+		where += fmt.Sprintf(" AND agent_id = $%d", argIdx)
+		args = append(args, filter.AgentID)
+		argIdx++
+	}
 
 	// Count total matching rows.
 	var total int

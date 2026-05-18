@@ -1021,9 +1021,12 @@ func (s *Server) routes() http.Handler {
 		// that scope exists.
 		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /control/help", http.HandlerFunc(controlHandler.Help))
+		mux.Handle("GET /control/help/{topic}", http.HandlerFunc(controlHandler.HelpTopic))
 		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
 		mux.Handle("POST /control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
 		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
+		mux.Handle("GET /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.ListForAgent))))
 		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 		mux.Handle("GET /control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))

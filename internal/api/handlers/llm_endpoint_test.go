@@ -261,7 +261,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	// rewriter and reuse one-shot nonces).
 	mustContain := []string{
 		"Clawvisor proxy-lite control plane",
-		"https://clawvisor.local/control/skill",
+		"https://clawvisor.local/control/help",
 		"https://clawvisor.local/control/tasks?surface=inline",
 		"Before creating the task, tell me I will need to approve it",
 		// Proactive task-creation steer: the model should declare scope
@@ -293,7 +293,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	}
 	// Negative: the daemon URL must not appear in the notice — it's a
 	// regression bug if it does.
-	if strings.Contains(string(seenBody), "http://localhost:25297/control/skill") {
+	if strings.Contains(string(seenBody), "http://localhost:25297/control/help") {
 		t.Fatalf("control notice must not advertise the daemon URL: %s", seenBody)
 	}
 }
