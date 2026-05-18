@@ -1380,7 +1380,7 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
   // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
   // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/v1`
   // because the client appends just the action path (`/chat/completions`).
-  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_API_KEY=cvis_<this-agent-token> claude`
+  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: cvis_<this-agent-token>' ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= claude`
   const codex = `codex exec \\
   -c model_provider=clawvisor \\
   -c 'model_providers.clawvisor.base_url="${baseURL}/v1"' \\

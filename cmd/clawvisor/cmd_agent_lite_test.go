@@ -29,7 +29,12 @@ func TestBuildLiteProxyEnvClaude(t *testing.T) {
 	if got := values["ANTHROPIC_BASE_URL"]; got != "https://clawvisor.example" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
 	}
-	if got := values["ANTHROPIC_AUTH_TOKEN"]; got != "cvis_token" {
+	if got := values["ANTHROPIC_CUSTOM_HEADERS"]; got != "X-Clawvisor-Agent-Token: cvis_token" {
+		t.Fatalf("ANTHROPIC_CUSTOM_HEADERS = %q", got)
+	}
+	if got, ok := values["ANTHROPIC_AUTH_TOKEN"]; !ok {
+		t.Fatalf("ANTHROPIC_AUTH_TOKEN not present in env; expected explicit empty value to preserve subscription OAuth fallback")
+	} else if got != "" {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN = %q", got)
 	}
 	// Two-step check: the key must be present in the env (so it explicitly

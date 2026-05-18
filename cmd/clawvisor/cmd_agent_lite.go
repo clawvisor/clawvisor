@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	liteProxyProviderClaude = "claude"
-	liteProxyProviderCodex  = "codex"
+	liteProxyProviderClaude         = "claude"
+	liteProxyProviderCodex          = "codex"
+	liteProxyClaudeAgentTokenHeader = "X-Clawvisor-Agent-Token"
 )
 
 var liteRunProvider string
@@ -202,7 +203,8 @@ func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
 	case liteProxyProviderClaude:
 		env = append(env,
 			"ANTHROPIC_BASE_URL="+baseURL,
-			"ANTHROPIC_AUTH_TOKEN="+agentToken,
+			"ANTHROPIC_CUSTOM_HEADERS="+liteProxyClaudeAgentTokenHeader+": "+agentToken,
+			"ANTHROPIC_AUTH_TOKEN=",
 			"ANTHROPIC_API_KEY=",
 		)
 	case liteProxyProviderCodex:

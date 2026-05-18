@@ -142,13 +142,6 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	}
 	upstreamURL.RawQuery = inbound.URL.RawQuery
 
-	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
-	if err != nil {
-		return nil, err
-	}
-	defer zeroBytes(keyBytes)
-	_ = serviceID // serviceID is recorded by the handler for audit; future hook
-
 	req, err := http.NewRequestWithContext(ctx, inbound.Method, upstreamURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("llmproxy: build upstream request: %w", err)
@@ -161,6 +154,20 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	// rewrites by making the body unparseable. Cost: marginally larger
 	// SSE payload from upstream.
 	req.Header.Set("Accept-Encoding", "identity")
+
+	if provider == conversation.ProviderAnthropic && PassthroughUpstreamAuth(ctx) {
+		if auth := passthroughAnthropicAuthorization(inbound); auth != "" {
+			injectPassthroughAnthropicAuth(req, auth)
+			return f.Client.Do(req)
+		}
+	}
+
+	keyBytes, serviceID, err := f.lookupVaultKey(ctx, userID, agentID, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroBytes(keyBytes)
+	_ = serviceID // serviceID is recorded by the handler for audit; future hook
 
 	if err := injectUpstreamAuth(req, provider, keyBytes); err != nil {
 		return nil, err
@@ -218,6 +225,30 @@ func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key [
 		return fmt.Errorf("llmproxy: unknown provider %q", provider)
 	}
 	return nil
+}
+
+func passthroughAnthropicAuthorization(inbound *http.Request) string {
+	if inbound == nil {
+		return ""
+	}
+	auth := strings.TrimSpace(inbound.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return ""
+	}
+	token := strings.TrimSpace(auth[len(prefix):])
+	if token == "" || strings.HasPrefix(token, "cvis_") {
+		return ""
+	}
+	return prefix + token
+}
+
+func injectPassthroughAnthropicAuth(req *http.Request, authorization string) {
+	req.Header.Set("Authorization", authorization)
+	req.Header.Del("x-api-key")
+	if req.Header.Get("anthropic-version") == "" {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 }
 
 // forwardSkipHeaders are stripped from the inbound request when copying

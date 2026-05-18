@@ -17,6 +17,8 @@ import (
 //
 //   - `Authorization: Bearer <token>` — OpenAI SDK convention.
 //   - `x-api-key: <token>` — Anthropic SDK convention.
+//   - `X-Clawvisor-Agent-Token: <token>` — Claude Code passthrough auth,
+//     where Authorization must remain the user's Claude subscription OAuth token.
 //
 // Suitable for the LLM endpoint where the agent token rides on the SDK's
 // natural auth header. For the resolver path, use RequireAgentLLMNonce
@@ -29,12 +31,12 @@ import (
 // `cvis_…` doesn't authenticate against api.anthropic.com or
 // api.openai.com; it only works against this proxy.
 //
-// On success, attaches the resolved agent to the request context. Both
-// header candidates are tried — a client sending Authorization and
-// x-api-key with different values still authenticates when EITHER is a
-// valid agent token. This matters for mixed-header clients that might
-// inherit a bogus Authorization value (e.g., a stale OAuth token from
-// the environment) while the actual agent token rides on x-api-key.
+// On success, attaches the resolved agent to the request context. Header
+// candidates are tried in priority order — a client sending Authorization,
+// x-api-key, and/or X-Clawvisor-Agent-Token with different values still
+// authenticates when any one is a valid agent token. This matters for mixed-
+// header clients that keep upstream OAuth in Authorization while the actual
+// agent token rides in a Clawvisor-only header.
 func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,17 +48,19 @@ func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 			var (
 				agent     *store.Agent
 				validTok  string
+				source    string
 				transient bool
 			)
-			for _, tok := range candidates {
-				if !strings.HasPrefix(tok, "cvis_") {
+			for _, candidate := range candidates {
+				if !strings.HasPrefix(candidate.Token, "cvis_") {
 					continue
 				}
-				hash := auth.HashToken(tok)
+				hash := auth.HashToken(candidate.Token)
 				a, err := st.GetAgentByToken(r.Context(), hash)
 				if err == nil {
 					agent = a
-					validTok = tok
+					validTok = candidate.Token
+					source = candidate.Source
 					break
 				}
 				if !errors.Is(err, store.ErrNotFound) {
@@ -73,6 +77,9 @@ func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 			}
 			ctx := store.WithAgent(r.Context(), agent)
 			ctx = withCallerToken(ctx, validTok)
+			if source == agentLLMTokenSourceClawvisorHeader {
+				ctx = llmproxy.WithPassthroughUpstreamAuth(ctx)
+			}
 			AddLogField(ctx, "agent_id", agent.ID)
 			AddLogField(ctx, "user_id", agent.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -164,21 +171,55 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 // agentLLMTokenCandidates returns every header value that could be the
 // agent token, in priority order. Callers iterate and accept the first
 // one that authenticates. Returning a slice (rather than a single
-// "best" value) means a client sending both headers with different
+// "best" value) means a client sending multiple headers with different
 // values still authenticates if at least one is valid.
-func agentLLMTokenCandidates(r *http.Request) []string {
-	var out []string
+const (
+	AgentTokenHeader                   = "X-Clawvisor-Agent-Token"
+	agentLLMTokenSourceAuthorization   = "authorization"
+	agentLLMTokenSourceXAPIKey         = "x-api-key"
+	agentLLMTokenSourceClawvisorHeader = "x-clawvisor-agent-token"
+)
+
+type agentLLMTokenCandidate struct {
+	Token  string
+	Source string
+}
+
+func agentLLMTokenCandidates(r *http.Request) []agentLLMTokenCandidate {
+	var out []agentLLMTokenCandidate
+	if t := clawvisorAgentTokenHeader(r); t != "" {
+		out = append(out, agentLLMTokenCandidate{Token: t, Source: agentLLMTokenSourceClawvisorHeader})
+	}
 	if t := bearerToken(r); t != "" {
-		out = append(out, t)
+		out = appendAgentLLMTokenCandidate(out, t, agentLLMTokenSourceAuthorization)
 	}
 	if t := strings.TrimSpace(r.Header.Get("x-api-key")); t != "" {
-		// De-dupe: if Authorization happened to carry the same value,
-		// don't re-attempt.
-		if len(out) == 0 || out[0] != t {
-			out = append(out, t)
-		}
+		out = appendAgentLLMTokenCandidate(out, t, agentLLMTokenSourceXAPIKey)
 	}
 	return out
+}
+
+func appendAgentLLMTokenCandidate(out []agentLLMTokenCandidate, token, source string) []agentLLMTokenCandidate {
+	for _, existing := range out {
+		if existing.Token == token {
+			return out
+		}
+	}
+	return append(out, agentLLMTokenCandidate{Token: token, Source: source})
+}
+
+// clawvisorAgentTokenHeader extracts out-of-band agent auth for Claude Code
+// passthrough mode. Accepts either bare `cvis_...` or `Bearer cvis_...`.
+func clawvisorAgentTokenHeader(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get(AgentTokenHeader))
+	if v == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if strings.HasPrefix(v, prefix) {
+		return strings.TrimSpace(v[len(prefix):])
+	}
+	return v
 }
 
 // callerHeaderBearer extracts the agent token from `X-Clawvisor-Caller`.
