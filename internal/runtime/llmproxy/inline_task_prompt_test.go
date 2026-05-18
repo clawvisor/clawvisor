@@ -40,7 +40,7 @@ func TestRenderTaskApprovalPromptWellFormed(t *testing.T) {
 	if !strings.Contains(prompt, "10 min") {
 		t.Errorf("missing humanized expiry: %q", prompt)
 	}
-	if !strings.Contains(prompt, "(y)es") || !strings.Contains(prompt, "(n)o") {
+	if !strings.Contains(prompt, "`yes` or `y`") || !strings.Contains(prompt, "`no` or `n`") {
 		t.Errorf("missing yes/no instructions: %q", prompt)
 	}
 	if strings.Contains(prompt, "{") {
@@ -85,7 +85,7 @@ func TestRenderTaskApprovalPromptFallbackForEmptyPurpose(t *testing.T) {
 	if !strings.Contains(prompt, "unnamed") {
 		t.Errorf("expected 'unnamed' fallback, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "(y)es") {
+	if !strings.Contains(prompt, "`yes`") {
 		t.Errorf("expected yes instructions in fallback, got %q", prompt)
 	}
 }
