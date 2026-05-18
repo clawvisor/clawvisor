@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math"
 	"regexp"
 	"sort"
@@ -29,8 +30,23 @@ type InboundSecretFinding struct {
 }
 
 type InboundSecretScanResult struct {
-	Findings     []InboundSecretFinding `json:"findings"`
-	RedactedBody []byte                 `json:"-"`
+	Findings      []InboundSecretFinding      `json:"findings"`
+	Adjudications []InboundSecretAdjudication `json:"adjudications,omitempty"`
+	RedactedBody  []byte                      `json:"-"`
+}
+
+type InboundSecretAdjudication struct {
+	Fingerprint  string  `json:"fingerprint"`
+	FieldName    string  `json:"field_name,omitempty"`
+	Charset      string  `json:"charset,omitempty"`
+	Entropy      float64 `json:"entropy,omitempty"`
+	Outcome      string  `json:"outcome"`
+	Credential   bool    `json:"credential,omitempty"`
+	Service      string  `json:"service,omitempty"`
+	Confidence   float64 `json:"confidence,omitempty"`
+	ErrorKind    string  `json:"error_kind,omitempty"`
+	ErrorMessage string  `json:"error_message,omitempty"`
+	DurationMS   int64   `json:"duration_ms,omitempty"`
 }
 
 type InboundSecretScanOptions struct {
@@ -248,9 +264,10 @@ func ScanInboundSecretsWithOptions(ctx context.Context, opts InboundSecretScanOp
 		return InboundSecretScanResult{}, false, err
 	}
 	findings := map[string]InboundSecretFinding{}
-	rewritten, changed := scanInboundSecretValue(ctx, payload, "", true, false, false, opts, findings)
+	var adjudications []InboundSecretAdjudication
+	rewritten, changed := scanInboundSecretValue(ctx, payload, "", true, false, false, opts, findings, &adjudications)
 	if len(findings) == 0 {
-		return InboundSecretScanResult{}, false, nil
+		return InboundSecretScanResult{Adjudications: adjudications}, false, nil
 	}
 	encoded := body
 	if changed {
@@ -265,13 +282,13 @@ func ScanInboundSecretsWithOptions(ctx context.Context, opts InboundSecretScanOp
 		list = append(list, finding)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Fingerprint < list[j].Fingerprint })
-	return InboundSecretScanResult{Findings: list, RedactedBody: encoded}, true, nil
+	return InboundSecretScanResult{Findings: list, Adjudications: adjudications, RedactedBody: encoded}, true, nil
 }
 
-func scanInboundSecretValue(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (any, bool) {
+func scanInboundSecretValue(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding, adjudications *[]InboundSecretAdjudication) (any, bool) {
 	switch typed := value.(type) {
 	case string:
-		return scanInboundSecretString(ctx, typed, fieldName, skipHeuristic, inToolResult, opts, findings)
+		return scanInboundSecretString(ctx, typed, fieldName, skipHeuristic, inToolResult, opts, findings, adjudications)
 	case map[string]any:
 		if strings.EqualFold(stringFromMap(typed, "type"), "thinking") {
 			return value, false
@@ -280,7 +297,7 @@ func scanInboundSecretValue(ctx context.Context, value any, fieldName string, to
 		changed := false
 		for key, item := range typed {
 			childSkipHeuristic := skipHeuristic || (topLevel && runtimeautovault.NoiseSubtreeKey(key))
-			next, nextChanged := scanInboundSecretValue(ctx, item, key, false, childSkipHeuristic, childInToolResult, opts, findings)
+			next, nextChanged := scanInboundSecretValue(ctx, item, key, false, childSkipHeuristic, childInToolResult, opts, findings, adjudications)
 			if nextChanged {
 				typed[key] = next
 				changed = true
@@ -290,7 +307,7 @@ func scanInboundSecretValue(ctx context.Context, value any, fieldName string, to
 	case []any:
 		changed := false
 		for i, item := range typed {
-			next, nextChanged := scanInboundSecretValue(ctx, item, fieldName, false, skipHeuristic, inToolResult, opts, findings)
+			next, nextChanged := scanInboundSecretValue(ctx, item, fieldName, false, skipHeuristic, inToolResult, opts, findings, adjudications)
 			if nextChanged {
 				typed[i] = next
 				changed = true
@@ -310,7 +327,7 @@ func isToolResultSecretScanSubtree(value map[string]any) bool {
 	return strings.EqualFold(stringFromMap(value, "role"), "tool")
 }
 
-func scanInboundSecretString(ctx context.Context, value, fieldName string, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (string, bool) {
+func scanInboundSecretString(ctx context.Context, value, fieldName string, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding, adjudications *[]InboundSecretAdjudication) (string, bool) {
 	if strings.TrimSpace(value) == "" || runtimeautovault.ProtectedStringField(fieldName) {
 		return value, false
 	}
@@ -360,8 +377,10 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 		case runtimeautovault.HighContextSecretField(fieldName), !inToolResult && runtimeautovault.SecretContextHint(value, candidate.Value):
 			value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, runtimeautovault.GuessService(fieldName, value), "heuristic_swap", candidate.Entropy, opts.Suppressed, findings))
 		default:
-			verdict, ok, adjudicatorErr := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
+			result, ok, adjudicatorErr := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
+			recordInboundSecretAdjudication(adjudications, fieldName, candidate, result, ok, adjudicatorErr)
 			if ok {
+				verdict := result.Verdict
 				if !verdict.Credential || verdict.Confidence < 0.6 {
 					continue
 				}
@@ -372,7 +391,7 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 				value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, service, "heuristic_adjudicated", candidate.Entropy, opts.Suppressed, findings))
 				continue
 			}
-			if !adjudicatorErr {
+			if adjudicatorErr == nil {
 				continue
 			}
 			value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, runtimeautovault.GuessService(fieldName, value), "heuristic_observe", candidate.Entropy, opts.Suppressed, findings))
@@ -479,9 +498,9 @@ func stripSecretRedactionMarkers(value string) string {
 	return secretRedactionMarkerRE.ReplaceAllString(value, "")
 }
 
-func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions, fieldName, content string, candidate runtimeautovault.Candidate) (runtimeautovault.SecretAdjudicationVerdict, bool, bool) {
+func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions, fieldName, content string, candidate runtimeautovault.Candidate) (runtimeautovault.SecretAdjudicationResult, bool, error) {
 	if opts.Adjudicator == nil {
-		return runtimeautovault.SecretAdjudicationVerdict{}, false, false
+		return runtimeautovault.SecretAdjudicationResult{}, false, nil
 	}
 	host := opts.Host
 	if host == "" {
@@ -494,9 +513,67 @@ func adjudicateInboundSecret(ctx context.Context, opts InboundSecretScanOptions,
 		Candidate: candidate,
 	})
 	if err != nil {
-		return runtimeautovault.SecretAdjudicationVerdict{}, false, true
+		return result, false, err
 	}
-	return result.Verdict, true, false
+	return result, true, nil
+}
+
+func recordInboundSecretAdjudication(adjudications *[]InboundSecretAdjudication, fieldName string, candidate runtimeautovault.Candidate, result runtimeautovault.SecretAdjudicationResult, ok bool, err error) {
+	if adjudications == nil {
+		return
+	}
+	trace := InboundSecretAdjudication{
+		Fingerprint: SecretFingerprint(candidate.Value),
+		FieldName:   fieldName,
+		Charset:     candidate.Charset,
+		Entropy:     candidate.Entropy,
+	}
+	if result.Duration > 0 {
+		trace.DurationMS = result.Duration.Milliseconds()
+	}
+	switch {
+	case ok:
+		trace.Outcome = "verdict"
+		trace.Credential = result.Verdict.Credential
+		trace.Service = runtimeautovault.NormalizeSecretService(result.Verdict.Service)
+		trace.Confidence = result.Verdict.Confidence
+	case err != nil:
+		trace.Outcome = "error"
+		trace.ErrorKind = inboundSecretAdjudicationErrorKind(err)
+		trace.ErrorMessage = err.Error()
+	default:
+		trace.Outcome = "not_configured"
+	}
+	*adjudications = append(*adjudications, trace)
+}
+
+func inboundSecretAdjudicationErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, runtimeautovault.ErrSecretAdjudicatorDisabled):
+		return "disabled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
+		return "timeout"
+	case strings.Contains(msg, "gemini auth") || strings.Contains(msg, "oauth2") || strings.Contains(msg, "credentials"):
+		return "auth"
+	case strings.Contains(msg, "status "):
+		return "upstream_status"
+	case strings.Contains(msg, "no json object") || strings.Contains(msg, "invalid character") || strings.Contains(msg, "unmarshal"):
+		return "parse"
+	case strings.Contains(msg, "decode gemini response") || strings.Contains(msg, "no candidates") || strings.Contains(msg, "no text part"):
+		return "response_decode"
+	default:
+		return "error"
+	}
 }
 
 func redactFoundSecret(raw, service, source string, entropy float64, suppressed map[string]struct{}, findings map[string]InboundSecretFinding) string {
