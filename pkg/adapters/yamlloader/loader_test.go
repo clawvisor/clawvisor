@@ -34,6 +34,7 @@ func TestLoadEmbeddedDefinitions(t *testing.T) {
 		"perplexity":       false,
 		"microsoft.onedrive": false,
 		"microsoft.outlook":  false,
+		"clickup":          false,
 	}
 
 

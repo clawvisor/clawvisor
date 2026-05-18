@@ -1,0 +1,380 @@
+service:
+  id: clickup
+  display_name: ClickUp
+  description: "Manage workspaces, spaces, folders, lists, and tasks in ClickUp — create and update tasks, post comments, and read custom fields."
+  setup_url: "https://app.clickup.com/settings/apps"
+  key_hint: "ClickUp personal API token (pk_...)"
+  key_display_name: "Personal API token"
+  key_description: "Create one under ClickUp → Settings → Apps → API Token. Personal tokens are used as-is in the Authorization header (no Bearer prefix)."
+  icon_url: "/logos/clickup.png"
+  identity:
+    endpoint: "/user"
+    field: "user.email"
+
+auth:
+  type: api_key
+  header: "Authorization"
+  extra_headers:
+    Content-Type: "application/json"
+
+api:
+  base_url: "https://api.clickup.com/api/v2"
+  type: rest
+
+verification_hints: |
+  - list_workspaces takes no params; an empty params object is the only valid call shape.
+  - workspace_id, space_id, folder_id, list_id, and task_id are all opaque strings — workspace/space/folder/list IDs are numeric strings, task IDs are 9-char alphanumeric (e.g. "86bxf32em").
+  - filter_workspace_tasks accepts mostly optional filter params (statuses, assignees, tags, date ranges); calling it with only workspace_id is valid.
+  - create_task requires list_id + name; all other fields are optional.
+  - update_task accepts a sparse body — only provided params are sent, so omitting a field means "leave unchanged".
+  - delete_task and create_task_comment return responses that do not echo the task_id; clients should track the ID they sent in.
+
+actions:
+  list_workspaces:
+    display_name: "List workspaces"
+    risk: { category: read, sensitivity: low, description: "List ClickUp workspaces (teams) accessible to the account" }
+    method: GET
+    path: "/team"
+    response:
+      data_path: "teams"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: color }
+      summary: "{{len .Data}} workspace(s)"
+
+  list_spaces:
+    display_name: "List spaces"
+    risk: { category: read, sensitivity: low, description: "List spaces in a ClickUp workspace" }
+    method: GET
+    path: "/team/{{.workspace_id}}/space"
+    params:
+      workspace_id: { type: string, required: true, location: path }
+      archived: { type: bool, default: false, location: query }
+    response:
+      data_path: "spaces"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: private }
+        - { name: archived }
+      summary: "{{len .Data}} space(s)"
+
+  get_space:
+    display_name: "Get space"
+    risk: { category: read, sensitivity: low, description: "Read a specific ClickUp space" }
+    method: GET
+    path: "/space/{{.space_id}}"
+    params:
+      space_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: private }
+        - { name: archived }
+      summary: "Space {{.id}}: {{.name}}"
+
+  list_folders:
+    display_name: "List folders"
+    risk: { category: read, sensitivity: low, description: "List folders in a ClickUp space" }
+    method: GET
+    path: "/space/{{.space_id}}/folder"
+    params:
+      space_id: { type: string, required: true, location: path }
+      archived: { type: bool, default: false, location: query }
+    response:
+      data_path: "folders"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: hidden }
+        - { name: archived }
+        - { name: task_count }
+      summary: "{{len .Data}} folder(s)"
+
+  list_folderless_lists:
+    display_name: "List folderless lists"
+    risk: { category: read, sensitivity: low, description: "List lists in a ClickUp space that are not inside a folder" }
+    method: GET
+    path: "/space/{{.space_id}}/list"
+    params:
+      space_id: { type: string, required: true, location: path }
+      archived: { type: bool, default: false, location: query }
+    response:
+      data_path: "lists"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: archived }
+        - { name: task_count }
+      summary: "{{len .Data}} list(s)"
+
+  list_folder_lists:
+    display_name: "List folder lists"
+    risk: { category: read, sensitivity: low, description: "List lists inside a ClickUp folder" }
+    method: GET
+    path: "/folder/{{.folder_id}}/list"
+    params:
+      folder_id: { type: string, required: true, location: path }
+      archived: { type: bool, default: false, location: query }
+    response:
+      data_path: "lists"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: archived }
+        - { name: task_count }
+      summary: "{{len .Data}} list(s)"
+
+  create_folderless_list:
+    display_name: "Create folderless list"
+    risk: { category: write, sensitivity: medium, description: "Create a list directly inside a ClickUp space" }
+    method: POST
+    path: "/space/{{.space_id}}/list"
+    body_mode: sparse
+    params:
+      space_id: { type: string, required: true, location: path }
+      name: { type: string, required: true, location: body }
+      content: { type: string, location: body }
+      due_date: { type: int, location: body }
+      due_date_time: { type: bool, location: body }
+      priority: { type: int, location: body }
+      assignee: { type: string, location: body }
+      status: { type: string, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+      summary: "Created list {{.id}}: {{.name}}"
+
+  get_list:
+    display_name: "Get list"
+    risk: { category: read, sensitivity: low, description: "Read a specific ClickUp list" }
+    method: GET
+    path: "/list/{{.list_id}}"
+    params:
+      list_id: { type: string, required: true, location: path }
+    response:
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: task_count }
+        - { name: archived }
+      summary: "List {{.id}}: {{.name}}"
+
+  list_tasks:
+    display_name: "List tasks"
+    risk: { category: read, sensitivity: low, description: "List tasks in a ClickUp list" }
+    method: GET
+    path: "/list/{{.list_id}}/task"
+    params:
+      list_id: { type: string, required: true, location: path }
+      archived: { type: bool, default: false, location: query }
+      page: { type: int, default: 0, location: query }
+      order_by: { type: string, location: query }
+      reverse: { type: bool, location: query }
+      include_closed: { type: bool, default: false, location: query }
+      subtasks: { type: bool, location: query }
+      statuses: { type: array, location: query }
+      assignees: { type: array, location: query }
+    response:
+      data_path: "tasks"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: status, path: "status.status" }
+        - { name: priority, path: "priority.priority", nullable: true }
+        - { name: due_date }
+        - { name: url }
+      summary: "{{len .Data}} task(s)"
+
+  get_task:
+    display_name: "Get task"
+    risk: { category: read, sensitivity: low, description: "Read a specific ClickUp task" }
+    method: GET
+    path: "/task/{{.task_id}}"
+    params:
+      task_id: { type: string, required: true, location: path }
+      include_subtasks: { type: bool, location: query }
+      custom_task_ids: { type: bool, location: query }
+      team_id: { type: string, location: query }
+    response:
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: description, sanitize: true, nullable: true }
+        - { name: status, path: "status.status" }
+        - { name: priority, path: "priority.priority", nullable: true }
+        - { name: due_date }
+        - { name: url }
+      summary: "Task {{.id}}: {{.name}} [{{.status}}]"
+
+  create_task:
+    display_name: "Create task"
+    risk: { category: write, sensitivity: medium, description: "Create a task in a ClickUp list" }
+    method: POST
+    path: "/list/{{.list_id}}/task"
+    body_mode: sparse
+    params:
+      list_id: { type: string, required: true, location: path }
+      name: { type: string, required: true, location: body }
+      description: { type: string, location: body }
+      markdown_content: { type: string, location: body }
+      status: { type: string, location: body }
+      priority: { type: int, location: body }
+      assignees: { type: array, location: body }
+      tags: { type: array, location: body }
+      due_date: { type: int, location: body }
+      due_date_time: { type: bool, location: body }
+      start_date: { type: int, location: body }
+      start_date_time: { type: bool, location: body }
+      time_estimate: { type: int, location: body }
+      notify_all: { type: bool, location: body }
+      parent: { type: string, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: url }
+      summary: "Created task {{.id}}: {{.name}}"
+
+  update_task:
+    display_name: "Update task"
+    risk: { category: write, sensitivity: medium, description: "Update fields on a ClickUp task" }
+    method: PUT
+    path: "/task/{{.task_id}}"
+    body_mode: sparse
+    params:
+      task_id: { type: string, required: true, location: path }
+      name: { type: string, location: body }
+      description: { type: string, location: body }
+      markdown_content: { type: string, location: body }
+      status: { type: string, location: body }
+      priority: { type: int, location: body }
+      due_date: { type: int, location: body }
+      due_date_time: { type: bool, location: body }
+      start_date: { type: int, location: body }
+      start_date_time: { type: bool, location: body }
+      time_estimate: { type: int, location: body }
+      assignees: { type: object, location: body }
+      archived: { type: bool, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: name }
+        - { name: url }
+      summary: "Updated task {{.id}}: {{.name}}"
+
+  delete_task:
+    display_name: "Delete task"
+    risk: { category: delete, sensitivity: high, description: "Permanently delete a ClickUp task" }
+    method: DELETE
+    path: "/task/{{.task_id}}"
+    params:
+      task_id: { type: string, required: true, location: path }
+      custom_task_ids: { type: bool, location: query }
+      team_id: { type: string, location: query }
+    response:
+      summary: "Task deleted"
+
+  filter_workspace_tasks:
+    display_name: "Filter workspace tasks"
+    risk: { category: search, sensitivity: low, description: "Search and filter tasks across a ClickUp workspace" }
+    method: GET
+    path: "/team/{{.workspace_id}}/task"
+    params:
+      workspace_id: { type: string, required: true, location: path }
+      page: { type: int, default: 0, location: query }
+      order_by: { type: string, location: query }
+      reverse: { type: bool, location: query }
+      include_closed: { type: bool, default: false, location: query }
+      subtasks: { type: bool, location: query }
+      space_ids: { type: array, location: query }
+      project_ids: { type: array, location: query }
+      list_ids: { type: array, location: query }
+      statuses: { type: array, location: query }
+      assignees: { type: array, location: query }
+      tags: { type: array, location: query }
+      due_date_gt: { type: int, location: query }
+      due_date_lt: { type: int, location: query }
+      date_created_gt: { type: int, location: query }
+      date_created_lt: { type: int, location: query }
+      date_updated_gt: { type: int, location: query }
+      date_updated_lt: { type: int, location: query }
+    response:
+      data_path: "tasks"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: status, path: "status.status" }
+        - { name: priority, path: "priority.priority", nullable: true }
+        - { name: due_date }
+        - { name: url }
+      summary: "{{len .Data}} task(s)"
+
+  get_task_comments:
+    display_name: "Get task comments"
+    risk: { category: read, sensitivity: low, description: "Read comments on a ClickUp task" }
+    method: GET
+    path: "/task/{{.task_id}}/comment"
+    params:
+      task_id: { type: string, required: true, location: path }
+      start: { type: int, location: query }
+      start_id: { type: string, location: query }
+    response:
+      data_path: "comments"
+      fields:
+        - { name: id }
+        - { name: comment_text, sanitize: true }
+        - { name: user, path: "user.username", nullable: true }
+        - { name: date }
+      summary: "{{len .Data}} comment(s)"
+
+  create_task_comment:
+    display_name: "Create task comment"
+    risk: { category: write, sensitivity: medium, description: "Post a comment on a ClickUp task" }
+    method: POST
+    path: "/task/{{.task_id}}/comment"
+    body_mode: sparse
+    params:
+      task_id: { type: string, required: true, location: path }
+      comment_text: { type: string, required: true, location: body }
+      assignee: { type: int, location: body }
+      notify_all: { type: bool, default: true, location: body }
+    response:
+      fields:
+        - { name: id }
+        - { name: hist_id }
+        - { name: date }
+      summary: "Posted comment {{.id}}"
+
+  list_custom_fields:
+    display_name: "List custom fields"
+    risk: { category: read, sensitivity: low, description: "List custom fields accessible on a ClickUp list" }
+    method: GET
+    path: "/list/{{.list_id}}/field"
+    params:
+      list_id: { type: string, required: true, location: path }
+    response:
+      data_path: "fields"
+      fields:
+        - { name: id }
+        - { name: name, sanitize: true }
+        - { name: type }
+        - { name: hide_from_guests }
+      summary: "{{len .Data}} custom field(s)"
+
+  set_custom_field_value:
+    display_name: "Set custom field value"
+    risk: { category: write, sensitivity: medium, description: "Set the value of a custom field on a ClickUp task" }
+    method: POST
+    path: "/task/{{.task_id}}/field/{{.field_id}}"
+    body_mode: sparse
+    params:
+      task_id: { type: string, required: true, location: path }
+      field_id: { type: string, required: true, location: path }
+      value: { type: string, required: true, location: body }
+      value_options: { type: object, location: body }
+    response:
+      summary: "Custom field value updated"
