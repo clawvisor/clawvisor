@@ -887,6 +887,16 @@ func builtinPatternsRaw(service, action string) []extractionPattern {
 			extractionPattern{FactType: "charge_id", Regex: `"id":\s*"(ch_[a-zA-Z0-9]+)"`},
 			extractionPattern{FactType: "customer_id", Regex: `"(?:id|customer)":\s*"(cus_[a-zA-Z0-9]+)"`},
 		)
+	case "clickup":
+		// ClickUp task IDs are 9-char lowercase alphanumeric that always
+		// contain at least one letter (e.g. "86bxf32em"). Workspace, space,
+		// folder, and list IDs are all-digit numeric strings, so the letter
+		// requirement disambiguates task_id from those without needing
+		// structural context (which the trimmed adapter response doesn't
+		// carry anyway).
+		return append(generic,
+			extractionPattern{FactType: "task_id", Regex: `"id":\s*"([a-z0-9]*[a-z][a-z0-9]{5,})"`},
+		)
 	case "imessage":
 		return append(generic,
 			extractionPattern{FactType: "message_id", Regex: `"(?:id|guid)":\s*"([^"]+)"`},
