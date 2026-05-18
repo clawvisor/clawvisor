@@ -13,7 +13,7 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TRACE_LOG="${CLAWVISOR_TRACE_LOG:-$HOME/.clawvisor/logs/lite-proxy-trace.jsonl}"
-RAW_LOG="${CLAWVISOR_RAW_LOG:-$HOME/.clawvisor/logs/lite-proxy-raw.jsonl}"
+RAW_LOG="${CLAWVISOR_PROXY_LITE_RAW_LOG:-$HOME/.clawvisor/logs/lite-proxy-raw.jsonl}"
 OUT_DIR="${CLAWVISOR_SMOKE_OUT_DIR:-$ROOT/.context/live-codex-secret-smoke-$(date +%Y%m%d-%H%M%S)}"
 WORK_DIR="${CLAWVISOR_SMOKE_WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/clawvisor-codex-smoke.XXXXXX")}"
 CLAWVISOR_URL="${CLAWVISOR_URL:-http://127.0.0.1:25297}"

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type RuntimeEvent, type RuntimePolicyRule, type RuntimeStatus, type RuntimeSession, type StarterProfile } from '../api/client'
 
@@ -45,6 +45,7 @@ export default function Runtime() {
   const qc = useQueryClient()
   const [agentFilter, setAgentFilter] = useState<string>('all')
   const [editingRule, setEditingRule] = useState<RuleDraft | null>(null)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -130,11 +131,19 @@ export default function Runtime() {
   const enablePassthroughMut = useMutation({
     mutationFn: (body: { agent_id?: string; ttl_seconds?: number; indefinite?: boolean; reason?: string; confirmation_text?: string }) =>
       api.runtime.enablePassthrough(body),
-    onSuccess: refreshRuntime,
+    onSuccess: () => {
+      setRuntimeError(null)
+      refreshRuntime()
+    },
+    onError: (err: Error) => setRuntimeError(err.message),
   })
   const disablePassthroughMut = useMutation({
     mutationFn: (ruleId?: string) => api.runtime.disablePassthrough(ruleId),
-    onSuccess: refreshRuntime,
+    onSuccess: () => {
+      setRuntimeError(null)
+      refreshRuntime()
+    },
+    onError: (err: Error) => setRuntimeError(err.message),
   })
 
   const startCreateRule = (kind: 'egress' | 'tool') => {
@@ -164,6 +173,12 @@ export default function Runtime() {
           </select>
         </div>
       </div>
+
+      {runtimeError && (
+        <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {runtimeError}
+        </div>
+      )}
 
       {status && fullProxyActive && (
         <RuntimeStatusPanel
@@ -267,10 +282,16 @@ export function RuntimeStatusPanel({
   const [duration, setDuration] = useState('600')
   const [scope, setScope] = useState(selectedAgentId || '')
   const [confirmIndefinite, setConfirmIndefinite] = useState(false)
+  const [confirmGlobal, setConfirmGlobal] = useState(false)
   const passthrough = status.passthrough
   const passthroughActive = !!passthrough?.enabled
   const canControl = !!onEnablePassthrough && !!onDisablePassthrough
   const ttlSeconds = duration === 'indefinite' ? undefined : Number(duration)
+  useEffect(() => {
+    setScope(selectedAgentId || '')
+    setConfirmGlobal(false)
+  }, [selectedAgentId])
+  const globalScope = scope === ''
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -329,7 +350,10 @@ export function RuntimeStatusPanel({
               <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={scope}
-                  onChange={e => setScope(e.target.value)}
+                  onChange={e => {
+                    setScope(e.target.value)
+                    setConfirmGlobal(false)
+                  }}
                   className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
                 >
                   <option value="">All agents</option>
@@ -356,13 +380,19 @@ export function RuntimeStatusPanel({
                     Confirm indefinite
                   </label>
                 )}
+                {globalScope && (
+                  <label className="flex items-center gap-2 text-xs text-text-secondary">
+                    <input type="checkbox" checked={confirmGlobal} onChange={e => setConfirmGlobal(e.target.checked)} />
+                    Confirm all agents
+                  </label>
+                )}
                 <button
-                  disabled={busy || (duration === 'indefinite' && !confirmIndefinite)}
+                  disabled={busy || (duration === 'indefinite' && !confirmIndefinite) || (globalScope && !confirmGlobal)}
                   onClick={() => onEnablePassthrough?.({
                     agent_id: scope || undefined,
                     ttl_seconds: ttlSeconds,
                     indefinite: duration === 'indefinite',
-                    confirmation_text: duration === 'indefinite' ? 'enable passthrough' : undefined,
+                    confirmation_text: globalScope ? 'enable global passthrough' : duration === 'indefinite' ? 'enable passthrough' : undefined,
                     reason: 'dashboard break-glass passthrough',
                   })}
                   className="rounded bg-warning px-4 py-2 text-sm font-medium text-surface-0 hover:bg-warning/90 disabled:opacity-50"

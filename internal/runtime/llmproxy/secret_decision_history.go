@@ -117,15 +117,24 @@ func stripOpenAISecretDecisionHistory(body []byte) (SecretDecisionHistoryStripRe
 func stripSecretDecisionMessages(messages []map[string]json.RawMessage, text func(map[string]json.RawMessage) (string, string)) ([]map[string]json.RawMessage, bool) {
 	out := make([]map[string]json.RawMessage, 0, len(messages))
 	modified := false
+	skipDecisionIndex := -1
 	for i := 0; i < len(messages); i++ {
+		if i == skipDecisionIndex {
+			modified = true
+			continue
+		}
 		role, content := text(messages[i])
 		if role == "assistant" && strings.Contains(content, SecretDecisionIDMarker) {
 			modified = true
-			if i+1 < len(messages) {
-				nextRole, nextContent := text(messages[i+1])
-				if nextRole == "user" && ParseSecretDecisionReply(nextContent).Action != SecretDecisionNone {
-					i++
+			for j := i + 1; j < len(messages); j++ {
+				nextRole, nextContent := text(messages[j])
+				if nextRole != "user" {
+					continue
 				}
+				if ParseSecretDecisionReply(nextContent).Action != SecretDecisionNone {
+					skipDecisionIndex = j
+				}
+				break
 			}
 			continue
 		}

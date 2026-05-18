@@ -125,6 +125,71 @@ func TestRuntimeHandlerRuleCRUDAndStarterProfile(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandlerEnablePassthroughRejectsExcessiveTTL(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-passthrough-ttl.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-passthrough-ttl@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	body, _ := json.Marshal(map[string]any{
+		"ttl_seconds": maxRuntimePassthroughTTLSeconds + 1,
+		"reason":      "too long",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/passthrough", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h.EnablePassthrough(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for excessive ttl, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRuntimeHandlerEnablePassthroughRequiresConfirmationForGlobalTimed(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-passthrough-global-confirm.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-passthrough-global-confirm@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	body, _ := json.Marshal(map[string]any{
+		"ttl_seconds": 600,
+		"reason":      "global break glass",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/passthrough", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+	h.EnablePassthrough(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without global confirmation, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]any{
+		"ttl_seconds":       600,
+		"reason":            "global break glass",
+		"confirmation_text": "enable global passthrough",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/runtime/passthrough", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec = httptest.NewRecorder()
+	h.EnablePassthrough(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 with global confirmation, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRuntimeStatusShowsAgentScopedPassthrough(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-passthrough-status.db"))
@@ -172,6 +237,35 @@ func TestRuntimeStatusShowsAgentScopedPassthrough(t *testing.T) {
 	}
 	if !payload.Passthrough.Enabled || payload.Passthrough.RuleID != "agent-scoped-passthrough" || payload.Passthrough.AgentID != agent.ID {
 		t.Fatalf("status should surface active agent-scoped passthrough for selected agent, got %+v", payload.Passthrough)
+	}
+}
+
+func TestActivePassthroughPrefersAgentScopedRule(t *testing.T) {
+	now := time.Now().UTC()
+	agentID := "agent-1"
+	globalExpiry := now.Add(10 * time.Minute).Format(time.RFC3339Nano)
+	agentExpiry := now.Add(5 * time.Minute).Format(time.RFC3339Nano)
+	state := activePassthroughFromRules([]*store.RuntimePolicyRule{
+		{
+			ID:        "global",
+			Kind:      runtimePassthroughKind,
+			Action:    "allow",
+			Path:      globalExpiry,
+			Enabled:   true,
+			CreatedAt: now.Add(2 * time.Minute),
+		},
+		{
+			ID:        "agent",
+			AgentID:   &agentID,
+			Kind:      runtimePassthroughKind,
+			Action:    "allow",
+			Path:      agentExpiry,
+			Enabled:   true,
+			CreatedAt: now,
+		},
+	}, agentID, now)
+	if !state.Enabled || state.RuleID != "agent" || state.AgentID != agentID {
+		t.Fatalf("expected agent-scoped passthrough to win, got %+v", state)
 	}
 }
 
@@ -428,8 +522,8 @@ func TestDefaultToolRulesMigratesStaleGlobalSystemDefaultsToAgent(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListRuntimePolicyRules: %v", err)
 	}
-	if len(rules) != 1 {
-		t.Fatalf("expected stale global rule to be replaced with one agent-scoped rule, got %+v", rules)
+	if len(rules) != 2 {
+		t.Fatalf("expected stale global rule to remain as backstop plus one agent-scoped rule, got %+v", rules)
 	}
 	agentRead := 0
 	for _, rule := range rules {
@@ -438,7 +532,7 @@ func TestDefaultToolRulesMigratesStaleGlobalSystemDefaultsToAgent(t *testing.T) 
 		}
 	}
 	if agentRead != 1 {
-		t.Fatalf("expected stale global default to become an agent allow, got %+v", rules)
+		t.Fatalf("expected stale global default to seed an agent allow, got %+v", rules)
 	}
 }
 

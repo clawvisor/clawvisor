@@ -72,6 +72,10 @@ func OpenRawIOLogger(path string) (*RawIOLogger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lite-proxy: open raw-io log %q: %w", path, err)
 	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lite-proxy: chmod raw-io log %q: %w", path, err)
+	}
 	return NewRawIOLogger(f), nil
 }
 

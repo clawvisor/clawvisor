@@ -603,6 +603,9 @@ func TestTaskCreationPromptIncludesTaskCreationExample(t *testing.T) {
 		`"tool_name": "Write"`,
 		"/tmp/report.txt",
 		"expected_tools",
+		`"lifetime":"session"`,
+		`"lifetime":"standing"`,
+		"standing tasks must not include `expires_in_seconds`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("approval prompt missing %q:\n%s", want, got)

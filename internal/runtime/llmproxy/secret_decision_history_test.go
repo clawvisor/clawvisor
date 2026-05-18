@@ -69,3 +69,45 @@ func TestStripSecretDecisionHistory_OpenAIResponsesOutputText(t *testing.T) {
 		t.Fatalf("expected surrounding user history preserved: %s", text)
 	}
 }
+
+func TestStripSecretDecisionHistory_OpenAIResponsesSkipsReasoningBeforeDecision(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"token sk-test1234567890abcdef"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Clawvisor detected a possible raw secret.\n\n[clawvisor:secret=cv-secret-1]"}]},{"type":"reasoning","encrypted_content":"opaque-reasoning"},{"type":"message","role":"user","content":[{"type":"input_text","text":"vault resend_1"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}]}`)
+	got, err := StripSecretDecisionHistory(SecretDecisionHistoryStripRequest{
+		Provider: conversation.ProviderOpenAI,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatalf("StripSecretDecisionHistory: %v", err)
+	}
+	if !got.Modified {
+		t.Fatalf("expected Responses decision history to be stripped")
+	}
+	text := string(got.Body)
+	if strings.Contains(text, "Clawvisor detected a possible raw secret") || strings.Contains(text, "vault resend_1") {
+		t.Fatalf("expected prompt and decision stripped from %s", text)
+	}
+	if !strings.Contains(text, "opaque-reasoning") || !strings.Contains(text, "continue") {
+		t.Fatalf("expected intervening reasoning and surrounding history preserved: %s", text)
+	}
+}
+
+func TestStripSecretDecisionHistory_OpenAIChatCompletions(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"token sk-test1234567890abcdef"},{"role":"assistant","content":"Clawvisor detected a possible raw secret.\n\n[clawvisor:secret=cv-secret-1]"},{"role":"user","content":"vault resend_1"},{"role":"user","content":"continue"}]}`)
+	got, err := StripSecretDecisionHistory(SecretDecisionHistoryStripRequest{
+		Provider: conversation.ProviderOpenAI,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatalf("StripSecretDecisionHistory: %v", err)
+	}
+	if !got.Modified {
+		t.Fatalf("expected Chat Completions decision history to be stripped")
+	}
+	text := string(got.Body)
+	if strings.Contains(text, "Clawvisor detected a possible raw secret") || strings.Contains(text, "vault resend_1") {
+		t.Fatalf("expected prompt and decision stripped from %s", text)
+	}
+	if !strings.Contains(text, "token sk-test1234567890abcdef") || !strings.Contains(text, "continue") {
+		t.Fatalf("expected surrounding user history preserved: %s", text)
+	}
+}

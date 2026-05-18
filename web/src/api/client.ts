@@ -706,7 +706,7 @@ export interface RuntimePolicyRule {
   id: string
   user_id: string
   agent_id?: string
-  kind: 'egress' | 'tool' | 'service' | 'passthrough' | 'secret_suppression'
+  kind: 'egress' | 'tool' | 'service' | 'passthrough' | 'secret_suppression' | 'secret_rewrite'
   action: 'allow' | 'deny' | 'review'
   service?: string
   service_action?: string

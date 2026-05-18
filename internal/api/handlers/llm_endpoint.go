@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -136,6 +137,10 @@ type LLMEndpointHandler struct {
 	defaultToolRulesMu   sync.Mutex
 	defaultToolRulesSeen map[string]map[string]struct{}
 }
+
+const defaultToolRulesSeenMaxAgents = 10000
+
+var errSecretVaultNameConflict = errors.New("vault item already exists with a different value")
 
 // NewLLMEndpointHandler builds the handler with sensible defaults.
 func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *LLMEndpointHandler {
@@ -332,7 +337,8 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		h.forwardLitePassthrough(w, r, agent, provider, requestID, body, &auditStatus, &auditDecide, &auditOutcome, &auditReason, auditParams)
 		return
 	}
-	if decisionBody, decision, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+	decisionExtraSuppressed := map[string]struct{}{}
+	if decisionBody, decision, extraSuppressed, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
 		if len(decisionBody) == 0 {
 			return
 		}
@@ -346,35 +352,12 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auditParams["secret_decision"] = string(decision)
+		decisionExtraSuppressed = extraSuppressed
+	}
+	if processed, held := h.preprocessLiteSecretBody(w, r, agent, provider, requestID, body, decisionExtraSuppressed, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); held {
+		return
 	} else {
-		if stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
-			Provider: provider,
-			Body:     body,
-		}); err != nil {
-			h.emitLiteSecretPipelineTrace(requestID, agent, "history_strip_error", map[string]any{
-				"provider": string(provider),
-				"body_sha": liteSecretBodySHA(body),
-				"err":      err.Error(),
-			})
-			h.Logger.WarnContext(r.Context(), "lite-proxy secret decision history strip failed",
-				"agent_id", agent.ID, "err", err.Error())
-		} else if stripped.Modified {
-			h.emitLiteSecretPipelineTrace(requestID, agent, "history_stripped", map[string]any{
-				"provider":        string(provider),
-				"body_sha_before": liteSecretBodySHA(body),
-				"body_sha_after":  liteSecretBodySHA(stripped.Body),
-				"body_bytes":      len(stripped.Body),
-			})
-			body = stripped.Body
-			auditParams["secret_decision_history_stripped"] = true
-		}
-		if rewritten, modified := h.applyRememberedSecretRewrites(r.Context(), agent, provider, requestID, body); modified {
-			body = rewritten
-			auditParams["secret_rewrites_applied"] = true
-		}
-		if h.maybeHoldInboundSecret(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason) {
-			return
-		}
+		body = processed
 	}
 	// Strip the rewriter's transport details from the assistant
 	// tool_use history BEFORE the model sees this request. Without
@@ -1038,6 +1021,9 @@ func (h *LLMEndpointHandler) unseededDefaultTools(agentID string, availableTools
 	if h.defaultToolRulesSeen == nil {
 		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
 	}
+	if len(h.defaultToolRulesSeen) > defaultToolRulesSeenMaxAgents {
+		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
+	}
 	seen := h.defaultToolRulesSeen[agentID]
 	out := make([]string, 0, len(availableTools))
 	queued := map[string]struct{}{}
@@ -1065,6 +1051,9 @@ func (h *LLMEndpointHandler) markDefaultToolsSeeded(agentID string, toolNames []
 	h.defaultToolRulesMu.Lock()
 	defer h.defaultToolRulesMu.Unlock()
 	if h.defaultToolRulesSeen == nil {
+		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
+	}
+	if _, ok := h.defaultToolRulesSeen[agentID]; !ok && len(h.defaultToolRulesSeen) >= defaultToolRulesSeenMaxAgents {
 		h.defaultToolRulesSeen = map[string]map[string]struct{}{}
 	}
 	seen := h.defaultToolRulesSeen[agentID]
@@ -1104,9 +1093,6 @@ func ensureDefaultToolRules(ctx context.Context, st store.Store, agent *store.Ag
 			continue
 		}
 		if rule.AgentID == nil && rule.Source == "system" && rule.Action == "allow" && inspector.IsDefaultAllowedTool(rule.ToolName) {
-			if err := st.DeleteRuntimePolicyRule(ctx, rule.ID, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
-				return err
-			}
 			continue
 		}
 		if rule.AgentID == nil {
@@ -1147,8 +1133,12 @@ func (h *LLMEndpointHandler) activeLitePassthrough(ctx context.Context, agent *s
 	if h == nil || h.Store == nil || agent == nil {
 		return runtimePassthroughState{}
 	}
+	enabled := true
 	rules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
-		Kind: runtimePassthroughKind,
+		AgentID: agent.ID,
+		Kind:    runtimePassthroughKind,
+		Enabled: &enabled,
+		Limit:   100,
 	})
 	if err != nil {
 		h.Logger.WarnContext(ctx, "lite-proxy passthrough load failed",
@@ -1215,6 +1205,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 	}
 	defer resp.Body.Close()
 	*auditStatus = resp.StatusCode
+	*auditDecide = "allow"
 	*auditOutcome = outcomeFromStatus(resp.StatusCode)
 	upstreamHeadersMs := time.Since(forwardStart).Milliseconds()
 	if auditParams != nil {
@@ -1270,17 +1261,54 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, bool) {
+func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, bool) {
+	if stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
+		Provider: provider,
+		Body:     body,
+	}); err != nil {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "history_strip_error", map[string]any{
+			"provider": string(provider),
+			"body_sha": liteSecretBodySHA(body),
+			"err":      err.Error(),
+		})
+		h.Logger.WarnContext(r.Context(), "lite-proxy secret decision history strip failed",
+			"agent_id", agent.ID, "err", err.Error())
+	} else if stripped.Modified {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "history_stripped", map[string]any{
+			"provider":        string(provider),
+			"body_sha_before": liteSecretBodySHA(body),
+			"body_sha_after":  liteSecretBodySHA(stripped.Body),
+			"body_bytes":      len(stripped.Body),
+		})
+		body = stripped.Body
+		auditParams["secret_decision_history_stripped"] = true
+	}
+	if rewritten, modified := h.applyRememberedSecretRewrites(r.Context(), agent, provider, requestID, body); modified {
+		body = rewritten
+		auditParams["secret_rewrites_applied"] = true
+	}
+	if h.maybeHoldInboundSecret(w, r, agent, provider, requestID, body, extraSuppressed, auditParams, auditStatus, auditDecide, auditOutcome, auditReason) {
+		return body, true
+	}
+	return body, false
+}
+
+func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {
 	if h == nil || h.PendingSecrets == nil || agent == nil {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	reply := llmproxy.SecretDecisionReplyFromBody(provider, body)
 	if reply.Action == llmproxy.SecretDecisionNone {
-		return nil, "", false
+		return nil, "", nil, false
 	}
-	pending, err := h.PendingSecrets.PeekSecret(r.Context(), agent.UserID, agent.ID, provider)
-	if err != nil || pending == nil {
-		return nil, "", false
+	pending, err := h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	if err != nil {
+		h.Logger.WarnContext(r.Context(), "lite-proxy pending secret decision consume failed",
+			"agent_id", agent.ID, "provider", string(provider), "err", err.Error())
+		return nil, "", nil, false
+	}
+	if pending == nil {
+		return nil, "", nil, false
 	}
 	if auditParams != nil {
 		auditParams["secret_decision_id"] = pending.ID
@@ -1299,7 +1327,6 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 	})
 	switch reply.Action {
 	case llmproxy.SecretDecisionAllowOnce:
-		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		*auditStatus = 0
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
@@ -1307,10 +1334,9 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 			"body_sha":   liteSecretBodySHA(pending.OriginalBody),
 			"body_bytes": len(pending.OriginalBody),
 		})
-		return pending.OriginalBody, reply.Action, true
+		return pending.OriginalBody, reply.Action, secretFindingFingerprintSet(pending.Findings), true
 	case llmproxy.SecretDecisionNotSecret:
 		h.rememberNotSecretFindings(r.Context(), agent, pending.Findings)
-		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":                string(provider),
 			"decision":                string(reply.Action),
@@ -1318,16 +1344,15 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 			"body_sha":                liteSecretBodySHA(pending.OriginalBody),
 			"body_bytes":              len(pending.OriginalBody),
 		})
-		return pending.OriginalBody, reply.Action, true
+		return pending.OriginalBody, reply.Action, nil, true
 	case llmproxy.SecretDecisionDiscard:
-		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
 			"decision":   string(reply.Action),
 			"body_sha":   liteSecretBodySHA(pending.RedactedBody),
 			"body_bytes": len(pending.RedactedBody),
 		})
-		return pending.RedactedBody, reply.Action, true
+		return pending.RedactedBody, reply.Action, nil, true
 	case llmproxy.SecretDecisionVault:
 		name := strings.TrimSpace(reply.VaultName)
 		if name == "" && len(pending.Findings) > 0 {
@@ -1342,15 +1367,22 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 			if len(pending.Findings) > 1 {
 				vaultName = fmt.Sprintf("%s_%d", name, i+1)
 			}
-			placeholder, authID, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
+			placeholder, authID, vaultCreated, err := h.vaultFindingAndMintSessionPlaceholder(r.Context(), agent, vaultName, finding)
 			if err != nil {
 				h.rollbackPartialSecretVaults(r.Context(), agent, vaulted)
-				*auditStatus = http.StatusInternalServerError
+				h.requeuePendingSecretDecision(r.Context(), pending)
+				if errors.Is(err, errSecretVaultNameConflict) {
+					*auditStatus = http.StatusConflict
+					*auditOutcome = "secret_vault_name_conflict"
+					writeJSONError(w, http.StatusConflict, "SECRET_VAULT_NAME_CONFLICT", "vault item already exists with a different value; choose a different vault name")
+				} else {
+					*auditStatus = http.StatusInternalServerError
+					*auditOutcome = "secret_vault_failed"
+					writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
+				}
 				*auditDecide = "deny"
-				*auditOutcome = "secret_vault_failed"
 				*auditReason = err.Error()
-				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not save detected secret")
-				return nil, reply.Action, true
+				return nil, reply.Action, nil, true
 			}
 			vaulted = append(vaulted, liteSecretVaultedFinding{
 				vaultName:       vaultName,
@@ -1358,11 +1390,11 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				finding:         finding,
 				placeholder:     placeholder,
 				authID:          authID,
+				vaultCreated:    vaultCreated,
 			})
 		}
 		resumeBody := append([]byte{}, pending.OriginalBody...)
 		for _, item := range vaulted {
-			h.rememberVaultedSecretRewrite(r.Context(), agent, item.vaultName, item.finding, item.placeholder, pending.OriginalBody)
 			h.emitLiteSecretPipelineTrace(requestID, agent, "decision_vaulted_finding", map[string]any{
 				"provider":           string(provider),
 				"decision_id":        pending.ID,
@@ -1370,24 +1402,51 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 				"finding":            liteSecretFindingTraceSummary(item.finding),
 				"placeholder_prefix": liteSecretPlaceholderPrefix(item.placeholder),
 			})
-			resumeBody = bytes.ReplaceAll(resumeBody, []byte(item.finding.Value), []byte(item.placeholder))
+			rewrittenBody, modified, rewriteErr := rewriteJSONStrings(resumeBody, map[string]string{item.finding.Value: item.placeholder})
+			if rewriteErr != nil || !modified {
+				h.rollbackPartialSecretVaults(r.Context(), agent, vaulted)
+				h.requeuePendingSecretDecision(r.Context(), pending)
+				*auditStatus = http.StatusInternalServerError
+				*auditDecide = "deny"
+				*auditOutcome = "secret_vault_failed"
+				if rewriteErr != nil {
+					*auditReason = rewriteErr.Error()
+				} else {
+					*auditReason = "detected secret was not present in request JSON"
+				}
+				writeJSONError(w, http.StatusInternalServerError, "SECRET_VAULT_FAILED", "could not rewrite detected secret")
+				return nil, reply.Action, nil, true
+			}
+			resumeBody = rewrittenBody
 		}
-		_, _ = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pending.ID)
+		for _, item := range vaulted {
+			h.rememberVaultedSecretRewrite(r.Context(), agent, item.vaultName, item.finding, item.placeholder)
+		}
 		h.emitLiteSecretPipelineTrace(requestID, agent, "decision_released", map[string]any{
 			"provider":   string(provider),
 			"decision":   string(reply.Action),
 			"body_sha":   liteSecretBodySHA(resumeBody),
 			"body_bytes": len(resumeBody),
 		})
-		return resumeBody, reply.Action, true
+		return resumeBody, reply.Action, nil, true
 	default:
-		return nil, "", false
+		return nil, "", nil, false
 	}
 }
 
-func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.Context, agent *store.Agent, vaultName string, finding llmproxy.InboundSecretFinding) (string, string, error) {
+func (h *LLMEndpointHandler) requeuePendingSecretDecision(ctx context.Context, pending *llmproxy.PendingSecretDecision) {
+	if h == nil || h.PendingSecrets == nil || pending == nil {
+		return
+	}
+	if _, err := h.PendingSecrets.HoldSecret(ctx, *pending); err != nil {
+		h.Logger.WarnContext(ctx, "lite-proxy pending secret decision requeue failed",
+			"agent_id", pending.AgentID, "provider", string(pending.Provider), "decision_id", pending.ID, "err", err.Error())
+	}
+}
+
+func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.Context, agent *store.Agent, vaultName string, finding llmproxy.InboundSecretFinding) (string, string, bool, error) {
 	if h == nil || h.Store == nil || h.Vault == nil || agent == nil {
-		return "", "", fmt.Errorf("secret vault path is not configured")
+		return "", "", false, fmt.Errorf("secret vault path is not configured")
 	}
 	vaultItemID := strings.TrimSpace(finding.ExistingVaultItemID)
 	if vaultItemID == "" {
@@ -1396,9 +1455,30 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 	if vaultItemID == "" {
 		vaultItemID = "secret"
 	}
+	created := liteSecretVaultedFinding{
+		vaultName:       strings.TrimSpace(vaultName),
+		resolvedVaultID: vaultItemID,
+		finding:         finding,
+	}
+	rollback := func(err error) (string, string, bool, error) {
+		h.rollbackPartialSecretVaults(ctx, agent, []liteSecretVaultedFinding{created})
+		return "", "", false, err
+	}
 	if finding.ExistingVaultItemID == "" {
-		if err := h.Vault.Set(ctx, agent.UserID, vaultItemID, []byte(finding.Value)); err != nil {
-			return "", "", err
+		existing, err := h.Vault.Get(ctx, agent.UserID, vaultItemID)
+		switch {
+		case err == nil && !bytes.Equal(existing, []byte(finding.Value)):
+			return "", "", false, errSecretVaultNameConflict
+		case err == nil:
+			// Reuse the existing entry when the user picked the same vault
+			// name for the same value. Do not mark it for rollback.
+		case errors.Is(err, vault.ErrNotFound):
+			if err := h.Vault.Set(ctx, agent.UserID, vaultItemID, []byte(finding.Value)); err != nil {
+				return "", "", false, err
+			}
+			created.vaultCreated = true
+		default:
+			return "", "", false, err
 		}
 	}
 	expiresAt := time.Now().UTC().Add(24 * time.Hour)
@@ -1424,12 +1504,14 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 		ExpiresAt: &expiresAt,
 	}
 	if err := h.Store.CreateCredentialAuthorization(ctx, auth); err != nil {
-		return "", "", err
+		return rollback(err)
 	}
+	created.authID = auth.ID
 	placeholder, err := runtimeautovault.GeneratePlaceholder(runtimeautovault.PlaceholderPrefix(vaultItemID))
 	if err != nil {
-		return "", "", err
+		return rollback(err)
 	}
+	created.placeholder = placeholder
 	if err := h.Store.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
 		Placeholder:       placeholder,
 		UserID:            agent.UserID,
@@ -1439,9 +1521,9 @@ func (h *LLMEndpointHandler) vaultFindingAndMintSessionPlaceholder(ctx context.C
 		CredentialGrantID: auth.ID,
 		ExpiresAt:         &expiresAt,
 	}); err != nil {
-		return "", "", err
+		return rollback(err)
 	}
-	return placeholder, auth.ID, nil
+	return placeholder, auth.ID, created.vaultCreated, nil
 }
 
 type liteSecretVaultRewrite struct {
@@ -1454,10 +1536,7 @@ type liteSecretVaultedFinding struct {
 	finding         llmproxy.InboundSecretFinding
 	placeholder     string
 	authID          string
-}
-
-type credentialAuthorizationDeleter interface {
-	DeleteCredentialAuthorization(ctx context.Context, id, userID string) error
+	vaultCreated    bool
 }
 
 func resolvedSecretVaultItemID(vaultName string, finding llmproxy.InboundSecretFinding) string {
@@ -1482,13 +1561,13 @@ func (h *LLMEndpointHandler) rollbackPartialSecretVaults(ctx context.Context, ag
 					"agent_id", agent.ID, "placeholder_prefix", liteSecretPlaceholderPrefix(item.placeholder), "err", err.Error())
 			}
 		}
-		if deleter, ok := h.Store.(credentialAuthorizationDeleter); ok && strings.TrimSpace(item.authID) != "" {
-			if err := deleter.DeleteCredentialAuthorization(ctx, item.authID, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if h.Store != nil && strings.TrimSpace(item.authID) != "" {
+			if err := h.Store.DeleteCredentialAuthorization(ctx, item.authID, agent.UserID); err != nil && !errors.Is(err, store.ErrNotFound) {
 				h.Logger.WarnContext(ctx, "lite-proxy partial secret credential authorization rollback failed",
 					"agent_id", agent.ID, "auth_id", item.authID, "err", err.Error())
 			}
 		}
-		if h.Vault != nil && strings.TrimSpace(item.finding.ExistingVaultItemID) == "" && strings.TrimSpace(item.resolvedVaultID) != "" {
+		if h.Vault != nil && item.vaultCreated && strings.TrimSpace(item.resolvedVaultID) != "" {
 			if err := h.Vault.Delete(ctx, agent.UserID, item.resolvedVaultID); err != nil && !errors.Is(err, vault.ErrNotFound) {
 				h.Logger.WarnContext(ctx, "lite-proxy partial secret vault rollback failed",
 					"agent_id", agent.ID, "vault_item_id", item.resolvedVaultID, "err", err.Error())
@@ -1535,17 +1614,28 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 	out := append([]byte{}, body...)
 	modified := false
 	matched := 0
+	replacements := map[string]string{}
 	for _, finding := range scan.Findings {
 		rewrite, ok := rewrites[finding.Fingerprint]
 		if !ok || rewrite.Placeholder == "" || finding.Value == "" {
 			continue
 		}
 		matched++
-		next := bytes.ReplaceAll(out, []byte(finding.Value), []byte(rewrite.Placeholder))
-		if !bytes.Equal(next, out) {
-			out = next
-			modified = true
+		replacements[finding.Value] = rewrite.Placeholder
+	}
+	if len(replacements) > 0 {
+		rewritten, rewriteModified, rewriteErr := rewriteJSONStrings(out, replacements)
+		if rewriteErr != nil {
+			h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_error", map[string]any{
+				"provider":      string(provider),
+				"active_rules":  len(rewrites),
+				"body_sha":      liteSecretBodySHA(body),
+				"error_message": rewriteErr.Error(),
+			})
+			return body, false
 		}
+		out = rewritten
+		modified = rewriteModified
 	}
 	h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_done", map[string]any{
 		"provider":        string(provider),
@@ -1558,6 +1648,78 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 		"body_sha_after":  liteSecretBodySHA(out),
 	})
 	return out, modified
+}
+
+func rewriteJSONStrings(body []byte, replacements map[string]string) ([]byte, bool, error) {
+	if len(body) == 0 || len(replacements) == 0 {
+		return body, false, nil
+	}
+	var parsed any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, false, err
+	}
+	keys := sortedReplacementKeys(replacements)
+	rewritten, modified := rewriteJSONValueStrings(parsed, replacements, keys)
+	if !modified {
+		return body, false, nil
+	}
+	// Re-marshaling intentionally canonicalizes object key order and
+	// whitespace. The upstream LLM APIs only care about semantic JSON.
+	out, err := json.Marshal(rewritten)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
+}
+
+func sortedReplacementKeys(replacements map[string]string) []string {
+	keys := make([]string, 0, len(replacements))
+	for key := range replacements {
+		if key == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) == len(keys[j]) {
+			return keys[i] < keys[j]
+		}
+		return len(keys[i]) > len(keys[j])
+	})
+	return keys
+}
+
+func rewriteJSONValueStrings(value any, replacements map[string]string, keys []string) (any, bool) {
+	switch typed := value.(type) {
+	case string:
+		out := typed
+		for _, secret := range keys {
+			out = strings.ReplaceAll(out, secret, replacements[secret])
+		}
+		return out, out != typed
+	case []any:
+		modified := false
+		for i, item := range typed {
+			rewritten, changed := rewriteJSONValueStrings(item, replacements, keys)
+			if changed {
+				typed[i] = rewritten
+				modified = true
+			}
+		}
+		return typed, modified
+	case map[string]any:
+		modified := false
+		for key, item := range typed {
+			rewritten, changed := rewriteJSONValueStrings(item, replacements, keys)
+			if changed {
+				typed[key] = rewritten
+				modified = true
+			}
+		}
+		return typed, modified
+	default:
+		return value, false
+	}
 }
 
 func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent *store.Agent) map[string]liteSecretVaultRewrite {
@@ -1586,6 +1748,15 @@ func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent
 		if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, h.Store, placeholder, agent.UserID, agent.ID, now); !ok {
 			continue
 		}
+		vaultItemID := strings.TrimSpace(placeholder.VaultItemID)
+		if vaultItemID == "" {
+			vaultItemID = strings.TrimSpace(placeholder.ServiceID)
+		}
+		if h.Vault != nil && vaultItemID != "" {
+			if _, err := h.Vault.Get(ctx, agent.UserID, vaultItemID); err != nil {
+				continue
+			}
+		}
 		out[strings.TrimSpace(rule.Host)] = liteSecretVaultRewrite{
 			Placeholder: strings.TrimSpace(rule.Path),
 		}
@@ -1593,11 +1764,14 @@ func (h *LLMEndpointHandler) loadActiveSecretRewrites(ctx context.Context, agent
 	return out
 }
 
-func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
+func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
 	if h == nil || h.PendingSecrets == nil || agent == nil {
 		return false
 	}
 	suppressed := h.secretSuppressionFingerprints(r.Context(), agent)
+	for fp := range extraSuppressed {
+		suppressed[fp] = struct{}{}
+	}
 	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_start", map[string]any{
 		"provider":         string(provider),
 		"body_sha":         liteSecretBodySHA(body),
@@ -1783,7 +1957,7 @@ func (h *LLMEndpointHandler) rememberNotSecretFindings(ctx context.Context, agen
 	}
 }
 
-func (h *LLMEndpointHandler) rememberVaultedSecretRewrite(ctx context.Context, agent *store.Agent, vaultItemID string, finding llmproxy.InboundSecretFinding, placeholder string, originalBody []byte) {
+func (h *LLMEndpointHandler) rememberVaultedSecretRewrite(ctx context.Context, agent *store.Agent, vaultItemID string, finding llmproxy.InboundSecretFinding, placeholder string) {
 	if h == nil || h.Store == nil || agent == nil {
 		return
 	}
@@ -1874,6 +2048,17 @@ func liteSecretFindingFingerprintPrefixes(findings []llmproxy.InboundSecretFindi
 	return out
 }
 
+func secretFindingFingerprintSet(findings []llmproxy.InboundSecretFinding) map[string]struct{} {
+	out := make(map[string]struct{}, len(findings))
+	for _, finding := range findings {
+		if strings.TrimSpace(finding.Fingerprint) == "" {
+			continue
+		}
+		out[finding.Fingerprint] = struct{}{}
+	}
+	return out
+}
+
 func liteSecretFindingSources(findings []llmproxy.InboundSecretFinding) []string {
 	seen := map[string]struct{}{}
 	var out []string
@@ -1905,7 +2090,7 @@ func liteSecretPlaceholderPrefix(placeholder string) string {
 		return ""
 	}
 	if len(placeholder) <= 24 {
-		return placeholder[:min(8, len(placeholder))] + "..."
+		return placeholder + "..."
 	}
 	return placeholder[:24] + "..."
 }
@@ -1914,13 +2099,28 @@ func renderInboundSecretPrompt(pending llmproxy.PendingSecretDecision) string {
 	name := "secret"
 	source := "heuristic"
 	if len(pending.Findings) > 0 {
-		name = pending.Findings[0].SuggestedName
-		source = pending.Findings[0].Source
+		name = promptSafeSecretToken(pending.Findings[0].SuggestedName)
+		source = promptSafeSecretToken(pending.Findings[0].Source)
 	}
 	if len(pending.Findings) > 0 && pending.Findings[0].ExistingVaultItemID != "" {
-		return fmt.Sprintf(llmproxy.SecretDecisionPromptMarker+" in the last message.\n\nThis value already exists in the vault as `%s`, so choosing vault will reuse that entry instead of creating a duplicate.\nDetection source: %s\n\nReply `vault %s` to continue with a redacted message, `discard` to continue with it redacted without changing the vault, `allow once` to send it this time without vaulting, or `not secret` to remember that this value is not a secret.\n\n%s%s]", pending.Findings[0].ExistingVaultItemID, source, pending.Findings[0].ExistingVaultItemID, llmproxy.SecretDecisionIDMarker, pending.ID)
+		existing := promptSafeSecretToken(pending.Findings[0].ExistingVaultItemID)
+		commandName := promptSafeSecretToken(pending.Findings[0].ExistingVaultItemID)
+		return fmt.Sprintf(llmproxy.SecretDecisionPromptMarker+" in the last message.\n\nThis value already exists in the vault as `%s`, so choosing vault will reuse that entry instead of creating a duplicate.\nDetection source: %s\n\nReply `vault %s` to continue with a redacted message, `discard` to continue with it redacted without changing the vault, `allow once` to send it this time without vaulting, or `not secret` to remember that this value is not a secret.\n\n%s%s]", existing, source, commandName, llmproxy.SecretDecisionIDMarker, pending.ID)
 	}
 	return fmt.Sprintf(llmproxy.SecretDecisionPromptMarker+" in the last message.\n\nSuggested vault name: `%s`\nDetection source: %s\n\nReply `vault %s` to save it and continue with a redacted message, `discard` to continue with it redacted, `allow once` to send it this time without vaulting, or `not secret` to remember that this value is not a secret.\n\n%s%s]", name, source, name, llmproxy.SecretDecisionIDMarker, pending.ID)
+}
+
+func promptSafeSecretToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "secret"
+	}
+	replacer := strings.NewReplacer("`", "_", "\n", "_", "\r", "_", "\t", "_")
+	value = replacer.Replace(value)
+	if len(value) > 96 {
+		value = value[:96]
+	}
+	return value
 }
 
 func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, requestBody []byte, text string) ([]byte, string) {

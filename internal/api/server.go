@@ -105,6 +105,7 @@ type Server struct {
 	verdictCache       intent.VerdictCacher
 	extractionTracker  handlers.ExtractionTracker
 	callerNonces       llmproxy.CallerNonceCache
+	pendingSecrets     llmproxy.PendingSecretDecisionCache
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -322,6 +323,13 @@ func WithExtractionTracker(t handlers.ExtractionTracker) ServerOption {
 // consumed on another.
 func WithCallerNonceCache(c llmproxy.CallerNonceCache) ServerOption {
 	return func(s *Server) { s.callerNonces = c }
+}
+
+// WithPendingSecretDecisionCache overrides the default in-memory proxy-lite
+// pending-secret cache. Use the Redis-backed cache in multi-instance
+// deployments so a held secret decision can be consumed atomically anywhere.
+func WithPendingSecretDecisionCache(c llmproxy.PendingSecretDecisionCache) ServerOption {
+	return func(s *Server) { s.pendingSecrets = c }
 }
 
 // New creates a Server and registers all routes.
@@ -977,6 +985,9 @@ func (s *Server) routes() http.Handler {
 			callerNonces = llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
 		}
 		llmHandler.CallerNonces = callerNonces
+		if s.pendingSecrets != nil {
+			llmHandler.PendingSecrets = s.pendingSecrets
+		}
 
 		// Inline task approval: when an agent's "approve" reply on a
 		// task-definition prompt lands, the release path calls

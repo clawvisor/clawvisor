@@ -48,6 +48,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 			"Use /control/vault/items only when you need Clawvisor to mint a new placeholder from an available vault item. The response is just IDs; do not pipe or shell-filter it. If you need non-secret metadata for one item, fetch /control/vault/items/{id}.",
 			"Prefer expected_tools for harness tools such as bash, exec_command, WebFetch, Read, Write, or Edit.",
 			"When a task needs a new credential placeholder, include required_credentials with a concrete vault_item_id or vault_item_handle plus a specific why. Do not ask the user to paste raw secrets into chat.",
+			"Task lifetime defaults to session. Use lifetime=session with expires_in_seconds for temporary permission; use lifetime=standing only when the user explicitly wants persistent permission, and never combine standing with expires_in_seconds.",
 		},
 		"create_task": map[string]any{
 			"method": "POST",
@@ -63,6 +64,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 					"why":           "Use the selected Gmail credential to send the requested message.",
 				}},
 				"intent_verification_mode": "strict",
+				"lifetime":                 "session",
 				"expires_in_seconds":       600,
 			},
 		},

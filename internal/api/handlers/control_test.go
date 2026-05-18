@@ -23,6 +23,8 @@ func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 	var payload struct {
 		CreateTask struct {
 			Body struct {
+				Lifetime            string `json:"lifetime"`
+				ExpiresInSeconds    int    `json:"expires_in_seconds"`
 				RequiredCredentials []struct {
 					VaultItemID string `json:"vault_item_id"`
 					Why         string `json:"why"`
@@ -46,6 +48,13 @@ func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 	}
 	if strings.Contains(res.Body.String(), "vault_github_release_bot") {
 		t.Fatalf("skill payload should not contain stale vault item example: %s", res.Body.String())
+	}
+	if payload.CreateTask.Body.Lifetime != "session" || payload.CreateTask.Body.ExpiresInSeconds != 600 {
+		t.Fatalf("expected session lifetime example with expiry, got %+v", payload.CreateTask.Body)
+	}
+	if !strings.Contains(res.Body.String(), "lifetime=standing") ||
+		!strings.Contains(res.Body.String(), "never combine standing with expires_in_seconds") {
+		t.Fatalf("skill payload should document standing lifetime constraints: %s", res.Body.String())
 	}
 }
 

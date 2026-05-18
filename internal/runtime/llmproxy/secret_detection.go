@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -247,7 +248,7 @@ func ScanInboundSecretsWithOptions(ctx context.Context, opts InboundSecretScanOp
 		return InboundSecretScanResult{}, false, err
 	}
 	findings := map[string]InboundSecretFinding{}
-	rewritten, changed := scanInboundSecretValue(ctx, payload, "", true, false, opts, findings)
+	rewritten, changed := scanInboundSecretValue(ctx, payload, "", true, false, false, opts, findings)
 	if len(findings) == 0 {
 		return InboundSecretScanResult{}, false, nil
 	}
@@ -267,21 +268,19 @@ func ScanInboundSecretsWithOptions(ctx context.Context, opts InboundSecretScanOp
 	return InboundSecretScanResult{Findings: list, RedactedBody: encoded}, true, nil
 }
 
-func scanInboundSecretValue(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (any, bool) {
+func scanInboundSecretValue(ctx context.Context, value any, fieldName string, topLevel bool, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (any, bool) {
 	switch typed := value.(type) {
 	case string:
-		return scanInboundSecretString(ctx, typed, fieldName, skipHeuristic, opts, findings)
+		return scanInboundSecretString(ctx, typed, fieldName, skipHeuristic, inToolResult, opts, findings)
 	case map[string]any:
-		if isToolResultSecretScanSubtree(typed) {
-			return value, false
-		}
 		if strings.EqualFold(stringFromMap(typed, "type"), "thinking") {
 			return value, false
 		}
+		childInToolResult := inToolResult || isToolResultSecretScanSubtree(typed)
 		changed := false
 		for key, item := range typed {
 			childSkipHeuristic := skipHeuristic || (topLevel && runtimeautovault.NoiseSubtreeKey(key))
-			next, nextChanged := scanInboundSecretValue(ctx, item, key, false, childSkipHeuristic, opts, findings)
+			next, nextChanged := scanInboundSecretValue(ctx, item, key, false, childSkipHeuristic, childInToolResult, opts, findings)
 			if nextChanged {
 				typed[key] = next
 				changed = true
@@ -291,7 +290,7 @@ func scanInboundSecretValue(ctx context.Context, value any, fieldName string, to
 	case []any:
 		changed := false
 		for i, item := range typed {
-			next, nextChanged := scanInboundSecretValue(ctx, item, fieldName, false, skipHeuristic, opts, findings)
+			next, nextChanged := scanInboundSecretValue(ctx, item, fieldName, false, skipHeuristic, inToolResult, opts, findings)
 			if nextChanged {
 				typed[i] = next
 				changed = true
@@ -311,11 +310,8 @@ func isToolResultSecretScanSubtree(value map[string]any) bool {
 	return strings.EqualFold(stringFromMap(value, "role"), "tool")
 }
 
-func scanInboundSecretString(ctx context.Context, value, fieldName string, skipHeuristic bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (string, bool) {
+func scanInboundSecretString(ctx context.Context, value, fieldName string, skipHeuristic bool, inToolResult bool, opts InboundSecretScanOptions, findings map[string]InboundSecretFinding) (string, bool) {
 	if strings.TrimSpace(value) == "" || runtimeautovault.ProtectedStringField(fieldName) {
-		return value, false
-	}
-	if isClawvisorGeneratedSecretScanBlock(value) {
 		return value, false
 	}
 	original := value
@@ -346,9 +342,12 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 	if runtimeautovault.LooksLikeProtocolNoise(fieldName, value) || runtimeautovault.LooksLikeContextNoise(value) {
 		return value, value != original
 	}
-	scannable := stripSecretRedactionMarkers(runtimeautovault.StripHarnessMetadataTags(value))
+	scannable := stripClawvisorGeneratedMarkers(stripSecretRedactionMarkers(runtimeautovault.StripHarnessMetadataTags(value)))
 	for _, password := range runtimeautovault.FindPasswordRevealCandidates(scannable) {
 		value = strings.ReplaceAll(value, password, redactFoundSecret(password, runtimeautovault.GuessService(fieldName, value), "password_reveal", 0, opts.Suppressed, findings))
+	}
+	for _, assignment := range highContextSecretAssignments(scannable) {
+		value = strings.ReplaceAll(value, assignment.Value, redactFoundSecret(assignment.Value, runtimeautovault.GuessService(assignment.Name, value), "heuristic_swap", assignment.Entropy, opts.Suppressed, findings))
 	}
 	for _, candidate := range runtimeautovault.DetectCandidates(scannable) {
 		if runtimeautovault.LooksLikeShadow(candidate.Value) {
@@ -358,13 +357,10 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 			continue
 		}
 		switch {
-		case runtimeautovault.HighContextSecretField(fieldName), runtimeautovault.SecretContextHint(value, candidate.Value):
+		case runtimeautovault.HighContextSecretField(fieldName), !inToolResult && runtimeautovault.SecretContextHint(value, candidate.Value):
 			value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, runtimeautovault.GuessService(fieldName, value), "heuristic_swap", candidate.Entropy, opts.Suppressed, findings))
 		default:
-			verdict, ok, failed := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
-			if failed {
-				continue
-			}
+			verdict, ok, adjudicatorErr := adjudicateInboundSecret(ctx, opts, fieldName, value, candidate)
 			if ok {
 				if !verdict.Credential || verdict.Confidence < 0.6 {
 					continue
@@ -376,16 +372,85 @@ func scanInboundSecretString(ctx context.Context, value, fieldName string, skipH
 				value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, service, "heuristic_adjudicated", candidate.Entropy, opts.Suppressed, findings))
 				continue
 			}
+			if !adjudicatorErr {
+				continue
+			}
 			value = strings.ReplaceAll(value, candidate.Value, redactFoundSecret(candidate.Value, runtimeautovault.GuessService(fieldName, value), "heuristic_observe", candidate.Entropy, opts.Suppressed, findings))
 		}
 	}
 	return value, value != original
 }
 
-func isClawvisorGeneratedSecretScanBlock(value string) bool {
-	if value == "" {
+var clawvisorFooterMarkerRE = regexp.MustCompile(`\[clawvisor:(secret|approval)=[^\]]+\]`)
+var highContextAssignmentRE = regexp.MustCompile(`(?i)\b([A-Z0-9][A-Z0-9_-]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|REFRESH[_-]?TOKEN|SECRET|PASSWORD|PASSCODE)[A-Z0-9_-]*)\b\s*[:=]\s*["']?([A-Za-z0-9_./+=:-]{8,})["']?`)
+
+type highContextAssignment struct {
+	Name    string
+	Value   string
+	Entropy float64
+}
+
+func highContextSecretAssignments(value string) []highContextAssignment {
+	matches := highContextAssignmentRE.FindAllStringSubmatch(value, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]highContextAssignment, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		secret := strings.TrimSpace(match[2])
+		if _, ok := seen[secret]; ok || !secretAssignmentValueLooksSensitive(secret) {
+			continue
+		}
+		seen[secret] = struct{}{}
+		out = append(out, highContextAssignment{
+			Name:    name,
+			Value:   secret,
+			Entropy: secretAssignmentEntropy(secret),
+		})
+	}
+	return out
+}
+
+func secretAssignmentValueLooksSensitive(value string) bool {
+	if len(value) < 12 || runtimeautovault.LooksLikeShadow(value) || runtimeautovault.LooksObviouslyNonSecret(value) {
 		return false
 	}
+	lower := strings.ToLower(value)
+	for _, marker := range []string{"example", "dummy", "fake", "placeholder", "replace", "changeme", "change_me", "your_", "test_key", "tooloutput"} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	if secretAssignmentEntropy(value) < 3.2 {
+		return false
+	}
+	return true
+}
+
+func secretAssignmentEntropy(value string) float64 {
+	if value == "" {
+		return 0
+	}
+	counts := map[rune]int{}
+	for _, r := range value {
+		counts[r]++
+	}
+	var entropy float64
+	n := float64(len([]rune(value)))
+	for _, count := range counts {
+		p := float64(count) / n
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
+}
+
+func stripClawvisorGeneratedMarkers(value string) string {
+	value = clawvisorFooterMarkerRE.ReplaceAllString(value, " ")
 	markers := []string{
 		InlineApprovalIDMarker,
 		InlineApprovalSubstitutedPromptMarker,
@@ -398,11 +463,11 @@ func isClawvisorGeneratedSecretScanBlock(value string) bool {
 		ControlNoticeSentinel,
 	}
 	for _, marker := range markers {
-		if strings.Contains(value, marker) {
-			return true
+		if marker != "" {
+			value = strings.ReplaceAll(value, marker, " ")
 		}
 	}
-	return false
+	return value
 }
 
 var secretRedactionMarkerRE = regexp.MustCompile(`\[redacted secret:[^\]]+\]`)
@@ -486,8 +551,10 @@ func ParseSecretDecisionReply(text string) SecretDecisionReply {
 	case normalized == "not secret" || normalized == "not a secret" || normalized == "this is not a secret":
 		return SecretDecisionReply{Action: SecretDecisionNotSecret}
 	case strings.HasPrefix(normalized, "vault "):
-		name := strings.TrimSpace(text[len("vault "):])
-		name = strings.TrimPrefix(strings.TrimSpace(name), "as ")
+		name := strings.TrimSpace(normalized[len("vault "):])
+		if strings.HasPrefix(name, "as ") {
+			name = strings.TrimSpace(name[len("as "):])
+		}
 		return SecretDecisionReply{Action: SecretDecisionVault, VaultName: sanitizeVaultName(name)}
 	default:
 		return SecretDecisionReply{}
@@ -539,45 +606,6 @@ func LatestUserText(provider conversation.Provider, body []byte) string {
 				raw, _ := json.Marshal(parsed.Messages[i]["content"])
 				return strings.TrimSpace(flattenOpenAITaskReplyContent(raw))
 			}
-		}
-	}
-	return ""
-}
-
-func llmSecretNoiseSubtree(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "system", "tools", "tool_choice", "response_format", "model", "metadata":
-		return true
-	default:
-		return false
-	}
-}
-
-func protectedSecretField(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "signature", "thinking":
-		return true
-	default:
-		return false
-	}
-}
-
-func highSecretContext(fieldName, value string) bool {
-	field := strings.ToLower(strings.TrimSpace(fieldName))
-	text := strings.ToLower(value)
-	for _, needle := range []string{"password", "secret", "api key", "api_key", "token", "bearer", "credential"} {
-		if strings.Contains(field, needle) || strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func guessSecretService(fieldName, value string) string {
-	text := strings.ToLower(fieldName + " " + value)
-	for _, service := range []string{"github", "anthropic", "openai", "slack", "stripe", "resend", "google", "microsoft", "notion", "linear"} {
-		if strings.Contains(text, service) {
-			return service
 		}
 	}
 	return ""

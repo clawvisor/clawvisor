@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,7 +13,10 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-const runtimePassthroughKind = "passthrough"
+const (
+	runtimePassthroughKind          = "passthrough"
+	maxRuntimePassthroughTTLSeconds = 30 * 24 * 60 * 60
+)
 
 type runtimePassthroughState struct {
 	Enabled   bool       `json:"enabled"`
@@ -62,7 +64,15 @@ func (h *RuntimeHandler) EnablePassthrough(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds is required unless indefinite is true")
 		return
 	}
-	if body.Indefinite && !strings.EqualFold(strings.TrimSpace(body.ConfirmationText), "enable passthrough") {
+	if !body.Indefinite && body.TTLSeconds > maxRuntimePassthroughTTLSeconds {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be 30 days or less")
+		return
+	}
+	if body.AgentID == "" && !strings.EqualFold(strings.TrimSpace(body.ConfirmationText), "enable global passthrough") {
+		writeError(w, http.StatusBadRequest, "CONFIRMATION_REQUIRED", "set confirmation_text to 'enable global passthrough' for all-agents passthrough")
+		return
+	}
+	if body.AgentID != "" && body.Indefinite && !strings.EqualFold(strings.TrimSpace(body.ConfirmationText), "enable passthrough") {
 		writeError(w, http.StatusBadRequest, "CONFIRMATION_REQUIRED", "set confirmation_text to 'enable passthrough' for indefinite passthrough")
 		return
 	}
@@ -148,6 +158,8 @@ func (h *RuntimeHandler) activePassthroughForUser(ctx context.Context, userID, a
 
 func activePassthroughFromRules(rules []*store.RuntimePolicyRule, agentID string, now time.Time) runtimePassthroughState {
 	agentID = strings.TrimSpace(agentID)
+	var bestAgent *store.RuntimePolicyRule
+	var bestGlobal *store.RuntimePolicyRule
 	for _, rule := range rules {
 		if rule == nil || !rule.Enabled || rule.Kind != runtimePassthroughKind || rule.Action != "allow" {
 			continue
@@ -158,23 +170,48 @@ func activePassthroughFromRules(rules []*store.RuntimePolicyRule, agentID string
 		if rule.AgentID != nil && agentID == "" {
 			continue
 		}
-		expiresAt, active := passthroughExpiry(rule.Path, now)
+		_, active := passthroughExpiry(rule.Path, now)
 		if !active {
 			continue
 		}
-		stateAgent := ""
 		if rule.AgentID != nil {
-			stateAgent = *rule.AgentID
+			if bestAgent == nil || rule.CreatedAt.After(bestAgent.CreatedAt) {
+				bestAgent = rule
+			}
+			continue
 		}
-		return runtimePassthroughState{
-			Enabled:   true,
-			RuleID:    rule.ID,
-			AgentID:   stateAgent,
-			ExpiresAt: expiresAt,
-			Reason:    rule.Reason,
+		if bestGlobal == nil || rule.CreatedAt.After(bestGlobal.CreatedAt) {
+			bestGlobal = rule
 		}
 	}
+	if bestAgent != nil {
+		return passthroughStateFromRule(bestAgent, now)
+	}
+	if bestGlobal != nil {
+		return passthroughStateFromRule(bestGlobal, now)
+	}
 	return runtimePassthroughState{}
+}
+
+func passthroughStateFromRule(rule *store.RuntimePolicyRule, now time.Time) runtimePassthroughState {
+	if rule == nil {
+		return runtimePassthroughState{}
+	}
+	expiresAt, active := passthroughExpiry(rule.Path, now)
+	if !active {
+		return runtimePassthroughState{}
+	}
+	stateAgent := ""
+	if rule.AgentID != nil {
+		stateAgent = *rule.AgentID
+	}
+	return runtimePassthroughState{
+		Enabled:   true,
+		RuleID:    rule.ID,
+		AgentID:   stateAgent,
+		ExpiresAt: expiresAt,
+		Reason:    rule.Reason,
+	}
 }
 
 func passthroughExpiry(value string, now time.Time) (*time.Time, bool) {
@@ -190,14 +227,4 @@ func passthroughExpiry(value string, now time.Time) (*time.Time, bool) {
 		return &t, false
 	}
 	return &t, true
-}
-
-func passthroughAuditParams(state runtimePassthroughState) json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{
-		"passthrough": true,
-		"rule_id":     state.RuleID,
-		"expires_at":  state.ExpiresAt,
-		"reason":      state.Reason,
-	})
-	return raw
 }

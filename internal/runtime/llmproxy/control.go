@@ -69,6 +69,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"  - `expected_tools`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
 		"  - `required_credentials`: OMIT unless credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
 		"  - Invalid credential request: `\"required_credentials\":[{\"vault_item_id\":\"github\"}]`",
+		"  - `lifetime`: omit or set `\"session\"` for a temporary task with `expires_in_seconds`; set `\"standing\"` only when the user asked for persistent permission. Standing tasks do not expire, so NEVER include `expires_in_seconds` with `\"lifetime\":\"standing\"`.",
 		"",
 		strings.Join(allowedLines, "\n"),
 		"",

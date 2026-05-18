@@ -32,6 +32,11 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "OMIT unless credentials are needed") {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "`lifetime`") ||
+		!strings.Contains(notice, `"lifetime":"standing"`) ||
+		!strings.Contains(notice, "NEVER include `expires_in_seconds`") {
+		t.Fatalf("notice should explain session vs standing task lifetime; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "If you already have an `autovault_...` placeholder") ||
 		!strings.Contains(notice, "omit `required_credentials`") ||
 		!strings.Contains(notice, "Use GET https://clawvisor.local/control/vault/items only when you need Clawvisor to mint a new placeholder") {

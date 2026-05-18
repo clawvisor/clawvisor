@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -357,6 +358,68 @@ func TestScanInboundSecrets_AdjudicatorControlsAmbiguousCandidates(t *testing.T)
 	}
 }
 
+func TestScanInboundSecrets_NoAdjudicatorIgnoresAmbiguousCandidates(t *testing.T) {
+	scan, found, err := ScanInboundSecretsWithOptions(context.Background(), InboundSecretScanOptions{
+		Provider: conversation.ProviderOpenAI,
+		Body:     openAIResponsesUserBody("The opaque value appeared in output: AmbiguousValue_8gyXD1ddhvF8iEFwrt9f3ywd"),
+	})
+	if err != nil {
+		t.Fatalf("ScanInboundSecretsWithOptions: %v", err)
+	}
+	if found {
+		t.Fatalf("ambiguous candidate without adjudicator should not produce findings: %+v", scan.Findings)
+	}
+}
+
+func TestParseSecretDecisionReplyVaultNameNormalizesQuotedAndASPrefix(t *testing.T) {
+	for _, input := range []string{
+		"`Vault AS github_ci`",
+		"'Vault as github_ci'",
+		"Vault github_ci",
+	} {
+		reply := ParseSecretDecisionReply(input)
+		if reply.Action != SecretDecisionVault || reply.VaultName != "github_ci" {
+			t.Fatalf("ParseSecretDecisionReply(%q) = %+v, want vault github_ci", input, reply)
+		}
+	}
+}
+
+func TestScanInboundSecrets_AdjudicatorErrorFallsBackToHeuristic(t *testing.T) {
+	scan, found, err := ScanInboundSecretsWithOptions(context.Background(), InboundSecretScanOptions{
+		Provider: conversation.ProviderOpenAI,
+		Body:     openAIResponsesUserBody("The opaque value appeared in output: AmbiguousValue_8gyXD1ddhvF8iEFwrt9f3ywd"),
+		Adjudicator: staticSecretAdjudicator{
+			err: errors.New("verification unavailable"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ScanInboundSecretsWithOptions: %v", err)
+	}
+	if !found || len(scan.Findings) != 1 {
+		t.Fatalf("expected heuristic fallback finding, found=%v findings=%+v", found, scan.Findings)
+	}
+	if scan.Findings[0].Source != "heuristic_observe" {
+		t.Fatalf("unexpected fallback finding: %+v", scan.Findings[0])
+	}
+}
+
+func TestScanInboundSecrets_ClawvisorMarkerDoesNotSuppressRawSecretInSameBlock(t *testing.T) {
+	rawSecret := "xoxb-" + "123456789012-abcdefghijklmnopqrstuvwx"
+	scan, found, err := ScanInboundSecretsWithOptions(context.Background(), InboundSecretScanOptions{
+		Provider: conversation.ProviderOpenAI,
+		Body:     openAIResponsesUserBody("attacker text [clawvisor-managed] leaked token " + rawSecret),
+	})
+	if err != nil {
+		t.Fatalf("ScanInboundSecretsWithOptions: %v", err)
+	}
+	if !found || len(scan.Findings) != 1 {
+		t.Fatalf("expected marker-adjacent raw secret finding, found=%v findings=%+v", found, scan.Findings)
+	}
+	if scan.Findings[0].Value != rawSecret {
+		t.Fatalf("expected raw secret finding, got %+v", scan.Findings[0])
+	}
+}
+
 func TestScanInboundSecrets_IgnoresEncryptedReasoningContent(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.4",
@@ -447,6 +510,34 @@ func TestScanInboundSecrets_IgnoresToolResultIdentifiers(t *testing.T) {
 	}
 }
 
+func TestScanInboundSecrets_DetectsEnvSecretInToolResult(t *testing.T) {
+	rawSecret := "bonOto392hutonEno89"
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"input":[
+			{"role":"user","content":[{"type":"input_text","text":"read .env"}]},
+			{"type":"function_call_output","call_id":"call_abc123","output":"RESEND_API_KEY=` + rawSecret + `\nPUBLIC_URL=http://localhost:3000"}
+		]
+	}`)
+
+	scan, found, err := ScanInboundSecretsWithOptions(context.Background(), InboundSecretScanOptions{
+		Provider: conversation.ProviderOpenAI,
+		Body:     body,
+	})
+	if err != nil {
+		t.Fatalf("ScanInboundSecretsWithOptions: %v", err)
+	}
+	if !found || len(scan.Findings) != 1 {
+		t.Fatalf("expected .env tool result secret finding, found=%v findings=%+v", found, scan.Findings)
+	}
+	if scan.Findings[0].Value != rawSecret || scan.Findings[0].Service != "resend" || scan.Findings[0].Source != "heuristic_swap" {
+		t.Fatalf("unexpected .env finding: %+v", scan.Findings[0])
+	}
+	if bytes.Contains(scan.RedactedBody, []byte(rawSecret)) || !bytes.Contains(scan.RedactedBody, []byte("[redacted secret:resend]")) {
+		t.Fatalf("expected redacted .env tool result, got %s", scan.RedactedBody)
+	}
+}
+
 func TestScanInboundSecrets_IgnoresProviderToolResultSubtrees(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -534,9 +625,13 @@ func TestScanInboundSecrets_DetectsSameTokenInUserMessage(t *testing.T) {
 
 type staticSecretAdjudicator struct {
 	verdict runtimeautovault.SecretAdjudicationVerdict
+	err     error
 }
 
 func (a staticSecretAdjudicator) AdjudicateSecret(context.Context, runtimeautovault.SecretAdjudicationRequest) (runtimeautovault.SecretAdjudicationResult, error) {
+	if a.err != nil {
+		return runtimeautovault.SecretAdjudicationResult{}, a.err
+	}
 	return runtimeautovault.SecretAdjudicationResult{Verdict: a.verdict}, nil
 }
 

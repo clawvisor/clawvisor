@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,6 +40,27 @@ func TestRawIOLogger_EmitsJSONLineWithBody(t *testing.T) {
 	}
 	if _, hasEnc := parsed["body_encoding"]; hasEnc {
 		t.Errorf("utf8 body should not be base64-encoded; got encoding=%v", parsed["body_encoding"])
+	}
+}
+
+func TestOpenRawIOLoggerTightensExistingFilePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raw.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	l, err := OpenRawIOLogger(path)
+	if err != nil {
+		t.Fatalf("OpenRawIOLogger: %v", err)
+	}
+	if l == nil {
+		t.Fatal("expected logger")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("raw log mode=%#o, want 0600", got)
 	}
 }
 
