@@ -1639,6 +1639,7 @@ func (h *LLMEndpointHandler) applyRememberedSecretRewrites(ctx context.Context, 
 	}
 	h.emitLiteSecretPipelineTrace(requestID, agent, "rewrite_scan_done", map[string]any{
 		"provider":        string(provider),
+		"adjudications":   liteSecretAdjudicationTraceSummaries(scan.Adjudications),
 		"active_rules":    len(rewrites),
 		"findings":        liteSecretFindingTraceSummaries(scan.Findings),
 		"findings_count":  len(scan.Findings),
@@ -1799,14 +1800,16 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 	}
 	if !found {
 		h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_no_findings", map[string]any{
-			"provider": string(provider),
-			"body_sha": liteSecretBodySHA(body),
+			"provider":      string(provider),
+			"adjudications": liteSecretAdjudicationTraceSummaries(scan.Adjudications),
+			"body_sha":      liteSecretBodySHA(body),
 		})
 		return false
 	}
 	scan.Findings = h.annotateExistingVaultSecrets(r.Context(), agent.UserID, scan.Findings)
 	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_scan_findings", map[string]any{
 		"provider":          string(provider),
+		"adjudications":     liteSecretAdjudicationTraceSummaries(scan.Adjudications),
 		"findings_count":    len(scan.Findings),
 		"findings":          liteSecretFindingTraceSummaries(scan.Findings),
 		"body_sha_before":   liteSecretBodySHA(body),
@@ -1841,6 +1844,7 @@ func (h *LLMEndpointHandler) maybeHoldInboundSecret(w http.ResponseWriter, r *ht
 	}
 	h.emitLiteSecretPipelineTrace(requestID, agent, "hold_created", map[string]any{
 		"provider":          string(provider),
+		"adjudications":     liteSecretAdjudicationTraceSummaries(scan.Adjudications),
 		"decision_id":       held.ID,
 		"findings_count":    len(scan.Findings),
 		"findings":          liteSecretFindingTraceSummaries(scan.Findings),
@@ -2022,6 +2026,43 @@ func liteSecretFindingTraceSummaries(findings []llmproxy.InboundSecretFinding) [
 	return out
 }
 
+func liteSecretAdjudicationTraceSummaries(adjudications []llmproxy.InboundSecretAdjudication) []map[string]any {
+	out := make([]map[string]any, 0, len(adjudications))
+	for _, adjudication := range adjudications {
+		summary := map[string]any{
+			"fingerprint_prefix": liteSecretFingerprintPrefix(adjudication.Fingerprint),
+			"outcome":            adjudication.Outcome,
+		}
+		if adjudication.FieldName != "" {
+			summary["field_name"] = adjudication.FieldName
+		}
+		if adjudication.Charset != "" {
+			summary["charset"] = adjudication.Charset
+		}
+		if adjudication.Entropy > 0 {
+			summary["entropy"] = adjudication.Entropy
+		}
+		if adjudication.DurationMS > 0 {
+			summary["duration_ms"] = adjudication.DurationMS
+		}
+		if adjudication.Outcome == "verdict" {
+			summary["credential"] = adjudication.Credential
+			summary["confidence"] = adjudication.Confidence
+			if adjudication.Service != "" {
+				summary["service"] = adjudication.Service
+			}
+		}
+		if adjudication.ErrorKind != "" {
+			summary["error_kind"] = adjudication.ErrorKind
+		}
+		if adjudication.ErrorMessage != "" {
+			summary["error_message"] = truncateLiteSecretTraceString(adjudication.ErrorMessage, 500)
+		}
+		out = append(out, summary)
+	}
+	return out
+}
+
 func liteSecretFindingTraceSummary(finding llmproxy.InboundSecretFinding) map[string]any {
 	out := map[string]any{
 		"fingerprint_prefix": liteSecretFingerprintPrefix(finding.Fingerprint),
@@ -2036,6 +2077,16 @@ func liteSecretFindingTraceSummary(finding llmproxy.InboundSecretFinding) map[st
 		out["entropy"] = finding.Entropy
 	}
 	return out
+}
+
+func truncateLiteSecretTraceString(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
 }
 
 func liteSecretFindingFingerprintPrefixes(findings []llmproxy.InboundSecretFinding) []string {
