@@ -161,6 +161,43 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 	}
 }
 
+// OptionalAgentLLMNonce injects the agent bound to a proxy-lite caller nonce
+// when one is present and valid. Missing or invalid nonces fall through without
+// agent context so public/help endpoints can still return generic content.
+func OptionalAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logger *slog.Logger) func(http.Handler) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			value := callerHeaderBearer(r)
+			if value == "" || !strings.HasPrefix(value, llmproxy.NoncePrefix) || cache == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			target := llmproxy.NonceTarget{
+				Host:   strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")),
+				Method: r.Method,
+				Path:   strings.TrimPrefix(r.URL.Path, "/proxy/v1"),
+			}
+			agentID, err := cache.Consume(r.Context(), value, target)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			agent, err := st.GetAgent(r.Context(), agentID)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ctx := store.WithAgent(r.Context(), agent)
+			AddLogField(ctx, "agent_id", agent.ID)
+			AddLogField(ctx, "user_id", agent.UserID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // agentLLMTokenCandidates returns every header value that could be the
 // agent token, in priority order. Callers iterate and accept the first
 // one that authenticates. Returning a slice (rather than a single

@@ -998,7 +998,7 @@ func (s *Server) routes() http.Handler {
 		llmHandler.InlineTaskCreator = tasksHandler
 
 		llmCredHandler := handlers.NewLLMCredentialsHandler(s.store, s.vault, s.logger)
-		controlHandler := handlers.NewLLMControlHandler(baseURL)
+		controlHandler := handlers.NewLLMControlHandler(baseURL, s.store)
 
 		// LLM endpoint accepts the agent token via Authorization or
 		// x-api-key (SDK conventions).
@@ -1009,6 +1009,7 @@ func (s *Server) routes() http.Handler {
 		// bound to (agent, host, method, path), so a leaked nonce only
 		// authorizes the specific call the proxy already approved.
 		requireAgentLLMCaller := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
+		optionalAgentLLMCaller := middleware.OptionalAgentLLMNonce(s.store, callerNonces, s.logger)
 
 		mux.Handle("POST /v1/messages", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
 		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
@@ -1022,8 +1023,8 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /control/help", http.HandlerFunc(controlHandler.Help))
-		mux.Handle("GET /control/help/{topic}", http.HandlerFunc(controlHandler.HelpTopic))
-		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
+		mux.Handle("GET /control/help/{topic}", optionalAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.HelpTopic))))
+		mux.Handle("GET /control/skill", optionalAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Skill))))
 		mux.Handle("POST /control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
 		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
 		mux.Handle("GET /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.ListForAgent))))

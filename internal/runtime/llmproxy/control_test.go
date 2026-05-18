@@ -6,55 +6,34 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
-	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
-func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
+func TestControlNoticeIsStableHelpRouter(t *testing.T) {
 	notice := ControlNotice("http://localhost:25297", []string{"read", "edit", "write", "exec", "process"})
 
-	if !strings.Contains(notice, "Use `exec` with curl") {
-		t.Fatalf("notice should steer OpenClaw to its actual shell tool; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, `"tool_name":"exec"`) {
-		t.Fatalf("notice example should declare exec in expected_tools; got:\n%s", notice)
-	}
-	if strings.Contains(notice, "Use Bash with curl") || strings.Contains(notice, `"tool_name":"bash"`) {
-		t.Fatalf("notice should not hardcode Bash when exec is available; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "available tools (read, edit, write, exec, process)") {
-		t.Fatalf("notice should show actual available tool examples; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "/control/vault/items") || !strings.Contains(notice, "required_credentials") {
-		t.Fatalf("notice should explain credential discovery and declaration; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "Required task shape") ||
-		!strings.Contains(notice, "If credentials are needed, add") ||
-		!strings.Contains(notice, "OMIT unless credentials are needed") {
-		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "`lifetime`") ||
-		!strings.Contains(notice, `"lifetime":"standing"`) ||
-		!strings.Contains(notice, "NEVER include `expires_in_seconds`") {
-		t.Fatalf("notice should explain session vs standing task lifetime; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "If you already have an `autovault_...` placeholder") ||
-		!strings.Contains(notice, "omit `required_credentials`") ||
-		!strings.Contains(notice, "Use GET https://clawvisor.local/control/vault/items only when you need Clawvisor to mint a new placeholder") {
-		t.Fatalf("notice should not steer agents to rediscover already-issued placeholders; got:\n%s", notice)
-	}
-	if !strings.Contains(notice, "Help router: GET https://clawvisor.local/control/help") ||
-		!strings.Contains(notice, "Topics: tasks, credentials, tools, legacy-adapters, errors, bug-reporting") ||
-		!strings.Contains(notice, `--data @- <<'JSON'`) {
-		t.Fatalf("notice should point to routed help and keep the canonical curl shape; got:\n%s", notice)
+	for _, want := range []string{
+		"GET https://clawvisor.local/control/help",
+		"GET https://clawvisor.local/control/help/tasks",
+		"GET https://clawvisor.local/control/help/credentials",
+		"GET https://clawvisor.local/control/help/tools",
+		"GET https://clawvisor.local/control/help/legacy-adapters",
+		"GET https://clawvisor.local/control/help/errors",
+		"GET https://clawvisor.local/control/help/bug-reporting",
+		"request-aware",
+		"CLAWVISOR_TASK_ID",
+		"autovault_github_xyz",
+	} {
+		if !strings.Contains(notice, want) {
+			t.Fatalf("notice missing %q:\n%s", want, notice)
+		}
 	}
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "None yet. Use the dashboard Tool Controls") {
-		t.Fatalf("notice should only disclose persisted allowlisted tools; got:\n%s", notice)
-	}
-	if strings.Contains(notice, "Read files with `read`") || strings.Contains(notice, "Run one-shot read-only shell inspection") {
-		t.Fatalf("notice should not hardcode read-only allowances outside policy; got:\n%s", notice)
+	for _, forbidden := range []string{`"expected_tools"`, `"required_credentials"`, "Active policy allowlists", "Use `exec` with curl"} {
+		if strings.Contains(notice, forbidden) {
+			t.Fatalf("stable router notice should not inline dynamic/task docs fragment %q:\n%s", forbidden, notice)
+		}
 	}
 }
 
@@ -63,22 +42,8 @@ func TestControlNoticeDoesNotEmbedLiveCredentialInventory(t *testing.T) {
 	if strings.Contains(notice, "github.release") || strings.Contains(notice, "OpenAI work key") {
 		t.Fatalf("notice must stay static and avoid embedding live vault inventory; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "GET https://clawvisor.local/control/vault/items") {
-		t.Fatalf("static notice should point to credential discovery endpoint; got:\n%s", notice)
-	}
-}
-
-func TestControlNoticeDisclosesActivePolicyAllowlist(t *testing.T) {
-	notice := ControlNoticeWithPolicy("http://localhost:25297", []string{"Bash", "Read", "Write"}, []*store.RuntimePolicyRule{
-		{Kind: "tool", Action: "allow", ToolName: "Read", Enabled: true},
-		{Kind: "tool", Action: "review", ToolName: "Write", Enabled: true},
-		{Kind: "tool", Action: "allow", ToolName: "MissingTool", Enabled: true},
-	})
-	if !strings.Contains(notice, "Active policy allowlists `Read`") {
-		t.Fatalf("notice should disclose active policy allowlisted actual tools; got:\n%s", notice)
-	}
-	if strings.Contains(notice, "Active policy allowlists `Write`") || strings.Contains(notice, "MissingTool") {
-		t.Fatalf("notice should not disclose reviewed or unavailable tools as allowlisted; got:\n%s", notice)
+	if !strings.Contains(notice, "GET https://clawvisor.local/control/help/credentials") {
+		t.Fatalf("static notice should point to credential help endpoint; got:\n%s", notice)
 	}
 }
 

@@ -33,70 +33,50 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	// prior turns. controlBaseURL is intentionally ignored here.
 	_ = controlBaseURL
 	helpURL := "https://" + ControlSyntheticHost + "/control/help"
-	vaultItemsURL := "https://" + ControlSyntheticHost + "/control/vault/items"
-	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks"
-	tasksURLInline := tasksURL + "?surface=inline"
-	toolExamples := controlToolExamples(availableTools)
-	shellTool := controlShellTool(availableTools)
-	if shellTool == "" {
-		shellTool = "bash"
-	}
-	allowedLines := controlAllowedWithoutTaskLines(availableTools, toolRules)
+	_ = availableTools
+	_ = toolRules
 	return strings.Join([]string{
 		ControlNoticeSentinel,
 		"",
 		"Clawvisor gates agent tool work with task-scoped approval, credential vaulting, and runtime policy.",
 		"",
-		"WORKFLOW — start every non-trivial request with a task.",
-		"Create a task before multi-step work, writing files, making network calls, changing state, or using credentials. Don't wait for a tool call to be refused.",
+		"Use Clawvisor to request permission before non-trivial tool work, network calls, file changes, state changes, or credential use.",
 		"",
-		"Task endpoint:",
-		"  - Interactive user present: POST " + tasksURLInline,
-		"  - Headless/background run: POST " + tasksURL,
+		"Use the synthetic control host `https://" + ControlSyntheticHost + "` for all Clawvisor control-plane calls. Clawvisor rewrites this host internally and injects authorization.",
 		"",
-		"Required task shape:",
-		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
-		"   \"intent_verification_mode\":\"strict\",",
-		"   \"expires_in_seconds\":600}",
+		"Before doing work, fetch the focused help page for what you need. Help pages are request-aware when fetched through the proxy-lite control plane: they can include this agent's latest-known tool names, recommended shell tool, and active tool policies.",
 		"",
-		"If credentials are needed, add:",
-		"  \"required_credentials\":[{\"vault_item_id\":\"<vault item id>\",\"why\":\"<why this credential is needed>\"}]",
+		"- `GET " + helpURL + "`",
+		"  Use first when you are unsure which Clawvisor endpoint applies. It is the router index.",
 		"",
-		"Field rules:",
-		"  - `expected_tools`: use actual available tools (" + toolExamples + "). List plausible tools up front; include verify/read commands in the same tool `why`.",
-		"  - `required_credentials`: OMIT unless credentials are needed. If included, every entry MUST include `vault_item_id` or `vault_item_handle` AND `why`.",
-		"  - `lifetime`: omit or set `\"session\"` for a temporary task with `expires_in_seconds`; set `\"standing\"` only when the user asked for persistent permission. Standing tasks do not expire, so NEVER include `expires_in_seconds` with `\"lifetime\":\"standing\"`.",
+		"- `GET " + helpURL + "/tasks`",
+		"  Use before creating, inspecting, or expanding a task. This includes task JSON shape, session vs. standing task lifetime, task approval, active task lookup, and examples using current tool names when available.",
 		"",
-		strings.Join(allowedLines, "\n"),
+		"- `GET " + helpURL + "/credentials`",
+		"  Use before handling `autovault_...` placeholders, requesting a vault credential, or deciding whether a raw-looking value should be vaulted.",
 		"",
-		"CREDENTIAL ACCESS:",
-		"  - If you already have an `autovault_...` placeholder, do NOT call " + vaultItemsURL + " just to identify it. Create the task for the intended API call, omit `required_credentials`, and use the placeholder directly after approval.",
-		"  - Use GET " + vaultItemsURL + " only when you need Clawvisor to mint a new placeholder from an available vault item.",
-		"  - Do not ask the user to paste raw secrets into chat.",
+		"- `GET " + helpURL + "/tools`",
+		"  Use when deciding what to put in `expected_tools`, which shell tool to use for control-plane curl, or whether a tool can be used without a task. This endpoint reports latest-known tool policy state when available.",
 		"",
-		"VAULT PLACEHOLDERS — values like `autovault_github_xyz` are NOT raw credentials and are already usable placeholders. Use them directly in headers or curl arguments after the task is approved; Clawvisor substitutes the real secret at proxy time. Raw tokens such as `ghp_...` or `sk-...` are sensitive; ask the user to vault them first.",
+		"- `GET " + helpURL + "/legacy-adapters`",
+		"  Use when you need Clawvisor's classic service catalog and gateway APIs for Gmail, Calendar, GitHub, Slack, and other managed service adapters.",
+		"",
+		"- `GET " + helpURL + "/errors`",
+		"  Use when a Clawvisor request is denied, blocked, malformed, expired, or outside scope.",
+		"",
+		"- `GET " + helpURL + "/bug-reporting`",
+		"  Use when Clawvisor appears confusing, incorrect, or unsafe.",
 		"",
 		"Control-plane rules:",
-		"  - Before creating the task, tell me I will need to approve it.",
-		"  - Task creation does not grant permission until I approve it.",
-		"  - Use `" + shellTool + "` with curl for control-plane calls.",
+		"  - Before creating a task, tell me I will need to approve it.",
+		"  - Task creation requests permission; it does not grant permission until approved.",
+		"  - Fetch `/control/help/tools` if you need to know the recommended shell tool.",
 		"  - Use one foreground curl with JSON via `--data @-`; no temp files, pipes, redirects, extra shell commands, `&`, `nohup`, or polling.",
 		"  - NEVER write `cv-nonce-...`, `X-Clawvisor-Caller`, `X-Clawvisor-Target-Host`, or any `X-Clawvisor-*` header. Clawvisor injects those.",
 		"  - NEVER call `http://localhost:<port>` or `http://127.0.0.1:<port>` directly. Use `https://" + ControlSyntheticHost + "`.",
 		"  - Do NOT prefix tool calls with `CLAWVISOR_TASK_ID=<id>`.",
-		"",
-		"Help router: GET " + helpURL + ". Topics: tasks, credentials, tools, legacy-adapters, errors, bug-reporting.",
-		"",
-		"Canonical task curl:",
-		"  curl -sS -X POST '" + tasksURLInline + "' \\",
-		"    -H 'Content-Type: application/json' \\",
-		"    --data @- <<'JSON'",
-		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
-		"   \"intent_verification_mode\":\"strict\",",
-		"   \"expires_in_seconds\":600}",
-		"  JSON",
+		"  - Do not ask the user to paste raw secrets into chat.",
+		"  - Values like `autovault_github_xyz` are vault placeholders, not raw credentials.",
 	}, "\n")
 }
 

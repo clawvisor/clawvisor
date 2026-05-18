@@ -262,20 +262,13 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	mustContain := []string{
 		"Clawvisor proxy-lite control plane",
 		"https://clawvisor.local/control/help",
-		"https://clawvisor.local/control/tasks?surface=inline",
-		"Before creating the task, tell me I will need to approve it",
-		// Proactive task-creation steer: the model should declare scope
-		// up front, not wait until a tool call gets refused.
-		"start every non-trivial request with a task",
-		"Don't wait for a tool call to be refused",
-		// Vault-placeholder steer: tell the model these are SAFE to use
-		// directly, not raw credentials it should refuse to handle.
-		"VAULT PLACEHOLDERS",
+		"https://clawvisor.local/control/help/tasks",
+		"https://clawvisor.local/control/help/tools",
+		"https://clawvisor.local/control/help/credentials",
+		"Before doing work, fetch the focused help page",
+		"Before creating a task, tell me I will need to approve it",
 		"autovault_",
-		"NOT raw credentials",
-		// Steer model to the actual shell tool + curl (Claude Code's WebFetch can't carry
-		// the headers/body the control plane needs).
-		"`Bash` with curl",
+		"vault placeholders, not raw credentials",
 		// Don't-leak-the-daemon-URL rule. The notice now phrases this as
 		// "NEVER call http://localhost:<port>" and "Always use the
 		// synthetic host" — match on the stable canonical-URL fragment.
@@ -289,6 +282,11 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	for _, want := range mustContain {
 		if !strings.Contains(string(seenBody), want) {
 			t.Fatalf("upstream request missing control-notice fragment %q in: %s", want, seenBody)
+		}
+	}
+	for _, forbidden := range []string{`"expected_tools"`, "Active policy allowlists", "`Bash` with curl"} {
+		if strings.Contains(string(seenBody), forbidden) {
+			t.Fatalf("control notice should defer dynamic/task details to help endpoints; found %q in %s", forbidden, seenBody)
 		}
 	}
 	// Negative: the daemon URL must not appear in the notice — it's a
@@ -340,8 +338,11 @@ func TestLLMEndpoint_ControlNoticeUsesActiveToolPolicy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(string(seenBody), "Active policy allowlists `Read`") {
-		t.Fatalf("control notice should disclose active allow policy: %s", seenBody)
+	if !strings.Contains(string(seenBody), "GET https://clawvisor.local/control/help/tools") {
+		t.Fatalf("control notice should route active policy lookup to tools help: %s", seenBody)
+	}
+	if strings.Contains(string(seenBody), "Active policy allowlists `Read`") {
+		t.Fatalf("control notice should not disclose active allow policy directly: %s", seenBody)
 	}
 }
 
