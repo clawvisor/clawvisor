@@ -2429,6 +2429,17 @@ func (s *Store) GetCredentialAuthorization(ctx context.Context, id string) (*sto
 	return scanCredentialAuthorization(rows)
 }
 
+func (s *Store) DeleteCredentialAuthorization(ctx context.Context, id, userID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM credential_authorizations WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ConsumeMatchingCredentialAuthorization(ctx context.Context, match store.CredentialAuthorizationMatch, now time.Time) (*store.CredentialAuthorization, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

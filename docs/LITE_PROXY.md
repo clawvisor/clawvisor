@@ -172,7 +172,7 @@ curl -sS -X POST 'https://clawvisor.local/control/tasks?wait=true&timeout=120' \
   -H 'Content-Type: application/json' \
   --data '{
     "purpose": "Build a polished interactive landing page in /tmp/landing-b",
-    "expected_tools_json": [
+    "expected_tools": [
       {"tool_name": "Bash",  "why": "Create the directory and run helper commands"},
       {"tool_name": "Write", "why": "Create HTML / CSS / JS files"},
       {"tool_name": "Edit",  "why": "Iterate on the design"}
@@ -188,7 +188,7 @@ The user approves the task in the dashboard. Subsequent tool_uses within the dec
 
 ### Tool-name aliases across harnesses
 
-`expected_tools_json` accepts either harness-specific tool names or canonical class names:
+`expected_tools` accepts either harness-specific tool names or canonical class names:
 
 | Class | Aliases |
 |---|---|
@@ -301,4 +301,4 @@ If you're not seeing the events you expect, confirm the daemon picked up the con
 - [Architecture](ARCHITECTURE.md) — the daemon's component diagram.
 - [Runtime Proxy](RUNTIME_PROXY.md) — the CONNECT-based alternative.
 - [Integration: Claude Code](INTEGRATE_CLAUDE_CODE.md) — Claude Code specifics.
-- [Task examples](TASK_EXAMPLES.md) — `expected_tools_json` patterns.
+- [Task examples](TASK_EXAMPLES.md) — `expected_tools` patterns.

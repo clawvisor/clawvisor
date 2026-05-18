@@ -26,7 +26,7 @@ type InlineApprovalOutcome struct {
 	// TaskID is populated on success.
 	TaskID string
 	// Credentials are the concrete placeholders minted for
-	// required_credentials_json entries when the task was approved.
+	// required_credentials entries when the task was approved.
 	Credentials []InlineTaskCredentialPlaceholder
 	// ApprovalRecordID is populated on success when the canonical
 	// approval_records row was written.

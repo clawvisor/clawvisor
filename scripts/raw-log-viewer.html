@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clawvisor Raw Log Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --panel-2: #f1f4f8;
+      --text: #18202b;
+      --muted: #5f6b7a;
+      --line: #dce2ea;
+      --accent: #0f766e;
+      --accent-2: #155e75;
+      --warn: #b45309;
+      --bad: #b91c1c;
+      --good: #047857;
+      --code: #111827;
+      --code-bg: #f8fafc;
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(247, 248, 251, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+    .top {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .subtitle { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 0 18px 14px;
+    }
+    input[type="file"] { max-width: 320px; }
+    input[type="search"], select {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+    }
+    input[type="search"] { width: min(360px, 100%); }
+    button {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+      color: var(--text);
+      padding: 0 11px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    button:disabled { opacity: .55; cursor: default; }
+    label.toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      padding: 0 8px;
+      color: var(--muted);
+      user-select: none;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 390px minmax(0, 1fr);
+      gap: 14px;
+      padding: 14px 18px 18px;
+    }
+    .sidebar, .detail, .empty {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: var(--shadow);
+    }
+    .stat strong { display: block; font-size: 18px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    .sidebar {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .list-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .request-list {
+      max-height: calc(100vh - 230px);
+      overflow: auto;
+    }
+    .request-row {
+      display: block;
+      width: 100%;
+      height: auto;
+      text-align: left;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      padding: 10px 12px;
+      background: white;
+    }
+    .request-row:hover, .request-row.active { background: #edf7f5; }
+    .request-row.active { box-shadow: inset 3px 0 0 var(--accent); }
+    .row-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-weight: 650;
+    }
+    .row-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row-time { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+    .row-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 6px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+      max-width: 100%;
+    }
+    .chip.good { background: #dcfce7; color: var(--good); }
+    .chip.warn { background: #fef3c7; color: var(--warn); }
+    .chip.bad { background: #fee2e2; color: var(--bad); }
+    .chip.info { background: #dff6f3; color: var(--accent-2); }
+    .detail {
+      min-width: 0;
+      padding: 14px;
+    }
+    .detail h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .kv {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: #fbfcfe;
+      min-width: 0;
+    }
+    .kv .k { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+    .kv .v {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .event {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 12px;
+      overflow: hidden;
+      background: white;
+    }
+    .transcript {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .compare {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .compare-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+    }
+    .compare-head strong { font-size: 14px; }
+    .compare-head span { color: var(--muted); font-size: 12px; }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0;
+    }
+    .compare-pane {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+    }
+    .compare-pane.full { grid-column: 1 / -1; }
+    .compare-pane:last-child { border-right: 0; }
+    .compare-pane-head {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+    .compare-pane-head strong { display: block; }
+    .compare-pane-head span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .compare-pane pre {
+      max-height: 440px;
+      border: 0;
+      border-radius: 0;
+      border-top: 0;
+    }
+    .compare-missing {
+      padding: 18px;
+      color: var(--muted);
+    }
+    .transcript-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+    }
+    .transcript-head strong { font-size: 14px; }
+    .transcript-head span { color: var(--muted); font-size: 12px; }
+    .message {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .message.added { background: #f0fdf4; }
+    .message.deleted { background: #fff1f2; }
+    .message.modified { background: #fff; }
+    .message:last-child { border-bottom: 0; }
+    .role {
+      align-self: start;
+      border-radius: 999px;
+      padding: 4px 8px;
+      text-align: center;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: lowercase;
+    }
+    .role.system, .role.developer { background: #e0f2fe; color: #075985; }
+    .role.user { background: #dcfce7; color: #166534; }
+    .role.assistant { background: #ede9fe; color: #5b21b6; }
+    .role.tool { background: #fef3c7; color: #92400e; }
+    .message-body {
+      min-width: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .message-body.diff {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .message-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+    ins.diff-add {
+      background: #dcfce7;
+      color: #166534;
+      text-decoration: none;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+    del.diff-del {
+      background: #fee2e2;
+      color: #991b1b;
+      text-decoration: line-through;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+    .message.deleted .role {
+      background: #fee2e2;
+      color: #991b1b;
+      text-decoration: line-through;
+    }
+    .event-head {
+      display: grid;
+      grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 10px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+    }
+    .event-title { font-weight: 700; }
+    .event-sub {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .event-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .event-actions button { height: 28px; font-size: 12px; padding: 0 8px; }
+    .event-body { padding: 10px; }
+    .summary {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .turn {
+      border-left: 3px solid var(--line);
+      padding-left: 9px;
+      margin: 6px 0;
+    }
+    .turn strong {
+      color: var(--text);
+      margin-right: 5px;
+    }
+    pre {
+      margin: 0;
+      max-height: 560px;
+      overflow: auto;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--code-bg);
+      color: var(--code);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      grid-column: 1 / -1;
+      padding: 40px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .hidden { display: none !important; }
+    .notice {
+      border: 1px solid #f3d38b;
+      background: #fffbeb;
+      color: #7c4a03;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .parse-errors {
+      margin-top: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    @media (max-width: 980px) {
+      .top { grid-template-columns: 1fr; }
+      main { grid-template-columns: 1fr; }
+      .request-list { max-height: 360px; }
+      .detail-grid, .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .compare-grid, .message { grid-template-columns: 1fr; }
+      .compare-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+      .compare-pane:last-child { border-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="top">
+      <div>
+        <h1>Clawvisor Raw Log Viewer</h1>
+        <div class="subtitle">Open a logs folder, then inspect grouped LLM turns, proxy phases, prompt-prefix stability, and secret-pipeline traces.</div>
+      </div>
+      <div>
+        <input id="folderInput" type="file" webkitdirectory multiple />
+      </div>
+    </div>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search request id, agent, path, body, trace stage" />
+      <select id="providerFilter"><option value="">All providers</option></select>
+      <select id="agentFilter"><option value="">All agents</option></select>
+      <select id="phaseFilter"><option value="">All phases</option></select>
+      <label class="toggle"><input id="secretOnly" type="checkbox" /> Secret pipeline</label>
+      <label class="toggle"><input id="unstableOnly" type="checkbox" /> Prefix changed</label>
+      <label class="toggle"><input id="showRaw" type="checkbox" /> Show raw-looking tokens</label>
+      <button id="reloadServer" class="primary hidden">Reload logs</button>
+      <button id="expandAll">Expand all</button>
+      <button id="collapseAll">Collapse all</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="empty" class="empty">
+      Select `~/.clawvisor/logs` or a folder containing `lite-proxy-raw.jsonl` and optional `lite-proxy-trace.jsonl`.
+    </section>
+
+    <section id="content" class="hidden" style="display: contents;">
+      <div>
+        <div class="stats" id="stats"></div>
+        <aside class="sidebar">
+          <div class="list-head">
+            <span id="listCount">0 requests</span>
+            <span>Newest first</span>
+          </div>
+          <div id="requestList" class="request-list"></div>
+        </aside>
+      </div>
+      <section id="detail" class="detail"></section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      rawEvents: [],
+      traceEvents: [],
+      parseErrors: [],
+      groups: [],
+      filtered: [],
+      selectedID: "",
+      expanded: new Set(),
+      bodyCache: new Map(),
+    };
+
+    const els = {
+      folderInput: document.getElementById("folderInput"),
+      search: document.getElementById("search"),
+      providerFilter: document.getElementById("providerFilter"),
+      agentFilter: document.getElementById("agentFilter"),
+      phaseFilter: document.getElementById("phaseFilter"),
+      secretOnly: document.getElementById("secretOnly"),
+      unstableOnly: document.getElementById("unstableOnly"),
+      showRaw: document.getElementById("showRaw"),
+      expandAll: document.getElementById("expandAll"),
+      collapseAll: document.getElementById("collapseAll"),
+      reloadServer: document.getElementById("reloadServer"),
+      empty: document.getElementById("empty"),
+      content: document.getElementById("content"),
+      stats: document.getElementById("stats"),
+      listCount: document.getElementById("listCount"),
+      requestList: document.getElementById("requestList"),
+      detail: document.getElementById("detail"),
+    };
+
+    els.folderInput.addEventListener("change", async (event) => {
+      await loadFiles([...event.target.files]);
+    });
+    for (const el of [els.search, els.providerFilter, els.agentFilter, els.phaseFilter, els.secretOnly, els.unstableOnly, els.showRaw]) {
+      el.addEventListener("input", render);
+      el.addEventListener("change", render);
+    }
+    els.expandAll.addEventListener("click", () => {
+      for (const g of state.filtered) for (const ev of allEvents(g)) state.expanded.add(eventKey(ev));
+      renderDetail();
+    });
+    els.collapseAll.addEventListener("click", () => {
+      state.expanded.clear();
+      renderDetail();
+    });
+    els.reloadServer.addEventListener("click", () => loadServerLogs());
+    if (location.protocol === "http:" || location.protocol === "https:") {
+      loadServerLogs();
+    }
+
+    async function loadFiles(files) {
+      state.rawEvents = [];
+      state.traceEvents = [];
+      state.parseErrors = [];
+      state.groups = [];
+      state.filtered = [];
+      state.selectedID = "";
+      state.expanded.clear();
+      state.bodyCache.clear();
+
+      const candidates = files.filter(file => /(?:lite-proxy-(?:raw|trace)\.jsonl|raw.*\.jsonl|trace.*\.jsonl)$/i.test(file.name));
+      const selected = candidates.length ? candidates : files.filter(file => /\.jsonl$/i.test(file.name));
+      for (const file of selected) {
+        const text = await file.text();
+        parseJSONL(file.webkitRelativePath || file.name, text);
+      }
+      buildGroups();
+      buildFilters();
+      state.selectedID = state.groups[0]?.id || "";
+      render();
+    }
+
+    async function loadServerLogs() {
+      els.reloadServer.classList.remove("hidden");
+      try {
+        const resp = await fetch("/api/logs", { cache: "no-store" });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        state.rawEvents = [];
+        state.traceEvents = [];
+        state.parseErrors = [];
+        state.groups = [];
+        state.filtered = [];
+        state.selectedID = "";
+        state.expanded.clear();
+        state.bodyCache.clear();
+        for (const file of payload.files || []) {
+          parseJSONL(file.name || "server.jsonl", file.text || "");
+        }
+        buildGroups();
+        buildFilters();
+        state.selectedID = state.groups[0]?.id || "";
+        render();
+      } catch (_) {
+        // file:// usage is expected to fail here; the folder picker remains available.
+      }
+    }
+
+    function parseJSONL(fileName, text) {
+      const isTraceFile = /trace/i.test(fileName);
+      const isRawFile = /raw/i.test(fileName);
+      text.split(/\r?\n/).forEach((line, index) => {
+        if (!line.trim()) return;
+        try {
+          const ev = JSON.parse(line);
+          ev._file = fileName;
+          ev._line = index + 1;
+          if (ev.event === "secret_pipeline" || (!isRawFile && isTraceFile)) {
+            state.traceEvents.push(ev);
+          } else {
+            state.rawEvents.push(ev);
+          }
+        } catch (err) {
+          state.parseErrors.push({ file: fileName, line: index + 1, error: String(err), text: line.slice(0, 500) });
+        }
+      });
+    }
+
+    function buildGroups() {
+      const byID = new Map();
+      for (const ev of state.rawEvents) {
+        const id = ev.request_id || `missing:${ev._file}:${ev._line}`;
+        if (!byID.has(id)) byID.set(id, emptyGroup(id));
+        byID.get(id).raw.push(ev);
+      }
+      for (const ev of state.traceEvents) {
+        const id = ev.request_id || `trace:${ev._file}:${ev._line}`;
+        if (!byID.has(id)) byID.set(id, emptyGroup(id));
+        byID.get(id).traces.push(ev);
+      }
+      state.groups = [...byID.values()].map(finalizeGroup).sort((a, b) => compareTime(b.firstTimestamp, a.firstTimestamp));
+    }
+
+    function emptyGroup(id) {
+      return { id, raw: [], traces: [] };
+    }
+
+    function finalizeGroup(group) {
+      const events = allEvents(group).sort((a, b) => compareTime(a.timestamp, b.timestamp));
+      group.events = events;
+      group.firstTimestamp = events[0]?.timestamp || "";
+      group.lastTimestamp = events[events.length - 1]?.timestamp || "";
+      group.provider = firstValue(events, "provider");
+      group.agentID = firstValue(events, "agent_id");
+      group.userID = firstValue(events, "user_id");
+      group.method = firstValue(events, "method");
+      group.path = firstValue(events, "path");
+      group.model = inferModel(group.raw);
+      group.phases = unique(group.raw.map(ev => ev.phase).filter(Boolean));
+      group.traceStages = unique(group.traces.map(ev => ev.stage).filter(Boolean));
+      group.statuses = unique(group.raw.map(ev => ev.status).filter(status => Number(status) > 0).map(String));
+      group.bodyBytes = group.raw.reduce((sum, ev) => sum + (Number(ev.body_bytes) || 0), 0);
+      group.hasSecretPipeline = group.traces.some(ev => ev.event === "secret_pipeline");
+      group.hasPrefixChange = group.raw.some(ev => ev.prompt_prefix_stable_with_previous === false);
+      group.hasErrors = group.raw.some(ev => ev.err || Number(ev.status) >= 400) || group.traces.some(ev => ev.err || ev.error_message);
+      group.durationMS = durationMS(group.firstTimestamp, group.lastTimestamp);
+      group.searchText = JSON.stringify({
+        id: group.id,
+        provider: group.provider,
+        agent: group.agentID,
+        user: group.userID,
+        path: group.path,
+        model: group.model,
+        phases: group.phases,
+        traceStages: group.traceStages,
+        bodies: group.raw.map(ev => ev.body || "").join("\n").slice(0, 250000),
+      }).toLowerCase();
+      return group;
+    }
+
+    function buildFilters() {
+      fillSelect(els.providerFilter, "All providers", unique(state.groups.map(g => g.provider).filter(Boolean)).sort());
+      fillSelect(els.agentFilter, "All agents", unique(state.groups.map(g => g.agentID).filter(Boolean)).sort());
+      fillSelect(els.phaseFilter, "All phases", unique(state.rawEvents.map(ev => ev.phase).filter(Boolean)).sort());
+    }
+
+    function fillSelect(select, label, values) {
+      const current = select.value;
+      select.innerHTML = `<option value="">${escapeHTML(label)}</option>` + values.map(v => `<option value="${escapeAttr(v)}">${escapeHTML(shortID(v, 20))}</option>`).join("");
+      if (values.includes(current)) select.value = current;
+    }
+
+    function render() {
+      const query = els.search.value.trim().toLowerCase();
+      const provider = els.providerFilter.value;
+      const agent = els.agentFilter.value;
+      const phase = els.phaseFilter.value;
+      state.filtered = state.groups.filter(group => {
+        if (query && !group.searchText.includes(query)) return false;
+        if (provider && group.provider !== provider) return false;
+        if (agent && group.agentID !== agent) return false;
+        if (phase && !group.phases.includes(phase)) return false;
+        if (els.secretOnly.checked && !group.hasSecretPipeline) return false;
+        if (els.unstableOnly.checked && !group.hasPrefixChange) return false;
+        return true;
+      });
+      if (!state.filtered.some(group => group.id === state.selectedID)) {
+        state.selectedID = state.filtered[0]?.id || "";
+      }
+      els.empty.classList.toggle("hidden", state.groups.length > 0);
+      els.content.classList.toggle("hidden", state.groups.length === 0);
+      renderStats();
+      renderList();
+      renderDetail();
+    }
+
+    function renderStats() {
+      const totalBytes = state.filtered.reduce((sum, g) => sum + g.bodyBytes, 0);
+      const secretGroups = state.filtered.filter(g => g.hasSecretPipeline).length;
+      const unstable = state.filtered.filter(g => g.hasPrefixChange).length;
+      els.stats.innerHTML = [
+        stat("Requests", state.filtered.length, `${state.rawEvents.length} raw events`),
+        stat("Secret traces", secretGroups, `${state.traceEvents.length} trace events`),
+        stat("Prefix changes", unstable, "cache stability"),
+        stat("Body bytes", formatBytes(totalBytes), "visible set"),
+      ].join("");
+    }
+
+    function stat(label, value, sub) {
+      return `<div class="stat"><strong>${escapeHTML(String(value))}</strong><span>${escapeHTML(label)} - ${escapeHTML(sub)}</span></div>`;
+    }
+
+    function renderList() {
+      els.listCount.textContent = `${state.filtered.length} request${state.filtered.length === 1 ? "" : "s"}`;
+      els.requestList.innerHTML = state.filtered.map(group => {
+        const active = group.id === state.selectedID ? " active" : "";
+        const chips = [
+          chip(group.provider || "unknown", "info"),
+          group.model ? chip(group.model) : "",
+          group.hasSecretPipeline ? chip("secret", "warn") : "",
+          group.hasPrefixChange ? chip("prefix changed", "bad") : "",
+          group.statuses.length ? chip(group.statuses.join(","), statusClass(group.statuses)) : "",
+        ].join("");
+        return `<button class="request-row${active}" data-id="${escapeAttr(group.id)}">
+          <div class="row-top"><span class="row-id">${escapeHTML(shortID(group.id, 18))}</span><span class="row-time">${escapeHTML(formatTime(group.firstTimestamp))}</span></div>
+          <div class="row-id">${escapeHTML([group.method, group.path].filter(Boolean).join(" ") || "trace-only")}</div>
+          <div class="row-meta">${chips}</div>
+        </button>`;
+      }).join("");
+      for (const button of els.requestList.querySelectorAll("button[data-id]")) {
+        button.addEventListener("click", () => {
+          state.selectedID = button.dataset.id;
+          render();
+        });
+      }
+    }
+
+    function renderDetail() {
+      const group = state.filtered.find(g => g.id === state.selectedID);
+      if (!group) {
+        els.detail.innerHTML = `<div class="notice">No request selected.</div>`;
+        return;
+      }
+      const headerChips = [
+        chip(group.provider || "unknown", "info"),
+        group.hasSecretPipeline ? chip("secret pipeline", "warn") : "",
+        group.hasPrefixChange ? chip("prompt prefix changed", "bad") : group.raw.some(ev => ev.prompt_prefix_stable_with_previous === true) ? chip("prompt prefix stable", "good") : "",
+        group.hasErrors ? chip("error", "bad") : "",
+      ].join("");
+      const eventHTML = allEvents(group)
+        .sort((a, b) => compareTime(a.timestamp, b.timestamp))
+        .map(renderEvent)
+        .join("");
+      els.detail.innerHTML = `
+        <h2>${escapeHTML(group.id)}</h2>
+        <div class="row-meta">${headerChips}</div>
+        <div class="detail-grid">
+          ${kv("Time", `${formatTime(group.firstTimestamp)} -> ${formatTime(group.lastTimestamp)}`)}
+          ${kv("Duration", group.durationMS == null ? "" : `${group.durationMS} ms`)}
+          ${kv("Agent", group.agentID || "")}
+          ${kv("User", group.userID || "")}
+          ${kv("Endpoint", [group.method, group.path].filter(Boolean).join(" "))}
+          ${kv("Model", group.model || "")}
+          ${kv("Phases", group.phases.join(", "))}
+          ${kv("Trace stages", group.traceStages.join(", "))}
+        </div>
+        ${renderBodyCompare(group)}
+        ${renderTranscript(group)}
+        ${state.parseErrors.length ? renderParseErrors() : ""}
+        ${eventHTML}
+      `;
+      bindEventButtons();
+    }
+
+    function renderBodyCompare(group) {
+      const received = firstRawPhase(group, "proxy_received_request");
+      const upstream = firstRawPhase(group, "inbound_request");
+      const harness = lastRawPhase(group, "harness_response");
+      if (!received && !upstream && !harness) {
+        return "";
+      }
+      const same = received?.body && upstream?.body ? bodiesEqual(received, upstream) : null;
+      const note = same === null ? "Select a request with proxy and upstream captures." :
+        same ? "Proxy received body and upstream model-input body are byte-identical after logging redaction." :
+        "Proxy received body differs from the upstream model-input body.";
+      return `<section class="compare">
+        <div class="compare-head">
+          <strong>Proxy Body Compare</strong>
+          <span>${escapeHTML(note)}</span>
+        </div>
+        <div class="compare-grid">
+          ${renderComparePane("Proxy received", received, "Exact body read from the harness before Clawvisor preprocessing.")}
+          ${renderComparePane("Sent upstream", upstream, "Body transferred to the LLM provider after Clawvisor preprocessing.")}
+        </div>
+        ${harness ? `<div class="compare-grid">${renderComparePane("Returned to harness", harness, "Provider response after Clawvisor postprocessing.", true)}</div>` : ""}
+      </section>`;
+    }
+
+    function renderComparePane(label, ev, description, fullWidth = false) {
+      if (!ev) {
+        return `<div class="compare-pane ${fullWidth ? "full" : ""}"><div class="compare-pane-head"><strong>${escapeHTML(label)}</strong><span>${escapeHTML(description)}</span></div><div class="compare-missing">No capture for this phase.</div></div>`;
+      }
+      const meta = [
+        description,
+        ev.phase,
+        ev.marker,
+        ev.body_bytes ? formatBytes(ev.body_bytes) : "",
+        ev.timestamp ? formatTime(ev.timestamp) : "",
+      ].filter(Boolean).join(" | ");
+      return `<div class="compare-pane ${fullWidth ? "full" : ""}">
+        <div class="compare-pane-head"><strong>${escapeHTML(label)}</strong><span>${escapeHTML(meta)}</span></div>
+        <pre>${escapeHTML(displayBody(ev))}</pre>
+      </div>`;
+    }
+
+    function firstRawPhase(group, phase) {
+      return [...(group.raw || [])].filter(ev => ev.phase === phase).sort((a, b) => compareTime(a.timestamp, b.timestamp))[0] || null;
+    }
+
+    function lastRawPhase(group, phase) {
+      return [...(group.raw || [])].filter(ev => ev.phase === phase).sort((a, b) => compareTime(b.timestamp, a.timestamp))[0] || null;
+    }
+
+    function bodiesEqual(a, b) {
+      return (a.body || "") === (b.body || "") && (a.body_encoding || "") === (b.body_encoding || "");
+    }
+
+    function renderTranscript(group) {
+      const received = firstRawPhase(group, "proxy_received_request");
+      const inbound = firstRawPhase(group, "inbound_request") || firstRawPhase(group, "inbound_secret_hold");
+      if (!inbound?.body || inbound.body_encoding) {
+        return `<section class="transcript"><div class="transcript-head"><strong>Model Input Transcript</strong><span>No readable inbound request body for this turn.</span></div></section>`;
+      }
+      const parsed = parseBodyJSON(inbound.body);
+      if (!parsed) {
+        return `<section class="transcript"><div class="transcript-head"><strong>Model Input Transcript</strong><span>Inbound body is not JSON.</span></div></section>`;
+      }
+      const inboundTurns = extractRequestTranscript(parsed, group.provider);
+      if (!inboundTurns.length) {
+        return `<section class="transcript"><div class="transcript-head"><strong>Model Input Transcript</strong><span>No transcript-like fields found in inbound request.</span></div></section>`;
+      }
+      const receivedTurns = received?.body && !received.body_encoding ? extractRequestTranscript(parseBodyJSON(received.body) || {}, group.provider) : null;
+      const turns = receivedTurns && receivedTurns.length ? mergeTranscriptTurns(receivedTurns, inboundTurns) : inboundTurns.map(turn => ({ ...turn, change: "same", html: escapeHTML(redactIfNeeded(turn.text || "")) }));
+      const messages = turns.map(turn => {
+        const role = normalizeRole(turn.role);
+        const meta = [turn.type, turn.name, changeLabel(turn.change)].filter(Boolean).join(" | ");
+        const bodyClass = turn.change && turn.change !== "same" ? "message-body diff" : "message-body";
+        const bodyHTML = turn.html || escapeHTML(redactIfNeeded(turn.text || ""));
+        return `<div class="message ${escapeAttr(turn.change || "same")}">
+          <div class="role ${escapeAttr(role)}">${escapeHTML(role)}</div>
+          <div class="${bodyClass}">
+            ${meta ? `<div class="message-meta">${escapeHTML(meta)}</div>` : ""}
+            ${bodyHTML}
+          </div>
+        </div>`;
+      }).join("");
+      const source = `${inbound.phase} ${inbound._file || ""}:${inbound._line || ""}`.trim();
+      const diffNote = receivedTurns && receivedTurns.length ? " Green content was added by Clawvisor; red strikethrough was removed before upstream." : "";
+      return `<section class="transcript">
+        <div class="transcript-head">
+          <strong>Model Input Transcript</strong>
+          <span>${escapeHTML(inboundTurns.length + " upstream message" + (inboundTurns.length === 1 ? "" : "s") + " from " + source + "." + diffNote)}</span>
+        </div>
+        ${messages}
+      </section>`;
+    }
+
+    function mergeTranscriptTurns(before, after) {
+      const out = [];
+      let i = 0, j = 0;
+      while (i < before.length || j < after.length) {
+        if (i >= before.length) {
+          out.push(transcriptAddedTurn(after[j++]));
+          continue;
+        }
+        if (j >= after.length) {
+          out.push(transcriptDeletedTurn(before[i++]));
+          continue;
+        }
+        const left = before[i];
+        const right = after[j];
+        if (turnIdentity(left) === turnIdentity(right)) {
+          out.push(transcriptMergedTurn(left, right));
+          i++;
+          j++;
+          continue;
+        }
+        if (j + 1 < after.length && turnIdentity(left) === turnIdentity(after[j + 1])) {
+          out.push(transcriptAddedTurn(right));
+          j++;
+          continue;
+        }
+        if (i + 1 < before.length && turnIdentity(before[i + 1]) === turnIdentity(right)) {
+          out.push(transcriptDeletedTurn(left));
+          i++;
+          continue;
+        }
+        out.push(transcriptDeletedTurn(left));
+        out.push(transcriptAddedTurn(right));
+        i++;
+        j++;
+      }
+      return out;
+    }
+
+    function transcriptMergedTurn(before, after) {
+      if ((before.text || "") === (after.text || "")) {
+        return { ...after, change: "same", html: escapeHTML(redactIfNeeded(after.text || "")) };
+      }
+      return { ...after, change: "modified", html: renderWordDiff(before.text || "", after.text || "") };
+    }
+
+    function transcriptAddedTurn(turn) {
+      return { ...turn, change: "added", html: `<ins class="diff-add">${escapeHTML(redactIfNeeded(turn.text || ""))}</ins>` };
+    }
+
+    function transcriptDeletedTurn(turn) {
+      return { ...turn, change: "deleted", html: `<del class="diff-del">${escapeHTML(redactIfNeeded(turn.text || ""))}</del>` };
+    }
+
+    function turnIdentity(turn) {
+      return [normalizeRole(turn.role), turn.type || "", turn.name || ""].join("\x1f");
+    }
+
+    function changeLabel(change) {
+      switch (change) {
+        case "added": return "added by proxy";
+        case "deleted": return "removed by proxy";
+        case "modified": return "modified by proxy";
+        default: return "";
+      }
+    }
+
+    function renderWordDiff(before, after) {
+      const oldTokens = diffTokens(before);
+      const newTokens = diffTokens(after);
+      const rows = diffLCS(oldTokens, newTokens);
+      let out = "";
+      for (const part of rows) {
+        const text = part.tokens.join("");
+        if (!text) continue;
+        if (part.kind === "same") out += escapeHTML(redactIfNeeded(text));
+        else if (part.kind === "add") out += `<ins class="diff-add">${escapeHTML(redactIfNeeded(text))}</ins>`;
+        else if (part.kind === "del") out += `<del class="diff-del">${escapeHTML(redactIfNeeded(text))}</del>`;
+      }
+      return out || "";
+    }
+
+    function diffTokens(text) {
+      return String(text || "").match(/\s+|[^\s]+/g) || [];
+    }
+
+    function diffLCS(oldTokens, newTokens) {
+      const n = oldTokens.length;
+      const m = newTokens.length;
+      const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) {
+        const row = dp[i];
+        const next = dp[i + 1];
+        for (let j = m - 1; j >= 0; j--) {
+          row[j] = oldTokens[i] === newTokens[j] ? next[j + 1] + 1 : Math.max(next[j], row[j + 1]);
+        }
+      }
+      const parts = [];
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (oldTokens[i] === newTokens[j]) {
+          pushDiff(parts, "same", oldTokens[i++]);
+          j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+          pushDiff(parts, "del", oldTokens[i++]);
+        } else {
+          pushDiff(parts, "add", newTokens[j++]);
+        }
+      }
+      while (i < n) pushDiff(parts, "del", oldTokens[i++]);
+      while (j < m) pushDiff(parts, "add", newTokens[j++]);
+      return parts;
+    }
+
+    function pushDiff(parts, kind, token) {
+      const last = parts[parts.length - 1];
+      if (last && last.kind === kind) last.tokens.push(token);
+      else parts.push({ kind, tokens: [token] });
+    }
+
+    function renderEvent(ev) {
+      const key = eventKey(ev);
+      const expanded = state.expanded.has(key);
+      const isTrace = ev.event === "secret_pipeline" || ev.stage;
+      const title = isTrace ? `trace: ${ev.stage || ev.event || "event"}` : ev.phase || "raw event";
+      const subtitle = [
+        formatTime(ev.timestamp),
+        ev.marker,
+        ev.status ? `status ${ev.status}` : "",
+        ev.body_bytes ? formatBytes(ev.body_bytes) : "",
+        ev._file ? `${ev._file}:${ev._line}` : "",
+      ].filter(Boolean).join(" | ");
+      return `<article class="event" data-key="${escapeAttr(key)}">
+        <div class="event-head">
+          <div class="event-title">${escapeHTML(title)}</div>
+          <div class="event-sub">${escapeHTML(subtitle)}</div>
+          <div class="event-actions">
+            <button data-toggle="${escapeAttr(key)}">${expanded ? "Collapse" : "Expand"}</button>
+            ${ev.body ? `<button data-copy="${escapeAttr(key)}">Copy body</button>` : ""}
+          </div>
+        </div>
+        <div class="event-body ${expanded ? "" : "hidden"}">
+          ${renderEventSummary(ev)}
+          ${renderBody(ev)}
+        </div>
+      </article>`;
+    }
+
+    function bindEventButtons() {
+      for (const button of els.detail.querySelectorAll("button[data-toggle]")) {
+        button.addEventListener("click", () => {
+          const key = button.dataset.toggle;
+          if (state.expanded.has(key)) state.expanded.delete(key);
+          else state.expanded.add(key);
+          renderDetail();
+        });
+      }
+      for (const button of els.detail.querySelectorAll("button[data-copy]")) {
+        button.addEventListener("click", async () => {
+          const ev = findEvent(button.dataset.copy);
+          if (!ev?.body) return;
+          await navigator.clipboard.writeText(displayBody(ev));
+          button.textContent = "Copied";
+          setTimeout(() => { button.textContent = "Copy body"; }, 1200);
+        });
+      }
+    }
+
+    function renderEventSummary(ev) {
+      const fields = { ...ev };
+      delete fields.body;
+      delete fields.headers;
+      const rows = [];
+      if (ev.headers && Object.keys(ev.headers).length) rows.push(`<div><strong>Headers:</strong> ${escapeHTML(JSON.stringify(ev.headers))}</div>`);
+      for (const key of ["prompt_prefix_cache_key", "prompt_prefix_sha256", "prompt_prefix_previous_sha256", "body_sha", "body_sha_before", "body_sha_after", "redacted_body_sha", "findings_count", "matched_count", "modified", "error_message"]) {
+        if (fields[key] !== undefined) rows.push(`<div><strong>${escapeHTML(key)}:</strong> ${escapeHTML(String(fields[key]))}</div>`);
+      }
+      if (Array.isArray(ev.findings)) rows.push(`<div><strong>Findings:</strong> ${escapeHTML(JSON.stringify(ev.findings))}</div>`);
+      const conversation = summarizeConversation(ev);
+      return `<div class="summary">${rows.join("")}${conversation}</div>`;
+    }
+
+    function renderBody(ev) {
+      if (!ev.body) return `<pre>${escapeHTML(JSON.stringify(ev, null, 2))}</pre>`;
+      if (ev.body_encoding && ev.body_encoding !== "") {
+        return `<pre>body_encoding=${escapeHTML(ev.body_encoding)}\n\n${escapeHTML(ev.body)}</pre>`;
+      }
+      return `<pre>${escapeHTML(displayBody(ev))}</pre>`;
+    }
+
+    function summarizeConversation(ev) {
+      if (!ev.body || ev.body_encoding) return "";
+      const parsed = parseBodyJSON(ev.body);
+      if (!parsed) {
+        if (looksLikeSSE(ev.body)) return summarizeSSE(ev.body);
+        return "";
+      }
+      const turns = [];
+      if (parsed.model) turns.push(`<div><strong>Model:</strong> ${escapeHTML(parsed.model)}</div>`);
+      for (const msg of extractTurns(parsed).slice(-12)) {
+        turns.push(`<div class="turn"><strong>${escapeHTML(msg.role || msg.type || "item")}:</strong>${escapeHTML(redactIfNeeded(snippet(msg.text || "", 500)))}</div>`);
+      }
+      return turns.join("");
+    }
+
+    function summarizeSSE(body) {
+      const lines = body.split(/\r?\n/).filter(line => line.startsWith("event:") || line.startsWith("data:")).slice(0, 30);
+      if (!lines.length) return "";
+      return `<div><strong>SSE preview:</strong></div><div class="turn">${escapeHTML(redactIfNeeded(lines.join("\n")))}</div>`;
+    }
+
+    function parseBodyJSON(body) {
+      const cached = state.bodyCache.get(body);
+      if (cached !== undefined) return cached;
+      try {
+        const parsed = JSON.parse(body);
+        state.bodyCache.set(body, parsed);
+        return parsed;
+      } catch (_) {
+        state.bodyCache.set(body, null);
+        return null;
+      }
+    }
+
+    function extractTurns(parsed) {
+      const out = [];
+      const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+      for (const msg of messages) out.push({ role: msg.role, text: contentText(msg.content) });
+      const input = Array.isArray(parsed.input) ? parsed.input : [];
+      for (const item of input) out.push({ role: item.role || item.type, type: item.type, text: contentText(item.content || item.text || item.output_text || item) });
+      const output = Array.isArray(parsed.output) ? parsed.output : [];
+      for (const item of output) out.push({ role: item.role || item.type, type: item.type, text: contentText(item.content || item.text || item.output_text || item) });
+      return out.filter(t => t.text);
+    }
+
+    function extractRequestTranscript(parsed, provider) {
+      const out = [];
+      if (parsed.instructions) {
+        out.push({ role: "system", type: "instructions", text: contentText(parsed.instructions) });
+      }
+      if (parsed.system) {
+        out.push({ role: "system", type: "system", text: contentText(parsed.system) });
+      }
+      if (Array.isArray(parsed.messages)) {
+        for (const msg of parsed.messages) {
+          out.push({
+            role: msg.role || msg.type || "message",
+            type: msg.type || "message",
+            name: msg.name || msg.tool_call_id || "",
+            text: contentText(msg.content || msg.text || msg),
+          });
+        }
+      }
+      if (Array.isArray(parsed.input)) {
+        for (const item of parsed.input) appendOpenAIInputTranscript(out, item);
+      } else if (typeof parsed.input === "string") {
+        out.push({ role: "user", type: "input", text: parsed.input });
+      }
+      if (Array.isArray(parsed.output)) {
+        for (const item of parsed.output) appendOpenAIInputTranscript(out, item);
+      }
+      if (!out.length && provider === "anthropic" && Array.isArray(parsed.messages)) {
+        for (const msg of parsed.messages) out.push({ role: msg.role || "message", type: "message", text: contentText(msg.content) });
+      }
+      return out.filter(turn => String(turn.text || "").trim() !== "");
+    }
+
+    function appendOpenAIInputTranscript(out, item) {
+      if (!item || typeof item !== "object") {
+        out.push({ role: "user", type: "input", text: contentText(item) });
+        return;
+      }
+      const type = item.type || "message";
+      const role = item.role || roleFromItemType(type);
+      if (type === "reasoning" && item.encrypted_content) {
+        out.push({ role: "assistant", type, text: "<encrypted_content>" });
+        return;
+      }
+      if (Array.isArray(item.content)) {
+        out.push({
+          role,
+          type,
+          name: item.name || item.call_id || item.tool_call_id || "",
+          text: contentText(item.content),
+        });
+        return;
+      }
+      out.push({
+        role,
+        type,
+        name: item.name || item.call_id || item.tool_call_id || "",
+        text: contentText(item.content || item.text || item.output || item),
+      });
+    }
+
+    function roleFromItemType(type) {
+      if (!type) return "message";
+      if (String(type).includes("tool") || String(type).includes("function")) return "tool";
+      if (String(type).includes("reasoning") || String(type).includes("assistant") || String(type).includes("output")) return "assistant";
+      if (String(type).includes("system") || String(type).includes("developer")) return "system";
+      return "user";
+    }
+
+    function normalizeRole(role) {
+      role = String(role || "message").toLowerCase();
+      if (role === "function" || role.includes("tool")) return "tool";
+      if (role === "developer") return "developer";
+      if (role === "system") return "system";
+      if (role === "assistant") return "assistant";
+      if (role === "user") return "user";
+      return role.replace(/[^a-z0-9_-]/g, "") || "message";
+    }
+
+    function contentText(value) {
+      if (value == null) return "";
+      if (typeof value === "string") return value;
+      if (Array.isArray(value)) return value.map(contentText).filter(Boolean).join("\n");
+      if (typeof value === "object") {
+        if (typeof value.text === "string") return value.text;
+        if (typeof value.input_text === "string") return value.input_text;
+        if (typeof value.output_text === "string") return value.output_text;
+        if (typeof value.content === "string") return value.content;
+        if (value.encrypted_content) return "<encrypted_content>";
+        return JSON.stringify(value);
+      }
+      return String(value);
+    }
+
+    function inferModel(events) {
+      for (const ev of events) {
+        if (!ev.body || ev.body_encoding) continue;
+        const parsed = parseBodyJSON(ev.body);
+        if (parsed?.model) return parsed.model;
+      }
+      return "";
+    }
+
+    function displayBody(ev) {
+      let body = ev.body || "";
+      const parsed = parseBodyJSON(body);
+      if (parsed) body = JSON.stringify(parsed, null, 2);
+      return redactIfNeeded(body);
+    }
+
+    function redactIfNeeded(text) {
+      if (els.showRaw.checked) return text;
+      return String(text)
+        .replace(/\b(cvis_)[A-Za-z0-9._:-]+/g, "$1<redacted>")
+        .replace(/\b(autovault[_:])[A-Za-z0-9._:-]+/gi, "$1<redacted>")
+        .replace(/\b(sk-[A-Za-z0-9_-]{12,})/g, "<redacted:openai-like>")
+        .replace(/\b(re_[A-Za-z0-9_-]{12,})/g, "<redacted:resend-like>")
+        .replace(/\b(gh[pousr]_[A-Za-z0-9_]{12,})/g, "<redacted:github-like>")
+        .replace(/(Authorization\s*:\s*Bearer\s+)[^\s"',}]+/gi, "$1<redacted>")
+        .replace(/("Authorization"\s*:\s*"Bearer\s+)[^"]+/gi, "$1<redacted>");
+    }
+
+    function renderParseErrors() {
+      return `<div class="notice parse-errors"><strong>Parse errors:</strong> ${state.parseErrors.length}<pre>${escapeHTML(JSON.stringify(state.parseErrors.slice(0, 20), null, 2))}</pre></div>`;
+    }
+
+    function allEvents(group) {
+      return [...(group.raw || []), ...(group.traces || [])];
+    }
+
+    function firstValue(events, key) {
+      return events.find(ev => ev[key])?.[key] || "";
+    }
+
+    function eventKey(ev) {
+      return `${ev._file || ""}:${ev._line || ""}:${ev.phase || ev.stage || ev.event || ""}`;
+    }
+
+    function findEvent(key) {
+      for (const group of state.groups) {
+        for (const ev of allEvents(group)) if (eventKey(ev) === key) return ev;
+      }
+      return null;
+    }
+
+    function kv(k, v) {
+      return `<div class="kv"><div class="k">${escapeHTML(k)}</div><div class="v">${escapeHTML(String(v || ""))}</div></div>`;
+    }
+
+    function chip(text, cls = "") {
+      if (!text) return "";
+      return `<span class="chip ${escapeAttr(cls)}">${escapeHTML(String(text))}</span>`;
+    }
+
+    function statusClass(statuses) {
+      const nums = statuses.map(Number);
+      if (nums.some(n => n >= 500)) return "bad";
+      if (nums.some(n => n >= 400)) return "warn";
+      if (nums.some(n => n >= 200 && n < 300)) return "good";
+      return "";
+    }
+
+    function unique(values) {
+      return [...new Set(values)];
+    }
+
+    function compareTime(a, b) {
+      return new Date(a || 0).getTime() - new Date(b || 0).getTime();
+    }
+
+    function durationMS(a, b) {
+      const start = new Date(a || 0).getTime();
+      const end = new Date(b || 0).getTime();
+      if (!start || !end || end < start) return null;
+      return end - start;
+    }
+
+    function formatTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString(undefined, { hour12: false });
+    }
+
+    function formatBytes(value) {
+      const n = Number(value) || 0;
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function shortID(value, max) {
+      value = String(value || "");
+      if (value.length <= max) return value;
+      const side = Math.max(4, Math.floor((max - 3) / 2));
+      return `${value.slice(0, side)}...${value.slice(-side)}`;
+    }
+
+    function snippet(value, max) {
+      value = String(value || "").replace(/\s+/g, " ").trim();
+      return value.length > max ? value.slice(0, max) + "..." : value;
+    }
+
+    function looksLikeSSE(body) {
+      return /^event:|^data:/m.test(body);
+    }
+
+    function escapeHTML(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHTML(value);
+    }
+  </script>
+</body>
+</html>

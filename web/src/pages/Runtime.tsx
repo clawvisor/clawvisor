@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Agent, type ApprovalRecord, type RuntimeEvent, type RuntimePolicyRule, type RuntimeStatus, type RuntimeSession, type StarterProfile } from '../api/client'
 
@@ -45,6 +45,7 @@ export default function Runtime() {
   const qc = useQueryClient()
   const [agentFilter, setAgentFilter] = useState<string>('all')
   const [editingRule, setEditingRule] = useState<RuleDraft | null>(null)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -54,32 +55,39 @@ export default function Runtime() {
     queryKey: ['runtime-status'],
     queryFn: () => api.runtime.status(),
   })
+  const fullProxyActive = !!status?.enabled
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
+    enabled: fullProxyActive,
     refetchInterval: 15_000,
   })
   const { data: approvals } = useQuery({
     queryKey: ['runtime-approvals'],
     queryFn: () => api.runtime.listApprovals(),
+    enabled: fullProxyActive,
     refetchInterval: 10_000,
   })
   const { data: events } = useQuery({
     queryKey: ['runtime-events'],
     queryFn: () => api.runtime.listEvents(),
+    enabled: fullProxyActive,
     refetchInterval: 10_000,
   })
   const { data: egressRules } = useQuery({
     queryKey: ['runtime-rules', 'egress', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'egress', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    enabled: fullProxyActive,
   })
   const { data: toolRules } = useQuery({
     queryKey: ['runtime-rules', 'tool', agentFilter],
     queryFn: () => api.runtime.listRules({ kind: 'tool', agent_id: agentFilter === 'all' ? undefined : agentFilter }),
+    enabled: fullProxyActive,
   })
   const { data: starterProfiles } = useQuery({
     queryKey: ['runtime-starter-profiles'],
     queryFn: () => api.runtime.listStarterProfiles(),
+    enabled: fullProxyActive,
   })
 
   const agentMap = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents])
@@ -120,6 +128,23 @@ export default function Runtime() {
       api.runtime.promoteEventToTask(eventId, lifetime),
     onSuccess: refreshRuntime,
   })
+  const enablePassthroughMut = useMutation({
+    mutationFn: (body: { agent_id?: string; ttl_seconds?: number; indefinite?: boolean; reason?: string; confirmation_text?: string }) =>
+      api.runtime.enablePassthrough(body),
+    onSuccess: () => {
+      setRuntimeError(null)
+      refreshRuntime()
+    },
+    onError: (err: Error) => setRuntimeError(err.message),
+  })
+  const disablePassthroughMut = useMutation({
+    mutationFn: (ruleId?: string) => api.runtime.disablePassthrough(ruleId),
+    onSuccess: () => {
+      setRuntimeError(null)
+      refreshRuntime()
+    },
+    onError: (err: Error) => setRuntimeError(err.message),
+  })
 
   const startCreateRule = (kind: 'egress' | 'tool') => {
     setEditingRule(kind === 'egress' ? emptyEgressRule() : emptyToolRule())
@@ -149,21 +174,34 @@ export default function Runtime() {
         </div>
       </div>
 
-      {status && (
+      {runtimeError && (
+        <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {runtimeError}
+        </div>
+      )}
+
+      {status && fullProxyActive && (
         <RuntimeStatusPanel
           status={status}
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
+          agents={agents}
+          selectedAgentId={agentFilter === 'all' ? '' : agentFilter}
+          busy={enablePassthroughMut.isPending || disablePassthroughMut.isPending}
+          onEnablePassthrough={(body) => enablePassthroughMut.mutate(body)}
+          onDisablePassthrough={(ruleId) => disablePassthroughMut.mutate(ruleId)}
         />
       )}
 
-      <StarterProfilesPanel
-        profiles={starterProfiles?.entries ?? []}
-        agents={agents}
-        agentFilter={agentFilter}
-        onApplied={refreshRuntime}
-      />
+      {fullProxyActive && (
+        <StarterProfilesPanel
+          profiles={starterProfiles?.entries ?? []}
+          agents={agents}
+          agentFilter={agentFilter}
+          onApplied={refreshRuntime}
+        />
+      )}
 
-      {editingRule && (
+      {fullProxyActive && editingRule && (
         <RuleEditorCard
           key={editingRule.id ?? `${editingRule.kind}-${editingRule.action}-${editingRule.host ?? editingRule.tool_name ?? 'new'}`}
           agents={agents}
@@ -177,50 +215,83 @@ export default function Runtime() {
         />
       )}
 
-      <RuleSection
-        title="Global Egress Rules"
-        subtitle="Fast-path controls for background and harness HTTP noise."
-        rules={egressRules?.entries ?? []}
-        agents={agentMap}
-        onNew={() => startCreateRule('egress')}
-        onEdit={setEditingRule}
-        onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-        onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-      />
+      {fullProxyActive && (
+        <>
+          <RuleSection
+            title="Global Egress Rules"
+            subtitle="Fast-path controls for background and harness HTTP noise."
+            rules={egressRules?.entries ?? []}
+            agents={agentMap}
+            onNew={() => startCreateRule('egress')}
+            onEdit={setEditingRule}
+            onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+            onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
+          />
 
-      <RuleSection
-        title="Global Tool Rules"
-        subtitle="Allow, review, or deny repeated tool-use patterns before they hit task friction."
-        rules={toolRules?.entries ?? []}
-        agents={agentMap}
-        onNew={() => startCreateRule('tool')}
-        onEdit={setEditingRule}
-        onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
-        onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
-      />
+          <RuleSection
+            title="Global Tool Rules"
+            subtitle="Allow, review, or deny repeated tool-use patterns before they hit task friction."
+            rules={toolRules?.entries ?? []}
+            agents={agentMap}
+            onNew={() => startCreateRule('tool')}
+            onEdit={setEditingRule}
+            onToggle={(rule) => updateRuleMut.mutate({ ...rule, scope: rule.agent_id ? 'agent' : 'global', enabled: !rule.enabled })}
+            onDelete={(rule) => deleteRuleMut.mutate(rule.id)}
+          />
 
-      <RuntimeApprovalsPanel approvals={liveApprovals} onResolved={refreshRuntime} />
+          <RuntimeApprovalsPanel approvals={liveApprovals} onResolved={refreshRuntime} />
 
-      <RuntimeSessionsPanel sessions={sessions?.entries ?? []} agents={agentMap} onUpdated={refreshRuntime} />
+          <RuntimeSessionsPanel sessions={sessions?.entries ?? []} agents={agentMap} onUpdated={refreshRuntime} />
 
-      <RuntimeEventsPanel
-        events={events?.entries ?? []}
-        agents={agentMap}
-        onResolved={refreshRuntime}
-        onEditRule={async (event, action) => {
-          const candidate = await api.runtime.getRuleCandidate(event.id, action)
-          setEditingRule({
-            ...candidate.rule,
-            scope: candidate.scope_default,
-          })
-        }}
-        onPromoteTask={(eventId, lifetime) => promoteTaskMut.mutate({ eventId, lifetime })}
-      />
+          <RuntimeEventsPanel
+            events={events?.entries ?? []}
+            agents={agentMap}
+            onResolved={refreshRuntime}
+            onEditRule={async (event, action) => {
+              const candidate = await api.runtime.getRuleCandidate(event.id, action)
+              setEditingRule({
+                ...candidate.rule,
+                scope: candidate.scope_default,
+              })
+            }}
+            onPromoteTask={(eventId, lifetime) => promoteTaskMut.mutate({ eventId, lifetime })}
+          />
+        </>
+      )}
     </div>
   )
 }
 
-export function RuntimeStatusPanel({ status, activeSessionCount }: { status: RuntimeStatus; activeSessionCount: number }) {
+export function RuntimeStatusPanel({
+  status,
+  activeSessionCount,
+  agents = [],
+  selectedAgentId = '',
+  busy = false,
+  onEnablePassthrough,
+  onDisablePassthrough,
+}: {
+  status: RuntimeStatus
+  activeSessionCount: number
+  agents?: Agent[]
+  selectedAgentId?: string
+  busy?: boolean
+  onEnablePassthrough?: (body: { agent_id?: string; ttl_seconds?: number; indefinite?: boolean; reason?: string; confirmation_text?: string }) => void
+  onDisablePassthrough?: (ruleId?: string) => void
+}) {
+  const [duration, setDuration] = useState('600')
+  const [scope, setScope] = useState(selectedAgentId || '')
+  const [confirmIndefinite, setConfirmIndefinite] = useState(false)
+  const [confirmGlobal, setConfirmGlobal] = useState(false)
+  const passthrough = status.passthrough
+  const passthroughActive = !!passthrough?.enabled
+  const canControl = !!onEnablePassthrough && !!onDisablePassthrough
+  const ttlSeconds = duration === 'indefinite' ? undefined : Number(duration)
+  useEffect(() => {
+    setScope(selectedAgentId || '')
+    setConfirmGlobal(false)
+  }, [selectedAgentId])
+  const globalScope = scope === ''
   return (
     <section className="rounded-md border border-border-default bg-surface-1 p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -235,6 +306,9 @@ export function RuntimeStatusPanel({ status, activeSessionCount }: { status: Run
           <span className="rounded bg-surface-2 px-2.5 py-1 text-text-secondary">
             {activeSessionCount} active session{activeSessionCount === 1 ? '' : 's'}
           </span>
+          <span className={`rounded px-2.5 py-1 ${passthroughActive ? 'bg-warning/15 text-warning' : 'bg-surface-2 text-text-tertiary'}`}>
+            {passthroughActive ? 'passthrough active' : 'passthrough off'}
+          </span>
         </div>
       </div>
       <div className="grid gap-3 md:grid-cols-4">
@@ -247,6 +321,87 @@ export function RuntimeStatusPanel({ status, activeSessionCount }: { status: Run
         <div className="rounded border border-border-subtle bg-surface-0 p-3">
           <div className="text-xs uppercase tracking-wider text-text-tertiary">Proxy endpoint</div>
           <code className="mt-1 block text-xs text-text-primary break-all">{status.proxy_url}</code>
+        </div>
+      )}
+      {canControl && (
+        <div className="rounded border border-warning/30 bg-warning/5 p-4 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Break-glass passthrough</div>
+              <div className="text-xs text-text-tertiary mt-1">
+                Temporarily stop proxy-lite intervention while keeping best-effort audit.
+              </div>
+              {passthroughActive && (
+                <div className="mt-2 text-xs text-warning">
+                  Active{passthrough.agent_id ? ` for ${agents.find(a => a.id === passthrough.agent_id)?.name ?? 'selected agent'}` : ' for all agents'}
+                  {passthrough.expires_at ? ` until ${new Date(passthrough.expires_at).toLocaleString()}` : ' indefinitely'}.
+                </div>
+              )}
+            </div>
+            {passthroughActive ? (
+              <button
+                disabled={busy}
+                onClick={() => onDisablePassthrough?.(passthrough.rule_id)}
+                className="rounded border border-warning/40 px-4 py-2 text-sm font-medium text-warning hover:bg-warning/10 disabled:opacity-50"
+              >
+                Disable passthrough
+              </button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={scope}
+                  onChange={e => {
+                    setScope(e.target.value)
+                    setConfirmGlobal(false)
+                  }}
+                  className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+                >
+                  <option value="">All agents</option>
+                  {agents.map(agent => (
+                    <option key={agent.id} value={agent.id}>{agent.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={duration}
+                  onChange={e => {
+                    setDuration(e.target.value)
+                    if (e.target.value !== 'indefinite') setConfirmIndefinite(false)
+                  }}
+                  className="rounded border border-border-default bg-surface-0 px-3 py-2 text-sm text-text-primary"
+                >
+                  <option value="600">10 minutes</option>
+                  <option value="3600">1 hour</option>
+                  <option value="172800">2 days</option>
+                  <option value="indefinite">Indefinite</option>
+                </select>
+                {duration === 'indefinite' && (
+                  <label className="flex items-center gap-2 text-xs text-text-secondary">
+                    <input type="checkbox" checked={confirmIndefinite} onChange={e => setConfirmIndefinite(e.target.checked)} />
+                    Confirm indefinite
+                  </label>
+                )}
+                {globalScope && (
+                  <label className="flex items-center gap-2 text-xs text-text-secondary">
+                    <input type="checkbox" checked={confirmGlobal} onChange={e => setConfirmGlobal(e.target.checked)} />
+                    Confirm all agents
+                  </label>
+                )}
+                <button
+                  disabled={busy || (duration === 'indefinite' && !confirmIndefinite) || (globalScope && !confirmGlobal)}
+                  onClick={() => onEnablePassthrough?.({
+                    agent_id: scope || undefined,
+                    ttl_seconds: ttlSeconds,
+                    indefinite: duration === 'indefinite',
+                    confirmation_text: globalScope ? 'enable global passthrough' : duration === 'indefinite' ? 'enable passthrough' : undefined,
+                    reason: 'dashboard break-glass passthrough',
+                  })}
+                  className="rounded bg-warning px-4 py-2 text-sm font-medium text-surface-0 hover:bg-warning/90 disabled:opacity-50"
+                >
+                  Enable
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>
@@ -453,6 +608,7 @@ export function RuleEditorCard({
   busy,
   allowedKinds = ['egress', 'tool'],
   defaultAgentId,
+  agentScopeLabel = 'One agent',
   toolNameOptions = [],
   onCancel,
   onSave,
@@ -462,6 +618,7 @@ export function RuleEditorCard({
   busy: boolean
   allowedKinds?: Array<'egress' | 'tool'>
   defaultAgentId?: string
+  agentScopeLabel?: string
   toolNameOptions?: string[]
   onCancel: () => void
   onSave: (draft: RuleDraft) => void
@@ -538,7 +695,7 @@ export function RuleEditorCard({
           <legend className="text-xs font-medium uppercase tracking-wider text-text-tertiary">Applies to</legend>
           <RadioGroup
             options={[
-              { value: 'agent', label: 'One agent' },
+              { value: 'agent', label: agentScopeLabel },
               { value: 'global', label: 'All agents' },
             ]}
             value={local.scope ?? 'agent'}

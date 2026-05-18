@@ -82,6 +82,45 @@ func TestRuntimeSecretCaptureKnownPrefixAndReusePlaceholder(t *testing.T) {
 	}
 }
 
+func TestRuntimeSecretCaptureDoesNotRewriteToolSchemaNames(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-schema.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "schema-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	cfg := config.Default()
+	cfg.LLM.Verification.Enabled = false
+	hooks := InboundSecretHooks{Store: st, Vault: v, Config: cfg}
+	body := []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_apps__github","tools":[{"type":"function","name":"_compare_commits"}]}],"messages":[{"role":"user","content":[{"type":"text","text":"inspect the branch"}]}]}`)
+
+	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, hooks, runtimeSession, "api.openai.com", body)
+	if err != nil {
+		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
+	}
+	if summary != nil || observed != 0 {
+		t.Fatalf("tool schema should not produce secret findings: summary=%+v observed=%d", summary, observed)
+	}
+	if string(rewritten) != string(body) {
+		t.Fatalf("tool schema should not be rewritten:\n%s", string(rewritten))
+	}
+}
+
 func TestRuntimeSecretCaptureRecordsScanSubspans(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-spans.db"))

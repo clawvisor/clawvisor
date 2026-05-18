@@ -61,3 +61,24 @@ func TestClaudeStarterProfileIncludesObservedStartupTraffic(t *testing.T) {
 		}
 	}
 }
+
+func TestStarterProfilesCoverInitialHarnessSetWithReadOnlyToolRules(t *testing.T) {
+	for _, id := range []string{"claude_code", "codex", "openclaw", "hermes"} {
+		profile, ok := StarterProfileByID(id)
+		if !ok {
+			t.Fatalf("StarterProfileByID(%s) = false, want true", id)
+		}
+		foundToolAllow := false
+		for _, rule := range profile.Rules {
+			if rule.Kind == "tool" && rule.Action == "allow" && rule.ToolName != "" {
+				foundToolAllow = true
+				if rule.ToolName == "Bash" || rule.ToolName == "exec" || rule.ToolName == "exec_command" {
+					t.Fatalf("%s should not blanket-allow shell tools through starter profile: %+v", id, rule)
+				}
+			}
+		}
+		if !foundToolAllow {
+			t.Fatalf("%s profile should include read-only tool allow rules", id)
+		}
+	}
+}

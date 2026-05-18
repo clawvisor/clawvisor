@@ -18,7 +18,7 @@ var (
 	prefixBodyRe = regexp.MustCompile(`\b[A-Za-z]{2,16}[_-][A-Za-z0-9_-]{16,}\b`)
 	blobRe       = regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}\b`)
 	uuidRe       = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
-	passwordRe   = regexp.MustCompile(`(?i)(?:password|passcode|secret|api[_ -]?key|access[_ -]?token)\s*(?:is|=|:)?\s*([A-Za-z0-9_./+=:-]{8,})`)
+	passwordRe   = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_-])(?:password|passcode|secret|api[_ -]?key|access[_ -]?token)\b\s*(?:(?:is\s*)?(?:=|:)|is)\s*([A-Za-z0-9_./+=:-]{8,})`)
 )
 
 const minEntropyBits = 3.5
@@ -38,8 +38,12 @@ func DetectCandidates(s string) []Candidate {
 	}
 	seen := map[string]bool{}
 	var out []Candidate
+	uuidLocs := uuidRe.FindAllStringIndex(s, -1)
 	add := func(match string, start, end int) {
-		if match == "" || seen[match] || LooksLikeShadow(match) || looksLikeIdentifier(match) {
+		if match == "" || seen[match] || LooksLikeShadow(match) || LooksLikeIdentifier(match) {
+			return
+		}
+		if containedInAnySpan(start, end, uuidLocs) && !uuidCandidateRe.MatchString(match) {
 			return
 		}
 		ent := shannonEntropy(match)
@@ -67,10 +71,16 @@ func DetectCandidates(s string) []Candidate {
 	return out
 }
 
-func looksLikeIdentifier(s string) bool {
-	if len(s) < 16 {
-		return false
+func containedInAnySpan(start, end int, spans [][]int) bool {
+	for _, span := range spans {
+		if len(span) == 2 && start >= span[0] && end <= span[1] {
+			return true
+		}
 	}
+	return false
+}
+
+func LooksLikeIdentifier(s string) bool {
 	hasSep := strings.ContainsAny(s, "_-")
 	if !hasSep {
 		return false

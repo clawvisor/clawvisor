@@ -48,9 +48,9 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 	return Verdict{}, false
 }
 
-// localOnlyTools enumerates tool names that the postprocess decision-
-// gate may pass through without requiring an approved task scope.
-// Two categories live here:
+// localOnlyTools enumerates tool names whose payloads should not be
+// interpreted as outbound network calls by the credential inspector.
+// Authorization is handled separately by runtime tool policies.
 //
 //  1. Pure local reads. Read / Glob / Grep / BashOutput / ToolSearch
 //     and their Codex equivalent (read_file). These don't change
@@ -58,41 +58,50 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 //
 //  2. Harness-internal lifecycle / planning state. Skill / Agent /
 //     EnterPlanMode / ExitPlanMode / EnterWorktree / ExitWorktree /
-//     ScheduleWakeup / TodoWrite / KillShell. These do mutate
-//     state, but the state is the harness's own scheduling / planning
-//     loop, not anything user-observable. Gating these on a task
-//     would force the user to approve "let me plan" — useless
-//     friction.
+//     ScheduleWakeup / TodoWrite / KillShell. These can mutate
+//     harness state, but they do not transmit placeholders to a
+//     remote API by themselves.
 //
 // User-observable writes (Edit / Write / NotebookEdit and Codex's
-// apply_patch) are NOT in this set; they go through the task-scope
-// gate per the design contract. The intent is: writes that the user
-// can see touch require an approved task; reads and harness internals
-// run freely.
+// apply_patch) are NOT in this set because their payloads may still
+// be relevant to local-file policy and audit paths.
 //
-// Meta-tools (Skill, Agent) are safe to allowlist because each
+// Meta-tools (Skill, Agent) are classified local here because each
 // sub-tool's tool_use is inspected separately when it fires; the
 // dispatch itself just trampolines.
 var localOnlyTools = map[string]struct{}{
 	// Pure local reads — Claude Code.
 	"Read":       {},
+	"View":       {},
+	"Open":       {},
+	"LS":         {},
+	"List":       {},
 	"Glob":       {},
 	"Grep":       {},
+	"Search":     {},
 	"BashOutput": {},
 	"ToolSearch": {},
+	"TodoRead":   {},
+	"CronList":   {},
+	"LSP":        {},
+	"Monitor":    {},
 	// Pure local reads — Codex.
 	"read_file": {},
 	// Harness-internal lifecycle / planning state. Mutating, but the
 	// state is not user-observable.
-	"TodoWrite":      {},
-	"KillShell":      {},
-	"Skill":          {},
-	"Agent":          {},
-	"ExitPlanMode":   {},
-	"EnterPlanMode":  {},
-	"EnterWorktree":  {},
-	"ExitWorktree":   {},
-	"ScheduleWakeup": {},
+	"TodoWrite":        {},
+	"KillShell":        {},
+	"Skill":            {},
+	"Agent":            {},
+	"CronCreate":       {},
+	"CronDelete":       {},
+	"ExitPlanMode":     {},
+	"EnterPlanMode":    {},
+	"EnterWorktree":    {},
+	"ExitWorktree":     {},
+	"PushNotification": {},
+	"RemoteTrigger":    {},
+	"ScheduleWakeup":   {},
 	// Claude Code's in-conversation Task family — manage the
 	// harness's TODO list / read/stop already-running subagents.
 	// TaskOutput/TaskStop trampoline to subagent state whose own
@@ -110,19 +119,72 @@ var localOnlyTools = map[string]struct{}{
 	"AskUserQuestion": {},
 }
 
+var defaultAllowedTools = map[string]struct{}{
+	// Read / inspection tools.
+	"Read":       {},
+	"View":       {},
+	"Open":       {},
+	"LS":         {},
+	"List":       {},
+	"Glob":       {},
+	"Grep":       {},
+	"Search":     {},
+	"ToolSearch": {},
+	"BashOutput": {},
+	"TodoRead":   {},
+	"TaskList":   {},
+	"TaskGet":    {},
+	"TaskOutput": {},
+	"CronList":   {},
+	"LSP":        {},
+	"Monitor":    {},
+	// Harness meta/control tools.
+	"Agent":                       {},
+	"AskUserQuestion":             {},
+	"CronCreate":                  {},
+	"CronDelete":                  {},
+	"EnterPlanMode":               {},
+	"ExitPlanMode":                {},
+	"EnterWorktree":               {},
+	"ExitWorktree":                {},
+	"PushNotification":            {},
+	"RemoteTrigger":               {},
+	"ScheduleWakeup":              {},
+	"Skill":                       {},
+	"TodoWrite":                   {},
+	"KillShell":                   {},
+	"TaskCreate":                  {},
+	"TaskStop":                    {},
+	"TaskUpdate":                  {},
+	"read_file":                   {},
+	"list_mcp_resources":          {},
+	"list_mcp_resource_templates": {},
+	"read_mcp_resource":           {},
+}
+
 func isLocalOnlyTool(name string) bool {
 	return IsLocalOnlyTool(name)
 }
 
-// IsLocalOnlyTool reports whether name is in the well-known set of
-// tools that never make outbound HTTP calls. Exported so the
-// postprocess decision-gate path can short-circuit task-scope
-// enforcement for these tools: requiring an approved task scope to
-// run Read / Edit / TodoWrite / Skill / etc. is over-restriction
-// since they're harness-local and can't exfiltrate credentials.
 func IsLocalOnlyTool(name string) bool {
 	_, ok := localOnlyTools[name]
 	return ok
+}
+
+func IsDefaultAllowedTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	if _, ok := defaultAllowedTools[name]; ok {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "read", "view", "open", "ls", "list", "glob", "grep", "search", "rg":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseStructuredFetch handles tools whose input is a JSON object with a

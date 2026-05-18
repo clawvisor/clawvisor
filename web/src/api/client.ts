@@ -553,8 +553,8 @@ export interface Task {
   status: 'pending_approval' | 'pending_scope_expansion' | 'active' | 'completed' | 'expired' | 'denied' | 'revoked'
   authorized_actions: TaskAction[]
   planned_calls?: PlannedCall[]
-  expected_tools_json?: ExpectedTool[]
-  expected_egress_json?: ExpectedEgress[]
+  expected_tools?: ExpectedTool[]
+  expected_egress?: ExpectedEgress[]
   intent_verification_mode?: 'strict' | 'lenient' | 'off'
   expected_use?: string
   schema_version?: number
@@ -648,6 +648,7 @@ export interface ActivityBucket {
 export interface RuntimeStatus {
   enabled: boolean
   proxy_lite_enabled?: boolean
+  passthrough?: RuntimePassthroughState
   proxy_url: string
   observation_mode_default: boolean
   inline_approval_enabled: boolean
@@ -657,6 +658,14 @@ export interface RuntimeStatus {
   inject_stored_bearer?: boolean
   ca_cert_pem: string
   starter_profiles?: StarterProfile[]
+}
+
+export interface RuntimePassthroughState {
+  enabled: boolean
+  rule_id?: string
+  agent_id?: string
+  expires_at?: string
+  reason?: string
 }
 
 export interface RuntimeSession {
@@ -697,7 +706,7 @@ export interface RuntimePolicyRule {
   id: string
   user_id: string
   agent_id?: string
-  kind: 'egress' | 'tool' | 'service'
+  kind: 'egress' | 'tool' | 'service' | 'passthrough' | 'secret_suppression' | 'secret_rewrite'
   action: 'allow' | 'deny' | 'review'
   service?: string
   service_action?: string
@@ -721,9 +730,16 @@ export interface RuntimePolicyRule {
 export interface RuntimeToolControl {
   agent_id: string
   tool_name: string
-  action: 'allow' | 'review' | 'deny'
+  // Agent-scoped UI "unset" is persisted by the backend as a review fallback
+  // rule so task scopes still govern the tool without an explicit allow/deny.
+  action: 'unset' | 'allow' | 'review' | 'deny'
   rule_id?: string
   source: 'default' | 'request' | 'observed' | 'rule'
+  scope?: 'unset' | 'global' | 'agent'
+  global_action: 'unset' | 'allow' | 'review' | 'deny'
+  global_rule_id?: string
+  agent_action: 'unset' | 'allow' | 'review' | 'deny'
+  agent_rule_id?: string
   last_seen_at?: string
   advanced_rule_count: number
   advanced_rules?: RuntimePolicyRule[]
@@ -1263,6 +1279,10 @@ export const api = {
   },
   runtime: {
     status: () => get<RuntimeStatus>('/api/runtime/status'),
+    enablePassthrough: (body: { agent_id?: string; ttl_seconds?: number; indefinite?: boolean; reason?: string; confirmation_text?: string }) =>
+      post<RuntimePassthroughState>('/api/runtime/passthrough', body),
+    disablePassthrough: (ruleId?: string) =>
+      del<{ status: string }>(ruleId ? `/api/runtime/passthrough/${encodeURIComponent(ruleId)}` : '/api/runtime/passthrough'),
     listApprovals: () => get<{ entries: ApprovalRecord[]; total: number }>('/api/runtime/approvals'),
     resolveApproval: (approvalId: string, resolution: 'allow_once' | 'allow_session' | 'allow_always' | 'deny') =>
       post<{ approval_id: string; status: string; resolution: string; task_id?: string }>(
@@ -1284,7 +1304,7 @@ export const api = {
       }),
     listToolControls: (agentId: string) =>
       get<{ entries: RuntimeToolControl[]; total: number }>('/api/runtime/tool-controls', { agent_id: agentId }),
-    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'allow' | 'review' | 'deny' }) =>
+    updateToolControl: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny'; scope?: 'global' | 'agent' }) =>
       put<RuntimeToolControl>('/api/runtime/tool-controls', control),
     createRule: (rule: Partial<RuntimePolicyRule> & { scope?: 'agent' | 'global' }) =>
       post<RuntimePolicyRule>('/api/runtime/rules', rule),

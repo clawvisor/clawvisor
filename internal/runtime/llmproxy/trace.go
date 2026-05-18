@@ -83,6 +83,7 @@ const (
 	TraceEventControlRewrite = "control_rewrite"
 	TraceEventNonceMint      = "nonce_mint"
 	TraceEventRewriteApplied = "rewrite_applied"
+	TraceEventSecretPipeline = "secret_pipeline"
 )
 
 const (
