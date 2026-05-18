@@ -8,16 +8,16 @@ user turn a blocked tool approval into an inline-approved task.
 `StageTool`
 
 - Standard pending tool approval.
-- The user may reply `approve`, `deny`, or `task`.
-- `approve`/`deny` are handled by `TryReleasePendingApproval`.
+- The user may reply `y`/`yes`, `n`/`no`, or `task`.
+- Yes/no replies are normalized to `approve`/`deny` and handled by `TryReleasePendingApproval`.
 - `task` is handled by `RewriteTaskApprovalReply`.
 
 `StageAwaitingTaskApproval`
 
 - The model emitted `POST /control/tasks?surface=inline`, and the proxy
   substituted a task approval prompt back into the conversation.
-- The user may reply `approve` or `deny`.
-- `approve`/`deny` are handled by `RewriteInlineTaskApprovalReply`.
+- The user may reply `y`/`yes` or `n`/`no`.
+- Yes/no replies are normalized to `approve`/`deny` and handled by `RewriteInlineTaskApprovalReply`.
 - If this stage reaches `TryReleasePendingApproval`, release fails
   closed with `inline_task_preprocess_missing` and leaves the hold in
   cache for retry.
@@ -30,9 +30,9 @@ Rules:
 
 - Explicit approval IDs target only that hold.
 - Bare replies target the newest visible hold across all stages.
-- `approve`/`deny` on a `StageAwaitingTaskApproval` hold route to the
+- Normalized `approve`/`deny` on a `StageAwaitingTaskApproval` hold route to the
   inline task approval transition.
-- `approve`/`deny` on any other hold route to regular tool release.
+- Normalized `approve`/`deny` on any other hold route to regular tool release.
 - `task` routes to the inline task-definition transition for the
   targeted hold.
 
@@ -70,8 +70,8 @@ Effects:
 `RewriteInlineTaskApprovalReply`
 
 ```text
-StageAwaitingTaskApproval + approve -> resolveInlineTaskApproval(success or failure)
-StageAwaitingTaskApproval + deny    -> resolveInlineTaskApproval(denied)
+StageAwaitingTaskApproval + yes -> resolveInlineTaskApproval(success or failure)
+StageAwaitingTaskApproval + no  -> resolveInlineTaskApproval(denied)
 ```
 
 Effects:
@@ -86,8 +86,8 @@ Effects:
 `TryReleasePendingApproval`
 
 ```text
-StageTool + approve -> release tool
-StageTool + deny    -> deny tool
+StageTool + yes -> release tool
+StageTool + no  -> deny tool
 ```
 
 Effects:

@@ -35,7 +35,7 @@ type InlineApprovalOutcome struct {
 	// embedding in an LLM-facing context note.
 	FailureReason string
 	// RequestID links this resolution back to the lite-proxy request
-	// that processed the user's approve/deny reply.
+	// that processed the user's yes/no reply.
 	RequestID string
 	// ResolvedAt is when the proxy resolved the inline approval.
 	ResolvedAt time.Time

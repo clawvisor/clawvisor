@@ -7,7 +7,7 @@ The lite-proxy is an LLM termination + tool-mediation surface that runs inside t
 
 - Swaps the agent token for the real upstream API key from the vault before forwarding to Anthropic / OpenAI.
 - Inspects every tool_use in the response, rewrites credentialed calls through Clawvisor's resolver, and gates them on task scope.
-- Holds tool_uses that need user approval, returning a synthesized prompt the user replies to inline (`approve` / `deny` / `task`).
+- Holds tool_uses that need user approval, returning a synthesized prompt the user replies to inline (`y`/`yes` / `n`/`no` / `task`).
 - Substitutes vaulted credentials into the outbound HTTP call at proxy time so the agent never holds the real secret.
 
 It is an alternative to the [runtime proxy](RUNTIME_PROXY.md) (CONNECT/TLS-MITM). They solve overlapping problems with different tradeoffs:
@@ -221,14 +221,14 @@ Tool: Bash
 Reason: no matching task scope
 Input: mkdir -p /tmp/landing
 
-Reply approve to run this tool call, deny to block it,
+Reply (y)es to run this tool call, (n)o to block it,
 or task to instruct the agent to include this in a task definition for approval.
 ```
 
 Three replies:
 
-- `approve` — release the held tool_use. Daemon rewrites and re-emits it; harness runs it; model gets the result.
-- `deny` — refuse it. Model sees a synthetic refusal tool_result and stops.
+- `y` / `yes` — release the held tool_use. Daemon rewrites and re-emits it; harness runs it; model gets the result.
+- `n` / `no` — refuse it. Model sees a synthetic refusal tool_result and stops.
 - `task` — daemon tells the model to POST a task definition that covers this work. Once the task is approved, the original tool_use re-emits within the new scope.
 
 The dashboard approval surface lives in parallel. Async agents and multi-agent control panels still use it. Single-user interactive sessions can stay entirely in chat.

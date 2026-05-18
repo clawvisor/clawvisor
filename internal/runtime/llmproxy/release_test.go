@@ -59,6 +59,26 @@ func TestTryReleasePendingApprovalParsesLongExplicitID(t *testing.T) {
 	if verb != "deny" || id != "cv-abcdef123456" {
 		t.Fatalf("short approval ID compatibility broke: verb=%q id=%q", verb, id)
 	}
+	verb, id = conversation.ParseApprovalReplyText("yes cv-abcdefghijklmnopqrstuvwxyz")
+	if verb != "approve" || id != "cv-abcdefghijklmnopqrstuvwxyz" {
+		t.Fatalf("yes approval ID did not normalize: verb=%q id=%q", verb, id)
+	}
+	verb, id = conversation.ParseApprovalReplyText("Y")
+	if verb != "approve" || id != "" {
+		t.Fatalf("uppercase bare yes shorthand did not normalize: verb=%q id=%q", verb, id)
+	}
+	verb, id = conversation.ParseApprovalReplyText("No cv-abcdef123456")
+	if verb != "deny" || id != "cv-abcdef123456" {
+		t.Fatalf("capitalized explicit no did not normalize: verb=%q id=%q", verb, id)
+	}
+	verb, id = conversation.ParseApprovalReplyText("n")
+	if verb != "deny" || id != "" {
+		t.Fatalf("bare no shorthand did not normalize: verb=%q id=%q", verb, id)
+	}
+	verb, id = conversation.ParseApprovalReplyText("I see no cv-abcdef123456 in the message")
+	if verb != "" || id != "" {
+		t.Fatalf("prose containing no + approval ID must not parse: verb=%q id=%q", verb, id)
+	}
 	verb, id = conversation.ParseApprovalReplyText("task")
 	if verb != "task" || id != "" {
 		t.Fatalf("bare task did not parse: verb=%q id=%q", verb, id)

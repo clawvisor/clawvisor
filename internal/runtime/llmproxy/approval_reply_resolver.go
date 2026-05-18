@@ -37,6 +37,7 @@ type approvalReplyRoutingRequest struct {
 //
 //   - explicit approval IDs target only that hold
 //   - bare replies target the newest visible hold across stages
+//   - yes/no replies normalize to approve/deny
 //   - approve/deny on an inline-task hold belongs to the inline rewriter
 //   - approve/deny on any other hold belongs to the regular release path
 //   - task starts the inline task-definition flow for the targeted hold
