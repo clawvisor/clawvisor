@@ -351,6 +351,7 @@ function AgentDetailView({
     const rules = [...(allEgressRules?.entries ?? []), ...(allToolRules?.entries ?? [])]
     return rules.filter(rule => !rule.agent_id || rule.agent_id === agent.id)
   }, [agent.id, allEgressRules, allToolRules])
+  const proxyLiteActive = runtimePolicyUI && !!runtimeStatus?.proxy_lite_enabled
 
   return (
     <div className="p-4 sm:p-8 space-y-8">
@@ -398,8 +399,8 @@ function AgentDetailView({
 
       {runtimePolicyUI && runtimeStatus?.enabled && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
 
-      <AgentLiteProxyPanel agentId={agent.id} />
-      <AgentLLMCredentialsPanel agentId={agent.id} />
+      {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} />}
+      {proxyLiteActive && <AgentLLMCredentialsPanel agentId={agent.id} />}
 
       {runtimePolicyUI && (
         <AgentPolicyPanel
