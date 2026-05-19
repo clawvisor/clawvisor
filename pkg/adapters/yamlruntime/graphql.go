@@ -69,7 +69,10 @@ func executeGraphQL(ctx context.Context, client *http.Client, baseURL string, ac
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}

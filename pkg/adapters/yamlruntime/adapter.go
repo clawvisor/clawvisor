@@ -124,7 +124,10 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	}
 
 	// Get credential fields for path and base-URL interpolation.
-	credFields, _ := credentialFields(a.def.Auth, req.Credential)
+	credFields, err := credentialFields(a.def.Auth, req.Credential)
+	if err != nil {
+		return nil, fmt.Errorf("%s: parsing credentials: %w", a.def.Service.ID, err)
+	}
 
 	// Resolve variables in base_url.
 	baseURL, err := a.resolvedBaseURL(req.Config, credFields)
@@ -155,7 +158,10 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, confi
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
 
-	credFields, _ := credentialFields(a.def.Auth, credBytes)
+	credFields, err := credentialFields(a.def.Auth, credBytes)
+	if err != nil {
+		return "", fmt.Errorf("%s: identity fetch: parsing credentials: %w", a.def.Service.ID, err)
+	}
 	baseURL, err := a.resolvedBaseURL(config, credFields)
 	if err != nil {
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
