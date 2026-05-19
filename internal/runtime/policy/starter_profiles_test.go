@@ -123,3 +123,57 @@ func TestOpenClawStarterProfileMatchesDiscoveredReadOnlyTools(t *testing.T) {
 		}
 	}
 }
+
+func TestHermesStarterProfileMatchesDiscoveredReadOnlyTools(t *testing.T) {
+	profile, ok := StarterProfileByID("hermes")
+	if !ok {
+		t.Fatalf("StarterProfileByID(hermes) = false, want true")
+	}
+	allowedTools := map[string]bool{}
+	for _, rule := range profile.Rules {
+		if rule.Kind == "tool" && rule.Action == "allow" {
+			allowedTools[rule.ToolName] = true
+		}
+	}
+	for _, name := range []string{
+		"browser_console",
+		"browser_get_images",
+		"browser_snapshot",
+		"clarify",
+		"read_file",
+		"search_files",
+		"session_search",
+		"skill_view",
+		"skills_list",
+	} {
+		if !allowedTools[name] {
+			t.Fatalf("hermes starter profile missing %s", name)
+		}
+	}
+	for _, name := range []string{
+		"browser_back",
+		"browser_click",
+		"browser_navigate",
+		"browser_press",
+		"browser_scroll",
+		"browser_type",
+		"browser_vision",
+		"cronjob",
+		"delegate_task",
+		"execute_code",
+		"image_generate",
+		"memory",
+		"patch",
+		"process",
+		"send_message",
+		"skill_manage",
+		"terminal",
+		"text_to_speech",
+		"vision_analyze",
+		"write_file",
+	} {
+		if allowedTools[name] {
+			t.Fatalf("hermes starter profile should not blanket-allow %s", name)
+		}
+	}
+}

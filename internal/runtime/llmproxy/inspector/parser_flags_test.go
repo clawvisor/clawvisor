@@ -257,6 +257,53 @@ func TestOpenClawReadOnlyToolsAreLocalOnlyDefaults(t *testing.T) {
 	}
 }
 
+func TestHermesReadOnlyToolsAreLocalOnlyDefaults(t *testing.T) {
+	for _, name := range []string{
+		"browser_console",
+		"browser_get_images",
+		"browser_snapshot",
+		"clarify",
+		"read_file",
+		"search_files",
+		"session_search",
+		"skill_view",
+		"skills_list",
+	} {
+		if !IsLocalOnlyTool(name) {
+			t.Fatalf("%s should be treated as local-only", name)
+		}
+		if !IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should be seeded as a default allowed tool", name)
+		}
+	}
+	for _, name := range []string{
+		"browser_back",
+		"browser_click",
+		"browser_navigate",
+		"browser_press",
+		"browser_scroll",
+		"browser_type",
+		"browser_vision",
+		"cronjob",
+		"delegate_task",
+		"execute_code",
+		"image_generate",
+		"memory",
+		"patch",
+		"process",
+		"send_message",
+		"skill_manage",
+		"terminal",
+		"text_to_speech",
+		"vision_analyze",
+		"write_file",
+	} {
+		if IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should not be seeded as a default allowed tool", name)
+		}
+	}
+}
+
 // Regression: a placeholder substring inside a local-only tool's args
 // (Skill, Read, Edit, etc.) must pass through without engaging the
 // LLM validator. Otherwise smoke-test installs without an LLM-backed

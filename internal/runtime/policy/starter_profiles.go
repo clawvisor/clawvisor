@@ -103,12 +103,18 @@ func StarterProfiles() []StarterProfile {
 		{
 			ID:          "hermes",
 			DisplayName: "Hermes",
-			Description: "Recommended allow rules for Hermes read-only inspection tools.",
+			Description: "Recommended allow rules for Hermes read-only inspection and local clarification tools.",
 			CommandKeys: []string{"hermes"},
 			Rules: []StarterProfileRuleDraft{
-				{Kind: "tool", Action: "allow", ToolName: "Read", Reason: "Read local files for single-step inspection"},
-				{Kind: "tool", Action: "allow", ToolName: "Glob", Reason: "Find files by pattern without changing state"},
-				{Kind: "tool", Action: "allow", ToolName: "Grep", Reason: "Search local files without changing state"},
+				{Kind: "tool", Action: "allow", ToolName: "read_file", Reason: "Read local files for single-step inspection"},
+				{Kind: "tool", Action: "allow", ToolName: "search_files", Reason: "Search local files without changing state"},
+				{Kind: "tool", Action: "allow", ToolName: "session_search", Reason: "Search local session history"},
+				{Kind: "tool", Action: "allow", ToolName: "skills_list", Reason: "List available local skills"},
+				{Kind: "tool", Action: "allow", ToolName: "skill_view", Reason: "Read local skill content"},
+				{Kind: "tool", Action: "allow", ToolName: "clarify", Reason: "Ask the user for clarification without external side effects"},
+				{Kind: "tool", Action: "allow", ToolName: "browser_snapshot", Reason: "Inspect the current browser page accessibility tree"},
+				{Kind: "tool", Action: "allow", ToolName: "browser_console", Reason: "Inspect current browser console output"},
+				{Kind: "tool", Action: "allow", ToolName: "browser_get_images", Reason: "Inspect current browser image metadata"},
 			},
 		},
 	}

@@ -52,8 +52,8 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 // Authorization is handled separately by runtime tool policies.
 //
 //  1. Pure local reads. Read / Glob / Grep / BashOutput / ToolSearch
-//     and their Codex equivalent (read_file). These don't change
-//     state or transmit credentials.
+//     and their Codex / Hermes equivalents (read_file, search_files).
+//     These don't change state or transmit credentials.
 //
 //  2. Harness-internal lifecycle / planning state. Skill / Agent /
 //     EnterPlanMode / ExitPlanMode / EnterWorktree / ExitWorktree /
@@ -86,6 +86,14 @@ var localOnlyTools = map[string]struct{}{
 	"Monitor":    {},
 	// Pure local reads — Codex.
 	"read_file": {},
+	// Pure local reads — Hermes.
+	"browser_console":    {},
+	"browser_get_images": {},
+	"browser_snapshot":   {},
+	"search_files":       {},
+	"session_search":     {},
+	"skill_view":         {},
+	"skills_list":        {},
 	// Pure local reads — OpenClaw.
 	"memory_get":       {},
 	"memory_search":    {},
@@ -122,6 +130,9 @@ var localOnlyTools = map[string]struct{}{
 	// OpenClaw's local turn-control tool. It does not reach outside
 	// the harness.
 	"sessions_yield": {},
+	// Hermes' user-clarification tool. It does not reach outside the
+	// harness or downstream APIs.
+	"clarify": {},
 	// Harness-internal user clarification prompt. It does not reach
 	// outside the harness and should not require an approved task scope.
 	"AskUserQuestion": {},
@@ -164,12 +175,20 @@ var defaultAllowedTools = map[string]struct{}{
 	"TaskCreate":                  {},
 	"TaskStop":                    {},
 	"TaskUpdate":                  {},
+	"browser_console":             {},
+	"browser_get_images":          {},
+	"browser_snapshot":            {},
+	"clarify":                     {},
 	"memory_get":                  {},
 	"memory_search":               {},
+	"search_files":                {},
 	"session_status":              {},
+	"session_search":              {},
 	"sessions_history":            {},
 	"sessions_list":               {},
 	"sessions_yield":              {},
+	"skill_view":                  {},
+	"skills_list":                 {},
 	"read_file":                   {},
 	"list_mcp_resources":          {},
 	"list_mcp_resource_templates": {},
