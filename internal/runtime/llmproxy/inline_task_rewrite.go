@@ -122,7 +122,16 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 	// fail closed without disturbing the cache so a fixed retry can
 	// drive the flow.
 	out := InlineApprovalRewriteResult{Body: req.Body}
-	_, canRewrite, probeErr := editor.ReplaceLatestUserText(verb, "")
+	// Probe with the same ApprovalID expectation we'll enforce on the
+	// real replacement below — without this, a probe that succeeded
+	// against a verb-matching but ID-mismatching message would
+	// proceed past the can-rewrite gate and fail at the second
+	// rewrite, mid-side-effect.
+	expectedApprovalID := ""
+	if action.Hold != nil {
+		expectedApprovalID = action.Hold.ID
+	}
+	_, canRewrite, probeErr := editor.ReplaceLatestUserText(verb, expectedApprovalID, "")
 	if probeErr != nil {
 		return out, probeErr
 	}
@@ -166,7 +175,11 @@ func RewriteInlineTaskApprovalReply(ctx context.Context, req InlineApprovalRewri
 		}, inlineApprovalOutcomeFromRewrite(req.RequestID, out))
 	}
 
-	rewritten, ok, err := editor.ReplaceLatestUserText(verb, replacement)
+	resolvedApprovalID := ""
+	if resolved != nil {
+		resolvedApprovalID = resolved.ID
+	}
+	rewritten, ok, err := editor.ReplaceLatestUserText(verb, resolvedApprovalID, replacement)
 	if err != nil {
 		return out, err
 	}

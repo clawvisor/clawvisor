@@ -88,7 +88,7 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			if ok != tc.wantReply || verb != tc.wantVerb || approvalID != tc.wantID {
 				t.Fatalf("LatestApprovalReply=(%q,%q,%v), want (%q,%q,%v)", verb, approvalID, ok, tc.wantVerb, tc.wantID, tc.wantReply)
 			}
-			out, ok, err := editor.ReplaceLatestUserText("approve", replacement)
+			out, ok, err := editor.ReplaceLatestUserText("approve", "", replacement)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,6 +104,141 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			}
 			if tc.wantAbsent != "" && strings.Contains(got, tc.wantAbsent) {
 				t.Fatalf("rewritten body should not retain %q: %s", tc.wantAbsent, got)
+			}
+		})
+	}
+}
+
+// TestReplaceLatestUserText_ApprovalIDExpectation covers the three
+// shapes the body editor needs to handle:
+//
+//   - explicit ID in the user message that MATCHES the expected hold —
+//     proceed as before.
+//   - explicit ID in the user message that DIFFERS from the expected
+//     hold — refuse, so a races-between-peek-and-rewrite second hold
+//     cannot be released by the prior message.
+//   - bare verb (no ID) — fall through to verb-only matching, preserving
+//     the documented "approve" / "yes" / "deny" / "no" UX. The expected
+//     ID is the *caller's* knowledge of which hold Peek resolved, not
+//     a requirement on the user.
+//
+// The actual-id used in fixtures matches the ID grammar enforced by
+// internal/runtime/conversation.approvalReplyRE (cv- followed by 12 or
+// 26 alphanumeric chars).
+func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
+	const actualID = "cv-abcdef123456"   // 12-char body
+	const differentID = "cv-zzzzzz999999" // also 12-char, different
+
+	cases := []struct {
+		name     string
+		provider conversation.Provider
+		path     string
+		body     string
+	}{
+		{
+			name:     "anthropic_blocks_with_id",
+			provider: conversation.ProviderAnthropic,
+			path:     "/v1/messages",
+			body:     `{"messages":[{"role":"user","content":[{"type":"text","text":"approve ` + actualID + `"}]}]}`,
+		},
+		{
+			name:     "openai_responses_string_input",
+			provider: conversation.ProviderOpenAI,
+			path:     "/v1/responses",
+			body:     `{"input":"approve ` + actualID + `"}`,
+		},
+		{
+			name:     "openai_responses_blocks",
+			provider: conversation.ProviderOpenAI,
+			path:     "/v1/responses",
+			body:     `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"approve ` + actualID + `"}]}]}`,
+		},
+		{
+			name:     "openai_chat_string_content",
+			provider: conversation.ProviderOpenAI,
+			path:     "/v1/chat/completions",
+			body:     `{"messages":[{"role":"user","content":"approve ` + actualID + `"}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"/explicit_mismatch_refuses", func(t *testing.T) {
+			req := httptest.NewRequest("POST", tc.path, nil)
+			editor, ok := newApprovalBodyEditor(req, tc.provider, []byte(tc.body))
+			if !ok {
+				t.Fatal("expected provider body editor")
+			}
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", differentID, "[replacement]")
+			if err != nil {
+				t.Fatalf("ReplaceLatestUserText error: %v", err)
+			}
+			if rewrote {
+				t.Fatalf("expected refusal on ID mismatch, but body was rewritten: %s", out)
+			}
+		})
+		t.Run(tc.name+"/explicit_match_rewrites", func(t *testing.T) {
+			req := httptest.NewRequest("POST", tc.path, nil)
+			editor, ok := newApprovalBodyEditor(req, tc.provider, []byte(tc.body))
+			if !ok {
+				t.Fatal("expected provider body editor")
+			}
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]")
+			if err != nil {
+				t.Fatalf("ReplaceLatestUserText error: %v", err)
+			}
+			if !rewrote {
+				t.Fatalf("expected rewrite on matching ID, body unchanged: %s", out)
+			}
+			if !strings.Contains(string(out), "[replacement]") {
+				t.Fatalf("expected replacement in rewritten body: %s", out)
+			}
+		})
+	}
+
+	// Bare-verb replies (the documented common case) must still rewrite
+	// even when the caller threads in an expected ID. The parsed ID is
+	// empty, so the stricter check is skipped and verb-only matching
+	// applies — preserving "approve" / "yes" / "deny" / "no" UX.
+	bareCases := []struct {
+		name     string
+		provider conversation.Provider
+		path     string
+		body     string
+	}{
+		{
+			name:     "anthropic_string_bare",
+			provider: conversation.ProviderAnthropic,
+			path:     "/v1/messages",
+			body:     `{"messages":[{"role":"user","content":"yes"}]}`,
+		},
+		{
+			name:     "openai_chat_bare",
+			provider: conversation.ProviderOpenAI,
+			path:     "/v1/chat/completions",
+			body:     `{"messages":[{"role":"user","content":"approve"}]}`,
+		},
+		{
+			name:     "openai_responses_bare_string",
+			provider: conversation.ProviderOpenAI,
+			path:     "/v1/responses",
+			body:     `{"input":"approve"}`,
+		},
+	}
+	for _, tc := range bareCases {
+		t.Run(tc.name+"/bare_verb_with_expected_id_rewrites", func(t *testing.T) {
+			req := httptest.NewRequest("POST", tc.path, nil)
+			editor, ok := newApprovalBodyEditor(req, tc.provider, []byte(tc.body))
+			if !ok {
+				t.Fatal("expected provider body editor")
+			}
+			out, rewrote, err := editor.ReplaceLatestUserText("approve", actualID, "[replacement]")
+			if err != nil {
+				t.Fatalf("ReplaceLatestUserText error: %v", err)
+			}
+			if !rewrote {
+				t.Fatalf("expected bare-verb rewrite to still succeed when expectation is set; body: %s", out)
+			}
+			if !strings.Contains(string(out), "[replacement]") {
+				t.Fatalf("expected replacement in rewritten body: %s", out)
 			}
 		})
 	}

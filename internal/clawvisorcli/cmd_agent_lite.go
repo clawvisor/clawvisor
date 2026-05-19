@@ -1,11 +1,15 @@
 package clawvisorcli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -238,6 +242,9 @@ func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureLiteProxyEnabled(opts.BaseURL); err != nil {
+		return err
+	}
 	commandArgs = prepareLiteProxyCommandArgs(opts, commandArgs)
 	child := exec.Command(commandArgs[0], commandArgs[1:]...)
 	child.Env = mergeEnvironment(os.Environ(), envPairs)
@@ -246,6 +253,59 @@ func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
 	child.Stderr = os.Stderr
 	fmt.Fprintf(os.Stderr, "Routing %s through Clawvisor proxy-lite at %s\n", opts.Provider, opts.BaseURL)
 	return child.Run()
+}
+
+// ensureLiteProxyEnabled preflight-checks that the daemon at baseURL
+// has `proxy_lite.enabled: true` in its config. Without this, the
+// harness would launch, dial the daemon, and get 404s on
+// `/v1/messages` — surfacing as a confusing "model unavailable"
+// error inside the harness's UI. The preflight is a single GET
+// against the unauthenticated `/api/features` endpoint with a tight
+// timeout; transient errors (connection refused, DNS lookup failure)
+// surface a clear "is the daemon running?" message instead of being
+// silently swallowed.
+//
+// Set CLAWVISOR_SKIP_LITE_PROXY_PRECHECK=1 to bypass — useful in
+// scripted environments where the daemon's config is already known.
+func ensureLiteProxyEnabled(baseURL string) error {
+	if os.Getenv("CLAWVISOR_SKIP_LITE_PROXY_PRECHECK") == "1" {
+		return nil
+	}
+	url := strings.TrimRight(baseURL, "/") + "/api/features"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("preflight request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach Clawvisor daemon at %s (is the daemon running?): %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// Older daemons may not expose /api/features. Don't refuse to
+		// run — fall through and let the harness see whatever the
+		// daemon actually responds with on /v1/*.
+		return nil
+	}
+	var fs struct {
+		ProxyLite bool `json:"proxy_lite"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&fs); err != nil {
+		// Unparseable response from a future daemon — same fallback
+		// as the non-200 case.
+		return nil
+	}
+	if !fs.ProxyLite {
+		return fmt.Errorf(
+			"proxy-lite is not enabled on the Clawvisor daemon at %s\n"+
+				"Set `proxy_lite.enabled: true` in the daemon config and restart, or set\n"+
+				"CLAWVISOR_SKIP_LITE_PROXY_PRECHECK=1 if you know the feature is active",
+			baseURL,
+		)
+	}
+	return nil
 }
 
 func prepareLiteProxyCommandArgs(opts *liteProxyOptions, commandArgs []string) []string {

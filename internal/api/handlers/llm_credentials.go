@@ -81,12 +81,57 @@ func (h *LLMCredentialsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Distinguish first-store from rotation before writing so we can
+	// emit the right audit-grade log line. Compare against the existing
+	// value to suppress no-op rewrites — the dashboard's "Save" button
+	// frequently lands without an actual value change, and an audit
+	// stream that flags every save would drown the real rotation
+	// events.
+	priorAction := "created"
+	if existing, err := h.Vault.Get(r.Context(), user.ID, serviceID); err == nil {
+		priorAction = "rotated"
+		if string(existing) == apiKey {
+			// No-op rewrite. Return 200 without touching the vault so
+			// the audit line below doesn't fire on an idempotent save.
+			resp := map[string]string{
+				"provider":   provider,
+				"service_id": serviceID,
+				"status":     "unchanged",
+			}
+			if agentID != "" {
+				resp["agent_id"] = agentID
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+	} else if !errors.Is(err, vault.ErrNotFound) {
+		h.Logger.WarnContext(r.Context(), "lite-proxy: vault probe failed",
+			"user_id", user.ID, "service_id", serviceID, "err", err.Error())
+		writeJSONError(w, http.StatusInternalServerError, "VAULT_ERROR", "could not check existing credential")
+		return
+	}
+
 	if err := h.Vault.Set(r.Context(), user.ID, serviceID, []byte(apiKey)); err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy: vault set failed",
 			"user_id", user.ID, "service_id", serviceID, "err", err.Error())
 		writeJSONError(w, http.StatusInternalServerError, "VAULT_ERROR", "could not store credential")
 		return
 	}
+
+	// Audit-grade log line. The vault layer is the authoritative store
+	// for the bytes; we never log the key itself or even a hash that
+	// could be brute-forced. The (user_id, service_id, agent_id)
+	// triple plus the action label is enough for compliance to
+	// reconstruct a rotation timeline from the daemon log.
+	h.Logger.InfoContext(r.Context(), "lite-proxy: llm credential "+priorAction,
+		"user_id", user.ID,
+		"service_id", serviceID,
+		"provider", provider,
+		"agent_id", agentID,
+		"action", priorAction,
+	)
 
 	resp := map[string]string{
 		"provider":   provider,

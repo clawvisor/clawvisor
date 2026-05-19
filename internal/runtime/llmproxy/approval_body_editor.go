@@ -10,7 +10,13 @@ import (
 
 type approvalBodyEditor interface {
 	LatestApprovalReply() (verb, approvalID string, ok bool)
-	ReplaceLatestUserText(expectedVerb, replacement string) ([]byte, bool, error)
+	// ReplaceLatestUserText replaces the latest user-role message text
+	// after confirming it parses as a reply with the expected verb. If
+	// expectedApprovalID is non-empty, the message MUST also carry a
+	// matching approval ID — without this check, a hold resolved by
+	// Peek+ApprovalID could be released by a different verb-matching
+	// message that races into the body between peek and rewrite.
+	ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error)
 	AugmentInlineApprovalHistory(outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error)
 }
 
@@ -37,8 +43,8 @@ func (e anthropicApprovalBodyEditor) LatestApprovalReply() (string, string, bool
 	return verb, approvalID, verb != ""
 }
 
-func (e anthropicApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, replacement string) ([]byte, bool, error) {
-	return replaceAnthropicApprovalReply(e.body, expectedVerb, replacement)
+func (e anthropicApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+	return replaceAnthropicApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
 }
 
 func (e anthropicApprovalBodyEditor) AugmentInlineApprovalHistory(outcomes InlineApprovalOutcomeStore, userID, agentID string) ([]byte, bool, error) {
@@ -54,8 +60,8 @@ func (e openAIChatApprovalBodyEditor) LatestApprovalReply() (string, string, boo
 	return verb, approvalID, verb != ""
 }
 
-func (e openAIChatApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, replacement string) ([]byte, bool, error) {
-	return replaceOpenAIChatApprovalReply(e.body, expectedVerb, replacement)
+func (e openAIChatApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+	return replaceOpenAIChatApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
 }
 
 func (e openAIChatApprovalBodyEditor) AugmentInlineApprovalHistory(_ InlineApprovalOutcomeStore, _, _ string) ([]byte, bool, error) {
@@ -81,15 +87,15 @@ func (e openAIResponsesApprovalBodyEditor) LatestApprovalReply() (string, string
 	return verb, approvalID, verb != ""
 }
 
-func (e openAIResponsesApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, replacement string) ([]byte, bool, error) {
-	return replaceOpenAIResponsesApprovalReply(e.body, expectedVerb, replacement)
+func (e openAIResponsesApprovalBodyEditor) ReplaceLatestUserText(expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
+	return replaceOpenAIResponsesApprovalReply(e.body, expectedVerb, expectedApprovalID, replacement)
 }
 
 func (e openAIResponsesApprovalBodyEditor) AugmentInlineApprovalHistory(_ InlineApprovalOutcomeStore, _, _ string) ([]byte, bool, error) {
 	return e.body, false, nil
 }
 
-func replaceAnthropicApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
+func replaceAnthropicApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Messages []struct {
 			Role    string          `json:"role"`
@@ -107,8 +113,11 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, replacement string
 		if req.Messages[i].Role != "user" {
 			continue
 		}
-		verb, _ := conversation.ParseApprovalReplyText(flattenAnthropicTaskReplyText(req.Messages[i].Content))
+		verb, parsedID := conversation.ParseApprovalReplyText(flattenAnthropicTaskReplyText(req.Messages[i].Content))
 		if verb != expectedVerb {
+			return body, false, nil
+		}
+		if !approvalIDMatchesExpectation(parsedID, expectedApprovalID) {
 			return body, false, nil
 		}
 		encoded, _ := json.Marshal(replacement)
@@ -124,7 +133,27 @@ func replaceAnthropicApprovalReply(body []byte, expectedVerb, replacement string
 	return body, false, nil
 }
 
-func replaceOpenAIChatApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
+// approvalIDMatchesExpectation enforces the parsed approval ID against
+// the caller's expectation ONLY when the user actually typed an ID.
+// The documented common case is a bare verb like "approve" / "yes" /
+// "deny" / "no" with no ID — for those, fall through to verb-only
+// matching (existing behavior).
+//
+// The stricter rule fires for explicit-ID replies ("approve cv-…"):
+// when the parsed ID is present but doesn't match the hold Peek
+// resolved, refuse to rewrite so the wrong hold can't be released by
+// a verb-matching message that races into the body between peek and
+// rewrite. A model that copies the ID-stamped prompt back into a
+// later turn — or a malicious / confused agent that swaps IDs in a
+// chained release — falls into this stricter path.
+func approvalIDMatchesExpectation(parsed, expected string) bool {
+	if expected == "" || parsed == "" {
+		return true
+	}
+	return parsed == expected
+}
+
+func replaceOpenAIChatApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Messages []map[string]any `json:"messages"`
 	}
@@ -141,8 +170,11 @@ func replaceOpenAIChatApprovalReply(body []byte, expectedVerb, replacement strin
 			continue
 		}
 		contentRaw, _ := json.Marshal(req.Messages[i]["content"])
-		verb, _ := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
+		verb, parsedID := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
 		if verb != expectedVerb {
+			return body, false, nil
+		}
+		if !approvalIDMatchesExpectation(parsedID, expectedApprovalID) {
 			return body, false, nil
 		}
 		req.Messages[i]["content"] = replacement
@@ -157,7 +189,7 @@ func replaceOpenAIChatApprovalReply(body []byte, expectedVerb, replacement strin
 	return body, false, nil
 }
 
-func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, replacement string) ([]byte, bool, error) {
+func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, expectedApprovalID, replacement string) ([]byte, bool, error) {
 	var req struct {
 		Input json.RawMessage `json:"input"`
 	}
@@ -170,8 +202,11 @@ func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, replacement 
 	}
 	var inputString string
 	if err := json.Unmarshal(req.Input, &inputString); err == nil {
-		verb, _ := conversation.ParseApprovalReplyText(inputString)
+		verb, parsedID := conversation.ParseApprovalReplyText(inputString)
 		if verb != expectedVerb {
+			return body, false, nil
+		}
+		if !approvalIDMatchesExpectation(parsedID, expectedApprovalID) {
 			return body, false, nil
 		}
 		encoded, _ := json.Marshal(replacement)
@@ -190,8 +225,11 @@ func replaceOpenAIResponsesApprovalReply(body []byte, expectedVerb, replacement 
 			continue
 		}
 		contentRaw, _ := json.Marshal(items[i]["content"])
-		verb, _ := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
+		verb, parsedID := conversation.ParseApprovalReplyText(flattenOpenAITaskReplyContent(contentRaw))
 		if verb != expectedVerb {
+			return body, false, nil
+		}
+		if !approvalIDMatchesExpectation(parsedID, expectedApprovalID) {
 			return body, false, nil
 		}
 		items[i]["content"] = []map[string]any{{"type": "input_text", "text": replacement}}

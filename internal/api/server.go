@@ -1043,7 +1043,19 @@ func (s *Server) routes() http.Handler {
 		// X-Clawvisor-Caller — never the raw agent token. The nonce is
 		// bound to (agent, host, method, path), so a leaked nonce only
 		// authorizes the specific call the proxy already approved.
-		requireAgentLLMCaller := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
+		//
+		// Rate-limit by source IP first, then enforce the nonce.
+		// Without IP-level rate limiting a leaked nonce could be
+		// brute-force-replayed against many (host, method, path)
+		// tuples within its TTL window — each attempt that misses the
+		// target still costs a cache round-trip even though
+		// one-shot-consume invalidates the nonce on the first match.
+		// The IP key is correct here because the resolver authenticates
+		// *inside* this middleware.
+		nonceMW := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
+		requireAgentLLMCaller := func(h http.Handler) http.Handler {
+			return middleware.RateLimit(gatewayRL, llmPreAuthKeyFn, rlCfg.Gateway.Limit)(nonceMW(h))
+		}
 
 		mux.Handle("POST /v1/messages", requireAgentLLMRL(llmHandler.Messages))
 		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLMRL(llmHandler.Messages))

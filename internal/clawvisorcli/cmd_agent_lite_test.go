@@ -1,6 +1,8 @@
 package clawvisorcli
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -210,4 +212,59 @@ func childCommand(parent *cobra.Command, name string) *cobra.Command {
 		}
 	}
 	return nil
+}
+
+func TestEnsureLiteProxyEnabled_AllowsWhenFlagOn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/features" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"proxy_lite":true,"secret_vault":false}`))
+	}))
+	defer srv.Close()
+	t.Setenv("CLAWVISOR_SKIP_LITE_PROXY_PRECHECK", "")
+	if err := ensureLiteProxyEnabled(srv.URL); err != nil {
+		t.Fatalf("expected no error when proxy_lite=true, got %v", err)
+	}
+}
+
+func TestEnsureLiteProxyEnabled_RejectsWhenFlagOff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/features" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"proxy_lite":false}`))
+	}))
+	defer srv.Close()
+	t.Setenv("CLAWVISOR_SKIP_LITE_PROXY_PRECHECK", "")
+	err := ensureLiteProxyEnabled(srv.URL)
+	if err == nil {
+		t.Fatal("expected error when proxy_lite=false")
+	}
+	if !strings.Contains(err.Error(), "proxy-lite is not enabled") {
+		t.Fatalf("expected clear error message, got %q", err.Error())
+	}
+}
+
+func TestEnsureLiteProxyEnabled_AllowsWhenDaemonOlder(t *testing.T) {
+	// Older daemons may 404 on /api/features. The CLI should not block
+	// the launch; let the harness see the real /v1/* response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("CLAWVISOR_SKIP_LITE_PROXY_PRECHECK", "")
+	if err := ensureLiteProxyEnabled(srv.URL); err != nil {
+		t.Fatalf("expected pass-through on 404, got %v", err)
+	}
+}
+
+func TestEnsureLiteProxyEnabled_SkipEnvBypassesPrecheck(t *testing.T) {
+	t.Setenv("CLAWVISOR_SKIP_LITE_PROXY_PRECHECK", "1")
+	// URL is intentionally unreachable; the env var should short-circuit.
+	if err := ensureLiteProxyEnabled("http://127.0.0.1:1"); err != nil {
+		t.Fatalf("skip env should bypass any preflight, got %v", err)
+	}
 }

@@ -1,4 +1,4 @@
--- See pkg/store/sqlite/migrations/042_symmetric_dedup_scope.sql for the full
+-- See pkg/store/sqlite/migrations/044_symmetric_dedup_scope.sql for the full
 -- rationale. Summary: align audit_log, pending_approvals, and approval_records
 -- on the same (user_id, request_id, COALESCE(task_id, '')) dedup key.
 --

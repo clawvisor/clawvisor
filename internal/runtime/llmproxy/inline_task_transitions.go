@@ -24,7 +24,11 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	if err != nil || pending == nil {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}
-	rewritten, ok, err := editor.ReplaceLatestUserText("task", taskCreationPrompt(pending.ToolUse))
+	pendingApprovalID := ""
+	if pending != nil {
+		pendingApprovalID = pending.ID
+	}
+	rewritten, ok, err := editor.ReplaceLatestUserText("task", pendingApprovalID, taskCreationPrompt(pending.ToolUse))
 	if err != nil || !ok {
 		return TaskReplyRewriteResult{Body: req.Body}, err
 	}

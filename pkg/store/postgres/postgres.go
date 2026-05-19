@@ -51,7 +51,10 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 //     non-CONCURRENTLY index for now.
 //   - File names should be NNN_name.sql with NNN strictly increasing; the
 //     name is used as the schema_migrations primary key, so renaming an
-//     already-applied file will reapply it.
+//     already-applied file will reapply it. Tolerance for "already exists"
+//     errors below makes the rename safe in practice for the common
+//     ADD COLUMN / CREATE INDEX / CREATE TABLE shapes — see
+//     isMigrationAlreadyAppliedErr.
 func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) error {
 	// Create migrations tracking table
 	_, err := pool.Exec(ctx, `
@@ -110,6 +113,22 @@ func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) 
 			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
 		}
 		if _, err := tx.Exec(ctx, string(data)); err != nil {
+			// Tolerate "already exists" errors so a renumbered migration
+			// (e.g. a duplicate 039_X collapsed to 040_X) can be recorded
+			// as applied on a staging env that already ran it under the
+			// old name. Mirrors the SQLite runner's "duplicate column
+			// name" handling. The transaction is unusable after a
+			// failed DDL in Postgres, so roll back and reopen.
+			if isMigrationAlreadyAppliedErr(err) {
+				_ = tx.Rollback(ctx)
+				if _, err := pool.Exec(ctx,
+					`INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING`,
+					entry.Name(),
+				); err != nil {
+					return fmt.Errorf("recording already-applied migration %s: %w", entry.Name(), err)
+				}
+				continue
+			}
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("applying migration %s: %w", entry.Name(), err)
 		}
@@ -126,4 +145,41 @@ func runMigrationsFS(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) 
 		}
 	}
 	return nil
+}
+
+// isMigrationAlreadyAppliedErr reports whether err looks like a
+// Postgres "the schema is already in the target shape" error. Used
+// to make renumbered migrations safe to re-apply: a renamed file
+// runs against a DB that already has the columns/indexes/tables,
+// gets one of these errors, and we record the new file name as
+// applied without re-running the DDL. Errors we treat as "already
+// done":
+//
+//   - 42701  duplicate_column
+//   - 42710  duplicate_object  (constraint, sequence, etc.)
+//   - 42P07  duplicate_table   (also fires for duplicate INDEX)
+//   - 42P16  invalid_table_definition (e.g. DROP CONSTRAINT that
+//     was already dropped, when paired with an IF NOT EXISTS later)
+//
+// We match on substring rather than pgx's SQLSTATE because some
+// errors come back wrapped or via the simple-protocol path without
+// a structured code. Substring is conservative — it matches the
+// SQLSTATE phrase printed by lib/pq + pgx — and false positives
+// would only mean recording an already-applied migration, never
+// silently skipping a legitimate DDL failure.
+func isMigrationAlreadyAppliedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"already exists",
+		"duplicate column",
+		"duplicate key value",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

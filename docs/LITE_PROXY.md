@@ -24,6 +24,8 @@ The two can coexist. The lite-proxy is the focus of this document.
 
 ## Enable the proxy
 
+**The lite-proxy ships off by default.** All routes listed below, the dashboard panels, and the CLI helpers refuse to operate until `proxy_lite.enabled` is set to `true`. Users who never touch this config see no behavior change.
+
 In `config.yaml`:
 
 ```yaml
@@ -67,7 +69,7 @@ The proxy is gated by `proxy_lite.enabled`. When on, the daemon exposes:
 Restart the daemon after editing config:
 
 ```bash
-clawvisor restart
+clawvisor-server restart
 ```
 
 ## Connect an agent
@@ -78,7 +80,7 @@ The simplest connection is via the bundled wrappers:
 
 ```bash
 # One-time: register the agent. Pick a memorable alias.
-clawvisor agent register dev
+clawvisor-server agent register dev
 ```
 
 In an interactive terminal, registration also asks whether this agent should
@@ -90,13 +92,13 @@ register the agent token.
 
 ```bash
 # Run Claude Code through the lite-proxy:
-clawvisor agent claude --agent dev -- --print "what is 2+2"
+clawvisor-server agent claude --agent dev -- --print "what is 2+2"
 
 # Run Codex through the lite-proxy:
-clawvisor agent codex --agent dev -- exec "say hi"
+clawvisor-server agent codex --agent dev -- exec "say hi"
 
 # Auto-detect harness from the command. This is the default `agent run` path.
-clawvisor agent run --agent dev -- claude --print "ping"
+clawvisor-server agent run --agent dev -- claude --print "ping"
 ```
 
 The wrappers inject the right environment variables for each harness:
@@ -110,7 +112,7 @@ The wrappers inject the right environment variables for each harness:
 If you need the raw exports for a custom invocation:
 
 ```bash
-clawvisor agent lite-env claude --agent dev
+clawvisor-server agent lite-env claude --agent dev
 # Prints `export ANTHROPIC_BASE_URL=… ANTHROPIC_AUTH_TOKEN=… …`
 ```
 
@@ -256,7 +258,7 @@ Or per-session:
 
 ```bash
 export CLAWVISOR_PROXY_LITE_TRACE=/tmp/lite-trace.jsonl
-clawvisor restart
+clawvisor-server restart
 ```
 
 Each tool_use produces a sequence of JSON-line events. Useful query patterns:
@@ -290,11 +292,20 @@ If you're not seeing the events you expect, confirm the daemon picked up the con
 
 ## Common gotchas
 
-- **Daemon port collision.** If `server.port` is taken (another dev server, Vite, etc.), the daemon will fall back to an ephemeral port and your registered agent's `server_url` goes stale. `clawvisor agent register --url http://localhost:<actual-port>` to refresh, or kill the squatter so the daemon can claim its configured port.
+- **Daemon port collision.** If `server.port` is taken (another dev server, Vite, etc.), the daemon will fall back to an ephemeral port and your registered agent's `server_url` goes stale. `clawvisor-server agent register --url http://localhost:<actual-port>` to refresh, or kill the squatter so the daemon can claim its configured port.
 - **`features.secret_vault: false` hides Shadow Tokens.** Either flip it on, or enable `proxy_lite.enabled` (which surfaces the panel as a side effect).
 - **Placeholder ownership.** A placeholder is bound to a specific `(user, agent, service)`. If you mint it under agent A but run agent B, the boundary check fails. The error message includes a redacted prefix so you can tell which placeholder was looked up.
 - **Multi-account services.** Service IDs can include an account suffix (`github:work`, `github:home`). The normalizer strips it for the bound-service host lookup, but the placeholder must still belong to the agent that's calling.
 - **Nonces in conversation history.** The harness re-sends prior tool_uses on every turn. The inbound sanitizer reverts rewritten URLs and strips `cv-nonce-…` / `X-Clawvisor-*` headers before the model sees them, so the model never learns the rewrite shape. If you see those substrings in the model's emitted tool_uses, file a bug.
+
+## Security caveats
+
+The lite-proxy is a defense-in-depth surface, not a panacea. Operators enabling it should understand its limits:
+
+- **Placeholders are visible to the model.** The model sees `autovault_…` strings inside its own prior tool_uses (the rewrite happens *after* the model emits the call). An instruction-following adversary can be tricked into copying a placeholder into a non-credentialed location (a comment, a log line, a description field). The inbound sanitizer redacts `cv-nonce-…` and `X-Clawvisor-*` headers from history before the next turn, but it cannot scrub placeholders embedded in arbitrary text — those are meant to be there.
+- **`allow_private_networks: false` is the default.** Flipping it on permits the resolver to dial RFC1918 / loopback. That re-introduces SSRF risk; it should only be used for self-host development where a private destination is the legitimate target.
+- **Passthrough mode disables the proxy's safety properties for the configured agent.** When an operator enables a passthrough rule (`Agents → break glass`), inbound bodies are sent upstream without autovault placeholder redaction and outbound tool_uses are sent to the harness without inspector mediation. Use sparingly and audit the resulting traffic.
+- **Adjudicator is a hint, not a gate.** The LLM-driven `SecretAdjudicator` decides whether an ambiguous candidate looks like a real credential. Prompt injection inside the candidate's surrounding context could in principle steer it; the adjudicator response is canary-verified to detect drift but a clever attacker can still produce verdicts that fail closed (no decision) rather than open (false positive). When in doubt, the proxy redacts.
 
 ## Related docs
 
