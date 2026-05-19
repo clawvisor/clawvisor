@@ -181,6 +181,48 @@ func TestRequireAgentLLMNonce_RejectsExpiredNonceBoundAgent(t *testing.T) {
 	}
 }
 
+// TestRequireAgentLLMNonce_AcceptsExplicitPortInTargetHostHeader is a
+// regression test for the host:port asymmetry between the mint side
+// (verdict.Host = url.URL.Hostname(), no port) and the rewriter
+// (X-Clawvisor-Target-Host = parsed.Host, port preserved). Without the
+// port-stripping normalization in the consume path, a non-default
+// upstream port like https://api.example.com:8443 would round-trip
+// from rewriter to resolver and fail nonce validation as
+// NONCE_TARGET_MISMATCH.
+func TestRequireAgentLLMNonce_AcceptsExplicitPortInTargetHostHeader(t *testing.T) {
+	st, agent, _ := newSeededAgent(t)
+	nonces := llmproxy.NewMemoryCallerNonceCache(5 * time.Minute)
+	// Mint with bare hostname (matches inspector verdict).
+	nonce, err := nonces.Mint(context.Background(), agent.ID, llmproxy.NonceTarget{
+		Host:   "api.example.com",
+		Method: http.MethodGet,
+		Path:   "/v1/whoami",
+	})
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	handlerCalled := false
+	handler := RequireAgentLLMNonce(st, nonces, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/v1/whoami", nil)
+	req.Header.Set("X-Clawvisor-Caller", "Bearer "+nonce)
+	// Rewriter emits host:port verbatim from parsed.Host.
+	req.Header.Set("X-Clawvisor-Target-Host", "api.example.com:8443")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with port-stripped host match, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !handlerCalled {
+		t.Fatal("downstream handler was not invoked")
+	}
+}
+
 func TestRequireAgentLLM_RejectsMissingOrInvalid(t *testing.T) {
 	st, _, _ := newSeededAgent(t)
 

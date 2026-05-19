@@ -86,6 +86,45 @@ func (v *LocalVault) Set(ctx context.Context, userID, serviceID string, credenti
 	return err
 }
 
+// SetIfAbsent stores a credential only when no row exists for the
+// (userID, serviceID) pair. The UNIQUE constraint on (user_id,
+// service_id) makes INSERT + DO NOTHING atomic across concurrent
+// callers; checking RowsAffected distinguishes "I created it" from
+// "it was already there." Postgres and SQLite share identical
+// semantics here.
+func (v *LocalVault) SetIfAbsent(ctx context.Context, userID, serviceID string, credential []byte) error {
+	encrypted, iv, authTag, err := v.encrypt(credential, rowAAD(userID, serviceID))
+	if err != nil {
+		return fmt.Errorf("vault encrypt: %w", err)
+	}
+	id := uuid.New().String()
+
+	var query string
+	if v.driver == "postgres" {
+		query = `
+			INSERT INTO vault_entries (id, user_id, service_id, encrypted, iv, auth_tag)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (user_id, service_id) DO NOTHING`
+	} else {
+		query = `
+			INSERT INTO vault_entries (id, user_id, service_id, encrypted, iv, auth_tag)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (user_id, service_id) DO NOTHING`
+	}
+	res, err := v.db.ExecContext(ctx, query, id, userID, serviceID, encrypted, iv, authTag)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrAlreadyExists
+	}
+	return nil
+}
+
 func (v *LocalVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {
 	q := fmt.Sprintf(
 		`SELECT encrypted, iv, auth_tag FROM vault_entries WHERE user_id = %s AND service_id = %s`,

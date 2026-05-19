@@ -115,14 +115,15 @@ func (h *VaultHandler) CreateForUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "RESERVED_VAULT_ITEM", "vault item id is reserved for a connected account or provider credential")
 		return
 	}
-	if _, err := h.vault.Get(r.Context(), user.ID, itemID); err == nil {
-		writeError(w, http.StatusConflict, "VAULT_ITEM_EXISTS", "vault item already exists")
-		return
-	} else if err != nil && !errors.Is(err, vault.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not verify vault item")
-		return
-	}
-	if err := h.vault.Set(r.Context(), user.ID, itemID, []byte(body.Value)); err != nil {
+	// SetIfAbsent is atomic: two concurrent creators see exactly one
+	// success and one ErrAlreadyExists. The previous Get+Set sequence
+	// raced — both could observe "not found" before either wrote, and
+	// the second write would silently clobber the first.
+	if err := h.vault.SetIfAbsent(r.Context(), user.ID, itemID, []byte(body.Value)); err != nil {
+		if errors.Is(err, vault.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "VAULT_ITEM_EXISTS", "vault item already exists")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not create vault item")
 		return
 	}

@@ -99,6 +99,52 @@ func (v *GCPVault) Set(ctx context.Context, userID, serviceID string, credential
 	return err
 }
 
+// SetIfAbsent uses GCP Secret Manager's CreateSecret as the atomic
+// existence test — it returns AlreadyExists if the secret name is
+// taken, which we translate to ErrAlreadyExists. On success we add
+// the first secret version.
+func (v *GCPVault) SetIfAbsent(ctx context.Context, userID, serviceID string, credential []byte) error {
+	encrypted, iv, authTag, err := v.localVault.encrypt(credential, rowAAD(userID, serviceID))
+	if err != nil {
+		return fmt.Errorf("gcp vault encrypt: %w", err)
+	}
+	payload := []byte(encrypted + "|" + iv + "|" + authTag)
+
+	name := v.secretName(userID, serviceID)
+	parent := fmt.Sprintf("projects/%s", v.project)
+	secretID := sanitizeSecretID(fmt.Sprintf("clawvisor-%s-%s", userID, serviceID))
+
+	_, err = v.client.CreateSecret(ctx, &secretmanagerpb.CreateSecretRequest{
+		Parent:   parent,
+		SecretId: secretID,
+		Secret: &secretmanagerpb.Secret{
+			Replication: &secretmanagerpb.Replication{
+				Replication: &secretmanagerpb.Replication_Automatic_{
+					Automatic: &secretmanagerpb.Replication_Automatic{},
+				},
+			},
+		},
+	})
+	if err != nil {
+		if status.Code(err) == codes.AlreadyExists {
+			return ErrAlreadyExists
+		}
+		return fmt.Errorf("creating secret: %w", err)
+	}
+
+	crcVal := int64(crc32.Checksum(payload, crc32.MakeTable(crc32.Castagnoli)))
+	if _, err := v.client.AddSecretVersion(ctx, &secretmanagerpb.AddSecretVersionRequest{
+		Parent: name,
+		Payload: &secretmanagerpb.SecretPayload{
+			Data:       payload,
+			DataCrc32C: &crcVal,
+		},
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *GCPVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {
 	name := v.secretName(userID, serviceID) + "/versions/latest"
 	result, err := v.client.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{

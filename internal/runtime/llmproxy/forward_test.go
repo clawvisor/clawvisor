@@ -28,6 +28,17 @@ func (s *stubVault) Set(ctx context.Context, userID, serviceID string, credentia
 	return nil
 }
 
+func (s *stubVault) SetIfAbsent(ctx context.Context, userID, serviceID string, credential []byte) error {
+	if s.stored == nil {
+		s.stored = map[string][]byte{}
+	}
+	if _, ok := s.stored[userID+"/"+serviceID]; ok {
+		return vault.ErrAlreadyExists
+	}
+	s.stored[userID+"/"+serviceID] = append([]byte{}, credential...)
+	return nil
+}
+
 func (s *stubVault) Get(ctx context.Context, userID, serviceID string) ([]byte, error) {
 	if s.err != nil {
 		return nil, s.err

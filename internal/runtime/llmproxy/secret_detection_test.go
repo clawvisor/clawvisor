@@ -800,3 +800,50 @@ func TestMemoryPendingSecretDecisionCachePreservesMultiplePendingForSameScope(t 
 		t.Fatalf("expected two different decisions to resolve, got %+v and %+v", resolvedA, resolvedB)
 	}
 }
+
+func TestLatestAssistantSecretDecisionID_Anthropic(t *testing.T) {
+	body := []byte(`{"model":"claude","messages":[
+		{"role":"user","content":"share ghp_token"},
+		{"role":"assistant","content":[{"type":"text","text":"Clawvisor detected a possible raw secret. Reply vault github [clawvisor:secret=cv-secret-AAA]"}]},
+		{"role":"user","content":"allow once"}
+	]}`)
+	got := LatestAssistantSecretDecisionID(conversation.ProviderAnthropic, body)
+	if got != "cv-secret-AAA" {
+		t.Fatalf("expected cv-secret-AAA, got %q", got)
+	}
+}
+
+func TestLatestAssistantSecretDecisionID_PrefersMostRecent(t *testing.T) {
+	body := []byte(`{"model":"claude","messages":[
+		{"role":"assistant","content":[{"type":"text","text":"first [clawvisor:secret=cv-secret-OLD]"}]},
+		{"role":"user","content":"discard"},
+		{"role":"assistant","content":[{"type":"text","text":"second [clawvisor:secret=cv-secret-NEW]"}]},
+		{"role":"user","content":"allow once"}
+	]}`)
+	got := LatestAssistantSecretDecisionID(conversation.ProviderAnthropic, body)
+	if got != "cv-secret-NEW" {
+		t.Fatalf("expected most-recent cv-secret-NEW, got %q", got)
+	}
+}
+
+func TestLatestAssistantSecretDecisionID_OpenAIResponses(t *testing.T) {
+	body := []byte(`{"model":"gpt","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"share sk-test"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Clawvisor detected. Reply [clawvisor:secret=cv-secret-BBB]"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"vault openai"}]}
+	]}`)
+	got := LatestAssistantSecretDecisionID(conversation.ProviderOpenAI, body)
+	if got != "cv-secret-BBB" {
+		t.Fatalf("expected cv-secret-BBB, got %q", got)
+	}
+}
+
+func TestLatestAssistantSecretDecisionID_NoMarker(t *testing.T) {
+	body := []byte(`{"model":"claude","messages":[
+		{"role":"user","content":"ordinary turn"},
+		{"role":"assistant","content":[{"type":"text","text":"ordinary reply"}]}
+	]}`)
+	if got := LatestAssistantSecretDecisionID(conversation.ProviderAnthropic, body); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+}

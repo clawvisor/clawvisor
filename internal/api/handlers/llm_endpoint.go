@@ -465,7 +465,16 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	reqSummary := liteProxyRequestDebugSummary(provider, body)
 	h.ensureDefaultToolRules(r.Context(), agent, reqSummary.AvailableTools)
 	if h.ControlBaseURL != "" && shouldInjectLiteControlNotice(r.URL.Path, reqSummary) {
-		_, noticeToolRules, _ := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		// Notice injection is best-effort UX; a store error here should
+		// not fail-close the request because no authorization decision
+		// is being made. Authorization-relevant call sites below check
+		// the error and refuse.
+		_, noticeToolRules, _, noticeLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		if noticeLoadErr != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy notice injection skipped: decision-input load failed",
+				"agent_id", agent.ID, "err", noticeLoadErr.Error())
+			noticeToolRules = nil
+		}
 		injectedBody, injected, injectErr := llmproxy.InjectControlNoticeWithPolicy(provider, body, h.ControlBaseURL, reqSummary.AvailableTools, noticeToolRules)
 		if injectErr != nil {
 			auditStatus = http.StatusBadRequest
@@ -736,7 +745,24 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		if h.Catalog != nil {
 			catalogIface = h.Catalog
 		}
-		candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		candidateTasks, toolRules, egressRules, decisionLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+		if decisionLoadErr != nil {
+			// Fail closed: postprocess gates EvaluateAuthorization on at
+			// least one input being non-nil; returning nils on a
+			// transient store outage would let credentialless tool_uses
+			// pass through unchecked. Surface a 503 so the harness can
+			// retry rather than silently weaken enforcement.
+			h.Logger.WarnContext(r.Context(), "lite-proxy decision-input load failed; failing closed",
+				"request_id", requestID, "agent_id", agent.ID, "err", decisionLoadErr.Error())
+			auditStatus = http.StatusServiceUnavailable
+			auditDecide = "deny"
+			auditOutcome = "decision_input_load_failed"
+			auditReason = decisionLoadErr.Error()
+			clearMirroredUpstreamHeaders(w.Header())
+			writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+				"authorization inputs unavailable; please retry")
+			return
+		}
 		h.Logger.DebugContext(r.Context(), "lite-proxy decision inputs loaded",
 			"request_id", requestID,
 			"agent_id", agent.ID,
@@ -968,15 +994,28 @@ func outcomeFromStatus(status int) string {
 	return "unknown"
 }
 
-func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, agent *store.Agent) ([]*store.Task, []*store.RuntimePolicyRule, []*store.RuntimePolicyRule) {
+// loadLiteProxyDecisionInputs loads the per-request authorization inputs
+// (active tasks, tool rules, egress rules) for the agent's user. Returns
+// a non-nil error if any of the underlying store reads fails. Callers in
+// the authorization path MUST fail closed on error — postprocess gates
+// EvaluateAuthorization on at least one of the three slices being
+// non-nil, so silently substituting nil on error would skip enforcement
+// and let credentialed-or-credentialless tool calls pass through during
+// a transient store outage.
+//
+// On success, every returned slice is non-nil (possibly empty) so the
+// downstream gate fires even for agents with zero configured rules and
+// no active tasks; EvaluateAuthorization then issues a NeedsApproval
+// verdict via SourceTaskScopeMissing, matching the configured posture.
+func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, agent *store.Agent) ([]*store.Task, []*store.RuntimePolicyRule, []*store.RuntimePolicyRule, error) {
 	if h == nil || h.Store == nil || agent == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tasks, _, err := h.Store.ListTasks(ctx, agent.UserID, store.TaskFilter{ActiveOnly: true})
 	if err != nil {
 		h.Logger.WarnContext(ctx, "lite-proxy task load failed",
 			"agent_id", agent.ID, "err", err.Error())
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("list tasks: %w", err)
 	}
 	candidateTasks := make([]*store.Task, 0, len(tasks))
 	for _, task := range tasks {
@@ -994,7 +1033,10 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 	if err != nil {
 		h.Logger.WarnContext(ctx, "lite-proxy tool rule load failed",
 			"agent_id", agent.ID, "err", err.Error())
-		toolRules = nil
+		return nil, nil, nil, fmt.Errorf("list tool rules: %w", err)
+	}
+	if toolRules == nil {
+		toolRules = []*store.RuntimePolicyRule{}
 	}
 	egressRules, err := h.Store.ListRuntimePolicyRules(ctx, agent.UserID, store.RuntimePolicyRuleFilter{
 		AgentID: agent.ID,
@@ -1004,9 +1046,12 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 	if err != nil {
 		h.Logger.WarnContext(ctx, "lite-proxy egress rule load failed",
 			"agent_id", agent.ID, "err", err.Error())
-		egressRules = nil
+		return nil, nil, nil, fmt.Errorf("list egress rules: %w", err)
 	}
-	return candidateTasks, toolRules, egressRules
+	if egressRules == nil {
+		egressRules = []*store.RuntimePolicyRule{}
+	}
+	return candidateTasks, toolRules, egressRules, nil
 }
 
 func (h *LLMEndpointHandler) ensureDefaultToolRules(ctx context.Context, agent *store.Agent, availableTools []string) {
@@ -1311,13 +1356,33 @@ func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter
 	if reply.Action == llmproxy.SecretDecisionNone {
 		return nil, "", nil, false
 	}
-	pending, err := h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	// Prefer resolving by the specific decision ID embedded in the
+	// preceding assistant prompt. Without this, a second pending
+	// decision queued between the user being shown decision A and
+	// replying would let "allow once" release A or B at random — and
+	// can leak the wrong original body. Fall back to last-pending
+	// only when the conversation history doesn't carry the marker
+	// (e.g. corrupted client transport stripped it), which still
+	// preserves the existing behavior for pre-existing flows.
+	pendingID := llmproxy.LatestAssistantSecretDecisionID(provider, body)
+	var (
+		pending *llmproxy.PendingSecretDecision
+		err     error
+	)
+	if pendingID != "" {
+		pending, err = h.PendingSecrets.ResolveSecretID(r.Context(), agent.UserID, agent.ID, provider, pendingID)
+	} else {
+		pending, err = h.PendingSecrets.ResolveSecret(r.Context(), agent.UserID, agent.ID, provider)
+	}
 	if err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy pending secret decision consume failed",
 			"agent_id", agent.ID, "provider", string(provider), "err", err.Error())
 		return nil, "", nil, false
 	}
 	if pending == nil {
+		// Ambiguous: user typed a decision verb but we can't bind it
+		// to a specific pending. Treat as no-op so the next pipeline
+		// stage sees an ordinary turn.
 		return nil, "", nil, false
 	}
 	if auditParams != nil {
@@ -2210,7 +2275,21 @@ func syntheticLiteTextResponse(r *http.Request, provider conversation.Provider, 
 }
 
 func (h *LLMEndpointHandler) maybeHandleLiteApprovalRelease(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditStatus *int, auditDecide, auditOutcome, auditReason *string) bool {
-	candidateTasks, toolRules, egressRules := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	candidateTasks, toolRules, egressRules, decisionLoadErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	if decisionLoadErr != nil {
+		// Approval-release path also authorizes; same fail-closed rule
+		// as the main serve() path applies.
+		h.Logger.WarnContext(r.Context(), "lite-proxy approval-release decision-input load failed; failing closed",
+			"request_id", requestID, "agent_id", agent.ID, "err", decisionLoadErr.Error())
+		*auditStatus = http.StatusServiceUnavailable
+		*auditDecide = "deny"
+		*auditOutcome = "decision_input_load_failed"
+		*auditReason = decisionLoadErr.Error()
+		clearMirroredUpstreamHeaders(w.Header())
+		writeJSONError(w, http.StatusServiceUnavailable, "DECISION_INPUT_UNAVAILABLE",
+			"authorization inputs unavailable; please retry")
+		return true
+	}
 	var catalogIface interface {
 		Resolve(host, method, path string) (llmproxy.ResolvedAction, bool)
 	}

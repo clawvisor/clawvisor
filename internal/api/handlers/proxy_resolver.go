@@ -453,7 +453,17 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			return "", fmt.Errorf("extract credential: %w", err)
 		}
 		go func(id string) {
-			ctx := context.WithoutCancel(r.Context())
+			// Fire-and-forget: detach cancellation but cap so a stuck DB
+			// can't leak goroutines forever. Recover from panics so an
+			// unexpected store impl bug doesn't crash the process.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+			defer cancel()
+			defer func() {
+				if rec := recover(); rec != nil {
+					h.Logger.ErrorContext(ctx, "lite-proxy resolver: touch placeholder panicked",
+						"placeholder", id, "recover", fmt.Sprintf("%v", rec))
+				}
+			}()
 			if err := h.Store.TouchRuntimePlaceholder(ctx, id, time.Now().UTC()); err != nil {
 				h.Logger.WarnContext(ctx, "lite-proxy resolver: touch placeholder failed",
 					"placeholder", id, "err", err.Error())
@@ -471,6 +481,13 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			continue
 		}
 		if _, skip := resolverHopByHopHeaders[canonical]; skip {
+			continue
+		}
+		if _, skip := resolverDropForwardedHeaders[canonical]; skip {
+			// Forwarded / X-Forwarded-* / X-Real-IP / Via never propagate
+			// to the upstream — the resolver is a confused-deputy boundary
+			// and these can carry attacker-influenced metadata that some
+			// backends trust for IP allowlists or vhost routing.
 			continue
 		}
 		if _, skip := connectionDrop[strings.ToLower(canonical)]; skip {
@@ -517,6 +534,23 @@ var resolverHopByHopHeaders = map[string]struct{}{
 	"Trailer":             {},
 	"Transfer-Encoding":   {},
 	"Upgrade":             {},
+}
+
+// resolverDropForwardedHeaders enumerates request headers that must
+// never reach the upstream. They carry source-IP / vhost metadata that
+// the model — and the agent's harness — can influence by setting them
+// in the rewritten tool_use. Trusted by some backends for allowlists
+// or routing, so passing them through turns the resolver into an
+// arbitrary-header injection vector.
+var resolverDropForwardedHeaders = map[string]struct{}{
+	"Forwarded":         {},
+	"X-Forwarded-For":   {},
+	"X-Forwarded-Host":  {},
+	"X-Forwarded-Proto": {},
+	"X-Forwarded-Port":  {},
+	"X-Forwarded-Ssl":   {},
+	"X-Real-Ip":         {},
+	"Via":               {},
 }
 
 // resolverConnectionScopedHeaders returns the lowercased header names

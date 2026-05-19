@@ -456,6 +456,56 @@ func TestResolver_StripsXClawvisorPrefixOnOutbound(t *testing.T) {
 	}
 }
 
+// TestResolver_StripsForwardedHeadersOnOutbound ensures the resolver
+// never propagates source-IP / vhost metadata an attacker — including
+// the model itself, via tool_use header values — could set. Some
+// upstreams trust X-Forwarded-For for IP allowlists and X-Forwarded-Host
+// for vhost routing; passing them through makes the resolver an
+// arbitrary-header injection vector.
+func TestResolver_StripsForwardedHeadersOnOutbound(t *testing.T) {
+	seen := map[string]string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, name := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Forwarded-Ssl", "X-Real-Ip", "Forwarded", "Via"} {
+			if v := r.Header.Get(name); v != "" {
+				seen[name] = v
+			}
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	// Attacker-influenced / proxy-injected forwarded headers.
+	req.Header.Set("X-Forwarded-For", "10.0.0.1, attacker.example")
+	req.Header.Set("X-Forwarded-Host", "internal.admin.example")
+	req.Header.Set("X-Forwarded-Proto", "http")
+	req.Header.Set("X-Forwarded-Port", "1337")
+	req.Header.Set("X-Forwarded-Ssl", "off")
+	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req.Header.Set("Forwarded", "for=10.0.0.1;host=internal.admin.example")
+	req.Header.Set("Via", "1.1 attacker")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(seen) != 0 {
+		t.Fatalf("forwarded headers leaked to upstream: %v", seen)
+	}
+}
+
 func TestResolver_StripsCallerAuthFromOutbound(t *testing.T) {
 	// Even when a harness misuses Authorization to carry the caller token,
 	// the resolver detects the cvis_ shape and strips it before forwarding.

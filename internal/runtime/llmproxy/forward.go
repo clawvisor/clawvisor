@@ -230,8 +230,17 @@ func (f *Forwarder) lookupVaultKey(ctx context.Context, userID, agentID string, 
 // injectUpstreamAuth writes the upstream-specific auth header using the raw
 // API key bytes. Handles both Anthropic (x-api-key + anthropic-version) and
 // OpenAI (Authorization: Bearer).
+//
+// Validates the key bytes contain no CR/LF/NUL so a corrupted vault entry
+// (or one that round-tripped through a system that did its own escaping)
+// can't smuggle additional headers via response splitting. Go's
+// net/http rejects CR/LF on Set, but the error message is opaque; we
+// surface a clear INVALID_VAULT_KEY error before reaching the Set call.
 func injectUpstreamAuth(req *http.Request, provider conversation.Provider, key []byte) error {
 	keyStr := strings.TrimSpace(string(key))
+	if strings.ContainsAny(keyStr, "\r\n\x00") {
+		return fmt.Errorf("llmproxy: INVALID_VAULT_KEY: upstream credential contains illegal control bytes")
+	}
 	switch provider {
 	case conversation.ProviderAnthropic:
 		req.Header.Set("x-api-key", keyStr)

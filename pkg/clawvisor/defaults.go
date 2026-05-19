@@ -249,9 +249,18 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	// Each *.mcp.yaml in internal/adapters/definitions/mcp/ becomes a service.
 	// The MCPAdapter handles tool discovery, execution, and identity (via the
 	// whoami hook); response sanitization happens generically in gateway middleware.
+	//
+	// A malformed bundled .mcp.yaml is degrading — the affected service is
+	// unavailable — but it must not crash every deployment, including users
+	// who never enabled MCP. Log and continue with whatever loaded
+	// successfully; LoadFromFS returns the parsed subset alongside the
+	// error.
 	mcpAdapters, err := mcpadapter.LoadFromFS(mcpdefs.FS, ".")
 	if err != nil {
-		return nil, fmt.Errorf("loading MCP adapter specs: %w", err)
+		logger.Warn("loading MCP adapter specs partially failed; affected services will be unavailable",
+			"err", err.Error(),
+			"loaded_count", len(mcpAdapters),
+		)
 	}
 	mcpByID := make(map[string]*mcpadapter.MCPAdapter, len(mcpAdapters))
 	for _, ma := range mcpAdapters {

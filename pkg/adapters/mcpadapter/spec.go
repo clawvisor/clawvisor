@@ -132,8 +132,12 @@ func LoadFromFS(filesystem fs.FS, root string) ([]*MCPAdapter, error) {
 		out = append(out, FromSpec(spec, transport))
 		return nil
 	})
+	// Preserve any partial results so callers can degrade gracefully —
+	// a single malformed bundled .mcp.yaml shouldn't take down every
+	// other MCP service. Callers that want strict semantics still
+	// check err.
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	return out, nil
 }

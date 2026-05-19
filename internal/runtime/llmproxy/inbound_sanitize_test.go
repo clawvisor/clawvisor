@@ -250,3 +250,40 @@ func TestSanitizeBashCommand_RedactsLooseNonces(t *testing.T) {
 		t.Errorf("expected redaction marker, got %q", got)
 	}
 }
+
+// TestBuildSyntheticURL_RejectsPathSmugglingHosts is a regression test
+// for an attacker-influenced X-Clawvisor-Target-Host that contains URL
+// path metacharacters. Without strict host validation the rebuilt
+// inbound-history URL would include the metacharacters verbatim.
+func TestBuildSyntheticURL_RejectsPathSmugglingHosts(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool // true => buildSyntheticURL should accept
+	}{
+		{"api.example.com", true},
+		{"api.example.com:8443", true},
+		{"api-v2.example_internal.com", true},
+		{"[2001:db8::1]:8443", true},
+		{"[::1]", true},
+		// Path-smuggling shapes:
+		{"evil.com/../legit.com", false},
+		{"evil.com?legit=true", false},
+		{"evil.com#frag", false},
+		{"evil.com@phish.example", false},
+		{"evil.com%2flegit.com", false},
+		{"evil.com\\backslash", false},
+		// Whitespace was already rejected, but exercise it.
+		{"evil.com /legit.com", false},
+		// Port nonsense.
+		{"evil.com:abc", false},
+		{"evil.com:99999", true}, // 5 chars, narrow accept; resolver still validates downstream
+		{"evil.com:999999", false},
+	}
+	for _, c := range cases {
+		got := buildSyntheticURL(c.host, "/x")
+		accepted := got != ""
+		if accepted != c.want {
+			t.Errorf("buildSyntheticURL(%q): accepted=%v want=%v (got %q)", c.host, accepted, c.want, got)
+		}
+	}
+}

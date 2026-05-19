@@ -237,6 +237,11 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be positive")
 		return
 	}
+	// Empty AgentID is intentional: the resolver treats a placeholder
+	// with no agent binding as user-wide (any of the user's agents
+	// may use it). Callers that want to scope to a single agent pass
+	// `agent_id`; manual UI mint flows leave it empty so the issued
+	// placeholder follows the user, not a specific agent.
 	var agentID string
 	if req.AgentID != "" {
 		agents, err := h.st.ListAgents(r.Context(), user.ID)

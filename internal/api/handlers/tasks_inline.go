@@ -177,7 +177,13 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		if err != nil {
 			h.logger.Error("failed to mint inline task credential placeholders; denying task to avoid orphaned active credential task",
 				"task_id", task.ID, "err", err)
-			if rollbackErr := h.st.UpdateTaskStatus(ctx, task.ID, "denied"); rollbackErr != nil {
+			// Rollback must outlive the inbound request — a client
+			// disconnect that cancels ctx between the mint failure and
+			// the status update would leave an orphaned active task
+			// with no credentials. Detach the cancellation but inherit
+			// values (logging, tracing).
+			rollbackCtx := context.WithoutCancel(ctx)
+			if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
 				h.logger.Error("CRITICAL: credential placeholder mint failed AND rollback failed; task is now orphaned active",
 					"task_id", task.ID, "mint_err", err, "rollback_err", rollbackErr)
 			}
@@ -202,7 +208,8 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		// error surfaced to the LLM.
 		h.logger.Error("failed to create inline approval record; denying task to preserve audit invariant",
 			"task_id", task.ID, "err", err)
-		if rollbackErr := h.st.UpdateTaskStatus(ctx, task.ID, "denied"); rollbackErr != nil {
+		rollbackCtx := context.WithoutCancel(ctx)
+		if rollbackErr := h.st.UpdateTaskStatus(rollbackCtx, task.ID, "denied"); rollbackErr != nil {
 			// Best-effort: log loudly. The original error is what we
 			// surface; an orphaned active task here is far worse than
 			// any other failure mode, so flag it.

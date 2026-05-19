@@ -123,6 +123,11 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 				writeAuthError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "caller nonce cache not configured")
 				return
 			}
+			// The nonce cache canonicalizes the target host (port
+			// stripped) on both Mint and Consume, so passing the raw
+			// header value through here is safe even when the
+			// rewriter intentionally preserves :port for downstream
+			// dial routing.
 			target := llmproxy.NonceTarget{
 				Host:   strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")),
 				Method: r.Method,

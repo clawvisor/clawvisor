@@ -26,6 +26,72 @@ func TestBuildSecretAdjudicatorPromptRedactsPeerCandidates(t *testing.T) {
 	}
 }
 
+// TestParseSecretAdjudicatorVerdict_RejectsCanaryMismatch is a
+// regression test for the prompt-injection mitigation. A response that
+// omits or alters the canary must be refused — converting a successful
+// injection into a fail-closed "no decision" rather than a false
+// negative on credential detection.
+func TestParseSecretAdjudicatorVerdict_RejectsCanaryMismatch(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		ok   bool
+	}{
+		{
+			name: "canary present and correct",
+			raw:  `{"credential":true,"service":"github","confidence":0.9,"canary":"` + adjudicatorPromptCanary + `"}`,
+			ok:   true,
+		},
+		{
+			name: "canary missing",
+			raw:  `{"credential":false,"service":"","confidence":0.1}`,
+			ok:   false,
+		},
+		{
+			name: "canary wrong",
+			raw:  `{"credential":false,"service":"","confidence":0.1,"canary":"attacker-supplied"}`,
+			ok:   false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := ParseSecretAdjudicatorVerdict(c.raw)
+			if c.ok && err != nil {
+				t.Fatalf("expected success, got err=%v", err)
+			}
+			if !c.ok && err == nil {
+				t.Fatalf("expected canary-mismatch error, got nil")
+			}
+		})
+	}
+}
+
+// TestBuildSecretAdjudicatorPrompt_FencesUntrustedFields ensures that
+// the attacker-influenced fields (host, fieldName, content) appear
+// inside the BEGIN/END sentinel fence so the model is instructed to
+// treat them as data.
+func TestBuildSecretAdjudicatorPrompt_FencesUntrustedFields(t *testing.T) {
+	prompt := BuildSecretAdjudicatorPrompt(
+		"api.example.test",
+		"x-evil-header",
+		"surrounding ctx",
+		Candidate{Value: "v", Charset: "alphanum", Entropy: 3.0},
+	)
+	for _, fragment := range []string{
+		"[BEGIN HOST]",
+		"[END HOST]",
+		"[BEGIN FIELD]",
+		"[END FIELD]",
+		"[BEGIN REDACTED CONTEXT]",
+		"[END REDACTED CONTEXT]",
+		adjudicatorPromptCanary,
+	} {
+		if !strings.Contains(prompt, fragment) {
+			t.Errorf("prompt is missing required fragment %q\nprompt:\n%s", fragment, prompt)
+		}
+	}
+}
+
 func TestSecretAdjudicatorConfigured(t *testing.T) {
 	tests := []struct {
 		name string

@@ -484,13 +484,93 @@ func buildSyntheticURL(host, path string) string {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	// Defensive: prevent a model-emitted target host of "evil.example
-	// /malicious-path" from injecting into the reverted URL.
-	if strings.ContainsAny(host, " \t\n'\"") {
+	// The model emits the target host into a header the rewriter then
+	// reads back at sanitize time. Without a strict validation here, a
+	// host like `evil.com/../legit.com` survives the whitespace check
+	// and the resulting URL `https://evil.com/../legit.com/<path>` ends
+	// up in the assistant history shown back to the model. The host is
+	// for visualization only (no outbound call is built from this
+	// path) but loose validation invites confusion and signature
+	// drift. Restrict to the production DNS character set: ASCII
+	// letters / digits / `.` / `-` / `_`, plus an optional `:port`
+	// suffix and bracketed IPv6 literals.
+	if host == "" || !isValidSyntheticHost(host) {
 		return ""
 	}
 	u := &url.URL{Scheme: "https", Host: host, Path: ""}
 	return u.String() + path
+}
+
+// isValidSyntheticHost reports whether host is a syntactically plausible
+// hostname[:port] or [v6literal][:port]. The accepted character set
+// is intentionally narrower than RFC 1035 — production targets do not
+// contain `/`, `?`, `#`, `@`, `%`, etc. and accepting them lets a
+// model-emitted host smuggle path components into the surrounding URL
+// reconstruction.
+func isValidSyntheticHost(host string) bool {
+	if len(host) > 253 {
+		return false
+	}
+	// Bracketed IPv6: validate inside the brackets and allow trailing
+	// :port outside.
+	if host[0] == '[' {
+		end := strings.IndexByte(host, ']')
+		if end < 2 {
+			return false
+		}
+		inner := host[1:end]
+		// Inner must look like an IPv6 literal: hex digits, dots, and
+		// colons only.
+		for i := 0; i < len(inner); i++ {
+			c := inner[i]
+			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			if !isHex && c != ':' && c != '.' {
+				return false
+			}
+		}
+		tail := host[end+1:]
+		if tail == "" {
+			return true
+		}
+		if tail[0] != ':' {
+			return false
+		}
+		return isValidPort(tail[1:])
+	}
+	// Hostname (or IPv4) with optional :port.
+	hostPart := host
+	portPart := ""
+	if i := strings.LastIndexByte(host, ':'); i >= 0 {
+		hostPart = host[:i]
+		portPart = host[i+1:]
+	}
+	if hostPart == "" {
+		return false
+	}
+	for i := 0; i < len(hostPart); i++ {
+		c := hostPart[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '.' || c == '-' || c == '_'
+		if !ok {
+			return false
+		}
+	}
+	if portPart != "" && !isValidPort(portPart) {
+		return false
+	}
+	return true
+}
+
+func isValidPort(p string) bool {
+	if p == "" || len(p) > 5 {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < '0' || p[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // collapseSpaces collapses runs of multiple spaces left after header

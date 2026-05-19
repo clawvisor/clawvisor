@@ -30,6 +30,16 @@ func (m *memVault) Set(_ context.Context, userID, key string, c []byte) error {
 	m.creds[userID][key] = c
 	return nil
 }
+func (m *memVault) SetIfAbsent(_ context.Context, userID, key string, c []byte) error {
+	if m.creds[userID] == nil {
+		m.creds[userID] = map[string][]byte{}
+	}
+	if _, ok := m.creds[userID][key]; ok {
+		return vault.ErrAlreadyExists
+	}
+	m.creds[userID][key] = c
+	return nil
+}
 func (m *memVault) Get(_ context.Context, userID, key string) ([]byte, error) {
 	if u, ok := m.creds[userID]; ok {
 		if c, ok := u[key]; ok {

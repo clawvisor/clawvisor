@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -74,8 +75,19 @@ const NoncePrefix = "cv-nonce-"
 // normalizeNonceTarget applies the canonicalization rules used on both
 // Mint and Consume. Documented in CallerNonceCache so callers know what
 // invariants the cache enforces.
+//
+// Host is hostname-only (port stripped) — the inspector verdict that
+// drives Mint uses url.URL.Hostname(), while the rewriter intentionally
+// preserves :port in the outbound X-Clawvisor-Target-Host header (so
+// the resolver dials the right port). Canonicalizing both ends here
+// eliminates the asymmetry that previously rejected legitimate
+// non-default-port targets as NONCE_TARGET_MISMATCH.
 func normalizeNonceTarget(t NonceTarget) NonceTarget {
-	t.Host = strings.ToLower(strings.TrimSpace(t.Host))
+	host := strings.ToLower(strings.TrimSpace(t.Host))
+	if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+		host = hostOnly
+	}
+	t.Host = host
 	t.Method = strings.ToUpper(strings.TrimSpace(t.Method))
 	// Path: strip query, strip trailing slash (unless root). Keep
 	// URL-encoded form verbatim — we don't canonicalize encoding here.

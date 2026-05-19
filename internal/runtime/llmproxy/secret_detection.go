@@ -638,6 +638,84 @@ func ParseSecretDecisionReply(text string) SecretDecisionReply {
 	}
 }
 
+// secretDecisionIDRE captures the pending-decision ID emitted into the
+// assistant prompt that asks the user to allow/discard/vault a detected
+// secret. The marker is `[clawvisor:secret=<id>]` and the ID is
+// guaranteed to be on a single line of opaque text — we constrain the
+// match to a non-`]` character class so an outer literal in surrounding
+// text can't tail-match.
+var secretDecisionIDRE = regexp.MustCompile(`\[clawvisor:secret=([^\]\s]+)\]`)
+
+// LatestAssistantSecretDecisionID returns the pending-decision ID embedded
+// in the most recent assistant message that carries the
+// SecretDecisionIDMarker. Returns empty string when no such message is
+// present. Callers thread the returned ID through ResolveSecretID so the
+// user's reply releases the specific pending decision they were shown,
+// not whatever happened to be at the tail of the queue when a concurrent
+// request enqueued a second pending.
+func LatestAssistantSecretDecisionID(provider conversation.Provider, body []byte) string {
+	collect := func(text string) string {
+		if !strings.Contains(text, SecretDecisionIDMarker) {
+			return ""
+		}
+		m := secretDecisionIDRE.FindStringSubmatch(text)
+		if len(m) < 2 {
+			return ""
+		}
+		return m[1]
+	}
+	switch provider {
+	case conversation.ProviderAnthropic:
+		var parsed struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(body, &parsed); err == nil {
+			for i := len(parsed.Messages) - 1; i >= 0; i-- {
+				if parsed.Messages[i].Role != "assistant" {
+					continue
+				}
+				if id := collect(flattenAnthropicTaskReplyText(parsed.Messages[i].Content)); id != "" {
+					return id
+				}
+			}
+		}
+	case conversation.ProviderOpenAI:
+		var parsed struct {
+			Messages []map[string]any `json:"messages"`
+			Input    json.RawMessage  `json:"input"`
+		}
+		if err := json.Unmarshal(body, &parsed); err == nil {
+			var items []map[string]any
+			if len(parsed.Input) > 0 && json.Unmarshal(parsed.Input, &items) == nil {
+				for i := len(items) - 1; i >= 0; i-- {
+					role, _ := items[i]["role"].(string)
+					if role != "assistant" {
+						continue
+					}
+					raw, _ := json.Marshal(items[i]["content"])
+					if id := collect(flattenOpenAITaskReplyContent(raw)); id != "" {
+						return id
+					}
+				}
+			}
+			for i := len(parsed.Messages) - 1; i >= 0; i-- {
+				role, _ := parsed.Messages[i]["role"].(string)
+				if role != "assistant" {
+					continue
+				}
+				raw, _ := json.Marshal(parsed.Messages[i]["content"])
+				if id := collect(flattenOpenAITaskReplyContent(raw)); id != "" {
+					return id
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func LatestUserText(provider conversation.Provider, body []byte) string {
 	switch provider {
 	case conversation.ProviderAnthropic:
