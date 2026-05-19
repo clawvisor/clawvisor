@@ -1004,6 +1004,21 @@ function BootstrapApproveStep({
     [connections, agentName],
   )
 
+  // Any time a previously-tracked pending request disappears (approved,
+  // denied via the inline buttons, or server-expired after a wait-timeout)
+  // the claim that produced it has been burned. Mint a fresh one so the
+  // visible curl in the UI is immediately retry-able. The mutation
+  // onSuccess handlers also invalidate, but this effect is the only thing
+  // that catches the server-expired case where the dashboard wasn't the
+  // driver of the resolution.
+  const hadPendingRef = useRef(false)
+  useEffect(() => {
+    if (hadPendingRef.current && !myPending) {
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
+    }
+    hadPendingRef.current = !!myPending
+  }, [myPending, qc])
+
   const [actionError, setActionError] = useState<string | null>(null)
   const approveMut = useMutation({
     mutationFn: (id: string) => api.connections.approve(id),
