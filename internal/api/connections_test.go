@@ -489,6 +489,102 @@ func TestConnectionRequest_ClaimInvalid(t *testing.T) {
 	}
 }
 
+func TestConnectionRequest_WaitDeniedReturns403(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+	resp := session.do("POST", "/api/agents/connect/claim", nil)
+	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+
+	type result struct {
+		status int
+		body   map[string]any
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=DenyMe&wait=true&timeout=10", "", nil)
+		defer r.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		resultCh <- result{status: r.StatusCode, body: body}
+	}()
+
+	// Wait until the pending request shows up server-side, then deny it.
+	var connID string
+	for i := 0; i < 50; i++ {
+		pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
+		if err == nil && len(pending) > 0 {
+			connID = pending[0].ID
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if connID == "" {
+		t.Fatal("pending request never appeared")
+	}
+	denyResp := session.do("POST", "/api/agents/connect/"+connID+"/deny", nil)
+	mustStatus(t, denyResp, http.StatusOK)
+
+	select {
+	case got := <-resultCh:
+		if got.status != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden on denied wait=true response, got %d (body=%v)", got.status, got.body)
+		}
+		if s, _ := got.body["status"].(string); s != "denied" {
+			t.Errorf("expected response status=denied, got %q", s)
+		}
+		if _, hasToken := got.body["token"]; hasToken {
+			t.Error("denied response must not include a token")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("wait=true POST never returned after deny")
+	}
+}
+
+func TestConnectionRequest_WaitApprovedReturns201WithToken(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+	resp := session.do("POST", "/api/agents/connect/claim", nil)
+	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+
+	type result struct {
+		status int
+		body   map[string]any
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=ApproveMeWait&wait=true&timeout=10", "", nil)
+		defer r.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		resultCh <- result{status: r.StatusCode, body: body}
+	}()
+
+	var connID string
+	for i := 0; i < 50; i++ {
+		pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
+		if err == nil && len(pending) > 0 {
+			connID = pending[0].ID
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if connID == "" {
+		t.Fatal("pending request never appeared")
+	}
+	approveResp := session.do("POST", "/api/agents/connect/"+connID+"/approve", nil)
+	mustStatus(t, approveResp, http.StatusOK)
+
+	select {
+	case got := <-resultCh:
+		if got.status != http.StatusCreated {
+			t.Errorf("expected 201 Created on approved wait=true response, got %d (body=%v)", got.status, got.body)
+		}
+		if tok, _ := got.body["token"].(string); tok == "" {
+			t.Error("approved response must include a non-empty token")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("wait=true POST never returned after approve")
+	}
+}
+
 func TestConnectionRequest_NameFromQuery(t *testing.T) {
 	env, session := setupConnectionEnv(t)
 

@@ -232,6 +232,10 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	// If wait=true, long-poll until the connection request is resolved.
+	// The status code distinguishes outcomes so a `curl -sf` bootstrap
+	// exits non-zero on anything other than approval — that way
+	// --remove-on-error cleans up the tokenless response body and the
+	// caller never ends up with garbage on disk.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		resolved := h.waitForConnectionResolution(r.Context(), req.ID, owner.ID, longPollDeadline(r))
 		if r.Context().Err() != nil {
@@ -242,12 +246,23 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			"status":        resolved.Status,
 			"expires_at":    resolved.ExpiresAt,
 		}
-		if resolved.Status == "approved" {
+		status := http.StatusCreated
+		switch resolved.Status {
+		case "approved":
 			if raw, ok := h.tokenCache.Load(req.ID); ok {
 				resp["token"] = raw
 			}
+		case "denied":
+			status = http.StatusForbidden
+		case "expired":
+			status = http.StatusGone
+		default:
+			// "pending" reaching the wait deadline is the long-poll
+			// equivalent of a timeout — caller should retry the curl
+			// or check the dashboard directly.
+			status = http.StatusRequestTimeout
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		writeJSON(w, status, resp)
 		return
 	}
 
