@@ -434,32 +434,33 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 		"response": map[string]any{"id": "resp_clawvisor_rewrite", "status": "in_progress"},
 	}))
 	for i, it := range items {
+		outputIndex := it.outputIndex
 		if it.isText {
 			itemID := fmt.Sprintf("msg_clawvisor_%d", i)
 			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item":         map[string]any{"id": itemID, "type": "message", "role": "assistant", "status": "in_progress"},
 			}))
 			if it.text != "" {
 				b.WriteString(sseEventBlock("response.output_text.delta", map[string]any{
 					"type":          "response.output_text.delta",
 					"item_id":       itemID,
-					"output_index":  i,
+					"output_index":  outputIndex,
 					"content_index": 0,
 					"delta":         it.text,
 				}))
 				b.WriteString(sseEventBlock("response.output_text.done", map[string]any{
 					"type":          "response.output_text.done",
 					"item_id":       itemID,
-					"output_index":  i,
+					"output_index":  outputIndex,
 					"content_index": 0,
 					"text":          it.text,
 				}))
 			}
 			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
 				"type":         "response.output_item.done",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item":         map[string]any{"id": itemID, "type": "message", "role": "assistant", "status": "completed"},
 			}))
 			continue
@@ -475,12 +476,12 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 			}
 			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item":         passThrough,
 			}))
 			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
 				"type":         "response.output_item.done",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item":         passThrough,
 			}))
 			continue
@@ -492,7 +493,7 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 			}
 			b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item": map[string]any{
 					"id":      itemID,
 					"type":    "custom_tool_call",
@@ -504,7 +505,7 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 			}))
 			b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
 				"type":         "response.output_item.done",
-				"output_index": i,
+				"output_index": outputIndex,
 				"item": map[string]any{
 					"id":      itemID,
 					"type":    "custom_tool_call",
@@ -523,7 +524,7 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 		}
 		b.WriteString(sseEventBlock("response.output_item.added", map[string]any{
 			"type":         "response.output_item.added",
-			"output_index": i,
+			"output_index": outputIndex,
 			"item": map[string]any{
 				"id":      itemID,
 				"type":    "function_call",
@@ -535,19 +536,19 @@ func buildOpenAIResponsesMultiSSE(items []orderedResponsesItem) []byte {
 		b.WriteString(sseEventBlock("response.function_call_arguments.delta", map[string]any{
 			"type":         "response.function_call_arguments.delta",
 			"item_id":      itemID,
-			"output_index": i,
+			"output_index": outputIndex,
 			"delta":        it.arguments,
 		}))
 		b.WriteString(sseEventBlock("response.function_call_arguments.done", map[string]any{
 			"type":         "response.function_call_arguments.done",
 			"item_id":      itemID,
-			"output_index": i,
+			"output_index": outputIndex,
 			"name":         it.name,
 			"arguments":    it.arguments,
 		}))
 		b.WriteString(sseEventBlock("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
-			"output_index": i,
+			"output_index": outputIndex,
 			"item": map[string]any{
 				"id":        itemID,
 				"type":      "function_call",

@@ -179,7 +179,7 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 	}
 }
 
-func TestBoundaryCheckVerdictUnknownServiceDefersToIntentVerification(t *testing.T) {
+func TestBoundaryCheckVerdictUnknownServiceFailsClosed(t *testing.T) {
 	placeholder := "autovault_agentphone_xxx"
 	st, userID, agentID := seedPostprocessStoreWithService(t, placeholder, "agentphone")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -194,11 +194,11 @@ func TestBoundaryCheckVerdictUnknownServiceDefersToIntentVerification(t *testing
 		Placeholders: []string{placeholder},
 	})
 
-	if !ok {
-		t.Fatalf("expected unknown service to defer to task/intent verification, got reason %q", reason)
+	if ok {
+		t.Fatalf("expected unknown service to fail closed, got reason %q", reason)
 	}
-	if !strings.Contains(reason, "deferring to task/intent verification") {
-		t.Fatalf("expected deferral reason, got %q", reason)
+	if !strings.Contains(reason, "no bound-service hosts") {
+		t.Fatalf("expected missing bound-host reason, got %q", reason)
 	}
 }
 

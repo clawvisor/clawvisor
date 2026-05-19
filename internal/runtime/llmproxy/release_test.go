@@ -309,7 +309,7 @@ func TestTryReleasePendingApproval_ResolveIsPinnedToPeekedID(t *testing.T) {
 	}
 }
 
-func TestTryReleasePendingApproval_ReleaseDefersUnknownServiceHostsToIntent(t *testing.T) {
+func TestTryReleasePendingApproval_BlocksUnknownServiceHosts(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	placeholder := "autovault_agentphone_test"
@@ -349,11 +349,11 @@ func TestTryReleasePendingApproval_ReleaseDefersUnknownServiceHostsToIntent(t *t
 		}},
 		IntentVerifier: &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits task"}},
 	})
-	if !result.Handled || result.Decision != "allow" || result.Outcome != "approval_released" {
-		t.Fatalf("unknown service host should defer to task/intent on release, got %+v", result)
+	if !result.Handled || result.Decision != "deny" || result.Outcome != "approval_release_blocked" {
+		t.Fatalf("unknown service host should fail closed on release, got %+v", result)
 	}
-	if strings.Contains(string(result.Body), "Approval denied") {
-		t.Fatalf("release body should contain approved tool call, got:\n%s", result.Body)
+	if !strings.Contains(string(result.Body), "no bound-service hosts") {
+		t.Fatalf("blocked release body should explain missing bound hosts, got:\n%s", result.Body)
 	}
 }
 

@@ -237,10 +237,6 @@ func (h *RuntimeHandler) CreateUserPlaceholder(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be positive")
 		return
 	}
-	if ttl <= 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ttl_seconds must be positive")
-		return
-	}
 	var agentID string
 	if req.AgentID != "" {
 		agents, err := h.st.ListAgents(r.Context(), user.ID)

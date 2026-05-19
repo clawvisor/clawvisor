@@ -116,6 +116,30 @@ func TestEvaluateAuthorization_HardDenyOverridesTaskScope(t *testing.T) {
 	}
 }
 
+func TestEvaluateAuthorization_HardDenyMatchesCrossHarnessToolAlias(t *testing.T) {
+	agentID := "agent-1"
+	toolDeny := rule("tool-deny", "tool", "deny", &agentID)
+	toolDeny.ToolName = "Bash"
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits task"}}
+
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("exec_command", map[string]any{"cmd": "cat README.md"}),
+		AgentID:        agentID,
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", agentID, "exec_command", "read repo files")},
+		ToolRules:      []*store.RuntimePolicyRule{toolDeny},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictDeny || got.Source != SourceRuleDeny || got.Rule != toolDeny {
+		t.Fatalf("decision = %+v, want Bash hard-deny to block exec_command alias", got)
+	}
+	if verifier.called {
+		t.Fatal("intent verifier should not run after hard deny")
+	}
+}
+
 func TestEvaluateAuthorization_ObserveDoesNotSoftenIntentRefusal(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "wrong repo"}}
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{

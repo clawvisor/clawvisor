@@ -707,7 +707,7 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     queryKey: ['connection-claim'],
     queryFn: () => api.connections.mintClaim(),
     refetchInterval: 4 * 60 * 1000,
-    staleTime: 4 * 60 * 1000,
+    staleTime: 0,
   })
 
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'

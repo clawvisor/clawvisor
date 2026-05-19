@@ -98,7 +98,7 @@ var agentRegisterCmd = &cobra.Command{
 		}
 		registry.Agents[name] = entry
 		if err := saveAgentRegistry(path, registry); err != nil {
-			return fmt.Errorf("rotated token for agent %q but could not save local registry: %w\nrecovery:\n  server_url=%s\n  agent_token=%s", name, err, cl.BaseURL(), agent.Token)
+			return fmt.Errorf("rotated token for agent %q but could not save local registry at %s: %w", name, path, err)
 		}
 
 		llmSetup, err := maybeConfigureRegisteredAgentLLM(cmd, cl, entry)
