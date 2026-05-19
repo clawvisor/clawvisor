@@ -122,6 +122,21 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// decodeJSONAllowEmpty is decodeJSON but treats an empty body as a no-op so
+// callers can supply all fields via query string. Non-empty malformed JSON
+// still errors normally.
+func decodeJSONAllowEmpty(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		writeDetailedError(w, http.StatusBadRequest, diagnoseJSONError(err))
+		return false
+	}
+	return true
+}
+
 // diagnoseJSONError inspects a JSON decode error and returns an actionable error detail.
 func diagnoseJSONError(err error) apiErrorDetail {
 	d := apiErrorDetail{

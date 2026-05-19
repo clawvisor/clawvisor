@@ -98,6 +98,7 @@ type Server struct {
 	// Multi-instance stores (set via options; nil = use defaults).
 	replayCache        middleware.ReplayCache
 	tokenCache         handlers.TokenCache
+	claimCodeCache     handlers.ClaimCodeCache
 	devicePairingStore handlers.DevicePairingStore
 	oauthStateStore    handlers.OAuthStateStore
 	pairingCodeStore   handlers.PairingCodeStore
@@ -284,6 +285,13 @@ func WithReplayCache(rc middleware.ReplayCache) ServerOption {
 // WithTokenCache overrides the default in-memory connection token cache.
 func WithTokenCache(tc handlers.TokenCache) ServerOption {
 	return func(s *Server) { s.tokenCache = tc }
+}
+
+// WithClaimCodeCache overrides the default in-memory claim code cache.
+// Multi-instance deployments must supply a shared (e.g. Redis-backed) cache
+// so a code minted on one instance can be consumed on another.
+func WithClaimCodeCache(cc handlers.ClaimCodeCache) ServerOption {
+	return func(s *Server) { s.claimCodeCache = cc }
 }
 
 // WithDevicePairingStore overrides the default in-memory device pairing store.
@@ -699,6 +707,9 @@ func (s *Server) routes() http.Handler {
 	if s.tokenCache != nil {
 		connectionsHandler.SetTokenCache(s.tokenCache)
 	}
+	if s.claimCodeCache != nil {
+		connectionsHandler.SetClaimCodeCache(s.claimCodeCache)
+	}
 	s.connectionsHandler = connectionsHandler
 	connectionsRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 10, Window: 60})
 	mux.Handle("POST /api/agents/connect",
@@ -706,6 +717,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
 	// Connection request management (user JWT)
+	mux.Handle("POST /api/agents/connect/claim", user(connectionsHandler.MintClaim))
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))

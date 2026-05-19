@@ -9,6 +9,8 @@ package llmproxy
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -140,6 +142,18 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	if err != nil {
 		return nil, err
 	}
+	// In passthrough mode, OpenAI splits its Codex surface across two
+	// upstreams: ChatGPT-OAuth bearers must hit chatgpt.com/backend-api/codex/*
+	// while API keys (and OAuth bearers explicitly scoped with
+	// api.responses.write) hit api.openai.com/v1/*. Route based on the
+	// bearer's shape and claims; fall back to api.openai.com when in doubt.
+	if PassthroughUpstreamAuth(ctx) && provider == conversation.ProviderOpenAI {
+		if auth := passthroughBearerAuthorization(inbound); auth != "" {
+			if routed := openaiPassthroughRoute(auth, inbound.URL.Path); routed != nil {
+				upstreamURL = routed
+			}
+		}
+	}
 	upstreamURL.RawQuery = inbound.URL.RawQuery
 
 	req, err := http.NewRequestWithContext(ctx, inbound.Method, upstreamURL.String(), bytes.NewReader(body))
@@ -247,6 +261,96 @@ func passthroughBearerAuthorization(inbound *http.Request) string {
 		return ""
 	}
 	return prefix + token
+}
+
+// openaiPassthroughRoute decides which OpenAI upstream a passthrough request
+// should hit. ChatGPT-OAuth JWT bearers — JWTs whose scope claims don't
+// include api.responses.write — must be routed to
+// chatgpt.com/backend-api/codex/*; everything else (sk-* / sk-proj-* API
+// keys, JWTs with api.responses.write, unrecognized tokens) falls back to
+// api.openai.com/v1/*. Returns nil to mean "use default routing."
+//
+// The Authorization header argument is the full "Bearer <token>" string.
+// The path argument is the inbound request path (typically /v1/responses).
+func openaiPassthroughRoute(authorization, inboundPath string) *url.URL {
+	const prefix = "Bearer "
+	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
+	if token == "" {
+		return nil
+	}
+	// API keys: sk-* and sk-proj-* go to the API endpoint.
+	if strings.HasPrefix(token, "sk-") {
+		return nil
+	}
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Some JWT emitters use padded base64; tolerate that.
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil
+		}
+	}
+	// Codex's access_token has scp as a JSON array; other OAuth providers
+	// emit space-separated strings. Decode both into json.RawMessage and
+	// normalize.
+	var claims struct {
+		Scp   json.RawMessage `json:"scp"`
+		Scope json.RawMessage `json:"scope"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	if scopesIncludes(claims.Scp, "api.responses.write") || scopesIncludes(claims.Scope, "api.responses.write") {
+		return nil
+	}
+	// ChatGPT-OAuth JWT without api.responses.write: route to chatgpt.com.
+	// Path mapping: /v1/<rest> → /backend-api/codex/<rest>.
+	suffix := strings.TrimPrefix(inboundPath, "/v1")
+	if !strings.HasPrefix(suffix, "/") {
+		suffix = "/" + suffix
+	}
+	return &url.URL{
+		Scheme: "https",
+		Host:   "chatgpt.com",
+		Path:   "/backend-api/codex" + suffix,
+	}
+}
+
+// scopesIncludes checks for a target scope in either of the two shapes OAuth
+// providers emit: a space-separated string (RFC 6749 oauth2 standard) or a
+// JSON array of strings (what Codex's access_token uses).
+func scopesIncludes(raw json.RawMessage, want string) bool {
+	if len(raw) == 0 || want == "" {
+		return false
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return false
+		}
+		for _, t := range strings.Fields(s) {
+			if t == want {
+				return true
+			}
+		}
+		return false
+	}
+	if raw[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return false
+		}
+		for _, t := range list {
+			if t == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func injectPassthroughOpenAIAuth(req *http.Request, authorization string) {

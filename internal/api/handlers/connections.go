@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,11 +23,13 @@ var (
 	errAlreadyResolved = errors.New("connection request already resolved")
 	errExpired         = errors.New("connection request expired")
 	errForbidden       = errors.New("connection request does not belong to this user")
+	errAgentNameTaken  = errors.New("agent name is already in use")
 )
 
 const (
 	connectionRequestExpiry   = 5 * time.Minute
 	connectionTokenWindow     = 5 * time.Minute
+	claimCodeTTL              = 5 * time.Minute
 	maxPendingRequests        = 10
 	pollTimeout               = 30 * time.Second
 	maxConcurrentPollsPerUser = 10
@@ -43,6 +47,11 @@ type ConnectionsHandler struct {
 	// Token cache for approved agent tokens. Backed by either in-memory
 	// or Redis, depending on server configuration.
 	tokenCache TokenCache
+
+	// Claim code cache for the bootstrap-curl flow. In-memory only —
+	// codes are 5-minute single-use and don't survive process restart,
+	// which is fine for transient bootstrap credentials.
+	claimCache ClaimCodeCache
 
 	// Per-user concurrent poll tracking.
 	userPollsMu sync.Mutex
@@ -68,6 +77,7 @@ func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
 		baseURL:     baseURL,
 		multiTenant: multiTenant,
 		tokenCache:  newMemoryTokenCache(connectionTokenWindow),
+		claimCache:  newMemoryClaimCodeCache(),
 		userPolls:   make(map[string]int),
 		ipPolls:     make(map[string]int),
 	}
@@ -76,6 +86,11 @@ func NewConnectionsHandler(st store.Store, notifier notify.Notifier,
 // SetTokenCache overrides the default in-memory token cache.
 func (h *ConnectionsHandler) SetTokenCache(tc TokenCache) {
 	h.tokenCache = tc
+}
+
+// SetClaimCodeCache overrides the default in-memory claim code cache.
+func (h *ConnectionsHandler) SetClaimCodeCache(cc ClaimCodeCache) {
+	h.claimCache = cc
 }
 
 // RequestConnect handles POST /api/agents/connect (unauthenticated).
@@ -87,32 +102,96 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		CallbackURL string `json:"callback_url"`
 		UserID      string `json:"user_id"`
 	}
-	if !decodeJSON(w, r, &body) {
+	// decodeJSON tolerates an empty body so callers can send everything as
+	// query params and skip the Content-Type / -d flags entirely.
+	if !decodeJSONAllowEmpty(w, r, &body) {
 		return
+	}
+	// Name may also arrive as a query param to keep the bootstrap curl
+	// body-less. Body wins if both are set (legacy callers).
+	if body.Name == "" {
+		body.Name = r.URL.Query().Get("name")
 	}
 	if body.Name == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "name is required")
 		return
 	}
 
-	// Resolve the target user. In multi-tenant mode, user_id is required so
-	// the connection request is routed to the correct user. In single-tenant
-	// mode, fall back to admin@local for backward compatibility.
-	var owner *store.User
-	var err error
-	if body.UserID != "" {
+	// Resolve the target user. A `?claim=<code>` query param (minted by an
+	// authenticated dashboard session) takes precedence and avoids leaking
+	// user_id into the bootstrap curl URL.
+	//
+	// Claim handling is two-phase: Peek first to identify the user so we
+	// can run the cheap validation that follows (name collisions, max
+	// pending), then Consume only when we're about to create the request.
+	// Burning the single-use code on a 4xx the caller could fix would
+	// leave the dashboard renderering a stale claim for up to four minutes
+	// before the next mint refetch — too long for a corrected retry.
+	// Fallback paths: user_id in the body (legacy callers, skill-based
+	// setup flow) or admin@local in single-tenant mode.
+	var (
+		owner          *store.User
+		err            error
+		pendingClaim   string // non-empty when we owe a Consume after validation
+	)
+	if claim := r.URL.Query().Get("claim"); claim != "" {
+		userID, ok := h.claimCache.Peek(claim)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "INVALID_CLAIM", "claim code is invalid, expired, or already consumed")
+			return
+		}
+		owner, err = h.st.GetUserByID(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+			return
+		}
+		pendingClaim = claim
+	} else if body.UserID != "" {
 		owner, err = h.st.GetUserByID(r.Context(), body.UserID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
 			return
 		}
 	} else if h.multiTenant {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "user_id is required")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "user_id or claim is required")
 		return
 	} else {
 		owner, err = h.st.GetUserByEmail(r.Context(), "admin@local")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not resolve daemon owner")
+			return
+		}
+	}
+
+	// Reject duplicate agent names up front so the bootstrap curl never
+	// silently clobbers an existing agent. The check runs before any DB
+	// write or notification — a name collision must leave the existing
+	// agent (and the on-disk JSON for that name on the caller's machine)
+	// untouched. We also reject if a *pending* request already exists for
+	// the same name; otherwise two concurrent bootstrap curls could both
+	// resolve into agents and only the first would be addressable by its
+	// chosen name.
+	existingAgents, err := h.st.ListAgents(r.Context(), owner.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list agents")
+		return
+	}
+	for _, a := range existingAgents {
+		if a.Name == body.Name {
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				fmt.Sprintf("agent %q already exists; pick a different name or delete it first", body.Name))
+			return
+		}
+	}
+	pendingRequests, err := h.st.ListPendingConnectionRequests(r.Context(), owner.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not list pending requests")
+		return
+	}
+	for _, p := range pendingRequests {
+		if p.Name == body.Name {
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				fmt.Sprintf("a pending request named %q is already waiting; approve or deny it before creating another with the same name", body.Name))
 			return
 		}
 	}
@@ -126,6 +205,16 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	if count >= maxPendingRequests {
 		writeError(w, http.StatusTooManyRequests, "TOO_MANY_PENDING", "too many pending connection requests")
 		return
+	}
+
+	// All validations passed — now atomically consume the claim. A
+	// concurrent caller racing on the same code loses here (Consume
+	// returns !ok), preserving single-use semantics.
+	if pendingClaim != "" {
+		if _, ok := h.claimCache.Consume(pendingClaim); !ok {
+			writeError(w, http.StatusUnauthorized, "INVALID_CLAIM", "claim code is invalid, expired, or already consumed")
+			return
+		}
 	}
 
 	req := &store.ConnectionRequest{
@@ -164,6 +253,10 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	// If wait=true, long-poll until the connection request is resolved.
+	// The status code distinguishes outcomes so a `curl -sf` bootstrap
+	// exits non-zero on anything other than approval — that way
+	// --remove-on-error cleans up the tokenless response body and the
+	// caller never ends up with garbage on disk.
 	if r.URL.Query().Get("wait") == "true" && h.eventHub != nil {
 		resolved := h.waitForConnectionResolution(r.Context(), req.ID, owner.ID, longPollDeadline(r))
 		if r.Context().Err() != nil {
@@ -174,12 +267,43 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			"status":        resolved.Status,
 			"expires_at":    resolved.ExpiresAt,
 		}
-		if resolved.Status == "approved" {
-			if raw, ok := h.tokenCache.Load(req.ID); ok {
-				resp["token"] = raw
+		status := http.StatusCreated
+		switch resolved.Status {
+		case "approved":
+			raw, ok := h.tokenCache.Load(req.ID)
+			if !ok {
+				// The approve handler wrote the token to the cache; if
+				// it's gone by the time we read it, we'd otherwise return
+				// 201 with no token field — and the bootstrap curl would
+				// happily write the tokenless body to disk. Surface as a
+				// 500 so --remove-on-error cleans up.
+				h.logger.WarnContext(r.Context(), "lite-proxy: approved request missing token in cache",
+					"connection_id", req.ID)
+				writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
+					"connection was approved but the token cache no longer has it; ask the user to re-approve")
+				return
+			}
+			resp["token"] = raw
+		case "denied":
+			status = http.StatusForbidden
+		case "expired":
+			status = http.StatusGone
+		default:
+			// "pending" reaching the wait deadline is the long-poll
+			// equivalent of a timeout — caller should retry the curl
+			// or check the dashboard directly. Expire the request
+			// server-side BEFORE returning the 408, so a late approve
+			// can't create an agent whose token nobody is around to
+			// receive. The agent would otherwise hold the name and
+			// block a clean retry with AGENT_NAME_EXISTS.
+			if expireErr := h.expireByID(r.Context(), req.ID, owner.ID); expireErr == nil {
+				resp["status"] = "expired"
+				status = http.StatusGone
+			} else {
+				status = http.StatusRequestTimeout
 			}
 		}
-		writeJSON(w, http.StatusCreated, resp)
+		writeJSON(w, status, resp)
 		return
 	}
 
@@ -188,6 +312,34 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		"status":        req.Status,
 		"poll_url":      "/api/agents/connect/" + req.ID + "/status",
 		"expires_at":    req.ExpiresAt,
+	})
+}
+
+// MintClaim handles POST /api/agents/connect/claim (user JWT). It mints a
+// short-lived single-use claim code that the dashboard embeds in the
+// bootstrap curl URL as `?claim=…`. The unauthenticated RequestConnect
+// endpoint consumes the claim to attribute the request to the minting
+// user without that user's ID ever appearing in the URL.
+//
+// The code is 10 URL-safe base64 characters (60 bits of entropy from
+// 8 random bytes, truncated). 5-minute single-use codes don't need
+// long-term unguessability and a tight URL is easier on the eyes.
+func (h *ConnectionsHandler) MintClaim(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not generate claim code")
+		return
+	}
+	code := base64.RawURLEncoding.EncodeToString(b)[:10]
+	h.claimCache.Store(code, user.ID, claimCodeTTL)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"code":       code,
+		"expires_at": time.Now().Add(claimCodeTTL),
 	})
 }
 
@@ -354,6 +506,9 @@ func (h *ConnectionsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
 		case errExpired:
 			writeError(w, http.StatusGone, "EXPIRED", "connection request has expired")
+		case errAgentNameTaken:
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				"an agent with this name already exists; deny this request and bootstrap with a different name")
 		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve connection request")
 		}
@@ -382,6 +537,22 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 	if time.Now().After(cr.ExpiresAt) {
 		_ = h.expireByID(ctx, id, userID)
 		return "", errExpired
+	}
+
+	// Re-check name uniqueness at approve time. The request-creation guard
+	// runs much earlier; between then and now a second agent with the same
+	// name could have been created (concurrent approve of another pending
+	// request, an Add Agent form submission, etc.). Without this re-check
+	// the duplicate guarantee leaks. The store has no unique index on
+	// (user_id, name) so we enforce it in code.
+	existing, listErr := h.st.ListAgents(ctx, userID)
+	if listErr != nil {
+		return "", fmt.Errorf("list agents: %w", listErr)
+	}
+	for _, a := range existing {
+		if a.Name == cr.Name {
+			return "", errAgentNameTaken
+		}
 	}
 
 	rawToken, err := auth.GenerateAgentToken()
