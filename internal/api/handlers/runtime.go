@@ -405,10 +405,8 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		caCertPEM = h.manager.CACertPEM()
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"enabled":                  h.cfg != nil && h.cfg.RuntimeProxy.Enabled,
-		"proxy_lite_enabled":       h.cfg != nil && h.cfg.ProxyLite.Enabled,
-		"passthrough":              h.activePassthroughForUser(r.Context(), user.ID, agentID, time.Now().UTC()),
 		"proxy_url":                proxyURL,
 		"observation_mode_default": h.cfg != nil && h.cfg.RuntimePolicy.ObservationModeDefault,
 		"inline_approval_enabled":  h.cfg != nil && h.cfg.RuntimePolicy.InlineApprovalEnabled,
@@ -433,7 +431,12 @@ func (h *RuntimeHandler) Status(w http.ResponseWriter, r *http.Request) {
 		"inject_stored_bearer": h.cfg != nil && h.cfg.RuntimePolicy.InjectStoredBearer,
 		"ca_cert_pem":          caCertPEM,
 		"starter_profiles":     runtimepolicy.StarterProfiles(),
-	})
+	}
+	if h.cfg != nil && h.cfg.ProxyLite.Enabled {
+		resp["proxy_lite_enabled"] = true
+		resp["passthrough"] = h.activePassthroughForUser(r.Context(), user.ID, agentID, time.Now().UTC())
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *RuntimeHandler) ListApprovals(w http.ResponseWriter, r *http.Request) {

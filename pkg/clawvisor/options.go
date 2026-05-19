@@ -213,6 +213,7 @@ type FeatureSet struct {
 	Billing           bool `json:"billing"`
 	LocalDaemon       bool `json:"local_daemon"`
 	RuntimeProxy      bool `json:"runtime_proxy"`
+	ProxyLite         bool `json:"proxy_lite"`
 	SecretVault       bool `json:"secret_vault"`
 	RuntimePolicyUI   bool `json:"runtime_policy_ui"`
 	RuntimeActivity   bool `json:"runtime_activity"`

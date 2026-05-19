@@ -652,8 +652,10 @@ func TestRuntimeSecretCapturePlaceholderRejectsUnboundOutboundHost(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	cfg := config.Default()
+	cfg.ProxyLite.Enabled = true
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"use re_bridgeSecret123456789 for the resend test"}]}]}`)
-	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: config.Default()}, runtimeSession, "api.anthropic.com", body)
+	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: cfg}, runtimeSession, "api.anthropic.com", body)
 	if err != nil {
 		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
 	}
@@ -676,7 +678,7 @@ func TestRuntimeSecretCapturePlaceholderRejectsUnboundOutboundHost(t *testing.T)
 	defer upstream.Close()
 
 	srv.InstallSessionGuard(&Authenticator{Store: st})
-	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v})
+	srv.InstallPlaceholderSwap(PlaceholderHooks{Store: st, Vault: v, Config: cfg})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

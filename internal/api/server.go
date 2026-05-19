@@ -137,6 +137,7 @@ type FeatureSet struct {
 	LocalDaemon       bool `json:"local_daemon"`
 	MobilePairing     bool `json:"mobile_pairing"`
 	RuntimeProxy      bool `json:"runtime_proxy"`
+	ProxyLite         bool `json:"proxy_lite"`
 	SecretVault       bool `json:"secret_vault"`
 	RuntimePolicyUI   bool `json:"runtime_policy_ui"`
 	RuntimeActivity   bool `json:"runtime_activity"`
@@ -724,12 +725,14 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
 	// Connection request management (user JWT)
-	// Mint is per-user rate-limited so an authenticated session can't
-	// spam the cache (memory or Redis keyspace). Same shape as the OAuth
-	// / policy-API limiters.
-	claimMintRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
-	mux.Handle("POST /api/agents/connect/claim",
-		requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
+	// Claim-code minting supports proxy-lite bootstrap curls; keep the
+	// route absent for proxy-lite-disabled installs so the connect API
+	// surface matches main.
+	if s.cfg.ProxyLite.Enabled {
+		claimMintRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
+		mux.Handle("POST /api/agents/connect/claim",
+			requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
+	}
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))
@@ -826,12 +829,14 @@ func (s *Server) routes() http.Handler {
 
 	// Services / OAuth (user JWT, rate-limited)
 	mux.Handle("GET /api/services", user(servicesHandler.List))
-	mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
-	mux.Handle("POST /api/vault/items", user(vaultHandler.CreateForUser))
-	mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
-	mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
-	mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))
-	mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+	if s.cfg.ProxyLite.Enabled {
+		mux.Handle("GET /api/vault/items", user(vaultHandler.ListForUser))
+		mux.Handle("POST /api/vault/items", user(vaultHandler.CreateForUser))
+		mux.Handle("GET /api/vault/items/{id}", user(vaultHandler.GetForUser))
+		mux.Handle("PUT /api/vault/items/{id}", user(vaultHandler.UpdateForUser))
+		mux.Handle("DELETE /api/vault/items/{id}", user(vaultHandler.DeleteForUser))
+		mux.Handle("GET /api/agent/vault/items", requireAgent(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+	}
 	mux.Handle("GET /api/oauth/url", userOAuthRL(servicesHandler.OAuthGetURL))  // fetch → returns {"url":"..."}
 	mux.Handle("GET /api/oauth/start", userOAuthRL(servicesHandler.OAuthStart)) // kept for compat
 	mux.HandleFunc("GET /api/oauth/callback", servicesHandler.OAuthCallback)    // no auth: browser redirect

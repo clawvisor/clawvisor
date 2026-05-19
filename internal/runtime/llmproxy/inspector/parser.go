@@ -1,14 +1,13 @@
 package inspector
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
-
-	"github.com/clawvisor/clawvisor/internal/runtime/autovault"
 )
 
 // DefaultParser handles the day-one supported tool shapes:
@@ -350,7 +349,7 @@ func parseBashCurl(t ToolUse) (Verdict, bool) {
 			// `@-` bodies are accepted here because Clawvisor only
 			// rewrites header placeholders; if a body source contains a
 			// placeholder it will be sent upstream as an inert literal.
-			if autovault.HeaderMaybeContainsShadow(tokens[i+1]) {
+			if headerMaybeContainsAutovaultPlaceholder(tokens[i+1]) {
 				return Verdict{IsAPICall: false, Ambiguous: true, Reason: "bash: placeholder not in -H header"}, true
 			}
 			if method == "GET" && !curlGet {
@@ -471,7 +470,7 @@ func extractCredentialedCurlSegment(cmd string) (credentialedCurlSegment, string
 	for _, redir := range stmt.Redirs {
 		if redir.Word != nil {
 			val, ok := staticWordValue(redir.Word)
-			if ok && autovault.HeaderMaybeContainsShadow(val) {
+			if ok && headerMaybeContainsAutovaultPlaceholder(val) {
 				return credentialedCurlSegment{}, "bash: redirect target carries placeholder; refusing"
 			}
 		}
@@ -513,7 +512,7 @@ func callExprContainsPlaceholder(ce *syntax.CallExpr) bool {
 		if !ok {
 			continue
 		}
-		if autovault.HeaderMaybeContainsShadow(val) {
+		if headerMaybeContainsAutovaultPlaceholder(val) {
 			return true
 		}
 	}
@@ -681,7 +680,7 @@ func scanHeadersForShadow(headers map[string]any) ([]CredentialLocation, []strin
 		if !ok {
 			continue
 		}
-		if !autovault.HeaderMaybeContainsShadow(value) {
+		if !headerMaybeContainsAutovaultPlaceholder(value) {
 			continue
 		}
 		scheme := ""
@@ -704,21 +703,35 @@ func scanHeadersForShadow(headers map[string]any) ([]CredentialLocation, []strin
 		// Extract the placeholder substring from the header value. For
 		// `Bearer autovault_github_xyz`, that's `autovault_github_xyz`.
 		// For Basic auth (base64-encoded user:pass) we'd need to decode,
-		// which `HeaderMaybeContainsShadow` already does as a check —
+		// which `headerMaybeContainsAutovaultPlaceholder` already does
+		// as a check —
 		// for v1 we conservatively don't extract the placeholder from
 		// Basic auth headers.
 		for _, candidate := range autovaultPlaceholderRE.FindAllString(value, -1) {
-			if autovault.LooksLikeShadow(candidate) {
-				placeholders = append(placeholders, candidate)
-			}
+			placeholders = append(placeholders, candidate)
 		}
 	}
 	return locs, placeholders
 }
 
-// autovaultPlaceholderRE pulls placeholder tokens out of a header value
-// without false-matching log-line / comment context that may share part
-// of the substring. Mirror of the runtime-proxy's autovault swap regex.
+func headerMaybeContainsAutovaultPlaceholder(v string) bool {
+	if autovaultPlaceholderRE.MatchString(v) {
+		return true
+	}
+	scheme, rest, ok := strings.Cut(v, " ")
+	if !ok || !strings.EqualFold(scheme, "Basic") {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rest))
+	if err != nil {
+		return false
+	}
+	return autovaultPlaceholderRE.Match(raw)
+}
+
+// autovaultPlaceholderRE pulls proxy-lite placeholder tokens out of a
+// header value without false-matching log-line / comment context that
+// may share part of the substring.
 var autovaultPlaceholderRE = regexp.MustCompile(`[A-Za-z0-9._:-]*autovault[A-Za-z0-9._:-]+`)
 
 func canonicalHeaderName(s string) string {

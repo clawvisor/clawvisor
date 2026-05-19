@@ -56,6 +56,7 @@ export default function Runtime() {
     queryFn: () => api.runtime.status(),
   })
   const fullProxyActive = !!status?.enabled
+  const proxyLiteActive = !!status?.proxy_lite_enabled
   const { data: sessions } = useQuery({
     queryKey: ['runtime-sessions'],
     queryFn: () => api.runtime.listSessions(),
@@ -186,9 +187,9 @@ export default function Runtime() {
           activeSessionCount={(sessions?.entries ?? []).filter(isActiveRuntimeSession).length}
           agents={agents}
           selectedAgentId={agentFilter === 'all' ? '' : agentFilter}
-          busy={enablePassthroughMut.isPending || disablePassthroughMut.isPending}
-          onEnablePassthrough={(body) => enablePassthroughMut.mutate(body)}
-          onDisablePassthrough={(ruleId) => disablePassthroughMut.mutate(ruleId)}
+          busy={proxyLiteActive && (enablePassthroughMut.isPending || disablePassthroughMut.isPending)}
+          onEnablePassthrough={proxyLiteActive ? (body) => enablePassthroughMut.mutate(body) : undefined}
+          onDisablePassthrough={proxyLiteActive ? (ruleId) => disablePassthroughMut.mutate(ruleId) : undefined}
         />
       )}
 
@@ -284,6 +285,7 @@ export function RuntimeStatusPanel({
   const [confirmIndefinite, setConfirmIndefinite] = useState(false)
   const [confirmGlobal, setConfirmGlobal] = useState(false)
   const passthrough = status.passthrough
+  const proxyLiteActive = !!status.proxy_lite_enabled
   const passthroughActive = !!passthrough?.enabled
   const canControl = !!onEnablePassthrough && !!onDisablePassthrough
   const ttlSeconds = duration === 'indefinite' ? undefined : Number(duration)
@@ -306,9 +308,11 @@ export function RuntimeStatusPanel({
           <span className="rounded bg-surface-2 px-2.5 py-1 text-text-secondary">
             {activeSessionCount} active session{activeSessionCount === 1 ? '' : 's'}
           </span>
-          <span className={`rounded px-2.5 py-1 ${passthroughActive ? 'bg-warning/15 text-warning' : 'bg-surface-2 text-text-tertiary'}`}>
-            {passthroughActive ? 'passthrough active' : 'passthrough off'}
-          </span>
+          {proxyLiteActive && (
+            <span className={`rounded px-2.5 py-1 ${passthroughActive ? 'bg-warning/15 text-warning' : 'bg-surface-2 text-text-tertiary'}`}>
+              {passthroughActive ? 'passthrough active' : 'passthrough off'}
+            </span>
+          )}
         </div>
       </div>
       <div className="grid gap-3 md:grid-cols-4">
@@ -323,7 +327,7 @@ export function RuntimeStatusPanel({
           <code className="mt-1 block text-xs text-text-primary break-all">{status.proxy_url}</code>
         </div>
       )}
-      {canControl && (
+      {proxyLiteActive && canControl && (
         <div className="rounded border border-warning/30 bg-warning/5 p-4 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>

@@ -40,32 +40,50 @@ func TestComputeFeatureSet_SecretVaultUnderProxyLite(t *testing.T) {
 	if !got.SecretVault {
 		t.Errorf("SecretVault should be true when proxy_lite is enabled, even without features.secret_vault")
 	}
+	if !got.ProxyLite {
+		t.Errorf("ProxyLite should expose the proxy_lite feature flag")
+	}
 	if !got.AgentLiveSessions {
 		t.Errorf("AgentLiveSessions should be true when proxy_lite is enabled")
 	}
 }
 
-func TestComputeFeatureSet_SecretVaultUnderRuntimeProxy(t *testing.T) {
+func TestComputeFeatureSet_SecretVaultHiddenUnderRuntimeProxyWithoutFlag(t *testing.T) {
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = true
 	cfg.ProxyLite.Enabled = false
 	cfg.Features.SecretVault = false
 
 	got := computeFeatureSet(cfg)
-	if !got.SecretVault {
-		t.Errorf("SecretVault should be true when runtime_proxy is enabled")
+	if got.SecretVault {
+		t.Errorf("SecretVault should stay hidden under runtime_proxy unless features.secret_vault is enabled")
+	}
+	if got.ProxyLite {
+		t.Errorf("ProxyLite should be false when proxy_lite is disabled")
 	}
 }
 
-func TestComputeFeatureSet_SecretVaultExplicitOptIn(t *testing.T) {
+func TestComputeFeatureSet_SecretVaultUnderRuntimeProxyWithFlag(t *testing.T) {
+	cfg := config.Default()
+	cfg.RuntimeProxy.Enabled = true
+	cfg.ProxyLite.Enabled = false
+	cfg.Features.SecretVault = true
+
+	got := computeFeatureSet(cfg)
+	if !got.SecretVault {
+		t.Errorf("SecretVault should follow the main-branch runtime_proxy + features.secret_vault gate")
+	}
+}
+
+func TestComputeFeatureSet_SecretVaultExplicitOptInWithoutRuntimeProxy(t *testing.T) {
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = false
 	cfg.ProxyLite.Enabled = false
 	cfg.Features.SecretVault = true
 
 	got := computeFeatureSet(cfg)
-	if !got.SecretVault {
-		t.Errorf("SecretVault should follow explicit features.secret_vault opt-in")
+	if got.SecretVault {
+		t.Errorf("SecretVault should not be enabled by features.secret_vault alone when proxy_lite is disabled")
 	}
 }
 

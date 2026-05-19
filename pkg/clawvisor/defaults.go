@@ -630,24 +630,27 @@ func buildVault(cfg *config.Config, db *sql.DB, driver string) (vault.Vault, err
 
 // computeFeatureSet returns the FeatureSet derived from cfg. Pulled
 // out of newServerOptions so the feature-flag matrix is testable in
-// isolation. Either proxy mode (runtime_proxy or proxy_lite) exposes
-// the autovault placeholder surfaces, since both paths consume the
-// same placeholders; features.secret_vault remains an independent
-// opt-in for installs that want the vault UI without any proxy.
+// isolation. When proxy_lite is disabled, this preserves main-branch
+// runtime feature behavior; proxy_lite opt-in adds the lite surfaces.
 func computeFeatureSet(cfg *config.Config) FeatureSet {
 	if cfg == nil {
 		return FeatureSet{}
 	}
-	anyProxyEnabled := cfg.RuntimeProxy.Enabled || cfg.ProxyLite.Enabled
+	proxyLiteEnabled := cfg.ProxyLite.Enabled
 	runtimeSurface := runtimePolicySurfaceEnabled(cfg)
+	secretVault := cfg.RuntimeProxy.Enabled && cfg.Features.SecretVault
+	if proxyLiteEnabled {
+		secretVault = true
+	}
 	return FeatureSet{
 		PasswordAuth:      cfg.Server.AuthMode == "password",
 		RuntimeProxy:      cfg.RuntimeProxy.Enabled,
-		SecretVault:       anyProxyEnabled || cfg.Features.SecretVault,
+		ProxyLite:         proxyLiteEnabled,
+		SecretVault:       secretVault,
 		RuntimePolicyUI:   runtimeSurface,
 		RuntimeActivity:   runtimeSurface,
-		AgentLiveSessions: anyProxyEnabled,
-		ServicePresets:    anyProxyEnabled && cfg.Features.ServicePresets,
+		AgentLiveSessions: cfg.RuntimeProxy.Enabled || proxyLiteEnabled,
+		ServicePresets:    runtimeSurface && cfg.Features.ServicePresets,
 	}
 }
 

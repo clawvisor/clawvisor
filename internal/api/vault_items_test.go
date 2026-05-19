@@ -8,12 +8,30 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/adapters"
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
 )
 
+func newProxyLiteTestEnv(t *testing.T, extra ...adapters.Adapter) *testEnv {
+	t.Helper()
+	return newTestEnvWithConfig(t, config.LLMConfig{}, nil, func(cfg *config.Config) {
+		cfg.ProxyLite.Enabled = true
+	}, extra...)
+}
+
+func TestVaultItemsRoutesRequireProxyLite(t *testing.T) {
+	env := newTestEnv(t)
+	sc := newScenario(t, env, "vault-items-disabled")
+	resp := sc.session.do("GET", "/api/vault/items", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected /api/vault/items to be absent when proxy_lite is disabled, got %d", resp.StatusCode)
+	}
+}
+
 func TestVaultItemsListForUserAndAgent(t *testing.T) {
-	env := newTestEnv(t, newMockAdapter("mock.vault", "read"))
+	env := newProxyLiteTestEnv(t, newMockAdapter("mock.vault", "read"))
 	sc := newScenario(t, env, "vault-items")
 	sc.activateService(t, env, "mock.vault")
 
@@ -65,7 +83,7 @@ func TestVaultItemsListForUserAndAgent(t *testing.T) {
 }
 
 func TestVaultItemsCountPlaceholdersForServiceBindingAliases(t *testing.T) {
-	env := newTestEnv(t, newMockAdapter("mock.vault", "read"))
+	env := newProxyLiteTestEnv(t, newMockAdapter("mock.vault", "read"))
 	sc := newScenario(t, env, "vault-items-alias")
 	usedAt := time.Now().UTC().Truncate(time.Second)
 
@@ -104,7 +122,7 @@ func TestVaultItemsCountPlaceholdersForServiceBindingAliases(t *testing.T) {
 }
 
 func TestVaultItemsSplitSharedSecretServiceBindings(t *testing.T) {
-	env := newTestEnv(t,
+	env := newProxyLiteTestEnv(t,
 		newSharedVaultMockAdapter("mock.mail", "mock.shared", "read"),
 		newSharedVaultMockAdapter("mock.calendar", "mock.shared", "read"),
 	)
@@ -145,7 +163,7 @@ func TestVaultItemsSplitSharedSecretServiceBindings(t *testing.T) {
 }
 
 func TestVaultItemsOmitAgentScopedLLMCredentials(t *testing.T) {
-	env := newTestEnv(t)
+	env := newProxyLiteTestEnv(t)
 	sc := newScenario(t, env, "vault-llm-agent")
 
 	serviceID := "agent:" + sc.AgentID + ":anthropic"
@@ -165,7 +183,7 @@ func TestVaultItemsOmitAgentScopedLLMCredentials(t *testing.T) {
 }
 
 func TestVaultItemsUpdateAndDeleteSecret(t *testing.T) {
-	env := newTestEnv(t)
+	env := newProxyLiteTestEnv(t)
 	sc := newScenario(t, env, "vault-secret-edit")
 
 	if err := env.Vault.Set(context.Background(), sc.session.UserID, "manual.secret", []byte("old-value")); err != nil {
@@ -191,7 +209,7 @@ func TestVaultItemsUpdateAndDeleteSecret(t *testing.T) {
 }
 
 func TestVaultItemsCreateSecret(t *testing.T) {
-	env := newTestEnv(t, newMockAdapter("mock.vault", "read"))
+	env := newProxyLiteTestEnv(t, newMockAdapter("mock.vault", "read"))
 	sc := newScenario(t, env, "vault-secret-create")
 
 	resp := sc.session.do("POST", "/api/vault/items", map[string]any{

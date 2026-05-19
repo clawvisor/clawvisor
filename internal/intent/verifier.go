@@ -18,32 +18,33 @@ import (
 
 // VerificationVerdict is the result of intent verification.
 type VerificationVerdict struct {
-	Allow             bool   `json:"allow"`
-	ParamScope        string `json:"param_scope"`        // "ok" | "violation" | "n/a"
-	ReasonCoherence   string `json:"reason_coherence"`   // "ok" | "incoherent" | "insufficient"
-	ExtractContext    bool   `json:"extract_context"`
+	Allow              bool     `json:"allow"`
+	ParamScope         string   `json:"param_scope"`      // "ok" | "violation" | "n/a"
+	ReasonCoherence    string   `json:"reason_coherence"` // "ok" | "incoherent" | "insufficient"
+	ExtractContext     bool     `json:"extract_context"`
 	MissingChainValues []string `json:"missing_chain_values"` // entities the LLM flagged as absent from chain context
-	Explanation       string `json:"explanation"`
-	Model             string `json:"model"`
-	LatencyMS         int    `json:"latency_ms"`
-	Cached            bool   `json:"cached"`
+	Explanation        string   `json:"explanation"`
+	Model              string   `json:"model"`
+	LatencyMS          int      `json:"latency_ms"`
+	Cached             bool     `json:"cached"`
 }
 
 // VerifyRequest contains the data needed for intent verification.
 type VerifyRequest struct {
-	TaskPurpose        string
-	ExpectedUse        string // from task's authorized_actions; empty → check params against reason only
-	ExpansionRationale string // from approved scope expansion; empty if action was in original task
-	Service            string
-	Action             string
-	Params             map[string]any
-	Reason             string
-	TaskID             string // cache key component
-	ServiceHints       string // adapter-provided verification guidance; empty for most adapters
-	ChainFacts           []store.ChainFact
-	ChainContextOptOut   bool // standing task without session_id — agent bypassed chain context
-	ChainContextEnabled  bool // chain context tracking is enabled in config
-	Lenient              bool // use lenient verification prompt (give agent benefit of the doubt)
+	TaskPurpose         string
+	ExpectedUse         string // from task's authorized_actions; empty → check params against reason only
+	ExpansionRationale  string // from approved scope expansion; empty if action was in original task
+	Service             string
+	Action              string
+	Params              map[string]any
+	Reason              string
+	TaskID              string // cache key component
+	ServiceHints        string // adapter-provided verification guidance; empty for most adapters
+	ChainFacts          []store.ChainFact
+	ChainContextOptOut  bool // standing task without session_id — agent bypassed chain context
+	ChainContextEnabled bool // chain context tracking is enabled in config
+	Lenient             bool // use lenient verification prompt (give agent benefit of the doubt)
+	ProxyLite           bool // include proxy-lite-specific verifier guidance
 }
 
 // Verifier checks whether a gateway request is consistent with the approved task.
@@ -162,12 +163,12 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 	start := time.Now()
 
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	// Lenient mode appends a per-call addendum to the system prompt. The
+	// Lenient and proxy-lite modes append per-call addenda to the system prompt. The
 	// Gemini cached system instruction holds only the strict base prompt,
 	// and Gemini drops systemInstruction when cachedContent is set, so a
-	// cached lenient call would silently revert to strict. Bypass the
+	// cached addendum call would silently revert to strict. Bypass the
 	// cache so the full system prompt is inlined.
-	if v.geminiCacheNameFn != nil && !req.Lenient {
+	if v.geminiCacheNameFn != nil && !req.Lenient && !req.ProxyLite {
 		client.AttachGeminiCacheNameFn(v.geminiCacheNameFn)
 		if v.geminiCacheInvalidator != nil {
 			client.AttachGeminiCacheInvalidator(v.geminiCacheInvalidator)
@@ -177,9 +178,9 @@ func (v *LLMVerifier) Verify(ctx context.Context, req VerifyRequest) (*Verificat
 		client = client.WithLogger(v.logger)
 	}
 	userMsg := buildVerificationUserMessage(req)
-	systemPrompt := verificationSystemPrompt
+	systemPrompt := verificationSystemPromptFor(req.ProxyLite)
 	if req.Lenient {
-		systemPrompt = verificationSystemPrompt + lenientAddendum
+		systemPrompt += lenientAddendum
 	}
 	messages := []llm.ChatMessage{
 		{Role: "system", Content: systemPrompt, CacheControl: true},

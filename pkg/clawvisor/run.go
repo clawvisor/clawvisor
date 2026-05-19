@@ -143,6 +143,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 		Billing:           opts.Features.Billing,
 		LocalDaemon:       opts.Features.LocalDaemon,
 		RuntimeProxy:      opts.Features.RuntimeProxy,
+		ProxyLite:         opts.Features.ProxyLite,
 		SecretVault:       opts.Features.SecretVault,
 		RuntimePolicyUI:   opts.Features.RuntimePolicyUI,
 		RuntimeActivity:   opts.Features.RuntimeActivity,
@@ -167,10 +168,12 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/sessions", user(http.HandlerFunc(runtimeHandler.ListSessions)))
 			mux.Handle("POST /api/runtime/sessions/{id}/revoke", user(http.HandlerFunc(runtimeHandler.RevokeSession)))
 			mux.Handle("GET /api/runtime/status", user(http.HandlerFunc(runtimeHandler.Status)))
-			mux.Handle("GET /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.GetPassthrough)))
-			mux.Handle("POST /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.EnablePassthrough)))
-			mux.Handle("DELETE /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
-			mux.Handle("DELETE /api/runtime/passthrough/{id}", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
+			if opts.Config != nil && opts.Config.ProxyLite.Enabled {
+				mux.Handle("GET /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.GetPassthrough)))
+				mux.Handle("POST /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.EnablePassthrough)))
+				mux.Handle("DELETE /api/runtime/passthrough", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
+				mux.Handle("DELETE /api/runtime/passthrough/{id}", user(http.HandlerFunc(runtimeHandler.DisablePassthrough)))
+			}
 			mux.Handle("GET /api/runtime/approvals", user(http.HandlerFunc(runtimeHandler.ListApprovals)))
 			mux.Handle("POST /api/runtime/approvals/{id}/resolve", user(http.HandlerFunc(runtimeHandler.ResolveApproval)))
 			mux.Handle("GET /api/runtime/events", user(http.HandlerFunc(runtimeHandler.ListEvents)))
@@ -182,8 +185,10 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			mux.Handle("GET /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.GetRule)))
 			mux.Handle("PUT /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.UpdateRule)))
 			mux.Handle("DELETE /api/runtime/rules/{id}", user(http.HandlerFunc(runtimeHandler.DeleteRule)))
-			mux.Handle("GET /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.ListToolControls)))
-			mux.Handle("PUT /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.UpsertToolControl)))
+			if opts.Config != nil && opts.Config.ProxyLite.Enabled {
+				mux.Handle("GET /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.ListToolControls)))
+				mux.Handle("PUT /api/runtime/tool-controls", user(http.HandlerFunc(runtimeHandler.UpsertToolControl)))
+			}
 			mux.Handle("GET /api/runtime/starter-profiles", user(http.HandlerFunc(runtimeHandler.ListStarterProfiles)))
 			mux.Handle("POST /api/runtime/starter-profiles/{profile}/apply", user(http.HandlerFunc(runtimeHandler.ApplyStarterProfile)))
 			mux.Handle("GET /api/runtime/preset-decisions", user(http.HandlerFunc(runtimeHandler.GetPresetDecision)))
@@ -271,6 +276,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 				Billing:           fs.Billing,
 				LocalDaemon:       fs.LocalDaemon,
 				RuntimeProxy:      fs.RuntimeProxy,
+				ProxyLite:         fs.ProxyLite,
 				SecretVault:       fs.SecretVault,
 				RuntimePolicyUI:   fs.RuntimePolicyUI,
 				RuntimeActivity:   fs.RuntimeActivity,
@@ -287,6 +293,7 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 			fs.Billing = modified.Billing
 			fs.LocalDaemon = modified.LocalDaemon
 			fs.RuntimeProxy = modified.RuntimeProxy
+			fs.ProxyLite = modified.ProxyLite
 			fs.SecretVault = modified.SecretVault
 			fs.RuntimePolicyUI = modified.RuntimePolicyUI
 			fs.RuntimeActivity = modified.RuntimeActivity
