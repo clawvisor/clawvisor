@@ -57,7 +57,7 @@ func MatchRuntimePolicyEgress(rules []*store.RuntimePolicyRule, agentID string, 
 
 func MatchRuntimePolicyTool(rules []*store.RuntimePolicyRule, agentID, toolName string, input map[string]any) (*store.RuntimePolicyRule, error) {
 	return bestMatchingRuntimePolicyRule(rules, agentID, func(rule *store.RuntimePolicyRule) (bool, int, error) {
-		if rule == nil || rule.Kind != "tool" || rule.ToolName != toolName {
+		if rule == nil || rule.Kind != "tool" || !toolNamesMatch(rule.ToolName, toolName) {
 			return false, 0, nil
 		}
 		if rule.InputRegex != "" {

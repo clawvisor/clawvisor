@@ -10,9 +10,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 	intvault "github.com/clawvisor/clawvisor/pkg/vault"
 )
@@ -82,6 +85,66 @@ func TestRuntimeSecretCaptureKnownPrefixAndReusePlaceholder(t *testing.T) {
 	}
 }
 
+func TestRuntimeSecretCaptureIgnoresExpiredCachedPlaceholder(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-expired-cache.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	raw := "re_expiredCacheSecret123456789"
+	expiredSession := &store.RuntimeSession{
+		ID:                    "expired-capture-session",
+		UserID:                userID,
+		AgentID:               agentID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: HashProxyBearerSecret("expired-secret"),
+		ExpiresAt:             time.Now().UTC().Add(-time.Minute),
+	}
+	if err := st.CreateRuntimeSession(ctx, expiredSession); err != nil {
+		t.Fatalf("CreateRuntimeSession(expired): %v", err)
+	}
+	first, err := captureRuntimeSecret(ctx, srv, st, v, expiredSession, "api.resend.com", "resend", raw)
+	if err != nil {
+		t.Fatalf("captureRuntimeSecret(expired): %v", err)
+	}
+	freshSession := &store.RuntimeSession{
+		ID:                    "fresh-capture-session",
+		UserID:                userID,
+		AgentID:               agentID,
+		Mode:                  "proxy",
+		ProxyBearerSecretHash: HashProxyBearerSecret("fresh-secret"),
+		ExpiresAt:             time.Now().UTC().Add(time.Hour),
+	}
+	if err := st.CreateRuntimeSession(ctx, freshSession); err != nil {
+		t.Fatalf("CreateRuntimeSession(fresh): %v", err)
+	}
+	second, err := captureRuntimeSecret(ctx, srv, st, v, freshSession, "api.resend.com", "resend", raw)
+	if err != nil {
+		t.Fatalf("captureRuntimeSecret(fresh): %v", err)
+	}
+	if first == second {
+		t.Fatalf("expected expired cached placeholder to be ignored, reused %q", first)
+	}
+	rec, err := st.GetRuntimePlaceholder(ctx, second)
+	if err != nil {
+		t.Fatalf("GetRuntimePlaceholder(fresh): %v", err)
+	}
+	if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, rec, userID, agentID, time.Now().UTC()); !ok {
+		t.Fatalf("fresh placeholder should validate: %+v", rec)
+	}
+}
+
 func TestRuntimeSecretCaptureDoesNotRewriteToolSchemaNames(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-schema.db"))
@@ -118,6 +181,44 @@ func TestRuntimeSecretCaptureDoesNotRewriteToolSchemaNames(t *testing.T) {
 	}
 	if string(rewritten) != string(body) {
 		t.Fatalf("tool schema should not be rewritten:\n%s", string(rewritten))
+	}
+}
+
+func TestRuntimeSecretCaptureKnownPrefixInsideNoiseSubtree(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-noise-prefix.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	st := sqlite.NewStore(db)
+	v, err := intvault.NewLocalVault(filepath.Join(t.TempDir(), "vault.key"), db, "sqlite")
+	if err != nil {
+		t.Fatalf("NewLocalVault: %v", err)
+	}
+	userID, agentID := seedRuntimePrincipal(t, st)
+	session := createRuntimeSession(t, st, "noise-prefix-session", userID, agentID, false)
+	runtimeSession, err := st.GetRuntimeSession(ctx, session.id)
+	if err != nil {
+		t.Fatalf("GetRuntimeSession: %v", err)
+	}
+	srv, err := NewServer(Config{DataDir: t.TempDir(), Addr: "127.0.0.1:0"}, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	cfg := config.Default()
+	cfg.LLM.Verification.Enabled = false
+	body := []byte(`{"tools":[{"name":"send","description":"Use ghp_toolSecret123456789 if requested."}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+
+	rewritten, summary, observed, err := srv.scanAndReplaceRuntimeSecrets(ctx, InboundSecretHooks{Store: st, Vault: v, Config: cfg}, runtimeSession, "api.openai.com", body)
+	if err != nil {
+		t.Fatalf("scanAndReplaceRuntimeSecrets: %v", err)
+	}
+	if observed != 0 || summary == nil || summary.ReplacementCount != 1 {
+		t.Fatalf("expected deterministic known-prefix rewrite in noise subtree, summary=%+v observed=%d", summary, observed)
+	}
+	if strings.Contains(string(rewritten), "ghp_toolSecret123456789") || !strings.Contains(string(rewritten), "autovault_github_") {
+		t.Fatalf("expected tools subtree secret to be replaced, got %s", string(rewritten))
 	}
 }
 
@@ -529,7 +630,7 @@ func TestRuntimeSecretCaptureDoesNotRewriteThinkingBlocksOrSignatures(t *testing
 	}
 }
 
-func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T) {
+func TestRuntimeSecretCapturePlaceholderRejectsUnboundOutboundHost(t *testing.T) {
 	ctx := context.Background()
 	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-secret-e2e.db"))
 	if err != nil {
@@ -564,7 +665,9 @@ func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T
 		t.Fatalf("expected placeholder in rewritten body: %s", string(rewritten))
 	}
 
+	var seenAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
 		if got := r.Header.Get("Authorization"); got != "Bearer re_bridgeSecret123456789" {
 			t.Fatalf("expected outbound placeholder swap, got %q", got)
 		}
@@ -589,8 +692,11 @@ func TestRuntimeSecretCapturePlaceholdersResolveThroughOutboundSwap(t *testing.T
 	}
 	out, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || string(out) != "ok" {
-		t.Fatalf("expected upstream success, got %d %q", resp.StatusCode, string(out))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected unbound captured placeholder rejection, got %d %q", resp.StatusCode, string(out))
+	}
+	if seenAuth != "" {
+		t.Fatalf("captured placeholder should not be forwarded to unbound host, saw auth %q", seenAuth)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/auth"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
@@ -73,6 +74,10 @@ func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 					return
 				}
 				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid agent token")
+				return
+			}
+			if agent.TokenExpiresAt != nil && time.Now().After(*agent.TokenExpiresAt) {
+				writeAuthError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "agent token has expired")
 				return
 			}
 			ctx := store.WithAgent(r.Context(), agent)
@@ -158,6 +163,10 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 				}
 				writeAuthError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
 					"temporary service error, please retry")
+				return
+			}
+			if agent.TokenExpiresAt != nil && time.Now().After(*agent.TokenExpiresAt) {
+				writeAuthError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "agent token has expired")
 				return
 			}
 			ctx := store.WithAgent(r.Context(), agent)

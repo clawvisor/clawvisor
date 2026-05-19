@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -190,6 +191,18 @@ func TestResolver_RejectsMissingTargetHost(t *testing.T) {
 	}
 }
 
+func TestProxyResolverTreatsCGNATAsPrivate(t *testing.T) {
+	if !isPrivateIP(net.ParseIP("100.64.0.1")) {
+		t.Fatal("expected RFC6598 CGNAT address to be treated as private")
+	}
+	if !isPrivateIP(net.ParseIP("100.127.255.254")) {
+		t.Fatal("expected upper RFC6598 CGNAT address to be treated as private")
+	}
+	if isPrivateIP(net.ParseIP("100.128.0.1")) {
+		t.Fatal("address outside RFC6598 CGNAT range should not be treated as private")
+	}
+}
+
 func TestResolver_RejectsSelfTarget(t *testing.T) {
 	h, st, _, agent, nonces, placeholder := newSeededResolver(t)
 	h.SelfHostnames = []string{"clawvisor.example"}
@@ -250,6 +263,54 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 	}
 }
 
+func TestResolver_RejectsUnknownServicePlaceholderToArbitraryHost(t *testing.T) {
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	h, st, user, agent, nonces, _ := newSeededResolver(t)
+	const serviceID = "custom_api_key"
+	if err := h.Vault.Set(context.Background(), user.ID, serviceID, []byte("custom-secret")); err != nil {
+		t.Fatalf("vault.Set: %v", err)
+	}
+	placeholder, err := autovault.GeneratePlaceholder(autovault.PlaceholderPrefix(serviceID))
+	if err != nil {
+		t.Fatalf("GeneratePlaceholder: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
+		Placeholder: placeholder,
+		UserID:      user.ID,
+		AgentID:     agent.ID,
+		ServiceID:   serviceID,
+		VaultItemID: serviceID,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
+	h.Client = upstream.Client()
+	h.Client.Transport = &redirectTargetTransport{base: upstream.URL}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
+	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/collect", nil)
+	req.Header.Set("X-Clawvisor-Target-Host", "attacker.example")
+	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
+	req.Header.Set("Authorization", "Bearer "+placeholder)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected unknown-service placeholder to fail closed, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if seenAuth != "" {
+		t.Fatalf("unknown-service placeholder should not be swapped to arbitrary host, saw auth %q", seenAuth)
+	}
+}
+
 func TestResolver_RejectsCallWithoutPlaceholder(t *testing.T) {
 	h, st, _, agent, nonces, _ := newSeededResolver(t)
 
@@ -292,7 +353,7 @@ func TestResolver_RejectsHostOutsideBoundService(t *testing.T) {
 	}
 }
 
-func TestResolver_AllowsUnknownServiceHostAfterPlaceholderAndTaskValidation(t *testing.T) {
+func TestResolver_AllowsUnknownServiceHostBoundByCredentialGrant(t *testing.T) {
 	var seenAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAuth = r.Header.Get("Authorization")
@@ -310,12 +371,31 @@ func TestResolver_AllowsUnknownServiceHostAfterPlaceholderAndTaskValidation(t *t
 	if err != nil {
 		t.Fatalf("GeneratePlaceholder: %v", err)
 	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	const grantID = "grant-agentphone"
+	if err := st.CreateCredentialAuthorization(context.Background(), &store.CredentialAuthorization{
+		ID:            grantID,
+		UserID:        user.ID,
+		AgentID:       agent.ID,
+		Scope:         "session",
+		CredentialRef: "agentphone",
+		Service:       "agentphone",
+		Host:          "api.agentphone.ai",
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		ExpiresAt:     &expiresAt,
+	}); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
 	if err := st.CreateRuntimePlaceholder(context.Background(), &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      user.ID,
-		AgentID:     agent.ID,
-		ServiceID:   "agentphone",
-		VaultItemID: "agentphone",
+		Placeholder:       placeholder,
+		UserID:            user.ID,
+		AgentID:           agent.ID,
+		ServiceID:         "agentphone",
+		VaultItemID:       "agentphone",
+		CredentialGrantID: grantID,
+		ExpiresAt:         &expiresAt,
 	}); err != nil {
 		t.Fatalf("CreateRuntimePlaceholder: %v", err)
 	}

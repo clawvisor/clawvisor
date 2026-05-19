@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"github.com/elazarl/goproxy"
+	"github.com/google/uuid"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
 	runtimeautovault "github.com/clawvisor/clawvisor/internal/runtime/autovault"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetiming "github.com/clawvisor/clawvisor/internal/runtime/timing"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -299,10 +301,6 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 	replaced := false
 	s.stringsSeen++
 
-	if skipHeuristic {
-		return value, false
-	}
-
 	knownPrefixStartedAt := time.Now()
 	for _, spec := range runtimeautovault.KnownPrefixSpecs() {
 		if !strings.Contains(value, spec.Prefix) {
@@ -326,6 +324,10 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		})
 	}
 	s.addMetric("inbound_secret.scan.known_prefix", time.Since(knownPrefixStartedAt))
+
+	if skipHeuristic {
+		return value, replaced && value != original
+	}
 
 	protocolNoiseStartedAt := time.Now()
 	if runtimeLooksLikeProtocolNoise(fieldName, value) {
@@ -353,7 +355,7 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		if runtimeautovault.LooksLikeShadow(candidate.Value) {
 			continue
 		}
-		if placeholder, ok := s.lookupReusablePlaceholder(candidate.Value); ok {
+		if placeholder, ok := s.lookupReusablePlaceholder(ctx, candidate.Value); ok {
 			value = strings.ReplaceAll(value, candidate.Value, placeholder)
 			replaced = true
 			s.replacements++
@@ -401,7 +403,7 @@ func (s *runtimeSecretScanner) rewriteString(ctx context.Context, value string, 
 		if runtimeautovault.LooksLikeShadow(passwordValue) {
 			continue
 		}
-		placeholder, ok := s.lookupReusablePlaceholder(passwordValue)
+		placeholder, ok := s.lookupReusablePlaceholder(ctx, passwordValue)
 		if !ok {
 			var err error
 			placeholder, err = s.placeholderForValue(ctx, guessService(fieldName, value), passwordValue)
@@ -458,15 +460,15 @@ func stripRuntimeHarnessMetadataTags(value string) string {
 }
 
 func (s *runtimeSecretScanner) placeholderForValue(ctx context.Context, service, raw string) (string, error) {
-	placeholder, err := captureRuntimeSecret(ctx, s.server, s.hooks.Store, s.hooks.Vault, s.session, service, raw)
+	placeholder, err := captureRuntimeSecret(ctx, s.server, s.hooks.Store, s.hooks.Vault, s.session, s.host, service, raw)
 	if err == nil {
 		s.serviceLabels[normalizeSecretService(service)] = struct{}{}
 	}
 	return placeholder, err
 }
 
-func (s *runtimeSecretScanner) lookupReusablePlaceholder(raw string) (string, bool) {
-	return lookupRuntimeSecretPlaceholder(s.server, s.session, raw)
+func (s *runtimeSecretScanner) lookupReusablePlaceholder(ctx context.Context, raw string) (string, bool) {
+	return lookupRuntimeSecretPlaceholder(ctx, s.server, s.hooks.Store, s.session, raw)
 }
 
 func (s *runtimeSecretScanner) recordAdjudicationDebug(rec adjudicationDebugRecord) {
@@ -678,7 +680,7 @@ func (s *runtimeSecretScanner) collectAdjudicationTasks(value any, fieldName str
 			if runtimeautovault.LooksLikeShadow(candidate.Value) {
 				continue
 			}
-			if _, ok := s.lookupReusablePlaceholder(candidate.Value); ok {
+			if _, ok := s.lookupReusablePlaceholder(context.Background(), candidate.Value); ok {
 				continue
 			}
 			if highContextSecretField(fieldName) || secretContextHint(typed, candidate.Value) {
@@ -839,14 +841,15 @@ func secretValueCacheKey(agentID, raw string) string {
 	return agentID + ":" + hex.EncodeToString(sum[:])
 }
 
-func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v vault.Vault, session *store.RuntimeSession, service, raw string) (string, error) {
-	if placeholder, ok := lookupRuntimeSecretPlaceholder(srv, session, raw); ok {
+func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v vault.Vault, session *store.RuntimeSession, host, service, raw string) (string, error) {
+	if placeholder, ok := lookupRuntimeSecretPlaceholder(ctx, srv, st, session, raw); ok {
 		return placeholder, nil
 	}
 	cacheKey := secretValueCacheKey(session.AgentID, raw)
 	if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
-		srv.secretValueCache.Store(cacheKey, entry)
-		return entry.Placeholder, nil
+		if placeholder, ok := validateCapturedSecretCacheEntry(ctx, srv, st, session, cacheKey, entry); ok {
+			return placeholder, nil
+		}
 	}
 	release := func() {}
 	if ok, unlock := srv.acquireCapturedSecretLock(cacheKey); ok {
@@ -856,8 +859,9 @@ func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v va
 		deadline := time.Now().UTC().Add(2 * time.Second)
 		for time.Now().UTC().Before(deadline) {
 			if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
-				srv.secretValueCache.Store(cacheKey, entry)
-				return entry.Placeholder, nil
+				if placeholder, ok := validateCapturedSecretCacheEntry(ctx, srv, st, session, cacheKey, entry); ok {
+					return placeholder, nil
+				}
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
@@ -874,11 +878,34 @@ func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v va
 	if err := v.Set(ctx, session.UserID, serviceID, []byte(raw)); err != nil {
 		return "", err
 	}
+	grantID := uuid.NewString()
+	expiresAt := session.ExpiresAt
+	metadata, _ := json.Marshal(map[string]any{"source": "runtime_secret_capture"})
+	if err := st.CreateCredentialAuthorization(ctx, &store.CredentialAuthorization{
+		ID:            grantID,
+		UserID:        session.UserID,
+		AgentID:       session.AgentID,
+		SessionID:     &session.ID,
+		Scope:         "session",
+		CredentialRef: serviceID,
+		Service:       serviceID,
+		Host:          host,
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+		MetadataJSON:  metadata,
+		ExpiresAt:     &expiresAt,
+	}); err != nil {
+		return "", err
+	}
 	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      session.UserID,
-		AgentID:     session.AgentID,
-		ServiceID:   serviceID,
+		Placeholder:       placeholder,
+		UserID:            session.UserID,
+		AgentID:           session.AgentID,
+		ServiceID:         serviceID,
+		VaultItemID:       serviceID,
+		CredentialGrantID: grantID,
+		ExpiresAt:         &expiresAt,
 	}); err != nil {
 		return "", err
 	}
@@ -891,7 +918,7 @@ func captureRuntimeSecret(ctx context.Context, srv *Server, st store.Store, v va
 	return placeholder, nil
 }
 
-func lookupRuntimeSecretPlaceholder(srv *Server, session *store.RuntimeSession, raw string) (string, bool) {
+func lookupRuntimeSecretPlaceholder(ctx context.Context, srv *Server, st store.Store, session *store.RuntimeSession, raw string) (string, bool) {
 	if srv == nil || session == nil {
 		return "", false
 	}
@@ -899,13 +926,41 @@ func lookupRuntimeSecretPlaceholder(srv *Server, session *store.RuntimeSession, 
 	value, ok := srv.secretValueCache.Load(cacheKey)
 	if !ok {
 		if entry, ok := srv.sharedCapturedSecretGet(cacheKey); ok {
-			srv.secretValueCache.Store(cacheKey, entry)
-			return entry.Placeholder, true
+			return validateCapturedSecretCacheEntry(ctx, srv, st, session, cacheKey, entry)
 		}
 		return "", false
 	}
 	entry, _ := value.(capturedSecretEntry)
-	return entry.Placeholder, entry.Placeholder != ""
+	return validateCapturedSecretCacheEntry(ctx, srv, st, session, cacheKey, entry)
+}
+
+func validateCapturedSecretCacheEntry(ctx context.Context, srv *Server, st store.Store, session *store.RuntimeSession, cacheKey string, entry capturedSecretEntry) (string, bool) {
+	if entry.Placeholder == "" || st == nil || session == nil {
+		return "", false
+	}
+	rec, err := st.GetRuntimePlaceholder(ctx, entry.Placeholder)
+	if err != nil {
+		if srv != nil {
+			srv.secretValueCache.Delete(cacheKey)
+		}
+		return "", false
+	}
+	if entry.ServiceID != "" && rec.ServiceID != entry.ServiceID {
+		if srv != nil {
+			srv.secretValueCache.Delete(cacheKey)
+		}
+		return "", false
+	}
+	if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(ctx, st, rec, session.UserID, session.AgentID, time.Now().UTC()); !ok {
+		if srv != nil {
+			srv.secretValueCache.Delete(cacheKey)
+		}
+		return "", false
+	}
+	if srv != nil {
+		srv.secretValueCache.Store(cacheKey, entry)
+	}
+	return entry.Placeholder, true
 }
 
 var knownProtocolNoisePrefixes = []string{

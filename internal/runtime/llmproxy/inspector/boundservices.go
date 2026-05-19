@@ -66,6 +66,8 @@ func BoundServiceHosts(serviceID string) []string {
 		return []string{"api.linear.app"}
 	case "perplexity":
 		return []string{"api.perplexity.ai"}
+	case "resend":
+		return []string{"api.resend.com"}
 	case "openai":
 		return []string{"api.openai.com"}
 	case "anthropic":

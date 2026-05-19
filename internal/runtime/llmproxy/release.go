@@ -310,9 +310,9 @@ func boundaryCheckReleaseVerdict(ctx context.Context, req ReleaseRequest, v insp
 		if reason, ok := ValidateRuntimePlaceholderAccess(ctx, req.Store, rec, req.Agent.UserID, req.Agent.ID, time.Now().UTC()); !ok {
 			return reason, false
 		}
-		hosts := inspector.BoundServiceHosts(rec.ServiceID)
+		hosts, boundReason := RuntimePlaceholderBoundHosts(ctx, req.Store, rec)
 		if len(hosts) == 0 {
-			return "no hardcoded bound-service hosts for service " + rec.ServiceID + "; deferring to task/intent verification", true
+			return boundReason, false
 		}
 		if ok, reason := inspector.BoundaryCheck(v, hosts); !ok {
 			return reason, false

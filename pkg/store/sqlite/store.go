@@ -485,10 +485,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a := &store.Agent{}
 	var createdAt string
 	var orgID *string
+	var tokenExpiresAt *string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE id = ? AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE id = ? AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &createdAt, &orgID, &tokenExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -498,6 +499,11 @@ func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, erro
 	a.CreatedAt = parseTime(createdAt)
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if tokenExpiresAt != nil && *tokenExpiresAt != "" {
+		if t := parseTime(*tokenExpiresAt); !t.IsZero() {
+			a.TokenExpiresAt = &t
+		}
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings

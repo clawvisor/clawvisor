@@ -201,7 +201,9 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		auditDecide = "deny"
 		auditOutcome = "ssrf_blocked"
 		auditReason = err.Error()
-		writeJSONError(w, http.StatusForbidden, "SSRF_BLOCKED", err.Error())
+		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: blocked target host",
+			"host", targetHost, "err", err.Error())
+		writeJSONError(w, http.StatusForbidden, "SSRF_BLOCKED", "target host is not allowed")
 		return
 	}
 
@@ -406,22 +408,27 @@ func (h *ProxyResolverHandler) swapHeaderPlaceholders(r *http.Request, agent *st
 			}
 		}
 		// Bound-service host check.
-		hosts := inspector.BoundServiceHosts(ph.ServiceID)
-		if len(hosts) > 0 {
-			// Strip port for allowlist comparison; preserve the original
-			// host:port for the upstream dial. Allowlist entries are
-			// hostnames (e.g. "api.github.com"), so targetHost like
-			// "api.github.com:443" must compare as "api.github.com".
-			hostOnly := targetHost
-			if h, _, err := net.SplitHostPort(targetHost); err == nil {
-				hostOnly = h
+		hosts, boundReason := llmproxy.RuntimePlaceholderBoundHosts(r.Context(), h.Store, ph)
+		if len(hosts) == 0 {
+			return "", &resolverAPIError{
+				status: http.StatusForbidden,
+				code:   "TARGET_HOST_NOT_BOUND",
+				msg:    "target host not in placeholder's bound-service allowlist: " + boundReason,
 			}
-			if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
-				return "", &resolverAPIError{
-					status: http.StatusForbidden,
-					code:   "TARGET_HOST_NOT_BOUND",
-					msg:    "target host not in placeholder's bound-service allowlist: " + reason,
-				}
+		}
+		// Strip port for allowlist comparison; preserve the original
+		// host:port for the upstream dial. Allowlist entries are
+		// hostnames (e.g. "api.github.com"), so targetHost like
+		// "api.github.com:443" must compare as "api.github.com".
+		hostOnly := targetHost
+		if h, _, err := net.SplitHostPort(targetHost); err == nil {
+			hostOnly = h
+		}
+		if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: hostOnly}, hosts); !ok {
+			return "", &resolverAPIError{
+				status: http.StatusForbidden,
+				code:   "TARGET_HOST_NOT_BOUND",
+				msg:    "target host not in placeholder's bound-service allowlist: " + reason,
 			}
 		}
 		vaultLookupKey := ph.ServiceID
@@ -605,6 +612,7 @@ func (h *ProxyResolverHandler) checkSSRF(ctx context.Context, host string) error
 }
 
 func isPrivateIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+	cgnat := &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+	return ip.IsLoopback() || ip.IsPrivate() || cgnat.Contains(ip) || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
 }

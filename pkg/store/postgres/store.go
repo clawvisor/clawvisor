@@ -412,15 +412,19 @@ func (s *Store) GetAgent(ctx context.Context, id string) (*store.Agent, error) {
 func (s *Store) getAgentByID(ctx context.Context, id string) (*store.Agent, error) {
 	a := &store.Agent{}
 	var orgID *string
+	var tokenExpiresAt *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, description, token_hash, created_at, org_id FROM agents WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT id, user_id, name, description, token_hash, created_at, org_id, token_expires_at FROM agents WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID)
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.TokenHash, &a.CreatedAt, &orgID, &tokenExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if orgID != nil {
 		a.OrgID = *orgID
+	}
+	if tokenExpiresAt != nil {
+		a.TokenExpiresAt = tokenExpiresAt
 	}
 	if settings, settingsErr := s.GetAgentRuntimeSettings(ctx, a.ID); settingsErr == nil {
 		a.RuntimeSettings = settings

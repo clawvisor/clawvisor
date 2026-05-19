@@ -83,7 +83,7 @@ func ExtractCredentialValue(credential []byte) (string, error) {
 	}
 	for _, key := range []string{"access_token", "token", "api_key", "password"} {
 		if raw, ok := decoded[key].(string); ok && strings.TrimSpace(raw) != "" {
-			return raw, nil
+			return strings.TrimSpace(raw), nil
 		}
 	}
 	return "", fmt.Errorf("credential has no swappable token field")

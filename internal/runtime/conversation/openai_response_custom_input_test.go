@@ -34,6 +34,29 @@ func TestCustomToolCallReemit_PreservesStringInput(t *testing.T) {
 	}
 }
 
+func TestResponsesMultiSSEPreservesOriginalOutputIndex(t *testing.T) {
+	sse := string(buildOpenAIResponsesMultiSSE([]orderedResponsesItem{
+		{
+			isText:      true,
+			outputIndex: 2,
+			text:        "hello",
+		},
+		{
+			outputIndex: 5,
+			itemID:      "fc_1",
+			callID:      "call_1",
+			name:        "shell",
+			arguments:   `{"cmd":"pwd"}`,
+		},
+	}))
+	if strings.Contains(sse, `"output_index":0`) || strings.Contains(sse, `"output_index":1`) {
+		t.Fatalf("synthesized SSE should preserve original output_index values, got:\n%s", sse)
+	}
+	if !strings.Contains(sse, `"output_index":2`) || !strings.Contains(sse, `"output_index":5`) {
+		t.Fatalf("synthesized SSE missing original output_index values, got:\n%s", sse)
+	}
+}
+
 func TestCustomToolInputForReemit_NilCollapsesToNull(t *testing.T) {
 	got := customToolInputForReemit(nil, nil)
 	if got != nil {

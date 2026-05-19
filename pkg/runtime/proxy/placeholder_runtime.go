@@ -78,7 +78,7 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 					if _, ok := llmproxy.ValidateRuntimePlaceholderAccess(req.Context(), hooks.Store, meta, st.Session.UserID, st.Session.AgentID, now); !ok {
 						return "", store.ErrNotFound
 					}
-					if err := validateRuntimePlaceholderBoundHost(req, meta.ServiceID); err != nil {
+					if err := validateRuntimePlaceholderBoundHost(req, hooks.Store, meta); err != nil {
 						return "", err
 					}
 					vaultLookupKey := meta.ServiceID
@@ -197,10 +197,10 @@ func (s *Server) InstallPlaceholderSwap(hooks PlaceholderHooks) {
 	})
 }
 
-func validateRuntimePlaceholderBoundHost(req *http.Request, serviceID string) error {
-	hosts := inspector.BoundServiceHosts(serviceID)
+func validateRuntimePlaceholderBoundHost(req *http.Request, st store.Store, ph *store.RuntimePlaceholder) error {
+	hosts, reason := llmproxy.RuntimePlaceholderBoundHosts(req.Context(), st, ph)
 	if len(hosts) == 0 {
-		return nil
+		return fmt.Errorf("target host outside placeholder bound-service: %s", reason)
 	}
 	if ok, reason := inspector.BoundaryCheck(inspector.Verdict{IsAPICall: true, Host: requestHost(req)}, hosts); !ok {
 		return fmt.Errorf("target host outside placeholder bound-service: %s", reason)

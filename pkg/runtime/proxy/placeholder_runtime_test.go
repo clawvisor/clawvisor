@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,14 +43,6 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeneratePlaceholder: %v", err)
 	}
-	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
-		Placeholder: placeholder,
-		UserID:      userID,
-		AgentID:     agentID,
-		ServiceID:   "mock.placeholder",
-	}); err != nil {
-		t.Fatalf("CreateRuntimePlaceholder: %v", err)
-	}
 
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = true
@@ -61,6 +54,31 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 		_, _ = w.Write([]byte(`ok`))
 	}))
 	defer upstream.Close()
+	upstreamHost := mustURL(t, upstream.URL).Hostname()
+	if err := st.CreateCredentialAuthorization(ctx, &store.CredentialAuthorization{
+		ID:            "grant-mock-placeholder",
+		UserID:        userID,
+		AgentID:       agentID,
+		Scope:         "session",
+		CredentialRef: "mock.placeholder",
+		Service:       "mock.placeholder",
+		Host:          upstreamHost,
+		HeaderName:    "authorization",
+		Scheme:        "bearer",
+		Status:        "active",
+	}); err != nil {
+		t.Fatalf("CreateCredentialAuthorization: %v", err)
+	}
+	if err := st.CreateRuntimePlaceholder(ctx, &store.RuntimePlaceholder{
+		Placeholder:       placeholder,
+		UserID:            userID,
+		AgentID:           agentID,
+		ServiceID:         "mock.placeholder",
+		VaultItemID:       "mock.placeholder",
+		CredentialGrantID: "grant-mock-placeholder",
+	}); err != nil {
+		t.Fatalf("CreateRuntimePlaceholder: %v", err)
+	}
 
 	ownerSession := createRuntimeSession(t, st, "session-owner", userID, agentID, false)
 	otherSession := createRuntimeSession(t, st, "session-other", userID, otherAgent.ID, false)
@@ -112,6 +130,15 @@ func TestRuntimeProxySwapsScopedPlaceholders(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected cross-agent placeholder rejection, got %d", resp.StatusCode)
 	}
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("url.Parse(%q): %v", raw, err)
+	}
+	return u
 }
 
 func TestRuntimeProxyRejectsPlaceholderOutsideBoundServiceHost(t *testing.T) {
@@ -284,7 +311,7 @@ func TestRuntimeProxyObservesKnownOutboundCredentialWithoutCapturing(t *testing.
 	if resp.StatusCode != http.StatusOK || seenAuth != "Bearer "+rawToken {
 		t.Fatalf("expected raw header to pass through unchanged, status=%d auth=%q", resp.StatusCode, seenAuth)
 	}
-	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); ok {
+	if _, ok := lookupRuntimeSecretPlaceholder(ctx, srv, st, &store.RuntimeSession{UserID: userID, AgentID: agentID}, rawToken); ok {
 		t.Fatal("expected outbound raw credential observation to avoid silent capture")
 	}
 	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})
@@ -350,7 +377,7 @@ func TestRuntimeProxyObservesUnknownOutboundCredentialInObserveMode(t *testing.T
 		t.Fatalf("proxy request: %v", err)
 	}
 	resp.Body.Close()
-	if _, ok := lookupRuntimeSecretPlaceholder(srv, &store.RuntimeSession{AgentID: agentID}, rawToken); ok {
+	if _, ok := lookupRuntimeSecretPlaceholder(ctx, srv, st, &store.RuntimeSession{UserID: userID, AgentID: agentID}, rawToken); ok {
 		t.Fatal("observe mode should not capture unknown outbound credentials")
 	}
 	events, err := st.ListRuntimeEvents(ctx, userID, store.RuntimeEventFilter{SessionID: session.id, Limit: 10})

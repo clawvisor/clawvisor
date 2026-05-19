@@ -607,6 +607,13 @@ func (s *Server) routes() http.Handler {
 	userPolicyRL := func(h http.HandlerFunc) http.Handler {
 		return requireUser(middleware.RateLimit(policyRL, userKeyFn, rlCfg.PolicyAPI.Limit)(h))
 	}
+	llmPreAuthKeyFn := func(r *http.Request) string { return "llm-ip:" + ipKeyFn(r) }
+	llmAgentKeyFn := func(r *http.Request) string {
+		if a := middleware.AgentFromContext(r.Context()); a != nil {
+			return "llm-agent:" + a.ID
+		}
+		return ""
+	}
 	authRateLimited := func(h http.HandlerFunc) http.Handler {
 		return middleware.RateLimit(authRL, ipKeyFn, rlCfg.Auth.Limit)(h)
 	}
@@ -1021,6 +1028,11 @@ func (s *Server) routes() http.Handler {
 		// LLM endpoint accepts the agent token via SDK auth headers or
 		// X-Clawvisor-Agent-Token for Claude Code subscription passthrough.
 		requireAgentLLM := middleware.RequireAgentLLM(s.store)
+		requireAgentLLMRL := func(h http.HandlerFunc) http.Handler {
+			agentLimited := middleware.RateLimit(gatewayRL, llmAgentKeyFn, rlCfg.Gateway.Limit)(http.HandlerFunc(h))
+			authenticated := requireAgentLLM(agentLimited)
+			return middleware.RateLimit(gatewayRL, llmPreAuthKeyFn, rlCfg.Gateway.Limit)(authenticated)
+		}
 
 		// Resolver expects a short-lived single-use nonce in
 		// X-Clawvisor-Caller — never the raw agent token. The nonce is
@@ -1028,10 +1040,10 @@ func (s *Server) routes() http.Handler {
 		// authorizes the specific call the proxy already approved.
 		requireAgentLLMCaller := middleware.RequireAgentLLMNonce(s.store, callerNonces, s.logger)
 
-		mux.Handle("POST /v1/messages", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
-		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLM(http.HandlerFunc(llmHandler.Messages)))
-		mux.Handle("POST /v1/chat/completions", requireAgentLLM(http.HandlerFunc(llmHandler.ChatCompletions)))
-		mux.Handle("POST /v1/responses", requireAgentLLM(http.HandlerFunc(llmHandler.Responses)))
+		mux.Handle("POST /v1/messages", requireAgentLLMRL(llmHandler.Messages))
+		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLMRL(llmHandler.Messages))
+		mux.Handle("POST /v1/chat/completions", requireAgentLLMRL(llmHandler.ChatCompletions))
+		mux.Handle("POST /v1/responses", requireAgentLLMRL(llmHandler.Responses))
 
 		// Synthetic Clawvisor control plane. Model-emitted calls to
 		// https://clawvisor.local/control/... are rewritten here with

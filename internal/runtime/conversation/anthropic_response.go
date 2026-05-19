@@ -292,7 +292,10 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 	if !anyBlocked && anyRewritten {
 		// Re-emit the entire turn as SSE with the rewritten input bytes
 		// substituted for the affected tool_use blocks.
-		assembled := buildAnthropicMultiBlockSSE(msgID, msgModel, msgRole, orderedAll, rewrittenInput)
+		assembled, err := buildAnthropicMultiBlockSSE(msgID, msgModel, msgRole, orderedAll, rewrittenInput)
+		if err != nil {
+			return RewriteResult{}, err
+		}
 		return RewriteResult{
 			Body:          assembled,
 			Decisions:     decisions,
@@ -321,7 +324,7 @@ func (rw AnthropicResponseRewriter) rewriteSSE(body []byte, eval ToolUseEvaluato
 // message_delta + message_stop. Block indices are 0..N-1 contiguous;
 // the upstream's original indices are not preserved (which is fine —
 // stop_reason and overall structure are what the harness cares about).
-func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlock, rewrittenInput map[*pendingBlock]json.RawMessage) []byte {
+func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlock, rewrittenInput map[*pendingBlock]json.RawMessage) ([]byte, error) {
 	if msgID == "" {
 		msgID = "msg_clawvisor_rewrite"
 	}
@@ -333,16 +336,20 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 	}
 
 	var b bytes.Buffer
-	emit := func(name string, data any) {
-		raw, _ := json.Marshal(data)
+	emit := func(name string, data any) error {
+		raw, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
 		b.WriteString("event: ")
 		b.WriteString(name)
 		b.WriteString("\ndata: ")
 		b.Write(raw)
 		b.WriteString("\n\n")
+		return nil
 	}
 
-	emit("message_start", map[string]any{
+	if err := emit("message_start", map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
 			"id":            msgID,
@@ -354,14 +361,16 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 			"stop_sequence": nil,
 			"usage":         map[string]int{"input_tokens": 0, "output_tokens": 0},
 		},
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	stopReason := "end_turn"
 	outIndex := 0
 	for _, pb := range blocks {
 		if pb.isTU {
 			stopReason = "tool_use"
-			emit("content_block_start", map[string]any{
+			if err := emit("content_block_start", map[string]any{
 				"type":  "content_block_start",
 				"index": outIndex,
 				"content_block": map[string]any{
@@ -370,23 +379,29 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 					"name":  pb.name,
 					"input": map[string]any{},
 				},
-			})
+			}); err != nil {
+				return nil, err
+			}
 			input := pb.input.Bytes()
 			if rw, ok := rewrittenInput[pb]; ok {
 				input = rw
 			}
-			emit("content_block_delta", map[string]any{
+			if err := emit("content_block_delta", map[string]any{
 				"type":  "content_block_delta",
 				"index": outIndex,
 				"delta": map[string]any{
 					"type":         "input_json_delta",
 					"partial_json": string(input),
 				},
-			})
-			emit("content_block_stop", map[string]any{
+			}); err != nil {
+				return nil, err
+			}
+			if err := emit("content_block_stop", map[string]any{
 				"type":  "content_block_stop",
 				"index": outIndex,
-			})
+			}); err != nil {
+				return nil, err
+			}
 			outIndex++
 			continue
 		}
@@ -394,43 +409,53 @@ func buildAnthropicMultiBlockSSE(msgID, model, role string, blocks []*pendingBlo
 			continue
 		}
 		// Text block.
-		emit("content_block_start", map[string]any{
+		if err := emit("content_block_start", map[string]any{
 			"type":  "content_block_start",
 			"index": outIndex,
 			"content_block": map[string]any{
 				"type": "text",
 				"text": "",
 			},
-		})
+		}); err != nil {
+			return nil, err
+		}
 		if pb.text.Len() > 0 {
-			emit("content_block_delta", map[string]any{
+			if err := emit("content_block_delta", map[string]any{
 				"type":  "content_block_delta",
 				"index": outIndex,
 				"delta": map[string]any{
 					"type": "text_delta",
 					"text": pb.text.String(),
 				},
-			})
+			}); err != nil {
+				return nil, err
+			}
 		}
-		emit("content_block_stop", map[string]any{
+		if err := emit("content_block_stop", map[string]any{
 			"type":  "content_block_stop",
 			"index": outIndex,
-		})
+		}); err != nil {
+			return nil, err
+		}
 		outIndex++
 	}
 
-	emit("message_delta", map[string]any{
+	if err := emit("message_delta", map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{
 			"stop_reason":   stopReason,
 			"stop_sequence": nil,
 		},
 		"usage": map[string]int{"output_tokens": 0},
-	})
-	emit("message_stop", map[string]any{
+	}); err != nil {
+		return nil, err
+	}
+	if err := emit("message_stop", map[string]any{
 		"type": "message_stop",
-	})
-	return b.Bytes()
+	}); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
 
 func SynthAnthropicTextSSE(msgID, model, role, text string) []byte {
