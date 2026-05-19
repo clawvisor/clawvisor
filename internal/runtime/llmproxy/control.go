@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
@@ -38,11 +39,13 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	tasksURLInline := tasksURL + "?surface=inline"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
-	if shellTool == "" {
-		shellTool = "bash"
+	shellToolExample := shellTool
+	if shellToolExample == "" {
+		shellToolExample = "<actual available shell/command-execution tool>"
 	}
+	controlPlaneToolRule := controlPlaneToolRule(shellTool)
 	allowedLines := controlAllowedWithoutTaskLines(availableTools, toolRules)
-	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellTool, availableTools)
+	workedExampleLines := controlWorkedExampleLines(tasksURLInline, shellToolExample, availableTools)
 	return strings.Join([]string{
 		ControlNoticeSentinel,
 		"",
@@ -56,7 +59,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"",
 		"Required task shape:",
 		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
+		"   \"expected_tools\":[{\"tool_name\":\"" + shellToolExample + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"",
@@ -84,7 +87,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"Control-plane rules:",
 		"  - Before creating the task, tell me I will need to approve it.",
 		"  - Task creation does not grant permission until I approve it.",
-		"  - Use `" + shellTool + "` with curl for control-plane calls.",
+		controlPlaneToolRule,
 		"  - Use one foreground curl with JSON via `--data @-`; no temp files, pipes, redirects, extra shell commands, `&`, `nohup`, or polling.",
 		"  - NEVER write `cv-nonce-...`, `X-Clawvisor-Caller`, `X-Clawvisor-Target-Host`, or any `X-Clawvisor-*` header. Clawvisor injects those.",
 		"  - NEVER call `http://localhost:<port>` or `http://127.0.0.1:<port>` directly. Use `https://" + ControlSyntheticHost + "`.",
@@ -96,16 +99,23 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"    -H 'Content-Type: application/json' \\",
 		"    --data @- <<'JSON'",
 		"  {\"purpose\":\"<user-visible goal>\",",
-		"   \"expected_tools\":[{\"tool_name\":\"" + shellTool + "\",\"why\":\"<why this tool is needed>\"}],",
+		"   \"expected_tools\":[{\"tool_name\":\"" + shellToolExample + "\",\"why\":\"<why this tool is needed>\"}],",
 		"   \"intent_verification_mode\":\"strict\",",
 		"   \"expires_in_seconds\":600}",
 		"  JSON",
 	}, "\n")
 }
 
+func controlPlaneToolRule(shellTool string) string {
+	if shellTool != "" {
+		return "  - Use `" + shellTool + "` with curl for control-plane calls."
+	}
+	return "  - Use an actual available shell/command-execution tool with curl for control-plane calls; do not invent `bash` unless it is listed in the request tools."
+}
+
 func controlWorkedExampleLines(tasksURLInline, shellTool string, availableTools []string) []string {
-	readTool := controlToolByName(availableTools, "read")
-	writeTool := controlToolByName(availableTools, "write")
+	readTool := controlToolByAlias(availableTools, "read", "read_file")
+	writeTool := controlToolByAlias(availableTools, "write", "write_file")
 	localTools := []string{
 		"{\"tool_name\":\"" + shellTool + "\",\"why\":\"Create the target directory and run sanity checks such as ls and wc after files are written.\"}",
 	}
@@ -198,6 +208,7 @@ func controlToolExamples(availableTools []string) string {
 	if len(tools) == 0 {
 		return "Bash, Read, Write, Edit, WebFetch, etc."
 	}
+	tools = prioritizeControlToolExamples(tools)
 	const max = 8
 	if len(tools) > max {
 		tools = tools[:max]
@@ -209,21 +220,64 @@ func controlToolExamples(availableTools []string) string {
 func controlShellTool(availableTools []string) string {
 	for _, tool := range compactToolNames(availableTools) {
 		switch strings.ToLower(tool) {
-		case "bash", "shell", "exec", "exec_command":
+		case "bash", "shell", "exec", "exec_command", "terminal":
 			return tool
 		}
 	}
 	return ""
 }
 
-func controlToolByName(availableTools []string, name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
+func controlToolByAlias(availableTools []string, names ...string) string {
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			wanted[name] = struct{}{}
+		}
+	}
 	for _, tool := range compactToolNames(availableTools) {
-		if strings.ToLower(tool) == name {
+		if _, ok := wanted[strings.ToLower(tool)]; ok {
 			return tool
 		}
 	}
 	return ""
+}
+
+func prioritizeControlToolExamples(tools []string) []string {
+	priority := []string{
+		"bash", "terminal", "shell", "exec", "exec_command",
+		"write", "write_file", "edit", "patch",
+		"read", "read_file",
+		"process", "execute_code",
+	}
+	rank := make(map[string]int, len(priority))
+	for i, name := range priority {
+		rank[name] = i
+	}
+	type rankedTool struct {
+		name  string
+		rank  int
+		order int
+	}
+	ranked := make([]rankedTool, 0, len(tools))
+	for i, tool := range tools {
+		r, ok := rank[strings.ToLower(tool)]
+		if !ok {
+			r = len(priority) + i
+		}
+		ranked = append(ranked, rankedTool{name: tool, rank: r, order: i})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].rank != ranked[j].rank {
+			return ranked[i].rank < ranked[j].rank
+		}
+		return ranked[i].order < ranked[j].order
+	})
+	out := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		out = append(out, item.name)
+	}
+	return out
 }
 
 func compactToolNames(availableTools []string) []string {
