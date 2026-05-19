@@ -408,6 +408,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var ticketStore auth.TicketStorer
 	var replayCache middleware.ReplayCache
 	var tokenCache handlers.TokenCache
+	var claimCodeCache handlers.ClaimCodeCache
 	var devicePairingStore handlers.DevicePairingStore
 	var oauthStateStore handlers.OAuthStateStore
 	var pairingCodeStore handlers.PairingCodeStore
@@ -431,6 +432,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		ticketStore = auth.NewRedisTicketStore(client)
 		replayCache = middleware.NewRedisReplayCache(client)
 		tokenCache = handlers.NewRedisTokenCache(client, 5*time.Minute)
+		claimCodeCache = handlers.NewRedisClaimCodeCache(client)
 		devicePairingStore = handlers.NewRedisDevicePairingStore(client)
 		oauthStateStore = handlers.NewRedisOAuthStateStore(client)
 		pairingCodeStore = handlers.NewRedisPairingCodeStore(client, 5*time.Minute, 3)
@@ -493,6 +495,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		TicketStore:        ticketStore,
 		ReplayCache:        replayCache,
 		TokenCache:         tokenCache,
+		ClaimCodeCache:     claimCodeCache,
 		DevicePairingStore: devicePairingStore,
 		OAuthStateStore:    oauthStateStore,
 		PairingCodeStore:   pairingCodeStore,
