@@ -159,6 +159,10 @@ func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 // For basic auth with a user:pass token, it includes "user" and "pass"; for
 // api_key (or basic auth with user_var), just "token".
 func credentialFields(authDef yamldef.AuthDef, credBytes []byte) (map[string]string, error) {
+	// OAuth2 tokens are managed by the HTTP client (refresh handled separately);
+	if authDef.Type == "oauth2" || len(credBytes) == 0 {
+		return map[string]string{}, nil
+	}
 	token, err := extractToken(credBytes)
 	if err != nil {
 		return nil, err

@@ -1615,3 +1615,40 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+func TestOAuth2RefreshTokenOnlyCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok": true}`))
+	}))
+	defer srv.Close()
+
+	def := yamldef.ServiceDef{
+		Service: yamldef.ServiceInfo{ID: "test.oauth"},
+		Auth:    yamldef.AuthDef{Type: "oauth2"},
+		API:     yamldef.APIDef{BaseURL: srv.URL, Type: "rest"},
+		Actions: map[string]yamldef.Action{
+			"ping": {Method: "GET", Path: "/ping"},
+		},
+	}
+
+	adapter, err := New(def, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	refreshOnlyCred := testOAuthCred("", "some-refresh-token")
+
+	// Execute must not fail with "credential missing token" or "parsing credentials".
+	_, execErr := adapter.Execute(context.Background(), adapters.Request{
+		Action:     "ping",
+		Credential: refreshOnlyCred,
+	})
+	if execErr != nil {
+		// A network/auth error from the test server is acceptable
+		if containsHelper(execErr.Error(), "parsing credentials") || containsHelper(execErr.Error(), "credential missing token") {
+			t.Errorf("Execute errored on credential parsing for refresh-token-only oauth2 cred: %v", execErr)
+		}
+	}
+}
+

@@ -124,9 +124,8 @@ func (a *YAMLAdapter) Execute(ctx context.Context, req adapters.Request) (*adapt
 	}
 
 	// Get credential fields for path and base-URL interpolation.
-	// Ignore parse errors when no credentials are provided (noauth adapters).
 	credFields, err := credentialFields(a.def.Auth, req.Credential)
-	if err != nil && len(req.Credential) > 0 {
+	if err != nil {
 		return nil, fmt.Errorf("%s: parsing credentials: %w", a.def.Service.ID, err)
 	}
 
@@ -159,9 +158,8 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, confi
 		return "", fmt.Errorf("%s: identity fetch: %w", a.def.Service.ID, err)
 	}
 
-	// Ignore parse errors when no credentials are provided (noauth adapters).
 	credFields, err := credentialFields(a.def.Auth, credBytes)
-	if err != nil && len(credBytes) > 0 {
+	if err != nil {
 		return "", fmt.Errorf("%s: identity fetch: parsing credentials: %w", a.def.Service.ID, err)
 	}
 	baseURL, err := a.resolvedBaseURL(config, credFields)
