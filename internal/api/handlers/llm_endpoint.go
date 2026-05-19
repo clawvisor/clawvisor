@@ -2085,11 +2085,18 @@ func (h *LLMEndpointHandler) emitLiteSecretPipelineTrace(requestID string, agent
 	h.TraceLogger.Emit(fields)
 }
 
+// liteSecretBodySHA produces a 16-char fingerprint of the request body
+// used to correlate "this body was held → this body was released" entries
+// in the audit / trace stream. It is NOT a credential hash and not
+// compared in any security-sensitive way; the truncation to 64 bits of
+// hex tells the same story. SHA-256 is the right primitive for a
+// content fingerprint and lgtm/CodeQL's weak-hash heuristic fires on
+// the function name only.
 func liteSecretBodySHA(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	sum := sha256.Sum256(body)
+	sum := sha256.Sum256(body) // lgtm[go/weak-cryptographic-algorithm]
 	return fmt.Sprintf("%x", sum[:])[:16]
 }
 

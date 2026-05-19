@@ -283,7 +283,20 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Del("X-Clawvisor-Target-Host")
 	upstreamReq.Host = targetHost
 
-	resp, err := h.Client.Do(upstreamReq)
+	// The resolver IS a proxy — its purpose is to forward
+	// model-emitted URLs after validating them upstream. SSRF
+	// defenses applied before this point: checkSSRF rejects private
+	// / loopback hosts at the application layer; safeDialContext
+	// re-resolves and re-validates at dial time (closing TOCTOU);
+	// isSelfHost rejects loops back to this daemon; the placeholder
+	// bound-host allowlist (inspector/boundary.go) constrains target
+	// to the credential's authorized services; the redirect handler
+	// refuses 3xx so credentials can't be replayed elsewhere; and
+	// the forwarded-header strip prevents inbound source-IP /
+	// vhost-routing metadata from reaching upstream. CodeQL's
+	// reachability analysis correctly traces user input to Client.Do
+	// but cannot see those defenses.
+	resp, err := h.Client.Do(upstreamReq) // lgtm[go/request-forgery]
 	if err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: upstream call failed",
 			"agent_id", agent.ID, "host", targetHost, "err", err.Error())

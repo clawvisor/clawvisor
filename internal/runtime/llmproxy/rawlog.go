@@ -234,7 +234,14 @@ func appendRawPart(parts [][]byte, label string, raw json.RawMessage) [][]byte {
 	if len(raw) == 0 || string(raw) == "null" {
 		return parts
 	}
-	part := make([]byte, 0, len(label)+1+len(raw))
+	// `label` is a fixed-string constant (e.g. "message:user", at most
+	// ~32 bytes) and `raw` is a json.RawMessage from a request body
+	// already capped upstream by http.MaxBytesReader plus the
+	// provider-side body limits. Triggering a 64-bit integer overflow
+	// here would require a `raw` payload near 2^63 bytes — physically
+	// impossible given those caps. The sum stays well within `int`
+	// range on every supported GOARCH.
+	part := make([]byte, 0, len(label)+1+len(raw)) // lgtm[go/allocation-size-overflow]
 	part = append(part, label...)
 	part = append(part, ':')
 	part = append(part, raw...)
