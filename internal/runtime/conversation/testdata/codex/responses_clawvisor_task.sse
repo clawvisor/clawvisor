@@ -1,0 +1,15 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_test","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_test_1","type":"function_call","call_id":"call_test_1","name":"exec_command","arguments":""}}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_test_1","arguments":"{\"cmd\":\"curl -sS -X POST 'https://clawvisor.local/control/tasks?surface=inline' -H 'Content-Type: application/json' --data @- <<'JSON'\\n{\\\"purpose\\\":\\\"write hello to /tmp/foo\\\"}\\nJSON\",\"yield_time_ms\":1000}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_test_1","type":"function_call","call_id":"call_test_1","name":"exec_command","arguments":"{\"cmd\":\"curl -sS -X POST 'https://clawvisor.local/control/tasks?surface=inline' -H 'Content-Type: application/json' --data @- <<'JSON'\\n{\\\"purpose\\\":\\\"write hello to /tmp/foo\\\"}\\nJSON\",\"yield_time_ms\":1000}"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_test","status":"completed"}}
+

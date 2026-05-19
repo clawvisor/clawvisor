@@ -3009,6 +3009,16 @@ func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateConnectionRequestStatusIfPending(ctx context.Context, id, status string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE connection_requests SET status = $1 WHERE id = $2 AND status = 'pending'`,
+		status, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error {
 	var err error
 	var n int64

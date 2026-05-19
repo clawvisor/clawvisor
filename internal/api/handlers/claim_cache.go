@@ -12,7 +12,9 @@ import (
 // endpoint when the curl runs.
 type ClaimCodeCache interface {
 	// Store records a claim code for the user with the given TTL.
-	Store(code, userID string, ttl time.Duration)
+	// Returns an error when the underlying backend can't persist the
+	// entry; callers should refuse to hand the code back to the user.
+	Store(code, userID string, ttl time.Duration) error
 	// Peek returns the user ID for a claim without consuming it. Lets
 	// callers validate the request before burning the single-use code, so
 	// recoverable failures (duplicate-name 409, max-pending 429) don't
@@ -39,11 +41,16 @@ func newMemoryClaimCodeCache() *memoryClaimCodeCache {
 	return &memoryClaimCodeCache{entries: make(map[string]claimCodeEntry)}
 }
 
-func (c *memoryClaimCodeCache) Store(code, userID string, ttl time.Duration) {
+func (c *memoryClaimCodeCache) Store(code, userID string, ttl time.Duration) error {
 	c.mu.Lock()
 	c.entries[code] = claimCodeEntry{userID: userID, expiresAt: time.Now().Add(ttl)}
+	// Opportunistic cleanup piggy-backed on writes, while we already hold
+	// the lock. Avoids the per-Store goroutine that the original code
+	// fired (each call spawned a fresh goroutine all contending for this
+	// same mutex, stacking up under load).
+	c.cleanupLocked()
 	c.mu.Unlock()
-	go c.cleanup()
+	return nil
 }
 
 func (c *memoryClaimCodeCache) Peek(code string) (string, bool) {
@@ -75,9 +82,9 @@ func (c *memoryClaimCodeCache) Consume(code string) (string, bool) {
 	return entry.userID, true
 }
 
-func (c *memoryClaimCodeCache) cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// cleanupLocked is the actual eviction loop; the caller must already hold
+// c.mu. Inlined into Store so we don't pay a per-Store goroutine.
+func (c *memoryClaimCodeCache) cleanupLocked() {
 	now := time.Now()
 	for code, entry := range c.entries {
 		if now.After(entry.expiresAt) {

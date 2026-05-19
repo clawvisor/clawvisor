@@ -717,7 +717,12 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
 	// Connection request management (user JWT)
-	mux.Handle("POST /api/agents/connect/claim", user(connectionsHandler.MintClaim))
+	// Mint is per-user rate-limited so an authenticated session can't
+	// spam the cache (memory or Redis keyspace). Same shape as the OAuth
+	// / policy-API limiters.
+	claimMintRL := newKeyedLimiterFromBucket(config.RateLimitBucket{Limit: 30, Window: 60})
+	mux.Handle("POST /api/agents/connect/claim",
+		requireUser(middleware.RateLimit(claimMintRL, userKeyFn, 30)(http.HandlerFunc(connectionsHandler.MintClaim))))
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))

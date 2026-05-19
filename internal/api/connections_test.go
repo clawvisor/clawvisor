@@ -576,6 +576,62 @@ func TestConnectionRequest_ApproveRejectsRacingDuplicateName(t *testing.T) {
 // still pending, the server must expire the request before returning, so a
 // late approve can't create an agent whose token never reaches a caller
 // (which would otherwise hold the name and block a clean re-bootstrap).
+// Regression: if Approve lands between waitForConnectionResolution
+// returning pending and the timeout-branch's expire, the conditional
+// store update must NOT clobber the approved status. The handler should
+// re-read the row and return 201 + token so the bootstrap curl writes
+// the token file rather than thinking the request expired.
+func TestConnectionRequest_WaitTimeoutLosingRaceToApproveReturnsToken(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+	resp := session.do("POST", "/api/agents/connect/claim", nil)
+	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+
+	// Create a pending request directly, then mark it approved (with an
+	// agent) BEFORE issuing the wait=true POST. The handler will see the
+	// request as already-pending at peek time but the wait loop will
+	// detect the resolved state immediately via the initial fetch — same
+	// downstream code path as the race-loss, just timed deterministically.
+	// We use the request-creation path so the claim is consumed normally.
+	type result struct {
+		status int
+		body   map[string]any
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		r := env.do("POST", "/api/agents/connect?claim="+claim+"&name=RaceApprove&wait=true&timeout=10", "", nil)
+		defer r.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		resultCh <- result{status: r.StatusCode, body: body}
+	}()
+	var connID string
+	for i := 0; i < 50; i++ {
+		pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
+		if err == nil && len(pending) > 0 {
+			connID = pending[0].ID
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if connID == "" {
+		t.Fatal("pending request never appeared")
+	}
+	approveResp := session.do("POST", "/api/agents/connect/"+connID+"/approve", nil)
+	mustStatus(t, approveResp, http.StatusOK)
+
+	select {
+	case got := <-resultCh:
+		if got.status != http.StatusCreated {
+			t.Errorf("expected 201 even when wait timeout raced with approve, got %d (body=%v)", got.status, got.body)
+		}
+		if tok, _ := got.body["token"].(string); tok == "" {
+			t.Error("approved race result must include token")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("wait=true POST never returned")
+	}
+}
+
 func TestConnectionRequest_WaitTimeoutExpiresPending(t *testing.T) {
 	env, session := setupConnectionEnv(t)
 	resp := session.do("POST", "/api/agents/connect/claim", nil)

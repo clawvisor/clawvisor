@@ -3355,6 +3355,17 @@ func (s *Store) ListPendingConnectionRequests(ctx context.Context, userID string
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateConnectionRequestStatusIfPending(ctx context.Context, id, status string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE connection_requests SET status = ? WHERE id = ? AND status = 'pending'`,
+		status, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *Store) UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error {
 	var res sql.Result
 	var err error
