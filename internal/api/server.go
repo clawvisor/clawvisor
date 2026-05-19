@@ -706,6 +706,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/agents/connect/{id}/status", e2e(http.HandlerFunc(connectionsHandler.PollStatus)))
 
 	// Connection request management (user JWT)
+	mux.Handle("POST /api/agents/connect/claim", user(connectionsHandler.MintClaim))
 	mux.Handle("GET /api/agents/connections", user(connectionsHandler.List))
 	mux.Handle("POST /api/agents/connect/{id}/approve", user(connectionsHandler.Approve))
 	mux.Handle("POST /api/agents/connect/{id}/deny", user(connectionsHandler.Deny))

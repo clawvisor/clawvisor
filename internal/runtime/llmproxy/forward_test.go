@@ -3,6 +3,8 @@ package llmproxy
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -384,5 +386,99 @@ func TestCopyForwardableHeaders_StripsConnectionScoped(t *testing.T) {
 	}
 	if dst.Get("Authorization") != "" {
 		t.Errorf("Authorization (static skip) should still be stripped, got %q", dst.Get("Authorization"))
+	}
+}
+
+// makeJWT builds a syntactically-valid JWT with the given claims for routing
+// tests. Signature is not verified — the routing helper inspects claims only.
+func makeJWT(claims map[string]any) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload, _ := json.Marshal(claims)
+	body := base64.RawURLEncoding.EncodeToString(payload)
+	sig := base64.RawURLEncoding.EncodeToString([]byte("sig"))
+	return header + "." + body + "." + sig
+}
+
+func TestOpenAIPassthroughRoute_APIKeyFallsBackToDefault(t *testing.T) {
+	if got := openaiPassthroughRoute("Bearer sk-abc123", "/v1/responses"); got != nil {
+		t.Errorf("sk-* API key must use default api.openai.com routing, got %s", got)
+	}
+	if got := openaiPassthroughRoute("Bearer sk-proj-abc123", "/v1/responses"); got != nil {
+		t.Errorf("sk-proj-* API key must use default routing, got %s", got)
+	}
+}
+
+func TestOpenAIPassthroughRoute_OAuthWithResponseScope(t *testing.T) {
+	// Space-separated string form (RFC 6749).
+	jwt := makeJWT(map[string]any{"scp": "api.responses.write other.scope"})
+	if got := openaiPassthroughRoute("Bearer "+jwt, "/v1/responses"); got != nil {
+		t.Errorf("OAuth bearer with api.responses.write scp (string) must use default routing, got %s", got)
+	}
+	// Array form (Codex's actual token format).
+	jwtArr := makeJWT(map[string]any{"scp": []string{"openid", "api.responses.write", "email"}})
+	if got := openaiPassthroughRoute("Bearer "+jwtArr, "/v1/responses"); got != nil {
+		t.Errorf("OAuth bearer with api.responses.write scp (array) must use default routing, got %s", got)
+	}
+	jwtScope := makeJWT(map[string]any{"scope": "api.responses.write"})
+	if got := openaiPassthroughRoute("Bearer "+jwtScope, "/v1/responses"); got != nil {
+		t.Errorf("OAuth bearer with api.responses.write scope must use default routing, got %s", got)
+	}
+}
+
+// Regression: Codex's access_token has scp as a JSON array. Earlier the
+// helper assumed scp was a space-separated string, so unmarshal failed and
+// we fell through to default routing (api.openai.com), which rejected the
+// bearer for missing api scopes.
+func TestOpenAIPassthroughRoute_CodexAccessTokenShape(t *testing.T) {
+	jwt := makeJWT(map[string]any{
+		"iss": "https://auth.openai.com",
+		"scp": []string{"openid", "profile", "email", "offline_access", "api.connectors.read", "api.connectors.invoke"},
+	})
+	got := openaiPassthroughRoute("Bearer "+jwt, "/v1/responses")
+	if got == nil {
+		t.Fatal("Codex-shaped access_token (scp as array without api.responses.write) must route to chatgpt.com")
+	}
+	if got.Host != "chatgpt.com" || got.Path != "/backend-api/codex/responses" {
+		t.Errorf("expected https://chatgpt.com/backend-api/codex/responses, got %s://%s%s", got.Scheme, got.Host, got.Path)
+	}
+}
+
+func TestOpenAIPassthroughRoute_ChatGPTOAuth(t *testing.T) {
+	jwt := makeJWT(map[string]any{
+		"scp":                 "openid email profile",
+		"chatgpt_account_id":  "acct_xyz",
+	})
+	got := openaiPassthroughRoute("Bearer "+jwt, "/v1/responses")
+	if got == nil {
+		t.Fatal("ChatGPT-OAuth bearer (no api.responses.write) must route to chatgpt.com")
+	}
+	if got.Host != "chatgpt.com" {
+		t.Errorf("expected chatgpt.com host, got %s", got.Host)
+	}
+	if got.Path != "/backend-api/codex/responses" {
+		t.Errorf("expected /backend-api/codex/responses, got %s", got.Path)
+	}
+	if got.Scheme != "https" {
+		t.Errorf("expected https scheme, got %s", got.Scheme)
+	}
+}
+
+func TestOpenAIPassthroughRoute_MalformedTokenFallsBack(t *testing.T) {
+	if got := openaiPassthroughRoute("Bearer not.a.jwt.too.many.dots", "/v1/responses"); got != nil {
+		t.Errorf("malformed token must fall back to default routing, got %s", got)
+	}
+	if got := openaiPassthroughRoute("Bearer notjwt", "/v1/responses"); got != nil {
+		t.Errorf("non-JWT non-API-key must fall back, got %s", got)
+	}
+	if got := openaiPassthroughRoute("", "/v1/responses"); got != nil {
+		t.Errorf("empty bearer must return nil, got %s", got)
+	}
+}
+
+func TestOpenAIPassthroughRoute_NonV1PathPreserved(t *testing.T) {
+	jwt := makeJWT(map[string]any{"scp": "openid"})
+	got := openaiPassthroughRoute("Bearer "+jwt, "/v1/chat/completions")
+	if got == nil || got.Path != "/backend-api/codex/chat/completions" {
+		t.Errorf("expected /backend-api/codex/chat/completions, got %v", got)
 	}
 }

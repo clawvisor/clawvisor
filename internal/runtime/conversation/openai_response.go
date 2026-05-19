@@ -24,7 +24,7 @@ func (rw OpenAIResponseRewriter) Rewrite(body []byte, contentType string, eval T
 	case isOpenAIResponsesBody(body):
 		return rw.rewriteResponses(body, contentType, eval)
 	default:
-		if isSSE(contentType) {
+		if isSSE(contentType) || looksLikeSSE(body) {
 			if bytes.Contains(body, []byte("response.output_item.added")) || bytes.Contains(body, []byte("response.function_call_arguments")) {
 				return rw.rewriteResponses(body, contentType, eval)
 			}
@@ -34,18 +34,39 @@ func (rw OpenAIResponseRewriter) Rewrite(body []byte, contentType string, eval T
 	}
 }
 
+// rewriteResponses picks the SSE vs JSON path. Content-Type is the primary
+// signal but isn't always present (some upstreams elide it for streamed
+// responses, and proxy hops may strip it); fall back to body sniffing.
 func (rw OpenAIResponseRewriter) rewriteResponses(body []byte, contentType string, eval ToolUseEvaluator) (RewriteResult, error) {
-	if isSSE(contentType) {
+	if isSSE(contentType) || looksLikeSSE(body) {
 		return rw.rewriteResponsesSSE(body, eval)
 	}
 	return rw.rewriteResponsesJSON(body, eval)
 }
 
 func (rw OpenAIResponseRewriter) rewriteChatCompletions(body []byte, contentType string, eval ToolUseEvaluator) (RewriteResult, error) {
-	if isSSE(contentType) {
+	if isSSE(contentType) || looksLikeSSE(body) {
 		return rw.rewriteChatCompletionsSSE(body, eval)
 	}
 	return rw.rewriteChatCompletionsJSON(body, eval)
+}
+
+// looksLikeSSE sniffs the body for an SSE framing pattern. Used as a
+// fallback when the Content-Type header is missing — happens with some
+// upstream transports and shows up here as empty contentType, which would
+// otherwise route an SSE body through the JSON path (json.Unmarshal fails,
+// no tool_uses get extracted, no rewrites fire).
+func looksLikeSSE(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	head := body
+	if len(head) > 4096 {
+		head = head[:4096]
+	}
+	return bytes.HasPrefix(bytes.TrimLeft(head, "\r\n "), []byte("event:")) ||
+		bytes.HasPrefix(bytes.TrimLeft(head, "\r\n "), []byte("data:")) ||
+		bytes.Contains(head, []byte("\nevent: response."))
 }
 
 type openAIResponsesJSON struct {
