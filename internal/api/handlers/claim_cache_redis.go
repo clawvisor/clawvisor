@@ -30,6 +30,20 @@ func (c *RedisClaimCodeCache) Store(code, userID string, ttl time.Duration) {
 	_ = c.rdb.Set(ctx, redisClaimCachePrefix+code, userID, ttl).Err()
 }
 
+// Peek reads the user ID without deleting the entry. Lets the connections
+// handler validate the request shape before burning the claim — failures
+// that the user can recover from (duplicate name, max pending) shouldn't
+// burn their single-use code.
+func (c *RedisClaimCodeCache) Peek(code string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	val, err := c.rdb.Get(ctx, redisClaimCachePrefix+code).Result()
+	if errors.Is(err, redis.Nil) || err != nil {
+		return "", false
+	}
+	return val, true
+}
+
 // Consume reads and deletes the entry in one round-trip via GETDEL, so two
 // concurrent consumes of the same code can't both succeed. Returns ("",
 // false) for unknown, expired (Redis already evicted), or already-consumed

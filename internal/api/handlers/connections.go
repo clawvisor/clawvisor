@@ -23,6 +23,7 @@ var (
 	errAlreadyResolved = errors.New("connection request already resolved")
 	errExpired         = errors.New("connection request expired")
 	errForbidden       = errors.New("connection request does not belong to this user")
+	errAgentNameTaken  = errors.New("agent name is already in use")
 )
 
 const (
@@ -118,14 +119,23 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 
 	// Resolve the target user. A `?claim=<code>` query param (minted by an
 	// authenticated dashboard session) takes precedence and avoids leaking
-	// user_id into the bootstrap curl URL. Single-use: the claim is
-	// consumed up front, so any failure below requires the dashboard to
-	// re-mint. Fallback paths: user_id in the body (legacy callers,
-	// skill-based setup flow) or admin@local in single-tenant mode.
-	var owner *store.User
-	var err error
+	// user_id into the bootstrap curl URL.
+	//
+	// Claim handling is two-phase: Peek first to identify the user so we
+	// can run the cheap validation that follows (name collisions, max
+	// pending), then Consume only when we're about to create the request.
+	// Burning the single-use code on a 4xx the caller could fix would
+	// leave the dashboard renderering a stale claim for up to four minutes
+	// before the next mint refetch — too long for a corrected retry.
+	// Fallback paths: user_id in the body (legacy callers, skill-based
+	// setup flow) or admin@local in single-tenant mode.
+	var (
+		owner          *store.User
+		err            error
+		pendingClaim   string // non-empty when we owe a Consume after validation
+	)
 	if claim := r.URL.Query().Get("claim"); claim != "" {
-		userID, ok := h.claimCache.Consume(claim)
+		userID, ok := h.claimCache.Peek(claim)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "INVALID_CLAIM", "claim code is invalid, expired, or already consumed")
 			return
@@ -135,6 +145,7 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
 			return
 		}
+		pendingClaim = claim
 	} else if body.UserID != "" {
 		owner, err = h.st.GetUserByID(r.Context(), body.UserID)
 		if err != nil {
@@ -196,6 +207,16 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// All validations passed — now atomically consume the claim. A
+	// concurrent caller racing on the same code loses here (Consume
+	// returns !ok), preserving single-use semantics.
+	if pendingClaim != "" {
+		if _, ok := h.claimCache.Consume(pendingClaim); !ok {
+			writeError(w, http.StatusUnauthorized, "INVALID_CLAIM", "claim code is invalid, expired, or already consumed")
+			return
+		}
+	}
+
 	req := &store.ConnectionRequest{
 		UserID:      owner.ID,
 		Name:        body.Name,
@@ -249,9 +270,20 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		status := http.StatusCreated
 		switch resolved.Status {
 		case "approved":
-			if raw, ok := h.tokenCache.Load(req.ID); ok {
-				resp["token"] = raw
+			raw, ok := h.tokenCache.Load(req.ID)
+			if !ok {
+				// The approve handler wrote the token to the cache; if
+				// it's gone by the time we read it, we'd otherwise return
+				// 201 with no token field — and the bootstrap curl would
+				// happily write the tokenless body to disk. Surface as a
+				// 500 so --remove-on-error cleans up.
+				h.logger.WarnContext(r.Context(), "lite-proxy: approved request missing token in cache",
+					"connection_id", req.ID)
+				writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
+					"connection was approved but the token cache no longer has it; ask the user to re-approve")
+				return
 			}
+			resp["token"] = raw
 		case "denied":
 			status = http.StatusForbidden
 		case "expired":
@@ -465,6 +497,9 @@ func (h *ConnectionsHandler) Approve(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "ALREADY_RESOLVED", "connection request is not pending")
 		case errExpired:
 			writeError(w, http.StatusGone, "EXPIRED", "connection request has expired")
+		case errAgentNameTaken:
+			writeError(w, http.StatusConflict, "AGENT_NAME_EXISTS",
+				"an agent with this name already exists; deny this request and bootstrap with a different name")
 		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not approve connection request")
 		}
@@ -493,6 +528,22 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 	if time.Now().After(cr.ExpiresAt) {
 		_ = h.expireByID(ctx, id, userID)
 		return "", errExpired
+	}
+
+	// Re-check name uniqueness at approve time. The request-creation guard
+	// runs much earlier; between then and now a second agent with the same
+	// name could have been created (concurrent approve of another pending
+	// request, an Add Agent form submission, etc.). Without this re-check
+	// the duplicate guarantee leaks. The store has no unique index on
+	// (user_id, name) so we enforce it in code.
+	existing, listErr := h.st.ListAgents(ctx, userID)
+	if listErr != nil {
+		return "", fmt.Errorf("list agents: %w", listErr)
+	}
+	for _, a := range existing {
+		if a.Name == cr.Name {
+			return "", errAgentNameTaken
+		}
 	}
 
 	rawToken, err := auth.GenerateAgentToken()

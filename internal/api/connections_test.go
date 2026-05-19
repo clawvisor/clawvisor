@@ -489,6 +489,89 @@ func TestConnectionRequest_ClaimInvalid(t *testing.T) {
 	}
 }
 
+// Regression: a recoverable validation failure (e.g., duplicate name 409)
+// must NOT burn the single-use claim code. Otherwise the dashboard would
+// render a stale, unusable claim for ~4 minutes before the next refetch,
+// and the user's corrected retry would fail with INVALID_CLAIM.
+func TestConnectionRequest_ClaimSurvivesNameCollision(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+
+	// First, create an existing agent named "Foo" by going through the
+	// approve flow so the name shows up in the agents list.
+	resp := env.do("POST", "/api/agents/connect", "", map[string]any{"name": "Foo"})
+	body := mustStatus(t, resp, http.StatusCreated)
+	connID := str(t, body, "connection_id")
+	resp = session.do("POST", "/api/agents/connect/"+connID+"/approve", nil)
+	mustStatus(t, resp, http.StatusOK)
+
+	// Mint a fresh claim.
+	resp = session.do("POST", "/api/agents/connect/claim", nil)
+	code := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+
+	// Attempt to bootstrap "Foo" again — collides with the existing agent.
+	resp = env.do("POST", "/api/agents/connect?claim="+code+"&name=Foo", "", nil)
+	body = mustStatus(t, resp, http.StatusConflict)
+	if got := str(t, body, "code"); got != "AGENT_NAME_EXISTS" {
+		t.Errorf("expected code=AGENT_NAME_EXISTS, got %q", got)
+	}
+
+	// Retry with a different name using the SAME claim — must succeed,
+	// proving the claim wasn't consumed by the 409.
+	resp = env.do("POST", "/api/agents/connect?claim="+code+"&name=Bar", "", nil)
+	mustStatus(t, resp, http.StatusCreated)
+
+	// Now a third use of the same claim must fail — the successful Bar
+	// request consumed it.
+	resp = env.do("POST", "/api/agents/connect?claim="+code+"&name=Baz", "", nil)
+	body = mustStatus(t, resp, http.StatusUnauthorized)
+	if got := str(t, body, "code"); got != "INVALID_CLAIM" {
+		t.Errorf("expected code=INVALID_CLAIM on third use, got %q", got)
+	}
+}
+
+// Regression: the duplicate-name guard at request creation isn't enough
+// because an agent with the same name can be created between request
+// creation and approval (concurrent approve of a different pending,
+// add-agent form, etc.). ApproveByID must re-check.
+func TestConnectionRequest_ApproveRejectsRacingDuplicateName(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+
+	// Create a connection request named "Race" — its name guard sees no
+	// existing agent.
+	resp := env.do("POST", "/api/agents/connect", "", map[string]any{"name": "Race"})
+	body := mustStatus(t, resp, http.StatusCreated)
+	pendingID := str(t, body, "connection_id")
+
+	// Sneak an agent named "Race" into the store directly, simulating a
+	// concurrent approve or add-agent form submission that landed first.
+	if _, err := env.Store.CreateAgent(context.Background(), session.UserID, "Race", "decoy-token-hash"); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+
+	// Approving the pending request must now reject — the name is taken.
+	resp = session.do("POST", "/api/agents/connect/"+pendingID+"/approve", nil)
+	body = mustStatus(t, resp, http.StatusConflict)
+	if got := str(t, body, "code"); got != "AGENT_NAME_EXISTS" {
+		t.Errorf("expected code=AGENT_NAME_EXISTS on race, got %q", got)
+	}
+
+	// Confirm exactly one agent named "Race" exists (the decoy, not a
+	// second one created by the approve handler).
+	agents, err := env.Store.ListAgents(context.Background(), session.UserID)
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	var raceCount int
+	for _, a := range agents {
+		if a.Name == "Race" {
+			raceCount++
+		}
+	}
+	if raceCount != 1 {
+		t.Errorf("expected exactly one 'Race' agent, got %d", raceCount)
+	}
+}
+
 func TestConnectionRequest_WaitDeniedReturns403(t *testing.T) {
 	env, session := setupConnectionEnv(t)
 	resp := session.do("POST", "/api/agents/connect/claim", nil)
