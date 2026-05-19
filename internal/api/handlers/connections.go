@@ -267,43 +267,64 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 			"status":        resolved.Status,
 			"expires_at":    resolved.ExpiresAt,
 		}
-		status := http.StatusCreated
-		switch resolved.Status {
-		case "approved":
-			raw, ok := h.tokenCache.Load(req.ID)
-			if !ok {
-				// The approve handler wrote the token to the cache; if
-				// it's gone by the time we read it, we'd otherwise return
-				// 201 with no token field — and the bootstrap curl would
-				// happily write the tokenless body to disk. Surface as a
-				// 500 so --remove-on-error cleans up.
-				h.logger.WarnContext(r.Context(), "lite-proxy: approved request missing token in cache",
-					"connection_id", req.ID)
-				writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
-					"connection was approved but the token cache no longer has it; ask the user to re-approve")
-				return
+		// finalStatus stamps the response and returns the right HTTP code.
+		// Hoisted into a closure because the timeout branch loops back
+		// through it after re-reading state on a lost race.
+		writeFinal := func(fresh string, expiresAt any) {
+			resp["status"] = fresh
+			if expiresAt != nil {
+				resp["expires_at"] = expiresAt
 			}
-			resp["token"] = raw
-		case "denied":
-			status = http.StatusForbidden
-		case "expired":
-			status = http.StatusGone
-		default:
-			// "pending" reaching the wait deadline is the long-poll
-			// equivalent of a timeout — caller should retry the curl
-			// or check the dashboard directly. Expire the request
-			// server-side BEFORE returning the 408, so a late approve
-			// can't create an agent whose token nobody is around to
-			// receive. The agent would otherwise hold the name and
-			// block a clean retry with AGENT_NAME_EXISTS.
-			if expireErr := h.expireByID(r.Context(), req.ID, owner.ID); expireErr == nil {
-				resp["status"] = "expired"
-				status = http.StatusGone
-			} else {
-				status = http.StatusRequestTimeout
+			switch fresh {
+			case "approved":
+				raw, ok := h.tokenCache.Load(req.ID)
+				if !ok {
+					// The approve handler wrote the token to the cache;
+					// if it's gone by the time we read it, returning 201
+					// without a token field would write garbage to the
+					// caller's disk. Surface as 500 so --remove-on-error
+					// cleans up.
+					h.logger.WarnContext(r.Context(), "lite-proxy: approved request missing token in cache",
+						"connection_id", req.ID)
+					writeError(w, http.StatusInternalServerError, "TOKEN_UNAVAILABLE",
+						"connection was approved but the token cache no longer has it; ask the user to re-approve")
+					return
+				}
+				resp["token"] = raw
+				writeJSON(w, http.StatusCreated, resp)
+			case "denied":
+				writeJSON(w, http.StatusForbidden, resp)
+			case "expired":
+				writeJSON(w, http.StatusGone, resp)
+			default:
+				writeJSON(w, http.StatusRequestTimeout, resp)
 			}
 		}
-		writeJSON(w, status, resp)
+		switch resolved.Status {
+		case "approved", "denied", "expired":
+			writeFinal(resolved.Status, resolved.ExpiresAt)
+		default:
+			// "pending" reaching the wait deadline is the long-poll
+			// equivalent of a timeout. Conditionally expire so a late
+			// Approve that raced into the window isn't clobbered — the
+			// store method gates on WHERE status='pending'. If we lose
+			// the race (modified=false), re-read and respond with
+			// whatever the real terminal state is.
+			modified, expireErr := h.expireByID(r.Context(), req.ID, owner.ID)
+			switch {
+			case expireErr != nil:
+				writeFinal("pending", resolved.ExpiresAt)
+			case modified:
+				writeFinal("expired", resolved.ExpiresAt)
+			default:
+				fresh, fetchErr := h.st.GetConnectionRequest(r.Context(), req.ID)
+				if fetchErr != nil {
+					writeFinal("pending", resolved.ExpiresAt)
+				} else {
+					writeFinal(fresh.Status, fresh.ExpiresAt)
+				}
+			}
+		}
 		return
 	}
 
@@ -336,7 +357,16 @@ func (h *ConnectionsHandler) MintClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := base64.RawURLEncoding.EncodeToString(b)[:10]
-	h.claimCache.Store(code, user.ID, claimCodeTTL)
+	if err := h.claimCache.Store(code, user.ID, claimCodeTTL); err != nil {
+		// If the backend (Redis, typically) rejected the write, returning
+		// a 201 with the code would hand the user a credential that
+		// doesn't exist anywhere — every bootstrap curl using it would
+		// immediately INVALID_CLAIM. Surface the failure instead.
+		h.logger.WarnContext(r.Context(), "lite-proxy: claim cache store failed",
+			"err", err.Error(), "user_id", user.ID)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not persist claim code")
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"code":       code,
 		"expires_at": time.Now().Add(claimCodeTTL),
@@ -360,10 +390,17 @@ func (h *ConnectionsHandler) PollStatus(w http.ResponseWriter, r *http.Request) 
 			return true
 		}
 
-		// Check expiry.
+		// Check expiry. On a lost race (another writer flipped the row to
+		// approved/denied in the window) re-read so we hand the caller
+		// the actual terminal state rather than asserting "expired".
 		if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
-			if err := h.expireByID(r.Context(), id, cr.UserID); err == nil {
-				cr.Status = "expired"
+			modified, err := h.expireByID(r.Context(), id, cr.UserID)
+			if err == nil {
+				if modified {
+					cr.Status = "expired"
+				} else if fresh, fetchErr := h.st.GetConnectionRequest(r.Context(), id); fetchErr == nil {
+					cr = fresh
+				}
 			}
 		}
 
@@ -477,8 +514,12 @@ func (h *ConnectionsHandler) waitForConnectionResolution(ctx context.Context, co
 				return &store.ConnectionRequest{ID: connID, Status: "pending"}, false
 			}
 			if cr.Status == "pending" && time.Now().After(cr.ExpiresAt) {
-				if err := h.expireByID(c, connID, cr.UserID); err == nil {
-					cr.Status = "expired"
+				if modified, expireErr := h.expireByID(c, connID, cr.UserID); expireErr == nil {
+					if modified {
+						cr.Status = "expired"
+					} else if fresh, fetchErr := h.st.GetConnectionRequest(c, connID); fetchErr == nil {
+						cr = fresh
+					}
 				}
 			}
 			return cr, cr.Status != "pending"
@@ -535,7 +576,7 @@ func (h *ConnectionsHandler) ApproveByID(ctx context.Context, id, userID string)
 		return "", errAlreadyResolved
 	}
 	if time.Now().After(cr.ExpiresAt) {
-		_ = h.expireByID(ctx, id, userID)
+		_, _ = h.expireByID(ctx, id, userID)
 		return "", errExpired
 	}
 
@@ -638,16 +679,27 @@ func (h *ConnectionsHandler) DenyByID(ctx context.Context, id, userID string) er
 	return nil
 }
 
-func (h *ConnectionsHandler) expireByID(ctx context.Context, id, userID string) error {
-	if err := h.st.UpdateConnectionRequestStatus(ctx, id, "expired", ""); err != nil {
-		return err
+// expireByID transitions a pending connection request to "expired" only if
+// it's still pending. Returns (modified, err): modified=true means the
+// row was flipped to expired; modified=false means another writer (Approve
+// or Deny) beat us to the row and the caller must re-read state instead of
+// assuming the request is gone. Without this guard a timed-out long-poll
+// could clobber an approval that landed in the race window, orphaning the
+// agent the approval created.
+func (h *ConnectionsHandler) expireByID(ctx context.Context, id, userID string) (bool, error) {
+	modified, err := h.st.UpdateConnectionRequestStatusIfPending(ctx, id, "expired")
+	if err != nil {
+		return false, err
+	}
+	if !modified {
+		return false, nil
 	}
 	h.decrementNotifierPolling(userID)
 	h.updateNotificationMsg(ctx, id, userID, "⏰ <b>Expired</b> — connection request timed out.")
 	if h.eventHub != nil {
 		h.eventHub.Publish(userID, events.Event{Type: "queue"})
 	}
-	return nil
+	return true, nil
 }
 
 func (h *ConnectionsHandler) decrementNotifierPolling(userID string) {

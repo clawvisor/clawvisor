@@ -325,6 +325,13 @@ type Store interface {
 	GetConnectionRequest(ctx context.Context, id string) (*ConnectionRequest, error)
 	ListPendingConnectionRequests(ctx context.Context, userID string) ([]*ConnectionRequest, error)
 	UpdateConnectionRequestStatus(ctx context.Context, id, status, agentID string) error
+	// UpdateConnectionRequestStatusIfPending transitions the row only if
+	// its current status is "pending". Returns true when the row was
+	// modified, false when another writer beat us (status was already
+	// approved/denied/expired). Lets timeout-style callers expire a
+	// pending request without clobbering an approval that landed in the
+	// race window.
+	UpdateConnectionRequestStatusIfPending(ctx context.Context, id, status string) (modified bool, err error)
 	DeleteExpiredConnectionRequests(ctx context.Context) error
 	CountPendingConnectionRequestsForUser(ctx context.Context, userID string) (int, error)
 
