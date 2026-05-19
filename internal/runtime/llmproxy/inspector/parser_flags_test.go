@@ -321,6 +321,8 @@ func TestParser_LocalOnlyToolsPassThrough(t *testing.T) {
 		{"glob_with_placeholder_pattern", "Glob", `{"pattern":"autovault_github_xxx*.json"}`},
 		// Codex's read_file is treated the same as Claude Code's Read.
 		{"codex_read_file", "read_file", `{"path":"/tmp/autovault_github_xxx.json"}`},
+		// OpenClaw's read tool is lowercase but should be treated as a local file read.
+		{"openclaw_read", "read", `{"path":"/tmp/autovault_github_xxx.json"}`},
 		{"ask_user_question", "AskUserQuestion", `{"question":"Use autovault_github_xxx for this task?","options":["yes","no"]}`},
 	}
 	for _, tc := range cases {

@@ -95,6 +95,7 @@ var localOnlyTools = map[string]struct{}{
 	"skill_view":         {},
 	"skills_list":        {},
 	// Pure local reads — OpenClaw.
+	"read":             {},
 	"memory_get":       {},
 	"memory_search":    {},
 	"session_status":   {},
