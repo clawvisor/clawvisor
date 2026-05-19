@@ -130,8 +130,12 @@ func TestConnectionsHandlerExpireUpdatesNotificationState(t *testing.T) {
 	notifier := &testNotifier{}
 	h := NewConnectionsHandler(st, notifier, nil, slog.Default(), "http://example.com", false)
 
-	if err := h.expireByID(ctx, req.ID, user.ID); err != nil {
+	modified, err := h.expireByID(ctx, req.ID, user.ID)
+	if err != nil {
 		t.Fatalf("expireByID: %v", err)
+	}
+	if !modified {
+		t.Fatalf("expected expireByID to modify the pending row")
 	}
 
 	got, err := st.GetConnectionRequest(ctx, req.ID)

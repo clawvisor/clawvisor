@@ -848,18 +848,26 @@ function nextAvailableName(base: string, agents: Agent[] | undefined): string {
 }
 
 // useSequencedAgentName initializes agentName to a collision-free variant
-// of base. It only runs once per mount — subsequent user typing controls
-// the value, even if the user types a name that already exists.
+// of base. The auto-rename runs at most once and only if the user hasn't
+// already typed something; otherwise we'd clobber their input when
+// `agents` resolves async (mount → effect early-returns because agents is
+// undefined → user types "my-name" → agents resolves → effect fires → name
+// overwritten back to "codex-0").
 function useSequencedAgentName(base: string, agents: Agent[] | undefined): [string, (n: string) => void] {
   const [name, setName] = useState(base)
   const sequenced = useRef(false)
+  const touched = useRef(false)
   useEffect(() => {
-    if (sequenced.current || !agents) return
+    if (sequenced.current || touched.current || !agents) return
     sequenced.current = true
     const next = nextAvailableName(base, agents)
     if (next !== base) setName(next)
   }, [agents, base])
-  return [name, setName]
+  const setAndMarkTouched = (next: string) => {
+    touched.current = true
+    setName(next)
+  }
+  return [name, setAndMarkTouched]
 }
 
 function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, agentName: string): string {
