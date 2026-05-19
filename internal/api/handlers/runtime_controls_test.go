@@ -137,7 +137,9 @@ func TestRuntimeHandlerEnablePassthroughRejectsExcessiveTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	cfg := config.Default()
+	cfg.ProxyLite.Enabled = true
+	h := NewRuntimeHandler(st, nil, nil, cfg, nil)
 	body, _ := json.Marshal(map[string]any{
 		"ttl_seconds": maxRuntimePassthroughTTLSeconds + 1,
 		"reason":      "too long",
@@ -221,7 +223,9 @@ func TestRuntimeStatusShowsAgentScopedPassthrough(t *testing.T) {
 		t.Fatalf("CreateRuntimePolicyRule: %v", err)
 	}
 
-	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	cfg := config.Default()
+	cfg.ProxyLite.Enabled = true
+	h := NewRuntimeHandler(st, nil, nil, cfg, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status?agent_id="+agent.ID, nil)
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
 	res := httptest.NewRecorder()

@@ -71,7 +71,7 @@ func (c *verdictCache) Cleanup() {
 	}
 }
 
-// buildCacheKey builds a cache key from (taskID, service, action, sha256(params), sha256(reason), sha256(chainFacts)?).
+// buildCacheKey builds a cache key from (taskID, service, action, sha256(params), sha256(reason), sha256(chainFacts)?, prompt mode).
 func buildCacheKey(req VerifyRequest) cacheKey {
 	paramsBytes, _ := json.Marshal(req.Params)
 	paramsHash := sha256.Sum256(paramsBytes)
@@ -84,6 +84,9 @@ func buildCacheKey(req VerifyRequest) cacheKey {
 	mode := "s"
 	if req.Lenient {
 		mode = "l"
+	}
+	if req.ProxyLite {
+		mode += "p"
 	}
 
 	if len(req.ChainFacts) > 0 {

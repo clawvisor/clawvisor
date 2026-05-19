@@ -607,6 +607,7 @@ export interface FeatureSet {
   local_daemon: boolean
   mobile_pairing: boolean
   runtime_proxy: boolean
+  proxy_lite: boolean
   secret_vault: boolean
   runtime_policy_ui: boolean
   runtime_activity: boolean

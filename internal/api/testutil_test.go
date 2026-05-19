@@ -51,6 +51,10 @@ func newTestEnvWithVaultWrapper(t *testing.T, wrapVault func(vault.Vault) vault.
 }
 
 func newTestEnvWithLLMAndVaultWrapper(t *testing.T, llmCfg config.LLMConfig, wrapVault func(vault.Vault) vault.Vault, extra ...adapters.Adapter) *testEnv {
+	return newTestEnvWithConfig(t, llmCfg, wrapVault, nil, extra...)
+}
+
+func newTestEnvWithConfig(t *testing.T, llmCfg config.LLMConfig, wrapVault func(vault.Vault) vault.Vault, configure func(*config.Config), extra ...adapters.Adapter) *testEnv {
 	t.Helper()
 
 	ctx := context.Background()
@@ -96,6 +100,9 @@ func newTestEnvWithLLMAndVaultWrapper(t *testing.T, llmCfg config.LLMConfig, wra
 		// existing tests exercise the feature; we don't actually start a proxy
 		// listener in these tests, only the gateway handler reads the flag.
 		RuntimeProxy: config.RuntimeProxyConfig{Enabled: true},
+	}
+	if configure != nil {
+		configure(cfg)
 	}
 
 	// Tests use password auth so Register/Login routes are available.

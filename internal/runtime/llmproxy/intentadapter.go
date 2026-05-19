@@ -36,6 +36,7 @@ func (a *intentVerifierAdapter) Verify(ctx context.Context, req IntentVerifyRequ
 		Reason:      req.Reason,
 		TaskID:      req.TaskID,
 		Lenient:     req.Lenient,
+		ProxyLite:   true,
 	})
 	if err != nil {
 		return nil, err

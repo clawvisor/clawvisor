@@ -175,6 +175,7 @@ func TestRuntimeProxyRejectsPlaceholderOutsideBoundServiceHost(t *testing.T) {
 	cfg := config.Default()
 	cfg.RuntimeProxy.Enabled = true
 	cfg.RuntimeProxy.DataDir = t.TempDir()
+	cfg.ProxyLite.Enabled = true
 
 	var seenAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

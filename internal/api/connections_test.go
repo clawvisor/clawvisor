@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -16,7 +17,9 @@ import (
 // The session user IS admin@local so that ownership checks pass.
 func setupConnectionEnv(t *testing.T) (*testEnv, *testSession) {
 	t.Helper()
-	env := newTestEnv(t)
+	env := newTestEnvWithConfig(t, config.LLMConfig{}, nil, func(cfg *config.Config) {
+		cfg.ProxyLite.Enabled = true
+	})
 
 	// Register admin@local through the API so the session user is the daemon owner.
 	// Connection requests are assigned to admin@local, so the approving user
@@ -36,6 +39,27 @@ func setupConnectionEnv(t *testing.T) (*testEnv, *testSession) {
 		RefreshToken: str(t, body, "refresh_token"),
 	}
 	return env, session
+}
+
+func TestConnectionRequest_ClaimRouteRequiresProxyLite(t *testing.T) {
+	env := newTestEnv(t)
+	const password = "TestPass123!"
+	resp := env.do("POST", "/api/auth/register", "", map[string]any{
+		"email": "claim-disabled@local", "password": password,
+	})
+	body := mustStatus(t, resp, http.StatusCreated)
+	session := &testSession{
+		env:          env,
+		Email:        "claim-disabled@local",
+		UserID:       str(t, nested(t, body, "user"), "id"),
+		AccessToken:  str(t, body, "access_token"),
+		RefreshToken: str(t, body, "refresh_token"),
+	}
+	resp = session.do("POST", "/api/agents/connect/claim", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected claim route to be absent when proxy_lite is disabled, got %d", resp.StatusCode)
+	}
 }
 
 func TestConnectionRequest_Create(t *testing.T) {

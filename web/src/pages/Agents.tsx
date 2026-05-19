@@ -672,14 +672,23 @@ function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; 
 
 type AgentTab = 'openclaw' | 'hermes' | 'claude-code' | 'codex' | 'claude-desktop' | 'other'
 
-const AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'other']
+const PROXY_LITE_AGENT_TABS: AgentTab[] = ['openclaw', 'hermes', 'claude-code', 'codex', 'claude-desktop', 'other']
+const LEGACY_AGENT_TABS: AgentTab[] = ['openclaw', 'claude-code', 'claude-desktop', 'other']
 
 function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const initialTab = (AGENT_TABS.includes(searchParams.get('agent') as AgentTab)
+  const { user, features } = useAuth()
+  const proxyLiteUI = !!features?.proxy_lite
+  const agentTabs = proxyLiteUI ? PROXY_LITE_AGENT_TABS : LEGACY_AGENT_TABS
+  const initialTab = (agentTabs.includes(searchParams.get('agent') as AgentTab)
     ? (searchParams.get('agent') as AgentTab)
-    : 'claude-code')
+    : proxyLiteUI ? 'claude-code' : 'openclaw')
   const [tab, setTabState] = useState<AgentTab>(initialTab)
+  useEffect(() => {
+    if (!agentTabs.includes(tab)) {
+      setTabState(agentTabs[0])
+    }
+  }, [agentTabs, tab])
   const setTab = (next: AgentTab) => {
     setTabState(next)
     const params = new URLSearchParams(searchParams)
@@ -689,9 +698,8 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   // `?mode=skill` opens each tab with its skill-based escape hatch expanded
   // by default — useful for support / docs deep links. Otherwise tabs lead
   // with the proxy-lite (passthrough or vaulted) setup.
-  const showSkillDefault = searchParams.get('mode') === 'skill'
+  const showSkillDefault = !proxyLiteUI || searchParams.get('mode') === 'skill'
   const [copied, setCopied] = useState(false)
-  const { user } = useAuth()
 
   const { data: pairInfo } = useQuery({
     queryKey: ['pairInfo'],
@@ -706,6 +714,7 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   const { data: claim } = useQuery({
     queryKey: ['connection-claim'],
     queryFn: () => api.connections.mintClaim(),
+    enabled: proxyLiteUI,
     refetchInterval: 4 * 60 * 1000,
     staleTime: 0,
   })
@@ -735,12 +744,21 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
   }
 
   const tabs: { id: AgentTab; label: string }[] = [
-    { id: 'openclaw', label: 'OpenClaw' },
-    { id: 'hermes', label: 'Hermes' },
-    { id: 'claude-code', label: 'Claude Code' },
-    { id: 'codex', label: 'Codex' },
-    { id: 'claude-desktop', label: 'Claude Desktop' },
-    { id: 'other', label: 'Other Agents' },
+    ...(proxyLiteUI
+      ? [
+          { id: 'openclaw' as const, label: 'OpenClaw' },
+          { id: 'hermes' as const, label: 'Hermes' },
+          { id: 'claude-code' as const, label: 'Claude Code' },
+          { id: 'codex' as const, label: 'Codex' },
+          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
+          { id: 'other' as const, label: 'Other Agents' },
+        ]
+      : [
+          { id: 'openclaw' as const, label: 'OpenClaw / Hermes' },
+          { id: 'claude-code' as const, label: 'Claude Code' },
+          { id: 'claude-desktop' as const, label: 'Claude Desktop' },
+          { id: 'other' as const, label: 'Other Agents' },
+        ]),
   ]
 
   return (
@@ -770,12 +788,23 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
       </div>
 
       <div className="p-5">
-        {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-        {tab === 'hermes' && <HermesGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-        {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} newToken={newToken} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-        {tab === 'codex' && <CodexGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-        {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} isLocal={isLocal} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-        {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+        {proxyLiteUI ? (
+          <>
+            {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'hermes' && <HermesGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
+            {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} newToken={newToken} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'codex' && <CodexGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
+            {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} isLocal={isLocal} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+          </>
+        ) : (
+          <>
+            {tab === 'openclaw' && <LegacyOpenClawGuide setupURL={setupURL} copied={copied} onCopy={copyText} />}
+            {tab === 'claude-code' && <LegacyClaudeCodeGuide clawvisorURL={clawvisorURL} userIdParam={userIdParam} onCopy={copyText} />}
+            {tab === 'claude-desktop' && <LegacyClaudeDesktopGuide isLocal={isLocal} onCopy={copyText} />}
+            {tab === 'other' && <LegacyOtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} copied={copied} onCopy={copyText} />}
+          </>
+        )}
       </div>
     </section>
   )
@@ -815,6 +844,297 @@ function CodeBlock({ children, onCopy }: { children: string; onCopy?: () => void
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+function LegacyClaudeCodeGuide({ clawvisorURL, userIdParam, onCopy }: {
+  clawvisorURL: string
+  userIdParam: string
+  onCopy: (text: string) => void
+}) {
+  const installCmd = `curl -sf "${clawvisorURL}/skill/clawvisor-setup.md${userIdParam}" \\\n  --create-dirs -o ~/.claude/commands/clawvisor-setup.md`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Install a slash command, then run it in Claude Code. It handles agent registration,
+        skill installation, environment setup, and a smoke test — all interactively.
+      </p>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={1} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Install the setup command</p>
+          <p className="text-xs text-text-tertiary">
+            Run this in your terminal to install the{' '}
+            <code className="font-mono text-text-secondary">/clawvisor-setup</code> slash command:
+          </p>
+          <CodeBlock onCopy={() => onCopy(installCmd)}>{installCmd}</CodeBlock>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={2} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Run /clawvisor-setup in Claude Code</p>
+          <p className="text-xs text-text-tertiary">
+            Open Claude Code and type{' '}
+            <code className="font-mono text-text-secondary">/clawvisor-setup</code>.
+            Claude will walk you through the setup — registering as an agent, configuring
+            environment variables, and verifying the connection.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+          <p className="text-xs text-text-tertiary">
+            During setup, Claude Code sends a connection request. Approve it in the{' '}
+            <strong>Pending Connections</strong> section above. Once approved, Claude Code
+            finishes setup automatically and runs a smoke test.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LegacyClaudeDesktopGuide({ isLocal, onCopy }: { isLocal: boolean; onCopy: (text: string) => void }) {
+  const marketplaceSlug = 'clawvisor/cowork-plugins'
+  const pluginLabel = isLocal ? 'Clawvisor Local' : 'Clawvisor'
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        {isLocal
+          ? 'Connect Claude Cowork to your local Clawvisor instance via the Cowork plugin.'
+          : 'Connect Claude Cowork to your Clawvisor cloud account via the Cowork plugin.'}
+      </p>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={1} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Open the plugin manager</p>
+          <p className="text-xs text-text-tertiary">
+            In Claude Desktop, navigate to <strong>Claude Cowork</strong>, click{' '}
+            <strong>Customize</strong> in the sidebar, then press the <strong>+</strong> next to{' '}
+            <strong>Personal plugins</strong>.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={2} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Add the marketplace</p>
+          <p className="text-xs text-text-tertiary">
+            Under <strong>Create plugin</strong>, select <strong>Add marketplace</strong> and paste:
+          </p>
+          <CodeBlock onCopy={() => onCopy(marketplaceSlug)}>{marketplaceSlug}</CodeBlock>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={3} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Install the {pluginLabel} plugin</p>
+          <p className="text-xs text-text-tertiary">
+            Open the <strong>Personal</strong> tab, switch to the <strong>cowork-plugins</strong> tab,
+            then select <strong>{pluginLabel}</strong> to install.
+          </p>
+        </div>
+      </div>
+
+      {!isLocal && (
+        <div className="flex items-start gap-3">
+          <StepNumber n={4} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Connect the Clawvisor connector</p>
+            <p className="text-xs text-text-tertiary">
+              Under the <strong>Clawvisor</strong> plugin, select <strong>Connectors</strong>, click the{' '}
+              <strong>clawvisor</strong> connector, and connect. Authorize Claude Cowork in your browser
+              when prompted.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-start gap-3">
+        <StepNumber n={isLocal ? 4 : 5} />
+        <div className="space-y-1.5 min-w-0 flex-1">
+          <p className="text-sm font-medium text-text-primary">Start using it</p>
+          <p className="text-xs text-text-tertiary">
+            Create a new Claude Cowork session and ask your agent to use a connected account via
+            Clawvisor — e.g. "check my Gmail" or "list my GitHub issues." Claude will create a task,
+            ask you to approve, and execute through Clawvisor.{' '}
+            {isLocal &&
+              <>Open the dashboard with <code className="font-mono text-text-secondary">clawvisor tui</code> or visit <code className="font-mono text-text-secondary">http://localhost:25297</code> to manage services, approvals, and restrictions.</>
+            }
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LegacyPromptBlock({ prompt, copied, onCopy }: { prompt: string; copied: boolean; onCopy: (text: string) => void }) {
+  return (
+    <div className="relative group bg-surface-0 border border-brand/20 rounded overflow-hidden">
+      <pre className="px-3 py-2.5 sm:pr-16 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-words">
+        {prompt}
+      </pre>
+      <button
+        onClick={() => onCopy(prompt)}
+        className="hidden sm:block absolute top-2 right-2 text-xs px-2 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <div className="sm:hidden border-t border-brand/20 px-3 py-1.5 flex justify-end">
+        <button
+          onClick={() => onCopy(prompt)}
+          className="text-xs px-2.5 py-1 rounded border border-border-subtle text-text-tertiary hover:text-text-primary hover:bg-surface-1"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LegacyOpenClawGuide({ setupURL, copied, onCopy }: {
+  setupURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Connect your agent to Clawvisor. Paste the setup prompt below into your agent — it will self-register and wait for your approval.
+      </p>
+
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+            <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
+            <p className="text-xs text-text-tertiary">
+              Your agent will follow the setup instructions — registering itself
+              and installing the Clawvisor skill.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+            <p className="text-xs text-text-tertiary">
+              A connection request will appear in the <strong>Pending Connections</strong> section above.
+              Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+              and is ready to go.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-surface-0 border border-border-subtle rounded-md px-4 py-3">
+        <p className="text-sm text-text-secondary">
+          <strong>Using Telegram?</strong> If you talk to your agent via Telegram, you can set up a
+          group chat with Clawvisor to get inline approval notifications and auto-approvals.{' '}
+          <a href="/dashboard/settings" className="text-brand hover:underline">Set it up in Settings &rarr; Telegram</a>.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function LegacyOtherAgentGuide({ setupURL, clawvisorURL, copied, onCopy }: {
+  setupURL: string
+  clawvisorURL: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-text-secondary">
+        Any agent that can make HTTP requests can connect to Clawvisor. The fastest way is to paste the setup
+        prompt below directly into your agent's chat — it will self-register and wait for your approval.
+      </p>
+
+      <div className="space-y-4">
+        <div className="flex items-start gap-3">
+          <StepNumber n={1} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Paste this into your agent</p>
+            <LegacyPromptBlock prompt={prompt} copied={copied} onCopy={onCopy} />
+            <p className="text-xs text-text-tertiary">
+              The agent will follow the setup instructions at that URL — it registers itself,
+              sets up E2E encryption, and installs the Clawvisor skill.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <StepNumber n={2} />
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="text-sm font-medium text-text-primary">Approve the connection</p>
+            <p className="text-xs text-text-tertiary">
+              A connection request will appear in the <strong>Pending Connections</strong> section above.
+              Click <strong>Approve</strong> to grant the agent a token. It receives the token automatically
+              and is ready to go.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <details className="group">
+        <summary className="text-sm font-medium text-text-secondary cursor-pointer hover:text-text-primary select-none">
+          Manual setup (token + environment variables)
+        </summary>
+        <div className="mt-4 space-y-4 pl-0">
+          <div className="flex items-start gap-3">
+            <StepNumber n={1} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Create an agent token</p>
+              <p className="text-xs text-text-tertiary">
+                Use the <strong>Create Agent</strong> form above. Copy the token — it's shown only once.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={2} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Configure environment variables</p>
+              <p className="text-xs text-text-tertiary">
+                Set these in your agent's environment (<code className="font-mono text-text-secondary">.env</code>, shell profile, container config, etc.):
+              </p>
+              <CodeBlock>{`CLAWVISOR_URL=${clawvisorURL}\nCLAWVISOR_AGENT_TOKEN=<your token>`}</CodeBlock>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <StepNumber n={3} />
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <p className="text-sm font-medium text-text-primary">Verify</p>
+              <CodeBlock>{`curl -sf -H "Authorization: Bearer $CLAWVISOR_AGENT_TOKEN" \\\n  "$CLAWVISOR_URL/api/skill/catalog" | head -20`}</CodeBlock>
+              <p className="text-xs text-text-tertiary">
+                Should return a JSON catalog of available services. See{' '}
+                <code className="font-mono text-text-secondary">{clawvisorURL}/skill/SKILL.md</code>{' '}
+                for the full protocol reference.
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
   )
 }
