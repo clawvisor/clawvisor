@@ -867,10 +867,12 @@ function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, 
   // The claim code (minted by an authenticated dashboard session) attributes
   // this curl to the user without leaking user_id into the URL. mkdir + chmod
   // bracket the curl so the file lands with tight perms; -sf makes curl exit
-  // non-zero without overwriting the file on a 4xx (duplicate-name 409,
-  // expired-claim 401, etc.) so retries don't clobber a previously-good file.
+  // non-zero on a 4xx (duplicate-name 409, expired-claim 401, etc.) and
+  // --remove-on-error guarantees the partial/error body never lands on disk.
+  // Without --remove-on-error, a failed retry would silently overwrite the
+  // previous good JSON with the error response.
   const claimParam = claim ? `&claim=${claim}` : ''
-  return `mkdir -p ~/.clawvisor/agents && curl -sf -X POST \\
+  return `mkdir -p ~/.clawvisor/agents && curl -sf --remove-on-error -X POST \\
   "${clawvisorURL}/api/agents/connect?wait=true&name=${agentName}${claimParam}" \\
   -o ~/.clawvisor/agents/${agentName}.json \\
   && chmod 600 ~/.clawvisor/agents/${agentName}.json`
