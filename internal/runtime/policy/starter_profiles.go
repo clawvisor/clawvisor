@@ -88,12 +88,16 @@ func StarterProfiles() []StarterProfile {
 		{
 			ID:          "openclaw",
 			DisplayName: "OpenClaw",
-			Description: "Recommended allow rules for OpenClaw's read-only inspection tools.",
+			Description: "Recommended allow rules for OpenClaw's read-only inspection and local session tools.",
 			CommandKeys: []string{"openclaw"},
 			Rules: []StarterProfileRuleDraft{
-				{Kind: "tool", Action: "allow", ToolName: "Read", Reason: "Read local files for single-step inspection"},
-				{Kind: "tool", Action: "allow", ToolName: "List", Reason: "List local files without changing state"},
-				{Kind: "tool", Action: "allow", ToolName: "Search", Reason: "Search local files without changing state"},
+				{Kind: "tool", Action: "allow", ToolName: "read", Reason: "Read local files for single-step inspection"},
+				{Kind: "tool", Action: "allow", ToolName: "sessions_list", Reason: "List visible sessions without changing external systems"},
+				{Kind: "tool", Action: "allow", ToolName: "sessions_history", Reason: "Read sanitized visible session history"},
+				{Kind: "tool", Action: "allow", ToolName: "session_status", Reason: "Inspect local session status"},
+				{Kind: "tool", Action: "allow", ToolName: "sessions_yield", Reason: "Yield the current turn without external side effects"},
+				{Kind: "tool", Action: "allow", ToolName: "memory_search", Reason: "Search local OpenClaw memory"},
+				{Kind: "tool", Action: "allow", ToolName: "memory_get", Reason: "Read exact excerpts from local OpenClaw memory"},
 			},
 		},
 		{

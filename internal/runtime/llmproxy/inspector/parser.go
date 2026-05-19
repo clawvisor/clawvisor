@@ -86,6 +86,12 @@ var localOnlyTools = map[string]struct{}{
 	"Monitor":    {},
 	// Pure local reads — Codex.
 	"read_file": {},
+	// Pure local reads — OpenClaw.
+	"memory_get":       {},
+	"memory_search":    {},
+	"session_status":   {},
+	"sessions_history": {},
+	"sessions_list":    {},
 	// Harness-internal lifecycle / planning state. Mutating, but the
 	// state is not user-observable.
 	"TodoWrite":        {},
@@ -113,6 +119,9 @@ var localOnlyTools = map[string]struct{}{
 	"TaskGet":    {},
 	"TaskOutput": {},
 	"TaskStop":   {},
+	// OpenClaw's local turn-control tool. It does not reach outside
+	// the harness.
+	"sessions_yield": {},
 	// Harness-internal user clarification prompt. It does not reach
 	// outside the harness and should not require an approved task scope.
 	"AskUserQuestion": {},
@@ -155,6 +164,12 @@ var defaultAllowedTools = map[string]struct{}{
 	"TaskCreate":                  {},
 	"TaskStop":                    {},
 	"TaskUpdate":                  {},
+	"memory_get":                  {},
+	"memory_search":               {},
+	"session_status":              {},
+	"sessions_history":            {},
+	"sessions_list":               {},
+	"sessions_yield":              {},
 	"read_file":                   {},
 	"list_mcp_resources":          {},
 	"list_mcp_resource_templates": {},

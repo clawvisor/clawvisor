@@ -224,6 +224,39 @@ func TestParseBashCurl_AcceptsLineContinuationBeforeHeader(t *testing.T) {
 	}
 }
 
+func TestOpenClawReadOnlyToolsAreLocalOnlyDefaults(t *testing.T) {
+	for _, name := range []string{
+		"memory_get",
+		"memory_search",
+		"session_status",
+		"sessions_history",
+		"sessions_list",
+		"sessions_yield",
+	} {
+		if !IsLocalOnlyTool(name) {
+			t.Fatalf("%s should be treated as local-only", name)
+		}
+		if !IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should be seeded as a default allowed tool", name)
+		}
+	}
+	for _, name := range []string{
+		"edit",
+		"exec",
+		"image",
+		"process",
+		"sessions_send",
+		"sessions_spawn",
+		"subagents",
+		"web_fetch",
+		"write",
+	} {
+		if IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should not be seeded as a default allowed tool", name)
+		}
+	}
+}
+
 // Regression: a placeholder substring inside a local-only tool's args
 // (Skill, Read, Edit, etc.) must pass through without engaging the
 // LLM validator. Otherwise smoke-test installs without an LLM-backed

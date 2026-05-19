@@ -82,3 +82,44 @@ func TestStarterProfilesCoverInitialHarnessSetWithReadOnlyToolRules(t *testing.T
 		}
 	}
 }
+
+func TestOpenClawStarterProfileMatchesDiscoveredReadOnlyTools(t *testing.T) {
+	profile, ok := StarterProfileByID("openclaw")
+	if !ok {
+		t.Fatalf("StarterProfileByID(openclaw) = false, want true")
+	}
+	allowedTools := map[string]bool{}
+	for _, rule := range profile.Rules {
+		if rule.Kind == "tool" && rule.Action == "allow" {
+			allowedTools[rule.ToolName] = true
+		}
+	}
+	for _, name := range []string{
+		"read",
+		"memory_get",
+		"memory_search",
+		"session_status",
+		"sessions_history",
+		"sessions_list",
+		"sessions_yield",
+	} {
+		if !allowedTools[name] {
+			t.Fatalf("openclaw starter profile missing %s", name)
+		}
+	}
+	for _, name := range []string{
+		"edit",
+		"exec",
+		"image",
+		"process",
+		"sessions_send",
+		"sessions_spawn",
+		"subagents",
+		"web_fetch",
+		"write",
+	} {
+		if allowedTools[name] {
+			t.Fatalf("openclaw starter profile should not blanket-allow %s", name)
+		}
+	}
+}
