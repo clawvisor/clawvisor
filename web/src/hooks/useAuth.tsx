@@ -1,11 +1,22 @@
 import { useState, useEffect, useCallback, createContext, useContext, useRef, type ReactNode } from 'react'
-import { api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, type FeatureSet, type LoginResult, type RegisterResult, type Org } from '../api/client'
+import { APIError, api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, type FeatureSet, type LoginResult, type RegisterResult, type Org } from '../api/client'
 
 const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
 const CURRENT_ORG_KEY = 'clawvisor_current_org'
+const INITIAL_REFRESH_RETRY_MS = 1_000
+const MAX_INITIAL_REFRESH_RETRY_MS = 5_000
+const MAX_INITIAL_REFRESH_ATTEMPTS = 5
 
 function safeSetItem(key: string, value: string) {
   try { localStorage.setItem(key, value) } catch { /* quota exceeded — ignore */ }
+}
+
+function isRefreshTokenRejected(error: unknown): boolean {
+  return error instanceof APIError && (error.status === 400 || error.status === 401 || error.status === 403)
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 interface AuthContextValue {
@@ -88,26 +99,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((cfg) => setAuthMode(cfg.auth_mode))
       .catch((e) => console.warn('useAuth: failed to fetch config', e)) // default stays null → treated like password mode
 
-    const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
-    const authPromise = storedRefresh
-      ? api.auth
-          .refresh(storedRefresh)
-          .then((resp) => {
-            setAccessToken(resp.access_token)
-            safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
-            setUser(resp.user)
-            // Check onboarding status now that we have a valid token.
-            checkOnboarding()
-          })
-          .catch((e) => {
-            console.warn('useAuth: token refresh failed', e)
+    async function restoreSession() {
+      let refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+      if (!refreshToken) return
+
+      let retryDelay = INITIAL_REFRESH_RETRY_MS
+      for (let attempt = 1; attempt <= MAX_INITIAL_REFRESH_ATTEMPTS; attempt++) {
+        try {
+          const resp = await api.auth.refresh(refreshToken)
+          setAccessToken(resp.access_token)
+          safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
+          setUser(resp.user)
+          // Check onboarding status now that we have a valid token.
+          checkOnboarding()
+          return
+        } catch (e) {
+          if (isRefreshTokenRejected(e)) {
+            console.warn('useAuth: token refresh rejected', e)
             localStorage.removeItem(REFRESH_TOKEN_KEY)
             setAccessToken(null)
-          })
-      : Promise.resolve()
+            return
+          }
+
+          if (attempt === MAX_INITIAL_REFRESH_ATTEMPTS) {
+            console.warn('useAuth: token refresh temporarily failed; giving up initial restore', e)
+            setAccessToken(null)
+            return
+          }
+
+          console.warn('useAuth: token refresh temporarily failed; retrying', e)
+          await delay(retryDelay)
+          retryDelay = Math.min(retryDelay * 2, MAX_INITIAL_REFRESH_RETRY_MS)
+
+          refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+          if (!refreshToken) {
+            setAccessToken(null)
+            return
+          }
+        }
+      }
+    }
+
+    const authPromise = restoreSession()
 
     Promise.all([configPromise, authPromise]).finally(() => setIsLoading(false))
-  }, [])
+  }, [checkOnboarding])
 
   // Fetch features on mount and whenever the authenticated user changes, so
   // the server can return per-user feature gates (e.g. plan-based gating).
@@ -135,10 +171,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(resp.user)
         return resp.access_token
       } catch (e) {
-        // Refresh failed — clear auth so RequireAuth redirects to /login.
-        setAccessToken(null)
-        localStorage.removeItem(REFRESH_TOKEN_KEY)
-        setUser(null)
+        if (isRefreshTokenRejected(e)) {
+          // The server definitively rejected this refresh token. Clear auth so
+          // RequireAuth redirects to /login.
+          setAccessToken(null)
+          localStorage.removeItem(REFRESH_TOKEN_KEY)
+          setUser(null)
+        }
         throw e
       }
     })
