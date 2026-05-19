@@ -306,6 +306,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.TokenCache != nil {
 		apiOpts = append(apiOpts, api.WithTokenCache(opts.TokenCache))
 	}
+	if opts.ClaimCodeCache != nil {
+		apiOpts = append(apiOpts, api.WithClaimCodeCache(opts.ClaimCodeCache))
+	}
 	if opts.DevicePairingStore != nil {
 		apiOpts = append(apiOpts, api.WithDevicePairingStore(opts.DevicePairingStore))
 	}

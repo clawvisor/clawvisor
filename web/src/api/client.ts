@@ -1188,6 +1188,8 @@ export const api = {
       post<{ status: string; agent_id: string }>(`/api/agents/connect/${id}/approve`, {}),
     deny: (id: string) =>
       post<{ status: string }>(`/api/agents/connect/${id}/deny`, {}),
+    mintClaim: () =>
+      post<{ code: string; expires_at: string }>('/api/agents/connect/claim', {}),
   },
   services: {
     list: async () => {

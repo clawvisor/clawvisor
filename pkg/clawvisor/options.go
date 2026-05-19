@@ -140,6 +140,7 @@ type ServerOptions struct {
 	TicketStore        intauth.TicketStorer
 	ReplayCache        middleware.ReplayCache
 	TokenCache         handlers.TokenCache
+	ClaimCodeCache     handlers.ClaimCodeCache
 	DevicePairingStore handlers.DevicePairingStore
 	OAuthStateStore    handlers.OAuthStateStore
 	PairingCodeStore   handlers.PairingCodeStore
