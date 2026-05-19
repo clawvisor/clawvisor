@@ -572,6 +572,42 @@ func TestConnectionRequest_ApproveRejectsRacingDuplicateName(t *testing.T) {
 	}
 }
 
+// Regression: when wait=true's long-poll deadline fires with the request
+// still pending, the server must expire the request before returning, so a
+// late approve can't create an agent whose token never reaches a caller
+// (which would otherwise hold the name and block a clean re-bootstrap).
+func TestConnectionRequest_WaitTimeoutExpiresPending(t *testing.T) {
+	env, session := setupConnectionEnv(t)
+	resp := session.do("POST", "/api/agents/connect/claim", nil)
+	claim := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+
+	// Long-poll with a very short deadline. timeout=1 → ~1s wait window.
+	resp = env.do("POST", "/api/agents/connect?claim="+claim+"&name=TimeoutMe&wait=true&timeout=1", "", nil)
+	body := mustStatus(t, resp, http.StatusGone)
+	if got := str(t, body, "status"); got != "expired" {
+		t.Errorf("expected status=expired in response, got %q", got)
+	}
+
+	// The pending request must be gone — a late approve attempt must fail
+	// because the request is no longer pending.
+	pending, err := env.Store.ListPendingConnectionRequests(context.Background(), session.UserID)
+	if err != nil {
+		t.Fatalf("ListPendingConnectionRequests: %v", err)
+	}
+	for _, p := range pending {
+		if p.Name == "TimeoutMe" {
+			t.Errorf("expected the timed-out request to no longer be pending, found: %+v", p)
+		}
+	}
+
+	// And re-bootstrap with the same name must succeed cleanly (no
+	// AGENT_NAME_EXISTS) — the agent was never created.
+	resp = session.do("POST", "/api/agents/connect/claim", nil)
+	claim2 := str(t, mustStatus(t, resp, http.StatusCreated), "code")
+	resp = env.do("POST", "/api/agents/connect?claim="+claim2+"&name=TimeoutMe", "", nil)
+	mustStatus(t, resp, http.StatusCreated)
+}
+
 func TestConnectionRequest_WaitDeniedReturns403(t *testing.T) {
 	env, session := setupConnectionEnv(t)
 	resp := session.do("POST", "/api/agents/connect/claim", nil)

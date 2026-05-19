@@ -291,8 +291,17 @@ func (h *ConnectionsHandler) RequestConnect(w http.ResponseWriter, r *http.Reque
 		default:
 			// "pending" reaching the wait deadline is the long-poll
 			// equivalent of a timeout — caller should retry the curl
-			// or check the dashboard directly.
-			status = http.StatusRequestTimeout
+			// or check the dashboard directly. Expire the request
+			// server-side BEFORE returning the 408, so a late approve
+			// can't create an agent whose token nobody is around to
+			// receive. The agent would otherwise hold the name and
+			// block a clean retry with AGENT_NAME_EXISTS.
+			if expireErr := h.expireByID(r.Context(), req.ID, owner.ID); expireErr == nil {
+				resp["status"] = "expired"
+				status = http.StatusGone
+			} else {
+				status = http.StatusRequestTimeout
+			}
 		}
 		writeJSON(w, status, resp)
 		return

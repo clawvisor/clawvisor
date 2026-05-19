@@ -1025,6 +1025,10 @@ function BootstrapApproveStep({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connections'] })
       qc.invalidateQueries({ queryKey: ['overview'] })
+      // The claim was burned by the bootstrap curl that produced this
+      // request; pasting the same command again would 401. Mint a fresh
+      // one so the visible curl is immediately retry-able.
+      qc.invalidateQueries({ queryKey: ['connection-claim'] })
     },
     onError: (err: Error) => setActionError(err.message),
   })
