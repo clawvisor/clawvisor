@@ -387,7 +387,7 @@ export default function Policy() {
     onSuccess: refreshRuntime,
   })
   const updateToolControlMut = useMutation({
-    mutationFn: (control: { agent_id: string; tool_name: string; action: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent' }) => api.runtime.updateToolControl(control),
+    mutationFn: (control: { agent_id: string; tool_name: string; action?: 'unset' | 'allow' | 'deny'; scope: 'global' | 'agent'; read_only_commands_allowed?: boolean }) => api.runtime.updateToolControl(control),
     onSuccess: refreshRuntime,
   })
 
@@ -492,6 +492,7 @@ export default function Policy() {
               agents={agentMap}
               busy={updateToolControlMut.isPending}
               onChange={(toolName, action, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, action, scope })}
+              onReadOnlyCommandsChange={(toolName, allowed, scope) => updateToolControlMut.mutate({ agent_id: agentFilter, tool_name: toolName, read_only_commands_allowed: allowed, scope })}
               ruleBusy={createRuleMut.isPending || updateRuleMut.isPending}
               onSaveRule={async (draft) => {
                 if (draft.id) await updateRuleMut.mutateAsync(draft)
@@ -603,6 +604,7 @@ function ProxyLiteToolControlsPanel({
   agents,
   busy,
   onChange,
+  onReadOnlyCommandsChange,
   ruleBusy,
   onSaveRule,
   onToggleAdvanced,
@@ -615,6 +617,7 @@ function ProxyLiteToolControlsPanel({
   agents: Map<string, Agent>
   busy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   ruleBusy: boolean
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
@@ -622,7 +625,7 @@ function ProxyLiteToolControlsPanel({
 }) {
   const needsAgent = agentId === 'all'
   const globalControls = controls.filter(control =>
-    !!control.global_rule_id || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
+    isShellLikeToolName(control.tool_name) || !!control.global_rule_id || (control.advanced_rules ?? []).some(rule => !rule.agent_id),
   )
   const agentSelector = (
     <div className="flex items-center gap-2">
@@ -692,6 +695,7 @@ function ProxyLiteToolControlsPanel({
             busy={busy}
             ruleBusy={ruleBusy}
             onChange={onChange}
+            onReadOnlyCommandsChange={onReadOnlyCommandsChange}
             onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
@@ -708,6 +712,7 @@ function ProxyLiteToolControlsPanel({
             busy={busy}
             ruleBusy={ruleBusy}
             onChange={onChange}
+            onReadOnlyCommandsChange={onReadOnlyCommandsChange}
             onSaveRule={onSaveRule}
             onToggleAdvanced={onToggleAdvanced}
             onDeleteAdvanced={onDeleteAdvanced}
@@ -730,6 +735,7 @@ function ToolControlListSection({
   busy,
   ruleBusy,
   onChange,
+  onReadOnlyCommandsChange,
   onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
@@ -745,6 +751,7 @@ function ToolControlListSection({
   busy: boolean
   ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
@@ -775,6 +782,7 @@ function ToolControlListSection({
               busy={busy}
               ruleBusy={ruleBusy}
               onChange={onChange}
+              onReadOnlyCommandsChange={onReadOnlyCommandsChange}
               onSaveRule={onSaveRule}
               onToggleAdvanced={onToggleAdvanced}
               onDeleteAdvanced={onDeleteAdvanced}
@@ -795,6 +803,7 @@ function ToolControlRow({
   busy,
   ruleBusy,
   onChange,
+  onReadOnlyCommandsChange,
   onSaveRule,
   onToggleAdvanced,
   onDeleteAdvanced,
@@ -807,20 +816,28 @@ function ToolControlRow({
   busy: boolean
   ruleBusy: boolean
   onChange: (toolName: string, action: 'unset' | 'allow' | 'deny', scope: 'global' | 'agent') => void
+  onReadOnlyCommandsChange: (toolName: string, allowed: boolean, scope: 'global' | 'agent') => void
   onSaveRule: (draft: RuleDraft) => Promise<void>
   onToggleAdvanced: (rule: RuntimePolicyRule) => void
   onDeleteAdvanced: (rule: RuntimePolicyRule) => void
 }) {
   const [inlineDraft, setInlineDraft] = useState<RuleDraft | null>(null)
+  const shellLike = isShellLikeToolName(control.tool_name)
   const advancedRules = (control.advanced_rules ?? []).filter(rule =>
     sectionScope === 'global' ? !rule.agent_id : !!rule.agent_id,
   )
   const action = sectionScope === 'global' ? control.global_action : control.agent_action
-  const showSimpleControl = sectionScope === 'agent' || !!control.global_rule_id || advancedRules.length > 0
+  const showSimpleControl = sectionScope === 'agent' || shellLike || !!control.global_rule_id || advancedRules.length > 0
   if (!showSimpleControl && advancedRules.length === 0) return null
   const scopeLabel = sectionScope === 'global'
     ? control.global_rule_id ? 'Global policy' : 'No global policy'
     : control.agent_rule_id && action !== 'unset' ? 'Agent policy' : 'Task scopes'
+  const readOnlyCommandsAllowed = sectionScope === 'global'
+    ? control.global_read_only_commands_allowed ?? true
+    : control.agent_read_only_commands_allowed ?? control.global_read_only_commands_allowed ?? true
+  const readOnlyCommandsExplicit = sectionScope === 'global'
+    ? control.global_read_only_commands_allowed !== undefined
+    : control.agent_read_only_commands_allowed !== undefined
   return (
     <div className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -850,6 +867,28 @@ function ToolControlRow({
           </div>
         )}
       </div>
+
+      {shellLike && showSimpleControl && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-1 px-3 py-2">
+          <div>
+            <label className="flex items-center gap-2 text-sm text-text-primary">
+              <input
+                type="checkbox"
+                checked={readOnlyCommandsAllowed}
+                disabled={busy}
+                onChange={e => onReadOnlyCommandsChange(control.tool_name, e.target.checked, sectionScope)}
+              />
+              Allow read-only commands
+            </label>
+            <div className="mt-1 text-xs text-text-tertiary">
+              {readOnlyCommandsExplicit ? 'Explicit policy' : 'Default on'} · applies to commands like ls, cat, grep, rg, find, wc, and pwd.
+            </div>
+          </div>
+          <span className={`rounded px-2 py-0.5 text-xs ${readOnlyCommandsAllowed ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
+            {readOnlyCommandsAllowed ? 'allowed' : 'reviewed'}
+          </span>
+        </div>
+      )}
 
       {advancedRules.length > 0 && (
         <div className="mt-3 space-y-2 border-l border-border-subtle pl-3">
@@ -958,6 +997,10 @@ function toolPolicyActionLabel(action: RuntimePolicyRule['action'] | RuntimeTool
     default:
       return 'review'
   }
+}
+
+function isShellLikeToolName(name: string): boolean {
+  return ['bash', 'shell', 'exec', 'exec_command', 'mcp__shell__exec'].includes(name.trim().toLowerCase())
 }
 
 function SegmentedToolAction({

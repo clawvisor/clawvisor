@@ -32,6 +32,10 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 		!strings.Contains(notice, "OMIT unless credentials are needed") {
 		t.Fatalf("notice should make credential requests optional and show both task shapes; got:\n%s", notice)
 	}
+	if !strings.Contains(notice, "do not create a task when the request can be completed using only tools or command shapes listed under ALLOWED WITHOUT A TASK") ||
+		!strings.Contains(notice, "unless every required tool call is allowed without a task") {
+		t.Fatalf("notice should exempt allowlisted-only work from task creation; got:\n%s", notice)
+	}
 	if !strings.Contains(notice, "`lifetime`") ||
 		!strings.Contains(notice, `"lifetime":"standing"`) ||
 		!strings.Contains(notice, "NEVER include `expires_in_seconds`") {
@@ -51,8 +55,8 @@ func TestControlNoticeUsesAvailableShellToolNames(t *testing.T) {
 	if strings.Contains(notice, "/control/tasks?wait=true") || strings.Contains(notice, "timeout=120") {
 		t.Fatalf("notice should keep the headline task URL minimal; got:\n%s", notice)
 	}
-	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "None yet. Use the dashboard Tool Controls") {
-		t.Fatalf("notice should only disclose persisted allowlisted tools; got:\n%s", notice)
+	if !strings.Contains(notice, "ALLOWED WITHOUT A TASK") || !strings.Contains(notice, "Read-only commands through `exec` may run without a task") {
+		t.Fatalf("notice should disclose the default read-only shell allowance for the actual shell tool; got:\n%s", notice)
 	}
 	if strings.Contains(notice, "Read files with `read`") || strings.Contains(notice, "Run one-shot read-only shell inspection") {
 		t.Fatalf("notice should not hardcode read-only allowances outside policy; got:\n%s", notice)
@@ -131,6 +135,25 @@ func TestControlNoticeDisclosesActivePolicyAllowlist(t *testing.T) {
 	}
 	if strings.Contains(notice, "Active policy allowlists `Write`") || strings.Contains(notice, "MissingTool") {
 		t.Fatalf("notice should not disclose reviewed or unavailable tools as allowlisted; got:\n%s", notice)
+	}
+}
+
+func TestControlNoticeHonorsReadOnlyShellSetting(t *testing.T) {
+	notice := ControlNoticeWithPolicy("http://localhost:25297", []string{"exec_command", "read_file"}, []*store.RuntimePolicyRule{
+		{Kind: "tool", Action: "deny", ToolName: "Bash", Source: "readonly_shell_setting", Enabled: true},
+	})
+	if strings.Contains(notice, "Read-only commands through `exec_command` may run without a task") {
+		t.Fatalf("notice should not advertise read-only shell commands when disabled; got:\n%s", notice)
+	}
+	if strings.Contains(notice, "Read-only commands through `Bash`") {
+		t.Fatalf("notice should use actual available tool names, got:\n%s", notice)
+	}
+
+	notice = ControlNoticeWithPolicy("http://localhost:25297", []string{"exec_command", "read_file"}, []*store.RuntimePolicyRule{
+		{Kind: "tool", Action: "allow", ToolName: "Bash", Source: "readonly_shell_setting", Enabled: true},
+	})
+	if !strings.Contains(notice, "Read-only commands through `exec_command` may run without a task") {
+		t.Fatalf("notice should advertise enabled read-only shell commands using the actual Codex tool name; got:\n%s", notice)
 	}
 }
 

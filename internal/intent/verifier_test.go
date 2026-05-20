@@ -193,6 +193,14 @@ func TestVerificationSystemPromptForProxyLite(t *testing.T) {
 	if !contains(proxyLite, "PROXY LITE MODE") || !contains(proxyLite, "HARNESS WITHOUT PER-CALL RATIONALE") {
 		t.Fatalf("proxy-lite prompt should include proxy-lite guidance")
 	}
+	if !contains(proxyLite, "Local filesystem path concretization") ||
+		!contains(proxyLite, "scripts found in /tmp subdirectories") ||
+		!contains(proxyLite, "not whether the full absolute path was pre-enumerated") {
+		t.Fatalf("proxy-lite prompt should relax strict matching for concrete local paths")
+	}
+	if contains(base, "Local filesystem path concretization") {
+		t.Fatalf("base prompt should not include proxy-lite local path guidance")
+	}
 }
 
 func TestCacheHitAndMiss(t *testing.T) {

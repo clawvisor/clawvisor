@@ -359,15 +359,22 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		// still sees ordinary tool_use calls such as Bash/Read.
 		if v.Source == inspector.SourceTriggerMiss {
 			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
+				readOnlyShellCommand := false
+				if isShellTool(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+					if cmd := shellCommandFromInput(tu.Input); cmd != "" {
+						readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
+					}
+				}
 				decisionInput := runtimedecision.AuthorizationInput{
-					ToolUse:        tu,
-					UserID:         cfg.AgentUserID,
-					AgentID:        cfg.AgentID,
-					Posture:        cfg.Posture,
-					CandidateTasks: cfg.CandidateTasks,
-					ToolRules:      cfg.ToolRules,
-					EgressRules:    cfg.EgressRules,
-					IntentVerifier: decisionIntentVerifier{inner: cfg.IntentVerifier},
+					ToolUse:                tu,
+					UserID:                 cfg.AgentUserID,
+					AgentID:                cfg.AgentID,
+					Posture:                cfg.Posture,
+					CandidateTasks:         cfg.CandidateTasks,
+					ToolRules:              cfg.ToolRules,
+					EgressRules:            cfg.EgressRules,
+					IntentVerifier:         decisionIntentVerifier{inner: cfg.IntentVerifier},
+					SkipIntentVerification: readOnlyShellCommand,
 				}
 				dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
 				if err != nil {
@@ -396,6 +403,11 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					if dec.Source == runtimedecision.SourceTaskScopeMissing && isShellPollTool(tu.Name, tu.Input) {
 						audit("allow", "shell_poll_pass_through", "background-shell poll ("+tu.Name+")")
 						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "shell_poll_pass_through", "reason", "background-shell poll")
+						return conversation.ToolUseVerdict{Allowed: true}
+					}
+					if dec.Source == runtimedecision.SourceTaskScopeMissing && readOnlyShellCommand {
+						audit("allow", "readonly_shell_pass_through", "read-only shell command")
+						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "readonly_shell_pass_through", "reason", "read-only shell command", "cmd_preview", truncateForTrace(shellCommandFromInput(tu.Input), 200))
 						return conversation.ToolUseVerdict{Allowed: true}
 					}
 					substitute := approvalPrompt(tu, dec.Reason)
@@ -833,11 +845,51 @@ func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 // scope-free-reads pass-through path to decide whether to invoke the
 // AST classifier on the tool's cmd field.
 func isShellTool(name string) bool {
-	switch name {
-	case "Bash", "shell", "exec_command":
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
 		return true
 	}
 	return false
+}
+
+func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.RuntimePolicyRule) bool {
+	global := true
+	agent := (*bool)(nil)
+	for _, rule := range rules {
+		if rule == nil || !rule.Enabled || !isReadOnlyShellSettingRule(rule) || !shellToolNamesEquivalent(rule.ToolName, toolName) {
+			continue
+		}
+		allowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
+		if rule.AgentID != nil {
+			if strings.TrimSpace(*rule.AgentID) == strings.TrimSpace(agentID) {
+				v := allowed
+				agent = &v
+			}
+			continue
+		}
+		global = allowed
+	}
+	if agent != nil {
+		return *agent
+	}
+	return global
+}
+
+func isReadOnlyShellSettingRule(rule *store.RuntimePolicyRule) bool {
+	return strings.EqualFold(strings.TrimSpace(rule.Source), "readonly_shell_setting")
+}
+
+func shellToolNamesEquivalent(a, b string) bool {
+	return shellToolClass(a) == shellToolClass(b)
+}
+
+func shellToolClass(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
+		return "shell"
+	default:
+		return strings.ToLower(strings.TrimSpace(name))
+	}
 }
 
 // isShellPollTool reports whether a tool_use is a harness poll on a

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -13,20 +14,27 @@ import (
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
+const readOnlyShellSettingSource = "readonly_shell_setting"
+
 type runtimeToolControlResponse struct {
-	AgentID           string                     `json:"agent_id"`
-	ToolName          string                     `json:"tool_name"`
-	Action            string                     `json:"action"`
-	RuleID            string                     `json:"rule_id,omitempty"`
-	Source            string                     `json:"source"`
-	Scope             string                     `json:"scope,omitempty"`
-	GlobalAction      string                     `json:"global_action"`
-	GlobalRuleID      string                     `json:"global_rule_id,omitempty"`
-	AgentAction       string                     `json:"agent_action"`
-	AgentRuleID       string                     `json:"agent_rule_id,omitempty"`
-	LastSeenAt        *time.Time                 `json:"last_seen_at,omitempty"`
-	AdvancedRuleCount int                        `json:"advanced_rule_count"`
-	AdvancedRules     []*store.RuntimePolicyRule `json:"advanced_rules"`
+	AgentID                       string                     `json:"agent_id"`
+	ToolName                      string                     `json:"tool_name"`
+	Action                        string                     `json:"action"`
+	RuleID                        string                     `json:"rule_id,omitempty"`
+	Source                        string                     `json:"source"`
+	Scope                         string                     `json:"scope,omitempty"`
+	GlobalAction                  string                     `json:"global_action"`
+	GlobalRuleID                  string                     `json:"global_rule_id,omitempty"`
+	AgentAction                   string                     `json:"agent_action"`
+	AgentRuleID                   string                     `json:"agent_rule_id,omitempty"`
+	ReadOnlyCommandsAllowed       bool                       `json:"read_only_commands_allowed"`
+	GlobalReadOnlyCommandsAllowed *bool                      `json:"global_read_only_commands_allowed,omitempty"`
+	GlobalReadOnlyCommandsRuleID  string                     `json:"global_read_only_commands_rule_id,omitempty"`
+	AgentReadOnlyCommandsAllowed  *bool                      `json:"agent_read_only_commands_allowed,omitempty"`
+	AgentReadOnlyCommandsRuleID   string                     `json:"agent_read_only_commands_rule_id,omitempty"`
+	LastSeenAt                    *time.Time                 `json:"last_seen_at,omitempty"`
+	AdvancedRuleCount             int                        `json:"advanced_rule_count"`
+	AdvancedRules                 []*store.RuntimePolicyRule `json:"advanced_rules"`
 }
 
 func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request) {
@@ -55,14 +63,15 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		ctrl := controls[name]
 		if ctrl == nil {
 			ctrl = &runtimeToolControlResponse{
-				AgentID:      agentID,
-				ToolName:     name,
-				Action:       "unset",
-				Source:       "default",
-				Scope:        "unset",
-				GlobalAction: "unset",
-				AgentAction:  "unset",
-				LastSeenAt:   nil,
+				AgentID:                 agentID,
+				ToolName:                name,
+				Action:                  "unset",
+				Source:                  "default",
+				Scope:                   "unset",
+				GlobalAction:            "unset",
+				AgentAction:             "unset",
+				ReadOnlyCommandsAllowed: isShellLikeToolName(name),
+				LastSeenAt:              nil,
 			}
 			controls[name] = ctrl
 		}
@@ -78,6 +87,13 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		return
 	}
 	discoveredTools := []string{}
+	var latestEndpointAt *time.Time
+	latestAvailableTools := []string{}
+	type observedToolUse struct {
+		Name      string
+		Timestamp time.Time
+	}
+	observedTools := []observedToolUse{}
 	for _, entry := range entries {
 		var params map[string]any
 		if len(entry.ParamsSafe) > 0 {
@@ -85,30 +101,53 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		}
 		switch readString(params["event"]) {
 		case "lite_proxy.endpoint_call":
-			for _, name := range readStringSlice(params["available_tools"]) {
-				discoveredTools = appendToolName(discoveredTools, name)
-				ctrl := ensure(name)
-				if ctrl == nil {
-					continue
-				}
-				ctrl.Source = preferToolControlSource(ctrl.Source, "request")
-				if ctrl.LastSeenAt == nil || entry.Timestamp.After(*ctrl.LastSeenAt) {
-					ts := entry.Timestamp
-					ctrl.LastSeenAt = &ts
+			if latestEndpointAt == nil || entry.Timestamp.After(*latestEndpointAt) {
+				ts := entry.Timestamp
+				latestEndpointAt = &ts
+				latestAvailableTools = nil
+				for _, name := range readStringSlice(params["available_tools"]) {
+					latestAvailableTools = appendToolName(latestAvailableTools, name)
 				}
 			}
 		case "lite_proxy.tool_use_inspected":
 			toolName := readString(params["tool_name"])
-			discoveredTools = appendToolName(discoveredTools, toolName)
-			ctrl := ensure(toolName)
-			if ctrl == nil {
-				continue
+			if strings.TrimSpace(toolName) != "" {
+				observedTools = append(observedTools, observedToolUse{Name: toolName, Timestamp: entry.Timestamp})
 			}
-			ctrl.Source = preferToolControlSource(ctrl.Source, "observed")
-			if ctrl.LastSeenAt == nil || entry.Timestamp.After(*ctrl.LastSeenAt) {
-				ts := entry.Timestamp
-				ctrl.LastSeenAt = &ts
-			}
+		}
+	}
+	latestToolSet := toolNameSet(latestAvailableTools)
+	currentShellTool := firstShellLikeToolName(latestAvailableTools)
+	displayToolName := func(name string) string {
+		name = strings.TrimSpace(name)
+		if currentShellTool != "" && isShellLikeToolName(name) && !latestToolSet[strings.ToLower(name)] {
+			return currentShellTool
+		}
+		return name
+	}
+	for _, name := range latestAvailableTools {
+		discoveredTools = appendToolName(discoveredTools, name)
+		ctrl := ensure(name)
+		if ctrl == nil {
+			continue
+		}
+		ctrl.Source = preferToolControlSource(ctrl.Source, "request")
+		if latestEndpointAt != nil && (ctrl.LastSeenAt == nil || latestEndpointAt.After(*ctrl.LastSeenAt)) {
+			ts := *latestEndpointAt
+			ctrl.LastSeenAt = &ts
+		}
+	}
+	for _, observed := range observedTools {
+		toolName := displayToolName(observed.Name)
+		discoveredTools = appendToolName(discoveredTools, toolName)
+		ctrl := ensure(toolName)
+		if ctrl == nil {
+			continue
+		}
+		ctrl.Source = preferToolControlSource(ctrl.Source, "observed")
+		if ctrl.LastSeenAt == nil || observed.Timestamp.After(*ctrl.LastSeenAt) {
+			ts := observed.Timestamp
+			ctrl.LastSeenAt = &ts
 		}
 	}
 	if err := ensureDefaultToolRules(r.Context(), h.st, agent, discoveredTools); err != nil {
@@ -130,7 +169,21 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		if rule == nil || strings.TrimSpace(rule.ToolName) == "" {
 			continue
 		}
-		ctrl := ensure(rule.ToolName)
+		if isReadOnlyShellSettingRule(rule) {
+			allowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
+			for _, ctrl := range readOnlyShellSettingControls(controls, ensure, rule.ToolName) {
+				if rule.AgentID != nil {
+					ctrl.AgentReadOnlyCommandsAllowed = &allowed
+					ctrl.AgentReadOnlyCommandsRuleID = rule.ID
+				} else {
+					ctrl.GlobalReadOnlyCommandsAllowed = &allowed
+					ctrl.GlobalReadOnlyCommandsRuleID = rule.ID
+				}
+			}
+			continue
+		}
+		controlToolName := displayToolName(rule.ToolName)
+		ctrl := ensure(controlToolName)
 		if ctrl == nil {
 			continue
 		}
@@ -144,17 +197,17 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 					ctrl.AgentAction = action
 					ctrl.AgentRuleID = rule.ID
 				}
-				if !agentScopedTools[rule.ToolName] {
+				if !agentScopedTools[controlToolName] {
 					ctrl.Action = action
 					ctrl.RuleID = rule.ID
 					ctrl.Source = "rule"
 					ctrl.Scope = "agent"
-					agentScopedTools[rule.ToolName] = true
+					agentScopedTools[controlToolName] = true
 				}
 			} else if ctrl.GlobalRuleID == "" {
 				ctrl.GlobalAction = action
 				ctrl.GlobalRuleID = rule.ID
-				if !agentScopedTools[rule.ToolName] {
+				if !agentScopedTools[controlToolName] {
 					ctrl.Action = action
 					ctrl.RuleID = rule.ID
 					ctrl.Source = "rule"
@@ -174,6 +227,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 
 	out := make([]*runtimeToolControlResponse, 0, len(controls))
 	for _, ctrl := range controls {
+		ctrl.ReadOnlyCommandsAllowed = effectiveReadOnlyShellCommandsAllowed(ctrl)
 		out = append(out, ctrl)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -192,10 +246,11 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		AgentID  string `json:"agent_id"`
-		ToolName string `json:"tool_name"`
-		Action   string `json:"action"`
-		Scope    string `json:"scope"`
+		AgentID                 string `json:"agent_id"`
+		ToolName                string `json:"tool_name"`
+		Action                  string `json:"action"`
+		Scope                   string `json:"scope"`
+		ReadOnlyCommandsAllowed *bool  `json:"read_only_commands_allowed"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -215,7 +270,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "tool_name is required")
 		return
 	}
-	if action == "" {
+	if action == "" && body.ReadOnlyCommandsAllowed == nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "action must be unset, allow, review, or deny")
 		return
 	}
@@ -226,6 +281,35 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 	if _, err := loadUserAgent(r.Context(), h.st, user.ID, agentID); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "agent_id must belong to the current user")
 		return
+	}
+	if body.ReadOnlyCommandsAllowed != nil {
+		if !isShellLikeToolName(toolName) {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "read-only command setting only applies to shell-like tools")
+			return
+		}
+		if err := h.upsertReadOnlyShellSetting(r.Context(), user.ID, agentID, toolName, scope, *body.ReadOnlyCommandsAllowed); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not update read-only shell setting")
+			return
+		}
+		if action == "" {
+			resp := runtimeToolControlResponse{
+				AgentID:                 agentID,
+				ToolName:                toolName,
+				Action:                  "unset",
+				Source:                  "default",
+				Scope:                   "unset",
+				GlobalAction:            "unset",
+				AgentAction:             "unset",
+				ReadOnlyCommandsAllowed: *body.ReadOnlyCommandsAllowed,
+			}
+			if scope == "global" {
+				resp.GlobalReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
+			} else {
+				resp.AgentReadOnlyCommandsAllowed = body.ReadOnlyCommandsAllowed
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
 	}
 
 	ruleAgentID := &agentID
@@ -244,7 +328,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, rule := range rules {
-		if rule == nil || rule.ToolName != toolName || !isSimpleToolControlRule(rule) {
+		if rule == nil || !toolRuleNamesSameControl(rule.ToolName, toolName) || !isSimpleToolControlRule(rule) {
 			continue
 		}
 		if scope == "agent" && (rule.AgentID == nil || *rule.AgentID != agentID) {
@@ -337,6 +421,52 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func readOnlyShellSettingControls(controls map[string]*runtimeToolControlResponse, ensure func(string) *runtimeToolControlResponse, toolName string) []*runtimeToolControlResponse {
+	if !isShellLikeToolName(toolName) {
+		if ctrl := ensure(toolName); ctrl != nil {
+			return []*runtimeToolControlResponse{ctrl}
+		}
+		return nil
+	}
+	out := make([]*runtimeToolControlResponse, 0, 1)
+	for _, ctrl := range controls {
+		if ctrl != nil && isShellLikeToolName(ctrl.ToolName) {
+			out = append(out, ctrl)
+		}
+	}
+	if len(out) > 0 {
+		sort.Slice(out, func(i, j int) bool {
+			return strings.ToLower(out[i].ToolName) < strings.ToLower(out[j].ToolName)
+		})
+		return out
+	}
+	if ctrl := ensure(toolName); ctrl != nil {
+		return []*runtimeToolControlResponse{ctrl}
+	}
+	return nil
+}
+
+func toolNameSet(tools []string) map[string]bool {
+	set := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			set[strings.ToLower(tool)] = true
+		}
+	}
+	return set
+}
+
+func firstShellLikeToolName(tools []string) string {
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if isShellLikeToolName(tool) {
+			return tool
+		}
+	}
+	return ""
+}
+
 func readStringSlice(value any) []string {
 	switch typed := value.(type) {
 	case []string:
@@ -389,7 +519,100 @@ func isSimpleToolControlRule(rule *store.RuntimePolicyRule) bool {
 	if rule == nil || strings.TrimSpace(rule.InputRegex) != "" {
 		return false
 	}
+	if isReadOnlyShellSettingRule(rule) {
+		return false
+	}
 	return rawJSONEmptyObject(rule.InputShape)
+}
+
+func isReadOnlyShellSettingRule(rule *store.RuntimePolicyRule) bool {
+	return rule != nil && strings.EqualFold(strings.TrimSpace(rule.Source), readOnlyShellSettingSource)
+}
+
+func effectiveReadOnlyShellCommandsAllowed(ctrl *runtimeToolControlResponse) bool {
+	if ctrl == nil || !isShellLikeToolName(ctrl.ToolName) {
+		return false
+	}
+	allowed := true
+	if ctrl.GlobalReadOnlyCommandsAllowed != nil {
+		allowed = *ctrl.GlobalReadOnlyCommandsAllowed
+	}
+	if ctrl.AgentReadOnlyCommandsAllowed != nil {
+		allowed = *ctrl.AgentReadOnlyCommandsAllowed
+	}
+	return allowed
+}
+
+func isShellLikeToolName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolRuleNamesSameControl(ruleToolName, controlToolName string) bool {
+	if isShellLikeToolName(ruleToolName) && isShellLikeToolName(controlToolName) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(ruleToolName), strings.TrimSpace(controlToolName))
+}
+
+func (h *RuntimeHandler) upsertReadOnlyShellSetting(ctx context.Context, userID, agentID, toolName, scope string, allowed bool) error {
+	ruleAgentID := &agentID
+	filterAgentID := agentID
+	if scope == "global" {
+		ruleAgentID = nil
+		filterAgentID = ""
+	}
+	rules, err := h.st.ListRuntimePolicyRules(ctx, userID, store.RuntimePolicyRuleFilter{
+		AgentID: filterAgentID,
+		Kind:    "tool",
+		Limit:   500,
+	})
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		if rule == nil || !isReadOnlyShellSettingRule(rule) || !toolNamesSameShellClass(rule.ToolName, toolName) {
+			continue
+		}
+		if scope == "agent" && (rule.AgentID == nil || *rule.AgentID != agentID) {
+			continue
+		}
+		if scope == "global" && rule.AgentID != nil {
+			continue
+		}
+		if err := h.st.DeleteRuntimePolicyRule(ctx, rule.ID, userID); err != nil && err != store.ErrNotFound {
+			return err
+		}
+	}
+	action := "deny"
+	reason := "Require task scope or approval for read-only shell commands"
+	if allowed {
+		action = "allow"
+		reason = "Allow read-only shell commands without task scope"
+	}
+	return h.st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         uuid.NewString(),
+		UserID:     userID,
+		AgentID:    ruleAgentID,
+		Kind:       "tool",
+		Action:     action,
+		ToolName:   toolName,
+		InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
+		Reason:     reason,
+		Source:     readOnlyShellSettingSource,
+		Enabled:    true,
+	})
+}
+
+func toolNamesSameShellClass(a, b string) bool {
+	if isShellLikeToolName(a) && isShellLikeToolName(b) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func rawJSONEmptyObject(raw json.RawMessage) bool {

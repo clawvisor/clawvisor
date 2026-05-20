@@ -343,13 +343,20 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 		t.Fatalf("expected 3 discovered tools, got %+v", listed)
 	}
 	seenReadDefault := false
+	seenBashReadOnlyDefault := false
 	for _, entry := range listed.Entries {
 		if entry.ToolName == "Read" && entry.Action == "allow" && entry.Scope == "agent" {
 			seenReadDefault = true
 		}
+		if entry.ToolName == "Bash" && entry.ReadOnlyCommandsAllowed {
+			seenBashReadOnlyDefault = true
+		}
 	}
 	if !seenReadDefault {
 		t.Fatalf("discovered default tools should be seeded as agent-scoped always-allow policies, got %+v", listed.Entries)
+	}
+	if !seenBashReadOnlyDefault {
+		t.Fatalf("shell-like tools should default to allowing read-only commands, got %+v", listed.Entries)
 	}
 
 	upsertReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
@@ -416,6 +423,162 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	}
 	if bashRuleCount("review") != 1 {
 		t.Fatalf("unset should leave an agent-scoped task-scope fallback marker, got %+v", rules)
+	}
+
+	disableReadOnlyReq := httptest.NewRequest(http.MethodPut, "/api/runtime/tool-controls", bytes.NewReader([]byte(`{
+		"agent_id":"`+agent.ID+`",
+		"tool_name":"Bash",
+		"read_only_commands_allowed":false
+	}`)))
+	disableReadOnlyReq = disableReadOnlyReq.WithContext(context.WithValue(disableReadOnlyReq.Context(), middleware.UserContextKey, user))
+	disableReadOnlyRes := httptest.NewRecorder()
+	h.UpsertToolControl(disableReadOnlyRes, disableReadOnlyReq)
+	if disableReadOnlyRes.Code != http.StatusOK {
+		t.Fatalf("UpsertToolControl read-only toggle status=%d body=%s", disableReadOnlyRes.Code, disableReadOnlyRes.Body.String())
+	}
+	rules, err = st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool"})
+	if err != nil {
+		t.Fatalf("ListRuntimePolicyRules after read-only toggle: %v", err)
+	}
+	foundReadOnlyDeny := false
+	for _, rule := range rules {
+		if rule.ToolName == "Bash" && rule.Source == readOnlyShellSettingSource && rule.Action == "deny" {
+			foundReadOnlyDeny = true
+		}
+	}
+	if !foundReadOnlyDeny {
+		t.Fatalf("expected read-only shell deny setting, got %+v", rules)
+	}
+}
+
+func TestRuntimeHandlerToolControlsPreferCurrentShellToolForReadOnlySetting(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "runtime-tool-controls-shell-alias.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	defer db.Close()
+	st := sqlite.NewStore(db)
+	user, err := st.CreateUser(ctx, "runtime-tool-controls-shell-alias@test.example", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	agent, err := st.CreateAgent(ctx, user.ID, "codex-3", "token-hash")
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, entry := range []*store.AuditEntry{
+		{
+			ID:        "audit-old-claude-tools",
+			UserID:    user.ID,
+			AgentID:   &agent.ID,
+			RequestID: "req-old",
+			Timestamp: now,
+			Service:   "anthropic",
+			Action:    "lite_proxy.messages.create",
+			ParamsSafe: json.RawMessage(`{
+				"event":"lite_proxy.endpoint_call",
+				"available_tools":["Bash","Read"]
+			}`),
+			Decision: "allow",
+			Outcome:  "success",
+		},
+		{
+			ID:        "audit-current-codex-tools",
+			UserID:    user.ID,
+			AgentID:   &agent.ID,
+			RequestID: "req-current",
+			Timestamp: now.Add(time.Second),
+			Service:   "openai",
+			Action:    "lite_proxy.responses.create",
+			ParamsSafe: json.RawMessage(`{
+				"event":"lite_proxy.endpoint_call",
+				"available_tools":["exec_command","read_file"]
+			}`),
+			Decision: "allow",
+			Outcome:  "success",
+		},
+		{
+			ID:        "audit-stale-bash-tool-use",
+			UserID:    user.ID,
+			AgentID:   &agent.ID,
+			RequestID: "req-stale-tool",
+			Timestamp: now.Add(2 * time.Second),
+			Service:   "runtime.tool_use",
+			Action:    "lite_proxy.tool_use.allow",
+			ParamsSafe: json.RawMessage(`{
+				"event":"lite_proxy.tool_use_inspected",
+				"tool_name":"Bash"
+			}`),
+			Decision: "allow",
+			Outcome:  "success",
+		},
+	} {
+		if err := st.LogAudit(ctx, entry); err != nil {
+			t.Fatalf("LogAudit(%s): %v", entry.ID, err)
+		}
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "global-bash-simple",
+		UserID:     user.ID,
+		Kind:       "tool",
+		Action:     "deny",
+		ToolName:   "Bash",
+		InputShape: json.RawMessage(`{}`),
+		Reason:     "old shell policy",
+		Source:     "user",
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule simple: %v", err)
+	}
+	if err := st.CreateRuntimePolicyRule(ctx, &store.RuntimePolicyRule{
+		ID:         "global-readonly-bash-marker",
+		UserID:     user.ID,
+		Kind:       "tool",
+		Action:     "deny",
+		ToolName:   "Bash",
+		InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
+		Reason:     "Require task scope or approval for read-only shell commands",
+		Source:     readOnlyShellSettingSource,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("CreateRuntimePolicyRule: %v", err)
+	}
+
+	h := NewRuntimeHandler(st, nil, nil, config.Default(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/tool-controls?agent_id="+agent.ID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	res := httptest.NewRecorder()
+	h.ListToolControls(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("ListToolControls status=%d body=%s", res.Code, res.Body.String())
+	}
+	var listed struct {
+		Entries []runtimeToolControlResponse `json:"entries"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed controls: %v", err)
+	}
+	byTool := map[string]runtimeToolControlResponse{}
+	for _, entry := range listed.Entries {
+		byTool[entry.ToolName] = entry
+	}
+	if _, ok := byTool["Bash"]; ok {
+		t.Fatalf("stale Bash shell alias should not be surfaced for a Codex tool snapshot, got %+v", listed.Entries)
+	}
+	execEntry, ok := byTool["exec_command"]
+	if !ok {
+		t.Fatalf("expected exec_command control, got %+v", listed.Entries)
+	}
+	if execEntry.GlobalAction != "deny" || execEntry.GlobalRuleID != "global-bash-simple" {
+		t.Fatalf("shell-class simple policy should render on exec_command, got %+v", execEntry)
+	}
+	if execEntry.GlobalReadOnlyCommandsAllowed == nil || *execEntry.GlobalReadOnlyCommandsAllowed {
+		t.Fatalf("read-only shell setting should attach to exec_command, got %+v", execEntry)
+	}
+	if execEntry.ReadOnlyCommandsAllowed {
+		t.Fatalf("effective read-only setting should be disabled on exec_command, got %+v", execEntry)
 	}
 }
 

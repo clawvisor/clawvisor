@@ -60,6 +60,9 @@ func MatchRuntimePolicyTool(rules []*store.RuntimePolicyRule, agentID, toolName 
 		if rule == nil || rule.Kind != "tool" || !toolNamesMatch(rule.ToolName, toolName) {
 			return false, 0, nil
 		}
+		if strings.EqualFold(strings.TrimSpace(rule.Source), "readonly_shell_setting") {
+			return false, 0, nil
+		}
 		if rule.InputRegex != "" {
 			ok, err := matchRegexMap(rule.InputRegex, input)
 			if err != nil || !ok {

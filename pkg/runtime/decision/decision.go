@@ -116,6 +116,11 @@ type AuthorizationInput struct {
 	// Use this only for rule-only evaluation paths where task scope is not
 	// available for the tool surface being checked.
 	AllowMissingScope bool
+
+	// SkipIntentVerification allows callers with a deterministic local safety
+	// classifier to keep rule and task-scope matching while avoiding the LLM
+	// verifier for low-risk calls.
+	SkipIntentVerification bool
 }
 
 type AuthorizationDecision struct {
@@ -161,6 +166,9 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 	}
 	if denyRule != nil {
 		return decisionForRule(denyRule, posture), nil
+	}
+	if fallbackRule != nil && strings.EqualFold(strings.TrimSpace(fallbackRule.Action), "allow") {
+		return decisionForRule(fallbackRule, posture), nil
 	}
 
 	if in.Service != "" && in.Action != "" {
@@ -414,7 +422,7 @@ func evaluateServiceActionScope(ctx context.Context, in AuthorizationInput, post
 }
 
 func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Task, action *store.TaskAction, params map[string]any) (string, bool, error) {
-	if in.IntentVerifier == nil || action == nil {
+	if in.IntentVerifier == nil || action == nil || in.SkipIntentVerification {
 		return "", true, nil
 	}
 	// Normalize before comparing — verification mode is sourced from YAML
@@ -453,7 +461,7 @@ func runIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Tas
 }
 
 func runToolIntentVerify(ctx context.Context, in AuthorizationInput, task *store.Task, match *runtimepolicy.ToolMatch, params map[string]any) (string, bool, error) {
-	if in.IntentVerifier == nil || match == nil {
+	if in.IntentVerifier == nil || match == nil || in.SkipIntentVerification {
 		return "", true, nil
 	}
 	mode := ""

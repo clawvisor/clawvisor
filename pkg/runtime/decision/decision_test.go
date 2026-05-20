@@ -183,6 +183,30 @@ func TestEvaluateAuthorization_RuleAllowOverridesMissingTaskScope(t *testing.T) 
 	}
 }
 
+func TestEvaluateAuthorization_ToolAllowOverridesTaskIntentRefusal(t *testing.T) {
+	agentID := "agent-1"
+	allow := rule("allow", "tool", "allow", &agentID)
+	allow.ToolName = "Read"
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "file outside task scope"}}
+
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:        toolUse("Read", map[string]any{"file_path": "/tmp/blah1/hello.go"}),
+		AgentID:        agentID,
+		CandidateTasks: []*store.Task{taskWithExpectedTool("task-1", agentID, "Read", "read files in /tmp/blah2")},
+		ToolRules:      []*store.RuntimePolicyRule{allow},
+		IntentVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow || got.Source != SourceRuleAllow || got.Rule != allow {
+		t.Fatalf("decision = %+v, want immediate rule allow", got)
+	}
+	if verifier.called {
+		t.Fatal("intent verifier should not run after always-allow tool rule")
+	}
+}
+
 func TestEvaluateAuthorization_AmbiguousScopeNeedsApproval(t *testing.T) {
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
 		ToolUse: toolUse("Bash", nil),
@@ -261,6 +285,26 @@ func TestEvaluateAuthorization_ToolTaskRunsIntentVerifier(t *testing.T) {
 	}
 	if verifier.last.TaskID != "task-1" {
 		t.Fatalf("intent request TaskID = %q", verifier.last.TaskID)
+	}
+}
+
+func TestEvaluateAuthorization_CanSkipIntentForLocallyClassifiedLowRiskTool(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "would block if called"}}
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:                toolUse("exec_command", map[string]any{"cmd": "cat README.md"}),
+		AgentID:                "agent-1",
+		CandidateTasks:         []*store.Task{taskWithExpectedTool("task-1", "agent-1", "exec_command", "read repo files")},
+		IntentVerifier:         verifier,
+		SkipIntentVerification: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow || got.Source != SourceTaskScope {
+		t.Fatalf("decision = %+v, want task-scope allow", got)
+	}
+	if verifier.called {
+		t.Fatal("intent verifier should not run when SkipIntentVerification is set")
 	}
 }
 
