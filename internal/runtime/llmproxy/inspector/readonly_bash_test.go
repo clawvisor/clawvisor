@@ -23,6 +23,8 @@ func TestIsReadOnlyBashCommandAcceptsCommonReads(t *testing.T) {
 		"hostname --fqdn",
 		"hostname -I",
 		"cat <&0",
+		"printf '%s\\n' hello",
+		"printf -- -v",
 		"sort README.md",
 		"uniq README.md",
 	}
@@ -80,6 +82,8 @@ func TestIsReadOnlyBashCommandRejectsMutationsAndEscapes(t *testing.T) {
 		"hostname -F /tmp/name",
 		"tail -f /tmp/log",
 		"tail --follow=name /tmp/log",
+		"printf -v PATH /tmp && ls",
+		"printf -vPATH /tmp && ls",
 		"PATH=/tmp ls",
 		"pwd; ls",
 		"echo $(rm -rf /tmp/x)",

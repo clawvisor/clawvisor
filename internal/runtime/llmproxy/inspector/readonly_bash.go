@@ -210,6 +210,8 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 		}
 	case "hostname":
 		return hostnameArgsReadOnly(values)
+	case "printf":
+		return printfArgsReadOnly(values)
 	case "rg":
 		for _, val := range values {
 			if longFlag(val, "pre") || longFlag(val, "hostname-bin") {
@@ -245,6 +247,18 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 			}
 		}
 		if !sawInspect {
+			return false
+		}
+	}
+	return true
+}
+
+func printfArgsReadOnly(values []string) bool {
+	for _, val := range values {
+		if val == "--" {
+			return true
+		}
+		if val == "-v" || strings.HasPrefix(val, "-v") {
 			return false
 		}
 	}
