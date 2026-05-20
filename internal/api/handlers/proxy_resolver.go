@@ -296,7 +296,8 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	// vhost-routing metadata from reaching upstream. CodeQL's
 	// reachability analysis correctly traces user input to Client.Do
 	// but cannot see those defenses.
-	resp, err := h.Client.Do(upstreamReq) // lgtm[go/request-forgery]
+	// codeql[go/request-forgery] Proxy resolver upstream requests are constrained by the handler's configured upstream URL policy.
+	resp, err := h.Client.Do(upstreamReq)
 	if err != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy resolver: upstream call failed",
 			"agent_id", agent.ID, "host", targetHost, "err", err.Error())

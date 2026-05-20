@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -32,8 +33,10 @@ func NewAuthHandler(jwtSvc pkgauth.TokenService, st store.Store, cfg config.Auth
 type authResponse struct {
 	User         *store.User `json:"user"`
 	AccessToken  string      `json:"access_token"`
-	RefreshToken string      `json:"refresh_token"`
+	RefreshToken string      `json:"refresh_token,omitempty"`
 }
+
+const refreshTokenCookieName = "clawvisor_refresh_token"
 
 // Register creates a new user account.
 //
@@ -95,7 +98,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.issueTokens(r, user)
+	resp, err := h.issueTokens(w, r, user)
 	if err != nil {
 		_ = h.st.DeleteUser(r.Context(), user.ID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not issue tokens")
@@ -130,7 +133,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.issueTokens(r, user)
+	resp, err := h.issueTokens(w, r, user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not issue tokens")
 		return
@@ -146,12 +149,23 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RefreshToken == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "refresh_token is required")
+		return
+	}
+	refreshToken := body.RefreshToken
+	if refreshToken == "" {
+		cookie, err := r.Cookie(refreshTokenCookieName)
+		if err == nil {
+			refreshToken = cookie.Value
+		}
+	}
+	if refreshToken == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "refresh_token is required")
 		return
 	}
 
-	tokenHash := auth.HashToken(body.RefreshToken)
+	tokenHash := auth.HashToken(refreshToken)
 	// Atomic delete-and-return so a stolen refresh token replayed
 	// concurrently produces at most one new token pair: the second caller
 	// gets ErrNotFound because the first deleted the row first.
@@ -171,7 +185,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.issueTokens(r, user)
+	resp, err := h.issueTokens(w, r, user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not issue tokens")
 		return
@@ -182,14 +196,10 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 // Logout invalidates the current session's refresh token.
 //
 // POST /api/auth/logout
-// Auth: Bearer <access_token>
+// Auth: optional Bearer <access_token>
 // Body: {"refresh_token": "..."}  (optional; clears the specific session)
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
-		return
-	}
 
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
@@ -198,10 +208,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	if body.RefreshToken != "" {
 		_ = h.st.DeleteSession(r.Context(), auth.HashToken(body.RefreshToken))
-	} else {
+	} else if cookie, err := r.Cookie(refreshTokenCookieName); err == nil && cookie.Value != "" {
+		_ = h.st.DeleteSession(r.Context(), auth.HashToken(cookie.Value))
+	} else if user != nil {
 		// No specific token provided — clear all sessions for the user.
 		_ = h.st.DeleteUserSessions(r.Context(), user.ID)
 	}
+	h.clearRefreshCookie(w, r)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -345,7 +358,7 @@ func (h *AuthHandler) ExchangeMagic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.issueTokens(r, user)
+	resp, err := h.issueTokens(w, r, user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not issue tokens")
 		return
@@ -400,7 +413,7 @@ func (h *AuthHandler) GenerateMagicLocal(w http.ResponseWriter, r *http.Request)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authResponse, error) {
+func (h *AuthHandler) issueTokens(w http.ResponseWriter, r *http.Request, user *store.User) (*authResponse, error) {
 	accessTTL, err := h.cfg.AccessTokenDuration()
 	if err != nil {
 		return nil, err
@@ -424,11 +437,51 @@ func (h *AuthHandler) issueTokens(r *http.Request, user *store.User) (*authRespo
 	if _, err := h.st.CreateSession(r.Context(), user.ID, auth.HashToken(rawRefresh), expiresAt); err != nil {
 		return nil, err
 	}
+	h.setRefreshCookie(w, r, rawRefresh, expiresAt)
 
-	return &authResponse{
+	resp := &authResponse{
 		User:         user,
 		AccessToken:  accessToken,
 		RefreshToken: rawRefresh,
-	}, nil
+	}
+	if isBrowserRequest(r) {
+		resp.RefreshToken = ""
+	}
+	return resp, nil
 }
 
+func (h *AuthHandler) setRefreshCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    token,
+		Path:     "/api/auth",
+		Expires:  expiresAt,
+		MaxAge:   int(time.Until(expiresAt).Seconds()),
+		HttpOnly: true,
+		Secure:   h.secureRefreshCookie(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (h *AuthHandler) clearRefreshCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    "",
+		Path:     "/api/auth",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   h.secureRefreshCookie(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (h *AuthHandler) secureRefreshCookie(r *http.Request) bool {
+	return r.TLS != nil || !h.isLocal
+}
+
+func isBrowserRequest(r *http.Request) bool {
+	return r.Header.Get("Sec-Fetch-Site") != "" ||
+		r.Header.Get("Sec-Fetch-Mode") != "" ||
+		r.Header.Get("Origin") != "" ||
+		r.Header.Get("Referer") != ""
+}

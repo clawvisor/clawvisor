@@ -27,6 +27,7 @@ var ErrProxyAuthorizationRejected = errors.New("proxy authorization rejected")
 var ErrProxyAuthorizationUnavailable = errors.New("proxy authorization unavailable")
 
 func HashProxyBearerSecret(secret string) string {
+	// codeql[go/weak-sensitive-data-hashing] Runtime bearer secrets are high-entropy random values; SHA-256 is only an internal lookup key.
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }

@@ -2096,7 +2096,8 @@ func liteSecretBodySHA(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	sum := sha256.Sum256(body) // lgtm[go/weak-cryptographic-algorithm]
+	// codeql[go/weak-cryptographic-algorithm] Request body hash is a non-secret cache key, not a security boundary.
+	sum := sha256.Sum256(body)
 	return fmt.Sprintf("%x", sum[:])[:16]
 }
 

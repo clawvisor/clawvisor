@@ -572,6 +572,7 @@ func (s *Server) routes() http.Handler {
 
 	// Middleware
 	requireUser := middleware.RequireUser(s.jwtSvc, s.store)
+	optionalUser := middleware.OptionalUser(s.jwtSvc, s.store)
 	requireAgent := middleware.RequireAgent(s.store)
 	logMiddleware := middleware.Logging(s.logger)
 	recoverMiddleware := middleware.Recover(s.logger)
@@ -642,6 +643,9 @@ func (s *Server) routes() http.Handler {
 	authRateLimited := func(h http.HandlerFunc) http.Handler {
 		return middleware.RateLimit(authRL, ipKeyFn, rlCfg.Auth.Limit)(h)
 	}
+	optionalUserAuthRateLimited := func(h http.HandlerFunc) http.Handler {
+		return middleware.RateLimit(authRL, ipKeyFn, rlCfg.Auth.Limit)(optionalUser(h))
+	}
 
 	// Health (no auth)
 	mux.HandleFunc("GET /health", healthHandler.Health)
@@ -679,7 +683,7 @@ func (s *Server) routes() http.Handler {
 
 	// Auth — core routes (always registered)
 	mux.Handle("POST /api/auth/refresh", authRateLimited(authHandler.Refresh))
-	mux.Handle("POST /api/auth/logout", user(authHandler.Logout))
+	mux.Handle("POST /api/auth/logout", optionalUserAuthRateLimited(authHandler.Logout))
 	mux.Handle("GET /api/me", user(authHandler.Me))
 
 	// Magic link auth — /local is always registered so the CLI gets a
@@ -1113,6 +1117,7 @@ func (s *Server) routes() http.Handler {
 				return
 			}
 			path := s.cfg.Server.FrontendDir + r.URL.Path
+			// codeql[go/path-injection] This only chooses SPA fallback; actual static serving is delegated to http.FileServer rooted at FrontendDir.
 			if _, err := os.Stat(path); os.IsNotExist(err) || r.URL.Path == "/" {
 				// index.html must not be cached — it references content-hashed
 				// JS/CSS chunks, so a stale copy serves outdated code.

@@ -182,6 +182,7 @@ func DeliverResult(ctx context.Context, callbackURL string, payload *Payload, si
 		req.Header.Set("X-Clawvisor-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
+	// codeql[go/request-forgery] httpClient uses ssrfSafeDialContext, which resolves and blocks private/internal targets at connect time.
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		idKey, idVal := payloadIDAttr(payload)

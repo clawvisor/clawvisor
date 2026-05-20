@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, createContext, useContext, useRef, type ReactNode } from 'react'
 import { APIError, api, setAccessToken, setRefreshCallback, setCurrentOrgId, type User, type FeatureSet, type LoginResult, type RegisterResult, type Org } from '../api/client'
 
-const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
 const CURRENT_ORG_KEY = 'clawvisor_current_org'
 const INITIAL_REFRESH_RETRY_MS = 1_000
 const MAX_INITIAL_REFRESH_RETRY_MS = 5_000
@@ -33,7 +32,7 @@ interface AuthContextValue {
   register: (email: string, password: string) => Promise<RegisterResult>
   logout: () => Promise<void>
   /** Set session tokens directly (used by pages that handle multi-step auth flows) */
-  setSession: (accessToken: string, refreshToken: string, user: User) => void
+  setSession: (accessToken: string, refreshToken: string | undefined, user: User) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -92,7 +91,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (didInit.current) return
     didInit.current = true
 
-    // Fetch auth mode and refresh token in parallel. Features are fetched
+    localStorage.removeItem('clawvisor_refresh_token')
+
+    // Fetch auth mode and refresh cookie in parallel. Features are fetched
     // separately by the user-dependent effect below so we can return a
     // per-user FeatureSet (e.g. plan-based gating) once the user is known.
     const configPromise = api.config.public()
@@ -100,23 +101,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch((e) => console.warn('useAuth: failed to fetch config', e)) // default stays null → treated like password mode
 
     async function restoreSession() {
-      let refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
-      if (!refreshToken) return
-
       let retryDelay = INITIAL_REFRESH_RETRY_MS
       for (let attempt = 1; attempt <= MAX_INITIAL_REFRESH_ATTEMPTS; attempt++) {
         try {
-          const resp = await api.auth.refresh(refreshToken)
+          const resp = await api.auth.refresh()
           setAccessToken(resp.access_token)
-          safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
           setUser(resp.user)
           // Check onboarding status now that we have a valid token.
           checkOnboarding()
           return
         } catch (e) {
           if (isRefreshTokenRejected(e)) {
-            console.warn('useAuth: token refresh rejected', e)
-            localStorage.removeItem(REFRESH_TOKEN_KEY)
             setAccessToken(null)
             return
           }
@@ -130,12 +125,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.warn('useAuth: token refresh temporarily failed; retrying', e)
           await delay(retryDelay)
           retryDelay = Math.min(retryDelay * 2, MAX_INITIAL_REFRESH_RETRY_MS)
-
-          refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
-          if (!refreshToken) {
-            setAccessToken(null)
-            return
-          }
         }
       }
     }
@@ -162,12 +151,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // data endpoints (expired access token) without logging the user out.
   useEffect(() => {
     setRefreshCallback(async () => {
-      const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
-      if (!storedRefresh) throw new Error('no refresh token stored')
       try {
-        const resp = await api.auth.refresh(storedRefresh)
+        const resp = await api.auth.refresh()
         setAccessToken(resp.access_token)
-        safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
         setUser(resp.user)
         return resp.access_token
       } catch (e) {
@@ -175,7 +161,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // The server definitively rejected this refresh token. Clear auth so
           // RequireAuth redirects to /login.
           setAccessToken(null)
-          localStorage.removeItem(REFRESH_TOKEN_KEY)
           setUser(null)
         }
         throw e
@@ -184,9 +169,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setRefreshCallback(null)
   }, [])
 
-  const setSession = useCallback((at: string, rt: string, u: User) => {
+  const setSession = useCallback((at: string, _rt: string | undefined, u: User) => {
     setAccessToken(at)
-    safeSetItem(REFRESH_TOKEN_KEY, rt)
     setUser(u)
     checkOnboarding()
   }, [checkOnboarding])
@@ -194,9 +178,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const resp = await api.auth.login(email, password)
     // Only set session if we got full tokens back (not TOTP/setup redirect)
-    if (resp.access_token && resp.refresh_token && resp.user) {
+    if (resp.access_token && resp.user) {
       setAccessToken(resp.access_token)
-      safeSetItem(REFRESH_TOKEN_KEY, resp.refresh_token)
       setUser(resp.user)
       checkOnboarding()
     }
@@ -208,10 +191,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) ?? undefined
-    await api.auth.logout(refreshToken).catch((e) => console.warn('useAuth: logout request failed', e))
+    await api.auth.logout().catch((e) => console.warn('useAuth: logout request failed', e))
     setAccessToken(null)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(CURRENT_ORG_KEY)
     setCurrentOrgId(null)
     setCurrentOrgState(null)

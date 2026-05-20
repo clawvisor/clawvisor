@@ -336,6 +336,7 @@ func newCIEnv(t *testing.T) *ciTestEnv {
 	cmd.Env = []string{
 		"HOME=" + tmpDir,
 		"CONFIG_FILE=" + configPath,
+		"CLAWVISOR_YAMLRUNTIME_ALLOW_PRIVATE_NETWORKS=1",
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + os.Getenv("TMPDIR"),
 	}

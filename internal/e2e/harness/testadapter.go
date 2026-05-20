@@ -85,6 +85,7 @@ func (a *TestEchoAdapter) Execute(ctx context.Context, req adapters.Request) (*a
 		if err != nil {
 			return nil, fmt.Errorf("fetch_url: build request: %w", err)
 		}
+		// codeql[go/request-forgery] E2E-only harness action for tests; not registered as a production adapter.
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("fetch_url: do: %w", err)

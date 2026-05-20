@@ -956,6 +956,7 @@ func runtimeToolMetadata(toolName string, toolInput map[string]any) map[string]a
 }
 
 func withRuleMetadata(metadata map[string]any, extras ...map[string]any) map[string]any {
+	// codeql[go/allocation-size-overflow] metadata is an already-materialized map with a small bounded set of runtime audit keys.
 	out := make(map[string]any, len(metadata)+4)
 	for k, v := range metadata {
 		out[k] = v

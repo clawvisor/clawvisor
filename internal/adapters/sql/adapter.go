@@ -24,10 +24,10 @@ import (
 )
 
 const (
-	serviceID     = "sql"
-	maxRows       = 500
-	maxColWidth   = 1000
-	queryTimeout  = 30 * time.Second
+	serviceID    = "sql"
+	maxRows      = 500
+	maxColWidth  = 1000
+	queryTimeout = 30 * time.Second
 )
 
 // credential is the JSON structure stored in the vault.
@@ -48,8 +48,8 @@ func (a *Adapter) SupportedActions() []string {
 	return []string{"query", "execute", "list_tables", "describe_table"}
 }
 
-func (a *Adapter) OAuthConfig() *oauth2.Config                        { return nil }
-func (a *Adapter) RequiredScopes() []string                           { return nil }
+func (a *Adapter) OAuthConfig() *oauth2.Config { return nil }
+func (a *Adapter) RequiredScopes() []string    { return nil }
 func (a *Adapter) CredentialFromToken(_ *oauth2.Token) ([]byte, error) {
 	return nil, fmt.Errorf("sql: no token exchange — uses connection string")
 }
@@ -229,6 +229,7 @@ func (a *Adapter) query(ctx context.Context, cred *credential, params map[string
 	}
 	defer tx.Rollback()
 
+	// codeql[go/sql-injection] Raw SQL execution is the SQL adapter's explicit product capability, gated by credentials and approvals.
 	rows, err := tx.QueryContext(ctx, sqlStr, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sql: query: %w", err)
@@ -265,6 +266,7 @@ func (a *Adapter) execute(ctx context.Context, cred *credential, params map[stri
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
+	// codeql[go/sql-injection] Raw SQL execution is the SQL adapter's explicit product capability, gated by credentials and approvals.
 	result, err := db.ExecContext(ctx, sqlStr, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sql: execute: %w", err)
@@ -371,6 +373,7 @@ func (a *Adapter) describeTable(ctx context.Context, cred *credential, params ma
 		query = fmt.Sprintf("PRAGMA table_info(%s)", table)
 	}
 
+	// codeql[go/sql-injection] Query text is fixed per driver; user table input is parameterized or validated as a simple SQLite identifier.
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sql: describe_table: %w", err)
@@ -563,9 +566,8 @@ func init() {
 
 // Ensure interface compliance at compile time.
 var (
-	_ adapters.Adapter                = (*Adapter)(nil)
-	_ adapters.MetadataProvider       = (*Adapter)(nil)
-	_ adapters.VerificationHinter     = (*Adapter)(nil)
+	_ adapters.Adapter                 = (*Adapter)(nil)
+	_ adapters.MetadataProvider        = (*Adapter)(nil)
+	_ adapters.VerificationHinter      = (*Adapter)(nil)
 	_ adapters.APIKeyCredentialBuilder = (*Adapter)(nil)
 )
-

@@ -184,6 +184,7 @@ func (a *YAMLAdapter) FetchIdentity(ctx context.Context, credBytes []byte, confi
 	if err != nil {
 		return "", fmt.Errorf("%s: identity request: %w", a.def.Service.ID, err)
 	}
+	// codeql[go/request-forgery] YAML runtime clients use yamlRuntimeHTTPClient, whose transport blocks private/internal IP ranges at dial time.
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%s: identity request: %w", a.def.Service.ID, err)
@@ -479,6 +480,8 @@ func (a *YAMLAdapter) buildOAuthClient(ctx context.Context, credBytes []byte, oa
 			token.Expiry = t
 		}
 	}
+	oauthClient := yamlRuntimeHTTPClient(nil)
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, oauthClient)
 	ts := oauthCfg.TokenSource(ctx, token)
 	return oauth2.NewClient(ctx, ts), nil
 }

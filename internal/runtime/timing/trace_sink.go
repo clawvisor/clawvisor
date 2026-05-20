@@ -119,6 +119,7 @@ func (s *FileSink) WriteBody(baseDir string, ts time.Time, requestID, kind strin
 	}
 	filename := requestID + "." + kind + ".body"
 	path := filepath.Join(dayDir, filename)
+	// codeql[go/path-injection] requestID is generated as a UUID and kind is a fixed internal body-capture label.
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return nil, fmt.Errorf("write body capture: %w", err)
 	}

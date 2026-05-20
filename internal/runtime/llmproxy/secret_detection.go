@@ -608,6 +608,7 @@ func redactFoundSecret(raw, service, source string, entropy float64, suppressed 
 }
 
 func SecretFingerprint(raw string) string {
+	// codeql[go/weak-sensitive-data-hashing] Internal secret deduplication fingerprint; not used for password storage or authentication.
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }

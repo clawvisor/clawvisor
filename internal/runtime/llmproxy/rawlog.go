@@ -170,6 +170,7 @@ func (l *RawIOLogger) addPromptPrefixFieldsLocked(payload map[string]any, ev Raw
 	if !ok || len(prefix) == 0 {
 		return
 	}
+	// codeql[go/weak-sensitive-data-hashing] Prompt-prefix digest is internal deduplication metadata, not password storage.
 	sum := sha256.Sum256(prefix)
 	digest := hex.EncodeToString(sum[:])
 	payload["prompt_prefix_sha256"] = digest
@@ -241,7 +242,8 @@ func appendRawPart(parts [][]byte, label string, raw json.RawMessage) [][]byte {
 	// here would require a `raw` payload near 2^63 bytes — physically
 	// impossible given those caps. The sum stays well within `int`
 	// range on every supported GOARCH.
-	part := make([]byte, 0, len(label)+1+len(raw)) // lgtm[go/allocation-size-overflow]
+	// codeql[go/allocation-size-overflow] label and raw are already-materialized byte slices.
+	part := make([]byte, 0, len(label)+1+len(raw))
 	part = append(part, label...)
 	part = append(part, ':')
 	part = append(part, raw...)

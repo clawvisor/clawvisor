@@ -45,15 +45,13 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[strin
 		if err != nil {
 			return nil, err
 		}
-		return &http.Client{
-			Transport: &headerTransport{
-				header:       authDef.Header,
-				headerPrefix: authDef.HeaderPrefix,
-				token:        token,
-				extraHeaders: authDef.ExtraHeaders,
-				base:         http.DefaultTransport,
-			},
-		}, nil
+		return yamlRuntimeHTTPClientWithTransport(&headerTransport{
+			header:       authDef.Header,
+			headerPrefix: authDef.HeaderPrefix,
+			token:        token,
+			extraHeaders: authDef.ExtraHeaders,
+			base:         yamlRuntimeSSRFTransport(http.DefaultTransport),
+		}), nil
 
 	case "basic":
 		token, err := extractToken(credBytes)
@@ -74,14 +72,12 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[strin
 			}
 			user, pass = parts[0], parts[1]
 		}
-		return &http.Client{
-			Transport: &basicAuthTransport{
-				user:         user,
-				pass:         pass,
-				extraHeaders: authDef.ExtraHeaders,
-				base:         http.DefaultTransport,
-			},
-		}, nil
+		return yamlRuntimeHTTPClientWithTransport(&basicAuthTransport{
+			user:         user,
+			pass:         pass,
+			extraHeaders: authDef.ExtraHeaders,
+			base:         yamlRuntimeSSRFTransport(http.DefaultTransport),
+		}), nil
 
 	case "oauth2":
 		// OAuth credentials are stored as JSON with access_token, refresh_token, etc.
@@ -95,23 +91,19 @@ func buildHTTPClient(authDef yamldef.AuthDef, credBytes []byte, config map[strin
 		if oauthCred.AccessToken == "" {
 			return nil, fmt.Errorf("oauth2 credential missing access_token")
 		}
-		return &http.Client{
-			Transport: &headerTransport{
-				header:       "Authorization",
-				headerPrefix: "Bearer ",
-				token:        oauthCred.AccessToken,
-				extraHeaders: authDef.ExtraHeaders,
-				base:         http.DefaultTransport,
-			},
-		}, nil
+		return yamlRuntimeHTTPClientWithTransport(&headerTransport{
+			header:       "Authorization",
+			headerPrefix: "Bearer ",
+			token:        oauthCred.AccessToken,
+			extraHeaders: authDef.ExtraHeaders,
+			base:         yamlRuntimeSSRFTransport(http.DefaultTransport),
+		}), nil
 
 	case "none":
-		return &http.Client{
-			Transport: &headerTransport{
-				extraHeaders: authDef.ExtraHeaders,
-				base:         http.DefaultTransport,
-			},
-		}, nil
+		return yamlRuntimeHTTPClientWithTransport(&headerTransport{
+			extraHeaders: authDef.ExtraHeaders,
+			base:         yamlRuntimeSSRFTransport(http.DefaultTransport),
+		}), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported auth type %q", authDef.Type)

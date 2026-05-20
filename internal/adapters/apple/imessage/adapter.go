@@ -391,6 +391,7 @@ func extractTarGz(r io.Reader, destDir string) error {
 
 	tr := tar.NewReader(gz)
 	for {
+		// codeql[go/zipslip] The extracted path is converted to an absolute path and checked to remain under destDir before writes.
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			return nil

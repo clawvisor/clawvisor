@@ -3,8 +3,6 @@ import { Navigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { api, setAccessToken } from '../api/client'
 
-const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
-
 export default function MagicLink() {
   const { isAuthenticated, isLoading } = useAuth()
   const [searchParams] = useSearchParams()
@@ -20,7 +18,6 @@ export default function MagicLink() {
     api.auth.magic(magicToken)
       .then((resp) => {
         setAccessToken(resp.access_token)
-        localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token)
         window.location.href = '/dashboard'
       })
       .catch((e) => {
