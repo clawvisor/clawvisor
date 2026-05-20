@@ -92,7 +92,19 @@ func IsReadOnlyBashCommand(cmd string) (bool, string) {
 
 func readonlyRedirect(r *syntax.Redirect) bool {
 	switch r.Op {
-	case syntax.RdrIn, syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc, syntax.DplIn:
+	case syntax.RdrIn:
+		if r.Word == nil {
+			return false
+		}
+		val, ok := staticWordValue(r.Word)
+		return ok && !isBashNetworkPseudoPath(val)
+	case syntax.DplIn:
+		if r.Word == nil {
+			return false
+		}
+		val, ok := staticWordValue(r.Word)
+		return ok && (val == "-" || allDigits(val))
+	case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
 		return true
 	case syntax.RdrOut, syntax.AppOut:
 		if r.Word != nil {
@@ -102,6 +114,22 @@ func readonlyRedirect(r *syntax.Redirect) bool {
 		}
 	}
 	return false
+}
+
+func isBashNetworkPseudoPath(path string) bool {
+	return strings.HasPrefix(path, "/dev/tcp/") || strings.HasPrefix(path, "/dev/udp/")
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 var readOnlyBashCommands = map[string]bool{
@@ -181,14 +209,7 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 			}
 		}
 	case "hostname":
-		for _, val := range values {
-			if val == "--" {
-				continue
-			}
-			if !strings.HasPrefix(val, "-") {
-				return false
-			}
-		}
+		return hostnameArgsReadOnly(values)
 	case "rg":
 		for _, val := range values {
 			if longFlag(val, "pre") || longFlag(val, "hostname-bin") {
@@ -224,6 +245,19 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 			}
 		}
 		if !sawInspect {
+			return false
+		}
+	}
+	return true
+}
+
+func hostnameArgsReadOnly(values []string) bool {
+	for _, val := range values {
+		switch val {
+		case "-s", "--short", "-a", "--alias", "-i", "--ip-address", "-I", "--all-ip-addresses",
+			"-d", "--domain", "-f", "--fqdn", "--long", "-A", "--all-fqdns", "-y", "--yp", "--nis":
+			continue
+		default:
 			return false
 		}
 	}
