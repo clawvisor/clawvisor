@@ -226,10 +226,10 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// Inline task approval interception. When the user is
 			// mid-flight on a "task" gesture (the original tool hold has
 			// been transitioned to StageAwaitingTaskDefinition) and the
-			// model now emits POST /control/tasks, we route the task body
+			// model now emits POST /api/control/tasks, we route the task body
 			// through the inline approval path instead of letting it
 			// proxy through to the dashboard. The model never sees the
-			// real /control/tasks handler — its tool_use_result is
+			// real /api/control/tasks handler — its tool_use_result is
 			// replaced with a rendered yes/no prompt; the user's next
 			// "yes" creates the task pre-approved and the
 			// follow-up turn auto-releases the original tool call.
@@ -241,7 +241,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 			// Mint a nonce bound to the rewritten control URL's
 			// (host, method, path) — the rewritten curl carries it in
 			// X-Clawvisor-Caller; the daemon's nonce middleware on
-			// /control/* one-shot consumes it. Without this, the
+			// /api/control/* one-shot consumes it. Without this, the
 			// rewriter would have to embed the agent's raw cvis_ token
 			// (which the nonce middleware rejects) in the model's
 			// conversation context.
@@ -297,7 +297,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				nonce, mintErr := cfg.CallerNonces.Mint(req.Context(), cfg.AgentID, NonceTarget{
 					Host:   ControlSyntheticHost,
 					Method: "POST",
-					Path:   "/control/failure",
+					Path:   "/api/control/failure",
 				})
 				if mintErr != nil {
 					audit("block", "caller_nonce_mint_failed", mintErr.Error())
@@ -318,7 +318,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					trace(TraceEventControlRewrite,
 						"host", ControlSyntheticHost,
 						"method", "POST",
-						"path", "/control/failure",
+						"path", "/api/control/failure",
 						"failure_reason", reason,
 						"nonce_prefix", nonce[:min(len(nonce), 14)],
 						"rewrite_bytes", len(rewritten),

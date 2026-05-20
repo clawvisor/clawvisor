@@ -17,9 +17,10 @@ func NewLLMControlHandler(baseURL string) *LLMControlHandler {
 func (h *LLMControlHandler) Capabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"control_host": "https://clawvisor.local",
-		"direct_url":   strings.TrimRight(h.BaseURL, "/") + "/control/skill",
+		"direct_url":   strings.TrimRight(h.BaseURL, "/") + "/api/control/skill",
 		"base_path":    "/control",
-		"note":         "clawvisor.local is synthetic and is handled inside proxy-lite tool calls. Use direct_url when fetching documentation from a shell.",
+		"direct_path":  "/api/control",
+		"note":         "clawvisor.local/control is synthetic and is handled inside proxy-lite tool calls. Use direct_url when fetching documentation outside a proxy-lite tool call.",
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/control/skill", "purpose": "Return schemas and examples for Clawvisor control-plane calls."},
 			{"method": "GET", "path": "/control/vault/items", "purpose": "List available vault item IDs that can be requested in a task."},
@@ -36,7 +37,7 @@ func (h *LLMControlHandler) Skill(w http.ResponseWriter, r *http.Request) {
 		"name":        "clawvisor-control",
 		"description": "Use this control plane to ask the user for permission before attempting tool work that may be blocked.",
 		"base_url":    "https://clawvisor.local",
-		"direct_docs": strings.TrimRight(h.BaseURL, "/") + "/control/skill",
+		"direct_docs": strings.TrimRight(h.BaseURL, "/") + "/api/control/skill",
 		"rules": []string{
 			"clawvisor.local is synthetic. Do not expect DNS lookup for the naked domain to work.",
 			"Use direct_docs for reading these schemas from a shell.",

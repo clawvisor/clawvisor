@@ -170,7 +170,7 @@ func TestRequireAgentLLMNonce_RejectsExpiredNonceBoundAgent(t *testing.T) {
 		t.Fatal("handler should not run for an expired nonce-bound agent")
 	}))
 
-	req := httptest.NewRequest(http.MethodPost, "/proxy/v1/user", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/proxy/user", nil)
 	req.Header.Set("X-Clawvisor-Caller", "Bearer "+nonce)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	rec := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestRequireAgentLLMNonce_AcceptsExplicitPortInTargetHostHeader(t *testing.T
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/v1/whoami", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/v1/whoami", nil)
 	req.Header.Set("X-Clawvisor-Caller", "Bearer "+nonce)
 	// Rewriter emits host:port verbatim from parsed.Host.
 	req.Header.Set("X-Clawvisor-Target-Host", "api.example.com:8443")

@@ -37,7 +37,7 @@ func anthropicBashControlTasksPost(body string) []byte {
 
 func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 	// No awaiting_task_definition hold → the model is doing async task
-	// creation (or just calling /control/tasks directly), which should
+	// creation (or just calling /api/control/tasks directly), which should
 	// hit the dashboard-backed rewrite path unchanged.
 	cache := NewMemoryPendingApprovalCache(time.Minute)
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -61,14 +61,14 @@ func TestPostprocess_AsyncControlTasksPostFallsThroughWhenNoHold(t *testing.T) {
 		t.Fatalf("expected control-tool rewrite to fire when no inline hold exists")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
+	if !strings.Contains(out, "http://localhost:25297/api/control/tasks") {
 		t.Fatalf("expected control URL rewrite; got %s", out)
 	}
 }
 
 // TestInlineTask_PostprocessIntoRelease drives both halves of the
 // state machine through real exported entry points: Postprocess
-// intercepts the model-emitted POST /control/tasks (via the
+// intercepts the model-emitted POST /api/control/tasks (via the
 // ?surface=inline query signal — the only production-reachable signal
 // today) and registers the inner hold; TryReleasePendingApproval
 // consumes the user's "approve" reply, drives the InlineTaskCreator,
@@ -80,7 +80,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
 
 	// Drive Postprocess on a model response that emits the bash-form
-	// POST /control/tasks WITH the surface=inline query — that's how a
+	// POST /api/control/tasks WITH the surface=inline query — that's how a
 	// compliant model signals an inline approval gesture in production.
 	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
@@ -305,7 +305,7 @@ func TestPostprocess_InlineTaskInvalidCredentialFallsThroughToToolError(t *testi
 	if strings.Contains(out, "Clawvisor wants to create a task") {
 		t.Fatalf("invalid inline task should not render an approval prompt: %s", out)
 	}
-	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
+	if !strings.Contains(out, "http://localhost:25297/api/control/tasks") {
 		t.Fatalf("invalid inline task should fall through to control rewrite so the tool receives the validation error: %s", out)
 	}
 
@@ -342,7 +342,7 @@ func TestPostprocess_InlineTaskBareNoSignalRoutesToDashboard(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected dashboard control-rewrite when no inline signal; got %s", got.Body)
 	}
-	if !strings.Contains(string(got.Body), "http://localhost:25297/control/tasks") {
+	if !strings.Contains(string(got.Body), "http://localhost:25297/api/control/tasks") {
 		t.Fatalf("expected control URL rewritten; got %s", got.Body)
 	}
 }

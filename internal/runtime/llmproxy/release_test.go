@@ -338,7 +338,7 @@ func TestTryReleasePendingApproval_BlocksUnknownServiceHosts(t *testing.T) {
 		PendingApproval: cache,
 		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		Store:           st,
-		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
 		CandidateTasks: []*store.Task{{
 			ID:            "task-agentphone",
@@ -386,7 +386,7 @@ func TestTryReleasePendingApproval_BlockedReleaseShowsReason(t *testing.T) {
 		PendingApproval: cache,
 		Inspector:       inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{}),
 		Store:           st,
-		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:     inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:    NewMemoryCallerNonceCache(time.Minute),
 	})
 	if !result.Handled || result.Decision != "deny" || result.Outcome != "approval_release_blocked" {

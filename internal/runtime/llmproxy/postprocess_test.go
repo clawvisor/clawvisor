@@ -79,7 +79,7 @@ func TestPostprocess_JSONNoTrigger(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -102,7 +102,7 @@ func TestPostprocess_AuditsNoTriggerToolUse(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -154,7 +154,7 @@ func TestPostprocess_SourceTriggerMissHonorsToolDenyRule(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -224,7 +224,7 @@ func TestPostprocess_ReadOnlyBashRequiresPolicyOrTaskScope(t *testing.T) {
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:        insp,
-				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 				Store:            st,
 				AgentUserID:      userID,
@@ -258,7 +258,7 @@ func TestPostprocess_WriteStdinPollBypassesTaskScope(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -294,7 +294,7 @@ func TestPostprocess_WriteStdinWithCharsStillRequiresApproval(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -337,7 +337,7 @@ func TestPostprocess_MutatingBashStillRequiresApproval(t *testing.T) {
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:        insp,
-				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 				Store:            st,
 				AgentUserID:      userID,
@@ -381,7 +381,7 @@ func TestPostprocess_ReadOnlyToolPolicyAllowlistBypassesTaskScope(t *testing.T) 
 
 			got := Postprocess(req, body, "application/json", PostprocessConfig{
 				Inspector:      insp,
-				RewriteOpts:    inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+				RewriteOpts:    inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 				CallerNonces:   NewMemoryCallerNonceCache(time.Minute),
 				Store:          st,
 				AgentUserID:    userID,
@@ -436,7 +436,7 @@ func TestPostprocess_BashWithoutTaskScopeStillRequiresApproval(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -466,7 +466,7 @@ func TestPostprocess_SourceTriggerMissRequiresApprovalWhenScopeMissing(t *testin
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -522,7 +522,7 @@ func TestPostprocess_ToolTaskIntentRefusalRequiresApproval(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -661,7 +661,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 		t.Fatalf("expected synthetic control URL rewrite")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "http://localhost:25297/control/tasks") {
+	if !strings.Contains(out, "http://localhost:25297/api/control/tasks") {
 		t.Fatalf("control URL was not rewritten: %s", out)
 	}
 	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
@@ -673,7 +673,7 @@ func TestPostprocess_RewritesSyntheticControlToolUseBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/control/tasks"}`)
+	body := anthropicJSONWithToolUse(`{"cmd":"curl -i -X POST -H 'Content-Type: application/json' -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cvis_test' --data '{\"purpose\":\"Create a sample permission task from the shell for control-plane verification.\",\"intent_verification_mode\":\"strict\",\"expires_in_seconds\":600,\"expected_tools\":[{\"tool_name\":\"bash\",\"why\":\"Run curl against the proxied Clawvisor control endpoints.\"}]}' https://control.example.test/api/control/tasks"}`)
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -704,7 +704,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 		t.Fatalf("expected configured control URL rewrite")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "https://control.example.test/control/tasks") {
+	if !strings.Contains(out, "https://control.example.test/api/control/tasks") {
 		t.Fatalf("control URL missing after rewrite: %s", out)
 	}
 	if !strings.Contains(out, "X-Clawvisor-Caller") {
@@ -716,7 +716,7 @@ func TestPostprocess_RewritesConfiguredControlURLBeforeRules(t *testing.T) {
 }
 
 func TestPostprocess_RewritesMultilineConfiguredControlURLBeforeRules(t *testing.T) {
-	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/control/tasks\"}")
+	body := anthropicJSONWithToolUse("{\"cmd\":\"curl -i -X POST \\\\\\n-H 'Content-Type: application/json' \\\\\\n--data '{\\\"purpose\\\":\\\"test\\\",\\\"expected_tools\\\":[{\\\"tool_name\\\":\\\"bash\\\",\\\"why\\\":\\\"test\\\"}]}' \\\\\\nhttps://control.example.test/api/control/tasks\"}")
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
 	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
@@ -791,7 +791,7 @@ func TestPostprocess_RewritesHeredocSyntheticControlURLBeforeRules(t *testing.T)
 	if strings.Contains(out, "bash blocked") {
 		t.Fatalf("heredoc synthetic control endpoint should bypass tool rules: %s", out)
 	}
-	if !strings.Contains(out, "'https://control.example.test/control/tasks?wait=true\\u0026timeout=120'") ||
+	if !strings.Contains(out, "'https://control.example.test/api/control/tasks?wait=true\\u0026timeout=120'") ||
 		!strings.Contains(out, "X-Clawvisor-Target-Host") ||
 		!strings.Contains(out, "X-Clawvisor-Caller") ||
 		!strings.Contains(out, `\u003c\u003c'JSON'`) {
@@ -827,7 +827,7 @@ func TestPostprocess_MalformedSyntheticControlCommandRewritesToToolFailure(t *te
 		t.Fatalf("expected malformed control command failure rewrite")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "/control/failure") {
+	if !strings.Contains(out, "/api/control/failure") {
 		t.Fatalf("expected control failure endpoint rewrite, got: %s", out)
 	}
 	if !strings.Contains(out, "original_command") || !strings.Contains(out, "python3") {
@@ -863,7 +863,7 @@ func TestPostprocess_HoldsMultipleApprovalPromptsInOneResponse(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:        insp,
-		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:      inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
 		Store:            st,
 		AgentUserID:      userID,
@@ -909,7 +909,7 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -933,7 +933,7 @@ func TestPostprocess_ObservePostureDoesNotBlockToolDenyRule(t *testing.T) {
 	if strings.Contains(string(got.Body), "web fetch blocked") {
 		t.Fatalf("observe mode should not block with rule reason: %s", got.Body)
 	}
-	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(string(got.Body), "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("observe mode should allow rewrite through proxy: %s", got.Body)
 	}
 }
@@ -947,7 +947,7 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -977,7 +977,7 @@ func TestPostprocess_JSONRewritesAutovaultURL(t *testing.T) {
 		if err := json.Unmarshal(c.Input, &inputObj); err != nil {
 			t.Fatalf("rewritten input not parseable: %v", err)
 		}
-		if !strings.HasPrefix(inputObj.URL, "https://proxy.example/proxy/v1/repos/x/y/issues") {
+		if !strings.HasPrefix(inputObj.URL, "https://proxy.example/api/proxy/repos/x/y/issues") {
 			t.Fatalf("URL not rewritten to resolver: %q", inputObj.URL)
 		}
 		if inputObj.Headers["X-Clawvisor-Target-Host"] != "api.github.com" {
@@ -1027,7 +1027,7 @@ data: {"type":"message_stop"}
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1038,7 +1038,7 @@ data: {"type":"message_stop"}
 		t.Fatalf("expected SSE rewrite to fire on autovault placeholder")
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(out, "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten SSE missing resolver URL:\n%s", out)
 	}
 	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
@@ -1069,7 +1069,7 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1079,7 +1079,7 @@ func TestPostprocess_OpenAIResponsesJSONRewrite(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected rewrite for OpenAI Responses JSON, got skipped=%q", got.SkippedReason)
 	}
-	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(string(got.Body), "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten URL missing:\n%s", got.Body)
 	}
 	if !strings.Contains(string(got.Body), "X-Clawvisor-Target-Host") {
@@ -1114,7 +1114,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1125,7 +1125,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 		t.Fatalf("expected SSE rewrite for OpenAI Responses, got skipped=%q", got.SkippedReason)
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(out, "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten URL missing:\n%s", out)
 	}
 	if !strings.Contains(out, "response.output_item.done") || !strings.Contains(out, "response.completed") {
@@ -1156,7 +1156,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1223,7 +1223,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1233,7 +1233,7 @@ func TestPostprocess_OpenAIChatJSONRewrite(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected rewrite for OpenAI Chat JSON, got skipped=%q", got.SkippedReason)
 	}
-	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(string(got.Body), "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten URL missing:\n%s", got.Body)
 	}
 }
@@ -1255,7 +1255,7 @@ data: [DONE]
 
 	got := Postprocess(req, body, "text/event-stream", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,
@@ -1266,7 +1266,7 @@ data: [DONE]
 		t.Fatalf("expected SSE rewrite for OpenAI Chat, got skipped=%q", got.SkippedReason)
 	}
 	out := string(got.Body)
-	if !strings.Contains(out, "https://proxy.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(out, "https://proxy.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten URL missing:\n%s", out)
 	}
 	if !strings.Contains(out, `"finish_reason":"tool_calls"`) {
@@ -1289,7 +1289,7 @@ func TestPostprocess_AmbiguousFailsClosed(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:    insp,
-		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts:  inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:        st,
 		AgentUserID:  userID,

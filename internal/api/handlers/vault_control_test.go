@@ -39,7 +39,7 @@ func TestVaultControlItemsReturnsCompactAgentList(t *testing.T) {
 	}
 
 	h := NewVaultHandler(st, v, adapters.NewRegistry())
-	req := httptest.NewRequest(http.MethodGet, "/control/vault/items", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/control/vault/items", nil)
 	req = req.WithContext(store.WithAgent(req.Context(), agent))
 	rec := httptest.NewRecorder()
 
@@ -146,7 +146,7 @@ func TestVaultControlItemDetailReturnsCompactMetadata(t *testing.T) {
 	}
 
 	h := NewVaultHandler(st, v, adapters.NewRegistry())
-	req := httptest.NewRequest(http.MethodGet, "/control/vault/items/agentphone", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/control/vault/items/agentphone", nil)
 	req.SetPathValue("id", "agentphone")
 	req = req.WithContext(store.WithAgent(req.Context(), agent))
 	rec := httptest.NewRecorder()

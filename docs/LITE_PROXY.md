@@ -56,15 +56,20 @@ The proxy is gated by `proxy_lite.enabled`. When on, the daemon exposes:
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/messages` | Anthropic Messages API (Claude Code, Anthropic SDK). |
-| `POST /v1/messages/count_tokens` | Anthropic token counter. |
-| `POST /v1/chat/completions` | OpenAI Chat Completions (Codex, OpenAI SDK). |
-| `POST /v1/responses` | OpenAI Responses API. |
-| `POST /proxy/v1/…` | The resolver — agents call here when their tool_use uses a vault placeholder. The daemon swaps it in and forwards to the real target host. |
-| `GET /control/skill` | Documents the control plane to the agent. |
-| `POST /control/tasks` | Task creation. Agents POST here to request scope before doing non-trivial work. |
-| `GET /control/tasks/{id}` | Status lookup. |
-| `POST /control/tasks/{id}/expand` | Add scope to an existing task. |
+| `POST /api/v1/messages` | Anthropic Messages API (Claude Code, Anthropic SDK). |
+| `POST /api/v1/messages/count_tokens` | Anthropic token counter. |
+| `POST /api/v1/chat/completions` | OpenAI Chat Completions (Codex, OpenAI SDK). |
+| `POST /api/v1/responses` | OpenAI Responses API. |
+| `POST /api/proxy/…` | The resolver — agents call here when their tool_use uses a vault placeholder. The daemon swaps it in and forwards to the real target host. |
+| `GET /api/control/skill` | Documents the control plane to the agent. |
+| `POST /api/control/tasks` | Task creation. Agents POST here to request scope before doing non-trivial work. |
+| `GET /api/control/tasks/{id}` | Status lookup. |
+| `POST /api/control/tasks/{id}/expand` | Add scope to an existing task. |
+
+Agents should be prompted to use the shorter synthetic URL
+`https://clawvisor.local/control/...`. Proxy-lite rewrites that model-facing
+path to the real daemon route under `/api/control/...`; harnesses and direct
+HTTP clients should use the real `/api/control` routes.
 
 ### Split hosted deployments
 
@@ -72,13 +77,13 @@ Hosted environments can run the dashboard/API and lite-proxy as separate
 services from the same binary by setting `server.route_set`:
 
 ```yaml
-# Main app: dashboard + user APIs, but no public /v1, /proxy/v1, or /control surface.
+# Main app: dashboard + user APIs, but no public /api/v1, /api/proxy, or /api/control surface.
 server:
   route_set: app
 proxy_lite:
   enabled: true
 
-# Dedicated proxy service: health + /v1, /proxy/v1, and /control only.
+# Dedicated proxy service: health + /api/v1, /api/proxy, and /api/control only.
 server:
   route_set: proxy_lite
 proxy_lite:
@@ -137,8 +142,8 @@ The wrappers inject the right environment variables for each harness:
 
 | Variable | Claude Code | Codex |
 |---|---|---|
-| Endpoint | `ANTHROPIC_BASE_URL=<daemon>` | `OPENAI_BASE_URL=<daemon>/v1` |
-| Auth | `ANTHROPIC_AUTH_TOKEN=<cvis_…>` | `OPENAI_API_KEY=<cvis_…>` |
+| Endpoint | `ANTHROPIC_BASE_URL=<daemon>/api` | `OPENAI_BASE_URL=<daemon>/api/v1` |
+| Auth | `ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: <cvis_…>"` | `X-Clawvisor-Agent-Token: <cvis_…>` via Codex provider config |
 | Mask | `ANTHROPIC_API_KEY=` (empty) | Codex `-c model_provider=clawvisor` injected |
 
 If you need the raw exports for a custom invocation:
@@ -169,13 +174,13 @@ What happens at runtime:
 5. If all checks pass, the tool_use is **rewritten** before the harness sees it. The harness runs:
 
    ```bash
-   curl -sS https://daemon.example/proxy/v1/user \
+   curl -sS https://daemon.example/api/proxy/user \
      -H "Authorization: Bearer autovault_github_xyz123" \
      -H "X-Clawvisor-Target-Host: api.github.com" \
      -H "X-Clawvisor-Caller: Bearer cv-nonce-…"
    ```
 
-6. The resolver at `/proxy/v1/…` looks up the placeholder, fetches the real PAT from the vault, swaps the `Authorization` header value, and proxies the call to `api.github.com`. The harness gets the GitHub response.
+6. The resolver at `/api/proxy/…` looks up the placeholder, fetches the real PAT from the vault, swaps the `Authorization` header value, and proxies the call to `api.github.com`. The harness gets the GitHub response.
 
 The agent never sees the real PAT. The user pastes the placeholder once; Clawvisor handles substitution per call.
 
@@ -271,9 +276,9 @@ The dashboard approval surface lives in parallel. Async agents and multi-agent c
 
 Every inspected tool_use produces audit rows:
 
-- `lite_proxy.endpoint_call` — one per `/v1/*` request, with provider / model / streaming flag / available tools.
+- `lite_proxy.endpoint_call` — one per `/api/v1/*` request, with provider / model / streaming flag / available tools.
 - `lite_proxy.tool_use_inspected` — one per tool_use that the inspector saw. Records: tool name, decision (`allow` / `block` / `rewrite`), outcome, reason, host/method/path, placeholder (when applicable).
-- `lite_proxy.resolver_swap` — one per `/proxy/v1/…` resolver call, with the placeholder, bound service, target host/path.
+- `lite_proxy.resolver_swap` — one per `/api/proxy/…` resolver call, with the placeholder, bound service, target host/path.
 
 Credential patterns (`ghp_…`, `sk-ant-…`, `Bearer …`, etc.) are redacted before audit values are stored. Placeholders are kept verbatim — they're references, not secrets.
 

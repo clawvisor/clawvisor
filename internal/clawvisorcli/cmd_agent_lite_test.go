@@ -28,7 +28,7 @@ func TestBuildLiteProxyEnvClaude(t *testing.T) {
 	if got := values["CLAWVISOR_PROXY_LITE_PROVIDER"]; got != "claude" {
 		t.Fatalf("CLAWVISOR_PROXY_LITE_PROVIDER = %q", got)
 	}
-	if got := values["ANTHROPIC_BASE_URL"]; got != "https://clawvisor.example" {
+	if got := values["ANTHROPIC_BASE_URL"]; got != "https://clawvisor.example/api" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
 	}
 	if got := values["ANTHROPIC_CUSTOM_HEADERS"]; got != "X-Clawvisor-Agent-Token: cvis_token" {
@@ -60,7 +60,7 @@ func TestBuildLiteProxyEnvCodex(t *testing.T) {
 	}
 	values := envMap(env)
 
-	if got := values["OPENAI_BASE_URL"]; got != "https://clawvisor.example/v1" {
+	if got := values["OPENAI_BASE_URL"]; got != "https://clawvisor.example/api/v1" {
 		t.Fatalf("OPENAI_BASE_URL = %q", got)
 	}
 	if _, ok := values["OPENAI_API_KEY"]; ok {
@@ -71,12 +71,22 @@ func TestBuildLiteProxyEnvCodex(t *testing.T) {
 	}
 }
 
-func TestBuildLiteProxyEnvCodexAvoidsDuplicateV1(t *testing.T) {
+func TestBuildLiteProxyEnvCodexAvoidsDuplicateAPI(t *testing.T) {
+	env, err := buildLiteProxyEnv("codex", "https://clawvisor.example/api/v1/", "cvis_token")
+	if err != nil {
+		t.Fatalf("buildLiteProxyEnv: %v", err)
+	}
+	if got := envMap(env)["OPENAI_BASE_URL"]; got != "https://clawvisor.example/api/v1" {
+		t.Fatalf("OPENAI_BASE_URL = %q", got)
+	}
+}
+
+func TestBuildLiteProxyEnvCodexRewritesLegacyV1Base(t *testing.T) {
 	env, err := buildLiteProxyEnv("codex", "https://clawvisor.example/v1/", "cvis_token")
 	if err != nil {
 		t.Fatalf("buildLiteProxyEnv: %v", err)
 	}
-	if got := envMap(env)["OPENAI_BASE_URL"]; got != "https://clawvisor.example/v1" {
+	if got := envMap(env)["OPENAI_BASE_URL"]; got != "https://clawvisor.example/api/v1" {
 		t.Fatalf("OPENAI_BASE_URL = %q", got)
 	}
 }
@@ -161,7 +171,7 @@ func TestPrepareLiteProxyCommandArgsInjectsCodexConfig(t *testing.T) {
 		"codex",
 		"-c", "model_provider=clawvisor",
 		"-c", `model_providers.clawvisor.name="clawvisor"`,
-		"-c", `model_providers.clawvisor.base_url="https://clawvisor.example/v1"`,
+		"-c", `model_providers.clawvisor.base_url="https://clawvisor.example/api/v1"`,
 		"-c", `model_providers.clawvisor.wire_api="responses"`,
 		"-c", `model_providers.clawvisor.requires_openai_auth=true`,
 		"-c", `model_providers.clawvisor.env_http_headers={"X-Clawvisor-Agent-Token"="CLAWVISOR_AGENT_TOKEN"}`,

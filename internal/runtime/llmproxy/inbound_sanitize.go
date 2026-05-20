@@ -17,7 +17,7 @@ import (
 type SanitizeInboundRequest struct {
 	Provider        conversation.Provider
 	Body            []byte
-	ResolverBaseURL string // e.g. "http://localhost:25297/proxy/v1"
+	ResolverBaseURL string // e.g. "http://localhost:25297/api/proxy"
 	ControlBaseURL  string // e.g. "http://localhost:25297"
 }
 
@@ -31,8 +31,8 @@ type SanitizeInboundResult struct {
 
 const ClawvisorManagedMarker = "[clawvisor-managed]"
 
-// SanitizeInboundHistory walks an inbound /v1/messages or
-// /v1/chat/completions request body and reverts proxy-rewritten
+// SanitizeInboundHistory walks an inbound /api/v1/messages or
+// /api/v1/chat/completions request body and reverts proxy-rewritten
 // transport details inside assistant tool_use blocks back to the
 // synthetic form. Specifically, in every Bash-shaped tool_use we:
 //
@@ -41,14 +41,14 @@ const ClawvisorManagedMarker = "[clawvisor-managed]"
 //   - Convert `<daemon-resolver-base>/<path>` URLs back to
 //     `https://<target-host>/<path>` (target host extracted from the
 //     X-Clawvisor-Target-Host header before it was dropped).
-//   - Convert `<daemon-control-base>/control/…` URLs back to the
+//   - Convert `<daemon-control-base>/api/control/…` URLs back to the
 //     synthetic `https://clawvisor.local/control/…` form.
 //   - Replace any remaining literal `cv-nonce-…` substrings with a
 //     non-secret marker so the model can't pattern-match from them.
 //
 // Models pattern-match aggressively from their own conversation
 // history. Without this sanitization, after one rewrite turn the
-// model sees `curl … http://localhost:25297/proxy/v1/user
+// model sees `curl … http://localhost:25297/api/proxy/user
 // -H 'X-Clawvisor-Caller: Bearer cv-nonce-…' …` and starts emitting
 // that shape directly on subsequent turns — bypassing the rewrite
 // path and reusing stale nonces.
@@ -399,8 +399,8 @@ func sanitizeBashCommand(cmd string, req SanitizeInboundRequest) (string, bool) 
 	cmd = reCallerHeader.ReplaceAllString(cmd, "")
 
 	// Revert URLs. The resolver rewrite is `<resolver>/<path>` where
-	// resolver is something like `http://localhost:25297/proxy/v1`.
-	// The control rewrite is `<daemon>/control/<path>`.
+	// resolver is something like `http://localhost:25297/api/proxy`.
+	// The control rewrite is `<daemon>/api/control/<path>`.
 	resolverBase := strings.TrimRight(req.ResolverBaseURL, "/")
 	controlBase := strings.TrimRight(req.ControlBaseURL, "/")
 	if resolverBase != "" {
@@ -454,10 +454,10 @@ func revertResolverURLs(cmd, resolverBase, targetHost string) string {
 }
 
 func revertControlURLs(cmd, controlBase string) string {
-	// Replace `<controlBase>/control/…` and `<controlBase>/proxy/v1`
+	// Replace `<controlBase>/api/control/…` and `<controlBase>/api/proxy`
 	// has already been handled by revertResolverURLs. Here we only
 	// reach this when the rewriter targeted the control plane.
-	target := controlBase + "/control/"
+	target := controlBase + "/api/control/"
 	for {
 		idx := strings.Index(cmd, target)
 		if idx < 0 {

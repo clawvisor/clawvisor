@@ -210,10 +210,10 @@ func TestLLMEndpoint_PassthroughAnthropic(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
-	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+	mux.Handle("POST /api/v1/messages", mw(http.HandlerFunc(h.Messages)))
 
 	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(body)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -303,7 +303,7 @@ func TestLLMEndpoint_InjectsControlNoticeWhenToolsAvailable(t *testing.T) {
 	}
 	// Negative: the daemon URL must not appear in the notice — it's a
 	// regression bug if it does.
-	if strings.Contains(string(seenBody), "http://localhost:25297/control/skill") {
+	if strings.Contains(string(seenBody), "http://localhost:25297/api/control/skill") {
 		t.Fatalf("control notice must not advertise the daemon URL: %s", seenBody)
 	}
 }
@@ -1391,7 +1391,7 @@ func TestLLMEndpoint_InspectorRewritesAutovaultToolUse(t *testing.T) {
 
 	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	h.ResolverBaseURL = "https://clawvisor.example/proxy/v1"
+	h.ResolverBaseURL = "https://clawvisor.example/api/proxy"
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -1428,7 +1428,7 @@ func TestLLMEndpoint_InspectorRewritesAutovaultToolUse(t *testing.T) {
 		if err := json.Unmarshal(c.Input, &inputObj); err != nil {
 			t.Fatalf("rewritten input not parseable: %v", err)
 		}
-		if !strings.HasPrefix(inputObj.URL, "https://clawvisor.example/proxy/v1/repos/x/y/issues") {
+		if !strings.HasPrefix(inputObj.URL, "https://clawvisor.example/api/proxy/repos/x/y/issues") {
 			t.Fatalf("URL not rewritten to resolver: %q", inputObj.URL)
 		}
 		if inputObj.Headers["X-Clawvisor-Target-Host"] != "api.github.com" {
@@ -1468,7 +1468,7 @@ data: {"type":"message_stop"}
 
 	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	h.ResolverBaseURL = "https://clawvisor.example/proxy/v1"
+	h.ResolverBaseURL = "https://clawvisor.example/api/proxy"
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLM(st)
@@ -1484,7 +1484,7 @@ data: {"type":"message_stop"}
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	out := rec.Body.String()
-	if !strings.Contains(out, "https://clawvisor.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(out, "https://clawvisor.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("SSE response missing rewritten URL:\n%s", out)
 	}
 	if !strings.Contains(out, "X-Clawvisor-Target-Host") {
@@ -1513,7 +1513,7 @@ func TestLLMEndpoint_InlineApprovalReleasesHeldToolUse(t *testing.T) {
 
 	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
 	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
-	h.ResolverBaseURL = "https://clawvisor.example/proxy/v1"
+	h.ResolverBaseURL = "https://clawvisor.example/api/proxy"
 	h.AuditEmitter = llmproxy.NewAuditEmitter(st, slog.Default(), nil)
 	agent, err := st.GetAgentByToken(ctx, auth.HashToken(rawToken))
 	if err != nil {

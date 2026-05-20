@@ -142,8 +142,8 @@ func (h *ProxyResolverHandler) safeDialContext(ctx context.Context, network, add
 	return nil, firstErr
 }
 
-// Forward handles ANY method on /proxy/v1/<path>. Path mapping: the request
-// path after `/proxy/v1/` becomes the upstream path verbatim.
+// Forward handles ANY method on /api/proxy/<path>. Path mapping: the request
+// path after `/api/proxy/` becomes the upstream path verbatim.
 func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	requestID := r.Header.Get("X-Request-Id")
@@ -207,9 +207,9 @@ func (h *ProxyResolverHandler) Forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the upstream URL. The path after `/proxy/v1/` is the upstream
+	// Build the upstream URL. The path after `/api/proxy/` is the upstream
 	// request path; query string is preserved.
-	upstreamPath := strings.TrimPrefix(r.URL.Path, "/proxy/v1")
+	upstreamPath := strings.TrimPrefix(r.URL.Path, "/api/proxy")
 	if upstreamPath == "" {
 		upstreamPath = "/"
 	}

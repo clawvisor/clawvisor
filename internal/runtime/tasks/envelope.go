@@ -40,7 +40,7 @@ type Envelope struct {
 	SchemaVersion          int
 }
 
-// TaskCreateRequest is the parsed body of `POST /control/tasks` (or
+// TaskCreateRequest is the parsed body of `POST /api/control/tasks` (or
 // equivalently `POST /api/tasks`). The full validating handler lives in
 // internal/api/handlers; this lighter shape is used by the lite-proxy's
 // inline task-approval flow to inspect a model-emitted task definition

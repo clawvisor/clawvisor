@@ -102,8 +102,8 @@ func TestControlPartsFromCommandInput_ResolvesDataAtPath(t *testing.T) {
 	if method != "POST" {
 		t.Errorf("method=%q, want POST", method)
 	}
-	if u == nil || !strings.HasSuffix(u.Path, "/control/tasks") {
-		t.Errorf("URL = %v, want .../control/tasks", u)
+	if u == nil || !strings.HasSuffix(u.Path, "/api/control/tasks") {
+		t.Errorf("URL = %v, want .../api/control/tasks", u)
 	}
 	if !strings.Contains(string(body), `"purpose":"Build a landing page"`) {
 		t.Errorf("body should have resolved @file → heredoc content; got %s", body)
@@ -130,7 +130,7 @@ func TestRewriteControlToolUse_RewritesMultiStmtCatHeredocPlusCurl(t *testing.T)
 	if !strings.Contains(out, "cat \\u003c\\u003c") {
 		t.Errorf("rewrite dropped the cat heredoc: %s", out)
 	}
-	if !strings.Contains(out, `https://control.example/control/tasks`) {
+	if !strings.Contains(out, `https://control.example/api/control/tasks`) {
 		t.Errorf("rewrite missing control URL: %s", out)
 	}
 	if !strings.Contains(out, `X-Clawvisor-Caller`) {

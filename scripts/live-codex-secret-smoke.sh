@@ -18,7 +18,7 @@ OUT_DIR="${CLAWVISOR_SMOKE_OUT_DIR:-$ROOT/.context/live-codex-secret-smoke-$(dat
 WORK_DIR="${CLAWVISOR_SMOKE_WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/clawvisor-codex-smoke.XXXXXX")}"
 CLAWVISOR_URL="${CLAWVISOR_URL:-http://127.0.0.1:25297}"
 CLAWVISOR_URL="${CLAWVISOR_URL%/}"
-OPENAI_BASE_URL="${CLAWVISOR_OPENAI_BASE_URL:-$CLAWVISOR_URL/v1}"
+OPENAI_BASE_URL="${CLAWVISOR_OPENAI_BASE_URL:-$CLAWVISOR_URL/api/v1}"
 AGENT_TOKEN="${CLAWVISOR_AGENT_TOKEN:-}"
 AGENT_ID="${CLAWVISOR_SMOKE_AGENT_ID:-}"
 MODEL_ARGS=()
@@ -63,7 +63,7 @@ PY
   registered_url="$(printf '%s\n' "$resolved" | sed -n '3p')"
   if [[ "${CLAWVISOR_URL:-}" == "http://127.0.0.1:25297" && -n "$registered_url" ]]; then
     CLAWVISOR_URL="${registered_url%/}"
-    OPENAI_BASE_URL="${CLAWVISOR_OPENAI_BASE_URL:-$CLAWVISOR_URL/v1}"
+    OPENAI_BASE_URL="${CLAWVISOR_OPENAI_BASE_URL:-$CLAWVISOR_URL/api/v1}"
   fi
 fi
 

@@ -206,7 +206,7 @@ func buildLiteProxyEnv(provider, baseURL, agentToken string) ([]string, error) {
 	switch provider {
 	case liteProxyProviderClaude:
 		env = append(env,
-			"ANTHROPIC_BASE_URL="+baseURL,
+			"ANTHROPIC_BASE_URL="+liteProxyAPIBaseURL(baseURL),
 			"ANTHROPIC_CUSTOM_HEADERS="+liteProxyClaudeAgentTokenHeader+": "+agentToken,
 			"ANTHROPIC_AUTH_TOKEN=",
 			"ANTHROPIC_API_KEY=",
@@ -224,11 +224,21 @@ func normalizeLiteProxyServerURL(baseURL string) string {
 }
 
 func liteProxyOpenAIBaseURL(baseURL string) string {
+	return liteProxyAPIBaseURL(baseURL) + "/v1"
+}
+
+func liteProxyAPIBaseURL(baseURL string) string {
 	baseURL = normalizeLiteProxyServerURL(baseURL)
-	if strings.HasSuffix(baseURL, "/v1") {
+	if strings.HasSuffix(baseURL, "/api/v1") {
+		return strings.TrimSuffix(baseURL, "/v1")
+	}
+	if strings.HasSuffix(baseURL, "/api") {
 		return baseURL
 	}
-	return baseURL + "/v1"
+	if strings.HasSuffix(baseURL, "/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	return baseURL + "/api"
 }
 
 func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
@@ -258,7 +268,7 @@ func runLiteProxyCommand(opts *liteProxyOptions, commandArgs []string) error {
 // ensureLiteProxyEnabled preflight-checks that the daemon at baseURL
 // has `proxy_lite.enabled: true` in its config. Without this, the
 // harness would launch, dial the daemon, and get 404s on
-// `/v1/messages` — surfacing as a confusing "model unavailable"
+// `/api/v1/messages` — surfacing as a confusing "model unavailable"
 // error inside the harness's UI. The preflight is a single GET
 // against the unauthenticated `/api/features` endpoint with a tight
 // timeout; transient errors (connection refused, DNS lookup failure)
@@ -286,7 +296,7 @@ func ensureLiteProxyEnabled(baseURL string) error {
 	if resp.StatusCode != http.StatusOK {
 		// Older daemons may not expose /api/features. Don't refuse to
 		// run — fall through and let the harness see whatever the
-		// daemon actually responds with on /v1/*.
+		// daemon actually responds with on /api/v1/*.
 		return nil
 	}
 	var fs struct {

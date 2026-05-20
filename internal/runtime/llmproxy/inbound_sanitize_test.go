@@ -19,7 +19,7 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 			{"role": "assistant", "content": [
 				{"type": "text", "text": "ok"},
 				{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {
-					"command": "curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc123' http://localhost:25297/proxy/v1/user"
+					"command": "curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc123' http://localhost:25297/api/proxy/user"
 				}}
 			]}
 		]
@@ -27,7 +27,7 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if err != nil {
@@ -53,7 +53,7 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 		"X-Clawvisor-Caller",
 		"X-Clawvisor-Target-Host",
 		"http://localhost:25297",
-		"/proxy/v1/user",
+		"/api/proxy/user",
 	} {
 		if strings.Contains(out, banned) {
 			t.Errorf("post-rewrite leak: %q still present in sanitized body: %s", banned, out)
@@ -62,20 +62,20 @@ func TestSanitizeInboundHistory_AnthropicRevertsRewrittenCurl(t *testing.T) {
 }
 
 // Control-plane rewrites have a different shape: the rewriter targets
-// /control/... and uses clawvisor.local as the target host. The
+// /api/control/... and uses clawvisor.local as the target host. The
 // reversion goes to the synthetic clawvisor.local URL.
 func TestSanitizeInboundHistory_AnthropicRevertsControlCurl(t *testing.T) {
 	body := []byte(`{
 		"messages": [{"role": "assistant", "content": [
 			{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {
-				"command": "curl -sS -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cv-nonce-xyz' http://localhost:25297/control/tasks --data '{}'"
+				"command": "curl -sS -X POST -H 'X-Clawvisor-Target-Host: clawvisor.local' -H 'X-Clawvisor-Caller: Bearer cv-nonce-xyz' http://localhost:25297/api/control/tasks --data '{}'"
 			}}
 		]}]
 	}`)
 	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestSanitizeInboundHistory_NoOpWhenNothingToStrip(t *testing.T) {
 	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if err != nil {
@@ -126,7 +126,7 @@ func TestSanitizeInboundHistory_LeavesUserMessagesAlone(t *testing.T) {
 	res, _ := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	// The pre-filter sees "cv-nonce-" and engages, but the walk only
@@ -147,14 +147,14 @@ func TestSanitizeInboundHistory_OpenAIChatRevertsArguments(t *testing.T) {
 		"messages": [{"role":"assistant","tool_calls":[
 			{"id":"call_1","type":"function","function":{
 				"name":"Bash",
-				"arguments":"{\"command\":\"curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc' http://localhost:25297/proxy/v1/user\"}"
+				"arguments":"{\"command\":\"curl -sS -H 'Authorization: Bearer autovault_github_xxx' -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-abc' http://localhost:25297/api/proxy/user\"}"
 			}}
 		]}]
 	}`)
 	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderOpenAI,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if err != nil {
@@ -181,14 +181,14 @@ func TestSanitizeInboundHistory_OpenAINonAssistantToolCallsUnchanged(t *testing.
 		"messages": [{"role":"tool","tool_call_id":"call_1","tool_calls":[
 			{"id":"call_1","type":"function","function":{
 				"name":"Bash",
-				"arguments":"{\"command\":\"curl -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale' http://localhost:25297/proxy/v1/x\"}"
+				"arguments":"{\"command\":\"curl -H 'X-Clawvisor-Caller: Bearer cv-nonce-stale' http://localhost:25297/api/proxy/x\"}"
 			}}
 		]}]
 	}`)
 	res, err := SanitizeInboundHistory(SanitizeInboundRequest{
 		Provider:        conversation.ProviderOpenAI,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if err != nil {
@@ -211,14 +211,14 @@ func TestSanitizeInboundHistory_IsIdempotent(t *testing.T) {
 	body := []byte(`{
 		"messages": [{"role":"assistant","content":[
 			{"type":"tool_use","id":"toolu_1","name":"Bash","input":{
-				"command":"curl -sS -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-1' http://localhost:25297/proxy/v1/user"
+				"command":"curl -sS -H 'X-Clawvisor-Target-Host: api.github.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-1' http://localhost:25297/api/proxy/user"
 			}}
 		]}]
 	}`)
 	req := SanitizeInboundRequest{
 		Provider:        conversation.ProviderAnthropic,
 		Body:            body,
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	}
 	first, _ := SanitizeInboundHistory(req)
@@ -237,7 +237,7 @@ func TestSanitizeInboundHistory_IsIdempotent(t *testing.T) {
 // description) must have it redacted to a placeholder marker.
 func TestSanitizeBashCommand_RedactsLooseNonces(t *testing.T) {
 	got, mut := sanitizeBashCommand("echo 'cv-nonce-leaked-into-comment'", SanitizeInboundRequest{
-		ResolverBaseURL: "http://localhost:25297/proxy/v1",
+		ResolverBaseURL: "http://localhost:25297/api/proxy",
 		ControlBaseURL:  "http://localhost:25297",
 	})
 	if !mut {

@@ -20,7 +20,9 @@ func TestProxyLiteRouteSetExposesOnlyProxySurface(t *testing.T) {
 	env := newRouteSetEnv(t, "proxy_lite")
 
 	assertStatus(t, env.ts.Client(), env.ts.URL+"/health", http.StatusOK)
-	assertStatus(t, env.ts.Client(), env.ts.URL+"/control", http.StatusOK)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/control", http.StatusOK)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/control", http.StatusNotFound)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/v1/messages", http.StatusNotFound)
 	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/features", http.StatusNotFound)
 	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/runtime/llm-credentials", http.StatusNotFound)
 }
@@ -29,12 +31,20 @@ func TestAppRouteSetHidesProxySurfaceButKeepsManagementRoutes(t *testing.T) {
 	env := newRouteSetEnv(t, "app")
 
 	assertStatus(t, env.ts.Client(), env.ts.URL+"/health", http.StatusOK)
-	assertStatus(t, env.ts.Client(), env.ts.URL+"/control", http.StatusNotFound)
-	assertStatus(t, env.ts.Client(), env.ts.URL+"/v1/messages", http.StatusNotFound)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/control", http.StatusNotFound)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/v1/messages", http.StatusNotFound)
 
 	// Route exists and rejects missing user auth. This is what lets the main
 	// app own credential management while a separate service owns proxy traffic.
 	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/runtime/llm-credentials", http.StatusUnauthorized)
+}
+
+func TestFullRouteSetRejectsLegacyProxyPrefixes(t *testing.T) {
+	env := newRouteSetEnv(t, "")
+
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/v1/responses", http.StatusNotFound)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/control", http.StatusNotFound)
+	assertStatus(t, env.ts.Client(), env.ts.URL+"/api/features", http.StatusOK)
 }
 
 type routeSetEnv struct {

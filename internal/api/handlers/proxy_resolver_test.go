@@ -92,7 +92,7 @@ func nonceForRequest(t *testing.T, nonces llmproxy.CallerNonceCache, agentID str
 	return mintTestNonce(t, nonces, agentID,
 		req.Header.Get("X-Clawvisor-Target-Host"),
 		req.Method,
-		strings.TrimPrefix(req.URL.Path, "/proxy/v1"),
+		strings.TrimPrefix(req.URL.Path, "/api/proxy"),
 	)
 }
 
@@ -115,13 +115,13 @@ func TestResolver_HappyPath(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	// Target host: api.github.com (in the github bound-service allowlist).
 	// The redirectTargetTransport sends the actual dial to httptest's
 	// loopback URL, but the resolver believes (and validates against)
 	// api.github.com.
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/repos/x/y/issues", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/repos/x/y/issues", strings.NewReader(""))
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// Harness sends the placeholder in the natural Authorization header.
@@ -160,9 +160,9 @@ func TestResolver_AcceptsTargetHostWithExplicitPort(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/repos/x/y/issues", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/repos/x/y/issues", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com:8443")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -179,9 +179,9 @@ func TestResolver_RejectsMissingTargetHost(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
 	rec := httptest.NewRecorder()
@@ -209,9 +209,9 @@ func TestResolver_RejectsSelfTarget(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "clawvisor.example")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -250,9 +250,9 @@ func TestResolver_RejectsForeignPlaceholder(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+foreign)
@@ -294,9 +294,9 @@ func TestResolver_RejectsUnknownServicePlaceholderToArbitraryHost(t *testing.T) 
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/collect", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/collect", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "attacker.example")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -316,9 +316,9 @@ func TestResolver_RejectsCallWithoutPlaceholder(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// No header carries an autovault placeholder.
@@ -336,9 +336,9 @@ func TestResolver_RejectsHostOutsideBoundService(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/api.test/path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/api.test/path", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "slack.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -405,9 +405,9 @@ func TestResolver_AllowsUnknownServiceHostBoundByCredentialGrant(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodPost, "/proxy/v1/v1/calls", strings.NewReader(`{"to":"+15555550123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/proxy/v1/calls", strings.NewReader(`{"to":"+15555550123"}`))
 	req.Header.Set("X-Clawvisor-Target-Host", "api.agentphone.ai")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -436,9 +436,9 @@ func TestResolver_StripsXClawvisorPrefixOnOutbound(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("X-Clawvisor-Custom", "secret")
@@ -480,9 +480,9 @@ func TestResolver_StripsForwardedHeadersOnOutbound(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)
@@ -522,9 +522,9 @@ func TestResolver_StripsCallerAuthFromOutbound(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	// Placeholder rides on X-API-Key; Authorization carries a literal
@@ -554,10 +554,10 @@ func TestResolver_RejectsSelfTargetWithPort(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
 	for _, target := range []string{"clawvisor.example:443", "clawvisor.example:8080", "Clawvisor.Example:443"} {
-		req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 		// Set Target-Host BEFORE minting the nonce so the nonce is bound
 		// to the target the resolver will see. Without this order, the
 		// middleware's nonce-target check fires first and the 403 below
@@ -593,9 +593,9 @@ func TestResolver_DoesNotFollowRedirects(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mw := middleware.RequireAgentLLMNonce(st, nonces, slog.Default())
-	mux.Handle("/proxy/v1/", mw(http.HandlerFunc(h.Forward)))
+	mux.Handle("/api/proxy/", mw(http.HandlerFunc(h.Forward)))
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/v1/x", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/x", nil)
 	req.Header.Set("X-Clawvisor-Target-Host", "api.github.com")
 	req.Header.Set("X-Clawvisor-Caller", nonceForRequest(t, nonces, agent.ID, req))
 	req.Header.Set("Authorization", "Bearer "+placeholder)

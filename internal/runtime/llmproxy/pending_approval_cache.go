@@ -21,7 +21,7 @@ import (
 //
 //	StageTool ──user types "task"──► StageAwaitingTaskDefinition
 //	                                 │
-//	                                 model emits POST /control/tasks
+//	                                 model emits POST /api/control/tasks
 //	                                 ▼
 //	                                 (new hold) StageAwaitingTaskApproval
 //	                                 │
@@ -35,7 +35,7 @@ const (
 	StageTool PendingApprovalStage = ""
 	// StageAwaitingTaskDefinition — user typed "task". The same hold's
 	// ToolUse field still points at the ORIGINAL tool. We're waiting for
-	// the model to emit a POST /control/tasks tool_use that defines the
+	// the model to emit a POST /api/control/tasks tool_use that defines the
 	// task that should cover this work.
 	StageAwaitingTaskDefinition PendingApprovalStage = "awaiting_task_definition"
 	// StageAwaitingTaskApproval — model has emitted the task definition.
@@ -69,7 +69,7 @@ type PendingLiteApproval struct {
 	// upstream bash/tool hold and release-or-deny it in cascade.
 	AwaitingTaskFor string
 
-	// TaskDefinition is the parsed body of the POST /control/tasks the
+	// TaskDefinition is the parsed body of the POST /api/control/tasks the
 	// model emitted at StageAwaitingTaskDefinition. Used both to render the
 	// inline approval prompt and to create the task once the user approves.
 	// nil at the other stages.

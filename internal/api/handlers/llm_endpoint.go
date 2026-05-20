@@ -30,9 +30,9 @@ import (
 // Anthropic-/OpenAI-shaped requests authenticated by the agent's existing
 // `cvis_…` token (carried in Authorization, x-api-key, or
 // X-Clawvisor-Agent-Token for upstream-auth passthrough), fetches or preserves
-// upstream auth, and proxies the response back. v1 is pure passthrough —
-// inspector and rewriter layer in via the response-body wrap path in
-// subsequent files.
+// upstream auth, and proxies the response back. The provider-compatible
+// /api/v1 routes are passthrough endpoints; inspector and rewriter layer in via
+// the response-body wrap path in subsequent files.
 type LLMEndpointHandler struct {
 	Store     store.Store
 	Vault     vault.Vault
@@ -45,7 +45,7 @@ type LLMEndpointHandler struct {
 	Inspector *inspector.Inspector
 
 	// ResolverBaseURL is the URL the rewriter redirects credentialed
-	// tool_uses through (e.g. https://clawvisor.example/proxy/v1). Empty
+	// tool_uses through (e.g. https://clawvisor.example/api/proxy). Empty
 	// disables rewriting even when Inspector is set.
 	ResolverBaseURL string
 
@@ -54,7 +54,7 @@ type LLMEndpointHandler struct {
 	// Empty disables control prompt injection and control rewrites.
 	ControlBaseURL string
 
-	// AuditEmitter writes one audit_log row per /v1/* request and per
+	// AuditEmitter writes one audit_log row per /api/v1/* request and per
 	// inspected tool_use. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
 
@@ -165,19 +165,19 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 	}
 }
 
-// Messages handles `POST /v1/messages` (Anthropic) and `POST
-// /v1/messages/count_tokens`. The route-selected parser dispatches to the
+// Messages handles `POST /api/v1/messages` (Anthropic) and `POST
+// /api/v1/messages/count_tokens`. The route-selected parser dispatches to the
 // Anthropic parser regardless of the inbound Host header.
 func (h *LLMEndpointHandler) Messages(w http.ResponseWriter, r *http.Request) {
 	h.serve(w, r)
 }
 
-// ChatCompletions handles `POST /v1/chat/completions` (OpenAI Chat API).
+// ChatCompletions handles `POST /api/v1/chat/completions` (OpenAI Chat API).
 func (h *LLMEndpointHandler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	h.serve(w, r)
 }
 
-// Responses handles `POST /v1/responses` (OpenAI Responses API).
+// Responses handles `POST /api/v1/responses` (OpenAI Responses API).
 func (h *LLMEndpointHandler) Responses(w http.ResponseWriter, r *http.Request) {
 	h.serve(w, r)
 }
@@ -409,7 +409,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// resolves an awaiting_task_approval hold, create the task and
 	// rewrite the user message so the LLM gets clean context (rather
 	// than a synthesized cat-heredoc tool_use that confuses the model
-	// into re-POSTing /control/tasks).
+	// into re-POSTing /api/control/tasks).
 	inlineApprovalConsumed := false
 	if inlineRewrite, inlineErr := llmproxy.RewriteInlineTaskApprovalReply(r.Context(), llmproxy.InlineApprovalRewriteRequest{
 		HTTPRequest:     r,
@@ -453,7 +453,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 	// records what the user typed ("approve") not our one-shot
 	// rewrite ("approve [Clawvisor: ...]"), so on subsequent turns
 	// the context is lost and the model duplicates work
-	// (re-POSTs /control/tasks, re-emits tool_use). Walk conversation
+	// (re-POSTs /api/control/tasks, re-emits tool_use). Walk conversation
 	// history and re-inject the persistent context on every request.
 	if augBody, augmented, augErr := llmproxy.AugmentApprovedInlineTasksInHistory(body, provider, h.InlineApprovalOutcomes, agent.UserID, agent.ID); augErr != nil {
 		h.Logger.WarnContext(r.Context(), "lite-proxy inline task augmentation failed",
@@ -967,6 +967,7 @@ func (w *limitedCaptureWriter) Bytes() []byte {
 
 // actionForRoute maps a request path to an audit-log action label.
 func actionForRoute(path string) string {
+	path = strings.TrimPrefix(path, "/api")
 	switch path {
 	case "/v1/messages":
 		return "messages.create"

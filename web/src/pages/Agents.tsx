@@ -1583,20 +1583,20 @@ function ClaudeCodeGuide({ clawvisorURL, llmBaseURL, claim, userIdParam, newToke
   const connected = !!agents?.find(a => a.name === agentName)
 
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const runCmd = `ANTHROPIC_BASE_URL=${llmBaseURL} \\
+  const runCmd = `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
 ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
 ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
 claude`
   const zshrcSnippet = `cat >> ~/.zshrc <<'EOF'
 claude-cv() {
-  ANTHROPIC_BASE_URL=${llmBaseURL} \\
+  ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
   ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
   ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
   claude "$@"
 }
 EOF`
   const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualRunCmd = `ANTHROPIC_BASE_URL=${llmBaseURL} \\
+  const manualRunCmd = `ANTHROPIC_BASE_URL=${llmBaseURL}/api \\
 ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: ${tokenValue}' \\
 ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
 claude`
@@ -1773,7 +1773,7 @@ function CodexGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
 
 [model_providers.clawvisor]
 name = "Clawvisor"
-base_url = "${llmBaseURL}/v1"
+base_url = "${llmBaseURL}/api/v1"
 wire_api = "responses"
 requires_openai_auth = true
 
@@ -2204,14 +2204,14 @@ function OpenClawGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, co
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
   const onboardCmd = `openclaw onboard --non-interactive \\
   --auth-choice custom-api-key \\
-  --custom-base-url "${llmBaseURL}/v1" \\
+  --custom-base-url "${llmBaseURL}/api/v1" \\
   --custom-model-id "claude-sonnet-4-6" \\
   --custom-api-key "$(jq -r .token ${jsonPath})" \\
   --custom-compatibility anthropic`
   const tokenValue = newToken ?? 'cvis_<your-token>'
   const manualOnboardCmd = `openclaw onboard --non-interactive \\
   --auth-choice custom-api-key \\
-  --custom-base-url "${llmBaseURL}/v1" \\
+  --custom-base-url "${llmBaseURL}/api/v1" \\
   --custom-model-id "claude-sonnet-4-6" \\
   --custom-api-key "${tokenValue}" \\
   --custom-compatibility anthropic`
@@ -2400,17 +2400,17 @@ function HermesGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
   const keyReady = hasAnyUpstreamKey(creds)
 
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const envCmd = `OPENAI_BASE_URL=${llmBaseURL}/v1 \\
+  const envCmd = `OPENAI_BASE_URL=${llmBaseURL}/api/v1 \\
 OPENAI_API_KEY=$(jq -r .token ${jsonPath}) \\
 hermes chat`
   const configCmd = `mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF
 model:
   provider: custom
-  base_url: "${llmBaseURL}/v1"
+  base_url: "${llmBaseURL}/api/v1"
   api_key: "$(jq -r .token ${jsonPath})"
 EOF`
   const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualEnvCmd = `OPENAI_BASE_URL=${llmBaseURL}/v1 \\
+  const manualEnvCmd = `OPENAI_BASE_URL=${llmBaseURL}/api/v1 \\
 OPENAI_API_KEY=${tokenValue} \\
 hermes chat`
 
@@ -2556,17 +2556,17 @@ function OtherAgentGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, 
   const anthropicSDK = `import anthropic, json, os
 data = json.load(open(os.path.expanduser("${jsonPath}")))
 client = anthropic.Anthropic(
-    base_url="${llmBaseURL}",
+    base_url="${llmBaseURL}/api",
     api_key=data["token"],
 )`
   const openaiSDK = `from openai import OpenAI
 import json, os
 data = json.load(open(os.path.expanduser("${jsonPath}")))
 client = OpenAI(
-    base_url="${llmBaseURL}/v1",
+    base_url="${llmBaseURL}/api/v1",
     api_key=data["token"],
 )`
-  const curlCmd = `curl -X POST "${llmBaseURL}/v1/messages" \\
+  const curlCmd = `curl -X POST "${llmBaseURL}/api/v1/messages" \\
   -H "Authorization: Bearer $(jq -r .token ${jsonPath})" \\
   -H "anthropic-version: 2023-06-01" \\
   -H "Content-Type: application/json" \\
@@ -2574,12 +2574,12 @@ client = OpenAI(
   const tokenValue = newToken ?? 'cvis_<your-token>'
   const manualAnthropicSDK = `import anthropic
 client = anthropic.Anthropic(
-    base_url="${llmBaseURL}",
+    base_url="${llmBaseURL}/api",
     api_key="${tokenValue}",
 )`
   const manualOpenaiSDK = `from openai import OpenAI
 client = OpenAI(
-    base_url="${llmBaseURL}/v1",
+    base_url="${llmBaseURL}/api/v1",
     api_key="${tokenValue}",
 )`
   const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
@@ -2872,7 +2872,7 @@ function ConnectionCard({ request: cr }: { request: ConnectionRequest }) {
 // ── Lite-proxy LLM credentials panel ─────────────────────────────────────────
 //
 // Stores the upstream API key (sk-ant-..., sk-...) the lite-proxy swaps in
-// when forwarding /v1/messages and /v1/chat/completions for this specific
+// when forwarding /api/v1/messages and /api/v1/chat/completions for this specific
 // agent. Falls back to the user-level credential when the agent-scoped one
 // isn't set, so configuring this is optional.
 function AgentLLMCredentialsPanel({ agentId }: { agentId: string }) {
@@ -3067,25 +3067,25 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
       })
   }
 
-  // Anthropic SDK + Claude CLI: env var is the ORIGIN; the SDK appends
-  // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/v1`
+  // Anthropic SDK + Claude CLI: env var is the API family base; the SDK appends
+  // `/v1/messages` itself. OpenAI SDK + Codex: base URL includes `/api/v1`
   // because the client appends just the action path (`/chat/completions`).
-  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL} ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: cvis_<this-agent-token>' ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= claude`
+  const claudeCode = `ANTHROPIC_BASE_URL=${baseURL}/api ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: cvis_<this-agent-token>' ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= claude`
   const codex = `CLAWVISOR_AGENT_TOKEN=cvis_<this-agent-token> codex exec \\
   -c model_provider=clawvisor \\
-  -c 'model_providers.clawvisor.base_url="${baseURL}/v1"' \\
+  -c 'model_providers.clawvisor.base_url="${baseURL}/api/v1"' \\
   -c 'model_providers.clawvisor.wire_api="responses"' \\
   -c 'model_providers.clawvisor.requires_openai_auth=true' \\
   -c 'model_providers.clawvisor.env_http_headers={"X-Clawvisor-Agent-Token"="CLAWVISOR_AGENT_TOKEN"}' \\
   -c 'model="gpt-4o-mini"'`
   const openaiSDK = `from openai import OpenAI
 client = OpenAI(
-    base_url="${baseURL}/v1",
+    base_url="${baseURL}/api/v1",
     api_key="cvis_<this-agent-token>",
 )`
   const anthropicSDK = `import anthropic
 client = anthropic.Anthropic(
-    base_url="${baseURL}",
+    base_url="${baseURL}/api",
     api_key="cvis_<this-agent-token>",
 )`
 
@@ -3108,9 +3108,9 @@ client = anthropic.Anthropic(
           <div>
             <div className="text-xs uppercase tracking-wider text-text-tertiary">Base URL</div>
             <div className="mt-1 flex items-center gap-2">
-              <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{baseURL}/v1</code>
+              <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-1 text-text-primary">{baseURL}/api/v1</code>
               <button
-                onClick={() => copy('base', `${baseURL}/v1`)}
+                onClick={() => copy('base', `${baseURL}/api/v1`)}
                 className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
               >
                 {copied === 'base' ? 'Copied!' : copied === 'base-failed' ? 'Copy failed' : 'Copy'}

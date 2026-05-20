@@ -17,18 +17,18 @@ import (
 // Full state-machine test for inline task approval. Walks the four
 // transitions described in the plan:
 //
-//   T1. Postprocess on a tool that needs approval pre-stages the
-//       PendingLiteApproval at Stage=tool (we skip this step in the
-//       fixture — it's covered by TestPostprocess_BashWithoutTaskScope*
-//       — and start from a primed StageTool hold).
-//   T2. User types "task" → RewriteTaskApprovalReply transitions the
-//       hold to Stage=awaiting_task_definition.
-//   T3. Model emits POST /control/tasks → postprocess intercept fires,
-//       holds a new Stage=awaiting_task_approval entry, substitutes
-//       the rendered approval prompt for the user.
-//   T4. User types "approve" → TryReleasePendingApproval cascades:
-//       creates the task pre-approved, drops the original tool hold,
-//       emits a synthetic assistant response carrying the task body.
+//	T1. Postprocess on a tool that needs approval pre-stages the
+//	    PendingLiteApproval at Stage=tool (we skip this step in the
+//	    fixture — it's covered by TestPostprocess_BashWithoutTaskScope*
+//	    — and start from a primed StageTool hold).
+//	T2. User types "task" → RewriteTaskApprovalReply transitions the
+//	    hold to Stage=awaiting_task_definition.
+//	T3. Model emits POST /api/control/tasks → postprocess intercept fires,
+//	    holds a new Stage=awaiting_task_approval entry, substitutes
+//	    the rendered approval prompt for the user.
+//	T4. User types "approve" → TryReleasePendingApproval cascades:
+//	    creates the task pre-approved, drops the original tool hold,
+//	    emits a synthetic assistant response carrying the task body.
 //
 // The test confirms that at the end:
 //   - There's a real store.Task with status=active + source=inline_chat.
@@ -86,7 +86,7 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		t.Fatalf("T2: original hold should be dropped after task reply; got %+v", peekedT2)
 	}
 
-	// ── T3: model emits POST /control/tasks ──────────────────────────
+	// ── T3: model emits POST /api/control/tasks ──────────────────────────
 	// We can't easily run the full Postprocess here without seeding a
 	// store + inspector + boundary check. We exercise the intercept
 	// directly via the same exported helper Postprocess uses.
@@ -217,7 +217,6 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 		t.Error("rec.ResolvedAt should be set")
 	}
 }
-
 
 // extractField pulls a value out of the synthetic release response.
 // The task payload is now JSON-encoded inside a cat heredoc inside a
@@ -353,7 +352,7 @@ func TestInlineTaskRepeatTaskReplyOnInnerHoldDoesNothing(t *testing.T) {
 	// The rewrite WILL fire (the regex matches "task cv-...") but the
 	// hold's stage transitions to awaiting_task_definition. That's
 	// acceptable v1 behavior — if the user genuinely wants to redefine,
-	// the next POST /control/tasks will be intercepted again. The key
+	// the next POST /api/control/tasks will be intercepted again. The key
 	// invariant: no task was created, no double approval record.
 	_ = out
 	// Verify no Task or ApprovalRecord side-effects fired in the SAME

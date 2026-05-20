@@ -61,7 +61,7 @@ func (h *VaultHandler) ListForAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/control/") {
+	if strings.HasPrefix(r.URL.Path, "/api/control/") {
 		h.writeControlList(w, r, agent.UserID)
 		return
 	}
@@ -74,7 +74,7 @@ func (h *VaultHandler) GetForAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/control/") {
+	if strings.HasPrefix(r.URL.Path, "/api/control/") {
 		h.writeControlDetail(w, r, agent.UserID)
 		return
 	}

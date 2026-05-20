@@ -229,7 +229,7 @@ func TestRewrite_StructuredFetch(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestRewrite_StructuredFetch(t *testing.T) {
 		t.Fatalf("rewritten output not JSON: %v", err)
 	}
 	url, _ := got["url"].(string)
-	if !strings.HasPrefix(url, "https://proxy.clawvisor.example/proxy/v1/repos/x/y/issues") {
+	if !strings.HasPrefix(url, "https://proxy.clawvisor.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten url unexpected: %q", url)
 	}
 	if !strings.Contains(url, "state=open") {
@@ -259,7 +259,7 @@ func TestRewrite_BashAddsTargetHostHeader(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestRewrite_BashAddsTargetHostHeader(t *testing.T) {
 		t.Fatalf("rewritten output not JSON: %v", err)
 	}
 	cmd, _ := got["cmd"].(string)
-	if !strings.Contains(cmd, "https://proxy.clawvisor.example/proxy/v1/repos/x/y/issues") {
+	if !strings.Contains(cmd, "https://proxy.clawvisor.example/api/proxy/repos/x/y/issues") {
 		t.Fatalf("rewritten cmd missing resolver URL: %q", cmd)
 	}
 	if !strings.Contains(cmd, "X-Clawvisor-Target-Host: api.github.com") {
@@ -286,7 +286,7 @@ func TestRewrite_BashPostWithDataHeredocPreservesBody(t *testing.T) {
 	if !ok || !v.IsAPICall || v.Ambiguous {
 		t.Fatalf("setup: parser did not classify post body curl as IsAPICall: ok=%v %+v", ok, v)
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestRewrite_BashPostWithDataHeredocPreservesBody(t *testing.T) {
 		t.Fatalf("rewritten output not JSON: %v", err)
 	}
 	rewritten, _ := got["command"].(string)
-	if !strings.Contains(rewritten, "https://proxy.clawvisor.example/proxy/v1/v1/calls") {
+	if !strings.Contains(rewritten, "https://proxy.clawvisor.example/api/proxy/v1/calls") {
 		t.Fatalf("rewritten cmd missing resolver URL: %q", rewritten)
 	}
 	if !strings.Contains(rewritten, "X-Clawvisor-Target-Host: api.agentphone.ai") {
@@ -321,7 +321,7 @@ func TestRewrite_BashCurlPipedToJqPreservesTail(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify piped curl as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestRewrite_BashCurlPipedToJqPreservesTail(t *testing.T) {
 		t.Fatalf("rewritten output not JSON: %v", err)
 	}
 	cmd, _ := got["cmd"].(string)
-	if !strings.Contains(cmd, "https://proxy.clawvisor.example/proxy/v1/user") {
+	if !strings.Contains(cmd, "https://proxy.clawvisor.example/api/proxy/user") {
 		t.Fatalf("rewritten cmd missing resolver URL: %q", cmd)
 	}
 	if !strings.Contains(cmd, "| jq '.login'") {
@@ -350,7 +350,7 @@ func TestRewrite_BashCurlWithStderrRedirectPreservesTail(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify curl-with-redirect as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestRewrite_BashCurlWithStderrRedirectPreservesTail(t *testing.T) {
 	if !strings.Contains(cmd, "2>/dev/null") {
 		t.Fatalf("redirect lost in rewrite: %q", cmd)
 	}
-	if !strings.Contains(cmd, "https://proxy.clawvisor.example/proxy/v1/user") {
+	if !strings.Contains(cmd, "https://proxy.clawvisor.example/api/proxy/user") {
 		t.Fatalf("rewritten cmd missing resolver URL: %q", cmd)
 	}
 }
@@ -371,7 +371,7 @@ func TestRewrite_BashPreservesExplicitPort(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestRewrite_StructuredPreservesExplicitPort(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup: parser did not classify as IsAPICall")
 	}
-	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/proxy/v1"))
+	out, err := Rewrite(in, v, DefaultRewriteOpts("https://proxy.clawvisor.example/api/proxy"))
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestRewrite_InjectsCallerToken_Structured(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup")
 	}
-	opts := DefaultRewriteOpts("https://proxy.example/proxy/v1")
+	opts := DefaultRewriteOpts("https://proxy.example/api/proxy")
 	opts.CallerToken = "cvis_abc123"
 
 	out, err := Rewrite(in, v, opts)
@@ -510,7 +510,7 @@ func TestRewrite_InjectsCallerToken_Bash(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup")
 	}
-	opts := DefaultRewriteOpts("https://proxy.example/proxy/v1")
+	opts := DefaultRewriteOpts("https://proxy.example/api/proxy")
 	opts.CallerToken = "cvis_bash_token"
 
 	out, err := Rewrite(in, v, opts)
@@ -538,7 +538,7 @@ func TestRewrite_BashPreservesQuotedHeaderValue(t *testing.T) {
 	if !ok || !v.IsAPICall {
 		t.Fatalf("setup")
 	}
-	opts := DefaultRewriteOpts("https://proxy.example/proxy/v1")
+	opts := DefaultRewriteOpts("https://proxy.example/api/proxy")
 	opts.CallerToken = "cvis_call"
 
 	out, err := Rewrite(in, v, opts)

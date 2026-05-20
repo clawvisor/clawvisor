@@ -504,7 +504,7 @@ func TestScanInboundSecrets_IgnoresClawvisorNonceInPriorToolArguments(t *testing
 		"model":"gpt-5.4",
 		"input":[
 			{"role":"user","content":[{"type":"input_text","text":"Check the recent emails in Resend using the vaulted credential placeholder."}]},
-			{"type":"function_call","name":"exec_command","arguments":"curl -sS -H 'X-Clawvisor-Target-Host: api.resend.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-pr7vwci4umcgs6rsj3lika4vve' http://localhost:25297/proxy/v1/emails -H 'Authorization: Bearer autovault_resend_1_example'","call_id":"call_abc123"},
+			{"type":"function_call","name":"exec_command","arguments":"curl -sS -H 'X-Clawvisor-Target-Host: api.resend.com' -H 'X-Clawvisor-Caller: Bearer cv-nonce-pr7vwci4umcgs6rsj3lika4vve' http://localhost:25297/api/proxy/emails -H 'Authorization: Bearer autovault_resend_1_example'","call_id":"call_abc123"},
 			{"type":"function_call_output","call_id":"call_abc123","output":"{\"statusCode\":400,\"message\":\"API key is invalid\",\"name\":\"validation_error\"}"},
 			{"role":"user","content":[{"type":"input_text","text":"continue"}]}
 		]

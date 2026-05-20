@@ -71,7 +71,7 @@ type InlineApprovalRewriteResult struct {
 // user message and letting the request flow to the LLM, we:
 //
 //   - Avoid fabricating an assistant tool_use the LLM never authored
-//     (which previously confused the model into re-POSTing /control/tasks).
+//     (which previously confused the model into re-POSTing /api/control/tasks).
 //   - Avoid spoofing the harness into running shell commands the
 //     model didn't actually emit.
 //   - Give the LLM a clean conversation state with explicit context
@@ -210,7 +210,7 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 
 // InlineApprovalSubstitutedPromptMarker is the leading phrase of the
 // assistant text we substitute in place of a model-emitted POST
-// /control/tasks tool_use. The persistent-history rewriter looks for
+// /api/control/tasks tool_use. The persistent-history rewriter looks for
 // this marker to find user "approve" turns that need their context
 // re-injected on every subsequent request.
 const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task to cover this work:"
@@ -236,7 +236,7 @@ const (
 // — the harness records what the user actually typed ("approve"), not
 // our transit-rewritten version. On subsequent turns the conversation
 // history shows bare "approve" and the model loses the task-creation
-// context, leading to duplicate /control/tasks POSTs and other
+// context, leading to duplicate /api/control/tasks POSTs and other
 // confusions.
 //
 // This function runs on every request as a no-op-or-augment pass. It

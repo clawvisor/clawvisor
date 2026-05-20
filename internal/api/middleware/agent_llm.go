@@ -93,7 +93,7 @@ func RequireAgentLLM(st store.Store) func(http.Handler) http.Handler {
 }
 
 // RequireAgentLLMNonce authenticates the lite-proxy resolver
-// (/proxy/v1/...). The harness's resolver call carries the placeholder
+// (/api/proxy/...). The harness's resolver call carries the placeholder
 // being swapped in its natural credential header (Authorization /
 // x-api-key); caller-auth lives in `X-Clawvisor-Caller` and is a
 // short-lived single-use nonce minted by the proxy at rewrite time.
@@ -131,7 +131,7 @@ func RequireAgentLLMNonce(st store.Store, cache llmproxy.CallerNonceCache, logge
 			target := llmproxy.NonceTarget{
 				Host:   strings.TrimSpace(r.Header.Get("X-Clawvisor-Target-Host")),
 				Method: r.Method,
-				Path:   strings.TrimPrefix(r.URL.Path, "/proxy/v1"),
+				Path:   strings.TrimPrefix(r.URL.Path, "/api/proxy"),
 			}
 			agentID, err := cache.Consume(r.Context(), value, target)
 			if err != nil {

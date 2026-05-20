@@ -942,12 +942,10 @@ func (s *Server) routes() http.Handler {
 			routeSet != "app", true,
 		)
 	}
-	if routeSet == "app" {
-		mux.HandleFunc("/v1/", http.NotFound)
-		mux.HandleFunc("/proxy/v1/", http.NotFound)
-		mux.HandleFunc("/control", http.NotFound)
-		mux.HandleFunc("/control/", http.NotFound)
-	}
+	mux.HandleFunc("/v1/", http.NotFound)
+	mux.HandleFunc("/proxy/v1/", http.NotFound)
+	mux.HandleFunc("/control", http.NotFound)
+	mux.HandleFunc("/control/", http.NotFound)
 
 	// SSE event stream (user JWT or single-use ticket for EventSource)
 	requireUserOrTicket := middleware.RequireUserOrTicket(s.jwtSvc, s.store, s.ticketStore)
@@ -1215,7 +1213,7 @@ func (s *Server) registerLiteProxyRoutes(
 		if resolverBase == "" {
 			resolverBase = baseURL
 		}
-		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/proxy/v1"
+		llmHandler.ResolverBaseURL = strings.TrimRight(resolverBase, "/") + "/api/proxy"
 		llmHandler.ControlBaseURL = strings.TrimRight(baseURL, "/")
 
 		auditEmitter := llmproxy.NewAuditEmitter(s.store, s.logger, nil)
@@ -1268,23 +1266,23 @@ func (s *Server) registerLiteProxyRoutes(
 			return middleware.RateLimit(gatewayRL, llmPreAuthKeyFn, gatewayLimit)(nonceMW(h))
 		}
 
-		mux.Handle("POST /v1/messages", requireAgentLLMRL(llmHandler.Messages))
-		mux.Handle("POST /v1/messages/count_tokens", requireAgentLLMRL(llmHandler.Messages))
-		mux.Handle("POST /v1/chat/completions", requireAgentLLMRL(llmHandler.ChatCompletions))
-		mux.Handle("POST /v1/responses", requireAgentLLMRL(llmHandler.Responses))
+		mux.Handle("POST /api/v1/messages", requireAgentLLMRL(llmHandler.Messages))
+		mux.Handle("POST /api/v1/messages/count_tokens", requireAgentLLMRL(llmHandler.Messages))
+		mux.Handle("POST /api/v1/chat/completions", requireAgentLLMRL(llmHandler.ChatCompletions))
+		mux.Handle("POST /api/v1/responses", requireAgentLLMRL(llmHandler.Responses))
 
-		mux.Handle("GET /control", http.HandlerFunc(controlHandler.Capabilities))
-		mux.Handle("GET /control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
-		mux.Handle("GET /control/skill", http.HandlerFunc(controlHandler.Skill))
-		mux.Handle("POST /control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
-		mux.Handle("POST /control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
-		mux.Handle("GET /control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
-		mux.Handle("POST /control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
-		mux.Handle("GET /control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
-		mux.Handle("GET /control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
-		mux.Handle("/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
+		mux.Handle("GET /api/control", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /api/control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
+		mux.Handle("GET /api/control/skill", http.HandlerFunc(controlHandler.Skill))
+		mux.Handle("POST /api/control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
+		mux.Handle("POST /api/control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
+		mux.Handle("GET /api/control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
+		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
+		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))
+		mux.Handle("GET /api/control/vault/items/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.GetForAgent))))
+		mux.Handle("/api/control/", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.NotFound))))
 
-		mux.Handle("/proxy/v1/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))
+		mux.Handle("/api/proxy/", requireAgentLLMCaller(http.HandlerFunc(resolverHandler.Forward)))
 	}
 
 	if includeCredentialRoutes {

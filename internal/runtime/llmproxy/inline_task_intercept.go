@@ -19,7 +19,7 @@ import (
 const inlineTaskApprovalTTL = 10 * time.Minute
 
 // InlineSurfaceQueryParam is the query-string flag the model adds to
-// POST /control/tasks to opt in to the inline-approval flow when there
+// POST /api/control/tasks to opt in to the inline-approval flow when there
 // is no prior `task` reply (e.g. the agent knows the user is sitting
 // in the chat and prefers to approve there). Absent + no awaiting-
 // definition hold = the existing async dashboard path.
@@ -30,7 +30,7 @@ const InlineSurfaceQueryParam = "surface"
 const InlineSurfaceQueryValue = "inline"
 
 // maybeInterceptInlineTaskDefinition is the postprocess hook that
-// routes a model-emitted POST /control/tasks tool_use through the
+// routes a model-emitted POST /api/control/tasks tool_use through the
 // inline approval flow.
 //
 // The single opt-in signal is a `?surface=inline` query parameter on
@@ -46,7 +46,7 @@ const InlineSurfaceQueryValue = "inline"
 // prompt, and the user's next "yes" creates the task pre-approved.
 //
 // Returns (_, false) when the signal is absent, the body fails to
-// parse, or the path isn't POST /control/tasks — callers should
+// parse, or the path isn't POST /api/control/tasks — callers should
 // fall through to the regular control-rewrite path so headless task
 // creation still routes through the dashboard handler unchanged.
 func maybeInterceptInlineTaskDefinition(
@@ -61,11 +61,11 @@ func maybeInterceptInlineTaskDefinition(
 	if cfg.PendingApprovals == nil {
 		return conversation.ToolUseVerdict{}, false
 	}
-	// Only intercept POSTs to /control/tasks; the dashboard handler
+	// Only intercept POSTs to /api/control/tasks; the dashboard handler
 	// covers GETs (skill catalog) and other control paths. Exact
 	// path equality — HasSuffix would also match attacker-shaped paths
-	// like /foo/bar/control/tasks if the host check ever loosened.
-	if !strings.EqualFold(call.Method, "POST") || call.URL.Path != "/control/tasks" {
+	// like /foo/bar/api/control/tasks if the host check ever loosened.
+	if !strings.EqualFold(call.Method, "POST") || call.URL.Path != "/api/control/tasks" {
 		return conversation.ToolUseVerdict{}, false
 	}
 
@@ -97,7 +97,7 @@ func maybeInterceptInlineTaskDefinition(
 	// same request.
 	bodyBytes, ok := controlTaskBodyFromInput(tu.Input)
 	if !ok || len(bodyBytes) == 0 {
-		audit("fallthrough", "inline_task_body_missing", "POST /control/tasks had no body; deferring to dashboard rewrite")
+		audit("fallthrough", "inline_task_body_missing", "POST /api/control/tasks had no body; deferring to dashboard rewrite")
 		return conversation.ToolUseVerdict{}, false
 	}
 	parsed := &runtimetasks.TaskCreateRequest{}

@@ -107,7 +107,7 @@ data: {"type":"message_stop"}
 	result, err := (&AnthropicResponseRewriter{}).Rewrite(body, "text/event-stream", func(tu ToolUse) ToolUseVerdict {
 		return ToolUseVerdict{
 			Allowed:      true,
-			RewriteInput: json.RawMessage(`{"url":"https://example.test/control/skill","prompt":"What is here?"}`),
+			RewriteInput: json.RawMessage(`{"url":"https://example.test/api/control/skill","prompt":"What is here?"}`),
 		}
 	})
 	if err != nil {

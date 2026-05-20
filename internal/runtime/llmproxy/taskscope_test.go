@@ -161,7 +161,7 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -175,7 +175,7 @@ func TestPostprocess_TaskScopeBlocksUnauthorizedAction(t *testing.T) {
 	// The body should contain a Clawvisor refusal in place of the
 	// rewritten tool_use input. We accept either an unrewritten body
 	// (rewriter fell back to refusal) or a body without the resolver URL.
-	if strings.Contains(string(got.Body), "https://proxy.example/proxy/v1") {
+	if strings.Contains(string(got.Body), "https://proxy.example/api/proxy") {
 		t.Fatalf("rewrite should NOT have happened — task scope denies github.create_issue:\n%s", got.Body)
 	}
 	if !strings.Contains(string(got.Body), "no active task scope") {
@@ -194,7 +194,7 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -208,7 +208,7 @@ func TestPostprocess_TaskScopeAllowsAuthorizedAction(t *testing.T) {
 	if !got.Rewritten {
 		t.Fatalf("expected rewrite when task scope allows")
 	}
-	if !strings.Contains(string(got.Body), "https://proxy.example/proxy/v1") {
+	if !strings.Contains(string(got.Body), "https://proxy.example/api/proxy") {
 		t.Errorf("rewritten body missing resolver URL:\n%s", got.Body)
 	}
 }
@@ -243,7 +243,7 @@ func TestPostprocess_IntentVerifierBlocksOnDeny(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -285,7 +285,7 @@ func TestPostprocess_IntentVerifierLenientFlag(t *testing.T) {
 
 	_ = Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -315,7 +315,7 @@ func TestPostprocess_IntentVerifierOffSkipsCall(t *testing.T) {
 
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -350,7 +350,7 @@ func TestPostprocess_TaskScopeFallthroughOnUnknownAction(t *testing.T) {
 	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "should_not_be_called"}}
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,
@@ -377,7 +377,7 @@ func TestPostprocess_SharedDecisionAllowSkipsLegacyTaskScope(t *testing.T) {
 	denyAll := stubTaskScope{decision: TaskScopeDecision{Reason: "legacy task scope should not run"}}
 	got := Postprocess(req, body, "application/json", PostprocessConfig{
 		Inspector:   insp,
-		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/proxy/v1"),
+		RewriteOpts: inspector.DefaultRewriteOpts("https://proxy.example/api/proxy"),
 		CallerNonces: NewMemoryCallerNonceCache(time.Minute),
 		Store:       st,
 		AgentUserID: userID,

@@ -11,7 +11,7 @@ import (
 
 func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 	h := NewLLMControlHandler("http://localhost:25297")
-	req := httptest.NewRequest(http.MethodGet, "/control/skill", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/control/skill", nil)
 	res := httptest.NewRecorder()
 
 	h.Skill(res, req)
@@ -61,7 +61,7 @@ func TestControlSkillCredentialExampleUsesCurrentVaultItemShape(t *testing.T) {
 func TestControlFailureIncludesOriginalCommandContext(t *testing.T) {
 	h := NewLLMControlHandler("http://localhost:25297")
 	body := bytes.NewBufferString(`{"original_tool":"Bash","original_command":"curl -sS 'https://clawvisor.local/control/vault/items' | python3 -c 'print(1)'"}`)
-	req := httptest.NewRequest(http.MethodPost, "/control/failure?reason=malformed_control_command", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/control/failure?reason=malformed_control_command", body)
 	res := httptest.NewRecorder()
 
 	h.Failure(res, req)

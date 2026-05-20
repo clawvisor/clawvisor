@@ -14,7 +14,7 @@ user turn a blocked tool approval into an inline-approved task.
 
 `StageAwaitingTaskApproval`
 
-- The model emitted `POST /control/tasks?surface=inline`, and the proxy
+- The model emitted `POST /api/control/tasks?surface=inline`, and the proxy
   substituted a task approval prompt back into the conversation.
 - The user may reply `y`/`yes` or `n`/`no`.
 - Yes/no replies are normalized to `approve`/`deny` and handled by `RewriteInlineTaskApprovalReply`.
@@ -51,14 +51,14 @@ Effects:
 
 - Consumes the targeted tool hold.
 - Rewrites the user's `task` reply into a deterministic
-  `/control/tasks?surface=inline` task-creation prompt.
+  `/api/control/tasks?surface=inline` task-creation prompt.
 - Does not create a task.
 - Does not retain an orphan tool hold that could later be approved.
 
 `Postprocess` inline task intercept
 
 ```text
-model POST /control/tasks?surface=inline -> StageAwaitingTaskApproval
+model POST /api/control/tasks?surface=inline -> StageAwaitingTaskApproval
 ```
 
 Effects:

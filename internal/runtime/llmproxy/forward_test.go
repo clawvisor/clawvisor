@@ -81,7 +81,7 @@ func TestForward_AnthropicInjectsKey(t *testing.T) {
 		OpenAIBaseURL:    "",
 	}
 
-	inbound := httptest.NewRequest(http.MethodPost, "/v1/messages?beta=true", bytes.NewReader([]byte(`{"model":"claude"}`)))
+	inbound := httptest.NewRequest(http.MethodPost, "/api/v1/messages?beta=true", bytes.NewReader([]byte(`{"model":"claude"}`)))
 	inbound.Header.Set("Authorization", "Bearer cvis_xxx")
 	inbound.Header.Set("anthropic-beta", "beta1")
 
@@ -456,8 +456,8 @@ func TestOpenAIPassthroughRoute_CodexAccessTokenShape(t *testing.T) {
 
 func TestOpenAIPassthroughRoute_ChatGPTOAuth(t *testing.T) {
 	jwt := makeJWT(map[string]any{
-		"scp":                 "openid email profile",
-		"chatgpt_account_id":  "acct_xyz",
+		"scp":                "openid email profile",
+		"chatgpt_account_id": "acct_xyz",
 	})
 	got := openaiPassthroughRoute("Bearer "+jwt, "/v1/responses")
 	if got == nil {

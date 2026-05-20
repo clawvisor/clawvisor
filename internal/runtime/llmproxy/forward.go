@@ -48,6 +48,12 @@ func (s UpstreamSelector) URL(provider conversation.Provider, path string) (*url
 	return nil, fmt.Errorf("llmproxy: unknown provider %q", provider)
 }
 
+// ProviderPath maps Clawvisor's /api-hosted lite-proxy route back to the
+// provider-native path that should be sent upstream.
+func ProviderPath(_ conversation.Provider, path string) string {
+	return strings.TrimPrefix(path, "/api")
+}
+
 func joinURL(base, path string) (*url.URL, error) {
 	if base == "" {
 		return nil, errors.New("llmproxy: upstream base URL not configured")
@@ -138,7 +144,8 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 		return nil, errors.New("llmproxy: inbound request is nil")
 	}
 
-	upstreamURL, err := f.Upstream.URL(provider, inbound.URL.Path)
+	upstreamPath := ProviderPath(provider, inbound.URL.Path)
+	upstreamURL, err := f.Upstream.URL(provider, upstreamPath)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +156,7 @@ func (f *Forwarder) Forward(ctx context.Context, userID, agentID string, provide
 	// bearer's shape and claims; fall back to api.openai.com when in doubt.
 	if PassthroughUpstreamAuth(ctx) && provider == conversation.ProviderOpenAI {
 		if auth := passthroughBearerAuthorization(inbound); auth != "" {
-			if routed := openaiPassthroughRoute(auth, inbound.URL.Path); routed != nil {
+			if routed := openaiPassthroughRoute(auth, upstreamPath); routed != nil {
 				upstreamURL = routed
 			}
 		}

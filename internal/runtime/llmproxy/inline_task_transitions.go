@@ -12,7 +12,7 @@ func startInlineTaskDefinition(ctx context.Context, req TaskReplyRewriteRequest,
 	// harness now shows the task-creation prompt instead — there's
 	// no way back to approving the original tool. Leaving the hold
 	// in the cache was a latent safety issue: if the model didn't
-	// follow through with POST /control/tasks, the orphan hold could
+	// follow through with POST /api/control/tasks, the orphan hold could
 	// later be resolved as a regular tool approval by a bare approve.
 	//
 	// The inline-task intercept now relies on the query signal

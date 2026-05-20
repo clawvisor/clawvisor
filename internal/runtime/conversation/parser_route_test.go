@@ -8,10 +8,11 @@ func TestParserForRoute(t *testing.T) {
 		path string
 		want Provider
 	}{
+		{"/api/v1/messages", ProviderAnthropic},
+		{"/api/v1/messages/count_tokens", ProviderAnthropic},
+		{"/api/v1/chat/completions", ProviderOpenAI},
+		{"/api/v1/responses", ProviderOpenAI},
 		{"/v1/messages", ProviderAnthropic},
-		{"/v1/messages/count_tokens", ProviderAnthropic},
-		{"/v1/chat/completions", ProviderOpenAI},
-		{"/v1/responses", ProviderOpenAI},
 	}
 	for _, c := range cases {
 		got := r.ParserForRoute(c.path)

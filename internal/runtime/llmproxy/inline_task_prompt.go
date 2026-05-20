@@ -9,7 +9,7 @@ import (
 
 // renderTaskApprovalPrompt builds the inline yes/no prompt the model
 // substitutes in place of the synthetic task_use_result for a model-emitted
-// POST /control/tasks when the user is mid-flight on an inline task gesture
+// POST /api/control/tasks when the user is mid-flight on an inline task gesture
 // (StageAwaitingTaskApproval).
 //
 // The output is plain text in the same shape as approvalPrompt — the harness

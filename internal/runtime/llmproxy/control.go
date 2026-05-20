@@ -15,6 +15,8 @@ import (
 
 const (
 	ControlSyntheticHost  = "clawvisor.local"
+	ControlSyntheticPath  = "/control"
+	ControlAPIPath        = "/api/control"
 	ControlNoticeSentinel = "Clawvisor proxy-lite control plane."
 )
 
@@ -33,9 +35,9 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	// bypass the rewrite path and end up reusing one-shot nonces from
 	// prior turns. controlBaseURL is intentionally ignored here.
 	_ = controlBaseURL
-	docsURL := "https://" + ControlSyntheticHost + "/control/skill"
-	vaultItemsURL := "https://" + ControlSyntheticHost + "/control/vault/items"
-	tasksURL := "https://" + ControlSyntheticHost + "/control/tasks"
+	docsURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/skill"
+	vaultItemsURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/vault/items"
+	tasksURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/tasks"
 	tasksURLInline := tasksURL + "?surface=inline"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
@@ -492,6 +494,9 @@ func RewriteControlToolUse(t conversation.ToolUse, controlBaseURL string, caller
 	if rewritten, ok, err := rewriteControlCommandToolUse(t, v, opts); ok {
 		return rewritten, v, true, err
 	}
+	if rewritten, ok, err := rewriteControlStructuredToolUse(t, opts); ok {
+		return rewritten, v, true, err
+	}
 	rewritten, err := inspector.Rewrite(inspector.ToolUse{
 		ID:    t.ID,
 		Name:  t.Name,
@@ -531,6 +536,50 @@ func rewriteControlCommandToolUse(t conversation.ToolUse, v inspector.Verdict, o
 	return out, true, err
 }
 
+func rewriteControlStructuredToolUse(t conversation.ToolUse, opts inspector.RewriteOpts) ([]byte, bool, error) {
+	resolver, err := url.Parse(opts.ResolverBaseURL)
+	if err != nil || resolver.Host == "" {
+		return nil, false, nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(t.Input, &raw); err != nil {
+		return nil, false, nil
+	}
+	urlVal, ok := raw["url"].(string)
+	if !ok || urlVal == "" {
+		return nil, false, nil
+	}
+	parsed, err := url.Parse(urlVal)
+	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Hostname(), ControlSyntheticHost) {
+		return nil, false, nil
+	}
+	normalizedPath, ok := normalizeControlPath(parsed.Path)
+	if !ok {
+		return nil, false, nil
+	}
+	rewritten := *parsed
+	rewritten.Scheme = resolver.Scheme
+	rewritten.Host = resolver.Host
+	rewritten.Path = normalizedPath
+	if resolver.Path != "" {
+		rewritten.Path = strings.TrimRight(resolver.Path, "/") + normalizedPath
+	}
+	raw["url"] = rewritten.String()
+
+	headers, _ := raw["headers"].(map[string]any)
+	if headers == nil {
+		headers = map[string]any{}
+	}
+	headers[firstNonEmptyControl(opts.TargetHostHeader, "X-Clawvisor-Target-Host")] = parsed.Host
+	if opts.CallerToken != "" && opts.CallerHeader != "" {
+		headers[opts.CallerHeader] = "Bearer " + opts.CallerToken
+	}
+	raw["headers"] = headers
+
+	out, err := json.Marshal(raw)
+	return out, true, err
+}
+
 func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string, callerToken string, reason string) ([]byte, bool, error) {
 	if strings.TrimSpace(controlBaseURL) == "" {
 		return nil, false, nil
@@ -548,7 +597,7 @@ func RewriteControlFailureToolUse(t conversation.ToolUse, controlBaseURL string,
 			return nil, false, nil
 		}
 	}
-	u, err := url.Parse(strings.TrimRight(controlBaseURL, "/") + "/control/failure")
+	u, err := url.Parse(strings.TrimRight(controlBaseURL, "/") + "/api/control/failure")
 	if err != nil {
 		return nil, false, err
 	}
@@ -609,7 +658,7 @@ func shellQuote(s string) string {
 }
 
 // controlToolUseMinYieldMs is the floor we clamp Codex's
-// exec_command yield_time_ms to when the call is a /control/* curl.
+// exec_command yield_time_ms to when the call is an /api/control/* curl.
 // The curl's max block is wait timeout (120s) plus network slop; 180s
 // gives a comfortable margin without forcing the agent to wait
 // substantially longer than necessary if the user replies quickly.
@@ -684,8 +733,11 @@ func rewriteControlCommandString(cmd string, v inspector.Verdict, opts inspector
 		rewritten := *parsed
 		rewritten.Scheme = resolver.Scheme
 		rewritten.Host = resolver.Host
+		if normalizedPath, ok := normalizeControlPath(parsed.Path); ok {
+			rewritten.Path = normalizedPath
+		}
 		if resolver.Path != "" {
-			rewritten.Path = strings.TrimRight(resolver.Path, "/") + parsed.Path
+			rewritten.Path = strings.TrimRight(resolver.Path, "/") + rewritten.Path
 		}
 		headers := " -H " + shellSingleQuote(firstNonEmptyControl(opts.TargetHostHeader, "X-Clawvisor-Target-Host")+": "+parsed.Host)
 		if opts.CallerToken != "" && opts.CallerHeader != "" {
@@ -822,18 +874,19 @@ func commandInputMentionsControlEndpoint(in json.RawMessage, controlBaseURL stri
 }
 
 func textMentionsControlEndpoint(text string, controlBaseURL string) bool {
-	if strings.Contains(text, "://"+ControlSyntheticHost+"/control") {
+	if strings.Contains(text, "://"+ControlSyntheticHost+ControlSyntheticPath) ||
+		strings.Contains(text, "://"+ControlSyntheticHost+ControlAPIPath) {
 		return true
 	}
 	base, err := url.Parse(strings.TrimSpace(controlBaseURL))
 	if err != nil || base.Host == "" {
 		return false
 	}
-	prefix := strings.TrimRight(controlBaseURL, "/") + "/control"
+	prefix := strings.TrimRight(controlBaseURL, "/") + ControlAPIPath
 	if strings.Contains(text, prefix) {
 		return true
 	}
-	if base.Scheme != "" && strings.Contains(text, base.Scheme+"://"+base.Host+"/control") {
+	if base.Scheme != "" && strings.Contains(text, base.Scheme+"://"+base.Host+ControlAPIPath) {
 		return true
 	}
 	return false
@@ -945,10 +998,25 @@ func parseControlURL(raw string, controlBaseURL string) (*url.URL, bool) {
 	if !isControlHost(u, controlBaseURL) {
 		return nil, false
 	}
-	if u.Path != "/control" && !strings.HasPrefix(u.Path, "/control/") {
+	normalized, ok := normalizeControlPath(u.Path)
+	if !ok {
 		return nil, false
 	}
+	u.Path = normalized
 	return u, true
+}
+
+func normalizeControlPath(path string) (string, bool) {
+	switch {
+	case path == ControlAPIPath || strings.HasPrefix(path, ControlAPIPath+"/"):
+		return path, true
+	case path == ControlSyntheticPath:
+		return ControlAPIPath, true
+	case strings.HasPrefix(path, ControlSyntheticPath+"/"):
+		return ControlAPIPath + strings.TrimPrefix(path, ControlSyntheticPath), true
+	default:
+		return "", false
+	}
 }
 
 func isControlHost(u *url.URL, controlBaseURL string) bool {
@@ -1230,7 +1298,7 @@ func parseSingleControlCurlStmt(cmd string, stmt *syntax.Stmt) ([]controlCurlArg
 // harness — so without a path allowlist a model could write or
 // overwrite arbitrary files (think `cat <<X >~/.bashrc`,
 // `>/etc/important.conf`, `>/Users/<u>/.ssh/authorized_keys`) while
-// the request looks like a normal /control/tasks call.
+// the request looks like a normal /api/control/tasks call.
 //
 // The allowed shape is `/tmp/<flat-name>.json`:
 //   - absolute, anchored at `/tmp/` — no $HOME expansion, no relative

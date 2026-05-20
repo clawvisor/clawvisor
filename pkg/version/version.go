@@ -48,12 +48,13 @@ func PushURL() string {
 }
 
 // HaikuProxyURL returns the haiku proxy base URL for the current environment.
-// Includes /v1 so the LLM client's "/messages" append hits /v1/messages.
+// Includes /api/v1 so the LLM client's "/messages" append hits
+// /api/v1/messages.
 func HaikuProxyURL() string {
 	if IsStaging() {
-		return "https://hp.staging.clawvisor.com/v1"
+		return "https://hp.staging.clawvisor.com/api/v1"
 	}
-	return "https://hp.clawvisor.com/v1"
+	return "https://hp.clawvisor.com/api/v1"
 }
 
 // CORSOrigins returns the allowed CORS origins for the current environment.
