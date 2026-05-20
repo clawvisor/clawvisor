@@ -16,6 +16,7 @@ export default function Agents() {
   const qc = useQueryClient()
   const liveSessionsUI = !orgId && !!features?.agent_live_sessions
   const runtimePolicyUI = !orgId && !!features?.runtime_policy_ui
+  const proxyLiteUI = !orgId && !!features?.proxy_lite
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
@@ -114,6 +115,7 @@ export default function Agents() {
         approvals={approvalsByAgent.get(selectedAgent.id) ?? []}
         liveSessionsUI={fullRuntimeSessionsUI}
         runtimePolicyUI={runtimePolicyUI}
+        proxyLiteUI={proxyLiteUI}
         onDeleted={() => {
           qc.invalidateQueries({ queryKey: ['agents'] })
           qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -297,6 +299,7 @@ function AgentDetailView({
   approvals,
   liveSessionsUI,
   runtimePolicyUI,
+  proxyLiteUI,
   onDeleted,
 }: {
   agent: Agent
@@ -305,6 +308,7 @@ function AgentDetailView({
   approvals: ApprovalRecord[]
   liveSessionsUI: boolean
   runtimePolicyUI: boolean
+  proxyLiteUI: boolean
   onDeleted: () => void
 }) {
   const qc = useQueryClient()
@@ -317,7 +321,7 @@ function AgentDetailView({
   const { data: runtimeStatus } = useQuery({
     queryKey: ['runtime-status'],
     queryFn: () => api.runtime.status(),
-    enabled: runtimePolicyUI || liveSessionsUI,
+    enabled: runtimePolicyUI || liveSessionsUI || proxyLiteUI,
   })
   const { data: recentActivity } = useQuery({
     queryKey: ['audit', 'agent', agent.id],
@@ -351,7 +355,9 @@ function AgentDetailView({
     const rules = [...(allEgressRules?.entries ?? []), ...(allToolRules?.entries ?? [])]
     return rules.filter(rule => !rule.agent_id || rule.agent_id === agent.id)
   }, [agent.id, allEgressRules, allToolRules])
-  const proxyLiteActive = runtimePolicyUI && !!runtimeStatus?.proxy_lite_enabled
+  const proxyLiteActive = proxyLiteUI && !!runtimeStatus?.proxy_lite_enabled
+  const showRuntimeSettings = runtimePolicyUI && runtimeStatus?.enabled
+  const showAgentSettings = showRuntimeSettings || proxyLiteActive
 
   return (
     <div className="p-4 sm:p-8 space-y-8">
@@ -397,7 +403,7 @@ function AgentDetailView({
         </Link>
       </div>
 
-      {runtimePolicyUI && runtimeStatus?.enabled && <AgentRuntimePanel agentId={agent.id} defaultOpen />}
+      {showAgentSettings && <AgentRuntimePanel agentId={agent.id} defaultOpen showRuntimeControls={showRuntimeSettings} />}
 
       {proxyLiteActive && <AgentLiteProxyPanel agentId={agent.id} />}
       {proxyLiteActive && <AgentLLMCredentialsPanel agentId={agent.id} />}
@@ -548,7 +554,15 @@ function AgentMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; defaultOpen?: boolean }) {
+function AgentRuntimePanel({
+  agentId,
+  defaultOpen = false,
+  showRuntimeControls = true,
+}: {
+  agentId: string
+  defaultOpen?: boolean
+  showRuntimeControls?: boolean
+}) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(defaultOpen)
   const { data: settings } = useQuery({
@@ -575,9 +589,11 @@ function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; 
   })
 
   const current = draft ?? settings
+  const secretDetectionEnabled = current?.lite_proxy_secret_detection_disabled === false
+  const secretDetectionSummary = `secret detection ${secretDetectionEnabled ? 'on' : 'off'}`
 
   return (
-    <div className="mt-3 rounded border border-border-subtle bg-surface-0">
+    <div className="mt-3 overflow-hidden rounded border border-border-subtle bg-surface-0">
       <button
         onClick={() => {
           setOpen(v => !v)
@@ -586,73 +602,99 @@ function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; 
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <div>
-          <div className="text-sm font-medium text-text-primary">Runtime settings</div>
+          <div className="text-sm font-medium text-text-primary">{showRuntimeControls ? 'Runtime settings' : 'Agent settings'}</div>
           <div className="text-xs text-text-tertiary">
             {current
-              ? `${current.runtime_enabled ? 'enabled' : 'disabled'} · ${current.runtime_mode} · ${current.starter_profile || 'none'}`
-              : 'Configure observe vs enforce defaults, starter profile, and outbound credential posture.'}
+              ? showRuntimeControls
+                ? `${current.runtime_enabled ? 'enabled' : 'disabled'} · ${current.runtime_mode} · ${current.starter_profile || 'none'} · ${secretDetectionSummary}`
+                : `secret detection ${secretDetectionEnabled ? 'enabled' : 'disabled'}`
+              : showRuntimeControls
+                ? 'Configure observe vs enforce defaults, starter profile, and outbound credential posture.'
+                : 'Configure experimental agent controls.'}
           </div>
         </div>
         <span className="text-xs text-text-tertiary">{open ? 'Hide' : 'Edit'}</span>
       </button>
       {open && current && (
         <div className="border-t border-border-subtle px-4 py-4 space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs text-text-tertiary">Runtime enabled</span>
-              <select
-                value={current.runtime_enabled ? 'true' : 'false'}
-                onChange={e => setDraft({ ...current, runtime_enabled: e.target.value === 'true' })}
-                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-              >
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs text-text-tertiary">Runtime mode</span>
-              <select
-                value={current.runtime_mode}
-                onChange={e => setDraft({ ...current, runtime_mode: e.target.value as AgentRuntimeSettings['runtime_mode'] })}
-                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-              >
-                <option value="observe">Observe</option>
-                <option value="enforce">Enforce</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs text-text-tertiary">Starter profile</span>
-              <select
-                value={current.starter_profile}
-                onChange={e => setDraft({ ...current, starter_profile: e.target.value })}
-                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-              >
-                <option value="none">None</option>
-                <option value="claude_code">Claude Code</option>
-                <option value="codex">Codex</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs text-text-tertiary">Outbound credential mode</span>
-              <select
-                value={current.outbound_credential_mode}
-                onChange={e => setDraft({ ...current, outbound_credential_mode: e.target.value as AgentRuntimeSettings['outbound_credential_mode'] })}
-                className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
-              >
-                <option value="inherit">Inherit</option>
-                <option value="observe">Observe</option>
-                <option value="strict">Strict</option>
-              </select>
-            </label>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-text-primary">
-            <input
-              type="checkbox"
-              checked={current.inject_stored_bearer}
-              onChange={e => setDraft({ ...current, inject_stored_bearer: e.target.checked })}
+          {showRuntimeControls && (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs text-text-tertiary">Runtime enabled</span>
+                  <select
+                    value={current.runtime_enabled ? 'true' : 'false'}
+                    onChange={e => setDraft({ ...current, runtime_enabled: e.target.value === 'true' })}
+                    className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+                  >
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-text-tertiary">Runtime mode</span>
+                  <select
+                    value={current.runtime_mode}
+                    onChange={e => setDraft({ ...current, runtime_mode: e.target.value as AgentRuntimeSettings['runtime_mode'] })}
+                    className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+                  >
+                    <option value="observe">Observe</option>
+                    <option value="enforce">Enforce</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-text-tertiary">Starter profile</span>
+                  <select
+                    value={current.starter_profile}
+                    onChange={e => setDraft({ ...current, starter_profile: e.target.value })}
+                    className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+                  >
+                    <option value="none">None</option>
+                    <option value="claude_code">Claude Code</option>
+                    <option value="codex">Codex</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-text-tertiary">Outbound credential mode</span>
+                  <select
+                    value={current.outbound_credential_mode}
+                    onChange={e => setDraft({ ...current, outbound_credential_mode: e.target.value as AgentRuntimeSettings['outbound_credential_mode'] })}
+                    className="w-full rounded border border-border-default bg-surface-1 px-3 py-2 text-sm text-text-primary"
+                  >
+                    <option value="inherit">Inherit</option>
+                    <option value="observe">Observe</option>
+                    <option value="strict">Strict</option>
+                  </select>
+                </label>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-text-primary">
+                <input
+                  type="checkbox"
+                  checked={current.inject_stored_bearer}
+                  onChange={e => setDraft({ ...current, inject_stored_bearer: e.target.checked })}
+                />
+                Inject stored bearer credentials
+              </label>
+            </>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-border-subtle bg-surface-1 px-4 py-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-medium text-text-primary">Detect raw secrets</div>
+                <span className="rounded border border-border-subtle px-2 py-0.5 text-[11px] uppercase tracking-wider text-text-tertiary">
+                  Experimental
+                </span>
+              </div>
+              <div className="mt-1 text-xs text-text-tertiary">
+                Scans agent LLM requests for raw secrets and pauses them so you can vault, discard, allow once, or mark them safe.
+              </div>
+            </div>
+            <SwitchControl
+              checked={secretDetectionEnabled}
+              onChange={checked => setDraft({ ...current, lite_proxy_secret_detection_disabled: !checked })}
+              label="Detect raw secrets"
             />
-            Inject stored bearer credentials
-          </label>
+          </div>
           <div className="flex justify-end">
             <button
               onClick={() => saveMut.mutate(current)}
@@ -665,6 +707,35 @@ function AgentRuntimePanel({ agentId, defaultOpen = false }: { agentId: string; 
         </div>
       )}
     </div>
+  )
+}
+
+function SwitchControl({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 ${
+        checked ? 'bg-brand' : 'bg-border-strong'
+      }`}
+    >
+      <span
+        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${
+          checked ? 'translate-x-[18px] ml-0' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
   )
 }
 

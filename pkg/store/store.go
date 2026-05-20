@@ -414,14 +414,15 @@ type Agent struct {
 }
 
 type AgentRuntimeSettings struct {
-	AgentID                string    `json:"agent_id"`
-	RuntimeEnabled         bool      `json:"runtime_enabled"`
-	RuntimeMode            string    `json:"runtime_mode"`
-	StarterProfile         string    `json:"starter_profile"`
-	OutboundCredentialMode string    `json:"outbound_credential_mode"`
-	InjectStoredBearer     bool      `json:"inject_stored_bearer"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	AgentID                          string    `json:"agent_id"`
+	RuntimeEnabled                   bool      `json:"runtime_enabled"`
+	RuntimeMode                      string    `json:"runtime_mode"`
+	StarterProfile                   string    `json:"starter_profile"`
+	OutboundCredentialMode           string    `json:"outbound_credential_mode"`
+	InjectStoredBearer               bool      `json:"inject_stored_bearer"`
+	LiteProxySecretDetectionDisabled bool      `json:"lite_proxy_secret_detection_disabled"`
+	CreatedAt                        time.Time `json:"created_at"`
+	UpdatedAt                        time.Time `json:"updated_at"`
 }
 
 // ServiceMeta records that a user has activated a given service.

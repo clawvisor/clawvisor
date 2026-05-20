@@ -132,6 +132,10 @@ func TestLiteProxyRequestDebugSummaryExtractsAvailableTools(t *testing.T) {
 }
 
 func newSeededHandler(t *testing.T, upstreamURL string) (*LLMEndpointHandler, store.Store, string, string) {
+	return newSeededHandlerWithLiteProxySecretDetection(t, upstreamURL, boolPtr(true))
+}
+
+func newSeededHandlerWithLiteProxySecretDetection(t *testing.T, upstreamURL string, enabled *bool) (*LLMEndpointHandler, store.Store, string, string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -153,6 +157,13 @@ func newSeededHandler(t *testing.T, upstreamURL string) (*LLMEndpointHandler, st
 	agent, err := st.CreateAgent(ctx, user.ID, "claude-code", auth.HashToken(rawAgentToken))
 	if err != nil {
 		t.Fatalf("CreateAgent: %v", err)
+	}
+	if enabled != nil {
+		settings := defaultAgentRuntimeSettings(nil, agent.ID)
+		settings.LiteProxySecretDetectionDisabled = !*enabled
+		if err := st.UpsertAgentRuntimeSettings(ctx, settings); err != nil {
+			t.Fatalf("UpsertAgentRuntimeSettings: %v", err)
+		}
 	}
 
 	v := &stubVault{}
@@ -467,6 +478,92 @@ func TestLLMEndpoint_InboundSecretDiscardRedactsBeforeForwarding(t *testing.T) {
 	}
 	if !strings.Contains(string(seenBody), "[redacted secret:github]") {
 		t.Fatalf("discard forwarded body missing redaction marker: %s", seenBody)
+	}
+}
+
+func TestLLMEndpoint_LiteProxySecretDetectionCanBeDisabledPerAgent(t *testing.T) {
+	upstreamHits := 0
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandler(t, upstream.URL)
+	user, err := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	agents, err := st.ListAgents(context.Background(), user.ID)
+	if err != nil || len(agents) == 0 {
+		t.Fatalf("ListAgents: agents=%d err=%v", len(agents), err)
+	}
+	settings := defaultAgentRuntimeSettings(nil, agents[0].ID)
+	settings.LiteProxySecretDetectionDisabled = true
+	if err := st.UpsertAgentRuntimeSettings(context.Background(), settings); err != nil {
+		t.Fatalf("UpsertAgentRuntimeSettings: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "ghp_1234567890abcdefABCDEF1234567890abcdef"
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"my github token is `+rawSecret+`"}]}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected upstream response, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("disabled detection should forward immediately, hits=%d", upstreamHits)
+	}
+	if !strings.Contains(string(seenBody), rawSecret) {
+		t.Fatalf("disabled detection should not redact raw secret: %s", seenBody)
+	}
+	if strings.Contains(rec.Body.String(), "Clawvisor detected a possible raw secret") {
+		t.Fatalf("disabled detection should not prompt: %s", rec.Body.String())
+	}
+}
+
+func TestLLMEndpoint_LiteProxySecretDetectionDisabledByDefault(t *testing.T) {
+	upstreamHits := 0
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	h, st, rawToken, _ := newSeededHandlerWithLiteProxySecretDetection(t, upstream.URL, nil)
+	mux := http.NewServeMux()
+	mw := middleware.RequireAgentLLM(st)
+	mux.Handle("POST /v1/messages", mw(http.HandlerFunc(h.Messages)))
+
+	rawSecret := "ghp_1234567890abcdefABCDEF1234567890abcdef"
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"my github token is `+rawSecret+`"}]}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected upstream response, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("default-disabled detection should forward immediately, hits=%d", upstreamHits)
+	}
+	if !strings.Contains(string(seenBody), rawSecret) {
+		t.Fatalf("default-disabled detection should not redact raw secret: %s", seenBody)
+	}
+	if strings.Contains(rec.Body.String(), "Clawvisor detected a possible raw secret") {
+		t.Fatalf("default-disabled detection should not prompt: %s", rec.Body.String())
 	}
 }
 

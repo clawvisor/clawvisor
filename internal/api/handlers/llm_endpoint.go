@@ -338,23 +338,28 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decisionExtraSuppressed := map[string]struct{}{}
-	if decisionBody, decision, extraSuppressed, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
-		if len(decisionBody) == 0 {
-			return
+	liteProxySecretDetectionDisabled := agentLiteProxySecretDetectionDisabled(agent)
+	if liteProxySecretDetectionDisabled {
+		auditParams["lite_proxy_secret_detection_disabled"] = true
+	} else {
+		if decisionBody, decision, extraSuppressed, handled := h.maybeHandleLiteSecretDecision(w, r, agent, provider, requestID, body, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); handled {
+			if len(decisionBody) == 0 {
+				return
+			}
+			body = decisionBody
+			if _, err := parser.ParseRequest(body); err != nil {
+				auditStatus = http.StatusBadRequest
+				auditDecide = "deny"
+				auditOutcome = "malformed_request"
+				auditReason = err.Error()
+				writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
+				return
+			}
+			auditParams["secret_decision"] = string(decision)
+			decisionExtraSuppressed = extraSuppressed
 		}
-		body = decisionBody
-		if _, err := parser.ParseRequest(body); err != nil {
-			auditStatus = http.StatusBadRequest
-			auditDecide = "deny"
-			auditOutcome = "malformed_request"
-			auditReason = err.Error()
-			writeJSONError(w, http.StatusBadRequest, "MALFORMED_REQUEST", err.Error())
-			return
-		}
-		auditParams["secret_decision"] = string(decision)
-		decisionExtraSuppressed = extraSuppressed
 	}
-	if processed, held := h.preprocessLiteSecretBody(w, r, agent, provider, requestID, body, decisionExtraSuppressed, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); held {
+	if processed, held := h.preprocessLiteSecretBody(w, r, agent, provider, requestID, body, decisionExtraSuppressed, liteProxySecretDetectionDisabled, auditParams, &auditStatus, &auditDecide, &auditOutcome, &auditReason); held {
 		return
 	} else {
 		body = processed
@@ -1317,7 +1322,7 @@ func (h *LLMEndpointHandler) forwardLitePassthrough(w http.ResponseWriter, r *ht
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, bool) {
+func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, extraSuppressed map[string]struct{}, liteProxySecretDetectionDisabled bool, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, bool) {
 	if stripped, err := llmproxy.StripSecretDecisionHistory(llmproxy.SecretDecisionHistoryStripRequest{
 		Provider: provider,
 		Body:     body,
@@ -1339,6 +1344,14 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 		body = stripped.Body
 		auditParams["secret_decision_history_stripped"] = true
 	}
+	if liteProxySecretDetectionDisabled {
+		h.emitLiteSecretPipelineTrace(requestID, agent, "lite_proxy_secret_detection_skipped", map[string]any{
+			"provider": string(provider),
+			"body_sha": liteSecretBodySHA(body),
+			"reason":   "agent_setting",
+		})
+		return body, false
+	}
 	if rewritten, modified := h.applyRememberedSecretRewrites(r.Context(), agent, provider, requestID, body); modified {
 		body = rewritten
 		auditParams["secret_rewrites_applied"] = true
@@ -1347,6 +1360,10 @@ func (h *LLMEndpointHandler) preprocessLiteSecretBody(w http.ResponseWriter, r *
 		return body, true
 	}
 	return body, false
+}
+
+func agentLiteProxySecretDetectionDisabled(agent *store.Agent) bool {
+	return agent != nil && (agent.RuntimeSettings == nil || agent.RuntimeSettings.LiteProxySecretDetectionDisabled)
 }
 
 func (h *LLMEndpointHandler) maybeHandleLiteSecretDecision(w http.ResponseWriter, r *http.Request, agent *store.Agent, provider conversation.Provider, requestID string, body []byte, auditParams map[string]any, auditStatus *int, auditDecide, auditOutcome, auditReason *string) ([]byte, llmproxy.SecretDecisionAction, map[string]struct{}, bool) {

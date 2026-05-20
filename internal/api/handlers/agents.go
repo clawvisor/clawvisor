@@ -172,11 +172,12 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		RuntimeEnabled         bool   `json:"runtime_enabled"`
-		RuntimeMode            string `json:"runtime_mode"`
-		StarterProfile         string `json:"starter_profile"`
-		OutboundCredentialMode string `json:"outbound_credential_mode"`
-		InjectStoredBearer     bool   `json:"inject_stored_bearer"`
+		RuntimeEnabled                   bool   `json:"runtime_enabled"`
+		RuntimeMode                      string `json:"runtime_mode"`
+		StarterProfile                   string `json:"starter_profile"`
+		OutboundCredentialMode           string `json:"outbound_credential_mode"`
+		InjectStoredBearer               bool   `json:"inject_stored_bearer"`
+		LiteProxySecretDetectionDisabled *bool  `json:"lite_proxy_secret_detection_disabled"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -201,6 +202,9 @@ func (h *AgentsHandler) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Req
 	settings.StarterProfile = body.StarterProfile
 	settings.OutboundCredentialMode = body.OutboundCredentialMode
 	settings.InjectStoredBearer = body.InjectStoredBearer
+	if body.LiteProxySecretDetectionDisabled != nil {
+		settings.LiteProxySecretDetectionDisabled = *body.LiteProxySecretDetectionDisabled
+	}
 	if err := h.st.UpsertAgentRuntimeSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not save agent runtime settings")
 		return
@@ -318,11 +322,12 @@ func defaultAgentRuntimeSettings(cfg *config.Config, agentID string) *store.Agen
 		runtimeMode = "enforce"
 	}
 	return &store.AgentRuntimeSettings{
-		AgentID:                agentID,
-		RuntimeEnabled:         true,
-		RuntimeMode:            runtimeMode,
-		StarterProfile:         "none",
-		OutboundCredentialMode: "inherit",
-		InjectStoredBearer:     cfg != nil && cfg.RuntimePolicy.InjectStoredBearer,
+		AgentID:                          agentID,
+		RuntimeEnabled:                   true,
+		RuntimeMode:                      runtimeMode,
+		StarterProfile:                   "none",
+		OutboundCredentialMode:           "inherit",
+		InjectStoredBearer:               cfg != nil && cfg.RuntimePolicy.InjectStoredBearer,
+		LiteProxySecretDetectionDisabled: true,
 	}
 }

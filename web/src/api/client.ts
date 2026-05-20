@@ -259,6 +259,7 @@ export interface AgentRuntimeSettings {
   starter_profile: string
   outbound_credential_mode: 'inherit' | 'observe' | 'strict'
   inject_stored_bearer: boolean
+  lite_proxy_secret_detection_disabled: boolean
   created_at?: string
   updated_at?: string
 }
