@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, type TaskSuggestion, type WelcomeData, type WelcomeService, type WelcomeAgent, type WalkthroughExample } from '../api/client'
 import { ServiceIcon } from '../components/ServiceIcon'
+import { useAuth } from '../hooks/useAuth'
 
 // GetStarted — the "What is Clawvisor?" page. It's context-aware: users with
 // nothing connected are steered through setup, while users who are already
@@ -521,16 +522,22 @@ function SuggestionsLoading() {
 }
 
 function SuggestionsFallback({ status }: { status?: string }) {
+  const { features } = useAuth()
+  const multiTenant = !!features?.multi_tenant
   const message =
     status === 'unconfigured'
-      ? "Personalized task suggestions need an LLM API key. Add one in Settings to see ideas tailored to what you've connected."
+      ? multiTenant
+        ? 'Personalized task suggestions are temporarily unavailable.'
+        : "Personalized task suggestions need an LLM API key. Add one in Settings to see ideas tailored to what you've connected."
       : status === 'exhausted'
-        ? 'The free LLM credit is exhausted. Add your own API key in Settings to keep seeing personalized suggestions.'
+        ? multiTenant
+          ? 'Personalized task suggestions are temporarily unavailable.'
+          : 'The free LLM credit is exhausted. Add your own API key in Settings to keep seeing personalized suggestions.'
         : "Couldn't generate suggestions right now — try refreshing in a minute."
   return (
     <div className="rounded-lg border border-border-subtle bg-surface-1 px-4 py-5 text-sm text-text-secondary">
       {message}
-      {(status === 'unconfigured' || status === 'exhausted') && (
+      {!multiTenant && (status === 'unconfigured' || status === 'exhausted') && (
         <>
           {' '}
           <Link to="/dashboard/settings" className="text-brand hover:text-brand-strong font-medium">

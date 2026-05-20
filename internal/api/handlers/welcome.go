@@ -72,33 +72,33 @@ type welcomeAgent struct {
 // their agent. Kept deliberately small — the frontend renders a prompt the
 // user can copy/paste.
 type taskSuggestion struct {
-	Title    string   `json:"title"`              // short headline, e.g. "Triage inbox"
-	Prompt   string   `json:"prompt"`             // example natural-language prompt to hand the agent
-	Agent    string   `json:"agent,omitempty"`    // recommended agent name, if any
-	Services []string `json:"services"`           // service IDs the prompt involves
-	Risk     string   `json:"risk,omitempty"`     // "low" | "medium" | "high"
+	Title    string   `json:"title"`           // short headline, e.g. "Triage inbox"
+	Prompt   string   `json:"prompt"`          // example natural-language prompt to hand the agent
+	Agent    string   `json:"agent,omitempty"` // recommended agent name, if any
+	Services []string `json:"services"`        // service IDs the prompt involves
+	Risk     string   `json:"risk,omitempty"`  // "low" | "medium" | "high"
 }
 
 // walkthroughExample personalises the "here's what a task looks like" flow
 // using a coherent pairing of the user's connected services. Frontend falls
 // back to a hardcoded Gmail/Linear example when this is absent.
 type walkthroughExample struct {
-	UserPrompt   string   `json:"user_prompt"`           // what the user would ask, e.g. "Triage my Gmail…"
-	AgentTask    string   `json:"agent_task"`            // what the agent declares, e.g. "read Gmail…, create Linear issues"
-	PrimaryName  string   `json:"primary_name"`          // the main service name, for the subtitle
-	SecondaryName string  `json:"secondary_name"`        // the paired service name, for the subtitle
-	Services     []string `json:"services,omitempty"`    // service IDs referenced
+	UserPrompt    string   `json:"user_prompt"`        // what the user would ask, e.g. "Triage my Gmail…"
+	AgentTask     string   `json:"agent_task"`         // what the agent declares, e.g. "read Gmail…, create Linear issues"
+	PrimaryName   string   `json:"primary_name"`       // the main service name, for the subtitle
+	SecondaryName string   `json:"secondary_name"`     // the paired service name, for the subtitle
+	Services      []string `json:"services,omitempty"` // service IDs referenced
 }
 
 // welcomeResponse is the payload for GET /api/welcome/suggestions.
 type welcomeResponse struct {
-	Ready       bool                `json:"ready"`        // true when ≥1 service + ≥1 agent
+	Ready       bool                `json:"ready"` // true when ≥1 service + ≥1 agent
 	Services    []welcomeService    `json:"services"`
 	Agents      []welcomeAgent      `json:"agents"`
-	Suggestions []taskSuggestion    `json:"suggestions"`  // may be empty
+	Suggestions []taskSuggestion    `json:"suggestions"` // may be empty
 	Walkthrough *walkthroughExample `json:"walkthrough,omitempty"`
-	LLMUsed     bool                `json:"llm_used"`     // true if suggestions came from LLM
-	LLMStatus   string              `json:"llm_status"`   // "ok" | "unconfigured" | "exhausted" | "error"
+	LLMUsed     bool                `json:"llm_used"`   // true if suggestions came from LLM
+	LLMStatus   string              `json:"llm_status"` // "ok" | "unconfigured" | "exhausted" | "error"
 }
 
 // Suggestions returns the welcome-page payload.
@@ -144,11 +144,11 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide whether to call the LLM. Vertex authenticates via GCP ADC rather
-	// than an API key, so an empty APIKey is only "unconfigured" for other
-	// providers.
-	cfg := h.llmHealth.LLMConfig()
-	if cfg.APIKey == "" && cfg.Provider != "vertex" {
+	// Decide whether to call the LLM. The welcome page is not a first-class LLM
+	// subsection, so prefer the shared provider config but allow cloud deployments
+	// that only configure per-feature provider blocks to reuse one of those.
+	providerCfg, configured := welcomeSuggestionsProviderConfig(h.llmHealth.LLMConfig())
+	if !configured {
 		resp.LLMStatus = "unconfigured"
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -159,7 +159,7 @@ func (h *WelcomeHandler) Suggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	suggestions, walkthrough, err := h.generateSuggestions(ctx, cfg, services, agentSummaries)
+	suggestions, walkthrough, err := h.generateSuggestions(ctx, providerCfg, services, agentSummaries)
 	if err != nil {
 		if errors.Is(err, llm.ErrSpendCapExhausted) {
 			h.llmHealth.SetSpendCapExhausted()
@@ -310,15 +310,7 @@ func (h *WelcomeHandler) listActivatedServices(ctx context.Context, userID strin
 // generateSuggestions asks the LLM for 3-5 task ideas and a walkthrough example
 // tailored to the user's connected services and agent names. Returns an error
 // if the LLM call fails.
-func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.LLMConfig, services []welcomeService, agents []welcomeAgent) ([]taskSuggestion, *walkthroughExample, error) {
-	providerCfg := config.LLMProviderConfig{
-		Provider:       llmCfg.Provider,
-		Endpoint:       llmCfg.Endpoint,
-		APIKey:         llmCfg.APIKey,
-		Model:          llmCfg.Model,
-		TimeoutSeconds: llmCfg.TimeoutSeconds,
-	}
-
+func (h *WelcomeHandler) generateSuggestions(ctx context.Context, providerCfg config.LLMProviderConfig, services []welcomeService, agents []welcomeAgent) ([]taskSuggestion, *walkthroughExample, error) {
 	client := llm.NewClient(providerCfg).WithMaxTokens(1400)
 
 	userMsg := buildSuggestionUserMessage(services, agents)
@@ -354,6 +346,87 @@ func (h *WelcomeHandler) generateSuggestions(ctx context.Context, llmCfg config.
 	}
 
 	return parseSuggestionResponse(raw)
+}
+
+func welcomeSuggestionsProviderConfig(llmCfg config.LLMConfig) (config.LLMProviderConfig, bool) {
+	shared := normalizeWelcomeProviderEndpoint(config.LLMProviderConfig{
+		Provider:            llmCfg.Provider,
+		Endpoint:            llmCfg.Endpoint,
+		APIKey:              llmCfg.APIKey,
+		Model:               llmCfg.Model,
+		TimeoutSeconds:      llmCfg.TimeoutSeconds,
+		Project:             llmCfg.Project,
+		Region:              llmCfg.Region,
+		GeminiThinkingLevel: llmCfg.GeminiThinkingLevel,
+	})
+	if welcomeProviderConfigured(shared) {
+		return shared, true
+	}
+
+	candidates := []config.LLMProviderConfig{
+		llmCfg.TaskRisk.LLMProviderConfig,
+		llmCfg.Verification.LLMProviderConfig,
+		llmCfg.ChainContext.LLMProviderConfig,
+		llmCfg.FeedbackReview.LLMProviderConfig,
+		llmCfg.AdapterGen.LLMProviderConfig,
+	}
+	for _, c := range candidates {
+		if !c.Enabled {
+			continue
+		}
+		c = inheritWelcomeLLMDefaults(c, llmCfg)
+		if welcomeProviderConfigured(c) {
+			return c, true
+		}
+	}
+
+	return shared, false
+}
+
+func inheritWelcomeLLMDefaults(sub config.LLMProviderConfig, shared config.LLMConfig) config.LLMProviderConfig {
+	if sub.Provider == "" {
+		sub.Provider = shared.Provider
+	}
+	if sub.Endpoint == "" && (sub.Provider == "anthropic" || shared.Endpoint != "https://api.anthropic.com/v1") {
+		sub.Endpoint = shared.Endpoint
+	}
+	if sub.APIKey == "" {
+		sub.APIKey = shared.APIKey
+	}
+	if sub.Model == "" {
+		sub.Model = shared.Model
+	}
+	if sub.TimeoutSeconds == 0 {
+		sub.TimeoutSeconds = shared.TimeoutSeconds
+	}
+	if sub.Project == "" {
+		sub.Project = shared.Project
+	}
+	if sub.Region == "" {
+		sub.Region = shared.Region
+	}
+	if sub.GeminiThinkingLevel == "" {
+		sub.GeminiThinkingLevel = shared.GeminiThinkingLevel
+	}
+	return normalizeWelcomeProviderEndpoint(sub)
+}
+
+func normalizeWelcomeProviderEndpoint(cfg config.LLMProviderConfig) config.LLMProviderConfig {
+	if cfg.Endpoint == "https://api.anthropic.com/v1" && cfg.Provider != "" && cfg.Provider != "anthropic" {
+		cfg.Endpoint = ""
+	}
+	return cfg
+}
+
+func welcomeProviderConfigured(cfg config.LLMProviderConfig) bool {
+	switch cfg.Provider {
+	case "vertex":
+		return true
+	case "gemini":
+		return cfg.Project != "" && cfg.Model != ""
+	default:
+		return cfg.APIKey != ""
+	}
 }
 
 const suggestionSystemPrompt = `You help Clawvisor users discover useful first tasks to hand to their AI agents.
