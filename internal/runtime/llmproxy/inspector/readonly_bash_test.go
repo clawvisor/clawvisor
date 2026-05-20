@@ -72,6 +72,8 @@ func TestIsReadOnlyBashCommandRejectsMutationsAndEscapes(t *testing.T) {
 		"rg --hostname-bin /tmp/hostname pattern .",
 		"sort -o /tmp/out README.md",
 		"sort --output=/tmp/out README.md",
+		"sort --compress-program=/tmp/pwn README.md",
+		"sort --compress-program /tmp/pwn README.md",
 		"uniq README.md /tmp/out",
 		"date 01020304",
 		"date -s tomorrow",

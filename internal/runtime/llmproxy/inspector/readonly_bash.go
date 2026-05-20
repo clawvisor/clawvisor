@@ -220,7 +220,7 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 		}
 	case "sort":
 		for _, val := range values {
-			if longFlag(val, "output") || shortOptionHas(val, 'o') {
+			if longFlag(val, "output") || longFlag(val, "compress-program") || shortOptionHas(val, 'o') {
 				return false
 			}
 		}
