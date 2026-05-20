@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -65,11 +66,11 @@ func TestMatchRuntimePolicyToolIgnoresReadOnlyShellSettingMarker(t *testing.T) {
 		Kind:       "tool",
 		Action:     "allow",
 		ToolName:   "Bash",
-		InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
-		Source:     "readonly_shell_setting",
+		InputShape: toolnames.ReadOnlyShellSettingInputShape(),
+		Source:     toolnames.ReadOnlyShellSettingSource,
 		Enabled:    true,
 	}}
-	got, err := MatchRuntimePolicyTool(rules, agentID, "Bash", map[string]any{"clawvisor_readonly_shell_setting": true})
+	got, err := MatchRuntimePolicyTool(rules, agentID, "Bash", map[string]any{toolnames.ReadOnlyShellSettingShapeKey: true})
 	if err != nil {
 		t.Fatalf("MatchRuntimePolicyTool: %v", err)
 	}

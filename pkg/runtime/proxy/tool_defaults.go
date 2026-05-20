@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -285,8 +286,14 @@ func summarizeToolUse(toolName string, input map[string]any) string {
 		if pattern, ok := stringInput(input, "pattern"); ok {
 			return fmt.Sprintf("%s %s", name, pattern)
 		}
-	case "bash", "mcp__shell__exec":
+	default:
+		if !toolnames.IsShellToolName(toolName) {
+			break
+		}
 		if command, ok := stringInput(input, "command"); ok {
+			return fmt.Sprintf("%s %s", name, command)
+		}
+		if command, ok := stringInput(input, "cmd"); ok {
 			return fmt.Sprintf("%s %s", name, command)
 		}
 	}

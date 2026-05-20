@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -140,7 +141,7 @@ func TestControlNoticeDisclosesActivePolicyAllowlist(t *testing.T) {
 
 func TestControlNoticeHonorsReadOnlyShellSetting(t *testing.T) {
 	notice := ControlNoticeWithPolicy("http://localhost:25297", []string{"exec_command", "read_file"}, []*store.RuntimePolicyRule{
-		{Kind: "tool", Action: "deny", ToolName: "Bash", Source: "readonly_shell_setting", Enabled: true},
+		{Kind: "tool", Action: "deny", ToolName: "Bash", Source: toolnames.ReadOnlyShellSettingSource, Enabled: true},
 	})
 	if strings.Contains(notice, "Read-only commands through `exec_command` may run without a task") {
 		t.Fatalf("notice should not advertise read-only shell commands when disabled; got:\n%s", notice)
@@ -150,7 +151,7 @@ func TestControlNoticeHonorsReadOnlyShellSetting(t *testing.T) {
 	}
 
 	notice = ControlNoticeWithPolicy("http://localhost:25297", []string{"exec_command", "read_file"}, []*store.RuntimePolicyRule{
-		{Kind: "tool", Action: "allow", ToolName: "Bash", Source: "readonly_shell_setting", Enabled: true},
+		{Kind: "tool", Action: "allow", ToolName: "Bash", Source: toolnames.ReadOnlyShellSettingSource, Enabled: true},
 	})
 	if !strings.Contains(notice, "Read-only commands through `exec_command` may run without a task") {
 		t.Fatalf("notice should advertise enabled read-only shell commands using the actual Codex tool name; got:\n%s", notice)

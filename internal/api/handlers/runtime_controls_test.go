@@ -12,6 +12,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
 	"github.com/clawvisor/clawvisor/pkg/config"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -442,7 +443,7 @@ func TestRuntimeHandlerToolControlsDiscoverAndUpsert(t *testing.T) {
 	}
 	foundReadOnlyDeny := false
 	for _, rule := range rules {
-		if rule.ToolName == "Bash" && rule.Source == readOnlyShellSettingSource && rule.Action == "deny" {
+		if rule.ToolName == "Bash" && rule.Source == toolnames.ReadOnlyShellSettingSource && rule.Action == "deny" {
 			foundReadOnlyDeny = true
 		}
 	}
@@ -538,9 +539,9 @@ func TestRuntimeHandlerToolControlsPreferCurrentShellToolForReadOnlySetting(t *t
 		Kind:       "tool",
 		Action:     "deny",
 		ToolName:   "Bash",
-		InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
+		InputShape: toolnames.ReadOnlyShellSettingInputShape(),
 		Reason:     "Require task scope or approval for read-only shell commands",
-		Source:     readOnlyShellSettingSource,
+		Source:     toolnames.ReadOnlyShellSettingSource,
 		Enabled:    true,
 	}); err != nil {
 		t.Fatalf("CreateRuntimePolicyRule: %v", err)

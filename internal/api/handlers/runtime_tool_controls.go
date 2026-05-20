@@ -11,10 +11,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/clawvisor/clawvisor/internal/api/middleware"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
-
-const readOnlyShellSettingSource = "readonly_shell_setting"
 
 type runtimeToolControlResponse struct {
 	AgentID                       string                     `json:"agent_id"`
@@ -70,7 +69,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 				Scope:                   "unset",
 				GlobalAction:            "unset",
 				AgentAction:             "unset",
-				ReadOnlyCommandsAllowed: isShellLikeToolName(name),
+				ReadOnlyCommandsAllowed: toolnames.IsShellToolName(name),
 				LastSeenAt:              nil,
 			}
 			controls[name] = ctrl
@@ -120,7 +119,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 	currentShellTool := firstShellLikeToolName(latestAvailableTools)
 	displayToolName := func(name string) string {
 		name = strings.TrimSpace(name)
-		if currentShellTool != "" && isShellLikeToolName(name) && !latestToolSet[strings.ToLower(name)] {
+		if currentShellTool != "" && toolnames.IsShellToolName(name) && !latestToolSet[strings.ToLower(name)] {
 			return currentShellTool
 		}
 		return name
@@ -169,7 +168,7 @@ func (h *RuntimeHandler) ListToolControls(w http.ResponseWriter, r *http.Request
 		if rule == nil || strings.TrimSpace(rule.ToolName) == "" {
 			continue
 		}
-		if isReadOnlyShellSettingRule(rule) {
+		if toolnames.IsReadOnlyShellSettingRule(rule) {
 			allowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
 			for _, ctrl := range readOnlyShellSettingControls(controls, ensure, rule.ToolName) {
 				if rule.AgentID != nil {
@@ -283,7 +282,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if body.ReadOnlyCommandsAllowed != nil {
-		if !isShellLikeToolName(toolName) {
+		if !toolnames.IsShellToolName(toolName) {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "read-only command setting only applies to shell-like tools")
 			return
 		}
@@ -422,7 +421,7 @@ func (h *RuntimeHandler) UpsertToolControl(w http.ResponseWriter, r *http.Reques
 }
 
 func readOnlyShellSettingControls(controls map[string]*runtimeToolControlResponse, ensure func(string) *runtimeToolControlResponse, toolName string) []*runtimeToolControlResponse {
-	if !isShellLikeToolName(toolName) {
+	if !toolnames.IsShellToolName(toolName) {
 		if ctrl := ensure(toolName); ctrl != nil {
 			return []*runtimeToolControlResponse{ctrl}
 		}
@@ -430,7 +429,7 @@ func readOnlyShellSettingControls(controls map[string]*runtimeToolControlRespons
 	}
 	out := make([]*runtimeToolControlResponse, 0, 1)
 	for _, ctrl := range controls {
-		if ctrl != nil && isShellLikeToolName(ctrl.ToolName) {
+		if ctrl != nil && toolnames.IsShellToolName(ctrl.ToolName) {
 			out = append(out, ctrl)
 		}
 	}
@@ -460,7 +459,7 @@ func toolNameSet(tools []string) map[string]bool {
 func firstShellLikeToolName(tools []string) string {
 	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
-		if isShellLikeToolName(tool) {
+		if toolnames.IsShellToolName(tool) {
 			return tool
 		}
 	}
@@ -519,18 +518,14 @@ func isSimpleToolControlRule(rule *store.RuntimePolicyRule) bool {
 	if rule == nil || strings.TrimSpace(rule.InputRegex) != "" {
 		return false
 	}
-	if isReadOnlyShellSettingRule(rule) {
+	if toolnames.IsReadOnlyShellSettingRule(rule) {
 		return false
 	}
 	return rawJSONEmptyObject(rule.InputShape)
 }
 
-func isReadOnlyShellSettingRule(rule *store.RuntimePolicyRule) bool {
-	return rule != nil && strings.EqualFold(strings.TrimSpace(rule.Source), readOnlyShellSettingSource)
-}
-
 func effectiveReadOnlyShellCommandsAllowed(ctrl *runtimeToolControlResponse) bool {
-	if ctrl == nil || !isShellLikeToolName(ctrl.ToolName) {
+	if ctrl == nil || !toolnames.IsShellToolName(ctrl.ToolName) {
 		return false
 	}
 	allowed := true
@@ -543,17 +538,8 @@ func effectiveReadOnlyShellCommandsAllowed(ctrl *runtimeToolControlResponse) boo
 	return allowed
 }
 
-func isShellLikeToolName(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
-		return true
-	default:
-		return false
-	}
-}
-
 func toolRuleNamesSameControl(ruleToolName, controlToolName string) bool {
-	if isShellLikeToolName(ruleToolName) && isShellLikeToolName(controlToolName) {
+	if toolnames.IsShellToolName(ruleToolName) && toolnames.IsShellToolName(controlToolName) {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(ruleToolName), strings.TrimSpace(controlToolName))
@@ -575,7 +561,7 @@ func (h *RuntimeHandler) upsertReadOnlyShellSetting(ctx context.Context, userID,
 		return err
 	}
 	for _, rule := range rules {
-		if rule == nil || !isReadOnlyShellSettingRule(rule) || !toolNamesSameShellClass(rule.ToolName, toolName) {
+		if rule == nil || !toolnames.IsReadOnlyShellSettingRule(rule) || !toolnames.ToolNamesSameClass(rule.ToolName, toolName) {
 			continue
 		}
 		if scope == "agent" && (rule.AgentID == nil || *rule.AgentID != agentID) {
@@ -601,18 +587,11 @@ func (h *RuntimeHandler) upsertReadOnlyShellSetting(ctx context.Context, userID,
 		Kind:       "tool",
 		Action:     action,
 		ToolName:   toolName,
-		InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
+		InputShape: toolnames.ReadOnlyShellSettingInputShape(),
 		Reason:     reason,
-		Source:     readOnlyShellSettingSource,
+		Source:     toolnames.ReadOnlyShellSettingSource,
 		Enabled:    true,
 	})
-}
-
-func toolNamesSameShellClass(a, b string) bool {
-	if isShellLikeToolName(a) && isShellLikeToolName(b) {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func rawJSONEmptyObject(raw json.RawMessage) bool {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -84,12 +85,7 @@ func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (
 // Falls back to case-insensitive equality so the model can use any
 // case it wants.
 func toolNamesMatch(declared, actual string) bool {
-	if strings.EqualFold(declared, actual) {
-		return true
-	}
-	dc := toolClass(declared)
-	ac := toolClass(actual)
-	return dc != "" && dc == ac
+	return toolnames.ToolNamesSameClass(declared, actual)
 }
 
 // toolClass returns the canonical class for a tool name, or "" when
@@ -101,19 +97,7 @@ func toolNamesMatch(declared, actual string) bool {
 // only — no risk of an unrelated tool name picking up an aliased
 // class by accident.
 func toolClass(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bash", "shell", "exec", "exec_command":
-		return "shell"
-	case "read", "read_file":
-		return "read_file"
-	case "edit", "notebookedit", "apply_patch", "edit_file":
-		return "edit_file"
-	case "write", "write_file":
-		return "write_file"
-	case "webfetch", "fetch", "http_request", "web_fetch":
-		return "web_fetch"
-	}
-	return ""
+	return toolnames.ToolClass(name)
 }
 
 func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, error) {

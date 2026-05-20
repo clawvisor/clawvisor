@@ -12,6 +12,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
 )
@@ -276,8 +277,8 @@ func TestPostprocess_ReadOnlyBashCanBeDisabledByPolicy(t *testing.T) {
 			Kind:       "tool",
 			Action:     "deny",
 			ToolName:   "Bash",
-			InputShape: json.RawMessage(`{"clawvisor_readonly_shell_setting":true}`),
-			Source:     "readonly_shell_setting",
+			InputShape: toolnames.ReadOnlyShellSettingInputShape(),
+			Source:     toolnames.ReadOnlyShellSettingSource,
 			Enabled:    true,
 		}},
 		EgressRules:      []*store.RuntimePolicyRule{},

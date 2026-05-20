@@ -999,8 +999,10 @@ function toolPolicyActionLabel(action: RuntimePolicyRule['action'] | RuntimeTool
   }
 }
 
+const SHELL_LIKE_TOOL_NAMES = ['bash', 'shell', 'exec', 'exec_command', 'mcp__shell__exec', 'terminal']
+
 function isShellLikeToolName(name: string): boolean {
-  return ['bash', 'shell', 'exec', 'exec_command', 'mcp__shell__exec'].includes(name.trim().toLowerCase())
+  return SHELL_LIKE_TOOL_NAMES.includes(name.trim().toLowerCase())
 }
 
 function SegmentedToolAction({

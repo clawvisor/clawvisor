@@ -13,6 +13,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -360,7 +361,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		if v.Source == inspector.SourceTriggerMiss {
 			if cfg.CandidateTasks != nil || cfg.ToolRules != nil || cfg.EgressRules != nil {
 				readOnlyShellCommand := false
-				if isShellTool(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
+				if toolnames.IsShellToolName(tu.Name) && readOnlyShellCommandsAllowed(tu.Name, cfg.AgentID, cfg.ToolRules) {
 					if cmd := shellCommandFromInput(tu.Input); cmd != "" {
 						readOnlyShellCommand, _ = inspector.IsReadOnlyBashCommand(cmd)
 					}
@@ -840,23 +841,11 @@ func auditAgentForCfg(cfg PostprocessConfig) *store.Agent {
 	return &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}
 }
 
-// isShellTool reports whether name matches one of the harness shell
-// tools whose input carries a literal bash command line. Used by the
-// scope-free-reads pass-through path to decide whether to invoke the
-// AST classifier on the tool's cmd field.
-func isShellTool(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
-		return true
-	}
-	return false
-}
-
 func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.RuntimePolicyRule) bool {
 	global := true
 	agent := (*bool)(nil)
 	for _, rule := range rules {
-		if rule == nil || !rule.Enabled || !isReadOnlyShellSettingRule(rule) || !shellToolNamesEquivalent(rule.ToolName, toolName) {
+		if rule == nil || !rule.Enabled || !toolnames.IsReadOnlyShellSettingRule(rule) || !toolnames.ToolNamesSameClass(rule.ToolName, toolName) {
 			continue
 		}
 		allowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
@@ -873,23 +862,6 @@ func readOnlyShellCommandsAllowed(toolName, agentID string, rules []*store.Runti
 		return *agent
 	}
 	return global
-}
-
-func isReadOnlyShellSettingRule(rule *store.RuntimePolicyRule) bool {
-	return strings.EqualFold(strings.TrimSpace(rule.Source), "readonly_shell_setting")
-}
-
-func shellToolNamesEquivalent(a, b string) bool {
-	return shellToolClass(a) == shellToolClass(b)
-}
-
-func shellToolClass(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bash", "shell", "exec", "exec_command", "mcp__shell__exec":
-		return "shell"
-	default:
-		return strings.ToLower(strings.TrimSpace(name))
-	}
 }
 
 // isShellPollTool reports whether a tool_use is a harness poll on a

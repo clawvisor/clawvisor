@@ -11,6 +11,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/llm"
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
 
@@ -169,15 +170,14 @@ func isMutatingRuntimeAction(req RuntimeContextJudgeRequest) bool {
 			return true
 		}
 	}
-	switch strings.ToLower(strings.TrimSpace(req.ToolName)) {
+	name := strings.ToLower(strings.TrimSpace(req.ToolName))
+	switch name {
 	case "write", "edit", "notebookedit", "write_file", "edit_file", "mcp__filesystem__write_file", "mcp__filesystem__edit_file":
-		return true
-	case "bash", "mcp__shell__exec":
 		return true
 	case "task":
 		return true
 	default:
-		return false
+		return toolnames.IsShellToolName(name)
 	}
 }
 

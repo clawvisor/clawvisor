@@ -9,6 +9,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -185,7 +186,7 @@ func controlReadOnlyShellTool(availableTools []string, toolRules []*store.Runtim
 	allowed := true
 	var globalAllowed, agentAllowed *bool
 	for _, rule := range toolRules {
-		if rule == nil || !rule.Enabled || !isControlReadOnlyShellSettingRule(rule) || !controlShellToolNamesMatch(rule.ToolName, shellTool) {
+		if rule == nil || !rule.Enabled || !toolnames.IsReadOnlyShellSettingRule(rule) || !toolnames.ToolNamesSameClass(rule.ToolName, shellTool) {
 			continue
 		}
 		ruleAllowed := strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
@@ -207,17 +208,6 @@ func controlReadOnlyShellTool(availableTools []string, toolRules []*store.Runtim
 	return shellTool
 }
 
-func isControlReadOnlyShellSettingRule(rule *store.RuntimePolicyRule) bool {
-	return rule != nil && rule.Kind == "tool" && strings.EqualFold(strings.TrimSpace(rule.Source), "readonly_shell_setting")
-}
-
-func controlShellToolNamesMatch(a, b string) bool {
-	if strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b)) {
-		return true
-	}
-	return controlShellTool([]string{a}) != "" && controlShellTool([]string{b}) != ""
-}
-
 func policyAllowedToolNames(availableTools []string, toolRules []*store.RuntimePolicyRule) []string {
 	if len(availableTools) == 0 || len(toolRules) == 0 {
 		return nil
@@ -232,7 +222,7 @@ func policyAllowedToolNames(availableTools []string, toolRules []*store.RuntimeP
 		if rule == nil || !rule.Enabled || rule.Kind != "tool" || rule.Action != "allow" {
 			continue
 		}
-		if isControlReadOnlyShellSettingRule(rule) {
+		if toolnames.IsReadOnlyShellSettingRule(rule) {
 			continue
 		}
 		if name := strings.TrimSpace(rule.ToolName); name != "" {
@@ -271,8 +261,7 @@ func controlToolExamples(availableTools []string) string {
 
 func controlShellTool(availableTools []string) string {
 	for _, tool := range compactToolNames(availableTools) {
-		switch strings.ToLower(tool) {
-		case "bash", "shell", "exec", "exec_command", "terminal":
+		if toolnames.IsShellToolName(tool) {
 			return tool
 		}
 	}
@@ -297,7 +286,7 @@ func controlToolByAlias(availableTools []string, names ...string) string {
 
 func prioritizeControlToolExamples(tools []string) []string {
 	priority := []string{
-		"bash", "terminal", "shell", "exec", "exec_command",
+		"bash", "terminal", "shell", "exec", "exec_command", "mcp__shell__exec",
 		"write", "write_file", "edit", "patch",
 		"read", "read_file",
 		"process", "execute_code",
