@@ -14,13 +14,12 @@ import (
 
 // HealthHandler handles /health and /ready.
 type HealthHandler struct {
-	st       store.Store
-	v        vault.Vault
-	authMode string // "magic_link" or "password"
+	st store.Store
+	v  vault.Vault
 }
 
-func NewHealthHandler(st store.Store, v vault.Vault, authMode string) *HealthHandler {
-	return &HealthHandler{st: st, v: v, authMode: authMode}
+func NewHealthHandler(st store.Store, v vault.Vault) *HealthHandler {
+	return &HealthHandler{st: st, v: v}
 }
 
 // Health always returns 200 — used by load balancers.
@@ -55,13 +54,6 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, code, resp)
-}
-
-// ConfigPublic returns public configuration (no auth required).
-func (h *HealthHandler) ConfigPublic(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"auth_mode": h.authMode,
-	})
 }
 
 // Version returns the current and latest available version (no auth required).

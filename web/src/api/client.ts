@@ -1381,7 +1381,7 @@ export const api = {
       put<TelegramGroup>(`/api/notifications/telegram/groups/active/${groupChatId}/auto-approval`, { enabled, ...(notify !== undefined && { notify }) }),
   },
   config: {
-    public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey' }>('/api/config/public'),
+    public: () => get<{ auth_mode: 'magic_link' | 'password' | 'passkey'; proxy_lite_public_url?: string }>('/api/config/public'),
   },
   version: {
     get: () => get<VersionInfo>('/api/version'),

@@ -705,6 +705,10 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     queryKey: ['pairInfo'],
     queryFn: () => api.devices.pairInfo(),
   })
+  const { data: publicConfig } = useQuery({
+    queryKey: ['public-config'],
+    queryFn: () => api.config.public(),
+  })
 
   // Mint a single-use claim code so the bootstrap curl never has to embed
   // the user's ID. BootstrapApproveStep invalidates this query after the
@@ -730,6 +734,9 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
     : hasRelay
       ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
       : window.location.origin
+  const proxyLiteURL = !isLocal && proxyLiteUI
+    ? normalizePublicURL(publicConfig?.proxy_lite_public_url) ?? clawvisorURL
+    : clawvisorURL
 
   const userIdParam = user?.id ? `?user_id=${encodeURIComponent(user.id)}` : ''
 
@@ -790,12 +797,12 @@ function ConnectAgentGuide({ newToken }: { newToken: string | null }) {
       <div className="p-5">
         {proxyLiteUI ? (
           <>
-            {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'hermes' && <HermesGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-            {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} claim={claim?.code} userIdParam={userIdParam} newToken={newToken} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'codex' && <CodexGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
-            {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} isLocal={isLocal} onCopy={copyText} showSkillDefault={showSkillDefault} />}
-            {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'openclaw' && <OpenClawGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'hermes' && <HermesGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
+            {tab === 'claude-code' && <ClaudeCodeGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} userIdParam={userIdParam} newToken={newToken} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'codex' && <CodexGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} onCopy={copyText} />}
+            {tab === 'claude-desktop' && <ClaudeDesktopGuide clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} isLocal={isLocal} onCopy={copyText} showSkillDefault={showSkillDefault} />}
+            {tab === 'other' && <OtherAgentGuide setupURL={setupURL} clawvisorURL={clawvisorURL} llmBaseURL={proxyLiteURL} claim={claim?.code} newToken={newToken} copied={copied} onCopy={copyText} showSkillDefault={showSkillDefault} />}
           </>
         ) : (
           <>
@@ -1190,6 +1197,11 @@ function useSequencedAgentName(base: string, agents: Agent[] | undefined): [stri
   return [name, setAndMarkTouched]
 }
 
+function normalizePublicURL(url: string | null | undefined): string | null {
+  const trimmed = url?.trim().replace(/\/+$/, '')
+  return trimmed || null
+}
+
 function buildBootstrapCommand(clawvisorURL: string, claim: string | undefined, agentName: string): string {
   // Name and claim ride on the URL so the curl is body-less — no -H, no -d.
   // The claim code (minted by an authenticated dashboard session) attributes
@@ -1552,8 +1564,9 @@ function hasAnyUpstreamKey(creds: { credentials: { stored: boolean; agent_stored
   return creds.credentials.some(c => c.stored || c.agent_stored)
 }
 
-function ClaudeCodeGuide({ clawvisorURL, claim, userIdParam, newToken, onCopy, showSkillDefault }: {
+function ClaudeCodeGuide({ clawvisorURL, llmBaseURL, claim, userIdParam, newToken, onCopy, showSkillDefault }: {
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   userIdParam: string
   newToken: string | null
@@ -1570,20 +1583,20 @@ function ClaudeCodeGuide({ clawvisorURL, claim, userIdParam, newToken, onCopy, s
   const connected = !!agents?.find(a => a.name === agentName)
 
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const runCmd = `ANTHROPIC_BASE_URL=${clawvisorURL} \\
+  const runCmd = `ANTHROPIC_BASE_URL=${llmBaseURL} \\
 ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
 ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
 claude`
   const zshrcSnippet = `cat >> ~/.zshrc <<'EOF'
 claude-cv() {
-  ANTHROPIC_BASE_URL=${clawvisorURL} \\
+  ANTHROPIC_BASE_URL=${llmBaseURL} \\
   ANTHROPIC_CUSTOM_HEADERS="X-Clawvisor-Agent-Token: $(jq -r .token ${jsonPath})" \\
   ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
   claude "$@"
 }
 EOF`
   const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualRunCmd = `ANTHROPIC_BASE_URL=${clawvisorURL} \\
+  const manualRunCmd = `ANTHROPIC_BASE_URL=${llmBaseURL} \\
 ANTHROPIC_CUSTOM_HEADERS='X-Clawvisor-Agent-Token: ${tokenValue}' \\
 ANTHROPIC_AUTH_TOKEN= ANTHROPIC_API_KEY= \\
 claude`
@@ -1736,8 +1749,9 @@ claude`
   )
 }
 
-function CodexGuide({ clawvisorURL, claim, newToken, onCopy }: {
+function CodexGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   newToken: string | null
   onCopy: (text: string) => void
@@ -1759,7 +1773,7 @@ function CodexGuide({ clawvisorURL, claim, newToken, onCopy }: {
 
 [model_providers.clawvisor]
 name = "Clawvisor"
-base_url = "${clawvisorURL}/v1"
+base_url = "${llmBaseURL}/v1"
 wire_api = "responses"
 requires_openai_auth = true
 
@@ -1888,8 +1902,9 @@ codex -c model_provider=clawvisor`
   )
 }
 
-function ClaudeDesktopGuide({ clawvisorURL, claim, newToken, isLocal, onCopy, showSkillDefault }: {
+function ClaudeDesktopGuide({ clawvisorURL, llmBaseURL, claim, newToken, isLocal, onCopy, showSkillDefault }: {
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   newToken: string | null
   isLocal: boolean
@@ -1995,9 +2010,9 @@ function ClaudeDesktopGuide({ clawvisorURL, claim, newToken, isLocal, onCopy, sh
                   <div>
                     <div className="text-xs uppercase tracking-wider text-text-tertiary">Gateway base URL</div>
                     <div className="mt-1 flex items-center gap-2">
-                      <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary break-all">{clawvisorURL}</code>
+                      <code className="flex-1 px-3 py-1.5 text-sm font-mono rounded border border-border-default bg-surface-0 text-text-primary break-all">{llmBaseURL}</code>
                       <button
-                        onClick={() => onCopy(clawvisorURL)}
+                        onClick={() => onCopy(llmBaseURL)}
                         className="text-xs px-3 py-1 rounded border border-border-strong text-text-secondary hover:bg-surface-2"
                       >
                         Copy
@@ -2160,9 +2175,10 @@ function ClaudeDesktopGuide({ clawvisorURL, claim, newToken, isLocal, onCopy, sh
   )
 }
 
-function OpenClawGuide({ setupURL, clawvisorURL, claim, newToken, copied, onCopy, showSkillDefault }: {
+function OpenClawGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, copied, onCopy, showSkillDefault }: {
   setupURL: string
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   newToken: string | null
   copied: boolean
@@ -2188,14 +2204,14 @@ function OpenClawGuide({ setupURL, clawvisorURL, claim, newToken, copied, onCopy
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
   const onboardCmd = `openclaw onboard --non-interactive \\
   --auth-choice custom-api-key \\
-  --custom-base-url "${clawvisorURL}/v1" \\
+  --custom-base-url "${llmBaseURL}/v1" \\
   --custom-model-id "claude-sonnet-4-6" \\
   --custom-api-key "$(jq -r .token ${jsonPath})" \\
   --custom-compatibility anthropic`
   const tokenValue = newToken ?? 'cvis_<your-token>'
   const manualOnboardCmd = `openclaw onboard --non-interactive \\
   --auth-choice custom-api-key \\
-  --custom-base-url "${clawvisorURL}/v1" \\
+  --custom-base-url "${llmBaseURL}/v1" \\
   --custom-model-id "claude-sonnet-4-6" \\
   --custom-api-key "${tokenValue}" \\
   --custom-compatibility anthropic`
@@ -2360,8 +2376,9 @@ function OpenClawGuide({ setupURL, clawvisorURL, claim, newToken, copied, onCopy
   )
 }
 
-function HermesGuide({ clawvisorURL, claim, newToken, onCopy }: {
+function HermesGuide({ clawvisorURL, llmBaseURL, claim, newToken, onCopy }: {
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   newToken: string | null
   onCopy: (text: string) => void
@@ -2383,17 +2400,17 @@ function HermesGuide({ clawvisorURL, claim, newToken, onCopy }: {
   const keyReady = hasAnyUpstreamKey(creds)
 
   const jsonPath = `~/.clawvisor/agents/${agentName}.json`
-  const envCmd = `OPENAI_BASE_URL=${clawvisorURL}/v1 \\
+  const envCmd = `OPENAI_BASE_URL=${llmBaseURL}/v1 \\
 OPENAI_API_KEY=$(jq -r .token ${jsonPath}) \\
 hermes chat`
   const configCmd = `mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml <<EOF
 model:
   provider: custom
-  base_url: "${clawvisorURL}/v1"
+  base_url: "${llmBaseURL}/v1"
   api_key: "$(jq -r .token ${jsonPath})"
 EOF`
   const tokenValue = newToken ?? 'cvis_<your-token>'
-  const manualEnvCmd = `OPENAI_BASE_URL=${clawvisorURL}/v1 \\
+  const manualEnvCmd = `OPENAI_BASE_URL=${llmBaseURL}/v1 \\
 OPENAI_API_KEY=${tokenValue} \\
 hermes chat`
 
@@ -2509,9 +2526,10 @@ hermes chat`
   )
 }
 
-function OtherAgentGuide({ setupURL, clawvisorURL, claim, newToken, copied, onCopy, showSkillDefault }: {
+function OtherAgentGuide({ setupURL, clawvisorURL, llmBaseURL, claim, newToken, copied, onCopy, showSkillDefault }: {
   setupURL: string
   clawvisorURL: string
+  llmBaseURL: string
   claim: string | undefined
   newToken: string | null
   copied: boolean
@@ -2538,17 +2556,17 @@ function OtherAgentGuide({ setupURL, clawvisorURL, claim, newToken, copied, onCo
   const anthropicSDK = `import anthropic, json, os
 data = json.load(open(os.path.expanduser("${jsonPath}")))
 client = anthropic.Anthropic(
-    base_url="${clawvisorURL}",
+    base_url="${llmBaseURL}",
     api_key=data["token"],
 )`
   const openaiSDK = `from openai import OpenAI
 import json, os
 data = json.load(open(os.path.expanduser("${jsonPath}")))
 client = OpenAI(
-    base_url="${clawvisorURL}/v1",
+    base_url="${llmBaseURL}/v1",
     api_key=data["token"],
 )`
-  const curlCmd = `curl -X POST "${clawvisorURL}/v1/messages" \\
+  const curlCmd = `curl -X POST "${llmBaseURL}/v1/messages" \\
   -H "Authorization: Bearer $(jq -r .token ${jsonPath})" \\
   -H "anthropic-version: 2023-06-01" \\
   -H "Content-Type: application/json" \\
@@ -2556,12 +2574,12 @@ client = OpenAI(
   const tokenValue = newToken ?? 'cvis_<your-token>'
   const manualAnthropicSDK = `import anthropic
 client = anthropic.Anthropic(
-    base_url="${clawvisorURL}",
+    base_url="${llmBaseURL}",
     api_key="${tokenValue}",
 )`
   const manualOpenaiSDK = `from openai import OpenAI
 client = OpenAI(
-    base_url="${clawvisorURL}/v1",
+    base_url="${llmBaseURL}/v1",
     api_key="${tokenValue}",
 )`
   const prompt = `Please install Clawvisor. It's a security gateway between you and external services like Gmail, Slack, and GitHub. You don't hold any API keys directly; instead, you make requests through Clawvisor and I approve which actions you can take. Every call is logged, and I can revoke access at any time.\n\nSetup is just registering an agent token and installing a skill that teaches you how to use it. I'll review each step before it happens.\n\nInstructions: ${setupURL}`
@@ -3008,14 +3026,22 @@ function AgentLiteProxyPanel({ agentId: _agentId }: { agentId: string }) {
     queryKey: ['pairInfo'],
     queryFn: () => api.devices.pairInfo(),
   })
+  const { data: publicConfig } = useQuery({
+    queryKey: ['public-config'],
+    queryFn: () => api.config.public(),
+  })
   // window.location.origin points at the relay when the dashboard is
   // accessed via the cloud, not the per-daemon mount the agent harness
-  // must talk to. Prefer the daemon-scoped relay path when we have one
-  // and the dashboard isn't local; otherwise fall back to the origin.
+  // must talk to. Prefer the configured cloud lite-proxy URL, then the
+  // daemon-scoped relay path when we have one and the dashboard isn't
+  // local; otherwise fall back to the origin.
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   const hasRelay = !!(pairInfo?.daemon_id && pairInfo?.relay_host)
-  const baseURL = !isLocal && hasRelay
-    ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
+  const configuredProxyLiteURL = normalizePublicURL(publicConfig?.proxy_lite_public_url)
+  const baseURL = !isLocal && configuredProxyLiteURL
+    ? configuredProxyLiteURL
+    : !isLocal && hasRelay
+      ? `https://${pairInfo!.relay_host}/d/${pairInfo!.daemon_id}`
     : window.location.origin
   const [copied, setCopied] = useState<string | null>(null)
 

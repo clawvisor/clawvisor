@@ -32,6 +32,7 @@ func TestLoadAppliesRuntimeProxyTimingTraceEnv(t *testing.T) {
 func TestLoadAppliesProxyLiteCloudEnv(t *testing.T) {
 	t.Setenv("CLAWVISOR_ROUTE_SET", "proxy_lite")
 	t.Setenv("CLAWVISOR_PROXY_LITE_ENABLED", "true")
+	t.Setenv("CLAWVISOR_PROXY_LITE_PUBLIC_URL", "https://llm.example.com/")
 	t.Setenv("CLAWVISOR_PROXY_LITE_ANTHROPIC_BASE_URL", "https://anthropic.internal")
 	t.Setenv("CLAWVISOR_PROXY_LITE_OPENAI_BASE_URL", "https://openai.internal")
 	t.Setenv("CLAWVISOR_PROXY_LITE_SELF_HOSTNAMES", "app.example.com, llm.example.com")
@@ -48,6 +49,9 @@ func TestLoadAppliesProxyLiteCloudEnv(t *testing.T) {
 	}
 	if !cfg.ProxyLite.Enabled {
 		t.Fatal("expected proxy lite enabled")
+	}
+	if cfg.ProxyLite.PublicURL != "https://llm.example.com" {
+		t.Fatalf("PublicURL=%q", cfg.ProxyLite.PublicURL)
 	}
 	if cfg.ProxyLite.AnthropicBaseURL != "https://anthropic.internal" {
 		t.Fatalf("AnthropicBaseURL=%q", cfg.ProxyLite.AnthropicBaseURL)

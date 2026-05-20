@@ -284,6 +284,10 @@ type RuntimePolicyConfig struct {
 type ProxyLiteConfig struct {
 	Enabled bool `yaml:"enabled"`
 
+	// PublicURL is the externally reachable lite-proxy endpoint shown to
+	// agent harnesses by the dashboard in split cloud deployments.
+	PublicURL string `yaml:"public_url"`
+
 	// AnthropicBaseURL overrides the upstream Anthropic host. Empty =
 	// use https://api.anthropic.com.
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
@@ -787,6 +791,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ENABLED"); v != "" {
 		cfg.ProxyLite.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("CLAWVISOR_PROXY_LITE_PUBLIC_URL"); v != "" {
+		cfg.ProxyLite.PublicURL = strings.TrimRight(strings.TrimSpace(v), "/")
 	}
 	if v := os.Getenv("CLAWVISOR_PROXY_LITE_ANTHROPIC_BASE_URL"); v != "" {
 		cfg.ProxyLite.AnthropicBaseURL = strings.TrimSpace(v)

@@ -451,7 +451,8 @@ func (s *Server) routes() http.Handler {
 	} else if s.features.PasswordAuth {
 		authMode = "password"
 	}
-	healthHandler := handlers.NewHealthHandler(s.store, s.vault, authMode)
+	healthHandler := handlers.NewHealthHandler(s.store, s.vault)
+	configHandler := handlers.NewConfigHandler(authMode, s.cfg.ProxyLite.PublicURL)
 	restrictionsHandler := handlers.NewRestrictionsHandler(s.store)
 	agentsHandler := handlers.NewAgentsHandler(s.store, s.eventHub, s.logger, s.cfg)
 	auditHandler := handlers.NewAuditHandler(s.store)
@@ -645,7 +646,7 @@ func (s *Server) routes() http.Handler {
 	// Health (no auth)
 	mux.HandleFunc("GET /health", healthHandler.Health)
 	mux.HandleFunc("GET /ready", healthHandler.Ready)
-	mux.HandleFunc("GET /api/config/public", healthHandler.ConfigPublic)
+	mux.HandleFunc("GET /api/config/public", configHandler.Public)
 	mux.HandleFunc("GET /api/version", healthHandler.Version)
 	mux.HandleFunc("GET /api/skill/version", healthHandler.SkillVersion)
 
