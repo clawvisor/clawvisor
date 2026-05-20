@@ -52,7 +52,8 @@ func (DefaultParser) Parse(t ToolUse) (Verdict, bool) {
 // Authorization is handled separately by runtime tool policies.
 //
 //  1. Pure local reads. Read / Glob / Grep / BashOutput / ToolSearch
-//     and their Codex / Hermes equivalents (read_file, search_files).
+//     and their Codex / Hermes equivalents (read_file, view_image,
+//     search_files).
 //     These don't change state or transmit credentials.
 //
 //  2. Harness-internal lifecycle / planning state. Skill / Agent /
@@ -85,7 +86,8 @@ var localOnlyTools = map[string]struct{}{
 	"LSP":        {},
 	"Monitor":    {},
 	// Pure local reads — Codex.
-	"read_file": {},
+	"read_file":  {},
+	"view_image": {},
 	// Pure local reads — Hermes.
 	"browser_console":    {},
 	"browser_get_images": {},
@@ -137,6 +139,14 @@ var localOnlyTools = map[string]struct{}{
 	// Harness-internal user clarification prompt. It does not reach
 	// outside the harness and should not require an approved task scope.
 	"AskUserQuestion": {},
+	// Codex internal state / user-interaction tools. These don't make
+	// downstream API calls or mutate the user's workspace.
+	"update_plan":        {},
+	"request_user_input": {},
+	"tool_suggest":       {},
+	"wait_agent":         {},
+	"close_agent":        {},
+	"resume_agent":       {},
 }
 
 var defaultAllowedTools = map[string]struct{}{
@@ -191,9 +201,16 @@ var defaultAllowedTools = map[string]struct{}{
 	"skill_view":                  {},
 	"skills_list":                 {},
 	"read_file":                   {},
+	"view_image":                  {},
 	"list_mcp_resources":          {},
 	"list_mcp_resource_templates": {},
 	"read_mcp_resource":           {},
+	"update_plan":                 {},
+	"request_user_input":          {},
+	"tool_suggest":                {},
+	"wait_agent":                  {},
+	"close_agent":                 {},
+	"resume_agent":                {},
 }
 
 func isLocalOnlyTool(name string) bool {

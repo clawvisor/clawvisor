@@ -304,6 +304,46 @@ func TestHermesReadOnlyToolsAreLocalOnlyDefaults(t *testing.T) {
 	}
 }
 
+func TestCodexInternalToolsAreLocalOnlyDefaults(t *testing.T) {
+	for _, name := range []string{
+		"read_file",
+		"view_image",
+		"update_plan",
+		"request_user_input",
+		"tool_suggest",
+		"wait_agent",
+		"close_agent",
+		"resume_agent",
+	} {
+		if !IsLocalOnlyTool(name) {
+			t.Fatalf("%s should be treated as local-only", name)
+		}
+		if !IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should be seeded as a default allowed tool", name)
+		}
+	}
+	for _, name := range []string{
+		"list_mcp_resources",
+		"list_mcp_resource_templates",
+		"read_mcp_resource",
+	} {
+		if !IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should be seeded as a default allowed tool", name)
+		}
+	}
+	for _, name := range []string{
+		"exec_command",
+		"write_stdin",
+		"apply_patch",
+		"spawn_agent",
+		"send_input",
+	} {
+		if IsDefaultAllowedTool(name) {
+			t.Fatalf("%s should not be seeded as a default allowed tool", name)
+		}
+	}
+}
+
 // Regression: a placeholder substring inside a local-only tool's args
 // (Skill, Read, Edit, etc.) must pass through without engaging the
 // LLM validator. Otherwise smoke-test installs without an LLM-backed

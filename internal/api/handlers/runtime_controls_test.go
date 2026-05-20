@@ -440,6 +440,16 @@ func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
 	h.ensureDefaultToolRules(ctx, agent, []string{
 		"Read",
 		"read_file",
+		"view_image",
+		"update_plan",
+		"request_user_input",
+		"tool_suggest",
+		"wait_agent",
+		"close_agent",
+		"resume_agent",
+		"list_mcp_resources",
+		"list_mcp_resource_templates",
+		"read_mcp_resource",
 		"Bash",
 		"Write",
 		"sessions_list",
@@ -470,6 +480,11 @@ func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
 		"browser_type",
 		"browser_vision",
 		"delegate_task",
+		"exec_command",
+		"write_stdin",
+		"apply_patch",
+		"spawn_agent",
+		"send_input",
 	})
 	enabled := true
 	rules, err := st.ListRuntimePolicyRules(ctx, user.ID, store.RuntimePolicyRuleFilter{AgentID: agent.ID, Kind: "tool", Enabled: &enabled})
@@ -483,7 +498,12 @@ func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
 			t.Fatalf("default tool rule should be agent-scoped, got %+v", rule)
 		}
 	}
-	if !allowed["Read"] || !allowed["read_file"] ||
+	if !allowed["Read"] || !allowed["read_file"] || !allowed["view_image"] ||
+		!allowed["update_plan"] || !allowed["request_user_input"] ||
+		!allowed["tool_suggest"] || !allowed["wait_agent"] ||
+		!allowed["close_agent"] || !allowed["resume_agent"] ||
+		!allowed["list_mcp_resources"] || !allowed["list_mcp_resource_templates"] ||
+		!allowed["read_mcp_resource"] ||
 		!allowed["sessions_list"] || !allowed["sessions_history"] ||
 		!allowed["session_status"] || !allowed["sessions_yield"] ||
 		!allowed["memory_search"] || !allowed["memory_get"] ||
@@ -497,7 +517,9 @@ func TestDefaultToolRulesSeedAndRespectUnset(t *testing.T) {
 		allowed["web_fetch"] || allowed["sessions_send"] || allowed["sessions_spawn"] ||
 		allowed["subagents"] || allowed["terminal"] || allowed["write_file"] ||
 		allowed["patch"] || allowed["browser_navigate"] || allowed["browser_click"] ||
-		allowed["browser_type"] || allowed["browser_vision"] || allowed["delegate_task"] {
+		allowed["browser_type"] || allowed["browser_vision"] || allowed["delegate_task"] ||
+		allowed["exec_command"] || allowed["write_stdin"] || allowed["apply_patch"] ||
+		allowed["spawn_agent"] || allowed["send_input"] {
 		t.Fatalf("non-default tools should not be seeded as always allow, got %+v", rules)
 	}
 
