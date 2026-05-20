@@ -192,61 +192,214 @@ func commandFlagsReadOnly(name string, args []*syntax.Word) bool {
 	switch name {
 	case "date":
 		return dateArgsReadOnly(values)
-	case "file":
-		for _, val := range values {
-			if longFlag(val, "compile") || shortOptionHas(val, 'C') {
-				return false
-			}
-		}
 	case "find":
-		for _, val := range values {
-			switch val {
-			case "-exec", "-execdir", "-ok", "-okdir", "-delete":
-				return false
-			}
-			if strings.HasPrefix(val, "-fprint") || strings.HasPrefix(val, "-fls") || strings.HasPrefix(val, "-fprintf") {
-				return false
-			}
-		}
+		return findArgsReadOnly(values)
 	case "hostname":
 		return hostnameArgsReadOnly(values)
 	case "printf":
 		return printfArgsReadOnly(values)
-	case "rg":
-		for _, val := range values {
-			if longFlag(val, "pre") || longFlag(val, "hostname-bin") {
-				return false
-			}
-		}
-	case "sort":
-		for _, val := range values {
-			if longFlag(val, "output") || longFlag(val, "compress-program") || shortOptionHas(val, 'o') {
-				return false
-			}
-		}
-	case "tail":
-		for _, val := range values {
-			if longFlag(val, "follow") || shortOptionHas(val, 'f') || shortOptionHas(val, 'F') {
-				return false
-			}
-		}
 	case "uniq":
 		return uniqArgsReadOnly(values)
 	case "command":
-		sawInspect := false
-		for _, val := range values {
-			if val == "-v" || val == "-V" {
-				sawInspect = true
-				continue
-			}
-			if strings.HasPrefix(val, "-") {
+		return commandArgsReadOnly(values)
+	case "test":
+		return true
+	case "[":
+		return len(values) > 0 && values[len(values)-1] == "]"
+	}
+	spec, ok := readOnlyCommandOptions[name]
+	return ok && argsMatchOptionSpec(values, spec)
+}
+
+type optionSpec struct {
+	shortNoArg string
+	shortArg   string
+	longNoArg  map[string]bool
+	longArg    map[string]bool
+	operands   operandMode
+}
+
+type operandMode int
+
+const (
+	operandsNone operandMode = iota
+	operandsAny
+	operandsAtMostOne
+)
+
+var readOnlyCommandOptions = map[string]optionSpec{
+	"":         {operands: operandsNone},
+	"true":     {operands: operandsNone},
+	"false":    {operands: operandsNone},
+	"whoami":   noOperandSpec("help", "version"),
+	"groups":   anyOperandSpec("help", "version"),
+	"id":       {shortNoArg: "GgnruZ", longNoArg: flagSet("group", "groups", "name", "real", "user", "zero", "context", "help", "version"), operands: operandsAny},
+	"pwd":      {shortNoArg: "LP", longNoArg: flagSet("logical", "physical", "help", "version"), operands: operandsNone},
+	"uname":    {shortNoArg: "asnrvmpio", longNoArg: flagSet("all", "kernel-name", "nodename", "kernel-release", "kernel-version", "machine", "processor", "hardware-platform", "operating-system", "help", "version"), operands: operandsNone},
+	"which":    {shortNoArg: "a", longNoArg: flagSet("all", "skip-dot", "skip-tilde", "show-dot", "show-tilde", "tty-only", "help", "version"), operands: operandsAny},
+	"type":     {shortNoArg: "afptP", operands: operandsAny},
+	"ls":       {shortNoArg: "abcdfghiklmnopqrstuvwxyABCDFGHILNQRSTUXZ1", shortArg: "wT", longNoArg: flagSet("all", "almost-all", "author", "escape", "directory", "dired", "classify", "file-type", "full-time", "group-directories-first", "human-readable", "inode", "dereference", "numeric-uid-gid", "literal", "hide-control-chars", "show-control-chars", "quote-name", "recursive", "reverse", "size", "width", "context", "help", "version"), longArg: flagSet("block-size", "color", "colour", "format", "hide", "ignore", "indicator-style", "quoting-style", "sort", "tabsize", "time", "time-style"), operands: operandsAny},
+	"stat":     {shortNoArg: "Lct", shortArg: "cf", longNoArg: flagSet("dereference", "terse", "cached", "help", "version"), longArg: flagSet("format", "printf", "file-system"), operands: operandsAny},
+	"file":     {shortNoArg: "bcdEhikLlnNprsSvzZ0", shortArg: "eFfmP", longNoArg: flagSet("brief", "checking-printout", "exclude-quiet", "extension", "keep-going", "list", "dereference", "no-dereference", "no-buffer", "no-pad", "preserve-date", "raw", "special-files", "apple", "mime", "mime-type", "mime-encoding", "uncompress", "uncompress-noreport", "print0", "help", "version"), longArg: flagSet("exclude", "separator", "files-from", "magic-file", "parameter"), operands: operandsAny},
+	"du":       {shortNoArg: "0abcDhHklLmsSx", shortArg: "Btd", longNoArg: flagSet("null", "all", "apparent-size", "bytes", "total", "dereference-args", "human-readable", "si", "count-links", "dereference", "separate-dirs", "summarize", "one-file-system", "help", "version"), longArg: flagSet("block-size", "max-depth", "threshold", "time", "time-style", "exclude", "exclude-from", "files0-from"), operands: operandsAny},
+	"df":       {shortNoArg: "ahiHklPTv", shortArg: "Btx", longArg: flagSet("block-size", "output", "total", "type", "exclude-type"), longNoArg: flagSet("all", "human-readable", "si", "inodes", "local", "no-sync", "portability", "print-type", "sync", "help", "version"), operands: operandsAny},
+	"wc":       {shortNoArg: "clLmw", longNoArg: flagSet("bytes", "chars", "lines", "max-line-length", "words", "help", "version"), operands: operandsAny},
+	"readlink": {shortNoArg: "efmnqsvz", longNoArg: flagSet("canonicalize", "canonicalize-existing", "canonicalize-missing", "no-newline", "quiet", "silent", "verbose", "zero", "help", "version"), operands: operandsAny},
+	"realpath": {shortNoArg: "eLmqsz", shortArg: "P", longNoArg: flagSet("canonicalize-existing", "logical", "canonicalize-missing", "no-symlinks", "quiet", "strip", "zero", "help", "version"), longArg: flagSet("relative-to", "relative-base"), operands: operandsAny},
+	"dirname":  {shortNoArg: "z", longNoArg: flagSet("zero", "help", "version"), operands: operandsAny},
+	"basename": {shortNoArg: "azs", longArg: flagSet("suffix"), longNoArg: flagSet("multiple", "zero", "help", "version"), operands: operandsAny},
+	"cat":      {shortNoArg: "AbeEnstTuv", longNoArg: flagSet("show-all", "number-nonblank", "show-ends", "number", "squeeze-blank", "show-tabs", "show-nonprinting", "help", "version"), operands: operandsAny},
+	"head":     {shortNoArg: "cqvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines"), operands: operandsAny},
+	"tail":     {shortNoArg: "qvz", shortArg: "cn", longNoArg: flagSet("quiet", "silent", "verbose", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "lines", "pid", "sleep-interval", "max-unchanged-stats"), operands: operandsAny},
+	"hexdump":  {shortNoArg: "bcdCvx", shortArg: "efnos", longNoArg: flagSet("canonical", "help", "version"), longArg: flagSet("format", "format-file", "length", "skip"), operands: operandsAny},
+	"od":       {shortNoArg: "AbcDdfFHiIloOsvx", shortArg: "jNtw", longNoArg: flagSet("address-radix", "skip-bytes", "read-bytes", "format", "output-duplicates", "strings", "traditional", "width", "help", "version"), longArg: flagSet("endian"), operands: operandsAny},
+	"grep":     {shortNoArg: "EFGPiwxvcsnHhLloqbrRIUVzZ", shortArg: "ABCDefm", longNoArg: flagSet("basic-regexp", "extended-regexp", "fixed-strings", "perl-regexp", "ignore-case", "word-regexp", "line-regexp", "invert-match", "count", "line-number", "with-filename", "no-filename", "files-with-matches", "files-without-match", "only-matching", "quiet", "silent", "byte-offset", "text", "binary", "recursive", "dereference-recursive", "initial-tab", "unix-byte-offsets", "null", "null-data", "help", "version"), longArg: flagSet("after-context", "before-context", "binary-files", "color", "colour", "context", "devices", "directories", "exclude", "exclude-dir", "exclude-from", "group-separator", "include", "label", "max-count"), operands: operandsAny},
+	"egrep":    {shortNoArg: "EFGPiwxvcsnHhLloqbrRIUVzZ", shortArg: "ABCDefm", longNoArg: flagSet("basic-regexp", "extended-regexp", "fixed-strings", "perl-regexp", "ignore-case", "word-regexp", "line-regexp", "invert-match", "count", "line-number", "with-filename", "no-filename", "files-with-matches", "files-without-match", "only-matching", "quiet", "silent", "byte-offset", "text", "binary", "recursive", "dereference-recursive", "initial-tab", "unix-byte-offsets", "null", "null-data", "help", "version"), longArg: flagSet("after-context", "before-context", "binary-files", "color", "colour", "context", "devices", "directories", "exclude", "exclude-dir", "exclude-from", "group-separator", "include", "label", "max-count"), operands: operandsAny},
+	"fgrep":    {shortNoArg: "EFGPiwxvcsnHhLloqbrRIUVzZ", shortArg: "ABCDefm", longNoArg: flagSet("basic-regexp", "extended-regexp", "fixed-strings", "perl-regexp", "ignore-case", "word-regexp", "line-regexp", "invert-match", "count", "line-number", "with-filename", "no-filename", "files-with-matches", "files-without-match", "only-matching", "quiet", "silent", "byte-offset", "text", "binary", "recursive", "dereference-recursive", "initial-tab", "unix-byte-offsets", "null", "null-data", "help", "version"), longArg: flagSet("after-context", "before-context", "binary-files", "color", "colour", "context", "devices", "directories", "exclude", "exclude-dir", "exclude-from", "group-separator", "include", "label", "max-count"), operands: operandsAny},
+	"rg":       {shortNoArg: "0FHIJSUVchilnuvwx", shortArg: "ABCegjtm", longNoArg: flagSet("after-context", "before-context", "block-buffered", "byte-offset", "case-sensitive", "color", "column", "context", "count", "count-matches", "crlf", "debug", "dfa-size-limit", "files", "files-with-matches", "files-without-match", "fixed-strings", "follow", "glob", "heading", "hidden", "ignore-case", "json", "line-buffered", "line-number", "line-regexp", "max-columns-preview", "no-heading", "no-ignore", "no-ignore-dot", "no-ignore-exclude", "no-ignore-files", "no-ignore-global", "no-ignore-messages", "no-ignore-parent", "no-line-number", "no-messages", "no-require-git", "no-unicode", "null", "one-file-system", "passthru", "pcre2", "pretty", "quiet", "smart-case", "stats", "text", "trim", "type-list", "unrestricted", "vimgrep", "with-filename", "word-regexp", "help", "version"), longArg: flagSet("after-context", "before-context", "binary", "color", "colors", "context", "context-separator", "dfa-size-limit", "encoding", "engine", "field-context-separator", "field-match-separator", "glob", "glob-case-insensitive", "iglob", "ignore-file", "ignore-file-case-insensitive", "json-path", "max-columns", "max-count", "max-depth", "max-filesize", "mmap", "multiline", "multiline-dotall", "path-separator", "regex-size-limit", "regexp", "replace", "sort", "sortr", "threads", "type", "type-add", "type-clear", "type-not"), operands: operandsAny},
+	"cut":      {shortNoArg: "nsz", shortArg: "bcdf", longNoArg: flagSet("complement", "only-delimited", "zero-terminated", "help", "version"), longArg: flagSet("bytes", "characters", "delimiter", "fields", "output-delimiter"), operands: operandsAny},
+	"sort":     {shortNoArg: "bcdfghiMmnRruVz", shortArg: "kSstT", longNoArg: flagSet("check", "debug", "dictionary-order", "general-numeric-sort", "human-numeric-sort", "ignore-case", "ignore-leading-blanks", "ignore-nonprinting", "month-sort", "numeric-sort", "random-sort", "reverse", "unique", "version-sort", "zero-terminated", "help", "version"), longArg: flagSet("batch-size", "buffer-size", "field-separator", "key", "parallel", "random-source", "sort", "temporary-directory"), operands: operandsAny},
+	"tr":       {shortNoArg: "cdst", longNoArg: flagSet("complement", "delete", "squeeze-repeats", "truncate-set1", "help", "version"), operands: operandsAny},
+	"paste":    {shortNoArg: "sz", shortArg: "d", longNoArg: flagSet("serial", "zero-terminated", "help", "version"), longArg: flagSet("delimiters"), operands: operandsAny},
+	"col":      {shortNoArg: "bfhpx", operands: operandsAny},
+	"echo":     {shortNoArg: "enE", longNoArg: flagSet("help", "version"), operands: operandsAny},
+}
+
+func flagSet(names ...string) map[string]bool {
+	flags := make(map[string]bool, len(names))
+	for _, name := range names {
+		flags[name] = true
+	}
+	return flags
+}
+
+func noOperandSpec(longNoArg ...string) optionSpec {
+	return optionSpec{longNoArg: flagSet(longNoArg...), operands: operandsNone}
+}
+
+func anyOperandSpec(longNoArg ...string) optionSpec {
+	return optionSpec{longNoArg: flagSet(longNoArg...), operands: operandsAny}
+}
+
+func argsMatchOptionSpec(values []string, spec optionSpec) bool {
+	operands := 0
+	for i := 0; i < len(values); i++ {
+		val := values[i]
+		switch {
+		case val == "--":
+			operands += len(values) - i - 1
+			return operandCountAllowed(operands, spec.operands)
+		case val == "-" || !strings.HasPrefix(val, "-"):
+			operands++
+			if !operandCountAllowed(operands, spec.operands) {
 				return false
 			}
-			if !sawInspect {
+		case strings.HasPrefix(val, "--"):
+			name, hasValue := splitLongOption(val)
+			if hasValue {
+				if !spec.longArg[name] {
+					return false
+				}
+				continue
+			}
+			if spec.longNoArg[name] {
+				continue
+			}
+			if spec.longArg[name] {
+				i++
+				if i >= len(values) {
+					return false
+				}
+				continue
+			}
+			return false
+		default:
+			if !shortOptionsMatch(val, values, &i, spec) {
 				return false
 			}
 		}
-		if !sawInspect {
+	}
+	return true
+}
+
+func splitLongOption(value string) (string, bool) {
+	name, _, hasArg := strings.Cut(strings.TrimPrefix(value, "--"), "=")
+	return name, hasArg
+}
+
+func shortOptionsMatch(value string, values []string, index *int, spec optionSpec) bool {
+	options := []rune(value[1:])
+	for i, opt := range options {
+		if strings.ContainsRune(spec.shortNoArg, opt) {
+			continue
+		}
+		if strings.ContainsRune(spec.shortArg, opt) {
+			if i == len(options)-1 {
+				*index = *index + 1
+				if *index >= len(values) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	return len(options) > 0
+}
+
+func operandCountAllowed(count int, mode operandMode) bool {
+	switch mode {
+	case operandsNone:
+		return count == 0
+	case operandsAtMostOne:
+		return count <= 1
+	case operandsAny:
+		return true
+	default:
+		return false
+	}
+}
+
+func findArgsReadOnly(values []string) bool {
+	for i := 0; i < len(values); i++ {
+		val := values[i]
+		switch val {
+		case "--", "--help", "--version",
+			"!", "(", ")", ",", "-a", "-and", "-o", "-or", "-not",
+			"-H", "-L", "-P", "-depth", "-xdev", "-mount", "-noleaf",
+			"-daystart", "-ignore_readdir_race", "-noignore_readdir_race",
+			"-print", "-print0", "-printf", "-ls", "-quit",
+			"-empty", "-readable", "-writable", "-executable", "-true", "-false":
+			if val == "-printf" {
+				i++
+				if i >= len(values) {
+					return false
+				}
+			}
+			continue
+		case "-D", "-files0-from",
+			"-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-regextype",
+			"-type", "-xtype", "-maxdepth", "-mindepth", "-size",
+			"-mtime", "-mmin", "-ctime", "-cmin", "-atime", "-amin",
+			"-user", "-group", "-uid", "-gid", "-perm", "-inum", "-links",
+			"-fstype", "-samefile", "-newer", "-used":
+			i++
+			if i >= len(values) {
+				return false
+			}
+			continue
+		}
+		if strings.HasPrefix(val, "-O") && len(val) > 2 && allDigits(val[2:]) {
+			continue
+		}
+		if strings.HasPrefix(val, "-newer") && val != "-newer" {
+			i++
+			if i >= len(values) {
+				return false
+			}
+			continue
+		}
+		if strings.HasPrefix(val, "-") {
 			return false
 		}
 	}
@@ -294,18 +447,6 @@ func longFlag(val, name string) bool {
 	return val == "--"+name || strings.HasPrefix(val, "--"+name+"=")
 }
 
-func shortOptionHas(val string, want rune) bool {
-	if len(val) < 2 || val[0] != '-' || val == "--" || strings.HasPrefix(val, "--") {
-		return false
-	}
-	for _, r := range val[1:] {
-		if r == want {
-			return true
-		}
-	}
-	return false
-}
-
 func dateArgsReadOnly(values []string) bool {
 	for i := 0; i < len(values); i++ {
 		val := values[i]
@@ -348,39 +489,28 @@ func dateArgsReadOnly(values []string) bool {
 }
 
 func uniqArgsReadOnly(values []string) bool {
-	operands := 0
-	for i := 0; i < len(values); i++ {
-		val := values[i]
-		switch {
-		case val == "--":
-			operands += len(values) - i - 1
-			return operands <= 1
-		case val == "-f" || val == "-s" || val == "-w":
-			i++
-			if i >= len(values) {
-				return false
-			}
-		case strings.HasPrefix(val, "-f") || strings.HasPrefix(val, "-s") || strings.HasPrefix(val, "-w"):
+	return argsMatchOptionSpec(values, optionSpec{
+		shortNoArg: "cduizD",
+		shortArg:   "fsw",
+		longNoArg:  flagSet("count", "repeated", "unique", "ignore-case", "zero-terminated", "help", "version"),
+		longArg:    flagSet("skip-fields", "skip-chars", "check-chars", "group", "all-repeated"),
+		operands:   operandsAtMostOne,
+	})
+}
+
+func commandArgsReadOnly(values []string) bool {
+	sawInspect := false
+	for _, val := range values {
+		if val == "-v" || val == "-V" {
+			sawInspect = true
 			continue
-		case strings.HasPrefix(val, "--skip-fields=") ||
-			strings.HasPrefix(val, "--skip-chars=") ||
-			strings.HasPrefix(val, "--check-chars=") ||
-			strings.HasPrefix(val, "--group=") ||
-			strings.HasPrefix(val, "--all-repeated="):
-			continue
-		case val == "--skip-fields" || val == "--skip-chars" || val == "--check-chars" || val == "--group" || val == "--all-repeated":
-			i++
-			if i >= len(values) {
-				return false
-			}
-		case strings.HasPrefix(val, "-"):
-			continue
-		default:
-			operands++
-			if operands > 1 {
-				return false
-			}
+		}
+		if strings.HasPrefix(val, "-") {
+			return false
+		}
+		if !sawInspect {
+			return false
 		}
 	}
-	return true
+	return sawInspect
 }
