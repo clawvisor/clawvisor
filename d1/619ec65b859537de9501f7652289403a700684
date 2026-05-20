@@ -1,0 +1,35 @@
+internal/api/handlers/llm_endpoint.go
+  s_8de9dcae61d3e3::t_efc7d77cd882f5 115-118
+  s_8de9dcae61d3e3::t_42c2c9e9d5ec13 362-381,416-417
+  8de9dcae61d3e38a 406,626-629,693,745-761,2350-2351,2367-2388,440,446,449-451,464,522,562-563,594,616,711,821,2274-2275,2358,2360-2361
+  s_8de9dcae61d3e3::t_ef76046a2cdff9 740
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "d1619ec65b859537de9501f7652289403a700684",
+  "prompts": {
+    "8de9dcae61d3e38a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine",
+      "total_additions": 342,
+      "total_deletions": 72,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_8de9dcae61d3e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5adb3cfa-9da5-4932-8ea5-8cd5a4e7da97",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}

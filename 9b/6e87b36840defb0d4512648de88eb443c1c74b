@@ -1,0 +1,22 @@
+internal/runtime/llmproxy/postprocess.go
+  s_8f3d790934e389::t_a8ee76ee7b593c 710-720
+internal/runtime/llmproxy/control.go
+  s_8f3d790934e389::t_26bfbb739658e3 25-26,36-42
+  s_8f3d790934e389::t_7e0b68140ca629 71,78-79,85-86,88-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "9b6e87b36840defb0d4512648de88eb443c1c74b",
+  "prompts": {},
+  "sessions": {
+    "s_8f3d790934e389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "190ab831-8d1e-4bb8-935b-bdc4329088fa",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Eric Levine <eric@levine.tech>"
+    }
+  }
+}
