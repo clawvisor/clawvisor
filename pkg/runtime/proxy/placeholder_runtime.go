@@ -344,6 +344,7 @@ func injectStoredBearer(req *http.Request, v vault.Vault, userID string) (bool, 
 }
 
 func credentialReference(value string) string {
+	// codeql[go/weak-sensitive-data-hashing] Internal credential deduplication reference; not used for password storage or authentication.
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -652,6 +652,7 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	if !strings.Contains(s, "'") {
+		// codeql[go/unsafe-quoting] This branch only handles strings without single quotes; the branch below escapes embedded quotes.
 		return "'" + s + "'"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

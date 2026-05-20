@@ -59,6 +59,7 @@ func (AnthropicParser) ParseRequest(body []byte) ([]Turn, error) {
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
 	}
+	// codeql[go/allocation-size-overflow] len(r.Messages) comes from an already-materialized slice; overflow would require an impossible in-memory request.
 	out := make([]Turn, 0, len(r.Messages)+1)
 	if sys := flattenAnthropicContent(r.System, 0); sys != "" {
 		out = append(out, Turn{Role: RoleSystem, Content: sys})
@@ -207,6 +208,7 @@ func (OpenAIParser) ParseRequest(body []byte) ([]Turn, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
+	// codeql[go/allocation-size-overflow] len(req.Messages) comes from an already-materialized slice; overflow would require an impossible in-memory request.
 	out := make([]Turn, 0, len(req.Messages)+1)
 	if req.Instructions != "" {
 		out = append(out, Turn{Role: RoleSystem, Content: req.Instructions})
@@ -229,9 +231,9 @@ func (OpenAIParser) ParseRequest(body []byte) ([]Turn, error) {
 }
 
 type openAIRequest struct {
-	Messages     []openAIMessage  `json:"messages"`
-	Input        json.RawMessage  `json:"input,omitempty"`
-	Instructions string           `json:"instructions,omitempty"`
+	Messages     []openAIMessage `json:"messages"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	Instructions string          `json:"instructions,omitempty"`
 }
 
 type openAIMessage struct {

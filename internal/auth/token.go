@@ -20,6 +20,7 @@ func GenerateAgentToken() (string, error) {
 // HashToken returns the SHA-256 hex digest of any token string.
 // Used for both agent tokens and refresh tokens.
 func HashToken(token string) string {
+	// codeql[go/weak-sensitive-data-hashing] Tokens are high-entropy random values; SHA-256 is used only for internal lookup/deduplication, not password storage.
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }

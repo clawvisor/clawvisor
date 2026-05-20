@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -153,6 +155,74 @@ func TestAuth_Logout_InvalidatesRefreshToken(t *testing.T) {
 		"refresh_token": s.RefreshToken,
 	})
 	mustStatus(t, resp, http.StatusUnauthorized)
+}
+
+func TestAuth_LogoutWithCookieDoesNotRequireAccessToken(t *testing.T) {
+	env := newTestEnv(t)
+	s := newSession(t, env)
+
+	req, err := http.NewRequest(http.MethodPost, env.url("/api/auth/logout"), bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "clawvisor_refresh_token", Value: s.RefreshToken})
+	resp, err := env.client.Do(req)
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	mustStatus(t, resp, http.StatusNoContent)
+
+	var cleared bool
+	for _, c := range resp.Cookies() {
+		if c.Name == "clawvisor_refresh_token" && c.MaxAge < 0 {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
+		t.Fatalf("logout did not clear refresh cookie: %v", resp.Cookies())
+	}
+
+	resp = env.do("POST", "/api/auth/refresh", "", map[string]any{
+		"refresh_token": s.RefreshToken,
+	})
+	mustStatus(t, resp, http.StatusUnauthorized)
+}
+
+func TestAuth_BrowserResponseOmitsRefreshTokenJSON(t *testing.T) {
+	env := newTestEnv(t)
+	email := fmt.Sprintf("browser-%s@test.example", randSuffix())
+	body, _ := json.Marshal(map[string]any{
+		"email": email, "password": "secret123",
+	})
+	req, err := http.NewRequest(http.MethodPost, env.url("/api/auth/register"), bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, err := env.client.Do(req)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	decoded := mustStatus(t, resp, http.StatusCreated)
+	if _, ok := decoded["refresh_token"]; ok {
+		t.Fatalf("browser response exposed refresh_token: %v", decoded)
+	}
+	if str(t, decoded, "access_token") == "" {
+		t.Fatal("browser response missing access_token")
+	}
+	var setRefreshCookie bool
+	for _, c := range resp.Cookies() {
+		if c.Name == "clawvisor_refresh_token" && c.Value != "" && c.HttpOnly {
+			setRefreshCookie = true
+			break
+		}
+	}
+	if !setRefreshCookie {
+		t.Fatalf("browser response did not set HttpOnly refresh cookie: %v", resp.Cookies())
+	}
 }
 
 func TestAuth_InvalidToken_Rejected(t *testing.T) {

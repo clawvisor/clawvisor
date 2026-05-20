@@ -4,8 +4,6 @@ import { api, setAccessToken, type AuthResponse } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { isWebAuthnAvailable, startRegistration } from '../lib/webauthn'
 
-const REFRESH_TOKEN_KEY = 'clawvisor_refresh_token'
-
 type Step = 'choose' | 'passkey' | 'password' | 'totp'
 
 export default function SetupAuth() {
@@ -53,7 +51,6 @@ export default function SetupAuth() {
       // Setup password returns session tokens so we can call TOTP setup
       const pwResp = await api.auth.setupPassword(password, setupToken) as AuthResponse
       setAccessToken(pwResp.access_token)
-      localStorage.setItem(REFRESH_TOKEN_KEY, pwResp.refresh_token)
       // Now set up TOTP (uses the session token we just stored)
       const totp = await api.auth.totp.setup()
       setTotpQR(totp.qr_data_url)

@@ -837,6 +837,7 @@ func (s *runtimeSecretScanner) lookupOrAdjudicate(ctx context.Context, fieldName
 }
 
 func secretValueCacheKey(agentID, raw string) string {
+	// codeql[go/weak-sensitive-data-hashing] Internal secret deduplication key; not used for password storage or authentication.
 	sum := sha256.Sum256([]byte(raw))
 	return agentID + ":" + hex.EncodeToString(sum[:])
 }

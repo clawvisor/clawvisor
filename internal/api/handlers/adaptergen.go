@@ -45,10 +45,10 @@ func (h *AdapterGenHandler) generatorForRequest(r *http.Request) *adaptergen.Gen
 
 // createAdapterRequest is the request body for POST /api/adapters/generate.
 type createAdapterRequest struct {
-	SourceType    string            `json:"source_type"`                // "mcp", "openapi", "docs"
-	Source        string            `json:"source,omitempty"`           // raw content (mutually exclusive with source_url)
-	SourceURL     string            `json:"source_url,omitempty"`      // URL to fetch content from
-	SourceHeaders map[string]string `json:"source_headers,omitempty"`  // headers to send when fetching source_url (e.g. Authorization)
+	SourceType    string            `json:"source_type"`              // "mcp", "openapi", "docs"
+	Source        string            `json:"source,omitempty"`         // raw content (mutually exclusive with source_url)
+	SourceURL     string            `json:"source_url,omitempty"`     // URL to fetch content from
+	SourceHeaders map[string]string `json:"source_headers,omitempty"` // headers to send when fetching source_url (e.g. Authorization)
 	ServiceID     string            `json:"service_id,omitempty"`
 	AuthType      string            `json:"auth_type,omitempty"`
 }
@@ -69,7 +69,7 @@ const maxFetchBytes = 2 * 1024 * 1024 // 2 MB limit for fetched specs
 // dev/test — can opt in via ssrfSafeOAuthClient without re-listing every range.
 var ssrfRanges = func() []*net.IPNet {
 	cidrs := []string{
-		"0.0.0.0/8",     // "this" network (includes 0.0.0.0)
+		"0.0.0.0/8", // "this" network (includes 0.0.0.0)
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
@@ -163,6 +163,7 @@ func fetchSourceURL(ctx context.Context, rawURL string, headers map[string]strin
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	// codeql[go/request-forgery] ssrfSafeClient resolves at dial time and blocks internal/private IP ranges.
 	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching source_url: %w", err)

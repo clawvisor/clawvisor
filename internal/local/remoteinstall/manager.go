@@ -498,6 +498,7 @@ func extractTarGz(src, dest string) ([]string, error) {
 	tr := tar.NewReader(gzr)
 	topLevel := map[string]bool{}
 	for {
+		// codeql[go/zipslip] Each tar path is cleaned and rejected if absolute or parent-relative before any filesystem operation.
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break

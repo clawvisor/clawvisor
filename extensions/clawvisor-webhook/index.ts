@@ -9,6 +9,9 @@ const DEFAULT_PATH = "/clawvisor/callback";
 const MAX_BODY_BYTES = 1024 * 512;
 const DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789";
 const DEFAULT_SESSION_KEY = "agent:main:main";
+const DEFAULT_TICK_INTERVAL_MS = 15000;
+const MIN_TICK_INTERVAL_MS = 1000;
+const MAX_TICK_INTERVAL_MS = 300000;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -77,6 +80,11 @@ function publicKeyToBase64Url(publicKeyPem: string): string {
     ? spki.subarray(ED25519_SPKI_PREFIX.length)
     : spki;
   return base64UrlEncode(raw);
+}
+
+function clampTickIntervalMs(value: unknown): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_TICK_INTERVAL_MS;
+  return Math.min(Math.max(Math.trunc(n), MIN_TICK_INTERVAL_MS), MAX_TICK_INTERVAL_MS);
 }
 
 // ── Device identity (persisted) ────────────────────────────────────────
@@ -230,7 +238,7 @@ class GatewayClient {
   private connecting = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private tickIntervalMs = 15000;
+  private tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
 
   constructor(device: DeviceIdentity, gatewayToken: string, gatewayWsUrl: string, log: OpenClawPluginApi["log"]) {
     this.device = device;
@@ -283,7 +291,7 @@ class GatewayClient {
           if (frame.ok && frame.payload?.type === "hello-ok") {
             this.connected = true;
             this.connecting = false;
-            this.tickIntervalMs = frame.payload.policy?.tickIntervalMs ?? 15000;
+            this.tickIntervalMs = clampTickIntervalMs(frame.payload.policy?.tickIntervalMs);
             this.startTicking();
             this.log?.info("clawvisor-webhook: Gateway handshake complete");
             resolve();
@@ -388,6 +396,7 @@ class GatewayClient {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: "req", id: randomUUID(), method: "tick", params: {} }));
       }
+    // codeql[js/resource-exhaustion] tickIntervalMs is clamped to a bounded policy range before timers start.
     }, this.tickIntervalMs);
   }
 

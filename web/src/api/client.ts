@@ -1,5 +1,5 @@
 // Typed API client. All requests go through these helpers.
-// Access token is stored in memory (React state); refresh token in localStorage.
+// Access token is stored in memory (React state); refresh token is an HttpOnly cookie.
 // On 401, the caller should trigger a token refresh.
 
 import { populateFromServices } from '../lib/services'
@@ -166,7 +166,7 @@ export interface User {
 export interface AuthResponse {
   user: User
   access_token: string
-  refresh_token: string
+  refresh_token?: string
 }
 
 export interface GoogleAuthResult {
@@ -1097,8 +1097,8 @@ export const api = {
       post<{ status: 'waitlisted' }>('/api/auth/waitlist', { email }),
     login: (email: string, password: string) =>
       post<LoginResult>('/api/auth/login', { email, password }),
-    refresh: (refreshToken: string) =>
-      post<AuthResponse>('/api/auth/refresh', { refresh_token: refreshToken }),
+    refresh: () =>
+      post<AuthResponse>('/api/auth/refresh', {}),
     magic: (token: string) =>
       post<AuthResponse>('/api/auth/magic', { token }),
     verifyEmail: (token: string) =>
@@ -1107,8 +1107,8 @@ export const api = {
       post<{ status: string }>('/api/auth/resend-verification', { email }),
     devSkipOnboarding: (email: string) =>
       post<AuthResponse>('/api/auth/dev/skip-onboarding', { email }),
-    logout: (refreshToken?: string) =>
-      post<void>('/api/auth/logout', { refresh_token: refreshToken }),
+    logout: () =>
+      post<void>('/api/auth/logout', {}),
     me: () => get<User>('/api/me'),
     updateMe: (currentPassword: string, newPassword: string) =>
       put<User>('/api/me', { current_password: currentPassword, new_password: newPassword }),
