@@ -33,6 +33,10 @@ type GatewayRequestResolver interface {
 }
 
 func ClassifyGatewayRequest(tasks []*store.Task, agentID, serviceType, alias, action string) GatewayRequestClassification {
+	return ClassifyGatewayRequestPreferred(tasks, agentID, serviceType, alias, action, "")
+}
+
+func ClassifyGatewayRequestPreferred(tasks []*store.Task, agentID, serviceType, alias, action, preferredTaskID string) GatewayRequestClassification {
 	candidates := make([]*store.Task, 0, len(tasks))
 	for _, task := range tasks {
 		if task == nil || task.AgentID != agentID || task.Status != "active" {
@@ -63,6 +67,14 @@ func ClassifyGatewayRequest(tasks []*store.Task, agentID, serviceType, alias, ac
 			MatchedTask: inScope[0],
 		}
 	default:
+		for _, task := range inScope {
+			if preferredTaskID != "" && task.ID == preferredTaskID {
+				return GatewayRequestClassification{
+					Kind:        ClassificationBelongsToExistingTask,
+					MatchedTask: task,
+				}
+			}
+		}
 		return GatewayRequestClassification{
 			Kind:           ClassificationAmbiguous,
 			CandidateTasks: inScope,

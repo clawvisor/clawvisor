@@ -427,6 +427,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	var pendingSecretCache llmproxy.PendingSecretDecisionCache
 	var liteApprovalCache llmproxy.PendingApprovalCache
 	var liteOutcomeStore llmproxy.InlineApprovalOutcomeStore
+	var taskCheckoutStore llmproxy.TaskCheckoutStore
 	var extractionTracker handlers.ExtractionTracker
 	var rdb *redis.Client
 	if cfg.Redis.URL != "" {
@@ -468,6 +469,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		pendingSecretCache = llmproxy.NewRedisPendingSecretDecisionCache(client, 10*time.Minute)
 		liteApprovalCache = llmproxy.NewRedisPendingApprovalCache(client, 10*time.Minute)
 		liteOutcomeStore = llmproxy.NewRedisInlineApprovalOutcomeStore(client, 24*time.Hour)
+		taskCheckoutStore = llmproxy.NewRedisTaskCheckoutStore(client, 24*time.Hour)
 
 		// Safety TTL exceeds the 30s extraction timeout + 10s save timeout
 		// so a crashed instance doesn't orphan entries.
@@ -519,6 +521,7 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 		PendingSecretCache: pendingSecretCache,
 		LiteApprovalCache:  liteApprovalCache,
 		LiteOutcomeStore:   liteOutcomeStore,
+		TaskCheckoutStore:  taskCheckoutStore,
 		RedisClient:        rdb,
 	}
 

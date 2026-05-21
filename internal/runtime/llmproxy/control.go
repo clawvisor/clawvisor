@@ -40,6 +40,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 	vaultItemsURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/vault/items"
 	tasksURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/tasks"
 	tasksURLInline := tasksURL + "?surface=inline"
+	taskCheckoutURL := "https://" + ControlSyntheticHost + ControlSyntheticPath + "/task/checkout"
 	toolExamples := controlToolExamples(availableTools)
 	shellTool := controlShellTool(availableTools)
 	shellToolExample := shellTool
@@ -61,6 +62,7 @@ func controlNotice(controlBaseURL string, availableTools []string, toolRules []*
 		"Task endpoint:",
 		"  - Interactive user present: POST " + tasksURLInline,
 		"  - Headless/background run: POST " + tasksURL,
+		"  - To switch focus among active tasks: POST " + taskCheckoutURL + " with {\"task_id\":\"<active task id>\"}. Checkout is only a preference among valid matches; it does not grant permission.",
 		"",
 		"Required task shape:",
 		"  {\"purpose\":\"<user-visible goal>\",",
@@ -817,12 +819,12 @@ func ParseControlToolUse(t conversation.ToolUse) (ControlCall, bool) {
 }
 
 func ParseControlToolUseWithBase(t conversation.ToolUse, controlBaseURL string) (ControlCall, bool) {
-	u, method, _, ok := controlCallParts(t, controlBaseURL)
+	u, method, body, ok := controlCallParts(t, controlBaseURL)
 	if !ok {
 		return ControlCall{}, false
 	}
 	if method == "" {
-		method = controlMethodForPath(u.Path)
+		method = controlMethodForCall(u.Path, body)
 	}
 	method = strings.ToUpper(strings.TrimSpace(method))
 	if method == "" {
@@ -1094,7 +1096,7 @@ func defaultPort(scheme string) string {
 }
 
 func controlVerdict(u *url.URL) inspector.Verdict {
-	return controlVerdictWithMethod(u, controlMethodForPath(u.Path))
+	return controlVerdictWithMethod(u, controlMethodForCall(u.Path, nil))
 }
 
 func controlVerdictWithMethod(u *url.URL, method string) inspector.Verdict {
@@ -1109,7 +1111,11 @@ func controlVerdictWithMethod(u *url.URL, method string) inspector.Verdict {
 }
 
 func controlMethodForPath(path string) string {
-	if strings.HasSuffix(path, "/tasks") {
+	return controlMethodForCall(path, nil)
+}
+
+func controlMethodForCall(path string, body []byte) string {
+	if strings.HasSuffix(path, "/tasks") && len(body) > 0 {
 		return "POST"
 	}
 	return "GET"

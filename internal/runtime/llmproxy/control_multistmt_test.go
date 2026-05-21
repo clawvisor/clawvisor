@@ -69,6 +69,44 @@ func TestControlPartsFromCommandInput_ResolvesDataAtDashFromHeredoc(t *testing.T
 	}
 }
 
+func TestParseControlToolUse_BodylessTasksCurlIsGET(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:    "tu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://clawvisor.local/control/tasks"}`),
+	}
+
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatal("expected control call to parse")
+	}
+	if call.Method != "GET" {
+		t.Fatalf("method=%q, want GET for bodyless task list curl", call.Method)
+	}
+	if call.Verdict.Method != "GET" {
+		t.Fatalf("verdict method=%q, want GET", call.Verdict.Method)
+	}
+}
+
+func TestParseControlToolUse_TasksCurlWithBodyIsPOST(t *testing.T) {
+	tu := conversation.ToolUse{
+		ID:    "tu_1",
+		Name:  "Bash",
+		Input: json.RawMessage(`{"command":"curl -sS https://clawvisor.local/control/tasks --data '{\"purpose\":\"x\"}'"}`),
+	}
+
+	call, ok := ParseControlToolUse(tu)
+	if !ok {
+		t.Fatal("expected control call to parse")
+	}
+	if call.Method != "POST" {
+		t.Fatalf("method=%q, want POST for task creation curl with body", call.Method)
+	}
+	if call.Verdict.Method != "POST" {
+		t.Fatalf("verdict method=%q, want POST", call.Verdict.Method)
+	}
+}
+
 func TestParseControlCmd_MultiStmtCatHeredocPlusCurl(t *testing.T) {
 	args, dataFiles, ok := parseControlCmd(multiStmtCatCurlCmd)
 	if !ok {

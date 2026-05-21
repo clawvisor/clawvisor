@@ -34,6 +34,9 @@ type InlineApprovalRewriteRequest struct {
 	// turns can re-inject the correct context (success vs. failure)
 	// instead of blindly claiming the task was created.
 	Outcomes InlineApprovalOutcomeStore
+	// Checkouts stores the created task as the agent's current focus on
+	// successful inline approval. Checkout is a routing preference only.
+	Checkouts TaskCheckoutStore
 }
 
 // InlineApprovalRewriteResult reports what happened. When Rewritten
@@ -60,6 +63,8 @@ type InlineApprovalRewriteResult struct {
 	// ApprovalRecordID is the canonical approval_records row id
 	// created at the same time as the task. Useful for audit traces.
 	ApprovalRecordID string
+	// CheckedOut reports whether the task was stored as current focus.
+	CheckedOut bool
 }
 
 // RewriteInlineTaskApprovalReply consumes an awaiting_task_approval
@@ -202,6 +207,7 @@ func inlineApprovalOutcomeFromRewrite(requestID string, out InlineApprovalRewrit
 		TaskID:           out.TaskID,
 		Credentials:      out.Credentials,
 		ApprovalRecordID: out.ApprovalRecordID,
+		CheckedOut:       out.CheckedOut,
 		FailureReason:    out.Reason,
 		RequestID:        requestID,
 		ResolvedAt:       time.Now().UTC(),
@@ -219,12 +225,21 @@ const InlineApprovalSubstitutedPromptMarker = "Clawvisor wants to create a task 
 // user message so subsequent passes can detect that a turn was
 // already augmented and skip it. Avoids double-augmentation across
 // retries / multi-step preprocess pipelines.
-const InlineApprovalAugmentationMarker = "[Clawvisor: inline task"
+const InlineApprovalAugmentationMarker = "[Clawvisor: task"
+
+// LegacyInlineApprovalAugmentationMarker keeps older synthetic history
+// recognizable after the user-visible wording was shortened.
+const LegacyInlineApprovalAugmentationMarker = "[Clawvisor: inline task"
 
 const (
 	InlineTaskDenyMarker         = "[Clawvisor: the user denied the task-creation request."
-	InlineTaskCreatorErrorMarker = "[Clawvisor: inline task creation failed"
+	InlineTaskCreatorErrorMarker = "[Clawvisor: task creation failed"
 )
+
+func containsInlineApprovalAugmentationMarker(text string) bool {
+	return strings.Contains(text, InlineApprovalAugmentationMarker) ||
+		strings.Contains(text, LegacyInlineApprovalAugmentationMarker)
+}
 
 // AugmentApprovedInlineTasksInHistory walks the conversation history
 // and re-injects the "[Clawvisor: ... task approved inline ...]"
@@ -280,7 +295,7 @@ func augmentationContextForOutcome(key InlineApprovalOutcomeKey, store InlineApp
 		return "", false
 	}
 	if outcome.Succeeded {
-		return inlineApprovedReplyAugmentationContext(outcome.Credentials), true
+		return inlineApprovedReplyAugmentationContext(outcome.TaskID, outcome.CheckedOut, outcome.Credentials), true
 	}
 	return inlineFailedReplyAugmentationContext(outcome.FailureReason), true
 }
@@ -337,18 +352,28 @@ func sanitizeFailureReasonForBracketEnvelope(reason string) string {
 // "approve" message wholesale with this bracketed context. Leaving
 // "approve" on its own line would still parse as a fresh bare
 // approval to a downstream re-parse; the bracketed text fully
-// conveys what happened ("created and approved by the user inline")
+// conveys what happened ("created and approved by the user")
 // without that sharp edge.
 func inlineApprovedReplyAugmentation() string {
-	return inlineApprovedReplyAugmentationContext(nil)
+	return inlineApprovedReplyAugmentationContext("", false, nil)
 }
 
 // inlineApprovedReplyAugmentationContext is the bracketed body shared
 // between the one-shot rewrite and the persistent augmenter.
-func inlineApprovedReplyAugmentationContext(credentials []InlineTaskCredentialPlaceholder) string {
+func inlineApprovedReplyAugmentationContext(taskID string, checkedOut bool, credentials []InlineTaskCredentialPlaceholder) string {
 	var b strings.Builder
 	b.WriteString(InlineApprovalAugmentationMarker)
-	b.WriteString(" was created and approved by the user inline. Approval source: inline_chat. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work — that would create a duplicate task. If your earlier tool_use already completed successfully (you can see a successful tool_result above), do NOT re-emit it; move on to the next step.")
+	b.WriteString(" was created and approved by the user. The task covers the originally requested work; proceed by emitting your next tool_use(s). Do NOT POST /control/tasks again for the same work. If an earlier tool_use already completed successfully, do NOT re-emit it; move on to the next step using the results above.")
+	if strings.TrimSpace(taskID) != "" {
+		b.WriteString(" Task ID: ")
+		b.WriteString(strings.TrimSpace(taskID))
+		b.WriteString(".")
+	}
+	if checkedOut && strings.TrimSpace(taskID) != "" {
+		b.WriteString(" Task ")
+		b.WriteString(strings.TrimSpace(taskID))
+		b.WriteString(" is now the active task. To switch active tasks, fetch https://clawvisor.local/control/tasks, then POST https://clawvisor.local/control/task/checkout with the target task_id.")
+	}
 	if len(credentials) > 0 {
 		b.WriteString(" Credential placeholders granted for this task:")
 		for _, cred := range credentials {

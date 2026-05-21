@@ -109,6 +109,7 @@ type Server struct {
 	pendingSecrets     llmproxy.PendingSecretDecisionCache
 	liteApprovals      llmproxy.PendingApprovalCache
 	liteOutcomes       llmproxy.InlineApprovalOutcomeStore
+	taskCheckouts      llmproxy.TaskCheckoutStore
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
 }
@@ -355,6 +356,13 @@ func WithLiteApprovalCache(c llmproxy.PendingApprovalCache) ServerOption {
 // deployments so later turns can see approvals resolved by another instance.
 func WithLiteApprovalOutcomeStore(c llmproxy.InlineApprovalOutcomeStore) ServerOption {
 	return func(s *Server) { s.liteOutcomes = c }
+}
+
+// WithTaskCheckoutStore overrides the default in-memory proxy-lite task focus
+// store. Use a shared implementation in multi-instance deployments so checkout
+// state follows the agent across replicas.
+func WithTaskCheckoutStore(c llmproxy.TaskCheckoutStore) ServerOption {
+	return func(s *Server) { s.taskCheckouts = c }
 }
 
 // New creates a Server and registers all routes.
@@ -1257,9 +1265,17 @@ func (s *Server) registerLiteProxyRoutes(
 		} else if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
 			s.logger.Warn("lite-proxy: LiteApprovalOutcomeStore not configured — inline approval outcomes are process-local; use Redis for multi-instance proxy deployments")
 		}
+		if s.taskCheckouts != nil {
+			llmHandler.TaskCheckouts = s.taskCheckouts
+		} else if s.logger != nil && strings.EqualFold(strings.TrimSpace(s.cfg.Server.RouteSet), "proxy_lite") {
+			s.logger.Warn("lite-proxy: TaskCheckoutStore not configured — task focus is process-local; use Redis for multi-instance proxy deployments")
+		}
 		llmHandler.InlineTaskCreator = tasksHandler
 
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
+		controlHandler.Store = s.store
+		controlHandler.TaskCheckouts = llmHandler.TaskCheckouts
+		controlHandler.Audit = auditEmitter
 		requireAgentLLM := middleware.RequireAgentLLM(s.store)
 		requireAgentLLMRL := func(h http.HandlerFunc) http.Handler {
 			agentLimited := middleware.RateLimit(gatewayRL, llmAgentKeyFn, gatewayLimit)(http.HandlerFunc(h))
@@ -1280,7 +1296,9 @@ func (s *Server) registerLiteProxyRoutes(
 		mux.Handle("GET /api/control/capabilities", http.HandlerFunc(controlHandler.Capabilities))
 		mux.Handle("GET /api/control/skill", http.HandlerFunc(controlHandler.Skill))
 		mux.Handle("POST /api/control/failure", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.Failure))))
+		mux.Handle("GET /api/control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.ListTasks))))
 		mux.Handle("POST /api/control/tasks", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Create))))
+		mux.Handle("POST /api/control/task/checkout", requireAgentLLMCaller(e2e(http.HandlerFunc(controlHandler.CheckoutTask))))
 		mux.Handle("GET /api/control/tasks/{id}", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Get))))
 		mux.Handle("POST /api/control/tasks/{id}/expand", requireAgentLLMCaller(e2e(http.HandlerFunc(tasksHandler.Expand))))
 		mux.Handle("GET /api/control/vault/items", requireAgentLLMCaller(e2e(http.HandlerFunc(vaultHandler.ListForAgent))))

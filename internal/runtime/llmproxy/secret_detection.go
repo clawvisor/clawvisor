@@ -474,6 +474,7 @@ func stripClawvisorGeneratedMarkers(value string) string {
 		InlineApprovalIDMarker,
 		InlineApprovalSubstitutedPromptMarker,
 		InlineApprovalAugmentationMarker,
+		LegacyInlineApprovalAugmentationMarker,
 		InlineTaskDenyMarker,
 		InlineTaskCreatorErrorMarker,
 		SecretDecisionIDMarker,

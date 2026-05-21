@@ -270,7 +270,7 @@ func augmentAnthropicApprovedInlineTasks(body []byte, outcomes InlineApprovalOut
 		if verb != "approve" {
 			continue
 		}
-		if strings.Contains(userText, InlineApprovalAugmentationMarker) {
+		if containsInlineApprovalAugmentationMarker(userText) {
 			continue
 		}
 

@@ -160,13 +160,10 @@ func TestInlineTaskApprovalFullStateMachine(t *testing.T) {
 	}
 
 	// Rewritten user message carries the canonical inline-approval
-	// augmentation context. We intentionally do NOT include the
-	// per-task id/purpose in the rewrite — that would cause it to
-	// drift from the augmenter's rendering on subsequent turns (the
-	// augmenter scans history without DB access). The result
-	// struct still surfaces the task id for audit purposes.
+	// augmentation context, including the checked-out task id when
+	// checkout storage succeeds.
 	rewrittenBody := string(t4Result.Body)
-	if !strings.Contains(rewrittenBody, "task was created and approved by the user inline") {
+	if !strings.Contains(rewrittenBody, "task was created and approved by the user") {
 		t.Errorf("rewritten body missing canonical augmentation context; got %s", rewrittenBody)
 	}
 	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {

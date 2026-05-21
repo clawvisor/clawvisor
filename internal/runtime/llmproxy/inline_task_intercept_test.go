@@ -146,7 +146,7 @@ func TestInlineTask_PostprocessIntoRelease(t *testing.T) {
 	if !creator.called {
 		t.Fatal("Creator should have been invoked")
 	}
-	if !strings.Contains(string(rewrite.Body), "task was created and approved by the user inline") {
+	if !strings.Contains(string(rewrite.Body), "task was created and approved by the user") {
 		t.Fatalf("rewritten body missing canonical augmentation context: %s", rewrite.Body)
 	}
 	if rewrite.TaskID != "task-uuid-final" {

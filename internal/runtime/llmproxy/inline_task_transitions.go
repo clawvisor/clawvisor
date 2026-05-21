@@ -94,6 +94,14 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		out.TaskID = created.ID
 		out.ApprovalRecordID = created.ApprovalRecordID
 		out.Credentials = created.Credentials
+		if req.Checkouts != nil && req.Agent != nil && created.ID != "" {
+			if err := req.Checkouts.Set(ctx, TaskCheckoutKey{
+				UserID:  req.Agent.UserID,
+				AgentID: req.Agent.ID,
+			}, created.ID, 0); err == nil {
+				out.CheckedOut = true
+			}
+		}
 		if req.Audit != nil {
 			req.Audit.LogInlineTaskApproved(ctx, req.Agent, req.RequestID, resolved, created)
 		}
@@ -101,6 +109,6 @@ func resolveInlineTaskApproval(ctx context.Context, req InlineApprovalRewriteReq
 		// subsequent turns. One canonical rendering avoids showing the
 		// model the same user approve turn with different content across
 		// calls.
-		return inlineApprovedReplyAugmentationContext(created.Credentials), out
+		return inlineApprovedReplyAugmentationContext(created.ID, out.CheckedOut, created.Credentials), out
 	}
 }
