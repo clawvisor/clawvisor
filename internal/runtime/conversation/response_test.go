@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestSyntheticApprovalToolUseResponseOpenAIChatLiteProxyRoute(t *testing.T) {
+	t.Parallel()
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/chat/completions", nil)
+	body := []byte(`{"messages":[{"role":"user","content":"approve"}]}`)
+	resp, ok := SyntheticApprovalToolUseResponse(req, ProviderOpenAI, body, true, "call_123", "write", map[string]any{"path": "index.html"})
+	if !ok {
+		t.Fatal("expected synthetic response")
+	}
+	if !strings.Contains(string(resp.Body), `"object":"chat.completion"`) {
+		t.Fatalf("expected chat completions response for lite-proxy route, got %s", resp.Body)
+	}
+	if !strings.Contains(string(resp.Body), `"tool_calls"`) {
+		t.Fatalf("expected chat tool_calls response, got %s", resp.Body)
+	}
+}
+
 func TestAnthropicResponseRewriterAllowsToolUseJSON(t *testing.T) {
 	t.Parallel()
 

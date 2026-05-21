@@ -56,15 +56,32 @@ func OpenAIApprovalReply(body []byte) (verb, id string) {
 }
 
 func isOpenAIResponsesEndpoint(req *http.Request) bool {
-	return req != nil && req.URL != nil && (strings.HasPrefix(req.URL.Path, "/v1/responses") || strings.HasPrefix(req.URL.Path, "/backend-api/codex/responses"))
+	if req == nil || req.URL == nil {
+		return false
+	}
+	path := liteProxyProviderPath(req.URL.Path)
+	return strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/backend-api/codex/responses")
 }
 
 func isOpenAIChatCompletionsEndpoint(req *http.Request) bool {
-	return req != nil && req.URL != nil && strings.HasPrefix(req.URL.Path, "/v1/chat/completions")
+	if req == nil || req.URL == nil {
+		return false
+	}
+	return strings.HasPrefix(liteProxyProviderPath(req.URL.Path), "/v1/chat/completions")
 }
 
 func IsOpenAIChatCompletionsEndpoint(req *http.Request) bool {
 	return isOpenAIChatCompletionsEndpoint(req)
+}
+
+func liteProxyProviderPath(path string) string {
+	if path == "/api" {
+		return ""
+	}
+	if strings.HasPrefix(path, "/api/") {
+		return strings.TrimPrefix(path, "/api")
+	}
+	return path
 }
 
 func openAIResponsesToolResultIDs(body []byte) []string {

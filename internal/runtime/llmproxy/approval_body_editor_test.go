@@ -55,6 +55,15 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 			want:      `"content":"` + replacement + `"`,
 		},
 		{
+			name:      "openai_chat_lite_proxy_route",
+			provider:  conversation.ProviderOpenAI,
+			path:      "/api/v1/chat/completions",
+			body:      `{"messages":[{"role":"user","content":"approve"}]}`,
+			wantReply: true,
+			wantVerb:  "approve",
+			want:      `"content":"` + replacement + `"`,
+		},
+		{
 			name:      "openai_responses_string_input",
 			provider:  conversation.ProviderOpenAI,
 			path:      "/v1/responses",
@@ -126,7 +135,7 @@ func TestApprovalBodyEditorProviderShapes(t *testing.T) {
 // internal/runtime/conversation.approvalReplyRE (cv- followed by 12 or
 // 26 alphanumeric chars).
 func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
-	const actualID = "cv-abcdef123456"   // 12-char body
+	const actualID = "cv-abcdef123456"    // 12-char body
 	const differentID = "cv-zzzzzz999999" // also 12-char, different
 
 	cases := []struct {
@@ -157,6 +166,12 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 			name:     "openai_chat_string_content",
 			provider: conversation.ProviderOpenAI,
 			path:     "/v1/chat/completions",
+			body:     `{"messages":[{"role":"user","content":"approve ` + actualID + `"}]}`,
+		},
+		{
+			name:     "openai_chat_lite_proxy_route",
+			provider: conversation.ProviderOpenAI,
+			path:     "/api/v1/chat/completions",
 			body:     `{"messages":[{"role":"user","content":"approve ` + actualID + `"}]}`,
 		},
 	}
@@ -214,6 +229,12 @@ func TestReplaceLatestUserText_ApprovalIDExpectation(t *testing.T) {
 			name:     "openai_chat_bare",
 			provider: conversation.ProviderOpenAI,
 			path:     "/v1/chat/completions",
+			body:     `{"messages":[{"role":"user","content":"approve"}]}`,
+		},
+		{
+			name:     "openai_chat_lite_proxy_bare",
+			provider: conversation.ProviderOpenAI,
+			path:     "/api/v1/chat/completions",
 			body:     `{"messages":[{"role":"user","content":"approve"}]}`,
 		},
 		{
