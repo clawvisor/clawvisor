@@ -439,6 +439,59 @@ func (h *VaultHandler) listItems(r *http.Request, userID string) ([]VaultItem, e
 	return items, nil
 }
 
+// listVaultItemIDs returns the set of public vault item IDs visible to the
+// agent — the same set /control/vault/items exposes. Use this for any
+// candidate / suggestion paths so we never leak internal storage keys
+// (agent-scoped LLM keys, hidden adapter backing keys, etc.) that would be
+// rejected if the agent tried to request them in `required_credentials`.
+func listVaultItemIDs(ctx context.Context, st store.Store, v vault.Vault, adapterReg *adapters.Registry, userID string) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	keys, err := v.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var metas []*store.ServiceMeta
+	if st != nil {
+		metas, err = st.ListServiceMetas(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	ids := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, key := range keys {
+		if _, _, ok := parseAgentScopedLLMKey(key); ok {
+			continue
+		}
+		if item, ok := llmCredentialVaultItem(key); ok {
+			add(item.ID)
+			continue
+		}
+		bindings := vaultBindingsForVaultKey(ctx, adapterReg, userID, key, metas)
+		if len(bindings) > 0 {
+			for _, binding := range bindings {
+				add(connectedVaultItemID(binding))
+			}
+			continue
+		}
+		add(key)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
 func llmCredentialVaultItem(key string) (VaultItem, bool) {
 	if provider := llmProviderFromVaultKey(key); provider != "" {
 		return VaultItem{
