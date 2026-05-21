@@ -9,6 +9,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 )
 
 // inlineTaskApprovalTTL is how long the user has to type yes/no
@@ -151,12 +152,96 @@ func maybeInterceptInlineTaskDefinition(
 		"purpose", parsed.Purpose,
 		"signal", "query",
 	)
-	assessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
+	assessment := assessInlineTaskRisk(req, cfg, parsed, env, trace)
 	return conversation.ToolUseVerdict{
 		Allowed:        false,
 		Reason:         "Clawvisor: awaiting inline task approval",
 		SubstituteWith: renderTaskApprovalPromptWithRisk(parsed, innerHold.Pending.ID, assessment),
 	}, true
+}
+
+// assessInlineTaskRisk runs the LLM-backed risk assessor (when configured) and
+// merges its verdict with the deterministic envelope-shape policy. The
+// envelope policy is the floor — it catches structural risk (wildcard hosts,
+// regex matchers, intent-verification off) that the LLM may underweight or
+// miss. The LLM verdict supplies the user-facing explanation and any extra
+// factors when its level is at least as high as the floor.
+//
+// Returns the deterministic envelope assessment alone when the assessor is
+// nil, returns nil-from-LLM (e.g. spend cap exhausted), or returns an
+// "unknown"/error result. This keeps the inline approval prompt rendering
+// even if the LLM call fails — the user still sees the deterministic risk
+// read, just without the LLM's explanation.
+func assessInlineTaskRisk(
+	req *http.Request,
+	cfg PostprocessConfig,
+	parsed *runtimetasks.TaskCreateRequest,
+	env runtimetasks.Envelope,
+	trace func(event string, kv ...any),
+) *taskrisk.RiskAssessment {
+	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(parsed.Purpose, env)
+	if cfg.TaskRiskAssessor == nil {
+		return envelopeAssessment
+	}
+
+	llmVerdict := cfg.TaskRiskAssessor.AssessEnvelope(req.Context(), TaskRiskAssessRequest{
+		Purpose:                parsed.Purpose,
+		AgentName:              cfg.AgentName,
+		UserID:                 cfg.AgentUserID,
+		ExpectedTools:          env.ExpectedTools,
+		ExpectedEgress:         env.ExpectedEgress,
+		RequiredCredentials:    env.RequiredCredentials,
+		IntentVerificationMode: env.IntentVerificationMode,
+		ExpectedUse:            env.ExpectedUse,
+	})
+	if llmVerdict == nil || strings.EqualFold(strings.TrimSpace(llmVerdict.RiskLevel), "unknown") {
+		trace("inline_task.risk_llm_unavailable")
+		return envelopeAssessment
+	}
+
+	llmAssessment := &taskrisk.RiskAssessment{
+		RiskLevel:   llmVerdict.RiskLevel,
+		Explanation: llmVerdict.Explanation,
+		Factors:     llmVerdict.Factors,
+	}
+	return mergeInlineRisk(llmAssessment, envelopeAssessment)
+}
+
+// mergeInlineRisk picks the higher of the two risk levels and prefers the
+// LLM explanation when it set the ceiling; the envelope policy supplies the
+// explanation only when it raised the level above the LLM's read. Factors
+// from both are concatenated.
+func mergeInlineRisk(llm, envelope *taskrisk.RiskAssessment) *taskrisk.RiskAssessment {
+	if llm == nil {
+		return envelope
+	}
+	if envelope == nil {
+		return llm
+	}
+	out := *llm
+	if riskRank(envelope.RiskLevel) > riskRank(llm.RiskLevel) {
+		out.RiskLevel = envelope.RiskLevel
+		if envelope.Explanation != "" {
+			out.Explanation = envelope.Explanation
+		}
+	}
+	out.Factors = append(append([]string{}, llm.Factors...), envelope.Factors...)
+	out.Conflicts = append(append([]taskrisk.ConflictDetail{}, llm.Conflicts...), envelope.Conflicts...)
+	return &out
+}
+
+func riskRank(level string) int {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return 0
+	case "medium":
+		return 1
+	case "high":
+		return 2
+	case "critical":
+		return 3
+	}
+	return -1
 }
 
 func inlineTaskValidationReason(issues []runtimepolicy.ValidationIssue) string {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/runtime/toolnames"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -22,6 +23,39 @@ import (
 // dependency into this package.
 type IntentVerifier interface {
 	Verify(ctx context.Context, req IntentVerifyRequest) (*IntentVerdict, error)
+}
+
+// TaskRiskAssessor scores a candidate task envelope at creation time so
+// the inline-approval prompt can surface a real, LLM-judged risk read
+// instead of the deterministic fallback. Narrow interface so this
+// package doesn't pull in the taskrisk LLM client dependency.
+type TaskRiskAssessor interface {
+	AssessEnvelope(ctx context.Context, req TaskRiskAssessRequest) *TaskRiskAssessment
+}
+
+// TaskRiskAssessRequest is the per-task input to TaskRiskAssessor. It
+// mirrors taskrisk.AssessRequest's v2-envelope shape; the handler
+// adapter is responsible for translating between the two so this
+// package can stay independent of the taskrisk package.
+type TaskRiskAssessRequest struct {
+	Purpose                string
+	AgentName              string
+	UserID                 string
+	ExpectedTools          []runtimetasks.ExpectedTool
+	ExpectedEgress         []runtimetasks.ExpectedEgress
+	RequiredCredentials    []runtimetasks.RequiredCredential
+	IntentVerificationMode string
+	ExpectedUse            string
+}
+
+// TaskRiskAssessment mirrors taskrisk.RiskAssessment but lives in this
+// package to keep the dependency narrow. The renderer only consumes
+// RiskLevel + Explanation; the rest is passed through for parity with
+// the dashboard surface.
+type TaskRiskAssessment struct {
+	RiskLevel   string
+	Explanation string
+	Factors     []string
 }
 
 // IntentVerifyRequest is the per-tool-use input to the verifier. Mirrors
@@ -121,6 +155,17 @@ type PostprocessConfig struct {
 	PreferredTaskID string
 
 	PendingApprovals PendingApprovalCache
+
+	// TaskRiskAssessor scores a task envelope via LLM at inline-approval
+	// time so the approval prompt carries an evaluated risk read.
+	// Optional: when nil, the intercept falls back to the deterministic
+	// envelope-shape policy alone.
+	TaskRiskAssessor TaskRiskAssessor
+
+	// AgentName is the agent's display name, surfaced to the assessor so
+	// its prompt context matches the dashboard task-creation surface.
+	// Optional.
+	AgentName string
 
 	// ControlBaseURL is the daemon URL used for synthetic Clawvisor control
 	// endpoint rewrites. Empty disables the control-plane rewrite path.

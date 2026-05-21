@@ -396,6 +396,104 @@ func TestReleaseInlineTaskApproval_QueryOnlyHoldNoOuterCascade(t *testing.T) {
 	}
 }
 
+// stubInlineRiskAssessor is a recorder for the LLM-backed task risk path.
+type stubInlineRiskAssessor struct {
+	got    TaskRiskAssessRequest
+	called bool
+	out    *TaskRiskAssessment
+}
+
+func (s *stubInlineRiskAssessor) AssessEnvelope(_ context.Context, req TaskRiskAssessRequest) *TaskRiskAssessment {
+	s.called = true
+	s.got = req
+	return s.out
+}
+
+func TestPostprocess_InlineTaskSubstitutesLLMRiskExplanation(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+		RiskLevel:   "medium",
+		Explanation: "Writing to /tmp may collide with other processes' files.",
+	}}
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+		TaskRiskAssessor: assessor,
+		AgentName:        "test-agent",
+	})
+
+	if !assessor.called {
+		t.Fatalf("expected LLM risk assessor to be called during inline task intercept")
+	}
+	if assessor.got.AgentName != "test-agent" {
+		t.Fatalf("assessor request missing agent name: %+v", assessor.got)
+	}
+	if assessor.got.Purpose == "" {
+		t.Fatalf("assessor request missing purpose: %+v", assessor.got)
+	}
+	if len(assessor.got.ExpectedTools) == 0 {
+		t.Fatalf("assessor request missing expected tools: %+v", assessor.got)
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "Writing to /tmp may collide") {
+		t.Fatalf("approval prompt should carry LLM explanation; got %s", out)
+	}
+	if !strings.Contains(out, "medium") {
+		t.Fatalf("approval prompt should reflect LLM risk level; got %s", out)
+	}
+}
+
+// TestPostprocess_InlineTaskFallsBackWhenLLMUnknown confirms the merge
+// path: an "unknown" LLM verdict (spend-cap exhausted, parse failure, etc.)
+// drops back to the deterministic envelope policy so the prompt still
+// renders a risk read.
+func TestPostprocess_InlineTaskFallsBackWhenLLMUnknown(t *testing.T) {
+	cache := NewMemoryPendingApprovalCache(time.Minute)
+	st, userID, agentID := seedPostprocessStore(t, "autovault_github_xxx")
+
+	assessor := &stubInlineRiskAssessor{out: &TaskRiskAssessment{
+		RiskLevel:   "unknown",
+		Explanation: "Risk assessment failed: spend cap exhausted",
+	}}
+
+	body := anthropicBashControlTasksPostWithQuery(inlineTaskBody, "surface=inline")
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	insp := inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+
+	got := Postprocess(req, body, "application/json", PostprocessConfig{
+		Inspector:        insp,
+		RewriteOpts:      inspector.DefaultRewriteOpts("http://localhost:25297"),
+		CallerNonces:     NewMemoryCallerNonceCache(time.Minute),
+		Store:            st,
+		AgentUserID:      userID,
+		AgentID:          agentID,
+		ControlBaseURL:   "http://localhost:25297",
+		PendingApprovals: cache,
+		TaskRiskAssessor: assessor,
+	})
+
+	if !assessor.called {
+		t.Fatalf("expected assessor to be called even when it returns unknown")
+	}
+	out := string(got.Body)
+	if !strings.Contains(out, "constrained runtime envelope") {
+		t.Fatalf("expected deterministic-policy fallback explanation; got %s", out)
+	}
+}
+
 func TestPostprocess_InlineTaskMalformedBodyFallsThrough(t *testing.T) {
 	ctx := context.Background()
 	cache := NewMemoryPendingApprovalCache(time.Minute)

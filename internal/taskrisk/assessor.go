@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/clawvisor/clawvisor/internal/llm"
+	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
 	"github.com/clawvisor/clawvisor/pkg/adapters"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -24,6 +25,13 @@ type Assessor interface {
 }
 
 // AssessRequest contains the data needed for task risk assessment.
+//
+// A request carries one of two scope shapes — the legacy v1 fields
+// (AuthorizedActions, PlannedCalls) or the v2 runtime envelope
+// (ExpectedTools, ExpectedEgress, RequiredCredentials, IntentVerificationMode,
+// ExpectedUse). The prompt renderer handles either shape so the same
+// LLMAssessor covers dashboard, control-plane, and lite-proxy task
+// creation paths.
 type AssessRequest struct {
 	Purpose           string
 	AuthorizedActions []store.TaskAction
@@ -33,6 +41,19 @@ type AssessRequest struct {
 	// (discovered at activation) appear in the prompt. Empty falls back to
 	// the global registry only.
 	UserID string
+
+	// V2 runtime envelope. Proxy-lite tasks (and any v2-schema dashboard
+	// task) declare scope here instead of AuthorizedActions/PlannedCalls.
+	ExpectedTools          []runtimetasks.ExpectedTool
+	ExpectedEgress         []runtimetasks.ExpectedEgress
+	RequiredCredentials    []runtimetasks.RequiredCredential
+	IntentVerificationMode string
+	ExpectedUse            string
+}
+
+// HasEnvelope reports whether the request carries v2 envelope fields.
+func (r AssessRequest) HasEnvelope() bool {
+	return len(r.ExpectedTools) > 0 || len(r.ExpectedEgress) > 0 || len(r.RequiredCredentials) > 0
 }
 
 // RiskAssessment is the result of a task risk evaluation.
