@@ -565,20 +565,33 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run risk assessment (non-blocking — errors are logged, not propagated).
+	// Both schema versions route through the LLM assessor: v1 carries
+	// AuthorizedActions/PlannedCalls, v2 carries the runtime envelope.
+	// The deterministic envelope-shape policy serves as a floor for v2
+	// tasks so structural amplifiers (wildcard hosts, regex matchers,
+	// intent verification off) are never under-graded by the LLM.
 	if h.assessor != nil {
 		var assessment *taskrisk.RiskAssessment
-		if len(req.AuthorizedActions) > 0 {
-			legacyAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+		if len(req.AuthorizedActions) > 0 || hasV2Fields {
+			llmReq := taskrisk.AssessRequest{
 				Purpose:           req.Purpose,
 				AuthorizedActions: req.AuthorizedActions,
 				PlannedCalls:      req.PlannedCalls,
 				AgentName:         agent.Name,
 				UserID:            agent.UserID,
-			})
+			}
+			if hasV2Fields {
+				llmReq.ExpectedTools = env.ExpectedTools
+				llmReq.ExpectedEgress = env.ExpectedEgress
+				llmReq.RequiredCredentials = env.RequiredCredentials
+				llmReq.IntentVerificationMode = env.IntentVerificationMode
+				llmReq.ExpectedUse = env.ExpectedUse
+			}
+			llmAssessment, err := h.assessor.Assess(ctx, llmReq)
 			if err != nil {
 				h.logger.Warn("task risk assessment failed", "error", err)
 			}
-			assessment = legacyAssessment
+			assessment = llmAssessment
 		}
 		if hasV2Fields {
 			envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)

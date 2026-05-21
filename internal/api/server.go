@@ -112,6 +112,12 @@ type Server struct {
 	taskCheckouts      llmproxy.TaskCheckoutStore
 
 	adapterGenFactory handlers.GeneratorFactory // per-request Generator factory; set via option
+
+	// taskRiskAssessor scores task envelopes at creation time. Shared
+	// between the dashboard task-create path (via TasksHandler) and the
+	// lite-proxy inline-approval intercept so both surfaces see the
+	// same LLM-judged risk read.
+	taskRiskAssessor taskrisk.Assessor
 }
 
 // Dependencies is passed to ExtraRoutes so extension handlers can access shared services.
@@ -551,11 +557,14 @@ func (s *Server) routes() http.Handler {
 	if s.localServiceProvider != nil {
 		skillHandler.SetLocalServiceProvider(s.localServiceProvider)
 	}
-	// Construct task risk assessor (noop if disabled).
+	// Construct task risk assessor (noop if disabled). Stashed on the
+	// server so registerLiteProxyRoutes can plumb the same instance into
+	// the lite-proxy's inline-approval intercept.
 	var assessor taskrisk.Assessor = taskrisk.NoopAssessor{}
 	if s.llmCfg.TaskRisk.Enabled {
 		assessor = taskrisk.NewLLMAssessor(s.llmHealth, s.adapterReg, s.logger)
 	}
+	s.taskRiskAssessor = assessor
 	approvalsHandler := handlers.NewApprovalsHandler(s.store, s.vault, s.adapterReg, s.notifier, *s.cfg, assessor, s.logger, s.eventHub)
 	approvalsHandler.SetCallbackDispatcher(s.cbDispatcher)
 	s.approvalsHandler = approvalsHandler
@@ -1271,6 +1280,7 @@ func (s *Server) registerLiteProxyRoutes(
 			s.logger.Warn("lite-proxy: TaskCheckoutStore not configured — task focus is process-local; use Redis for multi-instance proxy deployments")
 		}
 		llmHandler.InlineTaskCreator = tasksHandler
+		llmHandler.TaskRiskAssessor = s.taskRiskAssessor
 
 		controlHandler := handlers.NewLLMControlHandler(baseURL)
 		controlHandler.Store = s.store

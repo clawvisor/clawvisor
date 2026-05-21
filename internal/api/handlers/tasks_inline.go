@@ -153,14 +153,33 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 		task.ApprovalRationale = rationale
 	}
 
-	// Best-effort risk assessment for parity with the dashboard path; a
-	// failure here is non-fatal (the dashboard path also swallows it).
+	// Run the LLM-backed risk assessor and merge with the deterministic
+	// envelope-shape policy for parity with the dashboard path. Failures
+	// in either are non-fatal — a task should still be created with at
+	// least the structural assessment when the LLM call errors out.
+	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
+	finalAssessment := envelopeAssessment
 	if h.assessor != nil {
-		envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
-		if envelopeAssessment != nil {
-			task.RiskLevel = envelopeAssessment.RiskLevel
-			task.RiskDetails = taskrisk.MarshalAssessment(envelopeAssessment)
+		llmAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
+			Purpose:                req.Purpose,
+			AgentName:              agent.Name,
+			UserID:                 agent.UserID,
+			ExpectedTools:          env.ExpectedTools,
+			ExpectedEgress:         env.ExpectedEgress,
+			RequiredCredentials:    env.RequiredCredentials,
+			IntentVerificationMode: env.IntentVerificationMode,
+			ExpectedUse:            env.ExpectedUse,
+		})
+		if err != nil {
+			h.logger.Warn("inline task risk assessment failed", "error", err)
 		}
+		if llmAssessment != nil && !strings.EqualFold(llmAssessment.RiskLevel, "unknown") {
+			finalAssessment = mergeRiskAssessments(llmAssessment, envelopeAssessment)
+		}
+	}
+	if finalAssessment != nil {
+		task.RiskLevel = finalAssessment.RiskLevel
+		task.RiskDetails = taskrisk.MarshalAssessment(finalAssessment)
 	}
 
 	if err := h.st.CreateTask(ctx, task); err != nil {

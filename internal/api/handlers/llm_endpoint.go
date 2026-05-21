@@ -20,6 +20,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/vault"
@@ -120,6 +121,11 @@ type LLMEndpointHandler struct {
 	// inspector decision point for diagnostic purposes. Off by
 	// default; opted in via cfg.ProxyLite.TraceLogPath.
 	TraceLogger *llmproxy.TraceLogger
+
+	// TaskRiskAssessor evaluates the runtime envelope of an inline task
+	// gesture at approval time. Optional — when nil, the inline approval
+	// prompt falls back to the deterministic envelope-shape policy only.
+	TaskRiskAssessor taskrisk.Assessor
 
 	// RawIOLogger, when non-nil, captures full raw HTTP bodies for
 	// inbound requests, upstream responses, and the bodies returned
@@ -815,8 +821,10 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
 			// inside the credentialed rewrite path so the agent's raw
 			// bearer token never enters the model's conversation context.
-			CallerNonces: h.CallerNonces,
-			Trace:        h.TraceLogger,
+			CallerNonces:     h.CallerNonces,
+			Trace:            h.TraceLogger,
+			TaskRiskAssessor: h.taskRiskBridge(),
+			AgentName:        agent.Name,
 		})
 		h.Logger.DebugContext(r.Context(), "lite-proxy postprocess complete",
 			"request_id", requestID,
@@ -2606,4 +2614,45 @@ func clawvisorAgentTokenHeader(r *http.Request) string {
 		return strings.TrimSpace(v[len(prefix):])
 	}
 	return v
+}
+
+// taskRiskBridge adapts the handler's taskrisk.Assessor (which speaks the
+// shared AssessRequest shape used by the dashboard task-create path) to
+// the narrow llmproxy.TaskRiskAssessor interface the postprocess pipeline
+// consumes. Returns nil when the handler has no assessor configured so
+// the intercept's nil-check correctly falls back to the deterministic
+// envelope policy.
+func (h *LLMEndpointHandler) taskRiskBridge() llmproxy.TaskRiskAssessor {
+	if h == nil || h.TaskRiskAssessor == nil {
+		return nil
+	}
+	return &liteProxyTaskRiskBridge{assessor: h.TaskRiskAssessor}
+}
+
+type liteProxyTaskRiskBridge struct {
+	assessor taskrisk.Assessor
+}
+
+func (b *liteProxyTaskRiskBridge) AssessEnvelope(ctx context.Context, req llmproxy.TaskRiskAssessRequest) *llmproxy.TaskRiskAssessment {
+	if b == nil || b.assessor == nil {
+		return nil
+	}
+	out, err := b.assessor.Assess(ctx, taskrisk.AssessRequest{
+		Purpose:                req.Purpose,
+		AgentName:              req.AgentName,
+		UserID:                 req.UserID,
+		ExpectedTools:          req.ExpectedTools,
+		ExpectedEgress:         req.ExpectedEgress,
+		RequiredCredentials:    req.RequiredCredentials,
+		IntentVerificationMode: req.IntentVerificationMode,
+		ExpectedUse:            req.ExpectedUse,
+	})
+	if err != nil || out == nil {
+		return nil
+	}
+	return &llmproxy.TaskRiskAssessment{
+		RiskLevel:   out.RiskLevel,
+		Explanation: out.Explanation,
+		Factors:     out.Factors,
+	}
 }
