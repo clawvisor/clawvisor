@@ -136,7 +136,10 @@ type LLMEndpointHandler struct {
 	// avoid leaving this on outside of diagnostic sessions.
 	RawIOLogger *llmproxy.RawIOLogger
 
-	// MaxRequestBytes caps the inbound request body. Defaults to 4 MiB.
+	// MaxRequestBytes caps the inbound request body. Defaults to 34 MiB —
+	// 2 MiB of headroom above Anthropic's 32 MB Messages API cap (OpenAI's
+	// is ~25 MB), so the proxy never rejects a request the upstream would
+	// have accepted.
 	MaxRequestBytes int64
 
 	// MaxResponseBytes caps the upstream response body when buffering for
@@ -171,7 +174,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
 		CallerNonces:         llmproxy.NewMemoryCallerNonceCache(5 * time.Minute),
-		MaxRequestBytes:      4 << 20,
+		MaxRequestBytes:      34 << 20,
 		defaultToolRulesSeen: map[string]map[string]struct{}{},
 	}
 }

@@ -39,7 +39,8 @@ type ProxyResolverHandler struct {
 	// per placeholder swapped. nil disables audit logging.
 	AuditEmitter *llmproxy.AuditEmitter
 
-	// MaxRequestBytes caps the inbound body. Defaults to 8 MiB.
+	// MaxRequestBytes caps the inbound body. Defaults to 34 MiB to mirror
+	// the LLM proxy endpoint (2 MiB above Anthropic's 32 MB Messages cap).
 	MaxRequestBytes int64
 
 	// SelfHostnames is the set of hosts this Clawvisor deployment serves
@@ -69,7 +70,7 @@ func NewProxyResolverHandler(st store.Store, v vault.Vault, logger *slog.Logger)
 		Store:           st,
 		Vault:           v,
 		Logger:          logger,
-		MaxRequestBytes: 8 << 20,
+		MaxRequestBytes: 34 << 20,
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
