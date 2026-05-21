@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.8](https://github.com/clawvisor/clawvisor/compare/v0.9.7...v0.9.8) (2026-05-21)
+
+
+### Features
+
+* **lite-proxy:** add experimental secret detection toggle ([#423](https://github.com/clawvisor/clawvisor/issues/423)) ([2289914](https://github.com/clawvisor/clawvisor/commit/228991486f9f119458b4ab2a97aa6ef7b79d12ae))
+* **lite-proxy:** add task checkout focus ([#426](https://github.com/clawvisor/clawvisor/issues/426)) ([b056249](https://github.com/clawvisor/clawvisor/commit/b056249a9d264f50a8df58fd41b960c13b66e53a))
+* **runtime:** speed up proxy-lite read-only tools ([#424](https://github.com/clawvisor/clawvisor/issues/424)) ([fb30e22](https://github.com/clawvisor/clawvisor/commit/fb30e22da03fc3b1247dec885e11209339b01963))
+* **taskrisk:** run LLM risk assessor on v2 envelopes and inline tasks ([#427](https://github.com/clawvisor/clawvisor/issues/427)) ([135b458](https://github.com/clawvisor/clawvisor/commit/135b4589c5ce4c0fc34f0d172deececcee8ac28e))
+
+
+### Bug Fixes
+
+* **auth:** preserve session on transient refresh failures ([#410](https://github.com/clawvisor/clawvisor/issues/410)) ([bfa49a9](https://github.com/clawvisor/clawvisor/commit/bfa49a9797a0c8771e5cf2d5cfb669067715ed78))
+* **lite-proxy:** move routes under api ([#420](https://github.com/clawvisor/clawvisor/issues/420)) ([15390ea](https://github.com/clawvisor/clawvisor/commit/15390eaf3181cd2f169ff3bed4ed02f89a9c2e33))
+* **llmproxy:** default allow codex internal tools ([#422](https://github.com/clawvisor/clawvisor/issues/422)) ([fe39ca7](https://github.com/clawvisor/clawvisor/commit/fe39ca749d1b7311378338961fca7eaa5ce1af08))
+* **llmproxy:** handle lite OpenAI chat approval routes ([#425](https://github.com/clawvisor/clawvisor/issues/425)) ([6f619de](https://github.com/clawvisor/clawvisor/commit/6f619de6e58d77d1a293dd536623d52860f90e5b))
+* **llmproxy:** raise inbound body cap to 34 MiB ([#428](https://github.com/clawvisor/clawvisor/issues/428)) ([271a5c6](https://github.com/clawvisor/clawvisor/commit/271a5c65ca61224c2c3a80de03f344a4248a85a0))
+* **runtime:** allow read-only agent tools ([#415](https://github.com/clawvisor/clawvisor/issues/415)) ([beaa94f](https://github.com/clawvisor/clawvisor/commit/beaa94fab6b461a0290703e4c5762ed50a8a6fc5))
+* **runtime:** guide agents to aliased vault items ([#429](https://github.com/clawvisor/clawvisor/issues/429)) ([4501a85](https://github.com/clawvisor/clawvisor/commit/4501a8590c640bdab274039fe76e8f8c5a5c1cca))
+* **security:** address code scanning findings ([#421](https://github.com/clawvisor/clawvisor/issues/421)) ([416d836](https://github.com/clawvisor/clawvisor/commit/416d8362d9c33848d2d8e9ec509ae13889275d3b))
+* **yamlruntime:** propagate io.ReadAll and credentialFields errors ([#412](https://github.com/clawvisor/clawvisor/issues/412)) ([ffeee40](https://github.com/clawvisor/clawvisor/commit/ffeee40c9090a7a2ac038689d6277368bde353c2))
+
 ## [0.9.7](https://github.com/clawvisor/clawvisor/compare/v0.9.6...v0.9.7) (2026-05-18)
 
 
