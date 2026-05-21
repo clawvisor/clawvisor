@@ -1337,12 +1337,76 @@ func (h *TasksHandler) validateTaskRequiredCredentials(ctx context.Context, task
 		}
 		if _, err := h.vault.Get(ctx, task.UserID, storageKey); err != nil {
 			if errors.Is(err, vault.ErrNotFound) {
-				return fmt.Errorf("vault item %q is not available", vaultItemID)
+				return h.vaultItemNotAvailableError(ctx, task.UserID, vaultItemID)
 			}
 			return fmt.Errorf("could not verify vault item %q", vaultItemID)
 		}
 	}
 	return nil
+}
+
+// vaultItemNotAvailableError formats a credential-validation failure with a
+// recovery hint. The agent's first instinct on "not available" is to tell the
+// user the credential is missing; this nudges it to discover the correct
+// handle instead. We surface up to a few candidate vault item IDs sharing the
+// requested service prefix (e.g. `github` → `github:ericlevine`) so the agent
+// can retry without a separate round-trip. Listing failures are silent — the
+// hint to GET /control/vault/items always fires.
+func (h *TasksHandler) vaultItemNotAvailableError(ctx context.Context, userID, vaultItemID string) error {
+	candidates := h.candidateVaultItemIDs(ctx, userID, vaultItemID)
+	hint := "list GET /control/vault/items to find the correct handle (vault items may be account-aliased, e.g. `github:account`) and retry the task"
+	if len(candidates) > 0 {
+		hint = fmt.Sprintf("did you mean %s? Vault items may be account-aliased; list GET /control/vault/items for the full set and retry the task", strings.Join(quoteStrings(candidates), ", "))
+	}
+	return fmt.Errorf("vault item %q is not available — %s", vaultItemID, hint)
+}
+
+// candidateVaultItemIDs returns up to 3 public vault item IDs whose service
+// prefix matches the requested handle. We source these from
+// listVaultItemIDs — the same list /control/vault/items exposes — so we
+// never suggest internal storage keys (agent-scoped LLM keys, hidden
+// adapter backing keys) that the agent couldn't actually request. The match
+// is conservative: exact prefix followed by `:` or `.` so that asking for
+// `github` surfaces `github:ericlevine` but not unrelated entries. Returns
+// nil on any error or when the vault is unconfigured.
+func (h *TasksHandler) candidateVaultItemIDs(ctx context.Context, userID, vaultItemID string) []string {
+	prefix := strings.TrimSpace(vaultItemID)
+	if prefix == "" {
+		return nil
+	}
+	ids, err := listVaultItemIDs(ctx, h.st, h.vault, h.adapterReg, userID)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, 3)
+	for _, id := range ids {
+		if id == vaultItemID {
+			continue
+		}
+		if !strings.HasPrefix(id, prefix) {
+			continue
+		}
+		rest := id[len(prefix):]
+		if rest == "" {
+			continue
+		}
+		if rest[0] != ':' && rest[0] != '.' {
+			continue
+		}
+		out = append(out, id)
+		if len(out) >= 3 {
+			break
+		}
+	}
+	return out
+}
+
+func quoteStrings(s []string) []string {
+	out := make([]string, len(s))
+	for i, v := range s {
+		out[i] = fmt.Sprintf("%q", v)
+	}
+	return out
 }
 
 func (h *TasksHandler) taskVaultItemStorageKey(ctx context.Context, task *store.Task, vaultItemID string) (string, error) {
