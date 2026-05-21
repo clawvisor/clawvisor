@@ -104,6 +104,10 @@ type LLMEndpointHandler struct {
 	// than the prior unconditional "task approved" claim).
 	InlineApprovalOutcomes llmproxy.InlineApprovalOutcomeStore
 
+	// TaskCheckouts stores the current task focus for an agent. The decision
+	// layer treats this as a preference among already-valid task candidates.
+	TaskCheckouts llmproxy.TaskCheckoutStore
+
 	// CallerNonces mints short-lived per-rewrite nonces that stand in
 	// for the agent's bearer token in the rewritten tool_use. The
 	// resolver-side middleware shares the same cache instance and
@@ -156,6 +160,7 @@ func NewLLMEndpointHandler(st store.Store, v vault.Vault, logger *slog.Logger) *
 		PendingApprovals:       llmproxy.NewMemoryPendingApprovalCache(10 * time.Minute),
 		PendingSecrets:         llmproxy.NewMemoryPendingSecretDecisionCache(10 * time.Minute),
 		InlineApprovalOutcomes: llmproxy.NewMemoryInlineApprovalOutcomeStore(24 * time.Hour),
+		TaskCheckouts:          llmproxy.NewMemoryTaskCheckoutStore(24 * time.Hour),
 		// Default in-process nonce cache; production wires the Redis-
 		// backed cache via WithCallerNonceCache. Cache instance is
 		// shared with the resolver-side middleware in production.
@@ -426,6 +431,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		Audit:           h.AuditEmitter,
 		RequestID:       requestID,
 		Outcomes:        h.InlineApprovalOutcomes,
+		Checkouts:       h.TaskCheckouts,
 	}); inlineErr != nil {
 		auditStatus = http.StatusBadRequest
 		auditDecide = "deny"
@@ -448,6 +454,9 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 		auditParams["inline_task_outcome"] = inlineRewrite.Outcome
 		if inlineRewrite.TaskID != "" {
 			auditParams["inline_task_id"] = inlineRewrite.TaskID
+		}
+		if inlineRewrite.CheckedOut {
+			auditParams["inline_task_checked_out"] = true
 		}
 		if inlineRewrite.Reason != "" {
 			auditParams["inline_task_reason"] = inlineRewrite.Reason
@@ -768,6 +777,13 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"authorization inputs unavailable; please retry")
 			return
 		}
+		preferredTaskID, preferredTaskErr := h.checkedOutTaskID(r.Context(), agent, candidateTasks)
+		if preferredTaskErr != nil {
+			h.Logger.WarnContext(r.Context(), "lite-proxy task checkout lookup failed; continuing without preferred task",
+				"request_id", requestID, "agent_id", agent.ID, "err", preferredTaskErr.Error())
+			auditParams["task_checkout_unavailable"] = true
+			preferredTaskID = ""
+		}
 		h.Logger.DebugContext(r.Context(), "lite-proxy decision inputs loaded",
 			"request_id", requestID,
 			"agent_id", agent.ID,
@@ -776,6 +792,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"candidate_tasks", len(candidateTasks),
 			"tool_rules", len(toolRules),
 			"egress_rules", len(egressRules),
+			"preferred_task_id", preferredTaskID,
 		)
 		processed := llmproxy.Postprocess(r, full, upstreamCT, llmproxy.PostprocessConfig{
 			Inspector:        h.Inspector,
@@ -792,6 +809,7 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			CandidateTasks:   candidateTasks,
 			ToolRules:        toolRules,
 			EgressRules:      egressRules,
+			PreferredTaskID:  preferredTaskID,
 			PendingApprovals: h.PendingApprovals,
 			ControlBaseURL:   h.ControlBaseURL,
 			// Per-tool-use nonce minting overrides RewriteOpts.CallerToken
@@ -1058,6 +1076,28 @@ func (h *LLMEndpointHandler) loadLiteProxyDecisionInputs(ctx context.Context, ag
 		egressRules = []*store.RuntimePolicyRule{}
 	}
 	return candidateTasks, toolRules, egressRules, nil
+}
+
+func (h *LLMEndpointHandler) checkedOutTaskID(ctx context.Context, agent *store.Agent, candidateTasks []*store.Task) (string, error) {
+	if h == nil || h.TaskCheckouts == nil || agent == nil {
+		return "", nil
+	}
+	checkout, ok, err := h.TaskCheckouts.Get(ctx, llmproxy.TaskCheckoutKey{
+		UserID:  agent.UserID,
+		AgentID: agent.ID,
+	})
+	if err != nil || !ok || strings.TrimSpace(checkout.TaskID) == "" {
+		return "", err
+	}
+	for _, task := range candidateTasks {
+		if task != nil && task.ID == checkout.TaskID && task.Status == "active" && task.AgentID == agent.ID {
+			return checkout.TaskID, nil
+		}
+	}
+	if err := h.TaskCheckouts.Clear(ctx, llmproxy.TaskCheckoutKey{UserID: agent.UserID, AgentID: agent.ID}); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 func (h *LLMEndpointHandler) ensureDefaultToolRules(ctx context.Context, agent *store.Agent, availableTools []string) {

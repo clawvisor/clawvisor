@@ -288,6 +288,65 @@ func TestEvaluateAuthorization_ToolTaskRunsIntentVerifier(t *testing.T) {
 	}
 }
 
+func TestEvaluateAuthorization_PreferredTaskDisambiguatesToolScope(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits checked-out task"}}
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:         toolUse("exec_command", map[string]any{"cmd": "cat README.md"}),
+		AgentID:         "agent-1",
+		CandidateTasks:  []*store.Task{taskWithExpectedTool("task-1", "agent-1", "exec_command", "read repo files"), taskWithExpectedTool("task-2", "agent-1", "exec_command", "read repo files")},
+		PreferredTaskID: "task-2",
+		IntentVerifier:  verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow || got.Source != SourceTaskScope || got.Task == nil || got.Task.ID != "task-2" {
+		t.Fatalf("decision = %+v, want preferred task-scope allow for task-2", got)
+	}
+	if verifier.last.TaskID != "task-2" {
+		t.Fatalf("intent verifier TaskID = %q, want task-2", verifier.last.TaskID)
+	}
+}
+
+func TestEvaluateAuthorization_PreferredTaskDisambiguatesServiceAction(t *testing.T) {
+	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: true, Explanation: "fits checked-out task"}}
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:         toolUse("WebFetch", map[string]any{"url": "https://api.github.com/repos/acme/app/issues"}),
+		AgentID:         "agent-1",
+		Service:         "github",
+		Action:          "create_issue",
+		CandidateTasks:  []*store.Task{taskWithAction("task-1", "agent-1", "github", "create_issue", "strict"), taskWithAction("task-2", "agent-1", "github", "create_issue", "strict")},
+		PreferredTaskID: "task-2",
+		IntentVerifier:  verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictAllow || got.Source != SourceTaskScope || got.Task == nil || got.Task.ID != "task-2" {
+		t.Fatalf("decision = %+v, want preferred task-scope allow for task-2", got)
+	}
+	if verifier.last.TaskID != "task-2" {
+		t.Fatalf("intent verifier TaskID = %q, want task-2", verifier.last.TaskID)
+	}
+}
+
+func TestEvaluateAuthorization_IgnoresPreferredTaskOutsideCandidateSet(t *testing.T) {
+	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{
+		ToolUse:         toolUse("WebFetch", map[string]any{"url": "https://api.github.com/repos/acme/app/issues"}),
+		AgentID:         "agent-1",
+		Service:         "github",
+		Action:          "create_issue",
+		CandidateTasks:  []*store.Task{taskWithAction("task-1", "agent-1", "github", "create_issue", "strict"), taskWithAction("task-2", "agent-1", "github", "create_issue", "strict")},
+		PreferredTaskID: "task-other",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != VerdictNeedsApproval || got.Source != SourceTaskScopeAmbiguous {
+		t.Fatalf("decision = %+v, want ambiguity when preferred task is not a valid candidate", got)
+	}
+}
+
 func TestEvaluateAuthorization_CanSkipIntentForLocallyClassifiedLowRiskTool(t *testing.T) {
 	verifier := &stubIntentVerifier{verdict: &IntentVerdict{Allow: false, Explanation: "would block if called"}}
 	got, err := EvaluateAuthorization(context.Background(), AuthorizationInput{

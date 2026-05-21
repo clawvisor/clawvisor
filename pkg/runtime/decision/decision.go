@@ -109,6 +109,10 @@ type AuthorizationInput struct {
 	CandidateTasks []*store.Task
 	ToolRules      []*store.RuntimePolicyRule
 	EgressRules    []*store.RuntimePolicyRule
+	// PreferredTaskID is the lite-proxy checked-out task focus. It only
+	// disambiguates among tasks that already match the request; it never grants
+	// scope to a task that would not otherwise cover the call.
+	PreferredTaskID string
 
 	IntentVerifier IntentVerifier
 
@@ -185,7 +189,7 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		// match — the lite-proxy's taskCreationPrompt tells the model
 		// to declare scope by tool_name, so a task created via that
 		// path will only have expected_tools populated.
-		if match, err := runtimepolicy.MatchToolCall(in.CandidateTasks, in.ToolUse.Name, toolInput); err != nil {
+		if match, err := runtimepolicy.MatchToolCallPreferred(in.CandidateTasks, in.ToolUse.Name, toolInput, in.PreferredTaskID); err != nil {
 			return AuthorizationDecision{}, err
 		} else if match != nil {
 			task := taskByID(in.CandidateTasks, match.TaskID)
@@ -215,14 +219,14 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 	}
 
 	if in.Target.Host != "" {
-		match, err := runtimepolicy.MatchEgressRequest(in.CandidateTasks, runtimepolicy.EgressRequest{
+		match, err := runtimepolicy.MatchEgressRequestPreferred(in.CandidateTasks, runtimepolicy.EgressRequest{
 			Host:    in.Target.Host,
 			Method:  in.Target.Method,
 			Path:    in.Target.Path,
 			Query:   in.Target.Query,
 			Body:    in.Target.Body,
 			Headers: in.Target.Headers,
-		})
+		}, in.PreferredTaskID)
 		if err != nil {
 			return AuthorizationDecision{}, err
 		}
@@ -236,7 +240,7 @@ func EvaluateAuthorization(ctx context.Context, in AuthorizationInput) (Authoriz
 		}
 	}
 
-	match, err := runtimepolicy.MatchToolCall(in.CandidateTasks, in.ToolUse.Name, toolInput)
+	match, err := runtimepolicy.MatchToolCallPreferred(in.CandidateTasks, in.ToolUse.Name, toolInput, in.PreferredTaskID)
 	if err != nil {
 		return AuthorizationDecision{}, err
 	}
@@ -389,7 +393,7 @@ func reviewDecisionWithRule(posture EvaluationPosture, rule *store.RuntimePolicy
 }
 
 func evaluateServiceActionScope(ctx context.Context, in AuthorizationInput, posture EvaluationPosture, toolInput map[string]any) (AuthorizationDecision, error) {
-	classification := runtimepolicy.ClassifyGatewayRequest(in.CandidateTasks, in.AgentID, in.Service, "", in.Action)
+	classification := runtimepolicy.ClassifyGatewayRequestPreferred(in.CandidateTasks, in.AgentID, in.Service, "", in.Action, in.PreferredTaskID)
 	switch classification.Kind {
 	case runtimepolicy.ClassificationBelongsToExistingTask:
 		task := classification.MatchedTask

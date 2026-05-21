@@ -114,10 +114,11 @@ type PostprocessConfig struct {
 	// Postprocess authorizes through pkg/runtime/decision after inspector
 	// boundary validation. When all are nil, it falls back to the legacy
 	// Catalog/TaskScope flow for compatibility with older tests/configs.
-	Posture        runtimedecision.EvaluationPosture
-	CandidateTasks []*store.Task
-	ToolRules      []*store.RuntimePolicyRule
-	EgressRules    []*store.RuntimePolicyRule
+	Posture         runtimedecision.EvaluationPosture
+	CandidateTasks  []*store.Task
+	ToolRules       []*store.RuntimePolicyRule
+	EgressRules     []*store.RuntimePolicyRule
+	PreferredTaskID string
 
 	PendingApprovals PendingApprovalCache
 
@@ -374,6 +375,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					CandidateTasks:         cfg.CandidateTasks,
 					ToolRules:              cfg.ToolRules,
 					EgressRules:            cfg.EgressRules,
+					PreferredTaskID:        cfg.PreferredTaskID,
 					IntentVerifier:         decisionIntentVerifier{inner: cfg.IntentVerifier},
 					SkipIntentVerification: readOnlyShellCommand,
 				}
@@ -480,17 +482,18 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				resolved, _ = cfg.Catalog.Resolve(v.Host, v.Method, v.Path)
 			}
 			decisionInput := runtimedecision.AuthorizationInput{
-				ToolUse:        tu,
-				UserID:         cfg.AgentUserID,
-				AgentID:        cfg.AgentID,
-				Posture:        cfg.Posture,
-				Target:         runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
-				Service:        resolved.ServiceID,
-				Action:         resolved.ActionID,
-				CandidateTasks: cfg.CandidateTasks,
-				ToolRules:      cfg.ToolRules,
-				EgressRules:    cfg.EgressRules,
-				IntentVerifier: decisionIntentVerifier{inner: cfg.IntentVerifier},
+				ToolUse:         tu,
+				UserID:          cfg.AgentUserID,
+				AgentID:         cfg.AgentID,
+				Posture:         cfg.Posture,
+				Target:          runtimedecision.TargetRequest{Host: v.Host, Method: v.Method, Path: v.Path},
+				Service:         resolved.ServiceID,
+				Action:          resolved.ActionID,
+				CandidateTasks:  cfg.CandidateTasks,
+				ToolRules:       cfg.ToolRules,
+				EgressRules:     cfg.EgressRules,
+				PreferredTaskID: cfg.PreferredTaskID,
+				IntentVerifier:  decisionIntentVerifier{inner: cfg.IntentVerifier},
 			}
 			dec, err := runtimedecision.EvaluateAuthorization(req.Context(), decisionInput)
 			if err != nil {

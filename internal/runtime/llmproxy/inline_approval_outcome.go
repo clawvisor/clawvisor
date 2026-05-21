@@ -31,6 +31,9 @@ type InlineApprovalOutcome struct {
 	// ApprovalRecordID is populated on success when the canonical
 	// approval_records row was written.
 	ApprovalRecordID string
+	// CheckedOut is true when this inline-approved task was also stored
+	// as the agent's current task focus.
+	CheckedOut bool
 	// FailureReason is populated on failure — short, suitable for
 	// embedding in an LLM-facing context note.
 	FailureReason string

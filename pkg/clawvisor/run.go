@@ -346,6 +346,9 @@ func RunWithContext(ctx context.Context, opts *ServerOptions) error {
 	if opts.LiteOutcomeStore != nil {
 		apiOpts = append(apiOpts, api.WithLiteApprovalOutcomeStore(opts.LiteOutcomeStore))
 	}
+	if opts.TaskCheckoutStore != nil {
+		apiOpts = append(apiOpts, api.WithTaskCheckoutStore(opts.TaskCheckoutStore))
+	}
 	if opts.LocalServiceProvider != nil {
 		apiOpts = append(apiOpts, api.WithLocalServiceProvider(&localSvcAdapter{opts.LocalServiceProvider}))
 	}

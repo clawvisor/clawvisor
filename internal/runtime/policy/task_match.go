@@ -32,50 +32,88 @@ type EgressMatch struct {
 }
 
 func MatchToolCall(tasks []*store.Task, toolName string, input map[string]any) (*ToolMatch, error) {
+	return MatchToolCallPreferred(tasks, toolName, input, "")
+}
+
+func MatchToolCallPreferred(tasks []*store.Task, toolName string, input map[string]any, preferredTaskID string) (*ToolMatch, error) {
+	if preferredTaskID != "" {
+		match, err := matchToolCallInTask(tasks, toolName, input, preferredTaskID)
+		if err != nil || match != nil {
+			return match, err
+		}
+	}
 	var best *ToolMatch
 	bestScore := -1
 	for _, task := range tasks {
-		env, err := runtimetasks.EnvelopeFromTask(task)
+		match, score, err := bestToolMatchInTask(task, toolName, input)
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range env.ExpectedTools {
-			// Tool-name match. Two layers:
-			//
-			// 1. Case-insensitive equality — handles the model
-			//    pattern-matching from documentation and emitting the
-			//    lowercase form (`bash` instead of `Bash`).
-			// 2. Tool-class equivalence — handles cross-harness aliases
-			//    (Claude Code says `Bash`, Codex says `exec_command`;
-			//    Claude Code says `Read`, Codex says `read_file`).
-			//
-			// A task created in a Claude Code session that declares
-			// `Bash` should cover the same work in a Codex session
-			// that uses `exec_command`. The model doesn't always know
-			// which harness it's in; the task does what it semantically
-			// said, not what the literal string matched.
-			if !toolNamesMatch(item.ToolName, toolName) {
-				continue
-			}
-			if item.InputRegex != "" {
-				if ok, err := matchRegexMap(item.InputRegex, input); err != nil || !ok {
-					if err != nil {
-						return nil, err
-					}
-					continue
-				}
-			}
-			if !matchShape(item.InputShape, input) {
-				continue
-			}
-			score := toolMatchSpecificity(item)
-			if score > bestScore {
-				bestScore = score
-				best = &ToolMatch{TaskID: task.ID, Item: item}
-			}
+		if match != nil && score > bestScore {
+			bestScore = score
+			best = match
 		}
 	}
 	return best, nil
+}
+
+func matchToolCallInTask(tasks []*store.Task, toolName string, input map[string]any, taskID string) (*ToolMatch, error) {
+	for _, task := range tasks {
+		if task == nil || task.ID != taskID {
+			continue
+		}
+		match, _, err := bestToolMatchInTask(task, toolName, input)
+		return match, err
+	}
+	return nil, nil
+}
+
+func bestToolMatchInTask(task *store.Task, toolName string, input map[string]any) (*ToolMatch, int, error) {
+	if task == nil {
+		return nil, -1, nil
+	}
+	env, err := runtimetasks.EnvelopeFromTask(task)
+	if err != nil {
+		return nil, -1, err
+	}
+	var best *ToolMatch
+	bestScore := -1
+	for _, item := range env.ExpectedTools {
+		// Tool-name match. Two layers:
+		//
+		// 1. Case-insensitive equality — handles the model
+		//    pattern-matching from documentation and emitting the
+		//    lowercase form (`bash` instead of `Bash`).
+		// 2. Tool-class equivalence — handles cross-harness aliases
+		//    (Claude Code says `Bash`, Codex says `exec_command`;
+		//    Claude Code says `Read`, Codex says `read_file`).
+		//
+		// A task created in a Claude Code session that declares
+		// `Bash` should cover the same work in a Codex session
+		// that uses `exec_command`. The model doesn't always know
+		// which harness it's in; the task does what it semantically
+		// said, not what the literal string matched.
+		if !toolNamesMatch(item.ToolName, toolName) {
+			continue
+		}
+		if item.InputRegex != "" {
+			if ok, err := matchRegexMap(item.InputRegex, input); err != nil || !ok {
+				if err != nil {
+					return nil, -1, err
+				}
+				continue
+			}
+		}
+		if !matchShape(item.InputShape, input) {
+			continue
+		}
+		score := toolMatchSpecificity(item)
+		if score > bestScore {
+			bestScore = score
+			best = &ToolMatch{TaskID: task.ID, Item: item}
+		}
+	}
+	return best, bestScore, nil
 }
 
 // toolNamesMatch decides whether a tool-call's actual name matches a
@@ -101,48 +139,86 @@ func toolClass(name string) string {
 }
 
 func MatchEgressRequest(tasks []*store.Task, req EgressRequest) (*EgressMatch, error) {
+	return MatchEgressRequestPreferred(tasks, req, "")
+}
+
+func MatchEgressRequestPreferred(tasks []*store.Task, req EgressRequest, preferredTaskID string) (*EgressMatch, error) {
 	host := strings.ToLower(req.Host)
 	method := strings.ToUpper(req.Method)
+	if preferredTaskID != "" {
+		match, err := matchEgressRequestInTask(tasks, req, host, method, preferredTaskID)
+		if err != nil || match != nil {
+			return match, err
+		}
+	}
 	var best *EgressMatch
 	bestScore := -1
 	for _, task := range tasks {
-		env, err := runtimetasks.EnvelopeFromTask(task)
+		match, score, err := bestEgressMatchInTask(task, req, host, method)
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range env.ExpectedEgress {
-			if strings.ToLower(item.Host) != host {
-				continue
-			}
-			if item.Method != "" && strings.ToUpper(item.Method) != method {
-				continue
-			}
-			if item.Path != "" && item.Path != req.Path {
-				continue
-			}
-			if item.PathRegex != "" {
-				ok, err := regexp.MatchString(item.PathRegex, req.Path)
-				if err != nil {
-					return nil, err
-				}
-				if !ok {
-					continue
-				}
-			}
-			if !matchShape(item.QueryShape, req.Query) || !matchShape(item.BodyShape, req.Body) {
-				continue
-			}
-			if !matchHeaders(item.Headers, req.Headers) {
-				continue
-			}
-			score := egressMatchSpecificity(item)
-			if score > bestScore {
-				bestScore = score
-				best = &EgressMatch{TaskID: task.ID, Item: item}
-			}
+		if match != nil && score > bestScore {
+			bestScore = score
+			best = match
 		}
 	}
 	return best, nil
+}
+
+func matchEgressRequestInTask(tasks []*store.Task, req EgressRequest, host, method, taskID string) (*EgressMatch, error) {
+	for _, task := range tasks {
+		if task == nil || task.ID != taskID {
+			continue
+		}
+		match, _, err := bestEgressMatchInTask(task, req, host, method)
+		return match, err
+	}
+	return nil, nil
+}
+
+func bestEgressMatchInTask(task *store.Task, req EgressRequest, host, method string) (*EgressMatch, int, error) {
+	if task == nil {
+		return nil, -1, nil
+	}
+	env, err := runtimetasks.EnvelopeFromTask(task)
+	if err != nil {
+		return nil, -1, err
+	}
+	var best *EgressMatch
+	bestScore := -1
+	for _, item := range env.ExpectedEgress {
+		if strings.ToLower(item.Host) != host {
+			continue
+		}
+		if item.Method != "" && strings.ToUpper(item.Method) != method {
+			continue
+		}
+		if item.Path != "" && item.Path != req.Path {
+			continue
+		}
+		if item.PathRegex != "" {
+			ok, err := regexp.MatchString(item.PathRegex, req.Path)
+			if err != nil {
+				return nil, -1, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		if !matchShape(item.QueryShape, req.Query) || !matchShape(item.BodyShape, req.Body) {
+			continue
+		}
+		if !matchHeaders(item.Headers, req.Headers) {
+			continue
+		}
+		score := egressMatchSpecificity(item)
+		if score > bestScore {
+			bestScore = score
+			best = &EgressMatch{TaskID: task.ID, Item: item}
+		}
+	}
+	return best, bestScore, nil
 }
 
 func matchHeaders(shape map[string]any, headers map[string]string) bool {

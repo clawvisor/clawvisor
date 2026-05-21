@@ -99,7 +99,7 @@ func isSyntheticApprovalPromptText(text string) bool {
 }
 
 func isBareSyntheticApprovalReply(text string) bool {
-	if strings.Contains(text, InlineApprovalAugmentationMarker) ||
+	if containsInlineApprovalAugmentationMarker(text) ||
 		strings.Contains(text, InlineTaskDenyMarker) ||
 		strings.Contains(text, InlineTaskCreatorErrorMarker) {
 		return false

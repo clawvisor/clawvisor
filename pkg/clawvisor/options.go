@@ -151,6 +151,7 @@ type ServerOptions struct {
 	PendingSecretCache llmproxy.PendingSecretDecisionCache
 	LiteApprovalCache  llmproxy.PendingApprovalCache
 	LiteOutcomeStore   llmproxy.InlineApprovalOutcomeStore
+	TaskCheckoutStore  llmproxy.TaskCheckoutStore
 	RedisClient        *redis.Client
 }
 

@@ -83,6 +83,7 @@ func seedInlineTaskHolds(t *testing.T, cache *MemoryPendingApprovalCache) (outer
 
 func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.T) {
 	cache := NewMemoryPendingApprovalCache(time.Minute)
+	checkouts := NewMemoryTaskCheckoutStore(time.Hour)
 	outerID, innerID := seedInlineTaskHolds(t, cache)
 
 	creator := &fakeInlineTaskCreator{
@@ -110,6 +111,7 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 		Agent:           &store.Agent{ID: "agent-1", UserID: "user-1"},
 		PendingApproval: cache,
 		Creator:         creator,
+		Checkouts:       checkouts,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -126,17 +128,21 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	if len(out.Credentials) != 1 || out.Credentials[0].Placeholder != "autovault_agentphone_real123" {
 		t.Fatalf("expected minted credential placeholder in rewrite result, got %+v", out.Credentials)
 	}
+	if !out.CheckedOut {
+		t.Fatal("expected inline-approved task to be checked out")
+	}
+	checkout, ok, err := checkouts.Get(context.Background(), TaskCheckoutKey{UserID: "user-1", AgentID: "agent-1"})
+	if err != nil || !ok || checkout.TaskID != "task-uuid-123" {
+		t.Fatalf("checkout = %+v ok=%v err=%v, want task-uuid-123", checkout, ok, err)
+	}
 	if !creator.called {
 		t.Fatal("expected creator to be called")
 	}
 	if creator.gotOrigID != outerID {
 		t.Errorf("creator gotOrigID=%q, want %q", creator.gotOrigID, outerID)
 	}
-	// Body carries the canonical augmentation context. The per-task
-	// task_id is intentionally NOT in the rewrite — see the no-drift
-	// invariant in TestAugment_OneShotAndPersistentProduceIdenticalText.
 	rewrittenBody := string(out.Body)
-	if !strings.Contains(rewrittenBody, "task was created and approved by the user inline") {
+	if !strings.Contains(rewrittenBody, "task was created and approved by the user") {
 		t.Errorf("rewritten body missing canonical augmentation context: %s", rewrittenBody)
 	}
 	if !strings.Contains(strings.ToLower(rewrittenBody), "do not post /control/tasks") {
@@ -144,6 +150,10 @@ func TestRewriteInlineTaskApproval_ApproveCreatesTaskAndRewritesBody(t *testing.
 	}
 	if !strings.Contains(rewrittenBody, "agentphone=autovault_agentphone_real123") {
 		t.Errorf("rewritten body missing exact credential placeholder: %s", rewrittenBody)
+	}
+	if !strings.Contains(rewrittenBody, "Task task-uuid-123 is now the active task") ||
+		!strings.Contains(rewrittenBody, "https://clawvisor.local/control/tasks") {
+		t.Errorf("rewritten body missing active task guidance: %s", rewrittenBody)
 	}
 	// Both holds gone.
 	for _, id := range []string{outerID, innerID} {
