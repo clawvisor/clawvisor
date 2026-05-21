@@ -27,6 +27,7 @@ import (
 	contactsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/contacts"
 	driveadapter "github.com/clawvisor/clawvisor/internal/adapters/google/drive"
 	gmailadapter "github.com/clawvisor/clawvisor/internal/adapters/google/gmail"
+	sheetsadapter "github.com/clawvisor/clawvisor/internal/adapters/google/sheets"
 	onedriveadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/onedrive"
 	outlookadapter "github.com/clawvisor/clawvisor/internal/adapters/microsoft/outlook"
 	perplexityadapter "github.com/clawvisor/clawvisor/internal/adapters/perplexity"
@@ -178,6 +179,11 @@ func DefaultOptions(logger *slog.Logger, configPath ...string) (*ServerOptions, 
 	}
 	contacts := contactsadapter.New(oauthProvider)
 	goOverrides["google.contacts:list_contacts"] = contacts.Execute
+
+	sheets := sheetsadapter.New(oauthProvider)
+	for _, action := range []string{"list_spreadsheets", "get_spreadsheet", "read_range", "append_rows", "update_cells", "create_spreadsheet"} {
+		goOverrides["google.sheets:"+action] = sheets.Execute
+	}
 
 	dbx := dropboxadapter.New()
 	for _, action := range []string{"list_folder", "download_file", "upload_file"} {
