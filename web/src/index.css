@@ -98,7 +98,9 @@
   html {
     background-color: rgb(var(--color-surface-0));
     color: rgb(var(--color-text-primary));
-  }
+    scroll-behavior: smooth;
+  } 
+ 
 
   body {
     @apply bg-surface-0 text-text-primary antialiased;

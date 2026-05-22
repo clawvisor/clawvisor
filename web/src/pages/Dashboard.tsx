@@ -265,7 +265,7 @@ export default function Dashboard() {
       </nav>
 
       {/* Main content */}
-      <main className="flex-1 min-w-0 overflow-auto pt-14 md:pt-0">
+      <main className="flex-1 min-w-0 overflow-x-clip pt-14 md:pt-0">
         {versionData?.update_available && (
           <div className="mx-4 mt-3 px-4 py-2.5 rounded-md bg-brand-muted border border-brand/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
             <span className="text-text-primary">

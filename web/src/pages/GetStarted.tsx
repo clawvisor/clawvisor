@@ -1,13 +1,81 @@
-import { useState, type ReactNode } from 'react'
+/**
+ * @file GetStarted.tsx
+ * @description The "What is Clawvisor?" onboarding and quickstart page.
+ * 
+ * RECENT ARCHITECTURAL CHANGES & DEPRECATIONS:
+ * 1. Scroll Spy: Replaced standard `IntersectionObserver` with a custom `useScrollSpy` window 
+ *    scroll listener. This prevents sticky-positioning bugs caused by parent `overflow-clip` 
+ *    containers and fixes the "short page" bug where bottom sections couldn't trigger the active state.
+ * 2. Layouts: Upgraded the services/agents lists from a vertical stack to a 2-column grid (`md:grid-cols-2`) 
+ *    for better screen real estate usage.
+ * 3. Icons: Deprecated large inline SVGs for third-party services. We now use native `<img>` tags 
+ *    pointing to `/public/logos/`. This keeps the React bundle small. Used `dark:invert` for 
+ *    logos (like GitHub) that need to be visible on dark themes.
+ */
+
+import { useState, useEffect, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, type TaskSuggestion, type WelcomeData, type WelcomeService, type WelcomeAgent, type WalkthroughExample } from '../api/client'
 import { ServiceIcon } from '../components/ServiceIcon'
 import { useAuth } from '../hooks/useAuth'
 
-// GetStarted — the "What is Clawvisor?" page. It's context-aware: users with
-// nothing connected are steered through setup, while users who are already
-// set up lead with personalized LLM-generated task ideas.
+// ── Custom Hook for Scroll Spy ────────────────────────────────────────────────
+// Note: We use window.addEventListener('scroll') instead of IntersectionObserver
+// to accurately track sections even if parent layouts use tricky overflow properties.
+function useScrollSpy(sectionIds: string[], isLoading: boolean) {
+  const [activeId, setActiveId] = useState<string>(sectionIds[0] || '')
+
+  useEffect(() => {
+    // Suspend observation while the skeleton loader is rendering
+    if (isLoading) return;
+
+    const handleScroll = () => {
+      const elements = sectionIds.map(id => document.getElementById(id)).filter(Boolean)
+      if (elements.length === 0) return;
+
+      let currentActive: string = elements[0]?.id || '';
+
+      // 1. "Short Page" Protection: If the user hits the absolute bottom of the page, 
+      // force the last section to be active regardless of the detection line.
+      const isAtBottom = window.innerHeight + Math.round(window.scrollY) >= document.body.offsetHeight - 50;
+      if (isAtBottom) {
+        setActiveId(sectionIds[sectionIds.length - 1]);
+        return;
+      }
+
+      // 2. Standard Detection: Find the lowest element that has crossed the detection line
+      // (Set to 40% down from the top of the viewport)
+      const detectionLine = window.innerHeight * 0.4;
+      
+      for (const el of elements) {
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= detectionLine) {
+          currentActive = el.id;
+        }
+      }
+
+      setActiveId(currentActive);
+    };
+
+    // Small delay ensures the real DOM nodes have painted after loading finishes
+    const timeoutId = setTimeout(() => {
+      window.addEventListener('scroll', handleScroll, { passive: true });
+      handleScroll(); // Trigger once to set initial state
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, [sectionIds.join(','), isLoading]); 
+
+  return activeId || sectionIds[0];
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
 export default function GetStarted() {
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['welcome'],
@@ -20,45 +88,171 @@ export default function GetStarted() {
   const services = data?.services ?? []
   const agents = data?.agents ?? []
 
-  return (
-    <div className="p-4 sm:p-8 space-y-10 max-w-5xl">
-      <Hero ready={ready} services={services} agents={agents} isLoading={isLoading} />
+  // Dynamically define sidebar sections based on whether the user has completed setup
+  const sectionIds = ready 
+    ? ['overview', 'suggestions', 'your-setup', 'how-it-works']
+    : ['overview', 'connect-service', 'connect-agent', 'how-it-works']
+    
+  const activeSection = useScrollSpy(sectionIds, isLoading)
 
-      {isLoading ? (
-        <LoadingState />
-      ) : ready ? (
-        <>
-          <SuggestionsSection data={data} isLoading={isLoading} isFetching={isFetching} onRefresh={() => refetch()} />
-          <YourSetupSection services={services} agents={agents} />
-          <ExampleWalkthrough example={data?.walkthrough} />
-        </>
-      ) : (
-        <>
-          <SetupSteps services={services} agents={agents} isLoading={isLoading} />
-          <ExampleWalkthrough example={data?.walkthrough} />
-        </>
-      )}
+  return (
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 md:px-8 lg:px-10 py-10 ">
+      <div className="flex gap-10 xl:gap-16 items-start">
+
+        {/* ── Main content column ── */}
+        <div className="flex-1 min-w-0 space-y-14">
+          <Hero ready={ready} services={services} agents={agents} isLoading={isLoading} />
+
+          {isLoading ? (
+            <LoadingState />
+          ) : ready ? (
+            <>
+              <SuggestionsSection data={data} isLoading={isLoading} isFetching={isFetching} onRefresh={() => refetch()} />
+              <YourSetupSection services={services} agents={agents} />
+              <ExampleWalkthrough example={data?.walkthrough} />
+            </>
+          ) : (
+            <>
+              <SetupSteps services={services} agents={agents} isLoading={isLoading} />
+              <ExampleWalkthrough example={data?.walkthrough} />
+            </>
+          )}
+        </div>
+
+        {/* ── "On this page" right sidebar ── */}
+        <aside className="hidden xl:block w-48 shrink-0 sticky top-24 self-start max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-text-tertiary mb-3">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+            </svg>
+          </p>
+          <nav className="flex flex-col gap-0.5">
+            <PageIndexLink 
+              href="#overview" 
+              label="Overview" 
+              active={activeSection === 'overview'} 
+              icon={<InfoIcon />} 
+            />
+            
+            <div className="h-px bg-border-subtle my-2" />
+
+            {ready ? (
+              <>
+                <PageIndexLink 
+                  href="#suggestions" 
+                  label="Suggestions" 
+                  active={activeSection === 'suggestions'} 
+                  icon={<SparklesIcon />} 
+                />
+                <PageIndexLink 
+                  href="#your-setup" 
+                  label="Your setup" 
+                  active={activeSection === 'your-setup'} 
+                  icon={<GridIcon />} 
+                />
+              </>
+            ) : (
+              <>
+                <PageIndexLink 
+                  href="#connect-service" 
+                  label="Connect a service" 
+                  active={activeSection === 'connect-service'} 
+                  icon={<PlugIcon />} 
+                />
+                <PageIndexLink 
+                  href="#connect-agent" 
+                  label="Connect an agent" 
+                  active={activeSection === 'connect-agent'} 
+                  icon={<BotIcon />} 
+                />
+              </>
+            )}
+
+            <div className="h-px bg-border-subtle my-2" />
+            
+            <PageIndexLink 
+              href="#how-it-works" 
+              label="How a task works" 
+              active={activeSection === 'how-it-works'} 
+              icon={<TaskIcon />} 
+            />
+          </nav>
+        </aside>
+
+      </div>
     </div>
   )
 }
+
+function PageIndexLink({
+  href,
+  label,
+  active,
+  icon,
+}: {
+  href: string
+  label: string
+  active?: boolean
+  icon?: ReactNode
+}) {
+  return (
+    <a
+      href={href}
+      className={`flex items-center gap-2 text-[13px] leading-snug py-1.5 px-2 rounded-md transition-colors ${
+        active
+          ? 'text-brand font-medium bg-brand-muted'
+          : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
+      }`}
+    >
+      <div className={`shrink-0 ${active ? 'text-brand' : 'text-text-tertiary'}`}>
+        {icon}
+      </div>
+      {label}
+    </a>
+  )
+}
+
+// ── Sidebar Icons ─────────────────────────────────────────────────────────────
+
+function InfoIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+}
+function SparklesIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 5.5L21 11l-5.5 2.5L13 19l-2.5-5.5L5 11l5.5-2.5z" /></svg>
+}
+function GridIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
+}
+function PlugIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M19 13c0 2-2 4-7 4s-7-2-7-4V8h14v5z" /></svg>
+}
+function BotIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4M8 16h.01M16 16h.01" /></svg>
+}
+function TaskIcon() {
+  return <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+}
+
+// ── Loading state ─────────────────────────────────────────────────────────────
 
 function LoadingState() {
   return (
     <div className="space-y-10" aria-busy="true" aria-live="polite">
       <section>
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-4">
           <LoadingSpinner />
-          <h2 className="text-xl font-semibold text-text-primary">Checking your setup&hellip;</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-text-tertiary">Checking your setup…</h2>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SkeletonCard label="Services" />
-          <SkeletonCard label="Agents" />
+        <div className="space-y-2.5">
+          <SkeletonServiceRow />
+          <SkeletonServiceRow />
+          <SkeletonServiceRow />
         </div>
       </section>
       <section>
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-4">
           <LoadingSpinner />
-          <h2 className="text-xl font-semibold text-text-primary">Generating task ideas&hellip;</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-text-tertiary">Generating task ideas…</h2>
         </div>
         <SuggestionsLoading />
       </section>
@@ -66,14 +260,13 @@ function LoadingState() {
   )
 }
 
-function SkeletonCard({ label }: { label: string }) {
+function SkeletonServiceRow() {
   return (
-    <div className="rounded-lg border border-border-subtle bg-surface-1 p-4 animate-pulse">
-      <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary mb-3">{label}</div>
-      <div className="flex flex-wrap gap-2">
-        <div className="h-6 w-24 bg-surface-2 rounded-md" />
-        <div className="h-6 w-28 bg-surface-2 rounded-md" />
-        <div className="h-6 w-20 bg-surface-2 rounded-md" />
+    <div className="flex items-center gap-4 rounded-xl border border-border-subtle bg-surface-1 px-4 py-3.5 animate-pulse">
+      <div className="w-9 h-9 rounded-lg bg-surface-2 shrink-0" />
+      <div className="flex-1 space-y-2">
+        <div className="h-3.5 bg-surface-2 rounded w-24" />
+        <div className="h-3 bg-surface-2 rounded w-48" />
       </div>
     </div>
   )
@@ -109,22 +302,25 @@ function Hero({
   isLoading: boolean
 }) {
   return (
-    <header className="space-y-3">
-      <h1 className="text-3xl sm:text-4xl font-bold text-text-primary tracking-tight">
-        Your agents act. You stay in control.
+    <header id="overview" className="space-y-4">
+      <p className="text-xs font-semibold uppercase tracking-widest text-brand">Quickstart</p>
+      
+      <h1 className="text-4xl sm:text-5xl font-bold text-text-primary tracking-tight leading-[1.15]">
+        Your agents act.<br />You stay in control.
       </h1>
-      <p className="text-lg text-text-secondary max-w-3xl leading-relaxed">
-        Clawvisor is the gatekeeper between your AI agents and the APIs they act on. Agents never
-        hold credentials — they declare <strong className="text-text-primary">tasks</strong>, you
-        approve the scope once, and Clawvisor handles credential injection, execution, and audit
-        logging for every request.
+      
+      <p className="text-base sm:text-lg text-text-secondary leading-relaxed max-w-2xl">
+        Clawvisor sits between your AI agents and the APIs they use.
+        Agents declare tasks — you approve the scope once.
+        Credential injection, execution, and audit logging handled for you.
       </p>
       {isLoading ? (
-        <p className="text-sm text-text-tertiary">Loading your setup&hellip;</p>
+        <p className="text-sm text-text-tertiary">Loading your setup…</p>
       ) : ready ? (
         <p className="text-sm text-text-tertiary">
-          {services.length} service{services.length === 1 ? '' : 's'} connected · {agents.length}{' '}
-          agent{agents.length === 1 ? '' : 's'} registered
+          {services.length} service{services.length === 1 ? '' : 's'} connected
+          {' · '}
+          {agents.length} agent{agents.length === 1 ? '' : 's'} registered
         </p>
       ) : null}
     </header>
@@ -146,127 +342,195 @@ function SetupSteps({
   const hasAgent = agents.length > 0
 
   return (
-    <section>
-      <h2 className="text-xl font-semibold text-text-primary mb-1">Let's get you set up</h2>
-      <p className="text-sm text-text-secondary mb-4">
-        Two quick steps and your agents will be able to act on your behalf — safely.
-      </p>
+    <section className="space-y-6">
+      {!isLoading && (
+        <h2 className="text-xl font-semibold text-text-primary tracking-tight">
+          Complete your workspace setup
+        </h2>
+      )}
 
-      <div className="space-y-3">
-        <SetupStepCard num={1} done={hasService} title="Connect a service" loading={isLoading}>
-          <p className="text-sm text-text-secondary mb-3">
-            Link an API like Gmail, GitHub, Slack, or Linear so your agents have something to act
-            on. Credentials stay in Clawvisor's vault — agents never see them.
-          </p>
-          {hasService ? (
-            <ConnectedServicesStrip services={services} />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <PopularService id="google.gmail" label="Gmail" />
-              <PopularService id="github" label="GitHub" />
-              <PopularService id="linear" label="Linear" />
-              <PopularService id="slack" label="Slack" />
-              <PopularService id="google.calendar" label="Google Calendar" />
-              <Link
-                to="/dashboard/accounts"
-                className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-strong px-3 py-1.5 rounded-md border border-brand/40 bg-brand-muted transition-colors"
-              >
-                Browse all services
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M9 5l7 7-7 7" />
-                </svg>
-              </Link>
-            </div>
-          )}
-        </SetupStepCard>
+      {/* ── Step 1: Connect a service ── */}
+      <SetupStepCard id="connect-service" num={1} done={hasService} title="Connect a service" loading={isLoading}>
+        <p className="text-sm text-text-secondary mb-5 leading-relaxed">
+          Link an API like Gmail, GitHub, Slack, or Linear so your agents have something to act
+          on. Credentials stay in Clawvisor's vault — agents never see them.
+        </p>
 
-        <SetupStepCard num={2} done={hasAgent} title="Connect an agent" loading={isLoading}>
-          <p className="text-sm text-text-secondary mb-3">
-            Pair an AI agent (Claude Code, Claude Desktop, OpenClaw, or any HTTP client) with
-            Clawvisor so it can create tasks on your behalf.
-          </p>
-          {hasAgent ? (
-            <ConnectedAgentsStrip agents={agents} />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <PopularAgent tab="claude-code" label="Claude Code" />
-              <PopularAgent tab="claude-desktop" label="Claude Desktop" />
-              <PopularAgent tab="openclaw" label="OpenClaw" />
-              <PopularAgent tab="other" label="Other agents" />
+        {hasService ? (
+          <ConnectedServicesStrip services={services} />
+        ) : (
+          <>
+            {/* Note: Switched to grid-cols-2 for better horizontal screen real estate */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+              <ServiceRow
+                id="google.gmail"
+                label="Gmail"
+                description="Read, send, and label emails on your behalf"
+                icon={<img src="/logos/google-gmail.svg" alt="Gmail" className="w-5 h-5 object-contain" />}
+              />
+              <ServiceRow
+                id="github"
+                label="GitHub"
+                description="Open issues, review PRs, push commits"
+                /* dark:invert handles visibility for black logos in dark mode natively */
+                icon={<img src="/logos/github.svg" alt="GitHub" className="w-5 h-5 object-contain dark:invert" />}
+              />
+              <ServiceRow
+                id="slack"
+                label="Slack"
+                description="Post messages and read channel history"
+                icon={<img src="/logos/slack.svg" alt="Slack" className="w-5 h-5 object-contain" />}
+              />
+              <ServiceRow
+                id="google.calendar"
+                label="Google Calendar"
+                description="Create events, check availability, RSVP"
+                icon={<img src="/logos/google-calendar.svg" alt="Google Calendar" className="w-5 h-5 object-contain" />}
+              />
             </div>
-          )}
-        </SetupStepCard>
-      </div>
+            <Link
+              to="/dashboard/accounts"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-brand hover:text-brand-strong px-3.5 py-2 rounded-lg border border-brand/40 bg-brand-muted transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path 
+                  d="M17 14V20M14 17H20M15.6 10H18.4C18.9601 10 19.2401 10 19.454 9.89101C19.6422 9.79513 19.7951 9.64215 19.891 9.45399C20 9.24008 20 8.96005 20 8.4V5.6C20 5.03995 20 4.75992 19.891 4.54601C19.7951 4.35785 19.6422 4.20487 19.454 4.10899C19.2401 4 18.9601 4 18.4 4H15.6C15.0399 4 14.7599 4 14.546 4.10899C14.3578 4.20487 14.2049 4.35785 14.109 4.54601C14 4.75992 14 5.03995 14 5.6V8.4C14 8.96005 14 9.24008 14.109 9.45399C14.2049 9.64215 14.3578 9.79513 14.546 9.89101C14.7599 10 15.0399 10 15.6 10ZM5.6 10H8.4C8.96005 10 9.24008 10 9.45399 9.89101C9.64215 9.79513 9.79513 9.64215 9.89101 9.45399C10 9.24008 10 8.96005 10 8.4V5.6C10 5.03995 10 4.75992 9.89101 4.54601C9.79513 4.35785 9.64215 4.20487 9.45399 4.10899C9.24008 4 8.96005 4 8.4 4H5.6C5.03995 4 4.75992 4 4.54601 4.10899C4.35785 4.20487 4.20487 4.35785 4.10899 4.54601C4 4.75992 4 5.03995 4 5.6V8.4C4 8.96005 4 9.24008 4.10899 9.45399C4.20487 9.64215 4.35785 9.79513 4.54601 9.89101C4.75992 10 5.03995 10 5.6 10ZM5.6 20H8.4C8.96005 20 9.24008 20 9.45399 19.891C9.64215 19.7951 9.79513 19.6422 9.89101 19.454C10 19.2401 10 18.9601 10 18.4V15.6C10 15.0399 10 14.7599 9.89101 14.546C9.79513 14.3578 9.64215 14.2049 9.45399 14.109C9.24008 14 8.96005 14 8.4 14H5.6C5.03995 14 4.75992 14 4.54601 14.109C4.35785 14.2049 4.20487 14.3578 4.10899 14.546C4 14.7599 4 15.0399 4 15.6V18.4C4 18.9601 4 19.2401 4.10899 19.454C4.20487 19.6422 4.35785 19.7951 4.54601 19.891C4.75992 20 5.03995 20 5.6 20Z" 
+                  stroke="currentColor" 
+                  strokeWidth="2" 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                />
+              </svg>
+              Browse all services
+            </Link>
+          </>
+        )}
+      </SetupStepCard>
+
+      {/* ── Step 2: Connect an agent ── */}
+      <SetupStepCard id="connect-agent" num={2} done={hasAgent} title="Connect an agent" loading={isLoading}>
+        <p className="text-sm text-text-secondary mb-5 leading-relaxed">
+          Pair an AI agent (Claude Code, Claude Desktop, OpenClaw, or any HTTP client) with
+          Clawvisor so it can create tasks on your behalf.
+        </p>
+        {hasAgent ? (
+          <ConnectedAgentsStrip agents={agents} />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <AgentRow tab="claude-code"    label="Claude Code"    description="CLI-based coding agent"    icon={<ClaudeCodeIcon />} />
+            <AgentRow tab="claude-desktop" label="Claude Desktop" description="Desktop app agent"         icon={<ClaudeDesktopIcon />} />
+            <AgentRow tab="openclaw"       label="OpenClaw"       description="Open-source client"        icon={<OpenClawIcon />} />
+            <AgentRow tab="other"          label="Other agents"   description="Any HTTP client"           icon={<OtherAgentIcon />} />
+          </div>
+        )}
+      </SetupStepCard>
+
     </section>
   )
 }
 
-function SetupStepCard({
-  num,
-  done,
-  title,
-  loading,
-  children,
+function ServiceRow({
+  id,
+  label,
+  description,
+  icon,
 }: {
-  num: number
-  done: boolean
-  title: string
-  loading: boolean
-  children: ReactNode
+  id: string
+  label: string
+  description: string
+  icon: ReactNode
 }) {
-  return (
-    <div
-      className={`rounded-lg border px-5 py-4 ${
-        done ? 'border-success/30 bg-success/5' : 'border-border-subtle bg-surface-1'
-      }`}
-    >
-      <div className="flex items-center gap-3 mb-3">
-        <div
-          className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center ${
-            done ? 'bg-success text-surface-0' : 'bg-brand-muted text-brand'
-          }`}
-        >
-          {done ? (
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-              <path d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            <span className="text-sm font-bold">{num}</span>
-          )}
-        </div>
-        <h3 className="font-semibold text-text-primary text-base flex-1">{title}</h3>
-        {loading ? (
-          <span className="text-xs text-text-tertiary">checking…</span>
-        ) : done ? (
-          <span className="text-xs font-medium text-success uppercase tracking-wider">Done</span>
-        ) : null}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function PopularService({ id, label }: { id: string; label: string }) {
   return (
     <Link
       to={`/dashboard/accounts?search=${encodeURIComponent(id)}`}
-      className="inline-flex items-center gap-1.5 text-sm text-text-primary bg-surface-2 hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-subtle transition-colors"
+      className="flex items-center gap-4 rounded-xl border border-border-subtle bg-surface-0 hover:bg-surface-1 hover:border-border-secondary px-4 py-3.5 transition-colors group"
     >
-      {label}
+      <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-surface-1 group-hover:bg-surface-2 transition-colors overflow-hidden">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-text-primary">{label}</p>
+        <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{description}</p>
+      </div>
+      <svg className="w-4 h-4 text-text-tertiary shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path d="M9 5l7 7-7 7" />
+      </svg>
     </Link>
   )
 }
 
-function PopularAgent({ tab, label }: { tab: string; label: string }) {
+function AgentRow({
+  tab,
+  label,
+  description,
+  icon,
+}: {
+  tab: string
+  label: string
+  description: string
+  icon: ReactNode
+}) {
   return (
     <Link
       to={`/dashboard/agents?agent=${encodeURIComponent(tab)}`}
-      className="inline-flex items-center gap-1.5 text-sm text-text-primary bg-surface-2 hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-subtle transition-colors"
+      className="flex items-center gap-4 rounded-xl border border-border-subtle bg-surface-0 hover:bg-surface-1 hover:border-border-secondary px-4 py-3.5 transition-colors group"
     >
-      {label}
+      <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-brand-muted transition-colors overflow-hidden">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-text-primary">{label}</p>
+        <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{description}</p>
+      </div>
+      <svg className="w-4 h-4 text-text-tertiary shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path d="M9 5l7 7-7 7" />
+      </svg>
     </Link>
   )
 }
+
+// ── Agent Inline SVGs ─────────────────────────────────────────────────────────
+
+function ClaudeCodeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="24" height="24" rx="6" fill="#7F77DD"/>
+      <path d="M7 8l-4 4 4 4M17 8l4 4-4 4M14 6l-4 12" stroke="#fff" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function ClaudeDesktopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="24" height="24" rx="6" fill="#7F77DD"/>
+      <rect x="4" y="5" width="16" height="10" rx="1.5" stroke="#fff" strokeWidth="1.5"/>
+      <path d="M8 19h8M12 15v4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+function OpenClawIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="24" height="24" rx="6" fill="#534AB7"/>
+      <path d="M12 5C8.5 5 6 7.5 6 10c0 1.5.7 2.8 1.8 3.7L6.5 19h11l-1.3-5.3C17.3 12.8 18 11.5 18 10c0-2.5-2.5-5-6-5z" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round"/>
+      <circle cx="9.5" cy="10" r="1" fill="#fff"/>
+      <circle cx="14.5" cy="10" r="1" fill="#fff"/>
+    </svg>
+  )
+}
+
+function OtherAgentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="24" height="24" rx="6" fill="#888780"/>
+      <path d="M7 8h10M7 12h10M7 16h6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+// ── Components (used in connected strips) ─────────────────────────────────────
 
 function ConnectedServicesStrip({ services }: { services: WelcomeService[] }) {
   return (
@@ -317,15 +581,65 @@ function ConnectedAgentsStrip({ agents }: { agents: WelcomeAgent[] }) {
   )
 }
 
+// ── SetupStepCard ─────────────────────────────────────────────────────────────
+
+function SetupStepCard({
+  id,
+  num,
+  done,
+  title,
+  loading,
+  children,
+}: {
+  id?: string
+  num: number
+  done: boolean
+  title: string
+  loading: boolean
+  children: ReactNode
+}) {
+  return (
+    <div
+      id={id}
+      className={`rounded-xl border px-6 py-5 transition-colors scroll-mt-24 ${
+        done ? 'border-success/30 bg-success/5' : 'border-border-subtle bg-surface-1'
+      }`}
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div
+          className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-sm font-bold ${
+            done ? 'bg-success text-surface-0' : 'bg-brand-muted text-brand'
+          }`}
+        >
+          {done ? (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <span>{num}</span>
+          )}
+        </div>
+        <h2 className="font-semibold text-base text-text-primary flex-1">{title}</h2>
+        {loading ? (
+          <span className="text-xs text-text-tertiary">checking…</span>
+        ) : done ? (
+          <span className="text-xs font-semibold text-success uppercase tracking-wider">Done</span>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 // ── "Your setup" recap (ready state) ──────────────────────────────────────────
 
 function YourSetupSection({ services, agents }: { services: WelcomeService[]; agents: WelcomeAgent[] }) {
   return (
-    <section>
-      <h2 className="text-xl font-semibold text-text-primary mb-3">Your setup</h2>
+    <section id="your-setup" className="scroll-mt-24">
+      <h2 className="text-xl font-semibold text-text-primary mb-4">Your setup</h2>
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-border-subtle bg-surface-1 p-4">
-          <div className="flex items-baseline justify-between mb-3">
+        <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
+          <div className="flex items-baseline justify-between mb-4">
             <h3 className="font-medium text-text-primary">Services</h3>
             <Link to="/dashboard/accounts" className="text-xs text-brand hover:text-brand-strong font-medium">
               Manage →
@@ -333,8 +647,8 @@ function YourSetupSection({ services, agents }: { services: WelcomeService[]; ag
           </div>
           <ConnectedServicesStrip services={services} />
         </div>
-        <div className="rounded-lg border border-border-subtle bg-surface-1 p-4">
-          <div className="flex items-baseline justify-between mb-3">
+        <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
+          <div className="flex items-baseline justify-between mb-4">
             <h3 className="font-medium text-text-primary">Agents</h3>
             <Link to="/dashboard/agents" className="text-xs text-brand hover:text-brand-strong font-medium">
               Manage →
@@ -368,8 +682,8 @@ function SuggestionsSection({
   for (const s of services) serviceById.set(s.id, s)
 
   return (
-    <section>
-      <div className="flex items-baseline justify-between mb-4">
+    <section id="suggestions" className="scroll-mt-24">
+      <div className="flex items-baseline justify-between mb-5">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Things to try</h2>
           {data?.llm_used && (
@@ -402,7 +716,7 @@ function SuggestionsSection({
         <SuggestionsLoading />
       ) : suggestions.length > 0 ? (
         <div
-          className={`grid gap-3 md:grid-cols-2 transition-opacity ${isFetching ? 'opacity-50' : ''}`}
+          className={`grid gap-4 md:grid-cols-2 transition-opacity ${isFetching ? 'opacity-50' : ''}`}
           aria-busy={isFetching}
         >
           {suggestions.map((s, i) => (
@@ -433,34 +747,36 @@ function SuggestionCard({
   }
 
   return (
-    <div className="rounded-lg border border-border-subtle bg-surface-1 p-4 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
+    <div className="group rounded-xl border border-border-subtle bg-surface-1 hover:border-border-secondary hover:bg-surface-0 transition-colors flex flex-col overflow-hidden">
+      <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
         <h3 className="font-semibold text-text-primary leading-snug">{suggestion.title}</h3>
         {suggestion.risk && <RiskBadge level={suggestion.risk} />}
       </div>
 
-      <div className="space-y-1.5">
+      <div className="px-5 pb-4 flex-1">
         {suggestion.agent && (
-          <div className="text-xs text-text-tertiary">
+          <p className="text-xs text-text-tertiary mb-1.5">
             Ask <span className="font-mono text-brand">{suggestion.agent}</span> to:
-          </div>
+          </p>
         )}
-        <blockquote className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap border-l-2 border-brand/40 pl-3 italic">
-          {suggestion.prompt}
-        </blockquote>
+        <div className="rounded-lg bg-surface-2 border border-border-subtle px-4 py-3">
+          <p className="text-sm text-text-primary leading-relaxed italic whitespace-pre-wrap">
+            {suggestion.prompt}
+          </p>
+        </div>
       </div>
 
-      <div className="flex items-end justify-between gap-3 mt-auto pt-1">
-        <div className="flex flex-wrap gap-1.5">
+      <div className="px-5 py-3 border-t border-border-subtle bg-surface-2 flex items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5 min-w-0">
           {suggestion.services.map(id => {
             const svc = serviceById.get(id)
             return (
               <span
                 key={id}
-                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-surface-2 text-text-tertiary"
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-0 border border-border-subtle text-text-tertiary"
                 title={svc?.name ?? id}
               >
-                {svc && <ServiceIcon iconUrl={svc.icon_url} iconSvg={svc.icon_svg} serviceId={id} size={12} />}
+                {svc && <ServiceIcon iconUrl={svc.icon_url} iconSvg={svc.icon_svg} serviceId={id} size={11} />}
                 <span>{svc?.name ?? id}</span>
               </span>
             )
@@ -469,7 +785,7 @@ function SuggestionCard({
 
         <button
           onClick={copy}
-          className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
+          className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-2.5 py-1.5 rounded-lg hover:bg-surface-1 border border-transparent hover:border-border-subtle"
         >
           {copied ? (
             <>
@@ -508,13 +824,27 @@ function RiskBadge({ level }: { level: 'low' | 'medium' | 'high' }) {
 
 function SuggestionsLoading() {
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-4 md:grid-cols-2">
       {[0, 1, 2, 3].map(i => (
-        <div key={i} className="rounded-lg border border-border-subtle bg-surface-1 p-4 animate-pulse">
-          <div className="h-4 bg-surface-2 rounded w-1/2 mb-3" />
-          <div className="h-3 bg-surface-2 rounded w-full mb-1.5" />
-          <div className="h-3 bg-surface-2 rounded w-5/6 mb-1.5" />
-          <div className="h-3 bg-surface-2 rounded w-3/4" />
+        <div key={i} className="rounded-xl border border-border-subtle bg-surface-1 overflow-hidden animate-pulse">
+          <div className="px-5 pt-5 pb-4 space-y-2">
+            <div className="h-4 bg-surface-2 rounded w-1/2" />
+            <div className="h-3 bg-surface-2 rounded w-5/6" />
+          </div>
+          <div className="px-5 pb-4">
+            <div className="rounded-lg bg-surface-2 border border-border-subtle px-4 py-3 space-y-2">
+              <div className="h-3 bg-surface-3 rounded w-full" />
+              <div className="h-3 bg-surface-3 rounded w-4/5" />
+              <div className="h-3 bg-surface-3 rounded w-3/4" />
+            </div>
+          </div>
+          <div className="px-5 py-3 border-t border-border-subtle bg-surface-2 flex justify-between items-center">
+            <div className="flex gap-1.5">
+              <div className="h-5 w-16 bg-surface-3 rounded-full" />
+              <div className="h-5 w-16 bg-surface-3 rounded-full" />
+            </div>
+            <div className="h-6 w-24 bg-surface-3 rounded-lg" />
+          </div>
         </div>
       ))}
     </div>
@@ -535,7 +865,7 @@ function SuggestionsFallback({ status }: { status?: string }) {
           : 'The free LLM credit is exhausted. Add your own API key in Settings to keep seeing personalized suggestions.'
         : "Couldn't generate suggestions right now — try refreshing in a minute."
   return (
-    <div className="rounded-lg border border-border-subtle bg-surface-1 px-4 py-5 text-sm text-text-secondary">
+    <div className="rounded-xl border border-border-subtle bg-surface-1 px-5 py-5 text-sm text-text-secondary leading-relaxed">
       {message}
       {!multiTenant && (status === 'unconfigured' || status === 'exhausted') && (
         <>
@@ -566,7 +896,7 @@ function ExampleWalkthrough({ example }: { example?: WalkthroughExample }) {
   const steps: { label: string; body: string; detail?: string }[] = [
     {
       label: 'You ask',
-      body: `"${ex.user_prompt}"`,
+      body: `${ex.user_prompt}`,
     },
     {
       label: 'Agent declares a task',
@@ -574,58 +904,81 @@ function ExampleWalkthrough({ example }: { example?: WalkthroughExample }) {
       detail: 'The agent never holds credentials. It just says what it needs to do.',
     },
     {
-      label: 'You approve the scope once',
+      label: 'You approve once',
       body: 'Clawvisor shows the scope + an LLM-powered risk assessment; you approve it in one click.',
       detail: 'High-risk or destructive actions can require per-request approval instead.',
     },
     {
-      label: 'Clawvisor enforces it on every request',
+      label: 'Clawvisor enforces it',
       body: 'Every gateway call is checked against restrictions, task scope, and approvals. Everything is audited.',
     },
   ]
 
   return (
-    <section>
+    <section id="how-it-works" className="scroll-mt-24">
       <h2 className="text-xl font-semibold text-text-primary mb-1">
-        Here&rsquo;s what a task looks like
+        See Clawvisor in action
       </h2>
-      <p className="text-sm text-text-secondary mb-4">
+      <p className="text-sm text-text-secondary mb-8">
         {personalized
           ? `Using your connected ${ex.primary_name} and ${ex.secondary_name} as an example:`
-          : `Here\u2019s an example using ${ex.primary_name} and ${ex.secondary_name}:`}
+          : `Here's an example using ${ex.primary_name} and ${ex.secondary_name}:`}
       </p>
-      <ol className="space-y-0 relative">
-        {steps.map((step, i) => (
-          <li key={i} className="flex gap-4 pb-5 last:pb-0 relative">
-            {/* Connector line */}
-            {i < steps.length - 1 && (
-              <span
-                aria-hidden
-                className="absolute left-[15px] top-8 bottom-0 w-px bg-border-subtle"
-              />
-            )}
-            <div className="w-8 h-8 shrink-0 rounded-full bg-brand-muted text-brand text-xs font-bold flex items-center justify-center relative z-10">
-              {i + 1}
-            </div>
-            <div className="flex-1 pt-1">
-              <div className="text-xs font-medium uppercase tracking-wider text-text-tertiary">
-                {step.label}
+
+      <ol className="relative space-y-0">
+        {steps.map((step, i) => {
+          const isLast = i === steps.length - 1
+          return (
+            <li key={i} className="flex gap-5">
+              <div className="flex flex-col items-center shrink-0">
+                <div className="w-8 h-8 rounded-full bg-brand-muted text-brand text-sm font-bold flex items-center justify-center z-10 shrink-0">
+                  {i + 1}
+                </div>
+                {!isLast && (
+                  <div
+                    aria-hidden
+                    className="w-px flex-1 bg-border-subtle mt-1 mb-1 min-h-[32px]"
+                  />
+                )}
               </div>
-              <div className="text-text-primary mt-0.5 leading-relaxed">{step.body}</div>
-              {step.detail && (
-                <div className="text-sm text-text-secondary mt-1">{step.detail}</div>
-              )}
-            </div>
-          </li>
-        ))}
+              <div className={`flex-1 ${isLast ? 'pb-0' : 'pb-8'}`}>
+                <p className="text-xs font-semibold uppercase tracking-widest text-text-tertiary mb-1 mt-1.5">
+                  {step.label}
+                </p>
+                <p className="text-base font-medium text-text-primary leading-relaxed">
+                  {step.body}
+                </p>
+                {step.detail && (
+                  <p className="text-sm text-text-secondary mt-1.5 leading-relaxed">
+                    {step.detail}
+                  </p>
+                )}
+              </div>
+            </li>
+          )
+        })}
       </ol>
-      <div className="mt-4 rounded-md border border-border-subtle bg-surface-1 p-3 text-sm text-text-secondary">
-        <strong className="text-text-primary">Three layers of control</strong> check every request,
-        in order: <span className="text-text-primary">restrictions</span> (hard blocks you
-        configure), <span className="text-text-primary">task scopes</span> (what the agent
-        declared and you approved), and{' '}
-        <span className="text-text-primary">per-request approval</span> (anything outside the
-        scope goes to your queue).
+
+      <div className="mt-8 flex items-start gap-3 rounded-xl border border-brand/30 bg-brand-muted p-4 text-sm text-text-secondary leading-relaxed shadow-sm">
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          fill="none" 
+          viewBox="0 0 24 24" 
+          strokeWidth="1.5" 
+          stroke="currentColor" 
+          className="w-5 h-5 shrink-0 text-brand mt-0.5"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.25-8.25-3.286Zm0 13.036h.008v.008H12v-.008Z" />
+        </svg>
+
+        <div>
+          <span className="font-semibold text-brand">Three layers of control</span> check every request,
+          in order: <span className="font-medium text-text-primary">restrictions</span> (hard blocks you
+          configure), <span className="font-medium text-text-primary">task scopes</span> (what the agent
+          declared and you approved), and{' '}
+          <span className="font-medium text-text-primary">per-request approval</span> (anything outside the
+          scope goes to your queue).
+        </div>
       </div>
     </section>
   )
