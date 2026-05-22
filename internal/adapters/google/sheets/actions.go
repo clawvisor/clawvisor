@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/clawvisor/clawvisor/internal/adapters/format"
@@ -18,6 +19,12 @@ const (
 	sheetsAPIBase = "https://sheets.googleapis.com/v4"
 	driveAPIBase  = "https://www.googleapis.com/drive/v3"
 )
+
+// driveQueryAllowlist permits only characters that appear in ordinary file
+// names: letters, digits, whitespace, hyphens, dots, underscores, commas,
+// parentheses, ampersands, @, !, #, +.  Drive query operators (quotes,
+// backslashes, =, <, >, and/or keywords, etc.) are intentionally excluded.
+var driveQueryAllowlist = regexp.MustCompile(`^[a-zA-Z0-9\s\-._,()&@!#+]+$`)
 
 type spreadsheetListItem struct {
 	ID           string `json:"id"`
@@ -41,10 +48,10 @@ func (a *SheetsAdapter) listSpreadsheets(ctx context.Context, client *http.Clien
 	// Default query: spreadsheets only, not trashed.
 	driveQ := "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
 	if strings.TrimSpace(query) != "" {
-		// Basic substring search in name. Keep it simple; Google's q language is powerful
-		// but we don't want to accept arbitrary query strings without review.
-		safe := strings.ReplaceAll(query, "'", "\\'")
-		driveQ += fmt.Sprintf(" and name contains '%s'", safe)
+		if !driveQueryAllowlist.MatchString(query) {
+			return nil, fmt.Errorf("sheets list_spreadsheets: query contains disallowed characters; use only letters, digits, spaces, and common punctuation (- . , ( ) & @ ! # +)")
+		}
+		driveQ += fmt.Sprintf(" and name contains '%s'", query)
 	}
 	q.Set("q", driveQ)
 
