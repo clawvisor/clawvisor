@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -43,7 +44,9 @@ func (s *RedisInlineApprovalOutcomeStore) Record(key InlineApprovalOutcomeKey, o
 	if err != nil {
 		return
 	}
-	_ = s.rdb.Set(context.Background(), redisInlineApprovalOutcomeKey(key), raw, s.ttl).Err()
+	if err := s.rdb.Set(context.Background(), redisInlineApprovalOutcomeKey(key), raw, s.ttl).Err(); err != nil {
+		slog.Warn("failed to persist inline approval outcome", "approval_id", key.ApprovalID, "error", err)
+	}
 }
 
 func (s *RedisInlineApprovalOutcomeStore) Lookup(key InlineApprovalOutcomeKey) (InlineApprovalOutcome, bool) {
