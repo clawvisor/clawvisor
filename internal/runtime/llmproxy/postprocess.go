@@ -458,7 +458,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						trace(TraceEventDecision, "path", "trigger_miss", "kind", "allow", "source", "readonly_shell_pass_through", "reason", "read-only shell command", "cmd_preview", truncateForTrace(shellCommandFromInput(tu.Input), 200))
 						return conversation.ToolUseVerdict{Allowed: true}
 					}
-					substitute := approvalPrompt(tu, dec.Reason)
+					// Hold before rendering so the approval ID can be
+					// embedded in the substitute message footer. The
+					// agent's NEXT turn will carry that marker in
+					// assistant history and let a bare "y"/"n" reply
+					// resolve to this specific hold without the user
+					// having to type the ID.
+					var approvalID string
 					if cfg.PendingApprovals != nil {
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 							UserID:      cfg.AgentUserID,
@@ -479,12 +485,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 						if held.Evicted != nil {
 							audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
 						}
+						approvalID = held.Pending.ID
 					}
 					audit("block", string(dec.Source), dec.Reason)
 					return conversation.ToolUseVerdict{
 						Allowed:        false,
 						Reason:         "Clawvisor: approval required — " + dec.Reason,
-						SubstituteWith: substitute,
+						SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
 					}
 				}
 			}
@@ -568,6 +575,10 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					Reason:  "Clawvisor: " + dec.Reason,
 				}
 			case runtimedecision.VerdictNeedsApproval:
+				// Hold first so the assigned approval ID can be
+				// embedded in the substitute prompt footer; see the
+				// trigger-miss branch above for the same pattern.
+				var approvalID string
 				if cfg.PendingApprovals != nil {
 					held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
 						UserID:      cfg.AgentUserID,
@@ -588,12 +599,13 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					if held.Evicted != nil {
 						audit("block", "approval_evicted", "superseded pending approval "+held.Evicted.ID)
 					}
+					approvalID = held.Pending.ID
 				}
 				audit("block", string(dec.Source), dec.Reason)
 				return conversation.ToolUseVerdict{
 					Allowed:        false,
 					Reason:         "Clawvisor: approval required — " + dec.Reason,
-					SubstituteWith: approvalPrompt(tu, dec.Reason),
+					SubstituteWith: approvalPrompt(tu, dec.Reason, approvalID),
 				}
 			}
 		}
@@ -748,7 +760,13 @@ func ambiguousRefusalGuidance(tu conversation.ToolUse, v inspector.Verdict) stri
 	return b.String()
 }
 
-func approvalPrompt(tu conversation.ToolUse, reason string) string {
+// approvalPrompt renders the agent-facing message that substitutes for a
+// paused tool call. When approvalID is non-empty, the InlineApprovalIDMarker
+// footer is appended so subsequent turns can disambiguate which hold a bare
+// "y"/"n" reply targets — important when one agent's transcript contains
+// multiple pending prompts, or when several agents share a Clawvisor token
+// and only the per-transcript marker reliably identifies the right hold.
+func approvalPrompt(tu conversation.ToolUse, reason, approvalID string) string {
 	preview := conversation.MakeToolInputPreview(tu.Input)
 	var b strings.Builder
 	b.WriteString("Clawvisor paused this tool call for approval.")
@@ -766,6 +784,7 @@ func approvalPrompt(tu conversation.ToolUse, reason string) string {
 		b.WriteString(preview)
 	}
 	b.WriteString("\n\nReply `yes` or `y` to run this tool call, `no` or `n` to block it, or `task` to instruct the agent to include this in a task definition for approval.")
+	b.WriteString(approvalIDFooter(approvalID))
 	return b.String()
 }
 

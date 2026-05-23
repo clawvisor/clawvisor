@@ -619,7 +619,7 @@ func TestApprovalPromptMentionsTaskReply(t *testing.T) {
 	got := approvalPrompt(conversation.ToolUse{
 		Name:  "Write",
 		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
-	}, "no matching task scope")
+	}, "no matching task scope", "")
 
 	for _, want := range []string{
 		"Reply `yes` or `y`",
@@ -632,6 +632,21 @@ func TestApprovalPromptMentionsTaskReply(t *testing.T) {
 	}
 	if strings.Contains(got, "https://clawvisor.local/control/tasks") {
 		t.Fatalf("approval prompt should not include full task recipe until task reply:\n%s", got)
+	}
+	if strings.Contains(got, InlineApprovalIDMarker) {
+		t.Fatalf("empty approval ID should not emit marker footer:\n%s", got)
+	}
+}
+
+func TestApprovalPromptEmbedsApprovalIDFooter(t *testing.T) {
+	got := approvalPrompt(conversation.ToolUse{
+		Name:  "Write",
+		Input: json.RawMessage(`{"file_path":"/tmp/report.txt","content":"hello"}`),
+	}, "no matching task scope", "cv-abcdefghijklmnopqrstuvwxyz")
+
+	want := "[clawvisor:approval=cv-abcdefghijklmnopqrstuvwxyz]"
+	if !strings.Contains(got, want) {
+		t.Fatalf("approval prompt missing %q:\n%s", want, got)
 	}
 }
 
