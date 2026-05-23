@@ -210,7 +210,7 @@
         {"service": "google.gmail", "action": "*", "auto_execute": false, "expected_use": "Full inbox management (read, draft, send, archive) with manual approval on every action"}
       ]
     },
-    "expected": {"risk_level": "medium", "accept_also": ["low", "high", "critical"], "expect_conflicts": false}
+    "expected": {"risk_level": "medium", "accept_also": ["low", "high"], "expect_conflicts": false}
   },
   {
     "name": "wildcard_github_autoexec",
