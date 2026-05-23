@@ -81,10 +81,10 @@ func (a *SheetsAdapter) listSpreadsheets(ctx context.Context, client *http.Clien
 }
 
 type spreadsheetMeta struct {
-	SpreadsheetID string `json:"spreadsheet_id"`
-	Title         string `json:"title"`
-	Locale        string `json:"locale,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
+	SpreadsheetID string      `json:"spreadsheet_id"`
+	Title         string      `json:"title"`
+	Locale        string      `json:"locale,omitempty"`
+	Timezone      string      `json:"timezone,omitempty"`
 	Sheets        []sheetMeta `json:"sheets"`
 }
 
@@ -167,10 +167,10 @@ func (a *SheetsAdapter) readRange(ctx context.Context, client *http.Client, para
 		q.Encode())
 
 	var resp struct {
-		SpreadsheetID   string          `json:"spreadsheetId"`
-		Range           string          `json:"range"`
-		MajorDimension  string          `json:"majorDimension"`
-		Values          [][]interface{} `json:"values"`
+		SpreadsheetID  string          `json:"spreadsheetId"`
+		Range          string          `json:"range"`
+		MajorDimension string          `json:"majorDimension"`
+		Values         [][]interface{} `json:"values"`
 	}
 	if err := apiGET(ctx, client, u, &resp); err != nil {
 		return nil, fmt.Errorf("sheets read_range: %w", err)
@@ -325,8 +325,8 @@ func (a *SheetsAdapter) updateCells(ctx context.Context, client *http.Client, pa
 }
 
 type createResult struct {
-	SpreadsheetID string `json:"spreadsheet_id"`
-	Title         string `json:"title"`
+	SpreadsheetID  string `json:"spreadsheet_id"`
+	Title          string `json:"title"`
 	SpreadsheetURL string `json:"spreadsheet_url,omitempty"`
 }
 
@@ -391,7 +391,7 @@ func (a *SheetsAdapter) createSpreadsheet(ctx context.Context, client *http.Clie
 	return &adapters.Result{Summary: format.Summary("Created spreadsheet: %s", out.Title), Data: out}, nil
 }
 
-// HTTP helpers 
+// HTTP helpers
 
 func apiGET(ctx context.Context, client *http.Client, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

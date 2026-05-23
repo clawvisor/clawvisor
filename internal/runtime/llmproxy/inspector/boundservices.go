@@ -42,6 +42,12 @@ func BoundServiceHosts(serviceID string) []string {
 			"www.googleapis.com",
 			"oauth2.googleapis.com",
 		}
+	case "gsheets", "google.sheets", "gsheet", "google.sheet":
+		return []string{
+			"sheets.googleapis.com",
+			"www.googleapis.com",
+			"oauth2.googleapis.com",
+		}
 	case "google.contacts":
 		return []string{
 			"people.googleapis.com",
@@ -54,6 +60,7 @@ func BoundServiceHosts(serviceID string) []string {
 			"gmail.googleapis.com",
 			"calendar.googleapis.com",
 			"drive.googleapis.com",
+			"sheets.googleapis.com",
 			"oauth2.googleapis.com",
 		}
 	case "stripe":
