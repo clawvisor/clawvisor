@@ -83,7 +83,7 @@ func TestBuildAssessUserMessage_Basic(t *testing.T) {
 		AuthorizedActions: []store.TaskAction{
 			{Service: "google.calendar", Action: "list_events", AutoExecute: true, ExpectedUse: "fetch today's events"},
 		},
-	})
+	}, true)
 	if msg == "" {
 		t.Fatal("message should not be empty")
 	}
@@ -101,9 +101,27 @@ func TestBuildAssessUserMessage_Wildcard(t *testing.T) {
 		AuthorizedActions: []store.TaskAction{
 			{Service: "google.gmail", Action: "*", AutoExecute: true},
 		},
-	})
+	}, true)
 	if !contains(msg, "google.gmail:*") {
 		t.Error("message should contain wildcard action")
+	}
+}
+
+func TestBuildAssessUserMessage_VerificationDisabledNote(t *testing.T) {
+	req := AssessRequest{
+		AgentName: "bot",
+		Purpose:   "Manage emails",
+		AuthorizedActions: []store.TaskAction{
+			{Service: "google.gmail", Action: "send_message", AutoExecute: true},
+		},
+	}
+	enabled := buildAssessUserMessage(req, true)
+	if contains(enabled, "DEPLOYMENT NOTE") {
+		t.Error("verification-enabled message should NOT contain deployment note")
+	}
+	disabled := buildAssessUserMessage(req, false)
+	if !contains(disabled, "DEPLOYMENT NOTE: Intent verification is DISABLED") {
+		t.Error("verification-disabled message should contain deployment note")
 	}
 }
 

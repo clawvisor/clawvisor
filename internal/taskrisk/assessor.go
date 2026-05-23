@@ -103,7 +103,8 @@ func (a *LLMAssessor) Assess(ctx context.Context, req AssessRequest) (*RiskAsses
 
 	systemPrompt := fmt.Sprintf(riskAssessmentSystemPrompt, buildActionContextFromRegistry(ctx, a.registry, req.UserID))
 	client := llm.NewClient(cfg.LLMProviderConfig)
-	userMsg := buildAssessUserMessage(req)
+	verificationEnabled := a.health.VerificationConfig().Enabled
+	userMsg := buildAssessUserMessage(req, verificationEnabled)
 	// systemPrompt varies per user (the action context includes the user's
 	// MCP-discovered tools), so the cache prefix is effectively per-user.
 	// Still worth caching: a single user runs many risk assessments per
