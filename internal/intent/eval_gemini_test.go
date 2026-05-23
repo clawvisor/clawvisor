@@ -247,7 +247,7 @@ func TestEvalIntentVerification_Gemini(t *testing.T) {
 			if verdict.ParamScope != tc.Expected.ParamScope {
 				mismatches = append(mismatches, fmt.Sprintf("param_scope: got %q, want %q", verdict.ParamScope, tc.Expected.ParamScope))
 			}
-			if verdict.ReasonCoherence != tc.Expected.ReasonCoherence {
+			if !reasonCoherenceMatches(verdict.ReasonCoherence, tc.Expected.ReasonCoherence) {
 				mismatches = append(mismatches, fmt.Sprintf("reason_coherence: got %q, want %q", verdict.ReasonCoherence, tc.Expected.ReasonCoherence))
 			}
 			if len(tc.Expected.MissingChainValues) > 0 {
