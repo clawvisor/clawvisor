@@ -69,7 +69,7 @@ function useScrollSpy(sectionIds: string[], isLoading: boolean) {
       clearTimeout(timeoutId);
       window.removeEventListener('scroll', handleScroll);
     };
-  }, [sectionIds.join(','), isLoading]); 
+  }, [JSON.stringify(sectionIds), isLoading]);
 
   return activeId || sectionIds[0];
 }
