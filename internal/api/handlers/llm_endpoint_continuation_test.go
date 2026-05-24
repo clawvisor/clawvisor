@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
@@ -190,6 +191,116 @@ func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
 	}
 	if strings.Contains(string(final.Body), "substitute-fallback-text") {
 		t.Errorf("final body should NOT contain the fallback substitute text, got: %s", final.Body)
+	}
+}
+
+// TestTryContinuation_RefreshesCandidateTasksFromStore reproduces the
+// real-world bug where the model's post-auto-approval tool_uses fell
+// through to "no matching task scope" because the candidate task list
+// was a snapshot taken BEFORE the auto-approve gate created the new
+// task. Here we pass cfg.CandidateTasks=nil (the stale snapshot), but
+// the store has a task seeded by newSeededHandler that authorizes
+// POST api.github.com/repos/x/y/issues. If the refresh logic works,
+// the second postprocess loads that task, the inspector evaluates the
+// tool_use against it, and the URL gets rewritten through the
+// resolver. If the refresh is missing, the tool_use is blocked and
+// the rewritten URL never appears in the body.
+func TestTryContinuation_RefreshesCandidateTasksFromStore(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Second upstream call's response: a tool_use that requires the
+		// seeded github task scope.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "msg_second",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-sonnet-4",
+			"content": [
+				{"type": "tool_use", "id": "toolu_next", "name": "WebFetch", "input": {
+					"url": "https://api.github.com/repos/x/y/issues",
+					"method": "POST",
+					"headers": {"Authorization": "Bearer autovault_github_xxx"}
+				}}
+			],
+			"stop_reason": "tool_use"
+		}`))
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	h.Inspector = inspector.NewInspector(inspector.DefaultParser{}, inspector.AmbiguousValidator{})
+	h.ResolverBaseURL = "https://clawvisor.example/api/proxy"
+	h.CallerNonces = llmproxy.NewMemoryCallerNonceCache(time.Minute)
+
+	agent := firstSeededAgent(t, h.Store)
+	inboundBody := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"create gh issue"}]}`)
+	firstUpstreamBody := []byte(`{
+		"id": "msg_first",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-4",
+		"content": [
+			{"type": "tool_use", "id": "toolu_auto", "name": "Bash", "input": {"cmd": "curl https://clawvisor.local/control/tasks"}}
+		],
+		"stop_reason": "tool_use"
+	}`)
+	processed := llmproxy.PostprocessResult{
+		Body: []byte("fallback"),
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_auto", Name: "Bash"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "[approved]",
+				ContinueWithToolResult: "[approved]",
+			},
+		}},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(inboundBody)))
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	// Pass an empty CandidateTasks slice. This simulates the bug
+	// where the original load happened before any inline auto-approve
+	// minted a new task — the refresh inside tryContinuation must
+	// re-read the store to find the seeded github task.
+	final, _, _, err := h.tryContinuation(
+		req, agent, conversation.ProviderAnthropic, "req-refresh",
+		inboundBody, firstUpstreamBody, "application/json", http.StatusOK,
+		processed,
+		llmproxy.PostprocessConfig{
+			Inspector:        h.Inspector,
+			RewriteOpts:      inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+			Store:            h.Store,
+			AgentUserID:      agent.UserID,
+			AgentID:          agent.ID,
+			Catalog:          nil,
+			CandidateTasks:   nil, // STALE — refresh must rebuild this
+			ToolRules:        nil,
+			EgressRules:      nil,
+			CallerNonces:     h.CallerNonces,
+			PendingApprovals: h.PendingApprovals,
+		},
+		0,
+	)
+	if err != nil {
+		t.Fatalf("tryContinuation: %v", err)
+	}
+	if final == nil {
+		t.Fatal("expected continuation result")
+	}
+
+	body := string(final.Body)
+	// Without refresh: tool_use is blocked, the body becomes a
+	// "blocked by clawvisor" text turn.
+	if strings.Contains(strings.ToLower(body), "no matching task scope") ||
+		strings.Contains(strings.ToLower(body), "blocked by clawvisor") {
+		t.Fatalf("second postprocess blocked the tool_use — refresh did not load the seeded task into cfg.CandidateTasks. body=%s", body)
+	}
+	// With refresh + caller nonces: the URL is rewritten through the
+	// resolver. We assert the rewritten URL is present and the
+	// original github URL is no longer the bare URL the harness sees.
+	if !strings.Contains(body, "clawvisor.example/api/proxy") {
+		t.Errorf("expected resolver URL in second postprocess body, indicating the inspector authorized + rewrote the tool_use. body=%s", body)
 	}
 }
 

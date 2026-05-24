@@ -1126,6 +1126,36 @@ func (h *LLMEndpointHandler) tryContinuation(
 	if contCT == "" {
 		contCT = upstreamCT
 	}
+	// Refresh decision inputs before the continuation postprocess. The
+	// original cfg.CandidateTasks was loaded at the top of serve(),
+	// BEFORE the auto-approve gate created the new task — so it doesn't
+	// include the task we just minted. Without this reload the model's
+	// next tool_uses (Write, Bash, …) fall through to "no matching task
+	// scope" and the harness shows the human-approval prompt again,
+	// defeating the whole point of conversation auto-approval. ToolRules
+	// and EgressRules rarely change inside a single inbound request, but
+	// reloading them keeps the cfg internally consistent and absorbs any
+	// concurrent rule updates for free. PreferredTaskID gets recomputed
+	// from the checkouts cache (which the auto-approve path Set'd to the
+	// new task) so the decision layer's task preference matches the
+	// active checkout.
+	refreshedCandidates, refreshedToolRules, refreshedEgressRules, refreshErr := h.loadLiteProxyDecisionInputs(r.Context(), agent)
+	if refreshErr == nil {
+		cfg.CandidateTasks = refreshedCandidates
+		cfg.ToolRules = refreshedToolRules
+		cfg.EgressRules = refreshedEgressRules
+		if newPref, prefErr := h.checkedOutTaskID(r.Context(), agent, cfg.ConversationID, refreshedCandidates); prefErr == nil {
+			cfg.PreferredTaskID = newPref
+		}
+	} else {
+		// Don't fail the continuation on a decision-input refresh
+		// hiccup — fall through with the stale cfg. The worst case is
+		// the human-approval prompt we were trying to avoid, which is
+		// the same behavior as a transient store outage on the
+		// original request path.
+		h.Logger.WarnContext(r.Context(), "lite-proxy continuation decision-input refresh failed; using pre-continuation snapshot",
+			"request_id", requestID, "agent_id", agent.ID, "err", refreshErr.Error())
+	}
 	// Build a new *http.Request carrying the depth-marked context so
 	// that any inline_task_intercept on the second pass can see we're
 	// in a continuation (today nothing inside Postprocess branches on
