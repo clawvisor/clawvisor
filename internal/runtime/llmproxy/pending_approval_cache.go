@@ -50,7 +50,15 @@ type PendingLiteApproval struct {
 	UserID   string
 	AgentID  string
 	Provider conversation.Provider
-	ToolUse  conversation.ToolUse
+	// ConversationID partitions the hold to a single conversation when
+	// multiple conversations share a Clawvisor token (Conductor workspaces,
+	// sub-agents, multiple Claude Code sessions on the same install). A
+	// bare "y" reply in conversation B can no longer release a hold from
+	// conversation A. Empty falls back to the pre-conversation-scoping
+	// key shape (user + agent + provider), preserving behavior for older
+	// clients that don't surface a conversation identifier on the wire.
+	ConversationID string
+	ToolUse        conversation.ToolUse
 
 	Inspector   inspector.Verdict
 	Fingerprint runtimedecision.DecisionFingerprint
@@ -80,7 +88,12 @@ type ResolveRequest struct {
 	UserID     string
 	AgentID    string
 	Provider   conversation.Provider
-	ApprovalID string
+	// ConversationID scopes the lookup to the requesting conversation's
+	// bucket so bare/no-ID resolves and Drops can't cross conversation
+	// boundaries. Empty matches the pre-conversation-scoping bucket so
+	// older clients keep working without any wire-level changes.
+	ConversationID string
+	ApprovalID     string
 	// Stage, when non-empty, restricts Peek/Resolve/Drop to holds at
 	// the named stage. Used by the inline-task path to target its
 	// StageAwaitingTaskApproval hold specifically even when older,
@@ -112,9 +125,10 @@ type MemoryPendingApprovalCache struct {
 }
 
 type pendingApprovalKey struct {
-	userID   string
-	agentID  string
-	provider conversation.Provider
+	userID         string
+	agentID        string
+	provider       conversation.Provider
+	conversationID string
 }
 
 var liteApprovalRandRead = rand.Read
@@ -180,7 +194,7 @@ func (c *MemoryPendingApprovalCache) Resolve(_ context.Context, req ResolveReque
 	if pending == nil {
 		return nil, nil
 	}
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	items = append(items[:index], items[index+1:]...)
 	if len(items) == 0 {
 		delete(c.pending, key)
@@ -201,7 +215,7 @@ func (c *MemoryPendingApprovalCache) Peek(_ context.Context, req ResolveRequest)
 }
 
 func (c *MemoryPendingApprovalCache) findLocked(req ResolveRequest) (*PendingLiteApproval, int, []PendingLiteApproval) {
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	items := c.pruneExpiredLocked(key, c.now().UTC())
 	if len(items) == 0 {
 		return nil, -1, items
@@ -254,7 +268,7 @@ func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := pendingApprovalKey{userID: req.UserID, agentID: req.AgentID, provider: req.Provider}
+	key := resolveRequestKey(req)
 	if req.ApprovalID == "" {
 		delete(c.pending, key)
 		return nil
@@ -275,7 +289,21 @@ func (c *MemoryPendingApprovalCache) Drop(_ context.Context, req ResolveRequest)
 }
 
 func (p PendingLiteApproval) key() pendingApprovalKey {
-	return pendingApprovalKey{userID: p.UserID, agentID: p.AgentID, provider: p.Provider}
+	return pendingApprovalKey{
+		userID:         p.UserID,
+		agentID:        p.AgentID,
+		provider:       p.Provider,
+		conversationID: p.ConversationID,
+	}
+}
+
+func resolveRequestKey(req ResolveRequest) pendingApprovalKey {
+	return pendingApprovalKey{
+		userID:         req.UserID,
+		agentID:        req.AgentID,
+		provider:       req.Provider,
+		conversationID: req.ConversationID,
+	}
 }
 
 func (c *MemoryPendingApprovalCache) pruneExpiredLocked(key pendingApprovalKey, now time.Time) []PendingLiteApproval {

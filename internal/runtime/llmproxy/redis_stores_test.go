@@ -111,6 +111,58 @@ func TestRedisPendingApprovalCacheStageResolveLeavesOtherHolds(t *testing.T) {
 	}
 }
 
+// TestRedisPendingApprovalCacheScopesByConversationID asserts the
+// redis-backed cache also partitions holds per conversation. Without
+// this, two Claude Code sessions sharing a token would collide on the
+// same redis key and bare-verb replies could cross conversations.
+func TestRedisPendingApprovalCacheScopesByConversationID(t *testing.T) {
+	cache := NewRedisPendingApprovalCache(testRedisClient(t), time.Minute)
+	ctx := context.Background()
+
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:             "cv-A",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Hold(ctx, PendingLiteApproval{
+		ID:             "cv-B",
+		UserID:         "user-1",
+		AgentID:        "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-B",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolvedA, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedA == nil || resolvedA.ID != "cv-A" {
+		t.Fatalf("conv-A resolved %+v, want cv-A", resolvedA)
+	}
+
+	resolvedB, err := cache.Resolve(ctx, ResolveRequest{
+		UserID: "user-1", AgentID: "agent-1",
+		Provider:       conversation.ProviderAnthropic,
+		ConversationID: "conv-B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedB == nil || resolvedB.ID != "cv-B" {
+		t.Fatalf("conv-B resolved %+v, want cv-B", resolvedB)
+	}
+}
+
 func TestRedisInlineApprovalOutcomeStoreRecordAndLookup(t *testing.T) {
 	store := NewRedisInlineApprovalOutcomeStore(testRedisClient(t), time.Minute)
 	key := InlineApprovalOutcomeKey{UserID: "user-1", AgentID: "agent-1", ApprovalID: "cv-1"}

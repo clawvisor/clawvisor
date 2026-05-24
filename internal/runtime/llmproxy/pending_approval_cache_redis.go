@@ -63,7 +63,7 @@ func (c *RedisPendingApprovalCache) Hold(ctx context.Context, pending PendingLit
 	if err != nil {
 		return HoldResult{}, err
 	}
-	key := redisPendingApprovalKey(pending.UserID, pending.AgentID, pending.Provider)
+	key := redisPendingApprovalKey(pending.UserID, pending.AgentID, pending.Provider, pending.ConversationID)
 	max := c.max
 	if max <= 0 {
 		max = 10
@@ -99,7 +99,7 @@ func (c *RedisPendingApprovalCache) Resolve(ctx context.Context, req ResolveRequ
 	if c == nil || c.rdb == nil {
 		return nil, nil
 	}
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	for {
 		result, err := redisResolvePendingApprovalScript.Run(ctx, c.rdb, []string{key},
 			req.ApprovalID, string(req.Stage), redisPendingApprovalRemovalMarker(c.now()),
@@ -130,7 +130,7 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 	if c == nil || c.rdb == nil {
 		return nil
 	}
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	if req.ApprovalID == "" {
 		return c.rdb.Del(ctx, key).Err()
 	}
@@ -142,7 +142,7 @@ func (c *RedisPendingApprovalCache) Drop(ctx context.Context, req ResolveRequest
 }
 
 func (c *RedisPendingApprovalCache) find(ctx context.Context, req ResolveRequest) (*PendingLiteApproval, string, error) {
-	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider)
+	key := redisPendingApprovalKey(req.UserID, req.AgentID, req.Provider, req.ConversationID)
 	rawItems, err := c.rdb.LRange(ctx, key, 0, -1).Result()
 	if err != nil {
 		return nil, "", err
@@ -192,8 +192,17 @@ func (c *RedisPendingApprovalCache) dropExpired(ctx context.Context, key string,
 	return err
 }
 
-func redisPendingApprovalKey(userID, agentID string, provider conversation.Provider) string {
-	sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider)))
+func redisPendingApprovalKey(userID, agentID string, provider conversation.Provider, conversationID string) string {
+	// ConversationID partitions holds per-conversation. When empty, we
+	// keep the legacy (user, agent, provider) shape unchanged so existing
+	// redis entries from pre-conversation-scoping clients remain readable
+	// — no migration required, no silent loss of pending approvals on
+	// upgrade.
+	if conversationID == "" {
+		sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider)))
+		return redisPendingApprovalPrefix + hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256([]byte(userID + "\x00" + agentID + "\x00" + string(provider) + "\x00" + conversationID))
 	return redisPendingApprovalPrefix + hex.EncodeToString(sum[:])
 }
 

@@ -102,6 +102,14 @@ type PostprocessConfig struct {
 	AgentUserID string
 	AgentID     string
 
+	// ConversationID is a stable per-conversation identifier extracted from
+	// the incoming request body (see conversation.ConversationID). Used to
+	// scope pending-approval holds and task checkout focus so multiple
+	// conversations sharing a Clawvisor token don't clobber each other.
+	// Empty falls back to the pre-conversation-scoping behavior — empty
+	// IDs collide rather than partition, matching old clients.
+	ConversationID string
+
 	// CallerNonces mints the short-lived single-use nonce that takes
 	// the place of the agent's bearer token in the rewritten tool_use's
 	// X-Clawvisor-Caller header. The nonce is bound to (agent, host,
@@ -467,13 +475,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 					var approvalID string
 					if cfg.PendingApprovals != nil {
 						held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-							UserID:      cfg.AgentUserID,
-							AgentID:     cfg.AgentID,
-							Provider:    rewriter.Name(),
-							ToolUse:     tu,
-							Inspector:   v,
-							Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
-							Reason:      dec.Reason,
+							UserID:         cfg.AgentUserID,
+							AgentID:        cfg.AgentID,
+							Provider:       rewriter.Name(),
+							ConversationID: cfg.ConversationID,
+							ToolUse:        tu,
+							Inspector:      v,
+							Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
+							Reason:         dec.Reason,
 						})
 						if err != nil {
 							audit("block", "approval_hold_error", err.Error())
@@ -581,13 +590,14 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 				var approvalID string
 				if cfg.PendingApprovals != nil {
 					held, err := cfg.PendingApprovals.Hold(req.Context(), PendingLiteApproval{
-						UserID:      cfg.AgentUserID,
-						AgentID:     cfg.AgentID,
-						Provider:    rewriter.Name(),
-						ToolUse:     tu,
-						Inspector:   v,
-						Fingerprint: runtimedecision.Fingerprint(dec, decisionInput),
-						Reason:      dec.Reason,
+						UserID:         cfg.AgentUserID,
+						AgentID:        cfg.AgentID,
+						Provider:       rewriter.Name(),
+						ConversationID: cfg.ConversationID,
+						ToolUse:        tu,
+						Inspector:      v,
+						Fingerprint:    runtimedecision.Fingerprint(dec, decisionInput),
+						Reason:         dec.Reason,
 					})
 					if err != nil {
 						audit("block", "approval_hold_error", err.Error())

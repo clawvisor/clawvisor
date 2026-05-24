@@ -55,11 +55,12 @@ type InlineTaskCredentialPlaceholder struct {
 }
 
 type ReleaseRequest struct {
-	HTTPRequest *http.Request
-	RequestID   string
-	Provider    conversation.Provider
-	Body        []byte
-	Agent       *store.Agent
+	HTTPRequest    *http.Request
+	RequestID      string
+	Provider       conversation.Provider
+	Body           []byte
+	Agent          *store.Agent
+	ConversationID string
 
 	Inspector   *inspector.Inspector
 	RewriteOpts inspector.RewriteOpts
@@ -108,6 +109,7 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 		UserID:          req.Agent.UserID,
 		AgentID:         req.Agent.ID,
 		Provider:        req.Provider,
+		ConversationID:  req.ConversationID,
 		PendingApproval: req.PendingApproval,
 		Verb:            verb,
 		ApprovalID:      approvalID,
@@ -155,10 +157,11 @@ func TryReleasePendingApproval(ctx context.Context, req ReleaseRequest) ReleaseR
 	// hold has since been consumed, Resolve returns nil and we treat
 	// as not-found rather than grab whatever else is newest.
 	pending, err := req.PendingApproval.Resolve(ctx, ResolveRequest{
-		UserID:     req.Agent.UserID,
-		AgentID:    req.Agent.ID,
-		Provider:   req.Provider,
-		ApprovalID: peeked.ID,
+		UserID:         req.Agent.UserID,
+		AgentID:        req.Agent.ID,
+		Provider:       req.Provider,
+		ConversationID: req.ConversationID,
+		ApprovalID:     peeked.ID,
 	})
 	if err != nil {
 		return ReleaseResult{Handled: true, HTTPStatus: http.StatusServiceUnavailable, Decision: "deny", Outcome: "approval_release_error", Reason: err.Error()}
