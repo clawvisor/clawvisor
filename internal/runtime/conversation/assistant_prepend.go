@@ -602,6 +602,33 @@ func prependOpenAIResponsesAssistantTextSSE(body []byte, text string) ([]byte, e
 				return body, nil
 			}
 		}
+		// response.completed carries the final reconciled
+		// `response.output[]` array. Clients that read from this
+		// event (rather than reconstructing from per-item events)
+		// would otherwise see a final response that omits the
+		// notice item we emitted earlier in the stream. Rewrite
+		// the completed envelope to prepend the notice message to
+		// response.output[] in the same shape `insertNotice`
+		// emitted on the per-item events.
+		if ev.Event == "response.completed" {
+			rewritten, ok := injectNoticeIntoResponsesCompleted(ev.Data, text)
+			if ok {
+				out.WriteString("event: ")
+				out.WriteString(ev.Event)
+				out.WriteString("\ndata: ")
+				out.Write(rewritten)
+				out.WriteString("\n\n")
+				continue
+			}
+			// Couldn't parse — pass through unchanged. The per-item
+			// notice events still surfaced earlier in the stream.
+			out.WriteString("event: ")
+			out.WriteString(ev.Event)
+			out.WriteString("\ndata: ")
+			out.WriteString(ev.Data)
+			out.WriteString("\n\n")
+			continue
+		}
 		// Shift output_index on any event that carries one.
 		shifted, ok := shiftOpenAIResponsesEventIndex(ev.Data, 1)
 		if !ok {
@@ -625,6 +652,83 @@ func prependOpenAIResponsesAssistantTextSSE(body []byte, text string) ([]byte, e
 		_ = insertNotice()
 	}
 	return out.Bytes(), nil
+}
+
+// injectNoticeIntoResponsesCompleted rewrites a
+// response.completed event payload to prepend a notice message item
+// at response.output[0] AND prefix the notice text onto the top-level
+// response.output_text aggregator if present. Mirrors the per-item
+// notice events emitted earlier in the stream so clients that
+// reconcile from response.completed see a consistent final state.
+//
+// Returns (nil, false) when the event shape isn't what we expect
+// (no response field, output not an array, etc.) — caller passes
+// the original through unchanged.
+func injectNoticeIntoResponsesCompleted(data string, text string) ([]byte, bool) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &top); err != nil {
+		return nil, false
+	}
+	respRaw, ok := top["response"]
+	if !ok {
+		return nil, false
+	}
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(respRaw, &resp); err != nil {
+		return nil, false
+	}
+	noticeItem, err := json.Marshal(map[string]any{
+		"type":   "message",
+		"id":     "msg_clawvisor_notice",
+		"role":   "assistant",
+		"status": "completed",
+		"content": []map[string]any{
+			{"type": "output_text", "text": text},
+		},
+	})
+	if err != nil {
+		return nil, false
+	}
+	// Prepend notice to response.output (create the array if absent
+	// — covers a malformed completed event missing output but with
+	// the rest of the envelope intact).
+	var outputItems []json.RawMessage
+	if existingRaw, hasOutput := resp["output"]; hasOutput && len(existingRaw) > 0 && string(existingRaw) != "null" {
+		if err := json.Unmarshal(existingRaw, &outputItems); err != nil {
+			return nil, false
+		}
+	}
+	merged := append([]json.RawMessage{json.RawMessage(noticeItem)}, outputItems...)
+	mergedRaw, err := json.Marshal(merged)
+	if err != nil {
+		return nil, false
+	}
+	resp["output"] = mergedRaw
+	// Prefix the notice to the top-level output_text convenience
+	// aggregator so clients reading that field see consistent
+	// content. Skip silently if the field is absent or non-string.
+	if otRaw, ok := resp["output_text"]; ok && len(otRaw) > 0 && otRaw[0] == '"' {
+		var existing string
+		if err := json.Unmarshal(otRaw, &existing); err == nil {
+			combined := text
+			if existing != "" {
+				combined = text + "\n\n" + existing
+			}
+			if newRaw, err := json.Marshal(combined); err == nil {
+				resp["output_text"] = newRaw
+			}
+		}
+	}
+	respMarshaled, err := json.Marshal(resp)
+	if err != nil {
+		return nil, false
+	}
+	top["response"] = respMarshaled
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // shiftOpenAIResponsesEventIndex bumps the `output_index` field of

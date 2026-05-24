@@ -343,6 +343,9 @@ func TestPrependOpenAIResponsesAssistantText_SSE(t *testing.T) {
 		`event: response.output_item.done`,
 		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_orig","call_id":"call_z","name":"Write","arguments":"{}","status":"completed"}}`,
 		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_sse","status":"completed","output":[{"type":"function_call","id":"fc_orig","call_id":"call_z","name":"Write","arguments":"{}"}],"output_text":""}}`,
+		``,
 	}, "\n")
 
 	out, err := PrependOpenAIResponsesAssistantText("text/event-stream", []byte(sse), "[Clawvisor] approved")
@@ -396,6 +399,29 @@ func TestPrependOpenAIResponsesAssistantText_SSE(t *testing.T) {
 	}
 	if !strings.Contains(got, `"content_index":0`) {
 		t.Errorf("text-bearing events missing content_index:\n%s", got)
+	}
+	// response.completed must carry the notice item at the start of
+	// response.output and shift the original item to index 1. Clients
+	// that reconcile from this terminal event would otherwise see a
+	// final response without the notice despite earlier events
+	// announcing it.
+	completedIdx := strings.Index(got, "event: response.completed")
+	if completedIdx == -1 {
+		t.Fatalf("response.completed missing from output:\n%s", got)
+	}
+	completedTail := got[completedIdx:]
+	if !strings.Contains(completedTail, `"id":"msg_clawvisor_notice"`) {
+		t.Errorf("response.completed.response.output missing notice item:\n%s", completedTail)
+	}
+	if !strings.Contains(completedTail, `"id":"fc_orig"`) {
+		t.Errorf("response.completed.response.output dropped original item:\n%s", completedTail)
+	}
+	// Notice item appears in output BEFORE the original — string-search
+	// inside the completed event tail.
+	noticeInCompleted := strings.Index(completedTail, "msg_clawvisor_notice")
+	origInCompleted := strings.Index(completedTail, "fc_orig")
+	if noticeInCompleted == -1 || origInCompleted == -1 || noticeInCompleted >= origInCompleted {
+		t.Errorf("notice not before original in response.completed.output:\n%s", completedTail)
 	}
 }
 

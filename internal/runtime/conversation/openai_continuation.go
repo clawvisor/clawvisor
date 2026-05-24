@@ -247,25 +247,38 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 	var typ string
 	_ = json.Unmarshal(probe["type"], &typ)
 	switch typ {
-	case "message", "function_call", "custom_tool_call":
-		// Drop response-only fields. `status` is the load-bearing one;
-		// the others are belt-and-suspenders.
-		delete(probe, "status")
-		out, err := json.Marshal(probe)
-		if err != nil {
-			return nil, false
-		}
-		return out, true
-	case "reasoning":
-		// o1/o3/o4-mini extended-thinking responses include reasoning
-		// items carrying `encrypted_content` (or `summary`) that the
-		// upstream needs back on the continuation request so the model
-		// can preserve its chain of thought across the synthetic
-		// function_call_output we're about to inject. Dropping these
-		// either 400s the request (some models require the reasoning
-		// item to immediately precede the function_call) or breaks
-		// the model's reasoning continuity. Strip only the response-
-		// only `status` field and re-emit verbatim.
+	case
+		"message", "function_call", "custom_tool_call",
+		// Reasoning items carry encrypted_content / summary that
+		// o1/o3/o4-mini-style extended-thinking responses need
+		// round-tripped so the model can continue its chain across
+		// the synthetic function_call_output we inject.
+		"reasoning",
+		// Built-in tool call items. The Responses API emits these
+		// as legitimate output items when the corresponding tool
+		// was enabled and the model used it in the same turn that
+		// also emitted POST /api/control/tasks. Dropping them
+		// either 400s the upstream (when the call result must
+		// precede a dependent item) or silently strips the model's
+		// own grounding ("model forgets what its own search
+		// returned"). We pass these through with only the
+		// response-only `status` field stripped; if the upstream
+		// rejects any field we miss, the continuation forward will
+		// 400 and tryContinuation falls back to SubstituteWith —
+		// same fail-closed posture as any other continuation
+		// failure.
+		"web_search_call",
+		"file_search_call",
+		"code_interpreter_call",
+		"image_generation_call",
+		"mcp_call",
+		"mcp_list_tools",
+		"mcp_approval_request",
+		"local_shell_call":
+		// Drop response-only fields. `status` is the load-bearing
+		// one across all of these types; other fields like `id`,
+		// `call_id`, `arguments`, `output`, etc. are input-
+		// acceptable.
 		delete(probe, "status")
 		out, err := json.Marshal(probe)
 		if err != nil {
@@ -273,10 +286,11 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 		}
 		return out, true
 	default:
-		// Truly unknown / response-only item types (web_search_call,
-		// image_generation_call, …) are dropped on the continuation:
-		// re-sending them as input[] items would likely 400 from the
-		// upstream.
+		// Genuinely unknown item types we have no model for. Drop
+		// rather than re-emit a shape the upstream may reject. If
+		// future Responses-API item types break this branch in
+		// production, add them above with the same status-strip
+		// pattern.
 		return nil, false
 	}
 }
