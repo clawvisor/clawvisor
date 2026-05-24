@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -295,19 +296,44 @@ func TestBuildOpenAIResponsesContinuationBody_SSE(t *testing.T) {
 	}
 }
 
-// TestBuildOpenAIResponsesContinuationBody_PassesBuiltInToolItems
-// asserts that built-in tool output items (web_search_call, mcp_call,
-// reasoning, …) round-trip into the continuation's input[] rather
-// than being silently dropped. Dropping them either 400s the upstream
-// when a dependent item references them or strips the model's own
-// grounding.
-func TestBuildOpenAIResponsesContinuationBody_PassesBuiltInToolItems(t *testing.T) {
+// TestBuildOpenAIResponsesContinuationBody_RefusesBuiltInToolItems
+// asserts the continuation builder errors out cleanly when the
+// upstream's output contains an item type the Responses API rejects
+// on input[]. The handler treats the returned error as a soft
+// failure and falls back to SubstituteWith, which is safer than
+// issuing a continuation forward we know will 400.
+func TestBuildOpenAIResponsesContinuationBody_RefusesBuiltInToolItems(t *testing.T) {
+	originalBody := []byte(`{"model":"gpt-4","input":"x"}`)
+	upstream := []byte(`{
+		"output": [
+			{"type": "web_search_call", "id": "ws_1", "status": "completed"},
+			{"type": "function_call", "id": "fc_1", "call_id": "call_x", "name": "Bash", "arguments": "{}", "status": "completed"}
+		]
+	}`)
+	_, err := BuildContinuationBody(
+		conversation.ProviderOpenAI,
+		"application/json",
+		originalBody,
+		upstream,
+		[]ContinuationToolResult{{ToolUseID: "call_x", Content: "[ok]"}},
+	)
+	if err == nil {
+		t.Fatal("expected continuation to refuse when output contains a built-in tool call item; got nil error")
+	}
+	if !errors.Is(err, conversation.ErrResponsesContinuationHasBuiltInToolItem) {
+		t.Errorf("expected ErrResponsesContinuationHasBuiltInToolItem wrapped; got %v", err)
+	}
+}
+
+// TestBuildOpenAIResponsesContinuationBody_AcceptsReasoning confirms
+// reasoning items still round-trip — they're input-acceptable on the
+// Responses API and the model needs them back for chain-of-thought
+// continuity across our synthetic function_call_output.
+func TestBuildOpenAIResponsesContinuationBody_AcceptsReasoning(t *testing.T) {
 	originalBody := []byte(`{"model":"gpt-4","input":"x"}`)
 	upstream := []byte(`{
 		"output": [
 			{"type": "reasoning", "id": "rs_1", "summary": [{"type":"summary_text","text":"thinking"}], "status": "completed"},
-			{"type": "web_search_call", "id": "ws_1", "status": "completed"},
-			{"type": "mcp_call", "id": "mc_1", "server_label": "fs", "name": "list", "arguments": "{}", "output": "[]", "status": "completed"},
 			{"type": "function_call", "id": "fc_1", "call_id": "call_x", "name": "Bash", "arguments": "{}", "status": "completed"}
 		]
 	}`)
@@ -326,29 +352,19 @@ func TestBuildOpenAIResponsesContinuationBody_PassesBuiltInToolItems(t *testing.
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
 	input := parsed["input"].([]any)
-	// Promoted user message + 4 output items + 1 function_call_output = 6
-	if len(input) != 6 {
-		t.Fatalf("expected 6 input items (got %d); built-in tool items must round-trip: %v", len(input), input)
+	// Promoted user message + reasoning + function_call + function_call_output = 4
+	if len(input) != 4 {
+		t.Fatalf("expected 4 input items (got %d): %v", len(input), input)
 	}
-	// Spot-check each built-in type made it through.
 	types := map[string]bool{}
 	for _, it := range input {
 		if m, ok := it.(map[string]any); ok {
 			if t, ok := m["type"].(string); ok {
 				types[t] = true
-				// status is response-only — confirm we stripped it.
-				if _, hasStatus := m["status"]; hasStatus {
-					// message/promoted items are allowed to lack status; only
-					// flag for the stripped types.
-					if t == "reasoning" || t == "web_search_call" || t == "mcp_call" || t == "function_call" {
-						// Should NOT have status field after sanitize.
-						// Use t.Errorf as soft check.
-					}
-				}
 			}
 		}
 	}
-	for _, want := range []string{"reasoning", "web_search_call", "mcp_call", "function_call", "function_call_output"} {
+	for _, want := range []string{"reasoning", "function_call", "function_call_output"} {
 		if !types[want] {
 			t.Errorf("input missing built-in type %q after sanitize: %v", want, input)
 		}

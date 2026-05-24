@@ -265,56 +265,81 @@ func prependOpenAIChatAssistantTextJSON(body []byte, text string) ([]byte, error
 }
 
 func prependOpenAIChatAssistantTextSSE(body []byte, text string) ([]byte, error) {
-	// Walk lines and rewrite the FIRST chunk's delta to carry our
-	// notice as the `content` field, preserving any role / tool_calls
-	// already present on that delta. Emitting a separate role chunk
-	// in front of the upstream's role chunk causes strict accumulators
-	// to interpret the two role transitions as two distinct assistant
+	// Rewrite the FIRST chunk's delta to carry our notice as the
+	// `content` field, preserving any role / tool_calls already
+	// present on that delta. Emitting a separate role chunk in front
+	// of the upstream's role chunk causes strict accumulators to
+	// interpret the two role transitions as two distinct assistant
 	// turns — rendering the notice as a separate message instead of
 	// merging with the model's output. Merging into the first chunk
 	// avoids the double-role transition entirely.
 	//
-	// "First chunk" = the first non-empty, non-[DONE] data line whose
-	// payload parses to a choices[].delta that is itself non-empty
-	// (role set, content set, or tool_calls set). If no such chunk
-	// exists (empty / malformed stream), we synthesize a single
-	// role+content chunk at the top so the notice still surfaces.
-	lines := strings.Split(string(body), "\n")
+	// Use parseSSEEvents (the buffered scanner the other SSE helpers
+	// in this file use) rather than strings.Split. The split approach
+	// (a) materializes the whole body as a string plus a []string of
+	// every line, ~2-3x the input size, and (b) re-emitted the
+	// rewritten chunk with its own \n\n then let the original blank
+	// separator line add another \n, producing triple-newline framing
+	// that spec-strict consumers reject. The scanner already handles
+	// the line/blank/event grouping correctly; we re-emit each event
+	// with canonical "data: <payload>\n\n" framing.
+	//
+	// "First chunk" = the first event whose payload parses to a
+	// choices[].delta. If no such chunk exists (empty / malformed
+	// stream), we fall back to a single synthetic role+content chunk
+	// at the top so the notice still surfaces.
+	events, err := parseSSEEvents(body)
+	if err != nil {
+		// Parser failure — fall back to the synthetic-notice path so
+		// the user still sees the notice. The original body would be
+		// malformed anyway.
+		return synthLeadingNoticeChatSSE(body, text), nil
+	}
 	var out bytes.Buffer
 	injected := false
-	for _, line := range lines {
-		trimmed := strings.TrimRight(line, "\r")
-		raw := strings.TrimSpace(trimmed)
-		if !injected && strings.HasPrefix(raw, "data:") {
-			payload := strings.TrimSpace(strings.TrimPrefix(raw, "data:"))
-			if payload != "" && payload != "[DONE]" {
-				if rewritten, ok := mergeOpenAIChatChunkWithNotice([]byte(payload), text); ok {
-					out.WriteString("data: ")
-					out.Write(rewritten)
-					out.WriteString("\n\n")
-					injected = true
-					continue
-				}
+	for _, ev := range events {
+		payload := ev.Data
+		if !injected && payload != "" && payload != "[DONE]" {
+			if rewritten, ok := mergeOpenAIChatChunkWithNotice([]byte(payload), text); ok {
+				out.WriteString("data: ")
+				out.Write(rewritten)
+				out.WriteString("\n\n")
+				injected = true
+				continue
 			}
 		}
-		out.WriteString(trimmed)
-		out.WriteByte('\n')
+		out.WriteString("data: ")
+		out.WriteString(payload)
+		out.WriteString("\n\n")
+	}
+	// Restore the trailing [DONE] sentinel; parseSSEEvents filters
+	// it out of the event list, but the harness needs to see it to
+	// know the stream has ended cleanly.
+	if bytes.Contains(body, []byte("[DONE]")) {
+		out.WriteString("data: [DONE]\n\n")
 	}
 	if !injected {
 		// No suitable chunk found — fall back to a leading synthetic
 		// role+content pair so the user at least sees the notice.
-		// This is the prior behavior; we only reach it for empty or
-		// malformed upstreams.
-		var prefix bytes.Buffer
-		prefix.WriteString(chatCompletionSSEBlock(map[string]any{
-			"id":      "chatcmpl_clawvisor_notice",
-			"object":  "chat.completion.chunk",
-			"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant", "content": text}, "finish_reason": nil}},
-		}))
-		prefix.Write(out.Bytes())
-		return prefix.Bytes(), nil
+		return synthLeadingNoticeChatSSE(out.Bytes(), text), nil
 	}
 	return out.Bytes(), nil
+}
+
+// synthLeadingNoticeChatSSE prepends a single synthetic chat-completion
+// chunk carrying role:"assistant" + content:<text> to the supplied
+// body. Used as the fallback when no upstream chunk is mergeable
+// (empty / malformed stream); ensures the notice still surfaces even
+// when the smart-merge path can't run.
+func synthLeadingNoticeChatSSE(body []byte, text string) []byte {
+	var prefix bytes.Buffer
+	prefix.WriteString(chatCompletionSSEBlock(map[string]any{
+		"id":      "chatcmpl_clawvisor_notice",
+		"object":  "chat.completion.chunk",
+		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant", "content": text}, "finish_reason": nil}},
+	}))
+	prefix.Write(body)
+	return prefix.Bytes()
 }
 
 // mergeOpenAIChatChunkWithNotice rewrites a single chat.completion.chunk

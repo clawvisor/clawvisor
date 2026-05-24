@@ -173,6 +173,9 @@ func extractOpenAIResponsesOutputJSON(body []byte) (*OpenAIResponsesOutputItems,
 	if len(resp.Output) == 0 {
 		return nil, fmt.Errorf("conversation: openai responses has no output items")
 	}
+	if blocker := firstBuiltInToolItemType(resp.Output); blocker != "" {
+		return nil, fmt.Errorf("%w: item type %q", ErrResponsesContinuationHasBuiltInToolItem, blocker)
+	}
 	out := &OpenAIResponsesOutputItems{}
 	for _, raw := range resp.Output {
 		cleaned, ok := sanitizeResponsesItemForInput(raw)
@@ -185,6 +188,25 @@ func extractOpenAIResponsesOutputJSON(body []byte) (*OpenAIResponsesOutputItems,
 		return nil, fmt.Errorf("conversation: openai responses output had no usable items after sanitize")
 	}
 	return out, nil
+}
+
+// firstBuiltInToolItemType returns the type name of the first output
+// item whose type the Responses API does not accept on input[]. Used
+// to short-circuit ExtractOpenAIResponsesOutput before we build a
+// continuation request that would 400 upstream.
+func firstBuiltInToolItemType(items []json.RawMessage) string {
+	for _, raw := range items {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			continue
+		}
+		if isResponsesItemContinuationBlocker(probe.Type) {
+			return probe.Type
+		}
+	}
+	return ""
 }
 
 func extractOpenAIResponsesOutputSSE(body []byte) (*OpenAIResponsesOutputItems, error) {
@@ -211,6 +233,12 @@ func extractOpenAIResponsesOutputSSE(body []byte) (*OpenAIResponsesOutputItems, 
 		}
 		if err := json.Unmarshal([]byte(ev.Data), &raw); err != nil {
 			continue
+		}
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw.Item, &probe); err == nil && isResponsesItemContinuationBlocker(probe.Type) {
+			return nil, fmt.Errorf("%w: item type %q", ErrResponsesContinuationHasBuiltInToolItem, probe.Type)
 		}
 		cleaned, ok := sanitizeResponsesItemForInput(raw.Item)
 		if !ok {
@@ -253,20 +281,25 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 		// o1/o3/o4-mini-style extended-thinking responses need
 		// round-tripped so the model can continue its chain across
 		// the synthetic function_call_output we inject.
-		"reasoning",
-		// Built-in tool call items. The Responses API emits these
-		// as legitimate output items when the corresponding tool
-		// was enabled and the model used it in the same turn that
-		// also emitted POST /api/control/tasks. Dropping them
-		// either 400s the upstream (when the call result must
-		// precede a dependent item) or silently strips the model's
-		// own grounding ("model forgets what its own search
-		// returned"). We pass these through with only the
-		// response-only `status` field stripped; if the upstream
-		// rejects any field we miss, the continuation forward will
-		// 400 and tryContinuation falls back to SubstituteWith —
-		// same fail-closed posture as any other continuation
-		// failure.
+		"reasoning":
+		// Drop response-only fields. `status` is the load-bearing
+		// one; other fields like `id`, `call_id`, `arguments`,
+		// `output`, etc. are input-acceptable.
+		delete(probe, "status")
+		out, err := json.Marshal(probe)
+		if err != nil {
+			return nil, false
+		}
+		return out, true
+	case
+		// Built-in tool call items. These are output-only on the
+		// Responses API request shape; re-sending them in input[]
+		// 400s the continuation forward. We could drop them
+		// silently (which loses grounding) or refuse continuation
+		// (which preserves the fail-closed posture and surfaces
+		// SubstituteWith to the harness). isResponsesItemContinuationBlocker
+		// marks these so the extractor can short-circuit before we
+		// build a doomed continuation body.
 		"web_search_call",
 		"file_search_call",
 		"code_interpreter_call",
@@ -275,16 +308,7 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 		"mcp_list_tools",
 		"mcp_approval_request",
 		"local_shell_call":
-		// Drop response-only fields. `status` is the load-bearing
-		// one across all of these types; other fields like `id`,
-		// `call_id`, `arguments`, `output`, etc. are input-
-		// acceptable.
-		delete(probe, "status")
-		out, err := json.Marshal(probe)
-		if err != nil {
-			return nil, false
-		}
-		return out, true
+		return nil, false
 	default:
 		// Genuinely unknown item types we have no model for. Drop
 		// rather than re-emit a shape the upstream may reject. If
@@ -294,3 +318,37 @@ func sanitizeResponsesItemForInput(raw json.RawMessage) (json.RawMessage, bool) 
 		return nil, false
 	}
 }
+
+// isResponsesItemContinuationBlocker reports whether the given
+// Responses-API output item type is one whose presence in the
+// upstream's output means we cannot safely build a continuation
+// request. These are the built-in tool call items that the
+// Responses API rejects on input[]; if the model used any of them
+// in the same turn it emitted POST /api/control/tasks, the
+// continuation forward would 400. The extractor uses this to
+// short-circuit with a typed error so tryContinuation falls back
+// to SubstituteWith instead of issuing a doomed request.
+func isResponsesItemContinuationBlocker(typ string) bool {
+	switch typ {
+	case
+		"web_search_call",
+		"file_search_call",
+		"code_interpreter_call",
+		"image_generation_call",
+		"mcp_call",
+		"mcp_list_tools",
+		"mcp_approval_request",
+		"local_shell_call":
+		return true
+	}
+	return false
+}
+
+// ErrResponsesContinuationHasBuiltInToolItem is returned by
+// ExtractOpenAIResponsesOutput when the upstream's output contains
+// at least one built-in tool call item the Responses API rejects on
+// input[]. The lite-proxy treats this as a soft failure: tryContinuation
+// returns it as an error, the handler falls back to the original
+// processed result, and the harness sees the SubstituteWith
+// terminal text instead of a continuation that would have 400ed.
+var ErrResponsesContinuationHasBuiltInToolItem = fmt.Errorf("conversation: openai responses output contains built-in tool call item; continuation unsupported")

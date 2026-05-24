@@ -1286,8 +1286,7 @@ func (h *LLMEndpointHandler) tryContinuation(
 	collect(newProcessed.Decisions)
 	if len(notices) > 0 && len(newProcessed.Body) > 0 {
 		joined := strings.Join(notices, "\n")
-		originalLen := len(newProcessed.Body)
-		pre, prependErr := llmproxy.PrependAssistantNotice(provider, contCT, newProcessed.Body, joined)
+		pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, contCT, newProcessed.Body, joined)
 		switch {
 		case prependErr != nil:
 			// Prepend is UX polish, not correctness — log and return
@@ -1295,24 +1294,21 @@ func (h *LLMEndpointHandler) tryContinuation(
 			// output. The continuation itself succeeded.
 			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend failed; returning unannotated body",
 				"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
-		case len(pre) == 0:
-			// Empty result is a defensive no-op signal; keep the
-			// existing body to avoid stranding the harness.
-		case len(pre) == originalLen && bytes.Equal(pre, newProcessed.Body):
-			// Prepend was a silent no-op: the dispatcher couldn't
-			// find a shape it recognized (e.g. response body lacked
-			// the expected `choices`/`output`/`content` marker, or
-			// Anthropic SSE was missing `message_start`). The audit
-			// row for the auto-approval still fired, but the only
-			// user-facing trace is gone. Warn so an operator chasing
-			// "I auto-approved but the user didn't see the notice"
+		case !changed:
+			// Prepend was a no-op: the dispatcher couldn't find a
+			// shape it recognized (response body lacked the expected
+			// `choices`/`output`/`content` marker, or Anthropic SSE
+			// was missing `message_start`). The audit row for the
+			// auto-approval still fired, but the only user-facing
+			// trace is gone. Warn so an operator chasing "I
+			// auto-approved but the user didn't see the notice"
 			// has a deterministic log entry.
 			h.Logger.WarnContext(r.Context(), "lite-proxy continuation notice prepend silently no-op'd (shape not recognized); user will not see auto-approval notice",
 				"request_id", requestID,
 				"agent_id", agent.ID,
 				"provider", string(provider),
 				"content_type", contCT,
-				"body_bytes", originalLen,
+				"body_bytes", len(newProcessed.Body),
 			)
 		default:
 			newProcessed.Body = pre

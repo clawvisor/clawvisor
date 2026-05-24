@@ -97,10 +97,13 @@ func extractAnthropicUserText(contentRaw json.RawMessage) string {
 	if err := json.Unmarshal(contentRaw, &simple); err == nil {
 		return simple
 	}
-	// Block array form. Anthropic also accepts an "input_text" type on
-	// the user side in some flavors; treat any block carrying a non-
-	// empty Text field as human content, except tool_result blocks
-	// which are tool output even if a text field happens to be set.
+	// Block array form. Anthropic accepts "text" and "input_text" on
+	// the user side. Allowlist these and skip everything else — a
+	// denylist (skip tool_result, accept anything else with a text
+	// field) would let any future Anthropic block type, or a
+	// misbehaving harness emitting a custom type with an attacker-
+	// controlled `text` field, be classified as a genuine human turn
+	// and fed to the auto-approve assessor as if the user said it.
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -110,7 +113,7 @@ func extractAnthropicUserText(contentRaw json.RawMessage) string {
 	}
 	var parts []string
 	for _, b := range blocks {
-		if b.Type == "tool_result" {
+		if b.Type != "text" && b.Type != "input_text" {
 			continue
 		}
 		if b.Text != "" {
@@ -244,7 +247,48 @@ func isClawvisorInternalUserText(text string) bool {
 	if strings.HasPrefix(strings.TrimSpace(text), "[Clawvisor]") {
 		return true
 	}
-	verb, _ := conversation.ParseApprovalReplyText(text)
+	// Only filter when the user's ENTIRE trimmed message is a bare
+	// approval verb (or an id-bound verb). A multi-line genuine
+	// instruction whose last line happens to end in "yes" is the
+	// user authorizing their own request, not a Clawvisor-internal
+	// reply to a pending hold. Without this narrowing,
+	// "Please proceed with my plan.\n\nyes" was dropped entirely
+	// from the auto-approve assessor's view and the deterministic
+	// floor forced the manual prompt.
+	return isExactApprovalReplyShape(text)
+}
+
+// isExactApprovalReplyShape reports whether the supplied text, when
+// trimmed of surrounding whitespace, is shaped exactly like an
+// approval reply — either a bare verb ("yes", "no", "task", "y",
+// "n", "approve", "deny") or a verb followed by a single
+// cv-<id> token. Multi-line text and text with content beyond the
+// verb (e.g. trailing prose) do NOT match.
+func isExactApprovalReplyShape(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	// Reject any text that spans multiple non-empty lines — the
+	// approval reply shape is single-line by definition. We count
+	// non-empty lines rather than just checking for "\n" so a reply
+	// with trailing blank lines still matches.
+	nonEmptyLines := 0
+	for _, line := range strings.Split(trimmed, "\n") {
+		if strings.TrimSpace(line) != "" {
+			nonEmptyLines++
+			if nonEmptyLines > 1 {
+				return false
+			}
+		}
+	}
+	// Run the parser on JUST the trimmed text. It already enforces
+	// the single-line shape via its regex anchors (^$), so a match
+	// here implies the entire trimmed input is a bare verb / id-bound
+	// verb with no extra content. ParseApprovalReplyText scans
+	// bottom-up, but on a single-line input that's equivalent to
+	// matching the whole input.
+	verb, _ := conversation.ParseApprovalReplyText(trimmed)
 	return verb != ""
 }
 

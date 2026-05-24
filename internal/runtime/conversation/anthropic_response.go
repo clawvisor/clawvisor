@@ -737,8 +737,19 @@ func extractAnthropicAssistantContentJSON(body []byte) (json.RawMessage, error) 
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("conversation: parse anthropic JSON response: %w", err)
 	}
-	if len(resp.Content) == 0 {
+	// len(resp.Content) checks the raw JSON byte length. `[]` (2 bytes)
+	// and `null` (4 bytes) both pass that guard and propagate an empty
+	// content array into the continuation builder, which Anthropic
+	// rejects with a 400. Decode and check the actual element count.
+	if len(resp.Content) == 0 || string(resp.Content) == "null" {
 		return nil, fmt.Errorf("conversation: anthropic JSON response has no content")
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(resp.Content, &elems); err != nil {
+		return nil, fmt.Errorf("conversation: anthropic JSON content not an array: %w", err)
+	}
+	if len(elems) == 0 {
+		return nil, fmt.Errorf("conversation: anthropic JSON response has empty content array")
 	}
 	return resp.Content, nil
 }

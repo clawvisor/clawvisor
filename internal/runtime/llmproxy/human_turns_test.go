@@ -103,16 +103,11 @@ func TestExtractRecentHumanTurns_AnthropicSkipsBareApprovalVerbs(t *testing.T) {
 }
 
 // TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb
-// documents the deliberate (and surprising) fail-closed behavior of
-// the extractor when a user turn ends in a bare approval verb. The
-// approval-reply parser scans bottom-up and matches the last
-// non-empty line, so "Please proceed with my plan.\n\nyes" is
-// treated as the user driving the approval flow and the whole turn
-// drops out — including the leading instruction. The conservative
-// read is that we'd rather lose surrounding intent than mistakenly
-// treat "yes" as fresh authorization for unrelated scope. If you
-// loosen this, narrow ParseApprovalReplyText to require the trimmed
-// text equal a bare verb instead of just ending in one.
+// asserts the narrowed isClawvisorInternalUserText filter: only the
+// entire trimmed text being a bare verb matches. A multi-line
+// genuine instruction whose last line happens to be "yes" preserves
+// the whole turn — including the trailing verb — as a genuine human
+// authorization for the auto-approve assessor to evaluate.
 func TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb(t *testing.T) {
 	body := mustMarshal(t, map[string]any{
 		"messages": []map[string]any{
@@ -123,8 +118,11 @@ func TestExtractRecentHumanTurns_AnthropicMultiLineEndingInBareVerb(t *testing.T
 		Provider: conversation.ProviderAnthropic,
 		Body:     body,
 	})
-	if len(turns) != 0 {
-		t.Errorf("expected the entire turn to be dropped (trailing bare verb is interpreted as approval reply); got %v", turns)
+	if len(turns) != 1 {
+		t.Fatalf("expected the turn to be preserved (multi-line instruction ending in 'yes' is not a bare-verb reply); got %v", turns)
+	}
+	if !strings.Contains(turns[0], "Please proceed with my plan") {
+		t.Errorf("expected the leading instruction to survive; got %q", turns[0])
 	}
 }
 

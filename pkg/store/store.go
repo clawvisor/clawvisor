@@ -432,6 +432,16 @@ func ValidateConversationAutoApproveThreshold(raw string, enforceUICap bool) (st
 // with the empty string mapped to "off". Unknown values pass through
 // unchanged so the upsert path doesn't silently rewrite an invalid
 // value into a valid one — validation belongs in the API handler.
+//
+// Defense-in-depth: any value above ConversationAutoApproveUICap is
+// clamped down to the cap. The API handler also enforces the cap via
+// ValidateConversationAutoApproveThreshold(enforceUICap=true), but a
+// store caller that bypasses the handler (test fixture, future SQL
+// migration, internal admin tool) could otherwise persist an
+// above-cap value and the runtime gate (ConversationAutoApproveCovers)
+// would honor it. Clamping here makes the boundary enforce at the
+// store layer too.
+//
 // Used by the sqlite + postgres upsert paths so the persisted value
 // matches the migration default and any future `== "off"` string
 // comparison doesn't have to defensively treat "" as equivalent.
@@ -440,8 +450,12 @@ func NormalizeConversationAutoApproveThreshold(raw string) string {
 	if v == "" {
 		return ConversationAutoApproveOff
 	}
-	if _, ok := conversationAutoApproveRank[v]; !ok {
+	rank, ok := conversationAutoApproveRank[v]
+	if !ok {
 		return raw
+	}
+	if rank > conversationAutoApproveRank[ConversationAutoApproveUICap] {
+		return ConversationAutoApproveUICap
 	}
 	return v
 }
