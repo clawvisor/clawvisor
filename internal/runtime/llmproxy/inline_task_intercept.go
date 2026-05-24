@@ -198,10 +198,21 @@ func maybeInterceptInlineTaskDefinition(
 					"checked_out", checkedOut,
 					"reason", reason,
 				)
+				augmentation := inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials)
 				return conversation.ToolUseVerdict{
-					Allowed:        false,
-					Reason:         "Clawvisor: auto-approved from conversation context",
-					SubstituteWith: inlineApprovedReplyAugmentationContext(created.ID, checkedOut, created.Credentials),
+					Allowed: false,
+					Reason:  "Clawvisor: auto-approved from conversation context",
+					// SubstituteWith is the fallback rendered to the
+					// harness as an assistant text turn if the handler
+					// can't complete the recursive continuation call
+					// (unsupported provider, recursion bound reached,
+					// upstream error). ContinueWithToolResult is the
+					// happy path: the handler feeds this same text back
+					// to the upstream as a synthetic user/tool_result
+					// turn so the model proceeds with its next tool_use
+					// without bouncing to the user.
+					SubstituteWith:         augmentation,
+					ContinueWithToolResult: augmentation,
 				}, true
 			}
 		}

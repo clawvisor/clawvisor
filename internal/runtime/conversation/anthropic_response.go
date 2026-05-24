@@ -716,6 +716,151 @@ func SynthAnthropicToolUseJSON(msgID, model, role, toolUseID, toolName string, t
 	return body
 }
 
+// ExtractAnthropicAssistantContent reconstructs the assistant message's
+// content[] array from an upstream /v1/messages response. Handles both
+// JSON (single-shot) and SSE (streamed) wire formats. Returned as a
+// json.RawMessage that round-trips through json.Marshal so callers can
+// splice it back into a continuation request's messages array.
+//
+// Returns an error if the body is malformed or yields no content blocks.
+func ExtractAnthropicAssistantContent(contentType string, body []byte) (json.RawMessage, error) {
+	if isSSE(contentType) {
+		return extractAnthropicAssistantContentSSE(body)
+	}
+	return extractAnthropicAssistantContentJSON(body)
+}
+
+func extractAnthropicAssistantContentJSON(body []byte) (json.RawMessage, error) {
+	var resp struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("conversation: parse anthropic JSON response: %w", err)
+	}
+	if len(resp.Content) == 0 {
+		return nil, fmt.Errorf("conversation: anthropic JSON response has no content")
+	}
+	return resp.Content, nil
+}
+
+// extractAnthropicAssistantContentSSE walks the event stream and
+// rebuilds the structured content[] array. The bookkeeping mirrors
+// rewriteSSE — pendingBlock-style accumulators per content index — but
+// produces a structured shape (text + tool_use objects with parsed
+// input) suitable for resending to the upstream as a prior assistant
+// turn.
+func extractAnthropicAssistantContentSSE(body []byte) (json.RawMessage, error) {
+	events, err := parseSSEEvents(body)
+	if err != nil {
+		return nil, fmt.Errorf("conversation: parse anthropic SSE: %w", err)
+	}
+	type pending struct {
+		isTU     bool
+		toolID   string
+		toolName string
+		input    strings.Builder
+		text     strings.Builder
+	}
+	blocks := map[int]*pending{}
+	var order []int
+	for _, ev := range events {
+		switch ev.Event {
+		case "content_block_start":
+			var cbs struct {
+				Index        int `json:"index"`
+				ContentBlock struct {
+					Type  string          `json:"type"`
+					ID    string          `json:"id"`
+					Name  string          `json:"name"`
+					Input json.RawMessage `json:"input"`
+					Text  string          `json:"text"`
+				} `json:"content_block"`
+			}
+			if err := json.Unmarshal([]byte(ev.Data), &cbs); err != nil {
+				continue
+			}
+			p := &pending{
+				isTU:     cbs.ContentBlock.Type == "tool_use",
+				toolID:   cbs.ContentBlock.ID,
+				toolName: cbs.ContentBlock.Name,
+			}
+			if p.isTU && len(cbs.ContentBlock.Input) > 0 && string(cbs.ContentBlock.Input) != "{}" {
+				p.input.Write(cbs.ContentBlock.Input)
+			}
+			if !p.isTU && cbs.ContentBlock.Text != "" {
+				p.text.WriteString(cbs.ContentBlock.Text)
+			}
+			blocks[cbs.Index] = p
+			order = append(order, cbs.Index)
+		case "content_block_delta":
+			var cbd struct {
+				Index int `json:"index"`
+				Delta struct {
+					Type        string `json:"type"`
+					PartialJSON string `json:"partial_json"`
+					Text        string `json:"text"`
+				} `json:"delta"`
+			}
+			if err := json.Unmarshal([]byte(ev.Data), &cbd); err != nil {
+				continue
+			}
+			p, ok := blocks[cbd.Index]
+			if !ok {
+				continue
+			}
+			switch cbd.Delta.Type {
+			case "input_json_delta":
+				if p.isTU {
+					p.input.WriteString(cbd.Delta.PartialJSON)
+				}
+			case "text_delta":
+				if !p.isTU {
+					p.text.WriteString(cbd.Delta.Text)
+				}
+			}
+		}
+	}
+	out := make([]any, 0, len(order))
+	for _, idx := range order {
+		p, ok := blocks[idx]
+		if !ok {
+			continue
+		}
+		if p.isTU {
+			// Empty input is a valid tool_use shape; the upstream API
+			// rejects a tool_use with no input at all so default to {}.
+			var input any = map[string]any{}
+			if p.input.Len() > 0 {
+				if err := json.Unmarshal([]byte(p.input.String()), &input); err != nil {
+					input = map[string]any{}
+				}
+			}
+			out = append(out, map[string]any{
+				"type":  "tool_use",
+				"id":    p.toolID,
+				"name":  p.toolName,
+				"input": input,
+			})
+			continue
+		}
+		if p.text.Len() == 0 {
+			continue
+		}
+		out = append(out, map[string]any{
+			"type": "text",
+			"text": p.text.String(),
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("conversation: anthropic SSE yielded no content blocks")
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("conversation: marshal anthropic SSE content: %w", err)
+	}
+	return encoded, nil
+}
+
 func AnthropicRequestWantsStream(body []byte) bool {
 	var probe struct {
 		Stream bool `json:"stream"`

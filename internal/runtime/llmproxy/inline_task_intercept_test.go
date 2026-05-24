@@ -528,6 +528,33 @@ func TestAutoApprove_FiresOnLowRiskYesMatch(t *testing.T) {
 	}
 }
 
+// TestAutoApprove_VerdictRequestsContinuation verifies that the
+// auto-approve gate sets ContinueWithToolResult on the verdict — not
+// just SubstituteWith. The presence of this field is what tells the
+// handler to make a recursive LLM call instead of terminating the turn
+// with an assistant text reply.
+func TestAutoApprove_VerdictRequestsContinuation(t *testing.T) {
+	f := newAutoApproveFixture(t, &TaskRiskAssessment{
+		RiskLevel:   "low",
+		IntentMatch: "yes",
+	})
+	got := f.run("low", []string{"build me a landing page at /tmp/landing"})
+	if len(got.Decisions) == 0 {
+		t.Fatal("expected at least one tool_use decision")
+	}
+	v := got.Decisions[0].Verdict
+	if v.ContinueWithToolResult == "" {
+		t.Fatal("auto-approve verdict must populate ContinueWithToolResult so handler can recursive-call")
+	}
+	if v.SubstituteWith == "" {
+		t.Fatal("auto-approve verdict must keep SubstituteWith as fallback when continuation can't run")
+	}
+	if v.SubstituteWith != v.ContinueWithToolResult {
+		t.Errorf("fallback and continuation should carry the same augmentation body; sub=%q cont=%q",
+			v.SubstituteWith, v.ContinueWithToolResult)
+	}
+}
+
 // TestAutoApprove_DoesNotFireOnThresholdOff exercises the default case.
 // Even with a perfect intent match and low risk, threshold="off" must
 // keep the human in the loop.

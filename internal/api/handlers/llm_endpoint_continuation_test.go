@@ -1,0 +1,269 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
+	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
+	"github.com/clawvisor/clawvisor/pkg/store"
+)
+
+// firstSeededAgent retrieves the agent that newSeededHandler created
+// so the continuation tests can attach it to the request context the
+// same way the middleware would.
+func firstSeededAgent(t *testing.T, st store.Store) *store.Agent {
+	t.Helper()
+	user, err := st.GetUserByEmail(context.Background(), "lite-proxy@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	agents, err := st.ListAgents(context.Background(), user.ID)
+	if err != nil || len(agents) == 0 {
+		t.Fatalf("ListAgents: agents=%d err=%v", len(agents), err)
+	}
+	return agents[0]
+}
+
+// TestTryContinuation_PostsSecondCallWithToolResult exercises the
+// recursive-call mechanics directly: when the handler is handed a
+// processed result with a ContinueWithToolResult decision, it must
+// (a) POST a second request upstream whose messages array contains
+// the original assistant turn + a synthetic user/tool_result turn,
+// and (b) return the second response's body to the caller. This is
+// what makes auto-approved inline tasks proceed seamlessly to the
+// model's next tool_use instead of terminating the turn with an
+// assistant text "[task was approved]" message.
+func TestTryContinuation_PostsSecondCallWithToolResult(t *testing.T) {
+	var seenBodies [][]byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		seenBodies = append(seenBodies, b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "msg_second",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-sonnet-4",
+			"content": [{"type": "text", "text": "Files created."}],
+			"stop_reason": "end_turn"
+		}`))
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+
+	// Original inbound body the harness sent.
+	inboundBody := []byte(`{
+		"model": "claude-sonnet-4",
+		"messages": [
+			{"role": "user", "content": "make /tmp/blah.txt"}
+		],
+		"max_tokens": 1024
+	}`)
+	// The first upstream response — assistant emitted a tool_use that
+	// got auto-approved. We feed this in as the "current" upstream body.
+	firstUpstreamBody := []byte(`{
+		"id": "msg_first",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-4",
+		"content": [
+			{"type": "tool_use", "id": "toolu_auto", "name": "Bash", "input": {"cmd": "curl https://clawvisor.local/control/tasks"}}
+		],
+		"stop_reason": "tool_use"
+	}`)
+	// Hand-craft the postprocess result the gate would have produced.
+	processed := llmproxy.PostprocessResult{
+		Body:        []byte("substitute-fallback-text"),
+		ContentType: "application/json",
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_auto", Name: "Bash"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				Reason:                 "auto-approved",
+				SubstituteWith:         "[Clawvisor: task was approved]",
+				ContinueWithToolResult: "[Clawvisor: task was approved]",
+			},
+		}},
+	}
+
+	// Build a request carrying the agent-auth context the forwarder
+	// expects. We bypass the middleware here; tryContinuation reads
+	// agent.UserID/ID directly, and the forwarder reads upstream auth
+	// from the vault (seeded by newSeededHandler).
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(string(inboundBody)))
+	req.Header.Set("Content-Type", "application/json")
+	// Inject the agent into the request context the same way the
+	// middleware would.
+	agent := firstSeededAgent(t, h.Store)
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	final, status, ct, err := h.tryContinuation(
+		req,
+		agent,
+		conversation.ProviderAnthropic,
+		"req-test-1",
+		inboundBody,
+		firstUpstreamBody,
+		"application/json",
+		http.StatusOK,
+		processed,
+		llmproxy.PostprocessConfig{
+			// Postprocess on the second call needs at least an inspector
+			// configured to not be skipped; pass the handler's.
+			Inspector:   h.Inspector,
+			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+			Store:       h.Store,
+			AgentUserID: agent.UserID,
+			AgentID:     agent.ID,
+		},
+		0, // currentDepth
+	)
+	if err != nil {
+		t.Fatalf("tryContinuation: %v", err)
+	}
+	if final == nil {
+		t.Fatal("expected non-nil final result (continuation should have fired)")
+	}
+	if status != http.StatusOK {
+		t.Errorf("expected status 200 from second upstream, got %d", status)
+	}
+	if ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+
+	// Upstream must have been called exactly once (the continuation
+	// call). tryContinuation does not re-issue the first call — it
+	// builds on top of the firstUpstreamBody it was given.
+	if len(seenBodies) != 1 {
+		t.Fatalf("expected upstream to be called 1 time (continuation only), got %d", len(seenBodies))
+	}
+	// Inspect the second-call body shape.
+	var contReq map[string]any
+	if err := json.Unmarshal(seenBodies[0], &contReq); err != nil {
+		t.Fatalf("second upstream body not JSON: %v\n%s", err, seenBodies[0])
+	}
+	msgs, ok := contReq["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages field missing or wrong type: %T", contReq["messages"])
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages in continuation (user, assistant, user/tool_result); got %d: %v", len(msgs), msgs)
+	}
+	// Last turn must be a user turn carrying a tool_result with the augmentation content.
+	last, ok := msgs[2].(map[string]any)
+	if !ok {
+		t.Fatalf("last message not a map: %T", msgs[2])
+	}
+	if last["role"] != "user" {
+		t.Errorf("last turn role: got %v want user", last["role"])
+	}
+	lastContent, ok := last["content"].([]any)
+	if !ok || len(lastContent) == 0 {
+		t.Fatalf("last user turn content empty or wrong type: %v", last["content"])
+	}
+	tr, ok := lastContent[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_result block not a map: %T", lastContent[0])
+	}
+	if tr["type"] != "tool_result" {
+		t.Errorf("expected tool_result, got %v", tr["type"])
+	}
+	if tr["tool_use_id"] != "toolu_auto" {
+		t.Errorf("tool_use_id mismatch: %v", tr["tool_use_id"])
+	}
+	if !strings.Contains(tr["content"].(string), "task was approved") {
+		t.Errorf("tool_result content lost augmentation: %v", tr["content"])
+	}
+
+	// The final body returned to the caller should be the SECOND
+	// upstream's body (msg_second), not the fallback substitute text.
+	if !strings.Contains(string(final.Body), "msg_second") {
+		t.Errorf("final body should reflect second upstream response, got: %s", final.Body)
+	}
+	if strings.Contains(string(final.Body), "substitute-fallback-text") {
+		t.Errorf("final body should NOT contain the fallback substitute text, got: %s", final.Body)
+	}
+}
+
+// TestTryContinuation_NoContinueDecisionIsNoOp confirms the handler
+// short-circuits when no decision asked for continuation.
+func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("upstream should not be called when no continuation decision is present")
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	agent := firstSeededAgent(t, h.Store)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(`{"messages":[]}`))
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	processed := llmproxy.PostprocessResult{
+		Body:        []byte("orig"),
+		ContentType: "application/json",
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			Verdict: conversation.ToolUseVerdict{Allowed: true},
+		}},
+	}
+	final, status, ct, err := h.tryContinuation(
+		req, agent, conversation.ProviderAnthropic, "req-x",
+		[]byte(`{"messages":[]}`), []byte(`{"content":[]}`), "application/json", http.StatusOK,
+		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector}, 0,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if final != nil || status != 0 || ct != "" {
+		t.Errorf("expected no-op return, got final=%v status=%d ct=%q", final, status, ct)
+	}
+}
+
+// TestTryContinuation_UpstreamErrorFallsBack ensures that when the
+// continuation upstream call returns an error status, the handler
+// surfaces an error to its caller so the substitute fallback gets
+// rendered instead of an empty body.
+func TestTryContinuation_UpstreamErrorFallsBack(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"upstream borked"}`))
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	agent := firstSeededAgent(t, h.Store)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(`{}`))
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	processed := llmproxy.PostprocessResult{
+		Body: []byte("fallback"),
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_x"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "[fallback]",
+				ContinueWithToolResult: "[fallback]",
+			},
+		}},
+	}
+	inbound := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	first := []byte(`{"content":[{"type":"tool_use","id":"toolu_x","name":"Bash","input":{}}]}`)
+	final, _, _, err := h.tryContinuation(
+		req, agent, conversation.ProviderAnthropic, "req-y",
+		inbound, first, "application/json", http.StatusOK,
+		processed, llmproxy.PostprocessConfig{Inspector: h.Inspector}, 0,
+	)
+	if err == nil {
+		t.Fatal("expected error on upstream failure; got nil so caller would silently swap in continuation result")
+	}
+	if final != nil {
+		t.Errorf("final should be nil on error so caller falls back to original processed")
+	}
+}

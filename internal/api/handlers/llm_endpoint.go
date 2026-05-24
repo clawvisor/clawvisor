@@ -868,6 +868,67 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"decisions", len(processed.Decisions),
 			"skipped_reason", processed.SkippedReason,
 		)
+
+		// Conversation continuation. When one or more tool_use verdicts
+		// asked the proxy to feed a synthetic tool_result back to the
+		// upstream (instead of bouncing to the user as an assistant text
+		// turn), build a continuation request, forward upstream, and run
+		// postprocess again on the new response. The harness then sees
+		// the model's next tool_use rather than a "task was approved"
+		// terminal message — letting auto-approved tasks proceed
+		// seamlessly. Capped at maxContinuationDepth so a misbehaving
+		// gate can't loop. On any failure path the handler falls back to
+		// the original `processed` (which still carries SubstituteWith
+		// as a terminal assistant text), so the harness never sees an
+		// empty body.
+		continuationDepth := llmproxy.ContinuationDepthFromContext(r.Context())
+		if continuationDepth < llmproxy.MaxContinuationDepth {
+			contFinal, contStatus, contCT, contErr := h.tryContinuation(r, agent, provider, requestID, body, full, upstreamCT, resp.StatusCode, processed, llmproxy.PostprocessConfig{
+				Inspector:                        h.Inspector,
+				RewriteOpts:                      opts,
+				Store:                            h.Store,
+				AgentUserID:                      agent.UserID,
+				AgentID:                          agent.ID,
+				ConversationID:                   conversationID,
+				Audit:                            h.AuditEmitter,
+				RequestID:                        requestID,
+				Catalog:                          catalogIface,
+				TaskScope:                        h.TaskScope,
+				IntentVerifier:                   h.IntentVerifier,
+				Posture:                          liteProxyDecisionPosture(agent),
+				CandidateTasks:                   candidateTasks,
+				ToolRules:                        toolRules,
+				EgressRules:                      egressRules,
+				PreferredTaskID:                  preferredTaskID,
+				PendingApprovals:                 h.PendingApprovals,
+				ControlBaseURL:                   h.ControlBaseURL,
+				CallerNonces:                     h.CallerNonces,
+				Trace:                            h.TraceLogger,
+				TaskRiskAssessor:                 h.taskRiskBridge(),
+				AgentName:                        agent.Name,
+				RecentUserTurns:                  recentTurns,
+				ConversationAutoApproveThreshold: autoApproveThreshold,
+				InlineTaskCreator:                h.InlineTaskCreator,
+				Checkouts:                        h.TaskCheckouts,
+			}, continuationDepth)
+			switch {
+			case contErr != nil:
+				h.Logger.WarnContext(r.Context(), "lite-proxy continuation failed; falling back to substitute response",
+					"request_id", requestID, "agent_id", agent.ID, "err", contErr.Error())
+			case contFinal != nil:
+				processed = *contFinal
+				if contStatus != 0 {
+					resp.StatusCode = contStatus
+					auditStatus = contStatus
+					auditOutcome = outcomeFromStatus(contStatus)
+				}
+				if contCT != "" && contCT != upstreamCT {
+					w.Header().Set("Content-Type", contCT)
+					upstreamCT = contCT
+				}
+			}
+		}
+
 		// Fail closed when postprocess could not finish its rewrite pass.
 		// A rewriter mid-body error leaves Body=nil with a non-empty
 		// SkippedReason; passing the upstream body through unchanged
@@ -984,6 +1045,95 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 		return nil, errors.New("request body too large")
 	}
 	return buf, nil
+}
+
+// tryContinuation inspects the just-completed postprocess result for
+// tool_use verdicts that requested the proxy "continue the
+// conversation" (i.e. auto-approved tasks). When any are present and
+// the provider supports continuation, the handler builds a new
+// request body that appends the upstream's assistant turn plus a
+// synthetic user turn of tool_result blocks, forwards it upstream,
+// and re-runs postprocess on the new response. The new processed
+// result (along with its upstream status + content-type) is returned;
+// the caller swaps it in for the original.
+//
+// Returns (nil, 0, "", nil) when no continuation was requested — the
+// caller falls through to the existing path unchanged.
+// Returns an error when continuation was requested but couldn't be
+// completed (unsupported provider, malformed bodies, upstream failure);
+// the caller logs and falls back to the original processed result,
+// whose SubstituteWith fallback still surfaces the augmentation text
+// to the harness as a terminal assistant turn.
+func (h *LLMEndpointHandler) tryContinuation(
+	r *http.Request,
+	agent *store.Agent,
+	provider conversation.Provider,
+	requestID string,
+	inboundBody []byte,
+	upstreamBody []byte,
+	upstreamCT string,
+	upstreamStatus int,
+	processed llmproxy.PostprocessResult,
+	cfg llmproxy.PostprocessConfig,
+	currentDepth int,
+) (*llmproxy.PostprocessResult, int, string, error) {
+	if upstreamStatus >= 400 {
+		// Don't try to continue on top of an upstream error response —
+		// the model never actually emitted a clean tool_use turn, and
+		// the body shape may not match what extractAnthropicAssistantContent
+		// expects.
+		return nil, 0, "", nil
+	}
+	var toolResults []llmproxy.ContinuationToolResult
+	for _, dec := range processed.Decisions {
+		if dec.Verdict.ContinueWithToolResult == "" {
+			continue
+		}
+		toolResults = append(toolResults, llmproxy.ContinuationToolResult{
+			ToolUseID: dec.ToolUse.ID,
+			Content:   dec.Verdict.ContinueWithToolResult,
+		})
+	}
+	if len(toolResults) == 0 {
+		return nil, 0, "", nil
+	}
+	contBody, err := llmproxy.BuildContinuationBody(provider, upstreamCT, inboundBody, upstreamBody, toolResults)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("build continuation body: %w", err)
+	}
+	h.Logger.DebugContext(r.Context(), "lite-proxy continuation forwarding",
+		"request_id", requestID,
+		"agent_id", agent.ID,
+		"provider", string(provider),
+		"tool_results", len(toolResults),
+		"depth", currentDepth,
+		"body_bytes", len(contBody),
+	)
+	ctx := llmproxy.WithContinuationDepth(r.Context(), currentDepth+1)
+	resp, err := h.Forwarder.Forward(ctx, agent.UserID, agent.ID, provider, r, contBody)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("forward continuation: %w", err)
+	}
+	defer resp.Body.Close()
+	full, readErr := readResponseLimited(resp.Body, h.MaxResponseBytes)
+	if readErr != nil {
+		return nil, 0, "", fmt.Errorf("read continuation upstream: %w", readErr)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, 0, "", fmt.Errorf("continuation upstream returned %d", resp.StatusCode)
+	}
+	contCT := resp.Header.Get("Content-Type")
+	if contCT == "" {
+		contCT = upstreamCT
+	}
+	// Build a new *http.Request carrying the depth-marked context so
+	// that any inline_task_intercept on the second pass can see we're
+	// in a continuation (today nothing inside Postprocess branches on
+	// depth, but the per-context recursion guard is the natural place
+	// to add it as the gate's coverage expands).
+	contReq := r.Clone(ctx)
+	newProcessed := llmproxy.Postprocess(contReq, full, contCT, cfg)
+	return &newProcessed, resp.StatusCode, contCT, nil
 }
 
 // readResponseLimited mirrors readLimited for upstream responses. Default

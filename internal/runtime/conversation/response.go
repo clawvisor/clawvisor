@@ -20,6 +20,15 @@ type ToolUseVerdict struct {
 	// the original method/path/body. Per-block mutation; the assistant
 	// turn otherwise streams through unchanged.
 	RewriteInput json.RawMessage
+
+	// ContinueWithToolResult, when non-empty, signals that the proxy
+	// has answered the tool_use itself and wants to feed the result back
+	// to the model so it continues with its next tool_use rather than
+	// terminating the turn. The handler builds a synthetic user turn
+	// containing a tool_result block with this content and re-calls the
+	// upstream LLM. SubstituteWith remains the fallback rendered to the
+	// harness if the continuation call fails.
+	ContinueWithToolResult string
 }
 
 type RewriteResult struct {
@@ -193,6 +202,12 @@ func isSSE(contentType string) bool {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
 	return strings.HasPrefix(ct, "text/event-stream")
 }
+
+// IsSSEContentType reports whether the given Content-Type is an SSE
+// stream. Exported so sibling packages (the lite-proxy handler in
+// particular) can branch on wire format without duplicating the prefix
+// check.
+func IsSSEContentType(contentType string) bool { return isSSE(contentType) }
 
 func matchAnthropicEndpoint(req *http.Request) bool {
 	if req == nil || req.URL == nil {
