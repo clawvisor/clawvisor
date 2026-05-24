@@ -924,7 +924,6 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				}
 				if contCT != "" && contCT != upstreamCT {
 					w.Header().Set("Content-Type", contCT)
-					upstreamCT = contCT
 				}
 			}
 		}

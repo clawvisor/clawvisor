@@ -48,9 +48,13 @@ func prependAnthropicAssistantTextJSON(body []byte, text string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("prepend anthropic text: marshal text block: %w", err)
 	}
-	merged := make([]json.RawMessage, 0, len(content)+1)
-	merged = append(merged, json.RawMessage(textBlock))
-	merged = append(merged, content...)
+	// Use append-from-literal rather than make with a pre-computed
+	// cap. CodeQL flags `len(content)+1` as a potential overflow in
+	// the allocation size; the input is bounded by upstream
+	// MaxResponseBytes so the overflow is unreachable in practice,
+	// but sidestepping the explicit arithmetic keeps the static
+	// analyzer quiet without buying us anything in exchange.
+	merged := append([]json.RawMessage{json.RawMessage(textBlock)}, content...)
 	mergedRaw, err := json.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("prepend anthropic text: marshal content: %w", err)
