@@ -41,6 +41,22 @@ import (
 // Returns an InlineApprovedTask shaped for the synthetic response
 // surfaced back to the LLM via the lite-proxy's release path.
 func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*llmproxy.InlineApprovedTask, error) {
+	return h.createInlineApprovedTask(ctx, agent, req, originalToolUseID, nil)
+}
+
+// CreateInlineApprovedTaskWithAssessment is the auto-approve gate's
+// fast-path entry. When the lite-proxy has already run the LLM risk
+// assessor for the gate's intent-match check, it passes the resulting
+// assessment here so we don't pay a second LLM round-trip — and the
+// persisted task.RiskLevel is byte-identical to the level that
+// justified bypassing the prompt. Passing nil (or an "unknown"
+// assessment) falls back to computing fresh, matching the dashboard
+// path's behavior.
+func (h *TasksHandler) CreateInlineApprovedTaskWithAssessment(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedTask, error) {
+	return h.createInlineApprovedTask(ctx, agent, req, originalToolUseID, precomputed)
+}
+
+func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string, precomputed *taskrisk.RiskAssessment) (*llmproxy.InlineApprovedTask, error) {
 	if agent == nil {
 		return nil, errors.New("agent is required")
 	}
@@ -157,9 +173,21 @@ func (h *TasksHandler) CreateInlineApprovedTask(ctx context.Context, agent *stor
 	// envelope-shape policy for parity with the dashboard path. Failures
 	// in either are non-fatal — a task should still be created with at
 	// least the structural assessment when the LLM call errors out.
+	//
+	// Precomputed-assessment fast path: the auto-approve gate already
+	// ran the assessor (with RecentUserTurns) before deciding to skip
+	// the human prompt. Reusing its verdict here avoids a second
+	// round-trip AND avoids the displayed task.RiskLevel disagreeing
+	// with the level that justified the bypass. A nil or "unknown"
+	// precomputed value falls through to the normal compute path —
+	// the manual approval surface uses that branch and we keep its
+	// behavior unchanged.
 	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
 	finalAssessment := envelopeAssessment
-	if h.assessor != nil {
+	usePrecomputed := precomputed != nil && !strings.EqualFold(strings.TrimSpace(precomputed.RiskLevel), "unknown")
+	if usePrecomputed {
+		finalAssessment = precomputed
+	} else if h.assessor != nil {
 		llmAssessment, err := h.assessor.Assess(ctx, taskrisk.AssessRequest{
 			Purpose:                req.Purpose,
 			AgentName:              agent.Name,

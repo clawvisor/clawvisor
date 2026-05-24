@@ -1112,12 +1112,33 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// passed-through tool_use returns to its normal harness fate on
 	// the model's next turn.
 	if len(toolResults) != len(processed.Decisions) {
+		// The auto-approved task has already been created by the
+		// gate. The sibling tool_uses get dropped from the
+		// substitute-rendered assistant turn (the rewriter's "any
+		// blocked" branch substitutes the whole turn), so the
+		// harness never sees them — that's the surprising part for
+		// operators chasing "I approved the task but Bash never ran
+		// after that." Record a dedicated audit row enumerating the
+		// dropped tool names so the trail is greppable.
+		var droppedNames []string
+		var autoApprovedTUID string
+		for _, dec := range processed.Decisions {
+			if dec.Verdict.ContinueWithToolResult != "" {
+				autoApprovedTUID = dec.ToolUse.ID
+				continue
+			}
+			droppedNames = append(droppedNames, dec.ToolUse.Name)
+		}
 		h.Logger.WarnContext(r.Context(), "lite-proxy continuation skipped: sibling tool_uses in same turn would unbalance tool_use/tool_result count",
 			"request_id", requestID,
 			"agent_id", agent.ID,
 			"tool_uses_in_turn", len(processed.Decisions),
 			"continue_results", len(toolResults),
+			"dropped_tools", droppedNames,
 		)
+		if h.AuditEmitter != nil {
+			h.AuditEmitter.LogContinuationSkippedSiblingTools(r.Context(), agent, requestID, "", autoApprovedTUID, droppedNames)
+		}
 		return nil, 0, "", nil
 	}
 	contBody, err := llmproxy.BuildContinuationBody(provider, upstreamCT, inboundBody, upstreamBody, toolResults)
@@ -1208,14 +1229,37 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// notice on each verdict via PrependAssistantNotice; we collect
 	// them here and inject into the continuation's assistant turn so
 	// the user sees what was auto-approved at the top of the model's
-	// response. Multiple notices (one per auto-approved tool_use in a
-	// coalesced turn) join with newlines.
+	// response. Multiple notices (one per auto-approved tool_use in
+	// a coalesced turn) join with newlines.
+	//
+	// Both pass results contribute. The first pass carries notices
+	// for whatever the gate fired on in the original assistant turn
+	// (always present in this branch since we got here on a
+	// continuation). The second pass can also fire the gate when
+	// the model re-emits POST /api/control/tasks?surface=inline in
+	// the continuation response — that second auto-approval falls
+	// back to SubstituteWith because recursion is capped at depth=1,
+	// but its notice still belongs in the visible turn for parity
+	// with the first task. Without this, two auto-approved tasks in
+	// the same inbound request would render with only the first
+	// notice and silently elide the second.
 	var notices []string
-	for _, dec := range processed.Decisions {
-		if n := strings.TrimSpace(dec.Verdict.PrependAssistantNotice); n != "" {
+	seen := map[string]struct{}{}
+	collect := func(decs []conversation.ToolUseDecisionRecord) {
+		for _, dec := range decs {
+			n := strings.TrimSpace(dec.Verdict.PrependAssistantNotice)
+			if n == "" {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
 			notices = append(notices, n)
 		}
 	}
+	collect(processed.Decisions)
+	collect(newProcessed.Decisions)
 	if len(notices) > 0 && len(newProcessed.Body) > 0 {
 		joined := strings.Join(notices, "\n")
 		originalLen := len(newProcessed.Body)

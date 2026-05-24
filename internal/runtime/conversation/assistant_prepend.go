@@ -265,54 +265,119 @@ func prependOpenAIChatAssistantTextJSON(body []byte, text string) ([]byte, error
 }
 
 func prependOpenAIChatAssistantTextSSE(body []byte, text string) ([]byte, error) {
-	// Walk lines to find the first `data:` event so we can borrow its
-	// `id` for our injected chunks. Chat Completions SSE doesn't use
-	// `event:` headers — every payload is `data: {...}`.
+	// Walk lines and rewrite the FIRST chunk's delta to carry our
+	// notice as the `content` field, preserving any role / tool_calls
+	// already present on that delta. Emitting a separate role chunk
+	// in front of the upstream's role chunk causes strict accumulators
+	// to interpret the two role transitions as two distinct assistant
+	// turns — rendering the notice as a separate message instead of
+	// merging with the model's output. Merging into the first chunk
+	// avoids the double-role transition entirely.
+	//
+	// "First chunk" = the first non-empty, non-[DONE] data line whose
+	// payload parses to a choices[].delta that is itself non-empty
+	// (role set, content set, or tool_calls set). If no such chunk
+	// exists (empty / malformed stream), we synthesize a single
+	// role+content chunk at the top so the notice still surfaces.
 	lines := strings.Split(string(body), "\n")
-	var firstID string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			continue
-		}
-		var probe struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(payload), &probe); err != nil {
-			continue
-		}
-		firstID = probe.ID
-		break
-	}
-	if firstID == "" {
-		firstID = "chatcmpl_clawvisor_notice"
-	}
-
 	var out bytes.Buffer
-	// Inject two leading chunks: one carrying role:"assistant" (some
-	// harnesses key off the role-only chunk to open the assistant
-	// turn), one carrying our notice content. The upstream's
-	// subsequent chunks (which themselves set role:"assistant") then
-	// stream in — duplicate role assignment is a no-op for harnesses
-	// in practice.
-	out.WriteString(chatCompletionSSEBlock(map[string]any{
-		"id":      firstID,
-		"object":  "chat.completion.chunk",
-		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil}},
-	}))
-	out.WriteString(chatCompletionSSEBlock(map[string]any{
-		"id":      firstID,
-		"object":  "chat.completion.chunk",
-		"choices": []map[string]any{{"index": 0, "delta": map[string]any{"content": text}, "finish_reason": nil}},
-	}))
-	// Pass through the original body verbatim. Adding ours at the top
-	// preserves all upstream events, including ones we don't model.
-	out.Write(body)
+	injected := false
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		raw := strings.TrimSpace(trimmed)
+		if !injected && strings.HasPrefix(raw, "data:") {
+			payload := strings.TrimSpace(strings.TrimPrefix(raw, "data:"))
+			if payload != "" && payload != "[DONE]" {
+				if rewritten, ok := mergeOpenAIChatChunkWithNotice([]byte(payload), text); ok {
+					out.WriteString("data: ")
+					out.Write(rewritten)
+					out.WriteString("\n\n")
+					injected = true
+					continue
+				}
+			}
+		}
+		out.WriteString(trimmed)
+		out.WriteByte('\n')
+	}
+	if !injected {
+		// No suitable chunk found — fall back to a leading synthetic
+		// role+content pair so the user at least sees the notice.
+		// This is the prior behavior; we only reach it for empty or
+		// malformed upstreams.
+		var prefix bytes.Buffer
+		prefix.WriteString(chatCompletionSSEBlock(map[string]any{
+			"id":      "chatcmpl_clawvisor_notice",
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]any{{"index": 0, "delta": map[string]any{"role": "assistant", "content": text}, "finish_reason": nil}},
+		}))
+		prefix.Write(out.Bytes())
+		return prefix.Bytes(), nil
+	}
 	return out.Bytes(), nil
+}
+
+// mergeOpenAIChatChunkWithNotice rewrites a single chat.completion.chunk
+// payload to carry the notice text as its content field. The original
+// choices[0].delta is preserved (role / tool_calls / etc.) and a
+// `content` field is added or prefixed onto any existing content.
+// Returns (out, true) when the chunk shape was understood and rewritten;
+// (nil, false) when it didn't match the choices/delta shape and the
+// caller should pass the original through unchanged and try the next
+// line instead.
+func mergeOpenAIChatChunkWithNotice(payload []byte, text string) ([]byte, bool) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &top); err != nil {
+		return nil, false
+	}
+	choicesRaw, ok := top["choices"]
+	if !ok {
+		return nil, false
+	}
+	var choices []map[string]json.RawMessage
+	if err := json.Unmarshal(choicesRaw, &choices); err != nil || len(choices) == 0 {
+		return nil, false
+	}
+	deltaRaw, ok := choices[0]["delta"]
+	if !ok {
+		return nil, false
+	}
+	var delta map[string]json.RawMessage
+	if err := json.Unmarshal(deltaRaw, &delta); err != nil {
+		return nil, false
+	}
+	// Combine notice with any pre-existing content on the delta.
+	var combined string
+	if existingRaw, hasContent := delta["content"]; hasContent && len(existingRaw) > 0 && string(existingRaw) != "null" {
+		var existing string
+		if err := json.Unmarshal(existingRaw, &existing); err == nil && existing != "" {
+			combined = text + "\n\n" + existing
+		} else {
+			combined = text
+		}
+	} else {
+		combined = text
+	}
+	contentRaw, err := json.Marshal(combined)
+	if err != nil {
+		return nil, false
+	}
+	delta["content"] = contentRaw
+	deltaMarshaled, err := json.Marshal(delta)
+	if err != nil {
+		return nil, false
+	}
+	choices[0]["delta"] = deltaMarshaled
+	choicesMarshaled, err := json.Marshal(choices)
+	if err != nil {
+		return nil, false
+	}
+	top["choices"] = choicesMarshaled
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // PrependOpenAIResponsesAssistantText inserts a leading

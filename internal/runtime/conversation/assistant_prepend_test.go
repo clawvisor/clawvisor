@@ -206,25 +206,54 @@ func TestPrependOpenAIChatAssistantText_SSE(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	got := string(out)
+
 	// Notice content shows up.
 	if !strings.Contains(got, `"content":"[Clawvisor] approved"`) {
 		t.Errorf("notice content delta missing:\n%s", got)
 	}
-	// Notice precedes the original tool_call delta.
+	// Notice appears in the SAME chunk as the original first delta's
+	// role/tool_calls — no second role transition. We assert this by
+	// counting role:"assistant" occurrences: should be exactly one
+	// (carried on the first upstream chunk, which is also where we
+	// merged the notice content).
+	roleCount := strings.Count(got, `"role":"assistant"`)
+	if roleCount != 1 {
+		t.Errorf("expected exactly one role:\"assistant\" transition (merged into first delta); got %d\n%s", roleCount, got)
+	}
+	// Notice precedes the tool_call arguments delta (it's on the
+	// first chunk; the arguments stream in on the second).
 	noticePos := strings.Index(got, "[Clawvisor] approved")
-	toolPos := strings.Index(got, "call_y")
-	if noticePos == -1 || toolPos == -1 || noticePos >= toolPos {
-		t.Errorf("notice should be before tool_calls; notice at %d, tool at %d\n%s", noticePos, toolPos, got)
+	argsPos := strings.Index(got, `"arguments":"{}"`)
+	if noticePos == -1 || argsPos == -1 || noticePos >= argsPos {
+		t.Errorf("notice should be before the args delta; notice at %d, args at %d\n%s", noticePos, argsPos, got)
 	}
-	// First-chunk id reused for injected chunks (so the harness sees
-	// one coherent stream id).
+	// Original tool_call info (id + name) preserved on the merged
+	// first chunk.
+	if !strings.Contains(got, `"id":"call_y"`) || !strings.Contains(got, `"name":"Write"`) {
+		t.Errorf("first-delta tool_call lost on merge:\n%s", got)
+	}
+	// Stream id preserved.
 	if !strings.Contains(got, `"id":"chatcmpl-sse"`) {
-		t.Errorf("chunk id not preserved on injected chunks:\n%s", got)
+		t.Errorf("chunk id not preserved:\n%s", got)
 	}
-	// Upstream chunks still present untouched (we appended them
-	// verbatim after our injected ones).
-	if strings.Count(got, "call_y") == 0 {
-		t.Errorf("original chunks dropped:\n%s", got)
+	// finish_reason chunk passes through unchanged.
+	if !strings.Contains(got, `"finish_reason":"tool_calls"`) {
+		t.Errorf("finish_reason chunk lost:\n%s", got)
+	}
+}
+
+// TestPrependOpenAIChatAssistantText_SSE_EmptyStreamFallsBack covers
+// the malformed/empty-upstream case where there's no chunk to merge
+// into. We fall back to a leading synthetic chunk so the notice still
+// surfaces; this is the prior behavior.
+func TestPrependOpenAIChatAssistantText_SSE_EmptyStreamFallsBack(t *testing.T) {
+	out, err := PrependOpenAIChatAssistantText("text/event-stream", []byte("data: [DONE]\n\n"), "[Clawvisor] fallback")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "[Clawvisor] fallback") {
+		t.Errorf("fallback path lost the notice:\n%s", got)
 	}
 }
 

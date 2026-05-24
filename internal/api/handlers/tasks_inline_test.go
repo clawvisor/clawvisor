@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
 	"github.com/clawvisor/clawvisor/pkg/store/sqlite"
@@ -49,6 +50,72 @@ func newInlineTasksHandlerForTest(t *testing.T) (*TasksHandler, store.Store, *st
 		logger: slog.Default(),
 	}
 	return h, st, user, agent
+}
+
+// recordingAssessor is a stub that records each Assess call so the
+// dedup test can verify the precomputed-assessment fast path skips
+// the LLM round-trip.
+type recordingAssessor struct {
+	calls   int
+	respond func() *taskrisk.RiskAssessment
+}
+
+func (r *recordingAssessor) Assess(_ context.Context, _ taskrisk.AssessRequest) (*taskrisk.RiskAssessment, error) {
+	r.calls++
+	if r.respond == nil {
+		return &taskrisk.RiskAssessment{RiskLevel: "low"}, nil
+	}
+	return r.respond(), nil
+}
+
+func TestCreateInlineApprovedTaskWithAssessment_UsesPrecomputed(t *testing.T) {
+	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	rec := &recordingAssessor{
+		respond: func() *taskrisk.RiskAssessment { return &taskrisk.RiskAssessment{RiskLevel: "medium"} },
+	}
+	h.assessor = rec
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Make files",
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run"}},
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+	}
+	// Precomputed gate verdict says "low" with a distinctive explanation.
+	precomputed := &taskrisk.RiskAssessment{
+		RiskLevel:   "low",
+		Explanation: "precomputed-by-gate",
+	}
+	out, err := h.CreateInlineApprovedTaskWithAssessment(context.Background(), agent, req, "tu-1", precomputed)
+	if err != nil {
+		t.Fatalf("CreateInlineApprovedTaskWithAssessment: %v", err)
+	}
+	if out == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if rec.calls != 0 {
+		t.Errorf("assessor should NOT be called when precomputed is supplied (would defeat the dedup); got calls=%d", rec.calls)
+	}
+}
+
+func TestCreateInlineApprovedTaskWithAssessment_NilPrecomputedFallsThrough(t *testing.T) {
+	h, _, _, agent := newInlineTasksHandlerForTest(t)
+	rec := &recordingAssessor{}
+	h.assessor = rec
+
+	req := &runtimetasks.TaskCreateRequest{
+		Purpose:                "Make files",
+		ExpectedTools:          []runtimetasks.ExpectedTool{{ToolName: "Bash", Why: "Run"}},
+		IntentVerificationMode: "strict",
+		ExpiresInSeconds:       600,
+	}
+	_, err := h.CreateInlineApprovedTaskWithAssessment(context.Background(), agent, req, "tu-2", nil)
+	if err != nil {
+		t.Fatalf("CreateInlineApprovedTaskWithAssessment(nil): %v", err)
+	}
+	if rec.calls != 1 {
+		t.Errorf("assessor should be called once when precomputed is nil; got calls=%d", rec.calls)
+	}
 }
 
 func TestCreateInlineApprovedTaskHappyPath(t *testing.T) {

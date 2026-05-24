@@ -172,7 +172,25 @@ func maybeInterceptInlineTaskDefinition(
 			audit("fallthrough", "auto_approve_creator_missing", "conversation gate covered but no inline task creator configured")
 			trace("inline_task.auto_approve_creator_missing", "threshold", cfg.ConversationAutoApproveThreshold)
 		} else {
-			created, createErr := cfg.InlineTaskCreator.CreateInlineApprovedTask(req.Context(), &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID}, parsed, tu.ID)
+			// Include Name so the handler-side risk assessor's
+			// AgentName field matches the manual approval path (which
+			// receives the middleware-loaded agent).
+			//
+			// Fast-path the precomputed assessment when the
+			// implementation honors it (TasksHandler does). Avoids a
+			// second LLM round-trip AND keeps the persisted
+			// task.RiskLevel byte-identical to the level that
+			// justified bypassing the prompt — otherwise the assessor
+			// can return a different verdict on the second call and
+			// dashboards show a level the gate didn't actually accept.
+			agentForCreate := &store.Agent{ID: cfg.AgentID, UserID: cfg.AgentUserID, Name: cfg.AgentName}
+			var created *InlineApprovedTask
+			var createErr error
+			if withAssessment, ok := cfg.InlineTaskCreator.(InlineTaskCreatorWithAssessment); ok {
+				created, createErr = withAssessment.CreateInlineApprovedTaskWithAssessment(req.Context(), agentForCreate, parsed, tu.ID, assessment)
+			} else {
+				created, createErr = cfg.InlineTaskCreator.CreateInlineApprovedTask(req.Context(), agentForCreate, parsed, tu.ID)
+			}
 			if createErr != nil {
 				// Create failed — log and fall through to the prompt
 				// path so the user can still approve manually.

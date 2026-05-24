@@ -322,6 +322,67 @@ func (e *AuditEmitter) LogInlineTaskAutoApproved(ctx context.Context, agent *sto
 	}
 }
 
+// LogContinuationSkippedSiblingTools records the audit trail for the
+// case where the conversation auto-approval gate fired AND created a
+// task, but the model's assistant turn carried sibling tool_uses that
+// were NOT auto-approved (count mismatch between tool_uses and
+// continuation tool_results). The continuation was skipped to avoid
+// double-execution of the sibling tool_uses; the substitute fallback
+// rendered as a terminal assistant turn instead. The sibling
+// tool_uses were dropped from that rendered turn — the model never
+// receives a tool_result for them and the harness never executes
+// them. This is the audit row an operator chasing "I approved the
+// task but Bash never ran" can grep for.
+//
+// droppedToolNames is the list of sibling tool names the model
+// emitted alongside the auto-approved POST /api/control/tasks; the
+// AUDIT row records them by name (not arguments — those can be large
+// and may carry sensitive payloads).
+func (e *AuditEmitter) LogContinuationSkippedSiblingTools(ctx context.Context, agent *store.Agent, requestID string, taskID, autoApprovedToolUseID string, droppedToolNames []string) {
+	if e == nil || e.Store == nil || agent == nil {
+		return
+	}
+	params := map[string]any{
+		"event":                    "lite_proxy.continuation.skipped_sibling_tools",
+		"task_id":                  taskID,
+		"auto_approved_tool_use":   autoApprovedToolUseID,
+		"dropped_tool_names":       droppedToolNames,
+		"dropped_count":            len(droppedToolNames),
+		"reason":                   "would unbalance tool_use/tool_result count; substitute fallback rendered instead and sibling tool_uses were not executed",
+		"build_sha":                buildSHA(),
+		"clawvisor_version":        version.Version,
+	}
+	paramsJSON, _ := json.Marshal(params)
+	var taskIDPtr *string
+	if taskID != "" {
+		t := taskID
+		taskIDPtr = &t
+	}
+	var toolUseIDPtr *string
+	if autoApprovedToolUseID != "" {
+		id := autoApprovedToolUseID
+		toolUseIDPtr = &id
+	}
+	entry := &store.AuditEntry{
+		ID:         uuid.NewString(),
+		UserID:     agent.UserID,
+		AgentID:    &agent.ID,
+		RequestID:  requestID,
+		ToolUseID:  toolUseIDPtr,
+		TaskID:     taskIDPtr,
+		Timestamp:  time.Now().UTC(),
+		Service:    "runtime.tool_use",
+		Action:     "lite_proxy.continuation.skipped_sibling_tools",
+		ParamsSafe: paramsJSON,
+		Decision:   "allow",
+		Outcome:    "continuation_skipped_sibling_tools",
+	}
+	if err := e.Store.LogAudit(ctx, entry); err != nil {
+		e.Logger.WarnContext(ctx, "lite-proxy: continuation-skipped audit failed",
+			"agent_id", agent.ID, "request_id", requestID, "err", err.Error())
+	}
+}
+
 // LogResolverSwap records one credential swap at the resolver. Each row
 // links to the placeholder, target host, and upstream status.
 func (e *AuditEmitter) LogResolverSwap(ctx context.Context, agent *store.Agent, requestID, placeholder, boundService, targetHost, targetPath, method string, statusCode int, decision, outcome, reason string, duration time.Duration) {

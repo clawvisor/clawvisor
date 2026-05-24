@@ -11,6 +11,7 @@ import (
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	"github.com/clawvisor/clawvisor/internal/runtime/llmproxy/inspector"
 	runtimetasks "github.com/clawvisor/clawvisor/internal/runtime/tasks"
+	"github.com/clawvisor/clawvisor/internal/taskrisk"
 	runtimedecision "github.com/clawvisor/clawvisor/pkg/runtime/decision"
 	"github.com/clawvisor/clawvisor/pkg/store"
 )
@@ -29,6 +30,26 @@ import (
 // request (or ask the agent to).
 type InlineTaskCreator interface {
 	CreateInlineApprovedTask(ctx context.Context, agent *store.Agent, req *runtimetasks.TaskCreateRequest, originalToolUseID string) (*InlineApprovedTask, error)
+}
+
+// InlineTaskCreatorWithAssessment is an optional extension of
+// InlineTaskCreator. When the auto-approve gate has already run the
+// LLM risk assessor (and so already has a RiskAssessment in hand),
+// callers can type-assert to this interface and pass the precomputed
+// verdict, avoiding a second round-trip and the verdict drift it can
+// cause. Implementations that don't (or can't) honor the precomputed
+// value may simply call through to CreateInlineApprovedTask and
+// compute a fresh assessment — the precomputed value is a hint, not
+// a contract.
+type InlineTaskCreatorWithAssessment interface {
+	InlineTaskCreator
+	CreateInlineApprovedTaskWithAssessment(
+		ctx context.Context,
+		agent *store.Agent,
+		req *runtimetasks.TaskCreateRequest,
+		originalToolUseID string,
+		precomputed *taskrisk.RiskAssessment,
+	) (*InlineApprovedTask, error)
 }
 
 // InlineApprovedTask is the slice of the created task surfaced back
