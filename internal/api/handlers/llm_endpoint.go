@@ -917,6 +917,25 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				h.Logger.WarnContext(r.Context(), "lite-proxy continuation failed; falling back to substitute response",
 					"request_id", requestID, "agent_id", agent.ID, "err", contErr.Error())
 			case contFinal != nil:
+				// Treat any SkippedReason on the continuation's
+				// postprocess as a continuation failure regardless of
+				// whether a (possibly partial) body came back.
+				// SkippedReason indicates the rewriter couldn't finish
+				// its pass cleanly; swapping that body in would mask
+				// the original processed.SubstituteWith fallback and
+				// could leak partially-rewritten content (e.g. a
+				// literal autovault_… placeholder that never got
+				// resolved). Fall back to the original `processed`,
+				// matching the pre-continuation fail-closed posture.
+				if contFinal.SkippedReason != "" {
+					h.Logger.WarnContext(r.Context(), "lite-proxy continuation postprocess reported SkippedReason; falling back to substitute response",
+						"request_id", requestID,
+						"agent_id", agent.ID,
+						"skipped_reason", contFinal.SkippedReason,
+						"body_bytes", len(contFinal.Body),
+					)
+					break
+				}
 				processed = *contFinal
 				if contStatus != 0 {
 					resp.StatusCode = contStatus

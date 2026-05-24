@@ -184,7 +184,16 @@ func (h *TasksHandler) createInlineApprovedTask(ctx context.Context, agent *stor
 	// behavior unchanged.
 	envelopeAssessment := runtimepolicy.AssessTaskEnvelope(req.Purpose, env)
 	finalAssessment := envelopeAssessment
-	usePrecomputed := precomputed != nil && !strings.EqualFold(strings.TrimSpace(precomputed.RiskLevel), "unknown")
+	// Honor the precomputed value only when it carries a usable
+	// risk level. nil, empty, and the literal "unknown" all fall
+	// through to a fresh assessor call so we never persist a task
+	// with an empty risk_level when the precomputed slot was set
+	// but unpopulated.
+	precomputedRisk := ""
+	if precomputed != nil {
+		precomputedRisk = strings.ToLower(strings.TrimSpace(precomputed.RiskLevel))
+	}
+	usePrecomputed := precomputed != nil && precomputedRisk != "" && precomputedRisk != "unknown"
 	if usePrecomputed {
 		finalAssessment = precomputed
 	} else if h.assessor != nil {

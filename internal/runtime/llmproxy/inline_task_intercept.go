@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/clawvisor/clawvisor/internal/runtime/conversation"
 	runtimepolicy "github.com/clawvisor/clawvisor/internal/runtime/policy"
@@ -332,12 +333,30 @@ func hasNonEmptyTurn(turns []string) bool {
 // characters and cap the length defensively so a runaway purpose
 // can't dominate the assistant turn.
 func autoApproveUserNotice(purpose string) string {
-	const maxPurposeLen = 200
+	const maxPurposeRunes = 200
 	cleaned := strings.TrimSpace(purpose)
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\n", " ")
-	if len(cleaned) > maxPurposeLen {
-		cleaned = cleaned[:maxPurposeLen] + "…"
+	// Truncate by rune count, not bytes. Slicing a multibyte UTF-8
+	// string at an arbitrary byte index splits a rune mid-sequence
+	// and the resulting invalid UTF-8 renders as U+FFFD once JSON-
+	// marshalled. The purpose is model-controlled so a non-ASCII
+	// purpose (Chinese, emoji, accented Latin) over 200 bytes would
+	// deterministically produce a garbled notice without this.
+	if utf8.RuneCountInString(cleaned) > maxPurposeRunes {
+		// Walk runes and stop at the cap so we slice on a rune
+		// boundary. strings.TrimSpace + ReplaceAll above don't break
+		// rune boundaries, so cleaned is valid UTF-8 here.
+		runeCount := 0
+		cutByte := len(cleaned)
+		for i := range cleaned {
+			if runeCount == maxPurposeRunes {
+				cutByte = i
+				break
+			}
+			runeCount++
+		}
+		cleaned = cleaned[:cutByte] + "…"
 	}
 	if cleaned == "" {
 		return "[Clawvisor] Auto-approved a task based on your request."

@@ -87,7 +87,17 @@ func extractOpenAIChatAssistantMessageSSE(body []byte) (*OpenAIChatAssistantMess
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// Limit to choice index 0. The JSON extractor already uses
+		// Choices[0] only; mirroring that here keeps shapes consistent
+		// across wire formats. Merging multiple choices into a single
+		// continuation would either concatenate alternative
+		// completions (when the harness sets n>1) or collide on
+		// identical tool_call indices across choices, producing a
+		// malformed second request.
 		for _, choice := range event.Choices {
+			if choice.Index != 0 {
+				continue
+			}
 			if txt := flattenOpenAIContentFromAny(choice.Delta.Content); txt != "" {
 				text.WriteString(txt)
 			}

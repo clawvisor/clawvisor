@@ -489,6 +489,26 @@ func (f autoApproveFixture) holdCount() int {
 	}])
 }
 
+// TestAutoApproveUserNotice_TruncatesByRune ensures the user-facing
+// notice's purpose suffix is truncated on rune boundaries, not byte
+// boundaries. The purpose is model-controlled and can be non-ASCII;
+// a byte-slice would split a multibyte UTF-8 sequence and render as
+// U+FFFD once JSON-marshalled.
+func TestAutoApproveUserNotice_TruncatesByRune(t *testing.T) {
+	// Each Chinese character is 3 bytes in UTF-8; 300 chars = 900
+	// bytes, well over the 200-rune cap.
+	long := strings.Repeat("漢", 300)
+	got := autoApproveUserNotice(long)
+	// Result must be valid UTF-8 — no replacement chars from
+	// mid-rune slicing.
+	if strings.Contains(got, "�") {
+		t.Errorf("notice contains U+FFFD; truncation split a rune mid-sequence:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("notice should end with ellipsis when truncated; got: %s", got)
+	}
+}
+
 // TestAutoApprove_FiresOnLowRiskYesMatch is the happy path: user
 // authorized the work in the conversation, risk is low, threshold is
 // low — gate fires, task is created, no prompt rendered.

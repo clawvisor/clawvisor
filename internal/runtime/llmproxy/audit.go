@@ -281,6 +281,17 @@ func (e *AuditEmitter) LogInlineTaskApproved(ctx context.Context, agent *store.A
 // monitoring. Carries the same task_id / approval_record_id / tool_use
 // linkage as the human-approved path so dashboards that filter by
 // task_id keep working.
+//
+// PAIRED EMISSION: the auto-approve gate also writes a generic
+// tool-use audit row (action="lite_proxy.tool_use", outcome=
+// "auto_approved_from_conversation") via the rewriter's audit
+// closure. This task-linked row is emitted alongside, so the audit
+// trail for a single auto-approval contains TWO rows for the same
+// (request_id, tool_use_id): the tool-use row records the intercept
+// firing; this row records WHICH task got created. Consumers grouping
+// by (request_id, tool_use_id) should expect the pair — neither row
+// alone is the complete picture. Same pairing exists for the manual
+// path's LogInlineTaskApproved.
 func (e *AuditEmitter) LogInlineTaskAutoApproved(ctx context.Context, agent *store.Agent, requestID, toolUseID string, task *InlineApprovedTask, gateReason, riskLevel, intentMatch, threshold string) {
 	if e == nil || e.Store == nil || agent == nil || task == nil {
 		return
@@ -342,15 +353,22 @@ func (e *AuditEmitter) LogContinuationSkippedSiblingTools(ctx context.Context, a
 	if e == nil || e.Store == nil || agent == nil {
 		return
 	}
+	// Normalize a nil dropped-names slice to []string{} so the JSON
+	// renders as `[]` not `null`. Keeps the row's shape consistent
+	// with the documented dropped_count=0 companion field and saves
+	// downstream consumers a null-vs-empty branch.
+	if droppedToolNames == nil {
+		droppedToolNames = []string{}
+	}
 	params := map[string]any{
-		"event":                    "lite_proxy.continuation.skipped_sibling_tools",
-		"task_id":                  taskID,
-		"auto_approved_tool_use":   autoApprovedToolUseID,
-		"dropped_tool_names":       droppedToolNames,
-		"dropped_count":            len(droppedToolNames),
-		"reason":                   "would unbalance tool_use/tool_result count; substitute fallback rendered instead and sibling tool_uses were not executed",
-		"build_sha":                buildSHA(),
-		"clawvisor_version":        version.Version,
+		"event":                  "lite_proxy.continuation.skipped_sibling_tools",
+		"task_id":                taskID,
+		"auto_approved_tool_use": autoApprovedToolUseID,
+		"dropped_tool_names":     droppedToolNames,
+		"dropped_count":          len(droppedToolNames),
+		"reason":                 "would unbalance tool_use/tool_result count; substitute fallback rendered instead and sibling tool_uses were not executed",
+		"build_sha":              buildSHA(),
+		"clawvisor_version":      version.Version,
 	}
 	paramsJSON, _ := json.Marshal(params)
 	var taskIDPtr *string
