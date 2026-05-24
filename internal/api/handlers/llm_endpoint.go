@@ -965,6 +965,29 @@ func (h *LLMEndpointHandler) serve(w http.ResponseWriter, r *http.Request) {
 				"response postprocess failed; see clawvisor audit log")
 			return
 		}
+		// First-turn routing notice. When the inbound transcript carries
+		// no prior assistant turn, this is the user's opening prompt of
+		// a fresh conversation — prepend a one-liner so they see that
+		// Clawvisor is intermediating and which agent identity is in
+		// use. Only fires on 200; non-success bodies aren't shaped to
+		// accept the prepend and would be soft no-ops anyway. The
+		// per-tool-use auto-approve notice is handled separately on the
+		// continuation path and is additive with this one.
+		if resp.StatusCode == http.StatusOK && !llmproxy.HasInboundAssistantTurn(provider, body) {
+			notice := llmproxy.RenderAgentRoutingNotice(agent.Name)
+			pre, changed, prependErr := llmproxy.PrependAssistantNotice(provider, processed.ContentType, processed.Body, notice)
+			switch {
+			case prependErr != nil:
+				h.Logger.WarnContext(r.Context(), "lite-proxy first-turn notice prepend failed; returning unannotated body",
+					"request_id", requestID, "agent_id", agent.ID, "err", prependErr.Error())
+			case changed:
+				processed.Body = pre
+				// Mark Rewritten so the Content-Length / Content-Encoding
+				// cleanup below runs — the prepended body's length no
+				// longer matches the upstream header.
+				processed.Rewritten = true
+			}
+		}
 		if processed.Rewritten {
 			// Drop Content-Length entirely — the rewritten body's length
 			// differs from upstream's. Setting it to "" leaves an empty
