@@ -818,6 +818,7 @@ func Postprocess(req *http.Request, body []byte, contentType string, cfg Postpro
 		coalesced.UserID = cfg.AgentUserID
 		coalesced.AgentID = cfg.AgentID
 		coalesced.Provider = rewriter.Name()
+		coalesced.ConversationID = cfg.ConversationID
 		held, holdErr := originalPendingApprovals.Hold(req.Context(), coalesced)
 		if holdErr == nil {
 			// Coalesced hold committed. The buffered per-tool holds
