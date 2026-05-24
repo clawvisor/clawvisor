@@ -33,8 +33,13 @@ var ErrContinuationUnsupportedProvider = errors.New("llmproxy: continuation unsu
 // intercepted tool. Other top-level fields (model, system, tools,
 // max_tokens, stream, …) pass through unchanged.
 //
-// Only Anthropic is supported in the first cut; OpenAI providers
-// return ErrContinuationUnsupportedProvider.
+// Provider routing:
+//   - Anthropic: append assistant+user turns to messages[].
+//   - OpenAI Chat Completions (original body has "messages"): append
+//     assistant message with tool_calls + role:"tool" rows to messages[].
+//   - OpenAI Responses API (original body has "input"): append the
+//     output[] items + function_call_output items to input[],
+//     promoting a string-form input to an array first.
 func BuildContinuationBody(
 	provider conversation.Provider,
 	contentType string,
@@ -48,9 +53,208 @@ func BuildContinuationBody(
 	switch provider {
 	case conversation.ProviderAnthropic:
 		return buildAnthropicContinuationBody(contentType, originalRequestBody, upstreamResponseBody, toolResults)
+	case conversation.ProviderOpenAI:
+		shape := detectOpenAIShape(originalRequestBody)
+		switch shape {
+		case openAIShapeChat:
+			return buildOpenAIChatContinuationBody(contentType, originalRequestBody, upstreamResponseBody, toolResults)
+		case openAIShapeResponses:
+			return buildOpenAIResponsesContinuationBody(contentType, originalRequestBody, upstreamResponseBody, toolResults)
+		default:
+			return nil, errors.New("llmproxy: cannot determine openai request shape (no messages or input field)")
+		}
 	default:
 		return nil, ErrContinuationUnsupportedProvider
 	}
+}
+
+type openAIShape int
+
+const (
+	openAIShapeUnknown openAIShape = iota
+	openAIShapeChat
+	openAIShapeResponses
+)
+
+// detectOpenAIShape inspects the original request body to decide
+// which OpenAI API surface the harness was targeting. The two
+// surfaces are mutually exclusive in practice: Chat Completions uses
+// "messages", Responses API uses "input". A body carrying both is
+// non-conforming; we prefer "messages" (Chat Completions) to match
+// the older + more common shape.
+func detectOpenAIShape(body []byte) openAIShape {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return openAIShapeUnknown
+	}
+	if _, ok := probe["messages"]; ok {
+		return openAIShapeChat
+	}
+	if _, ok := probe["input"]; ok {
+		return openAIShapeResponses
+	}
+	return openAIShapeUnknown
+}
+
+func buildOpenAIChatContinuationBody(
+	contentType string,
+	originalRequestBody []byte,
+	upstreamResponseBody []byte,
+	toolResults []ContinuationToolResult,
+) ([]byte, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(originalRequestBody, &top); err != nil {
+		return nil, fmt.Errorf("continuation: parse original chat request body: %w", err)
+	}
+	messagesRaw, ok := top["messages"]
+	if !ok {
+		return nil, errors.New("continuation: chat completions body missing messages")
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(messagesRaw, &messages); err != nil {
+		return nil, fmt.Errorf("continuation: parse chat messages: %w", err)
+	}
+
+	asst, err := conversation.ExtractOpenAIChatAssistantMessage(contentType, upstreamResponseBody)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: extract chat assistant message: %w", err)
+	}
+	asstTurn := map[string]any{"role": "assistant"}
+	// Chat Completions accepts content=null when tool_calls is the
+	// only payload. Emit nil rather than an empty string so the
+	// upstream's parser treats it as "no prose" rather than "empty
+	// prose," which some versions of the API have validated against.
+	if asst.Content != "" {
+		asstTurn["content"] = asst.Content
+	} else {
+		asstTurn["content"] = nil
+	}
+	if len(asst.ToolCalls) > 0 {
+		calls := make([]map[string]any, 0, len(asst.ToolCalls))
+		for _, c := range asst.ToolCalls {
+			calls = append(calls, map[string]any{
+				"id":   c.ID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      c.Name,
+					"arguments": c.Arguments,
+				},
+			})
+		}
+		asstTurn["tool_calls"] = calls
+	}
+	asstRaw, err := json.Marshal(asstTurn)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: marshal chat assistant turn: %w", err)
+	}
+	messages = append(messages, asstRaw)
+
+	// One role:"tool" message per tool_call_id. Chat Completions
+	// requires that every tool_call in the prior assistant message be
+	// resolved by a matching tool message before the model will
+	// respond, so we emit exactly len(toolResults) of them.
+	for _, tr := range toolResults {
+		if strings.TrimSpace(tr.ToolUseID) == "" {
+			continue
+		}
+		toolRow := map[string]any{
+			"role":         "tool",
+			"tool_call_id": tr.ToolUseID,
+			"content":      tr.Content,
+		}
+		raw, err := json.Marshal(toolRow)
+		if err != nil {
+			return nil, fmt.Errorf("continuation: marshal chat tool row: %w", err)
+		}
+		messages = append(messages, raw)
+	}
+
+	mergedMessages, err := json.Marshal(messages)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: marshal merged chat messages: %w", err)
+	}
+	top["messages"] = mergedMessages
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: marshal chat continuation body: %w", err)
+	}
+	return out, nil
+}
+
+func buildOpenAIResponsesContinuationBody(
+	contentType string,
+	originalRequestBody []byte,
+	upstreamResponseBody []byte,
+	toolResults []ContinuationToolResult,
+) ([]byte, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(originalRequestBody, &top); err != nil {
+		return nil, fmt.Errorf("continuation: parse original responses request body: %w", err)
+	}
+	rawInput, ok := top["input"]
+	if !ok {
+		return nil, errors.New("continuation: responses body missing input")
+	}
+	// `input` may be a JSON string (the convenience form, e.g.
+	// `"input":"make a file"`) or an array of items. Promote the
+	// string to a single user-message item so we can append to it
+	// uniformly.
+	var inputItems []json.RawMessage
+	var asString string
+	if err := json.Unmarshal(rawInput, &asString); err == nil {
+		promoted := map[string]any{
+			"type": "message",
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "input_text", "text": asString},
+			},
+		}
+		raw, err := json.Marshal(promoted)
+		if err != nil {
+			return nil, fmt.Errorf("continuation: promote string input: %w", err)
+		}
+		inputItems = []json.RawMessage{raw}
+	} else if err := json.Unmarshal(rawInput, &inputItems); err != nil {
+		return nil, fmt.Errorf("continuation: parse responses input array: %w", err)
+	}
+
+	output, err := conversation.ExtractOpenAIResponsesOutput(contentType, upstreamResponseBody)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: extract responses output: %w", err)
+	}
+	inputItems = append(inputItems, output.Items...)
+
+	// function_call_output items per tool_result. The Responses API
+	// keys these off `call_id`, not the function_call's `id`, so the
+	// tool_use_id we plumbed through must already be the call_id (the
+	// OpenAI response rewriter normalizes to call_id when emitting
+	// tool_uses to the evaluator — see openai_response.go).
+	for _, tr := range toolResults {
+		if strings.TrimSpace(tr.ToolUseID) == "" {
+			continue
+		}
+		fco := map[string]any{
+			"type":    "function_call_output",
+			"call_id": tr.ToolUseID,
+			"output":  tr.Content,
+		}
+		raw, err := json.Marshal(fco)
+		if err != nil {
+			return nil, fmt.Errorf("continuation: marshal function_call_output: %w", err)
+		}
+		inputItems = append(inputItems, raw)
+	}
+
+	mergedInput, err := json.Marshal(inputItems)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: marshal merged input: %w", err)
+	}
+	top["input"] = mergedInput
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, fmt.Errorf("continuation: marshal responses continuation body: %w", err)
+	}
+	return out, nil
 }
 
 func buildAnthropicContinuationBody(
