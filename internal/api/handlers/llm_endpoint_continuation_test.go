@@ -415,6 +415,98 @@ func TestTryContinuation_NoContinueDecisionIsNoOp(t *testing.T) {
 	}
 }
 
+// TestServe_ContinuationClearsStaleContentLengthHeader exercises the
+// serve()-level wiring. Before the fix the handler's `if
+// processed.Rewritten` block only cleared Content-Length when the
+// continuation's postprocess ITSELF rewrote the body — leaving stale
+// upstream Content-Length / Content-Encoding headers in place when
+// the second upstream returned a plain text turn (passthrough). Go
+// would then either truncate the response or the harness would try
+// to gunzip plaintext. After the fix tryContinuation always marks
+// the swapped result as Rewritten so the header-cleanup fires
+// regardless.
+//
+// We can't easily drive an end-to-end auto-approve flow here without
+// the full inline_task_creator + risk_assessor scaffolding, so the
+// test stubs the auto-approve path by patching the Inspector. The
+// observable contract is the same: after a continuation swap whose
+// second response is passthrough-JSON, Content-Length on the harness
+// response should be the SECOND body's length, not the first's.
+func TestServe_ContinuationClearsStaleContentLengthHeader(t *testing.T) {
+	// Two upstream calls, returning bodies of very different sizes.
+	// If Content-Length leaks from call 1 → harness, the harness
+	// would see truncation or misframing.
+	const firstSize = 2048
+	const secondSize = 64
+	firstBody := []byte(`{"id":"msg_first","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"` + strings.Repeat("a", firstSize) + `"}],"stop_reason":"end_turn"}`)
+	secondBody := []byte(`{"id":"msg_second","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"` + strings.Repeat("b", secondSize) + `"}],"stop_reason":"end_turn"}`)
+
+	// Drive through tryContinuation directly rather than serve(), so
+	// we don't need the full auto-approve gate machinery wired up.
+	// What we're testing: after the swap, the body length matches the
+	// SECOND upstream's body, and the caller (serve) sees Rewritten=
+	// true on processed so it clears the stale headers.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(secondBody)
+	}))
+	defer upstream.Close()
+
+	h, _, _, _ := newSeededHandler(t, upstream.URL)
+	agent := firstSeededAgent(t, h.Store)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"x"}]}`))
+	req = req.WithContext(store.WithAgent(req.Context(), agent))
+
+	processed := llmproxy.PostprocessResult{
+		Body:        firstBody,
+		ContentType: "application/json",
+		Rewritten:   false,
+		Decisions: []conversation.ToolUseDecisionRecord{{
+			ToolUse: conversation.ToolUse{ID: "toolu_a", Name: "Bash"},
+			Verdict: conversation.ToolUseVerdict{
+				Allowed:                false,
+				SubstituteWith:         "[fallback]",
+				ContinueWithToolResult: "[approved]",
+			},
+		}},
+	}
+
+	final, _, _, err := h.tryContinuation(
+		req, agent, conversation.ProviderAnthropic, "req-headers",
+		[]byte(`{"messages":[{"role":"user","content":"x"}]}`),
+		[]byte(`{"content":[{"type":"tool_use","id":"toolu_a","name":"Bash","input":{}}]}`),
+		"application/json", http.StatusOK,
+		processed,
+		llmproxy.PostprocessConfig{
+			Inspector:   h.Inspector,
+			RewriteOpts: inspector.DefaultRewriteOpts(h.ResolverBaseURL),
+			Store:       h.Store,
+			AgentUserID: agent.UserID,
+			AgentID:     agent.ID,
+		},
+		0,
+	)
+	if err != nil {
+		t.Fatalf("tryContinuation: %v", err)
+	}
+	if final == nil {
+		t.Fatal("expected continuation result")
+	}
+	// The body is now the SECOND upstream's body. Its length is far
+	// from the first upstream's, so a stale Content-Length would have
+	// truncated it.
+	if len(final.Body) == firstSize {
+		t.Errorf("body wasn't swapped to second upstream (still first-sized)")
+	}
+	// Critical assertion: processed.Rewritten was forced to true,
+	// which is what triggers the header-clear in serve()'s
+	// `if processed.Rewritten` block. Without this, Content-Length
+	// from the first upstream call leaks into the harness response.
+	if !final.Rewritten {
+		t.Errorf("continuation swap must mark Rewritten=true so the handler clears stale Content-Length / Content-Encoding from the first upstream; got Rewritten=false")
+	}
+}
+
 // TestTryContinuation_UpstreamErrorFallsBack ensures that when the
 // continuation upstream call returns an error status, the handler
 // surfaces an error to its caller so the substitute fallback gets

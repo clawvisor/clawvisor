@@ -1163,6 +1163,23 @@ func (h *LLMEndpointHandler) tryContinuation(
 	// to add it as the gate's coverage expands).
 	contReq := r.Clone(ctx)
 	newProcessed := llmproxy.Postprocess(contReq, full, contCT, cfg)
+	// Force Rewritten=true on a successful continuation swap. The
+	// body now comes from a SECOND upstream call whose length almost
+	// certainly differs from the first call's Content-Length (which
+	// serve() mirrored into w.Header at the top of the handler) and
+	// which may carry a different Content-Encoding. Without this flag,
+	// the second Postprocess can legitimately report Rewritten=false
+	// when the body itself was passthrough (plain text turn, no
+	// tool_use to rewrite) — and serve()'s `if processed.Rewritten`
+	// header-clear block would skip dropping Content-Length /
+	// Content-Encoding. Go would then truncate the harness write to
+	// the stale length or the harness would try to gunzip our
+	// plaintext. Co-locating the flag here (rather than in serve())
+	// keeps the invariant tight: any non-nil return from
+	// tryContinuation has had its origin headers invalidated by the
+	// upstream swap, and the caller can rely on Rewritten=true to
+	// route through the normal post-rewrite cleanup.
+	newProcessed.Rewritten = true
 
 	// User-facing notices. The auto-approve gate records a one-line
 	// notice on each verdict via PrependAssistantNotice; we collect
